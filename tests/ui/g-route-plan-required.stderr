@@ -1,0 +1,85 @@
+error[E0107]: function takes 4 generic arguments but 3 generic arguments were supplied
+  --> tests/ui/g-route-plan-required.rs:16:44
+   |
+16 | const LEFT_ARM: g::Program<LeftSteps> = g::send::<Controller, Worker, LeftMsg>();
+   |                                            ^^^^   ----------  ------  ------- supplied 3 generic arguments
+   |                                            |
+   |                                            expected 4 generic arguments
+   |
+note: function defined here, with 4 generic parameters: `From`, `To`, `M`, `LANE`
+  --> src/global.rs
+   |
+   | pub const fn send<From, To, M, const LANE: u8>() -> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
+   |              ^^^^ ----  --  -  --------------
+help: add missing generic argument
+   |
+16 | const LEFT_ARM: g::Program<LeftSteps> = g::send::<Controller, Worker, LeftMsg, LANE>();
+   |                                                                              ++++++
+
+error[E0107]: function takes 4 generic arguments but 3 generic arguments were supplied
+  --> tests/ui/g-route-plan-required.rs:17:46
+   |
+17 | const RIGHT_ARM: g::Program<RightSteps> = g::send::<Controller, Worker, RightMsg>();
+   |                                              ^^^^   ----------  ------  -------- supplied 3 generic arguments
+   |                                              |
+   |                                              expected 4 generic arguments
+   |
+note: function defined here, with 4 generic parameters: `From`, `To`, `M`, `LANE`
+  --> src/global.rs
+   |
+   | pub const fn send<From, To, M, const LANE: u8>() -> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
+   |              ^^^^ ----  --  -  --------------
+help: add missing generic argument
+   |
+17 | const RIGHT_ARM: g::Program<RightSteps> = g::send::<Controller, Worker, RightMsg, LANE>();
+   |                                                                                 ++++++
+
+error[E0107]: function takes 2 generic arguments but 3 generic arguments were supplied
+  --> tests/ui/g-route-plan-required.rs:19:38
+   |
+19 | const _: g::Program<RouteSteps> = g::route::<0, 1, _>(
+   |                                      ^^^^^       --- help: remove the unnecessary generic argument
+   |                                      |
+   |                                      expected 2 generic arguments
+   |
+note: function defined here, with 2 generic parameters: `CONTROLLER`, `Steps`
+  --> src/global.rs
+   |
+   | pub const fn route<const CONTROLLER: u8, Steps>(
+   |              ^^^^^ --------------------  -----
+
+error[E0277]: the trait bound `StepCons<SendStep<Role<0>, Role<1>, Message<LabelMarker<3>, ()>>, StepNil>: hibana::global::steps::RouteArm<0>` is not satisfied
+  --> tests/ui/g-route-plan-required.rs:20:25
+   |
+20 |     g::route_chain::<0, LeftSteps>(LEFT_ARM).and::<RightSteps>(RIGHT_ARM),
+   |                         ^^^^^^^^^ unsatisfied trait bound
+   |
+   = help: the trait `hibana::global::steps::RouteArm<0>` is not implemented for `StepCons<SendStep<Role<0>, Role<1>, Message<LabelMarker<3>, ()>, 0>, StepNil>`
+           but it is implemented for `StepCons<SendStep<Role<0>, Role<0>, _, _>, _>`
+note: required by a bound in `hibana::route_chain`
+  --> src/global.rs
+   |
+   | pub const fn route_chain<const CONTROLLER: u8, Steps>(
+   |              ----------- required by a bound in this function
+...
+   |     Steps: steps::RouteArm<CONTROLLER>,
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `route_chain`
+
+error[E0277]: the trait bound `StepCons<SendStep<Role<0>, Role<1>, Message<LabelMarker<4>, ()>>, StepNil>: hibana::global::steps::RouteArm<0>` is not satisfied
+  --> tests/ui/g-route-plan-required.rs:20:52
+   |
+20 |     g::route_chain::<0, LeftSteps>(LEFT_ARM).and::<RightSteps>(RIGHT_ARM),
+   |                                              ---   ^^^^^^^^^^ unsatisfied trait bound
+   |                                              |
+   |                                              required by a bound introduced by this call
+   |
+   = help: the trait `hibana::global::steps::RouteArm<0>` is not implemented for `StepCons<SendStep<Role<0>, Role<1>, Message<LabelMarker<4>, ()>, 0>, StepNil>`
+           but it is implemented for `StepCons<SendStep<Role<0>, Role<0>, _, _>, _>`
+note: required by a bound in `RouteChainBuilder::<CONTROLLER, Steps>::and`
+  --> src/global/program.rs
+   |
+   |     pub const fn and<NextSteps>(
+   |                  --- required by a bound in this associated function
+...
+   |         NextSteps: RouteArm<CONTROLLER>,
+   |                    ^^^^^^^^^^^^^^^^^^^^ required by this bound in `RouteChainBuilder::<CONTROLLER, Steps>::and`

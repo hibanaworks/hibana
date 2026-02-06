@@ -1,0 +1,32 @@
+error[E0080]: evaluation panicked: Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dynamic plan provided
+  --> tests/ui/g-route-unprojectable.rs:70:5
+   |
+70 |     g::project::<1, Steps, _>(&ROUTE);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `PASSIVE_PROGRAM` failed inside this call
+   |
+note: inside `project::<1, StepCons<SendStep<Role<0>, Role<0>, Message<LabelMarker<100>, GenericCapToken<RouteArmKind<100>>, CanonicalControl<RouteArmKind<100>>>>, StepCons<SendStep<Role<0>, Role<1>, Message<LabelMarker<42>, ()>>, StepCons<SendStep<Role<0>, Role<1>, Message<LabelMarker<99>, ()>>, StepCons<SendStep<Role<0>, Role<0>, Message<LabelMarker<101>, GenericCapToken<RouteArmKind<101>>, CanonicalControl<RouteArmKind<101>>>>, StepCons<SendStep<Role<0>, Role<1>, Message<LabelMarker<42>, ()>>, StepCons<SendStep<Role<0>, Role<1>, Message<LabelMarker<99>, ()>>, StepCons<SendStep<Role<0>, Role<1>, Message<LabelMarker<77>, ()>>, StepNil>>>>>>>, MintConfig<NullMintSpec, CanonicalPolicy>>`
+  --> src/global/role_program.rs
+   |
+   | /     build_from_slice_with_mint::<ROLE, <Steps as ProjectRole<Role<ROLE>>>::Output, Mint>(
+   | |         eff,
+   | |         eff.as_static_slice(),
+   | |         Mint::INSTANCE,
+   | |     )
+   | |_____^
+note: inside `role_program::build_from_slice_with_mint::<1, StepCons<LocalRecv<Role<0>, Message<LabelMarker<42>, ()>>, StepCons<LocalRecv<Role<0>, Message<LabelMarker<99>, ()>>, StepCons<LocalRecv<Role<0>, Message<LabelMarker<42>, ()>>, StepCons<LocalRecv<Role<0>, Message<LabelMarker<99>, ()>>, StepCons<LocalRecv<Role<0>, Message<LabelMarker<77>, ()>>, StepNil>>>>>, MintConfig<NullMintSpec, CanonicalPolicy>>`
+  --> src/global/role_program.rs
+   |
+   |     let typestate = super::typestate::RoleTypestate::<ROLE>::from_static(program);
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `RoleTypestate::<1>::from_static`
+  --> src/global/typestate.rs
+   |
+   |         Self::build(program, program.as_static_slice())
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `RoleTypestate::<1>::build`
+  --> src/global/typestate.rs
+   |
+   | / ...   panic!(
+   | | ...       "Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dynamic plan provided"
+   | | ...   );
+   | |_______^ the failure occurred here

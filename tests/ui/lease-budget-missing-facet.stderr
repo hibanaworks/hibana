@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: lease facet needs exceed role program lease budget
+ --> tests/ui/lease-budget-missing-facet.rs:7:15
+  |
+7 | const _: () = hibana::control::lease::planner::assert_budget_covers(BUDGET, NEEDS);
+  |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `_` failed here

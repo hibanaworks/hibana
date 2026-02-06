@@ -1,0 +1,17 @@
+error[E0107]: function takes 4 generic arguments but 3 generic arguments were supplied
+  --> tests/ui/g-load-begin-wrong-control-kind.rs:15:16
+   |
+15 |     let _ = g::send::<g::Role<0>, g::Role<1>, BadMsg>();
+   |                ^^^^   ----------  ----------  ------ supplied 3 generic arguments
+   |                |
+   |                expected 4 generic arguments
+   |
+note: function defined here, with 4 generic parameters: `From`, `To`, `M`, `LANE`
+  --> src/global.rs
+   |
+   | pub const fn send<From, To, M, const LANE: u8>() -> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
+   |              ^^^^ ----  --  -  --------------
+help: add missing generic argument
+   |
+15 |     let _ = g::send::<g::Role<0>, g::Role<1>, BadMsg, LANE>();
+   |                                                     ++++++

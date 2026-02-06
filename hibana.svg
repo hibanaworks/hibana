@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" role="img" aria-label="Hibana mark">
+  <defs>
+    <style>
+      .charcoal{ stroke:#0B1020; fill:#0B1020; }
+      .flame1{ fill:#FF6B35; }
+      .flame2{ fill:#FF8C42; }
+      .glow-tip {
+        fill: #FF8C42;
+        animation: glow 2s ease-in-out infinite;
+      }
+      @keyframes glow {
+        0%, 100% {
+          fill: #FF8C42;
+          filter: drop-shadow(0 0 4px #FF6B35) drop-shadow(0 0 8px #FF6B35);
+        }
+        50% {
+          fill: #FFB366;
+          filter: drop-shadow(0 0 8px #FF6B35) drop-shadow(0 0 16px #FF8C42);
+        }
+      }
+      @media (prefers-color-scheme: dark) {
+        .charcoal{ stroke:#F3F4F6; fill:#F3F4F6; }
+        .glow-tip {
+          fill: #FF8C42;
+        }
+        @keyframes glow {
+          0%, 100% {
+            fill: #FF8C42;
+            filter: drop-shadow(0 0 6px #FF6B35) drop-shadow(0 0 12px #FF6B35);
+          }
+          50% {
+            fill: #FFB366;
+            filter: drop-shadow(0 0 10px #FF6B35) drop-shadow(0 0 20px #FF8C42);
+          }
+        }
+      }
+    </style>
+  </defs>
+  <line x1="400" y1="50" x2="400" y2="350" class="charcoal" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="400" cy="350" r="8" class="glow-tip"/>
+  <path d="M200 300 Q180 280 190 250 Q210 240 250 260 Q280 270 300 290 Q320 320 310 350 Q290 370 260 360 Q220 350 200 330 Z" class="flame1" opacity=".9"/>
+  <path d="M500 280 Q520 260 550 270 Q580 290 590 320 Q585 350 560 360 Q530 365 510 350 Q495 330 500 310 Z" class="flame1" opacity=".8"/>
+  <path d="M430 330 Q455 315 475 332 Q492 350 488 370 Q472 385 448 382 Q432 370 432 348 Z" class="flame2" opacity=".85"/>
+  <path d="M150 400 Q160 380 180 385 Q195 395 190 410 Q180 425 165 420 Q145 415 150 400 Z" class="flame2"/>
+  <path d="M350 380 Q360 370 370 380 Q375 400 365 420 Q355 435 345 425 Q340 405 350 380 Z" class="flame1"/>
+  <path d="M450 390 Q465 385 470 400 Q475 420 460 425 Q445 420 445 405 Q448 390 450 390 Z" class="flame2"/>
+  <circle cx="250" cy="320" r="8" class="flame1"/>
+  <circle cx="180" cy="480" r="6" class="flame2"/>
+  <circle cx="320" cy="450" r="5" class="flame1"/>
+  <circle cx="480" cy="420" r="7" class="flame2"/>
+  <circle cx="550" cy="480" r="4" class="flame1"/>
+  <circle cx="150" cy="350" r="5" class="flame2"/>
+  <circle cx="600" cy="380" r="6" class="flame1"/>
+  <circle cx="280" cy="500" r="4" class="flame2"/>
+  <circle cx="520" cy="500" r="5" class="flame1"/>
+  <circle cx="380" cy="520" r="3" class="flame2"/>
+  <circle cx="420" cy="480" r="4" class="flame1"/>
+  <circle cx="650" cy="450" r="5" class="flame2"/>
+  <circle cx="445" cy="273" r="5" class="flame2"/>
+  <circle cx="120" cy="420" r="3" class="flame2"/>
+  <circle cx="680" cy="400" r="3" class="flame1"/>
+  <circle cx="350" cy="530" r="2" class="flame2"/>
+  <circle cx="450" cy="540" r="2" class="flame1"/>
+  <circle cx="200" cy="520" r="3" class="flame2"/>
+  <circle cx="580" cy="520" r="2" class="flame1"/>
+  <circle cx="610" cy="540" r="2" class="flame2"/>
+  <path d="M250 380 Q270 375 290 385 Q300 395 285 405 Q265 410 250 400 Q245 385 250 380 Z" class="flame1" opacity=".7"/>
+  <path d="M510 350 Q530 345 545 355 Q550 370 535 375 Q515 370 510 360 Q508 350 510 350 Z" class="flame2" opacity=".8"/>
+  <circle cx="380" cy="200" r="4" class="flame1"/>
+  <circle cx="420" cy="180" r="3" class="flame2"/>
+  <circle cx="360" cy="160" r="2" class="flame1"/>
+</svg>

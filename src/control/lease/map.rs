@@ -1,0 +1,277 @@
+//! Fixed-size array-based map for `no_alloc` environments.
+//!
+//! This module provides a simple key-value map backed by a fixed-size array,
+//! suitable for use in `no_std`/`no_alloc` contexts.
+
+use core::mem::MaybeUninit;
+
+/// Fixed-size array-based map.
+///
+/// This map uses a fixed-size array and linear search. It is suitable for small
+/// maps (< 16 entries) in `no_alloc` environments.
+///
+/// # Type Parameters
+///
+/// - `K`: Key type (must implement `Copy + Eq`)
+/// - `V`: Value type
+/// - `N`: Maximum number of entries
+pub struct ArrayMap<K, V, const N: usize> {
+    entries: [MaybeUninit<(K, V)>; N],
+    len: usize,
+}
+
+impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
+    /// Create a new empty map.
+    pub const fn new() -> Self {
+        Self {
+            // SAFETY: MaybeUninit::uninit() creates an uninitialized array of MaybeUninit entries.
+            entries: unsafe { MaybeUninit::uninit().assume_init() },
+            len: 0,
+        }
+    }
+
+    /// Returns the number of entries in the map.
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns true if the map is empty.
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Returns true if the map is full.
+    pub const fn is_full(&self) -> bool {
+        self.len == N
+    }
+
+    /// Insert a key-value pair.
+    ///
+    /// Returns `Ok(())` if the insertion succeeded, or `Err(value)` if the map is full.
+    pub fn insert(&mut self, key: K, value: V) -> Result<(), V> {
+        // Check if key already exists
+        for i in 0..self.len {
+            // SAFETY: entries[0..len] are initialized
+            let (k, _) = unsafe { self.entries[i].assume_init_ref() };
+            if *k == key {
+                // Replace existing value
+                // SAFETY: we're replacing an initialized value
+                unsafe {
+                    self.entries[i].assume_init_drop();
+                    self.entries[i].write((key, value));
+                }
+                return Ok(());
+            }
+        }
+
+        // Insert new entry
+        if self.is_full() {
+            return Err(value);
+        }
+
+        // len < N, so entries[len] is valid
+        self.entries[self.len].write((key, value));
+        self.len += 1;
+        Ok(())
+    }
+
+    /// Get a reference to the value associated with the key.
+    pub fn get(&self, key: &K) -> Option<&V> {
+        for i in 0..self.len {
+            // SAFETY: entries[0..len] are initialized
+            let (k, v) = unsafe { self.entries[i].assume_init_ref() };
+            if k == key {
+                return Some(v);
+            }
+        }
+        None
+    }
+
+    /// Get a mutable reference to the value associated with the key.
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+        // Find the index first
+        let mut found_idx = None;
+        for i in 0..self.len {
+            // SAFETY: entries[0..len] are initialized
+            let (k, _) = unsafe { self.entries[i].assume_init_ref() };
+            if k == key {
+                found_idx = Some(i);
+                break;
+            }
+        }
+
+        // Then get mutable reference
+        if let Some(idx) = found_idx {
+            // SAFETY: entries[idx] is initialized (idx < len)
+            let (_k, v) = unsafe { self.entries[idx].assume_init_mut() };
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    /// Remove a key-value pair.
+    ///
+    /// Returns the value if the key was present, or `None` otherwise.
+    pub fn remove(&mut self, key: &K) -> Option<V> {
+        for i in 0..self.len {
+            // SAFETY: entries[0..len] are initialized
+            let (k, _) = unsafe { self.entries[i].assume_init_ref() };
+            if k == key {
+                // SAFETY: we're removing an initialized value
+                let (_k, v) = unsafe { self.entries[i].assume_init_read() };
+
+                // Shift remaining entries down
+                for j in i..self.len - 1 {
+                    // SAFETY: entries[j+1] is initialized (j+1 < len)
+                    unsafe {
+                        let entry = self.entries[j + 1].assume_init_read();
+                        self.entries[j].write(entry);
+                    }
+                }
+
+                self.len -= 1;
+                return Some(v);
+            }
+        }
+        None
+    }
+
+    /// Clear all entries.
+    pub fn clear(&mut self) {
+        for i in 0..self.len {
+            // SAFETY: entries[0..len] are initialized
+            unsafe {
+                self.entries[i].assume_init_drop();
+            }
+        }
+        self.len = 0;
+    }
+
+    /// Returns true if the map contains the given key.
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.get(key).is_some()
+    }
+
+    /// Iterate over all key/value pairs by reference.
+    #[inline]
+    pub fn for_each(&self, mut f: impl FnMut(&K, &V)) {
+        for i in 0..self.len {
+            // SAFETY: entries[0..len] are initialised
+            let (k, v) = unsafe { self.entries[i].assume_init_ref() };
+            f(k, v);
+        }
+    }
+
+    /// Iterate over all key/value pairs by mutable reference.
+    #[inline]
+    pub fn for_each_mut(&mut self, mut f: impl FnMut(&K, &mut V)) {
+        for i in 0..self.len {
+            // SAFETY: entries[0..len] are initialised
+            let (k, v) = unsafe { self.entries[i].assume_init_mut() };
+            f(k, v);
+        }
+    }
+}
+
+impl<K, V, const N: usize> Drop for ArrayMap<K, V, N> {
+    fn drop(&mut self) {
+        for i in 0..self.len {
+            // SAFETY: entries[0..len] are initialized
+            unsafe {
+                self.entries[i].assume_init_drop();
+            }
+        }
+    }
+}
+
+impl<K: Copy + Eq, V, const N: usize> Default for ArrayMap<K, V, N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_insert_and_get() {
+        let mut map: ArrayMap<u8, u32, 4> = ArrayMap::new();
+
+        assert!(map.insert(1, 100).is_ok());
+        assert!(map.insert(2, 200).is_ok());
+
+        assert_eq!(map.get(&1), Some(&100));
+        assert_eq!(map.get(&2), Some(&200));
+        assert_eq!(map.get(&3), None);
+
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn test_insert_full() {
+        let mut map: ArrayMap<u8, u32, 2> = ArrayMap::new();
+
+        assert!(map.insert(1, 100).is_ok());
+        assert!(map.insert(2, 200).is_ok());
+        assert_eq!(map.insert(3, 300), Err(300)); // Full
+
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn test_replace_existing() {
+        let mut map: ArrayMap<u8, u32, 4> = ArrayMap::new();
+
+        assert!(map.insert(1, 100).is_ok());
+        assert!(map.insert(1, 999).is_ok()); // Replace
+
+        assert_eq!(map.get(&1), Some(&999));
+        assert_eq!(map.len(), 1); // Should still be 1
+    }
+
+    #[test]
+    fn test_remove() {
+        let mut map: ArrayMap<u8, u32, 4> = ArrayMap::new();
+
+        map.insert(1, 100).unwrap();
+        map.insert(2, 200).unwrap();
+        map.insert(3, 300).unwrap();
+
+        assert_eq!(map.remove(&2), Some(200));
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.get(&2), None);
+
+        assert_eq!(map.get(&1), Some(&100));
+        assert_eq!(map.get(&3), Some(&300));
+    }
+
+    #[test]
+    fn test_clear() {
+        let mut map: ArrayMap<u8, u32, 4> = ArrayMap::new();
+
+        map.insert(1, 100).unwrap();
+        map.insert(2, 200).unwrap();
+
+        assert_eq!(map.len(), 2);
+
+        map.clear();
+
+        assert_eq!(map.len(), 0);
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn test_get_mut() {
+        let mut map: ArrayMap<u8, u32, 4> = ArrayMap::new();
+
+        map.insert(1, 100).unwrap();
+
+        if let Some(v) = map.get_mut(&1) {
+            *v = 999;
+        }
+
+        assert_eq!(map.get(&1), Some(&999));
+    }
+}

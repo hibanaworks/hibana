@@ -1,0 +1,16 @@
+error[E0624]: associated function `new` is private
+  --> tests/ui/cp-double-commit.rs:15:23
+   |
+15 |         unsafe { Txn::new(LaneId::new(1), hibana::control::Gen::ZERO) };
+   |                       ^^^ private associated function
+   |
+  ::: src/control/automaton/txn.rs
+   |
+   |     pub(crate) unsafe fn new(lane: LaneId, generation: Gen) -> Self {
+   |     --------------------------------------------------------------- private associated function defined here
+
+error[E0599]: no method named `commit` found for struct `Closed<Inv>` in the current scope
+  --> tests/ui/cp-double-commit.rs:22:27
+   |
+22 |     let _illegal = closed.commit(&mut tap);
+   |                           ^^^^^^ method not found in `Closed<TestInv>`

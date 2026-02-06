@@ -1,0 +1,475 @@
+//! Control-plane effects enumeration.
+//!
+//! All control operations (lane open, splice, delegate, cancel, fence, commit, abort)
+//! are projected into this enum. Composite operations are expressed through effect composition.
+
+extern crate alloc;
+
+use crate::eff::EffIndex;
+use crate::global::const_dsl::{ControlMarker, ControlScopeKind, HandlePlan, ScopeMarker};
+
+/// Control-plane effect primitive.
+///
+/// This enum represents the atomic effects that the control-plane can perform.
+/// All higher-level operations (splice, delegation, cancellation, etc.) are composed
+/// from these primitives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CpEffect {
+    /// Open a new lane
+    Open = 0,
+
+    /// Begin a splice operation.
+    SpliceBegin = 1,
+
+    /// Acknowledge a splice operation.
+    SpliceAck = 2,
+
+    /// Commit a splice operation.
+    SpliceCommit = 3,
+
+    /// Delegate a session/capability
+    Delegate = 4,
+
+    /// Begin cancellation
+    CancelBegin = 5,
+
+    /// Acknowledge cancellation
+    CancelAck = 6,
+
+    /// Fence operation (synchronization barrier)
+    Fence = 7,
+
+    /// Commit transaction
+    Commit = 8,
+
+    /// Abort transaction
+    Abort = 9,
+
+    /// Checkpoint operation (save state)
+    Checkpoint = 10,
+
+    /// Rollback to checkpoint
+    Rollback = 11,
+}
+
+impl CpEffect {
+    pub const fn bit(self) -> u16 {
+        1 << (self as u16)
+    }
+
+    /// Returns true if this effect is idempotent.
+    ///
+    /// Idempotent effects can be safely replayed without changing state.
+    pub const fn is_idempotent(self) -> bool {
+        matches!(
+            self,
+            Self::SpliceAck | Self::CancelAck | Self::Fence | Self::Abort | Self::Checkpoint
+        )
+    }
+
+    /// Returns true if this effect requires generation bump.
+    pub const fn requires_gen_bump(self) -> bool {
+        matches!(self, Self::SpliceCommit | Self::Commit)
+    }
+
+    /// Returns true if this effect is terminal (closes a transaction).
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Commit | Self::Abort)
+    }
+
+    /// Returns true if this effect modifies state history.
+    pub const fn modifies_history(self) -> bool {
+        matches!(self, Self::Checkpoint | Self::Rollback)
+    }
+
+    /// Convert CpEffect to tap event ID.
+    ///
+    /// Maps internal CpEffect enum values to observable tap event IDs.
+    /// This maintains backward compatibility with existing tap event constants.
+    pub const fn to_tap_event_id(self) -> u16 {
+        use crate::observe::ids;
+        match self {
+            Self::Open => 0x0100,         // New event ID for lane open
+            Self::SpliceBegin => 0x0110,  // New event ID for splice begin
+            Self::SpliceAck => 0x0111,    // New event ID for splice ack
+            Self::SpliceCommit => 0x0112, // New event ID for splice commit
+            Self::Delegate => 0x0120,     // New event ID for delegate
+            Self::CancelBegin => ids::CANCEL_BEGIN,
+            Self::CancelAck => ids::CANCEL_ACK,
+            Self::Fence => 0x0140,  // New event ID for fence
+            Self::Commit => 0x0150, // New event ID for commit
+            Self::Abort => 0x0151,  // New event ID for abort
+            Self::Checkpoint => ids::CHECKPOINT_REQ,
+            Self::Rollback => ids::ROLLBACK_REQ,
+        }
+    }
+
+    /// Map ResourceKind TAG to CpEffect.
+    ///
+    /// This function converts control message ResourceKind tags into their corresponding
+    /// control-plane effects. Returns None for ResourceKinds that don't map to effects
+    /// (e.g., loop decisions which are handled separately).
+    ///
+    /// TAG ranges (from resource_kinds.rs):
+    /// - 0x40: LoopContinue (no CpEffect, handled by LoopTable)
+    /// - 0x41: LoopBreak (no CpEffect, handled by LoopTable)
+    /// - 0x42: Checkpoint → Checkpoint
+    /// - 0x43: Commit → Commit
+    /// - 0x44: Rollback → Rollback
+    /// - 0x45: Cancel → CancelBegin
+    /// - 0x46: CancelAck → CancelAck
+    /// - 0x47: SpliceIntent → SpliceBegin
+    /// - 0x48: SpliceAck → SpliceAck
+    /// - 0x49: Reroute (complex, may need special handling)
+    /// - 0x4A-0x4E: Policy ops (no direct CpEffect)
+    pub const fn from_resource_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0x42 => Some(Self::Checkpoint),
+            0x43 => Some(Self::Commit),
+            0x44 => Some(Self::Rollback),
+            0x45 => Some(Self::CancelBegin),
+            0x46 => Some(Self::CancelAck),
+            0x47 => Some(Self::SpliceBegin),
+            0x48 => Some(Self::SpliceAck),
+            0x49 => Some(Self::Delegate),
+            _ => None, // Loop decisions (0x40-0x41), Policy ops (0x4A-0x4E)
+        }
+    }
+}
+
+/// Projected effects from global protocol ready for runtime execution (no_alloc).
+///
+/// This structure contains the flattened/optimized representation of effects
+/// derived from interpreting a global protocol's Eff tree. It serves as the
+/// output of the EffInterpreter and input to rendezvous initialization.
+///
+/// Uses fixed-size arrays for no_std/no_alloc compatibility.
+///
+/// Note: This is distinct from `control::cluster::CpCommand`, which wraps
+/// individual effect executions with their runtime operands.
+#[derive(Debug, Clone, Copy)]
+pub struct EffectEnvelope {
+    /// Sequence of control-plane effects to execute.
+    cp_effects: [core::mem::MaybeUninit<CpEffect>; Self::MAX_CP_EFFECTS],
+    cp_effects_len: usize,
+
+    /// Tap events to emit during execution.
+    tap_events: [core::mem::MaybeUninit<u16>; Self::MAX_TAP_EVENTS],
+    tap_events_len: usize,
+
+    /// Resource descriptors associated with control operations.
+    resources: [core::mem::MaybeUninit<ResourceDescriptor>; Self::MAX_RESOURCES],
+    resources_len: usize,
+
+    /// Scope markers captured during const projection.
+    scopes: [core::mem::MaybeUninit<ScopeMarker>; Self::MAX_SCOPES],
+    scopes_len: usize,
+
+    /// Control markers captured during const projection.
+    controls: [core::mem::MaybeUninit<ControlMarker>; Self::MAX_CONTROLS],
+    controls_len: usize,
+}
+
+/// Metadata describing a control resource discovered during projection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResourceDescriptor {
+    /// Effect index associated with the control atom.
+    pub eff_index: EffIndex,
+    /// Label associated with the control message.
+    pub label: u8,
+    /// Resource kind tag (maps to [`crate::control::cap::resource_kinds`]).
+    pub tag: u8,
+    /// Scope assigned to the resource (loop/checkpoint/cancel/...).
+    pub scope: ControlScopeKind,
+    /// Shot discipline mandated for the capability token.
+    pub shot: crate::control::cap::CapShot,
+    /// Handle generation plan (if any).
+    pub plan: HandlePlan,
+}
+
+impl EffectEnvelope {
+    /// Maximum number of control-plane effects per projection.
+    /// Conservative upper bound based on typical protocol complexity.
+    pub const MAX_CP_EFFECTS: usize = 256;
+
+    /// Maximum number of tap events per projection.
+    pub const MAX_TAP_EVENTS: usize = 512;
+
+    /// Maximum number of resource handles per projection.
+    pub const MAX_RESOURCES: usize = 128;
+
+    /// Maximum number of scope markers mirrored from the program.
+    pub const MAX_SCOPES: usize = crate::eff::meta::MAX_EFF_NODES;
+
+    /// Maximum number of control markers mirrored from the program.
+    pub const MAX_CONTROLS: usize = crate::eff::meta::MAX_EFF_NODES;
+
+    /// Create an empty projection.
+    pub const fn empty() -> Self {
+        Self {
+            cp_effects: unsafe {
+                core::mem::MaybeUninit::<[core::mem::MaybeUninit<CpEffect>; Self::MAX_CP_EFFECTS]>::uninit()
+                    .assume_init()
+            },
+            cp_effects_len: 0,
+            tap_events: unsafe {
+                core::mem::MaybeUninit::<[core::mem::MaybeUninit<u16>; Self::MAX_TAP_EVENTS]>::uninit()
+                    .assume_init()
+            },
+            tap_events_len: 0,
+            resources: unsafe {
+                core::mem::MaybeUninit::<
+                    [core::mem::MaybeUninit<ResourceDescriptor>; Self::MAX_RESOURCES],
+                >::uninit()
+                .assume_init()
+            },
+            resources_len: 0,
+            scopes: unsafe {
+                core::mem::MaybeUninit::<[core::mem::MaybeUninit<ScopeMarker>; Self::MAX_SCOPES]>::uninit()
+                    .assume_init()
+            },
+            scopes_len: 0,
+            controls: unsafe {
+                core::mem::MaybeUninit::<
+                    [core::mem::MaybeUninit<ControlMarker>; Self::MAX_CONTROLS],
+                >::uninit()
+                .assume_init()
+            },
+            controls_len: 0,
+        }
+    }
+
+    /// Check if this projection has any effects to execute.
+    pub fn is_empty(&self) -> bool {
+        self.cp_effects_len == 0 && self.tap_events_len == 0 && self.resources_len == 0
+    }
+
+    /// Push a control-plane effect.
+    pub fn push_cp_effect(&mut self, effect: CpEffect) {
+        if self.cp_effects_len >= Self::MAX_CP_EFFECTS {
+            panic!("EffectEnvelope: MAX_CP_EFFECTS exceeded");
+        }
+        self.cp_effects[self.cp_effects_len] = core::mem::MaybeUninit::new(effect);
+        self.cp_effects_len += 1;
+    }
+
+    /// Push a tap event ID.
+    pub fn push_tap_event(&mut self, event_id: u16) {
+        if self.tap_events_len >= Self::MAX_TAP_EVENTS {
+            panic!("EffectEnvelope: MAX_TAP_EVENTS exceeded");
+        }
+        self.tap_events[self.tap_events_len] = core::mem::MaybeUninit::new(event_id);
+        self.tap_events_len += 1;
+    }
+
+    /// Push a resource descriptor.
+    pub fn push_resource(
+        &mut self,
+        eff_index: EffIndex,
+        label: u8,
+        scope: ControlScopeKind,
+        kind_tag: u8,
+        shot: crate::control::cap::CapShot,
+        plan: HandlePlan,
+    ) {
+        if self.resources_len >= Self::MAX_RESOURCES {
+            panic!("EffectEnvelope: MAX_RESOURCES exceeded");
+        }
+        self.resources[self.resources_len] = core::mem::MaybeUninit::new(ResourceDescriptor {
+            eff_index,
+            label,
+            tag: kind_tag,
+            scope,
+            shot,
+            plan,
+        });
+        self.resources_len += 1;
+    }
+
+    /// Iterate over control-plane effects.
+    pub fn cp_effects(&self) -> impl Iterator<Item = &CpEffect> {
+        (0..self.cp_effects_len).map(move |i| unsafe { self.cp_effects[i].assume_init_ref() })
+    }
+
+    /// Iterate over tap events.
+    pub fn tap_events(&self) -> impl Iterator<Item = u16> + '_ {
+        (0..self.tap_events_len).map(move |i| unsafe { *self.tap_events[i].assume_init_ref() })
+    }
+
+    /// Iterate over resource handles.
+    pub fn resources(&self) -> impl Iterator<Item = &ResourceDescriptor> {
+        (0..self.resources_len).map(move |i| unsafe { self.resources[i].assume_init_ref() })
+    }
+
+    /// Iterate over scope markers.
+    pub fn scopes(&self) -> impl Iterator<Item = &ScopeMarker> {
+        (0..self.scopes_len).map(move |i| unsafe { self.scopes[i].assume_init_ref() })
+    }
+
+    /// Iterate over control markers.
+    pub fn controls(&self) -> impl Iterator<Item = &ControlMarker> {
+        (0..self.controls_len).map(move |i| unsafe { self.controls[i].assume_init_ref() })
+    }
+}
+
+fn emit_atom(
+    envelope: &mut EffectEnvelope,
+    atom: crate::eff::EffAtom,
+    offset: usize,
+    plan: HandlePlan,
+    spec: Option<crate::global::ControlLabelSpec>,
+) {
+    use crate::eff::EffDirection;
+
+    if atom.is_control {
+        if let Some(resource_kind_tag) = atom.resource {
+            if let Some(effect) = CpEffect::from_resource_tag(resource_kind_tag) {
+                envelope.push_cp_effect(effect);
+                envelope.push_tap_event(effect.to_tap_event_id());
+            } else {
+                let tap_id = 0x0300 + atom.label as u16;
+                envelope.push_tap_event(tap_id);
+            }
+
+            if let Some(rule) = spec {
+                envelope.push_resource(
+                    offset as EffIndex,
+                    atom.label,
+                    rule.scope_kind,
+                    resource_kind_tag,
+                    rule.shot,
+                    plan,
+                );
+            } else {
+                envelope.push_resource(
+                    offset as EffIndex,
+                    atom.label,
+                    ControlScopeKind::None,
+                    resource_kind_tag,
+                    crate::control::cap::CapShot::One,
+                    plan,
+                );
+            }
+        } else {
+            let tap_id = 0x0300 + atom.label as u16;
+            envelope.push_tap_event(tap_id);
+        }
+    } else {
+        if !plan.is_none() {
+            // Dynamic plans are permitted on non-control atoms (e.g., route decisions)
+            if !matches!(plan, HandlePlan::Dynamic { .. }) {
+                panic!("static control plan attached to non-control atom");
+            }
+        }
+        match atom.direction {
+            EffDirection::Send => {
+                let tap_id = 0x0200 + atom.label as u16;
+                envelope.push_tap_event(tap_id);
+            }
+            EffDirection::Recv => {
+                let tap_id = 0x0210 + atom.label as u16;
+                envelope.push_tap_event(tap_id);
+            }
+        }
+    }
+}
+
+/// Interpret a const `EffList`, producing the effect envelope consumed by the control plane.
+pub fn interpret_eff_list(program: &crate::g::EffList) -> EffectEnvelope {
+    let mut projected = EffectEnvelope::empty();
+
+    for (offset, node) in program.as_slice().iter().enumerate() {
+        if node.kind == crate::eff::EffKind::Atom {
+            let plan = program
+                .control_plan_with_scope(offset)
+                .map(|(plan, _scope)| plan)
+                .unwrap_or(HandlePlan::None);
+            let atom = node.atom_data();
+            let control_spec = program.control_spec_at(offset);
+            emit_atom(&mut projected, atom, offset, plan, control_spec);
+        }
+    }
+
+    for marker in program.control_markers() {
+        if projected.controls_len >= EffectEnvelope::MAX_CONTROLS {
+            panic!("EffectEnvelope: MAX_CONTROLS exceeded");
+        }
+        projected.controls[projected.controls_len] = core::mem::MaybeUninit::new(*marker);
+        projected.controls_len += 1;
+
+        if marker.tap_id != 0 {
+            projected.push_tap_event(marker.tap_id);
+        }
+    }
+
+    for marker in program.scope_markers() {
+        if projected.scopes_len >= EffectEnvelope::MAX_SCOPES {
+            panic!("EffectEnvelope: MAX_SCOPES exceeded");
+        }
+        projected.scopes[projected.scopes_len] = core::mem::MaybeUninit::new(*marker);
+        projected.scopes_len += 1;
+    }
+
+    projected
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_effect_properties() {
+        assert!(CpEffect::SpliceAck.is_idempotent());
+        assert!(!CpEffect::SpliceBegin.is_idempotent());
+        assert!(CpEffect::Checkpoint.is_idempotent());
+
+        assert!(CpEffect::SpliceCommit.requires_gen_bump());
+        assert!(!CpEffect::SpliceBegin.requires_gen_bump());
+
+        assert!(CpEffect::Commit.is_terminal());
+        assert!(CpEffect::Abort.is_terminal());
+        assert!(!CpEffect::Fence.is_terminal());
+
+        assert!(CpEffect::Checkpoint.modifies_history());
+        assert!(CpEffect::Rollback.modifies_history());
+        assert!(!CpEffect::Commit.modifies_history());
+    }
+
+    #[test]
+    fn test_empty_projected_effects() {
+        let projected = EffectEnvelope::empty();
+        assert!(projected.is_empty());
+        assert_eq!(projected.cp_effects().count(), 0);
+        assert_eq!(projected.tap_events().count(), 0);
+        assert_eq!(projected.resources().count(), 0);
+    }
+
+    #[test]
+    fn test_interpreter_pure() {
+        let program = crate::g::EffList::new();
+        let projected = interpret_eff_list(&program);
+        assert!(projected.is_empty());
+    }
+
+    #[test]
+    fn test_interpreter_control_atom() {
+        // CanonicalControl messages require self-send (From == To)
+        type Actor = crate::g::Role<0>;
+        use crate::control::cap::{GenericCapToken, resource_kinds::CheckpointKind};
+
+        let program = crate::g::send::<
+            Actor,
+            Actor,
+            crate::g::Msg<
+                { crate::runtime::consts::LABEL_CHECKPOINT },
+                GenericCapToken<CheckpointKind>,
+                crate::g::CanonicalControl<CheckpointKind>,
+            >,
+            0,
+        >();
+        let projected = interpret_eff_list(&program.into_eff());
+        assert_eq!(projected.cp_effects().count(), 1);
+        assert!(projected.tap_events().count() >= 1);
+    }
+}

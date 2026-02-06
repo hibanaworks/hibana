@@ -1,0 +1,88 @@
+//! Static limits and universes shared across the crate.
+//!
+//! The values here intentionally favour predictability over configurability so
+//! that they can be referenced inside `const` contexts without requiring
+//! allocation or dynamic discovery.
+
+/// Maximum number of distinct labels supported by the default universe.
+/// Labels 0-38: Application layer protocols (QUIC frames, hq-interop, custom apps)
+/// Labels 39-47: Management session (load, command, observe, reply)
+/// Labels 48-63: Control labels (loop, splice, reroute, policy, checkpoint, etc.)
+/// Labels 64-127: Extended application layer (hq-interop, HTTP/3, custom protocols)
+pub const LABEL_MAX: u8 = 128;
+
+/// Reserved label used for typed crash notifications (recv-only observability event).
+pub const LABEL_CRASH: u8 = 59;
+
+/// Reserved label used for typed cancellation notifications.
+pub const LABEL_CANCEL: u8 = 60;
+
+/// Reserved label used for typed checkpoint proposals.
+pub const LABEL_CHECKPOINT: u8 = 61;
+
+/// Reserved label used for typed commit acknowledgements.
+pub const LABEL_COMMIT: u8 = 62;
+
+/// Reserved label used for typed rollback intents.
+pub const LABEL_ROLLBACK: u8 = 63;
+
+/// Management session label assignments (below control-plane range 48-63).
+/// - Core management: 40-44, 47 (load, command, reply)
+/// - Streaming observe: 39, 45-46 (stream_end, subscribe, event)
+pub const LABEL_MGMT_LOAD_BEGIN: u8 = 40; // For CapToken<LoadBeginKind>
+pub const LABEL_MGMT_LOAD_BEGIN_DATA: u8 = 41; // For LoadBeginData
+pub const LABEL_MGMT_LOAD_CHUNK: u8 = 42;
+pub const LABEL_MGMT_LOAD_COMMIT: u8 = 43; // For CapToken<LoadCommitKind>
+pub const LABEL_MGMT_COMMAND: u8 = 44;
+pub const LABEL_MGMT_REPLY: u8 = 47;
+/// Streaming observe labels.
+pub const LABEL_OBSERVE_SUBSCRIBE: u8 = 45;
+pub const LABEL_OBSERVE_EVENT: u8 = 46;
+pub const LABEL_OBSERVE_BATCH: u8 = 38; // Batch of TapEvents (up to 50)
+pub const LABEL_OBSERVE_STREAM_END: u8 = 39; // Below core range, reserved for EOS
+
+// Control message label range (for route.case with CapToken<ResourceKind>)
+// These labels carry CapToken<ResourceKind> payloads for control-plane operations
+// expressed via route.case arms instead of bespoke combinators.
+pub const LABEL_CONTROL_START: u8 = 48;
+pub const LABEL_LOOP_CONTINUE: u8 = 48;
+pub const LABEL_LOOP_BREAK: u8 = 49;
+pub const LABEL_SPLICE_INTENT: u8 = 50;
+pub const LABEL_SPLICE_ACK: u8 = 51;
+pub const LABEL_REROUTE: u8 = 52;
+pub const LABEL_ROUTE_DECISION: u8 = 57;
+pub const LABEL_POLICY_LOAD: u8 = 53;
+pub const LABEL_POLICY_ACTIVATE: u8 = 54;
+pub const LABEL_POLICY_REVERT: u8 = 55;
+pub const LABEL_POLICY_ANNOTATE: u8 = 56;
+pub const LABEL_CONTROL_END: u8 = 58;
+
+/// Maximum number of logical lanes per rendezvous.
+///
+/// Lanes are represented as `u8` throughout the crate (see
+/// [`crate::rendezvous::Lane`]), so this bound never exceeds `u8::MAX`. Configuration
+/// surfaces such as [`crate::runtime::config::Config::with_lane_range`] refer to this
+/// constant when validating caller-provided ranges.
+pub const LANES_MAX: u8 = 16;
+
+/// Number of tap events maintained in the observation ring buffer.
+pub const RING_EVENTS: usize = 2048;
+
+/// Size of each individual ring buffer (User and Infra).
+pub const RING_BUFFER_SIZE: usize = RING_EVENTS / 2;
+
+/// Trait implemented by types that declare a label universe.
+pub trait LabelUniverse {
+    /// Inclusive upper bound for valid label identifiers.
+    const MAX_LABEL: u8;
+}
+
+/// Default label universe (128 labels, 0..=127).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DefaultLabelUniverse;
+impl LabelUniverse for DefaultLabelUniverse {
+    const MAX_LABEL: u8 = LABEL_MAX;
+}
+
+/// The canonical universe exported by the crate.
+pub const DEFAULT_LABEL_UNIVERSE: DefaultLabelUniverse = DefaultLabelUniverse;

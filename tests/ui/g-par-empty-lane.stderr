@@ -1,0 +1,17 @@
+error[E0277]: the trait bound `StepNil: StepNonEmpty` is not satisfied
+ --> tests/ui/g-par-empty-lane.rs:6:33
+  |
+6 |     let _ = g::par(g::par_chain(g::Program::empty()));
+  |                    ------------ ^^^^^^^^^^^^^^^^^^^ the trait `StepNonEmpty` is not implemented for `StepNil`
+  |                    |
+  |                    required by a bound introduced by this call
+  |
+  = help: the trait `StepNonEmpty` is implemented for `StepCons<Head, Tail>`
+note: required by a bound in `hibana::par_chain`
+ --> src/global.rs
+  |
+  | pub const fn par_chain<Steps>(lane: Program<Steps>) -> program::ParChainBuilder<Steps>
+  |              --------- required by a bound in this function
+  | where
+  |     Steps: steps::StepRoleSet + steps::StepNonEmpty,
+  |                                 ^^^^^^^^^^^^^^^^^^^ required by this bound in `par_chain`

@@ -1,0 +1,121 @@
+error[E0107]: function takes 4 generic arguments but 3 generic arguments were supplied
+  --> tests/ui/g-route-plan-mismatch.rs:74:8
+   |
+74 |     g::send::<Controller, Target, RouteMsgWithPlan>(),
+   |        ^^^^   ----------  ------  ---------------- supplied 3 generic arguments
+   |        |
+   |        expected 4 generic arguments
+   |
+note: function defined here, with 4 generic parameters: `From`, `To`, `M`, `LANE`
+  --> src/global.rs
+   |
+   | pub const fn send<From, To, M, const LANE: u8>() -> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
+   |              ^^^^ ----  --  -  --------------
+help: add missing generic argument
+   |
+74 |     g::send::<Controller, Target, RouteMsgWithPlan, LANE>(),
+   |                                                   ++++++
+
+error[E0277]: the trait bound `CanonicalControl<ArmKind<5>>: RequireSelfSendForCanonical<False>` is not satisfied
+  --> tests/ui/g-route-plan-mismatch.rs:74:35
+   |
+74 |     g::send::<Controller, Target, RouteMsgWithPlan>(),
+   |                                   ^^^^^^^^^^^^^^^^ the trait `RequireSelfSendForCanonical<False>` is not implemented for `CanonicalControl<ArmKind<5>>`
+   |
+   = help: the trait `RequireSelfSendForCanonical<False>` is not implemented for `CanonicalControl<ArmKind<5>>`
+           but trait `RequireSelfSendForCanonical<True>` is implemented for it
+   = help: for that trait implementation, expected `True`, found `False`
+note: required by a bound in `hibana::send`
+  --> src/global.rs
+   |
+   | pub const fn send<From, To, M, const LANE: u8>() -> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
+   |              ---- required by a bound in this function
+...
+   |         RequireSelfSendForCanonical<<From as steps::RoleEq<To>>::Output>,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `send`
+
+error[E0107]: function takes 4 generic arguments but 3 generic arguments were supplied
+  --> tests/ui/g-route-plan-mismatch.rs:78:8
+   |
+78 |     g::send::<Controller, Target, RouteMsgWithoutPlan>();
+   |        ^^^^   ----------  ------  ------------------- supplied 3 generic arguments
+   |        |
+   |        expected 4 generic arguments
+   |
+note: function defined here, with 4 generic parameters: `From`, `To`, `M`, `LANE`
+  --> src/global.rs
+   |
+   | pub const fn send<From, To, M, const LANE: u8>() -> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
+   |              ^^^^ ----  --  -  --------------
+help: add missing generic argument
+   |
+78 |     g::send::<Controller, Target, RouteMsgWithoutPlan, LANE>();
+   |                                                      ++++++
+
+error[E0277]: the trait bound `CanonicalControl<ArmKind<6>>: RequireSelfSendForCanonical<False>` is not satisfied
+  --> tests/ui/g-route-plan-mismatch.rs:78:35
+   |
+78 |     g::send::<Controller, Target, RouteMsgWithoutPlan>();
+   |                                   ^^^^^^^^^^^^^^^^^^^ the trait `RequireSelfSendForCanonical<False>` is not implemented for `CanonicalControl<ArmKind<6>>`
+   |
+   = help: the trait `RequireSelfSendForCanonical<False>` is not implemented for `CanonicalControl<ArmKind<6>>`
+           but trait `RequireSelfSendForCanonical<True>` is implemented for it
+   = help: for that trait implementation, expected `True`, found `False`
+note: required by a bound in `hibana::send`
+  --> src/global.rs
+   |
+   | pub const fn send<From, To, M, const LANE: u8>() -> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
+   |              ---- required by a bound in this function
+...
+   |         RequireSelfSendForCanonical<<From as steps::RoleEq<To>>::Output>,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `send`
+
+error[E0277]: the trait bound `StepCons<SendStep<Role<0>, Role<1>, Message<LabelMarker<5>, GenericCapToken<ArmKind<5>>, CanonicalControl<ArmKind<5>>>>, StepNil>: hibana::global::steps::RouteArm<0>` is not satisfied
+  --> tests/ui/g-route-plan-mismatch.rs:81:39
+   |
+81 |     let builder = g::route_chain::<0, WithPlanSteps>(ARM_WITH_PLAN).and::<WithoutPlanSteps>(ARM_WITHOUT_PLAN);
+   |                                       ^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+   = help: the trait `hibana::global::steps::RouteArm<0>` is not implemented for `StepCons<SendStep<Role<0>, Role<1>, Message<LabelMarker<5>, GenericCapToken<ArmKind<5>>, CanonicalControl<ArmKind<5>>>, 0>, StepNil>`
+           but it is implemented for `StepCons<SendStep<Role<0>, Role<0>, _, _>, _>`
+note: required by a bound in `hibana::route_chain`
+  --> src/global.rs
+   |
+   | pub const fn route_chain<const CONTROLLER: u8, Steps>(
+   |              ----------- required by a bound in this function
+...
+   |     Steps: steps::RouteArm<CONTROLLER>,
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `route_chain`
+
+error[E0277]: the trait bound `StepCons<SendStep<Role<0>, Role<1>, Message<LabelMarker<6>, GenericCapToken<ArmKind<6>>, CanonicalControl<ArmKind<6>>>>, StepNil>: hibana::global::steps::RouteArm<0>` is not satisfied
+  --> tests/ui/g-route-plan-mismatch.rs:81:75
+   |
+81 |     let builder = g::route_chain::<0, WithPlanSteps>(ARM_WITH_PLAN).and::<WithoutPlanSteps>(ARM_WITHOUT_PLAN);
+   |                                                                     ---   ^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |                                                                     |
+   |                                                                     required by a bound introduced by this call
+   |
+   = help: the trait `hibana::global::steps::RouteArm<0>` is not implemented for `StepCons<SendStep<Role<0>, Role<1>, Message<LabelMarker<6>, GenericCapToken<ArmKind<6>>, CanonicalControl<ArmKind<6>>>, 0>, StepNil>`
+           but it is implemented for `StepCons<SendStep<Role<0>, Role<0>, _, _>, _>`
+note: required by a bound in `RouteChainBuilder::<CONTROLLER, Steps>::and`
+  --> src/global/program.rs
+   |
+   |     pub const fn and<NextSteps>(
+   |                  --- required by a bound in this associated function
+...
+   |         NextSteps: RouteArm<CONTROLLER>,
+   |                    ^^^^^^^^^^^^^^^^^^^^ required by this bound in `RouteChainBuilder::<CONTROLLER, Steps>::and`
+
+error[E0107]: function takes 2 generic arguments but 3 generic arguments were supplied
+  --> tests/ui/g-route-plan-mismatch.rs:82:16
+   |
+82 |     let _ = g::route::<0, 1, _>(builder);
+   |                ^^^^^       --- help: remove the unnecessary generic argument
+   |                |
+   |                expected 2 generic arguments
+   |
+note: function defined here, with 2 generic parameters: `CONTROLLER`, `Steps`
+  --> src/global.rs
+   |
+   | pub const fn route<const CONTROLLER: u8, Steps>(
+   |              ^^^^^ --------------------  -----

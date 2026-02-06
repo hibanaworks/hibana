@@ -1,0 +1,324 @@
+error[E0107]: type alias takes at most 3 generic arguments but 4 generic arguments were supplied
+  --> tests/ui/g-typelist-unguarded-loop.rs:26:21
+   |
+26 |   type LoopBreakArm = LoopBreakSteps<
+   |                       ^^^^^^^^^^^^^^ expected at most 3 generic arguments
+...
+33 |       >,
+   |  ______-
+34 | |     StepNil,
+   | |___________- help: remove the unnecessary generic argument
+   |
+note: type alias defined here, with at most 3 generic parameters: `Controller`, `BreakMsg`, `Tail`
+  --> src/global/program.rs
+   |
+   | pub type LoopBreakSteps<Controller, BreakMsg, Tail = StepNil> =
+   |          ^^^^^^^^^^^^^^ ----------  --------  --------------
+
+error[E0277]: the trait bound `Role<1>: LoopContinueMessage` is not satisfied
+  --> tests/ui/g-typelist-unguarded-loop.rs:82:5
+   |
+82 | /     LoopSteps<
+83 | |         StepNil,
+84 | |         Controller,
+85 | |         Target,
+...  |
+96 | |         StepNil,
+97 | |     >,
+   | |_____^ the trait `LoopContinueMessage` is not implemented for `Role<1>`
+   |
+   = help: the trait `LoopContinueMessage` is implemented for `Message<LabelMarker<hibana::::global::program::{impl#7}::{constant#0}>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>`
+   = note: required for `StepCons<SendStep<Role<0>, Role<0>, Role<1>>, StepCons<SendStep<Role<0>, Role<0>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>, Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>>>` to implement `LoopStepsAssert<Role<1>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>`
+
+error[E0277]: the trait bound `Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>: LoopBreakMessage` is not satisfied
+  --> tests/ui/g-typelist-unguarded-loop.rs:82:5
+   |
+82 | /     LoopSteps<
+83 | |         StepNil,
+84 | |         Controller,
+85 | |         Target,
+...  |
+96 | |         StepNil,
+97 | |     >,
+   | |_____^ unsatisfied trait bound
+   |
+   = help: the trait `LoopBreakMessage` is not implemented for `Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>`
+   = help: the trait `LoopBreakMessage` is implemented for `Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>`
+   = note: required for `StepCons<SendStep<Role<0>, Role<0>, Role<1>>, StepCons<SendStep<Role<0>, Role<0>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>, Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>>>` to implement `LoopStepsAssert<Role<1>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>`
+
+error[E0107]: function takes 4 generic arguments but 3 generic arguments were supplied
+  --> tests/ui/g-typelist-unguarded-loop.rs:52:54
+   |
+52 |   const CONTINUE_ARM: g::Program<LoopContinueArm> = g::send::<Controller, Target, g::Msg<
+   |  ______________________________________________________^^^^___----------__------__-
+   | |                                                      |
+   | |                                                      expected 4 generic arguments
+53 | |     LABEL_LOOP_CONTINUE,
+54 | |     GenericCapToken<LoopContinueKind>,
+55 | |     CanonicalControl<LoopContinueKind>,
+56 | | >>();
+   | |_- supplied 3 generic arguments
+   |
+note: function defined here, with 4 generic parameters: `From`, `To`, `M`, `LANE`
+  --> src/global.rs
+   |
+   | pub const fn send<From, To, M, const LANE: u8>() -> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
+   |              ^^^^ ----  --  -  --------------
+help: add missing generic argument
+   |
+56 | >, LANE>();
+   |  ++++++
+
+error[E0308]: mismatched types
+  --> tests/ui/g-typelist-unguarded-loop.rs:52:51
+   |
+52 |   const CONTINUE_ARM: g::Program<LoopContinueArm> = g::send::<Controller, Target, g::Msg<
+   |  ___________________________________________________^
+53 | |     LABEL_LOOP_CONTINUE,
+54 | |     GenericCapToken<LoopContinueKind>,
+55 | |     CanonicalControl<LoopContinueKind>,
+56 | | >>();
+   | |____^ expected `Message<LabelMarker<48>, ..., ...>`, found `StepNil`
+   |
+   = note: expected struct `Program<StepCons<SendStep<Role<0>, Role<0>, Role<1>, 0>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>>`
+              found struct `Program<StepCons<SendStep<_, _, _, _>, StepNil>>`
+
+error[E0107]: function takes 4 generic arguments but 3 generic arguments were supplied
+  --> tests/ui/g-typelist-unguarded-loop.rs:70:8
+   |
+70 |   > = g::send::<Controller, Target, g::Msg<
+   |  ________^^^^___----------__------__-
+   | |        |
+   | |        expected 4 generic arguments
+71 | |     LABEL_LOOP_BREAK,
+72 | |     GenericCapToken<LoopBreakKind>,
+73 | |     CanonicalControl<LoopBreakKind>,
+74 | | >>();
+   | |_- supplied 3 generic arguments
+   |
+note: function defined here, with 4 generic parameters: `From`, `To`, `M`, `LANE`
+  --> src/global.rs
+   |
+   | pub const fn send<From, To, M, const LANE: u8>() -> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
+   |              ^^^^ ----  --  -  --------------
+help: add missing generic argument
+   |
+74 | >, LANE>();
+   |  ++++++
+
+error[E0277]: the trait bound `CanonicalControl<LoopBreakKind>: RequireSelfSendForCanonical<False>` is not satisfied
+  --> tests/ui/g-typelist-unguarded-loop.rs:70:35
+   |
+70 |   > = g::send::<Controller, Target, g::Msg<
+   |  ___________________________________^
+71 | |     LABEL_LOOP_BREAK,
+72 | |     GenericCapToken<LoopBreakKind>,
+73 | |     CanonicalControl<LoopBreakKind>,
+74 | | >>();
+   | |_^ the trait `RequireSelfSendForCanonical<False>` is not implemented for `CanonicalControl<LoopBreakKind>`
+   |
+   = help: the trait `RequireSelfSendForCanonical<False>` is not implemented for `CanonicalControl<LoopBreakKind>`
+           but trait `RequireSelfSendForCanonical<True>` is implemented for it
+   = help: for that trait implementation, expected `True`, found `False`
+note: required by a bound in `hibana::send`
+  --> src/global.rs
+   |
+   | pub const fn send<From, To, M, const LANE: u8>() -> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
+   |              ---- required by a bound in this function
+...
+   |         RequireSelfSendForCanonical<<From as steps::RoleEq<To>>::Output>,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `send`
+
+error[E0107]: function takes 2 generic arguments but 3 generic arguments were supplied
+  --> tests/ui/g-typelist-unguarded-loop.rs:76:47
+   |
+76 | const DECISION: g::Program<LoopDecision> = g::route::<0, 1, _>(
+   |                                               ^^^^^       --- help: remove the unnecessary generic argument
+   |                                               |
+   |                                               expected 2 generic arguments
+   |
+note: function defined here, with 2 generic parameters: `CONTROLLER`, `Steps`
+  --> src/global.rs
+   |
+   | pub const fn route<const CONTROLLER: u8, Steps>(
+   |              ^^^^^ --------------------  -----
+
+error[E0277]: the trait bound `Role<1>: MessageSpec` is not satisfied
+  --> tests/ui/g-typelist-unguarded-loop.rs:77:25
+   |
+77 |     g::route_chain::<0, LoopContinueArm>(CONTINUE_ARM)
+   |                         ^^^^^^^^^^^^^^^ the trait `MessageSpec` is not implemented for `Role<1>`
+   |
+   = help: the trait `MessageSpec` is implemented for `Message<L, P, C>`
+   = note: required for `StepCons<SendStep<Role<0>, Role<0>, Role<1>>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>` to implement `hibana::global::steps::RouteArm<0>`
+note: required by a bound in `hibana::route_chain`
+  --> src/global.rs
+   |
+   | pub const fn route_chain<const CONTROLLER: u8, Steps>(
+   |              ----------- required by a bound in this function
+...
+   |     Steps: steps::RouteArm<CONTROLLER>,
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `route_chain`
+
+error[E0277]: the trait bound `Role<1>: SendableLabel` is not satisfied
+  --> tests/ui/g-typelist-unguarded-loop.rs:77:25
+   |
+77 |     g::route_chain::<0, LoopContinueArm>(CONTINUE_ARM)
+   |                         ^^^^^^^^^^^^^^^ the trait `SendableLabel` is not implemented for `Role<1>`
+   |
+   = help: the trait `SendableLabel` is implemented for `Message<LabelMarker<LABEL>, Payload, Control>`
+   = note: required for `StepCons<SendStep<Role<0>, Role<0>, Role<1>>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>` to implement `hibana::global::steps::RouteArm<0>`
+note: required by a bound in `hibana::route_chain`
+  --> src/global.rs
+   |
+   | pub const fn route_chain<const CONTROLLER: u8, Steps>(
+   |              ----------- required by a bound in this function
+...
+   |     Steps: steps::RouteArm<CONTROLLER>,
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `route_chain`
+
+error[E0599]: the method `and` exists for struct `RouteChainBuilder<0, StepCons<SendStep<Role<0>, Role<0>, Role<1>>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>>`, but its trait bounds were not satisfied
+  --> tests/ui/g-typelist-unguarded-loop.rs:78:10
+   |
+77 | /     g::route_chain::<0, LoopContinueArm>(CONTINUE_ARM)
+78 | |         .and::<LoopBreakArm>(BREAK_ARM),
+   | |         -^^^ method cannot be called due to unsatisfied trait bounds
+   | |_________|
+   |
+   |
+  ::: src/global.rs
+   |
+   |   pub struct Message<Label, Payload, Control = NoControl>(PhantomData<(Label, Payload, Control)>);
+   |   ------------------------------------------------------- doesn't satisfy `_: StepConcat<_>`
+   |
+   = note: the following trait bounds were not satisfied:
+           `Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>: StepConcat<_>`
+
+error[E0277]: the trait bound `Role<1>: LoopContinueMessage` is not satisfied
+  --> tests/ui/g-typelist-unguarded-loop.rs:98:9
+   |
+98 |     > = g::seq(DECISION, BODY);
+   |         ^^^^^^^^^^^^^^^^^^^^^^ the trait `LoopContinueMessage` is not implemented for `Role<1>`
+   |
+   = help: the trait `LoopContinueMessage` is implemented for `Message<LabelMarker<hibana::::global::program::{impl#7}::{constant#0}>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>`
+   = note: required for `StepCons<SendStep<Role<0>, Role<0>, Role<1>>, StepCons<SendStep<Role<0>, Role<0>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>, Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>>>` to implement `LoopStepsAssert<Role<1>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>`
+
+error[E0277]: the trait bound `Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>: LoopBreakMessage` is not satisfied
+  --> tests/ui/g-typelist-unguarded-loop.rs:98:9
+   |
+98 |     > = g::seq(DECISION, BODY);
+   |         ^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+   = help: the trait `LoopBreakMessage` is not implemented for `Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>`
+   = help: the trait `LoopBreakMessage` is implemented for `Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>`
+   = note: required for `StepCons<SendStep<Role<0>, Role<0>, Role<1>>, StepCons<SendStep<Role<0>, Role<0>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>, Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>>>` to implement `LoopStepsAssert<Role<1>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>`
+
+error[E0277]: the trait bound `Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>: StepConcat<_>` is not satisfied
+  --> tests/ui/g-typelist-unguarded-loop.rs:98:9
+   |
+98 |     > = g::seq(DECISION, BODY);
+   |         ^^^^^^^^^^^^^^^^^^^^^^ the trait `StepConcat<_>` is not implemented for `Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>`
+   |
+   = help: the following other types implement trait `StepConcat<Other>`:
+             StepCons<Head, Tail>
+             StepNil
+   = note: required for `StepCons<SendStep<Role<0>, Role<0>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>, Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>>` to implement `StepConcat<_>`
+
+error[E0277]: the trait bound `Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>: StepConcat<_>` is not satisfied
+  --> tests/ui/g-typelist-unguarded-loop.rs:98:16
+   |
+98 |     > = g::seq(DECISION, BODY);
+   |         ------ ^^^^^^^^ the trait `StepConcat<_>` is not implemented for `Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>`
+   |         |
+   |         required by a bound introduced by this call
+   |
+   = help: the following other types implement trait `StepConcat<Other>`:
+             StepCons<Head, Tail>
+             StepNil
+   = note: required for `StepCons<SendStep<Role<0>, Role<0>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>, Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>>` to implement `StepConcat<_>`
+   = note: 1 redundant requirement hidden
+   = note: required for `StepCons<SendStep<Role<0>, Role<0>, Role<1>>, StepCons<SendStep<Role<0>, Role<0>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>, Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>>>` to implement `StepConcat<_>`
+note: required by a bound in `seq`
+  --> src/global.rs
+   |
+   | pub const fn seq<LeftSteps, RightSteps>(
+   |              --- required by a bound in this function
+...
+   |     LeftSteps: StepConcat<RightSteps>,
+   |                ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `seq`
+
+error[E0277]: the trait bound `Role<1>: LoopContinueMessage` is not satisfied
+   --> tests/ui/g-typelist-unguarded-loop.rs:112:88
+    |
+112 | const CONTROLLER: g::RoleProgram<'static, 0, ControllerLocal> = g::project::<0, _, _>(&LOOP);
+    |                                                                                        ^^^^ the trait `LoopContinueMessage` is not implemented for `Role<1>`
+    |
+    = help: the trait `LoopContinueMessage` is implemented for `Message<LabelMarker<hibana::::global::program::{impl#7}::{constant#0}>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>`
+    = note: required for `StepCons<SendStep<Role<0>, Role<0>, Role<1>>, StepCons<SendStep<Role<0>, Role<0>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>, Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>>>` to implement `LoopStepsAssert<Role<1>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>`
+
+error[E0277]: the trait bound `Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>: LoopBreakMessage` is not satisfied
+   --> tests/ui/g-typelist-unguarded-loop.rs:112:88
+    |
+112 | const CONTROLLER: g::RoleProgram<'static, 0, ControllerLocal> = g::project::<0, _, _>(&LOOP);
+    |                                                                                        ^^^^ unsatisfied trait bound
+    |
+    = help: the trait `LoopBreakMessage` is not implemented for `Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>`
+    = help: the trait `LoopBreakMessage` is implemented for `Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>`
+    = note: required for `StepCons<SendStep<Role<0>, Role<0>, Role<1>>, StepCons<SendStep<Role<0>, Role<0>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>, Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>>>` to implement `LoopStepsAssert<Role<1>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>`
+
+error[E0277]: the trait bound `Role<1>: MessageSpec` is not satisfied
+   --> tests/ui/g-typelist-unguarded-loop.rs:112:81
+    |
+112 | const CONTROLLER: g::RoleProgram<'static, 0, ControllerLocal> = g::project::<0, _, _>(&LOOP);
+    |                                                                                 ^ the trait `MessageSpec` is not implemented for `Role<1>`
+    |
+    = help: the trait `MessageSpec` is implemented for `Message<L, P, C>`
+    = note: required for `StepCons<SendStep<Role<0>, Role<0>, Role<1>>, StepCons<SendStep<Role<0>, Role<0>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>, Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>>>` to implement `ProjectRole<Role<0>>`
+note: required by a bound in `project`
+   --> src/global/role_program.rs
+    |
+    | pub const fn project<const ROLE: u8, Steps, Mint>(
+    |              ------- required by a bound in this function
+...
+    |     Steps: ProjectRole<Role<ROLE>>,
+    |            ^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `project`
+
+error[E0277]: the trait bound `Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>: ProjectRole<Role<0>>` is not satisfied
+   --> tests/ui/g-typelist-unguarded-loop.rs:112:81
+    |
+112 | const CONTROLLER: g::RoleProgram<'static, 0, ControllerLocal> = g::project::<0, _, _>(&LOOP);
+    |                                                                                 ^ unsatisfied trait bound
+    |
+    = help: the trait `ProjectRole<Role<0>>` is not implemented for `Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>`
+    = help: the following other types implement trait `ProjectRole<Local>`:
+              StepCons<SendStep<From, To, Msg, LANE>, Tail>
+              StepNil
+    = note: required for `StepCons<SendStep<Role<0>, Role<0>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>, Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>>` to implement `ProjectRole<Role<0>>`
+    = note: 1 redundant requirement hidden
+    = note: required for `StepCons<SendStep<Role<0>, Role<0>, Role<1>>, StepCons<SendStep<Role<0>, Role<0>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>, Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>>>` to implement `ProjectRole<Role<0>>`
+note: required by a bound in `project`
+   --> src/global/role_program.rs
+    |
+    | pub const fn project<const ROLE: u8, Steps, Mint>(
+    |              ------- required by a bound in this function
+...
+    |     Steps: ProjectRole<Role<ROLE>>,
+    |            ^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `project`
+
+error[E0308]: mismatched types
+   --> tests/ui/g-typelist-unguarded-loop.rs:112:65
+    |
+112 | const CONTROLLER: g::RoleProgram<'static, 0, ControllerLocal> = g::project::<0, _, _>(&LOOP);
+    |                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `RoleProgram<'_, 0, StepCons<..., ...>>`, found `RoleProgram<'_, 0, ..., _>`
+    |
+    = note: expected struct `RoleProgram<'static, 0, StepCons<LocalSend<Role<1>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>, StepNil>>`
+               found struct `RoleProgram<'static, 0, StepCons<hibana::global::LocalAction<Role<1>>, StepCons<hibana::global::LocalAction<Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>, _>>, _>`
+
+error[E0277]: the trait bound `Role<1>: MessageSpec` is not satisfied
+   --> tests/ui/g-typelist-unguarded-loop.rs:112:65
+    |
+112 | const CONTROLLER: g::RoleProgram<'static, 0, ControllerLocal> = g::project::<0, _, _>(&LOOP);
+    |                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `MessageSpec` is not implemented for `Role<1>`
+    |
+    = help: the trait `MessageSpec` is implemented for `Message<L, P, C>`
+    = note: required for `StepCons<SendStep<Role<0>, Role<0>, Role<1>>, StepCons<SendStep<Role<0>, Role<0>, Message<LabelMarker<48>, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>>, Message<LabelMarker<49>, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>>>` to implement `ProjectRole<Role<0>>`

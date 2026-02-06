@@ -1,0 +1,17 @@
+error[E0107]: function takes 4 generic arguments but 3 generic arguments were supplied
+  --> tests/ui/control-cancel-payload.rs:13:8
+   |
+13 |     g::send::<Controller, Target, g::Msg<LABEL_CANCEL, ()>>();
+   |        ^^^^   ----------  ------  ------------------------ supplied 3 generic arguments
+   |        |
+   |        expected 4 generic arguments
+   |
+note: function defined here, with 4 generic parameters: `From`, `To`, `M`, `LANE`
+  --> src/global.rs
+   |
+   | pub const fn send<From, To, M, const LANE: u8>() -> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
+   |              ^^^^ ----  --  -  --------------
+help: add missing generic argument
+   |
+13 |     g::send::<Controller, Target, g::Msg<LABEL_CANCEL, ()>, LANE>();
+   |                                                           ++++++

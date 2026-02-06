@@ -1,0 +1,35 @@
+error[E0107]: function takes 4 generic arguments but 3 generic arguments were supplied
+  --> tests/ui/g-par-role-conflict.rs:12:40
+   |
+12 |     let lane_a: g::Program<LaneA> = g::send::<R0, R1, g::Msg<3, ()>>();
+   |                                        ^^^^   --  --  ------------- supplied 3 generic arguments
+   |                                        |
+   |                                        expected 4 generic arguments
+   |
+note: function defined here, with 4 generic parameters: `From`, `To`, `M`, `LANE`
+  --> src/global.rs
+   |
+   | pub const fn send<From, To, M, const LANE: u8>() -> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
+   |              ^^^^ ----  --  -  --------------
+help: add missing generic argument
+   |
+12 |     let lane_a: g::Program<LaneA> = g::send::<R0, R1, g::Msg<3, ()>, LANE>();
+   |                                                                    ++++++
+
+error[E0107]: function takes 4 generic arguments but 3 generic arguments were supplied
+  --> tests/ui/g-par-role-conflict.rs:13:40
+   |
+13 |     let lane_b: g::Program<LaneB> = g::send::<R0, R2, g::Msg<4, ()>>();
+   |                                        ^^^^   --  --  ------------- supplied 3 generic arguments
+   |                                        |
+   |                                        expected 4 generic arguments
+   |
+note: function defined here, with 4 generic parameters: `From`, `To`, `M`, `LANE`
+  --> src/global.rs
+   |
+   | pub const fn send<From, To, M, const LANE: u8>() -> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
+   |              ^^^^ ----  --  -  --------------
+help: add missing generic argument
+   |
+13 |     let lane_b: g::Program<LaneB> = g::send::<R0, R2, g::Msg<4, ()>, LANE>();
+   |                                                                    ++++++
