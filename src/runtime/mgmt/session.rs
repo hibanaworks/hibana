@@ -61,11 +61,8 @@ pub type StreamContinueMsg = g::Msg<
     GenericCapToken<LoopContinueKind>,
     g::CanonicalControl<LoopContinueKind>,
 >;
-pub type StreamBreakMsg = g::Msg<
-    LABEL_LOOP_BREAK,
-    GenericCapToken<LoopBreakKind>,
-    g::CanonicalControl<LoopBreakKind>,
->;
+pub type StreamBreakMsg =
+    g::Msg<LABEL_LOOP_BREAK, GenericCapToken<LoopBreakKind>, g::CanonicalControl<LoopBreakKind>>;
 
 /// End-of-stream marker for the streaming observe protocol.
 /// Sent by Cluster on Break arm to signal Controller that the stream has ended.
@@ -179,7 +176,8 @@ const LOOP_SEGMENT: Program<LoopSegmentSteps> = g::seq(
     ),
 );
 
-const LOAD_COMMIT: Program<LoadCommitSteps> = g::send::<Controller, Cluster, LoadCommitTokenMsg, 0>();
+const LOAD_COMMIT: Program<LoadCommitSteps> =
+    g::send::<Controller, Cluster, LoadCommitTokenMsg, 0>();
 
 const COMMAND_ROUTE: Program<CommandRouteSteps> = g::send::<Controller, Cluster, CommandMsg, 0>();
 
@@ -432,10 +430,7 @@ where
             let flow = after_chunk
                 .flow::<LoopBreakMsg>()
                 .map_err(|err| map_send_error(err.into()))?;
-            let (next_endpoint, outcome) = flow
-                .send(())
-                .await
-                .map_err(map_send_error)?;
+            let (next_endpoint, outcome) = flow.send(()).await.map_err(map_send_error)?;
             debug_assert!(matches!(outcome, ControlOutcome::Canonical(_)));
             next_endpoint
         } else {
@@ -513,7 +508,8 @@ type StreamBatchStep = StepCons<steps::SendStep<Cluster, Controller, TapBatchMsg
 type StreamEndStep = StepCons<steps::SendStep<Cluster, Controller, StreamEndMsg>, StepNil>;
 
 // Stream loop control messages (Cluster self-send for CanonicalControl)
-type StreamLoopContinueStep = StepCons<steps::SendStep<Cluster, Cluster, StreamContinueMsg>, StepNil>;
+type StreamLoopContinueStep =
+    StepCons<steps::SendStep<Cluster, Cluster, StreamContinueMsg>, StepNil>;
 type StreamLoopBreakStep = StepCons<steps::SendStep<Cluster, Cluster, StreamBreakMsg>, StepNil>;
 
 // Stream loop arms:
@@ -535,14 +531,22 @@ const STREAM_SUBSCRIBE: Program<StreamSubscribeStep> =
 
 // Stream loop arms (Cluster self-send for CanonicalControl)
 // No HandlePlan::dynamic needed - self-send skips resolver validation entirely.
-const STREAM_LOOP_CONTINUE_ARM: Program<StreamLoopContinueSteps> =
-    g::send::<Cluster, Cluster, StreamContinueMsg, 0>()
-        .then(g::send::<Cluster, Controller, TapBatchMsg, 0>());
+const STREAM_LOOP_CONTINUE_ARM: Program<StreamLoopContinueSteps> = g::send::<
+    Cluster,
+    Cluster,
+    StreamContinueMsg,
+    0,
+>()
+.then(g::send::<Cluster, Controller, TapBatchMsg, 0>());
 
 // Break arm sends StreamEndMsg to signal end-of-stream (distinct label from TapEventMsg)
-const STREAM_LOOP_BREAK_ARM: Program<StreamLoopBreakSteps> =
-    g::send::<Cluster, Cluster, StreamBreakMsg, 0>()
-        .then(g::send::<Cluster, Controller, StreamEndMsg, 0>());
+const STREAM_LOOP_BREAK_ARM: Program<StreamLoopBreakSteps> = g::send::<
+    Cluster,
+    Cluster,
+    StreamBreakMsg,
+    0,
+>()
+.then(g::send::<Cluster, Controller, StreamEndMsg, 0>());
 
 // Route is local to Cluster (1 → 1) with .linger() for loop semantics
 const STREAM_LOOP_ROUTE: Program<StreamLoopRouteSteps> = g::route::<ROLE_CLUSTER, _>(
@@ -553,8 +557,11 @@ const STREAM_LOOP_ROUTE: Program<StreamLoopRouteSteps> = g::route::<ROLE_CLUSTER
 
 pub const STREAM_PROGRAM: Program<StreamProgramSteps> = STREAM_SUBSCRIBE.then(STREAM_LOOP_ROUTE);
 
-pub static STREAM_CONTROLLER_PROGRAM: g::RoleProgram<'static, ROLE_CONTROLLER, StreamControllerLocal> =
-    g::project::<ROLE_CONTROLLER, StreamProgramSteps, _>(&STREAM_PROGRAM);
+pub static STREAM_CONTROLLER_PROGRAM: g::RoleProgram<
+    'static,
+    ROLE_CONTROLLER,
+    StreamControllerLocal,
+> = g::project::<ROLE_CONTROLLER, StreamProgramSteps, _>(&STREAM_PROGRAM);
 pub static STREAM_CLUSTER_PROGRAM: g::RoleProgram<'static, ROLE_CLUSTER, StreamClusterLocal> =
     g::project::<ROLE_CLUSTER, StreamProgramSteps, _>(&STREAM_PROGRAM);
 
@@ -708,7 +715,17 @@ pub async fn drive_stream_controller<'lease, T, U, C, Mint, F, B, const MAX_RV: 
     subscribe: SubscribeReq,
     mut on_event: F,
 ) -> Result<
-    CursorEndpoint<'lease, ROLE_CONTROLLER, T, U, C, crate::control::cap::EpochInit, MAX_RV, Mint, B>,
+    CursorEndpoint<
+        'lease,
+        ROLE_CONTROLLER,
+        T,
+        U,
+        C,
+        crate::control::cap::EpochInit,
+        MAX_RV,
+        Mint,
+        B,
+    >,
     MgmtError,
 >
 where
@@ -737,11 +754,17 @@ where
         // Check label to determine which arm we're in
         if label == LABEL_OBSERVE_STREAM_END {
             // Break arm: StreamEndMsg received, exit loop
-            let (ep, ()) = branch.decode::<StreamEndMsg>().await.map_err(map_recv_error)?;
+            let (ep, ()) = branch
+                .decode::<StreamEndMsg>()
+                .await
+                .map_err(map_recv_error)?;
             return Ok(ep);
         } else if label == LABEL_OBSERVE_BATCH {
             // Continue arm: TapBatchMsg received, process all events in batch
-            let (ep, batch) = branch.decode::<TapBatchMsg>().await.map_err(map_recv_error)?;
+            let (ep, batch) = branch
+                .decode::<TapBatchMsg>()
+                .await
+                .map_err(map_recv_error)?;
 
             // Note: batch.lost_events() indicates ring buffer overrun count.
             // The callback can check this via TapBatch::lost_events() if needed.

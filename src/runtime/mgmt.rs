@@ -33,7 +33,10 @@ use crate::{
         loader::{ImageLoader, LoaderError},
         verifier::{Header, VerifyError},
     },
-    observe::{self, PolicyCommit, PolicyEvent, PolicyEventKind, PolicyRollback, policy_commit, policy_rollback, push},
+    observe::{
+        self, PolicyCommit, PolicyEvent, PolicyEventKind, PolicyRollback, policy_commit,
+        policy_rollback, push,
+    },
     rendezvous::{SLOT_COUNT as RENDEZVOUS_SLOT_COUNT, SlotStorage, slot_index},
     transport::wire::{CodecError, WireDecode, WireEncode},
 };
@@ -1089,6 +1092,7 @@ pub(crate) fn slot_from_u8(raw: u8) -> Option<Slot> {
         1 => Some(Slot::EndpointRx),
         2 => Some(Slot::EndpointTx),
         3 => Some(Slot::Rendezvous),
+        4 => Some(Slot::Route),
         _ => None,
     }
 }
