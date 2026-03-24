@@ -1,57 +1,173 @@
-//! Cursor-driven endpoint API built on the typestate DSL.
+//! Localside endpoint facade built on the typestate DSL.
 //!
-//! Applications interact with cursor-driven endpoints that are materialised
-//! from `RoleProgram` projections.
+//! Applications interact with `Endpoint` values that are materialised from
+//! `RoleProgram` projections.
 
 /// Affine endpoint helpers.
-pub mod affine;
+pub(crate) mod affine;
 /// Control-plane helpers for endpoints.
-pub mod control;
-/// Cursor endpoint implementation.
-pub mod cursor;
-/// Delegation helpers.
-pub mod delegate;
+pub(crate) mod control;
+/// Internal endpoint kernel implementation.
+pub(crate) mod cursor;
 /// Flow-based send API.
-pub mod flow;
-/// Endpoint metadata helpers.
-pub mod meta;
-/// Resolver plumbing for endpoints.
-pub mod resolver;
+pub(crate) mod flow;
 
-pub use control::ControlOutcome;
-pub use cursor::{CursorEndpoint, LoopDecision, RouteBranch};
-pub use flow::CapFlow;
-
-use crate::{
-    rendezvous::RendezvousError,
-    transport::{TransportError, wire::CodecError},
-};
-
-/// Unified endpoint error type used by cursor endpoints.
-#[derive(Debug)]
-pub enum Cancel {
-    /// Control-plane invariant violation (e.g., loop metadata mismatch).
-    ControlPlaneInvariant,
-    /// Rendezvous-level error surfaced during execution.
-    Rendezvous(RendezvousError),
-    /// Transport error bubbled from the underlying `Transport`.
-    Transport(TransportError),
+/// Public endpoint facade for app-facing localside interaction.
+pub struct Endpoint<
+    'r,
+    const ROLE: u8,
+    T,
+    U,
+    C,
+    E = crate::control::cap::mint::EpochTbl,
+    const MAX_RV: usize = 4,
+    Mint = crate::control::cap::mint::MintConfig,
+    B = crate::binding::NoBinding,
+> where
+    T: crate::transport::Transport + 'r,
+    U: crate::runtime::consts::LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot,
+{
+    inner: cursor::CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
 }
 
-impl From<RendezvousError> for Cancel {
-    fn from(err: RendezvousError) -> Self {
-        Self::Rendezvous(err)
+/// Public route-branch facade returned by [`Endpoint::offer`].
+pub struct RouteBranch<
+    'r,
+    const ROLE: u8,
+    T,
+    U,
+    C,
+    E = crate::control::cap::mint::EpochTbl,
+    const MAX_RV: usize = 4,
+    Mint = crate::control::cap::mint::MintConfig,
+    B = crate::binding::NoBinding,
+> where
+    T: crate::transport::Transport + 'r,
+    U: crate::runtime::consts::LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot,
+{
+    inner: cursor::RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+}
+
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
+    Endpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+where
+    T: crate::transport::Transport + 'r,
+    U: crate::runtime::consts::LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot,
+{
+    #[inline]
+    pub(crate) fn from_cursor(
+        inner: cursor::CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    ) -> Self {
+        Self { inner }
+    }
+
+    #[inline]
+    pub(crate) fn into_cursor(
+        self,
+    ) -> cursor::CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B> {
+        self.inner
     }
 }
 
-impl From<TransportError> for Cancel {
-    fn from(err: TransportError) -> Self {
-        Self::Transport(err)
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
+    RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+where
+    T: crate::transport::Transport + 'r,
+    U: crate::runtime::consts::LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot,
+{
+    #[inline]
+    pub(crate) fn from_cursor(
+        inner: cursor::RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    ) -> Self {
+        Self { inner }
     }
 }
 
-/// Endpoint-level result type.
-pub type Result<T> = core::result::Result<T, Cancel>;
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
+    Endpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+where
+    T: crate::transport::Transport + 'r,
+    U: crate::runtime::consts::LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot,
+{
+    #[inline]
+    pub fn flow<M>(self) -> SendResult<flow::Flow<'r, ROLE, M, T, U, C, E, MAX_RV, Mint, B>>
+    where
+        M: crate::global::MessageSpec + crate::global::SendableLabel,
+    {
+        self.inner.flow::<M>().map(flow::Flow::from_cap_flow)
+    }
+
+    #[inline]
+    pub async fn recv<M>(self) -> RecvResult<(Self, M::Payload)>
+    where
+        M: crate::global::MessageSpec,
+        M::Payload: crate::transport::wire::WireDecodeOwned,
+    {
+        let (endpoint, payload) = self.inner.recv::<M>().await?;
+        Ok((Self::from_cursor(endpoint), payload))
+    }
+
+    #[inline]
+    pub async fn offer(self) -> RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
+        let branch = self.inner.offer().await?;
+        Ok(RouteBranch::from_cursor(branch))
+    }
+}
+
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
+    RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+where
+    T: crate::transport::Transport + 'r,
+    U: crate::runtime::consts::LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot,
+{
+    #[inline]
+    pub fn label(&self) -> u8 {
+        self.inner.label()
+    }
+
+    #[inline]
+    pub fn into_endpoint(self) -> Endpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B> {
+        Endpoint::from_cursor(self.inner.into_endpoint())
+    }
+
+    #[inline]
+    pub async fn decode<M>(
+        self,
+    ) -> RecvResult<(Endpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>, M::Payload)>
+    where
+        M: crate::global::MessageSpec,
+        M::Payload: crate::transport::wire::WireDecodeOwned,
+    {
+        let (endpoint, payload) = self.inner.decode::<M>().await?;
+        Ok((Endpoint::from_cursor(endpoint), payload))
+    }
+}
+
+use crate::transport::{TransportError, wire::CodecError};
 
 /// Send error placeholder (will specialise once send/recv API lands).
 /// Errors surfaced when sending frames through a cursor endpoint.
@@ -97,15 +213,6 @@ pub enum RecvError {
     PolicyAbort { reason: u16 },
 }
 
-/// Guard that keeps the receive buffer borrowed for the duration of message
-/// decoding.
-///
-/// Cursor endpoints borrow frame payloads directly from the rendezvous slab.
-/// Dropping the guard releases that borrow so the next receive can reuse the
-/// backing storage. The guard is intentionally zero-sized; it exists purely to
-/// express the lifetime dependency at the type level.
-pub struct RecvGuard<'a>(core::marker::PhantomData<&'a ()>);
-
 /// Send result alias.
 pub type SendResult<T> = core::result::Result<T, SendError>;
 
@@ -113,40 +220,24 @@ pub type SendResult<T> = core::result::Result<T, SendError>;
 pub type RecvResult<T> = core::result::Result<T, RecvError>;
 
 /// Errors surfaced when executing local actions.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LocalFailureReason {
+pub(crate) struct LocalFailureReason {
     code: u16,
-    tag: &'static str,
 }
 
+#[cfg(test)]
 impl LocalFailureReason {
-    /// Generic handler error reported by user code.
-    pub const HANDLER: Self = Self::custom(0x0001, "handler");
-    /// Payload or prerequisite state was missing.
-    pub const PAYLOAD_UNAVAILABLE: Self = Self::custom(0x0002, "payload_unavailable");
     /// Internal invariant violation detected by the runtime.
-    pub const INTERNAL: Self = Self::custom(0xFFFF, "internal");
+    pub(crate) const INTERNAL: Self = Self::custom(0xFFFF);
 
     /// Create a custom failure reason (0x0000-0xFFFE reserved for user space).
-    pub const fn custom(code: u16, tag: &'static str) -> Self {
-        Self { code, tag }
-    }
-
-    /// Raw numeric representation used in tap events.
-    pub const fn value(self) -> u16 {
-        self.code
-    }
-
-    /// Human-readable identifier associated with the failure code.
-    pub const fn tag(self) -> &'static str {
-        self.tag
+    pub(crate) const fn custom(code: u16) -> Self {
+        Self { code }
     }
 
     #[inline]
-    pub const fn from_raw(raw: u16) -> Self {
-        Self {
-            code: raw,
-            tag: "unknown",
-        }
+    pub(crate) const fn from_raw(raw: u16) -> Self {
+        Self { code: raw }
     }
 }

@@ -1,17 +1,17 @@
-use hibana::g::{self, LocalSend, SendStep, StepCons, StepNil};
+use hibana::g::{self};
+use hibana::g::advanced::{RoleProgram, project};
+use hibana::g::advanced::steps::{LocalSend, SendStep, StepCons, StepNil};
 
-type Client = g::Role<0>;
-type Server = g::Role<1>;
-
-type GlobalSteps = StepCons<SendStep<Client, Server, g::Msg<7, u16>>, StepNil>;
-
-const PROGRAM: g::Program<GlobalSteps> = g::send::<Client, Server, g::Msg<7, u16>>();
+const PROGRAM: g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<7, u16>, 0>, StepNil>> =
+    g::send::<g::Role<0>, g::Role<1>, g::Msg<7, u16>, 0>();
 
 // Intentionally declare an incorrect local typelist for the client role. The payload type
 // (`u8`) mismatches the actual projection (`u16`), so this must fail during compilation.
-type WrongClientLocal = StepCons<LocalSend<Server, g::Msg<7, u8>>, StepNil>;
-
-const CLIENT: g::RoleProgram<'static, 0, WrongClientLocal> = g::project::<0, GlobalSteps, _>(&PROGRAM);
+const CLIENT: RoleProgram<
+    'static,
+    0,
+    StepCons<LocalSend<g::Role<1>, g::Msg<7, u8>>, StepNil>,
+> = project(&PROGRAM);
 
 fn main() {
     let _ = CLIENT;

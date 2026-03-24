@@ -1,12 +1,76 @@
-pub mod meta {
+pub(crate) mod meta {
     /// Maximum number of effect nodes the const DSL may emit.
-    pub const MAX_EFF_NODES: usize = 256;
+    pub(crate) const MAX_EFF_NODES: usize = 256;
 }
 
-pub type LabelId = u8;
-pub type ResourceKindId = u8;
-pub type EffIndex = u16;
-pub type EffSlice = &'static [EffStruct];
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct EffIndex(u16);
+
+impl EffIndex {
+    pub const ZERO: Self = Self(0);
+    pub const MAX: Self = Self(u16::MAX);
+
+    #[inline(always)]
+    pub const fn new(raw: u16) -> Self {
+        Self(raw)
+    }
+
+    #[inline(always)]
+    pub const fn from_usize(idx: usize) -> Self {
+        if idx > (u16::MAX as usize) {
+            panic!("eff index overflow");
+        }
+        Self(idx as u16)
+    }
+
+    #[inline(always)]
+    pub const fn raw(self) -> u16 {
+        self.0
+    }
+
+    #[inline(always)]
+    pub const fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl core::fmt::Display for EffIndex {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct EffSlice(&'static [EffStruct]);
+
+impl EffSlice {
+    #[inline(always)]
+    pub const fn new(slice: &'static [EffStruct]) -> Self {
+        Self(slice)
+    }
+
+    #[inline(always)]
+    pub const fn len(self) -> usize {
+        self.0.len()
+    }
+
+    #[inline(always)]
+    pub const fn is_empty(self) -> bool {
+        self.0.is_empty()
+    }
+
+    #[inline(always)]
+    pub const fn at(self, idx: usize) -> EffStruct {
+        self.0[idx]
+    }
+
+    #[inline(always)]
+    pub const fn as_slice(self) -> &'static [EffStruct] {
+        self.0
+    }
+}
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,9 +94,9 @@ pub struct EffChildren {
 pub struct EffAtom {
     pub from: u8,
     pub to: u8,
-    pub label: LabelId,
+    pub label: u8,
     pub is_control: bool,
-    pub resource: Option<ResourceKindId>,
+    pub resource: Option<u8>,
     pub direction: EffDirection,
     /// Type-level lane for parallel composition (default 0).
     pub lane: u8,

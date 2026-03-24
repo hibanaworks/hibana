@@ -3,10 +3,9 @@
 //! All control operations (lane open, splice, delegate, cancel, fence, commit, abort)
 //! are projected into this enum. Composite operations are expressed through effect composition.
 
-extern crate alloc;
-
 use crate::eff::EffIndex;
-use crate::global::const_dsl::{ControlMarker, ControlScopeKind, HandlePlan, ScopeMarker};
+use crate::global::const_dsl::EffList;
+use crate::global::const_dsl::{ControlMarker, ControlScopeKind, PolicyMode, ScopeMarker};
 
 /// Control-plane effect primitive.
 ///
@@ -54,14 +53,15 @@ pub enum CpEffect {
 }
 
 impl CpEffect {
-    pub const fn bit(self) -> u16 {
+    pub(crate) const fn bit(self) -> u16 {
         1 << (self as u16)
     }
 
     /// Returns true if this effect is idempotent.
     ///
     /// Idempotent effects can be safely replayed without changing state.
-    pub const fn is_idempotent(self) -> bool {
+    #[cfg(test)]
+    pub(crate) const fn is_idempotent(self) -> bool {
         matches!(
             self,
             Self::SpliceAck | Self::CancelAck | Self::Fence | Self::Abort | Self::Checkpoint
@@ -69,25 +69,27 @@ impl CpEffect {
     }
 
     /// Returns true if this effect requires generation bump.
-    pub const fn requires_gen_bump(self) -> bool {
+    #[cfg(test)]
+    pub(crate) const fn requires_gen_bump(self) -> bool {
         matches!(self, Self::SpliceCommit | Self::Commit)
     }
 
     /// Returns true if this effect is terminal (closes a transaction).
-    pub const fn is_terminal(self) -> bool {
+    #[cfg(test)]
+    pub(crate) const fn is_terminal(self) -> bool {
         matches!(self, Self::Commit | Self::Abort)
     }
 
     /// Returns true if this effect modifies state history.
-    pub const fn modifies_history(self) -> bool {
+    #[cfg(test)]
+    pub(crate) const fn modifies_history(self) -> bool {
         matches!(self, Self::Checkpoint | Self::Rollback)
     }
 
     /// Convert CpEffect to tap event ID.
     ///
-    /// Maps internal CpEffect enum values to observable tap event IDs.
-    /// This maintains backward compatibility with existing tap event constants.
-    pub const fn to_tap_event_id(self) -> u16 {
+    /// Maps internal CpEffect enum values onto the stable observable tap-event IDs.
+    pub(crate) const fn to_tap_event_id(self) -> u16 {
         use crate::observe::ids;
         match self {
             Self::Open => 0x0100,         // New event ID for lane open
@@ -123,7 +125,7 @@ impl CpEffect {
     /// - 0x48: SpliceAck → SpliceAck
     /// - 0x49: Reroute (complex, may need special handling)
     /// - 0x4A-0x4E: Policy ops (no direct CpEffect)
-    pub const fn from_resource_tag(tag: u8) -> Option<Self> {
+    pub(crate) const fn from_resource_tag(tag: u8) -> Option<Self> {
         match tag {
             0x42 => Some(Self::Checkpoint),
             0x43 => Some(Self::Commit),
@@ -149,7 +151,7 @@ impl CpEffect {
 /// Note: This is distinct from `control::cluster::CpCommand`, which wraps
 /// individual effect executions with their runtime operands.
 #[derive(Debug, Clone, Copy)]
-pub struct EffectEnvelope {
+pub(crate) struct EffectEnvelope {
     /// Sequence of control-plane effects to execute.
     cp_effects: [core::mem::MaybeUninit<CpEffect>; Self::MAX_CP_EFFECTS],
     cp_effects_len: usize,
@@ -173,40 +175,57 @@ pub struct EffectEnvelope {
 
 /// Metadata describing a control resource discovered during projection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ResourceDescriptor {
+pub(crate) struct ResourceDescriptor {
     /// Effect index associated with the control atom.
-    pub eff_index: EffIndex,
+    eff_index: EffIndex,
     /// Label associated with the control message.
-    pub label: u8,
+    label: u8,
     /// Resource kind tag (maps to [`crate::control::cap::resource_kinds`]).
-    pub tag: u8,
+    tag: u8,
     /// Scope assigned to the resource (loop/checkpoint/cancel/...).
-    pub scope: ControlScopeKind,
+    scope: ControlScopeKind,
     /// Shot discipline mandated for the capability token.
-    pub shot: crate::control::cap::CapShot,
-    /// Handle generation plan (if any).
-    pub plan: HandlePlan,
+    shot: crate::control::cap::mint::CapShot,
+    /// Policy mode attached to this control point.
+    policy: PolicyMode,
+}
+
+impl ResourceDescriptor {
+    #[inline(always)]
+    pub(crate) const fn eff_index(&self) -> EffIndex {
+        self.eff_index
+    }
+
+    #[inline(always)]
+    pub(crate) const fn tag(&self) -> u8 {
+        self.tag
+    }
+
+    #[inline(always)]
+    pub(crate) const fn policy(&self) -> PolicyMode {
+        self.policy
+    }
 }
 
 impl EffectEnvelope {
     /// Maximum number of control-plane effects per projection.
     /// Conservative upper bound based on typical protocol complexity.
-    pub const MAX_CP_EFFECTS: usize = 256;
+    const MAX_CP_EFFECTS: usize = 256;
 
     /// Maximum number of tap events per projection.
-    pub const MAX_TAP_EVENTS: usize = 512;
+    const MAX_TAP_EVENTS: usize = 512;
 
     /// Maximum number of resource handles per projection.
-    pub const MAX_RESOURCES: usize = 128;
+    const MAX_RESOURCES: usize = 128;
 
     /// Maximum number of scope markers mirrored from the program.
-    pub const MAX_SCOPES: usize = crate::eff::meta::MAX_EFF_NODES;
+    const MAX_SCOPES: usize = crate::eff::meta::MAX_EFF_NODES;
 
     /// Maximum number of control markers mirrored from the program.
-    pub const MAX_CONTROLS: usize = crate::eff::meta::MAX_EFF_NODES;
+    const MAX_CONTROLS: usize = crate::eff::meta::MAX_EFF_NODES;
 
     /// Create an empty projection.
-    pub const fn empty() -> Self {
+    pub(crate) const fn empty() -> Self {
         Self {
             cp_effects: unsafe {
                 core::mem::MaybeUninit::<[core::mem::MaybeUninit<CpEffect>; Self::MAX_CP_EFFECTS]>::uninit()
@@ -241,12 +260,13 @@ impl EffectEnvelope {
     }
 
     /// Check if this projection has any effects to execute.
-    pub fn is_empty(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_empty(&self) -> bool {
         self.cp_effects_len == 0 && self.tap_events_len == 0 && self.resources_len == 0
     }
 
     /// Push a control-plane effect.
-    pub fn push_cp_effect(&mut self, effect: CpEffect) {
+    fn push_cp_effect(&mut self, effect: CpEffect) {
         if self.cp_effects_len >= Self::MAX_CP_EFFECTS {
             panic!("EffectEnvelope: MAX_CP_EFFECTS exceeded");
         }
@@ -255,7 +275,7 @@ impl EffectEnvelope {
     }
 
     /// Push a tap event ID.
-    pub fn push_tap_event(&mut self, event_id: u16) {
+    fn push_tap_event(&mut self, event_id: u16) {
         if self.tap_events_len >= Self::MAX_TAP_EVENTS {
             panic!("EffectEnvelope: MAX_TAP_EVENTS exceeded");
         }
@@ -264,14 +284,14 @@ impl EffectEnvelope {
     }
 
     /// Push a resource descriptor.
-    pub fn push_resource(
+    fn push_resource(
         &mut self,
         eff_index: EffIndex,
         label: u8,
         scope: ControlScopeKind,
         kind_tag: u8,
-        shot: crate::control::cap::CapShot,
-        plan: HandlePlan,
+        shot: crate::control::cap::mint::CapShot,
+        policy: PolicyMode,
     ) {
         if self.resources_len >= Self::MAX_RESOURCES {
             panic!("EffectEnvelope: MAX_RESOURCES exceeded");
@@ -282,33 +302,29 @@ impl EffectEnvelope {
             tag: kind_tag,
             scope,
             shot,
-            plan,
+            policy,
         });
         self.resources_len += 1;
     }
 
     /// Iterate over control-plane effects.
-    pub fn cp_effects(&self) -> impl Iterator<Item = &CpEffect> {
+    pub(crate) fn cp_effects(&self) -> impl Iterator<Item = &CpEffect> {
         (0..self.cp_effects_len).map(move |i| unsafe { self.cp_effects[i].assume_init_ref() })
     }
 
     /// Iterate over tap events.
-    pub fn tap_events(&self) -> impl Iterator<Item = u16> + '_ {
+    #[cfg(test)]
+    pub(crate) fn tap_events(&self) -> impl Iterator<Item = u16> + '_ {
         (0..self.tap_events_len).map(move |i| unsafe { *self.tap_events[i].assume_init_ref() })
     }
 
     /// Iterate over resource handles.
-    pub fn resources(&self) -> impl Iterator<Item = &ResourceDescriptor> {
+    pub(crate) fn resources(&self) -> impl Iterator<Item = &ResourceDescriptor> {
         (0..self.resources_len).map(move |i| unsafe { self.resources[i].assume_init_ref() })
     }
 
-    /// Iterate over scope markers.
-    pub fn scopes(&self) -> impl Iterator<Item = &ScopeMarker> {
-        (0..self.scopes_len).map(move |i| unsafe { self.scopes[i].assume_init_ref() })
-    }
-
     /// Iterate over control markers.
-    pub fn controls(&self) -> impl Iterator<Item = &ControlMarker> {
+    pub(crate) fn controls(&self) -> impl Iterator<Item = &ControlMarker> {
         (0..self.controls_len).map(move |i| unsafe { self.controls[i].assume_init_ref() })
     }
 }
@@ -317,7 +333,7 @@ fn emit_atom(
     envelope: &mut EffectEnvelope,
     atom: crate::eff::EffAtom,
     offset: usize,
-    plan: HandlePlan,
+    policy: PolicyMode,
     spec: Option<crate::global::ControlLabelSpec>,
 ) {
     use crate::eff::EffDirection;
@@ -334,21 +350,21 @@ fn emit_atom(
 
             if let Some(rule) = spec {
                 envelope.push_resource(
-                    offset as EffIndex,
+                    EffIndex::from_usize(offset),
                     atom.label,
                     rule.scope_kind,
                     resource_kind_tag,
                     rule.shot,
-                    plan,
+                    policy,
                 );
             } else {
                 envelope.push_resource(
-                    offset as EffIndex,
+                    EffIndex::from_usize(offset),
                     atom.label,
                     ControlScopeKind::None,
                     resource_kind_tag,
-                    crate::control::cap::CapShot::One,
-                    plan,
+                    crate::control::cap::mint::CapShot::One,
+                    policy,
                 );
             }
         } else {
@@ -356,10 +372,10 @@ fn emit_atom(
             envelope.push_tap_event(tap_id);
         }
     } else {
-        if !plan.is_none() {
-            // Dynamic plans are permitted on non-control atoms (e.g., route decisions)
-            if !matches!(plan, HandlePlan::Dynamic { .. }) {
-                panic!("static control plan attached to non-control atom");
+        if !policy.is_static() {
+            // Dynamic policies are permitted on non-control atoms (e.g., route decisions).
+            if !matches!(policy, PolicyMode::Dynamic { .. }) {
+                panic!("static policy attached to non-control atom");
             }
         }
         match atom.direction {
@@ -376,18 +392,18 @@ fn emit_atom(
 }
 
 /// Interpret a const `EffList`, producing the effect envelope consumed by the control plane.
-pub fn interpret_eff_list(program: &crate::g::EffList) -> EffectEnvelope {
+pub(crate) fn interpret_eff_list(program: &EffList) -> EffectEnvelope {
     let mut projected = EffectEnvelope::empty();
 
     for (offset, node) in program.as_slice().iter().enumerate() {
         if node.kind == crate::eff::EffKind::Atom {
-            let plan = program
-                .control_plan_with_scope(offset)
-                .map(|(plan, _scope)| plan)
-                .unwrap_or(HandlePlan::None);
+            let policy = program
+                .policy_with_scope(offset)
+                .map(|(policy, _scope)| policy)
+                .unwrap_or(PolicyMode::Static);
             let atom = node.atom_data();
             let control_spec = program.control_spec_at(offset);
-            emit_atom(&mut projected, atom, offset, plan, control_spec);
+            emit_atom(&mut projected, atom, offset, policy, control_spec);
         }
     }
 
@@ -417,6 +433,8 @@ pub fn interpret_eff_list(program: &crate::g::EffList) -> EffectEnvelope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::global::CanonicalControl;
+    use crate::global::const_dsl::EffList;
 
     #[test]
     fn test_effect_properties() {
@@ -447,7 +465,7 @@ mod tests {
 
     #[test]
     fn test_interpreter_pure() {
-        let program = crate::g::EffList::new();
+        let program = EffList::new();
         let projected = interpret_eff_list(&program);
         assert!(projected.is_empty());
     }
@@ -455,16 +473,16 @@ mod tests {
     #[test]
     fn test_interpreter_control_atom() {
         // CanonicalControl messages require self-send (From == To)
-        type Actor = crate::g::Role<0>;
-        use crate::control::cap::{GenericCapToken, resource_kinds::CheckpointKind};
+        use crate::control::cap::mint::GenericCapToken;
+        use crate::control::cap::resource_kinds::CheckpointKind;
 
         let program = crate::g::send::<
-            Actor,
-            Actor,
+            crate::g::Role<0>,
+            crate::g::Role<0>,
             crate::g::Msg<
                 { crate::runtime::consts::LABEL_CHECKPOINT },
                 GenericCapToken<CheckpointKind>,
-                crate::g::CanonicalControl<CheckpointKind>,
+                CanonicalControl<CheckpointKind>,
             >,
             0,
         >();

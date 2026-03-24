@@ -2,14 +2,15 @@
 //!
 //! The checker maintains a fixed-state summary of the tap stream so that the
 //! control/data plane can be validated without replaying the entire trace.  The
-//! current implementation keeps per-flow counters plus lightweight hashes that
-//! witness `relay ≡ splice`, AMPST cancellation balance, and rollback safety.
+//! current implementation keeps per-flow counters for AMPST cancellation, loop,
+//! policy, and rollback safety.
 
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 
-use super::{
-    PolicyEventKind, PolicyEventSpec, PolicyLaneExpectation, TapEvent, ids, policy_event_spec,
-};
+use super::ids;
+use crate::observe::core::PolicyEventKind;
+use crate::observe::core::TapEvent;
+use crate::observe::core::{PolicyEventSpec, policy_event_spec};
 use crate::{
     endpoint::LocalFailureReason, observe::local::LocalActionFailure, runtime::consts::LANES_MAX,
 };
@@ -59,16 +60,6 @@ const fn zero_atomic_u32_array() -> [AtomicU32; LANES_MAX_USIZE] {
     ]
 }
 
-// 64-bit mixing constant derived from golden ratio (SplitMix64).
-const HASH_MIX: u64 = 0x9E37_79B1_85EB_CA87;
-
-fn update_hash(hash: &AtomicU64, sid: u32, aux: u32, key: u16) {
-    let token = ((sid as u64) << 32) ^ aux as u64 ^ ((key as u64) << 48);
-    let current = hash.load(Ordering::Relaxed);
-    let mixed = current.rotate_left(13) ^ token.wrapping_mul(HASH_MIX);
-    hash.store(mixed, Ordering::Relaxed);
-}
-
 struct CheckState {
     cancel_begin: AtomicU32,
     cancel_ack: AtomicU32,
@@ -79,13 +70,6 @@ struct CheckState {
     rollback_req: AtomicU32,
     rollback_ok: AtomicU32,
     rollback_inflight: AtomicI32,
-    relay_forward: AtomicU32,
-    splice_commit: AtomicU32,
-    splice_inflight: AtomicI32,
-    relay_hash: AtomicU64,
-    splice_hash: AtomicU64,
-    pending_splice_sid: AtomicU32,
-    pending_splice_gen: AtomicU32,
     loop_continue: AtomicU32,
     loop_break: AtomicU32,
     loop_inflight_continue: AtomicI32,
@@ -118,13 +102,6 @@ impl CheckState {
             rollback_req: AtomicU32::new(0),
             rollback_ok: AtomicU32::new(0),
             rollback_inflight: AtomicI32::new(0),
-            relay_forward: AtomicU32::new(0),
-            splice_commit: AtomicU32::new(0),
-            splice_inflight: AtomicI32::new(0),
-            relay_hash: AtomicU64::new(0),
-            splice_hash: AtomicU64::new(0),
-            pending_splice_sid: AtomicU32::new(0),
-            pending_splice_gen: AtomicU32::new(0),
             loop_continue: AtomicU32::new(0),
             loop_break: AtomicU32::new(0),
             loop_inflight_continue: AtomicI32::new(0),
@@ -152,6 +129,7 @@ impl CheckState {
         }
     }
 
+    #[cfg(test)]
     fn reset(&self) {
         self.cancel_begin.store(0, Ordering::Relaxed);
         self.cancel_ack.store(0, Ordering::Relaxed);
@@ -162,13 +140,6 @@ impl CheckState {
         self.rollback_req.store(0, Ordering::Relaxed);
         self.rollback_ok.store(0, Ordering::Relaxed);
         self.rollback_inflight.store(0, Ordering::Relaxed);
-        self.relay_forward.store(0, Ordering::Relaxed);
-        self.splice_commit.store(0, Ordering::Relaxed);
-        self.splice_inflight.store(0, Ordering::Relaxed);
-        self.relay_hash.store(0, Ordering::Relaxed);
-        self.splice_hash.store(0, Ordering::Relaxed);
-        self.pending_splice_sid.store(0, Ordering::Relaxed);
-        self.pending_splice_gen.store(0, Ordering::Relaxed);
         self.loop_continue.store(0, Ordering::Relaxed);
         self.loop_break.store(0, Ordering::Relaxed);
         self.loop_inflight_continue.store(0, Ordering::Relaxed);
@@ -200,17 +171,8 @@ impl CheckState {
     }
 
     fn record_policy_lane(&self, spec: PolicyEventSpec, event: TapEvent) {
-        let expectation = spec.lane_expectation();
-        if matches!(expectation, PolicyLaneExpectation::None) {
-            return;
-        }
-
         let lane_marker = event.causal_role();
         if lane_marker == 0 {
-            if matches!(expectation, PolicyLaneExpectation::Required) {
-                self.policy_lane_total.fetch_add(1, Ordering::Relaxed);
-                self.policy_lane_mismatch.fetch_add(1, Ordering::Relaxed);
-            }
             return;
         }
 
@@ -274,10 +236,6 @@ impl CheckState {
             self.record_policy_event(spec, event);
             return;
         }
-        if let Some(spec) = policy_event_spec(event.id) {
-            self.record_policy_event(spec, event);
-            return;
-        }
         match event.id {
             id if id == ids::CANCEL_BEGIN => {
                 self.cancel_begin.fetch_add(1, Ordering::Relaxed);
@@ -311,36 +269,6 @@ impl CheckState {
             id if id == ids::ROLLBACK_OK => {
                 self.rollback_ok.fetch_add(1, Ordering::Relaxed);
                 self.rollback_inflight.fetch_sub(1, Ordering::Relaxed);
-            }
-            id if id == ids::RELAY_FORWARD => {
-                self.relay_forward.fetch_add(1, Ordering::Relaxed);
-                update_hash(&self.relay_hash, event.arg0, event.arg1, event.causal_key);
-            }
-            id if id == ids::SPLICE_BEGIN => {
-                self.splice_inflight.fetch_add(1, Ordering::Relaxed);
-                // Store SID+1 so that 0 continues to mean "none".
-                self.pending_splice_sid
-                    .store(event.arg0.wrapping_add(1), Ordering::Relaxed);
-                self.pending_splice_gen.store(event.arg1, Ordering::Relaxed);
-            }
-            id if id == ids::SPLICE_COMMIT => {
-                self.splice_commit.fetch_add(1, Ordering::Relaxed);
-                self.splice_inflight.fetch_sub(1, Ordering::Relaxed);
-
-                let sid_marker = self.pending_splice_sid.swap(0, Ordering::Relaxed);
-                let gen_marker = self.pending_splice_gen.swap(0, Ordering::Relaxed);
-                let sid = if sid_marker != 0 {
-                    sid_marker.wrapping_sub(1)
-                } else {
-                    event.arg0
-                };
-                let gen_value = if sid_marker != 0 {
-                    gen_marker
-                } else {
-                    event.arg1
-                };
-
-                update_hash(&self.splice_hash, sid, gen_value, 0);
             }
             id if id == ids::LOOP_DECISION => {
                 let lane = ((event.arg1 >> 16) & 0xFFFF) as usize;
@@ -385,6 +313,7 @@ impl CheckState {
         }
     }
 
+    #[cfg(test)]
     fn snapshot(&self) -> CheckReport {
         let cancel_begin = self.cancel_begin.load(Ordering::Relaxed);
         let cancel_ack = self.cancel_ack.load(Ordering::Relaxed);
@@ -395,12 +324,6 @@ impl CheckState {
         let rollback_req = self.rollback_req.load(Ordering::Relaxed);
         let rollback_ok = self.rollback_ok.load(Ordering::Relaxed);
         let rollback_inflight = self.rollback_inflight.load(Ordering::Relaxed);
-        let relay_forward = self.relay_forward.load(Ordering::Relaxed);
-        let splice_commit = self.splice_commit.load(Ordering::Relaxed);
-        let splice_inflight = self.splice_inflight.load(Ordering::Relaxed);
-        let relay_hash = self.relay_hash.load(Ordering::Relaxed);
-        let splice_hash = self.splice_hash.load(Ordering::Relaxed);
-        let pending_splice = self.pending_splice_sid.load(Ordering::Relaxed) != 0;
         let loop_continue = self.loop_continue.load(Ordering::Relaxed);
         let loop_break = self.loop_break.load(Ordering::Relaxed);
         let loop_inflight_continue = self.loop_inflight_continue.load(Ordering::Relaxed);
@@ -434,13 +357,6 @@ impl CheckState {
             rollback_ok,
             rollback_inflight,
             rollback_balanced: rollback_inflight == 0,
-            relay_forward,
-            splice_commit,
-            splice_inflight,
-            forward_hash_relay: relay_hash,
-            forward_hash_splice: splice_hash,
-            forward_equivalent: relay_hash == splice_hash && relay_forward == splice_commit,
-            pending_splice,
             loop_continue,
             loop_break,
             loop_inflight_continue,
@@ -467,27 +383,30 @@ impl CheckState {
 static STATE: CheckState = CheckState::new();
 
 /// Reset the streaming checker state back to zero.
-pub fn reset() {
+#[cfg(test)]
+fn reset() {
     STATE.reset();
 }
 
 /// Feed a tap event into the streaming checker.
-pub fn feed(event: TapEvent) {
+pub(super) fn feed(event: TapEvent) {
     STATE.observe(event);
 }
 
 /// Snapshot the current checker summary.
-pub fn snapshot() -> CheckReport {
+#[cfg(test)]
+fn snapshot() -> CheckReport {
     STATE.snapshot()
 }
 
-/// Summary of the streaming checker counters and hashes.
+/// Summary of the streaming checker counters.
 ///
 /// Loop fields track the number of continue/break decisions observed and the
 /// outstanding unmatched events. A non-zero `loop_inflight_*` indicates that a
 /// decision has been recorded without a matching acknowledgement yet.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CheckReport {
+#[cfg(test)]
+struct CheckReport {
     pub cancel_begin: u32,
     pub cancel_ack: u32,
     pub cancel_inflight: i32,
@@ -500,13 +419,6 @@ pub struct CheckReport {
     pub rollback_ok: u32,
     pub rollback_inflight: i32,
     pub rollback_balanced: bool,
-    pub relay_forward: u32,
-    pub splice_commit: u32,
-    pub splice_inflight: i32,
-    pub forward_hash_relay: u64,
-    pub forward_hash_splice: u64,
-    pub forward_equivalent: bool,
-    pub pending_splice: bool,
     pub loop_continue: u32,
     pub loop_break: u32,
     pub loop_inflight_continue: i32,
@@ -541,20 +453,18 @@ mod tests {
     }
 
     #[test]
-    fn effect_init_does_not_break_forward_equivalence() {
+    fn effect_init_does_not_break_cancel_balance() {
         use crate::observe::events;
         let _guard = test_guard();
         reset();
         feed(events::EffectInit::new(1, 7, 3));
-        feed(events::RelayForward::new(2, 7, 11));
-        feed(events::SpliceBegin::new(3, 7, 11));
-        feed(events::SpliceCommit::new(4, 7, 11));
+        feed(events::CancelBegin::new(2, 7, 11));
+        feed(events::CancelAck::new(3, 7, 11));
 
         let report = snapshot();
-        assert_eq!(report.relay_forward, 1);
-        assert_eq!(report.splice_commit, 1);
-        assert!(report.forward_equivalent);
-        assert_eq!(report.splice_inflight, 0);
+        assert_eq!(report.cancel_begin, 1);
+        assert_eq!(report.cancel_ack, 1);
+        assert!(report.cancel_balanced);
         reset();
     }
 

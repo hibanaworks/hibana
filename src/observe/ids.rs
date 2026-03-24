@@ -19,11 +19,7 @@
 /// Events with `id < USER_EVENT_RANGE_END` are routed to the User Ring.
 pub const USER_EVENT_RANGE_END: u16 = 0x0100;
 
-/// Lower bound (inclusive) for Infra Ring events.
-/// Events with `id >= INFRA_EVENT_RANGE_START` are routed to the Infra Ring.
-pub const INFRA_EVENT_RANGE_START: u16 = 0x0100;
-
-// ────────────── Endpoint / Forwarder boundary (0x0200-0x020F) ──────────────
+// ────────────── Endpoint boundary (0x0200-0x020F) ──────────────
 
 /// AMPST cancellation initiated (begin message emitted).
 ///
@@ -55,25 +51,13 @@ pub const ENDPOINT_RECV: u16 = 0x0203;
 ///
 pub const ENDPOINT_CONTROL: u16 = 0x0204;
 
-/// Forwarding via relay path (frame copied between transports).
-///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: Packed lane/role/label/flags (u32)
-pub const RELAY_FORWARD: u16 = 0x0205;
-
-/// Forwarder control-plane event (fence, commit, splice coordination).
-///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: Implementation-defined payload (u32)
-pub const FORWARD_CONTROL: u16 = 0x0206;
-
-/// Splice handshake initiated (relay → splice transition).
+/// Splice handshake initiated.
 ///
 /// - `arg0`: Session identifier (u32)
 /// - `arg1`: Generation / causal context (u32)
 pub const SPLICE_BEGIN: u16 = 0x0208;
 
-/// Splice handshake committed and forwarding switched to splice mode.
+/// Splice handshake committed.
 ///
 /// - `arg0`: Session identifier (u32)
 /// - `arg1`: Generation acknowledged (u32)
@@ -109,35 +93,18 @@ pub const LANE_RELEASE: u16 = 0x0211;
 /// - `arg1`: lane<<16 | idx<<8 | disposition (1 = continue, 0 = break)
 pub const LOOP_DECISION: u16 = 0x0220;
 
-/// Route arm selection resolved via dynamic control plan.
+/// Route arm selection resolved via dynamic policy.
 ///
 /// - `arg0`: Session identifier (u32)
 /// - `arg1`: scope_id<<16 | arm (u32)
 /// - `causal`: lane marker with decision encoded in the sequence field (0 = skip, 1 = send)
 pub const ROUTE_DECISION: u16 = 0x0221;
 
-/// Nested route branch entered (scope id).
-///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: scope_id (u32)
-pub const ROUTE_SCOPE_ENTER: u16 = 0x0222;
-
-/// Nested route branch exited (scope id).
-///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: scope_id (u32)
-pub const ROUTE_SCOPE_EXIT: u16 = 0x0223;
-
-/// Loop scope entered.
-pub const LOOP_SCOPE_ENTER: u16 = 0x0224;
-
-/// Loop scope exited.
-pub const LOOP_SCOPE_EXIT: u16 = 0x0225;
-
 /// Local action handler reported a failure.
 ///
 /// - `arg0`: Session identifier (u32)
 /// - `arg1`: eff_index<<16 | reason (u32)
+#[cfg(test)]
 pub const LOCAL_ACTION_FAIL: u16 = 0x0226;
 
 // ───────────── Capability lifecycle (0x0240-0x024F) ─────────────
@@ -147,7 +114,7 @@ pub const LOCAL_ACTION_FAIL: u16 = 0x0226;
 ///
 /// Emitted when a new capability token is created via:
 /// - `Rendezvous::mint_cap`
-/// - `SessionCluster::canonical_session_token`
+/// - endpoint canonical control send paths such as `flow().send()`
 ///
 /// # Event Encoding
 /// - `arg0`: Session ID (u32) or packed lane/role/kind/shot
@@ -204,18 +171,6 @@ pub const ROLLBACK_REQ: u16 = 0x0131;
 /// - `arg1`: Generation restored (u32)
 pub const ROLLBACK_OK: u16 = 0x0132;
 
-/// UDP transport transmit event.
-///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: Implementation-defined payload (u32)
-pub const UDP_TX: u16 = 0x0210;
-
-/// UDP transport receive event.
-///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: Implementation-defined payload (u32)
-pub const UDP_RX: u16 = 0x0211;
-
 /// Transport-level telemetry event (ACK / Loss notification).
 ///
 /// - `arg0`: Lower 32 bits of the packet number
@@ -234,19 +189,13 @@ pub const TRANSPORT_METRICS: u16 = 0x0213;
 /// - `arg1`: Pacing interval in microseconds (0 indicates absent)
 pub const TRANSPORT_METRICS_EXT: u16 = 0x0214;
 
-/// Misuse detection: `RecvGuard` dropped without completion.
-///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: Lane / role context (u32)
-pub const MISUSE_RECVGUARD_DROP: u16 = 0x02FF;
-
 /// Delegation begins (tracks shot discipline and in-flight count).
 ///
 /// - `arg0`: Service identifier (high 32 bits of 64-bit id)
 /// - `arg1`: Low 32 bits | shot flag << 31 | in-flight count
 ///
 /// # Observable Properties
-/// - Every `DELEG_BEGIN` must be followed by `DELEG_SPLICE` or `DELEG_ABORT`
+/// - Every `DELEG_BEGIN` must be followed by `DELEG_SPLICE`
 /// - Shot discipline: Only `Many` delegations can be re-routed
 pub const DELEG_BEGIN: u16 = 0x0230;
 
@@ -269,24 +218,6 @@ pub const ROUTE_PICK: u16 = 0x0231;
 /// - Marks successful completion of delegation
 /// - Generation increments monotonically
 pub const DELEG_SPLICE: u16 = 0x0232;
-
-/// Delegation aborted (exhausted, invariant violation, or cancel).
-///
-/// - `arg0`: Abort reason (0 = Exhausted, 1 = Invariant, 2 = Cancelled)
-/// - `arg1`: Context dependent diagnostic (e.g., lane id)
-///
-/// # Observable Properties
-/// - Terminates the delegation flow for the associated session
-pub const DELEG_ABORT: u16 = 0x0233;
-
-/// SLO breach detected (latency budget exceeded).
-///
-/// - `arg0`: Observed latency in microseconds (u32)
-/// - `arg1`: Queue tail (low 16 bits) | retry flag (high 16 bits)
-///
-/// # Observable Properties
-/// - Emitted for `Many` delegations to inform routing adaptations
-pub const SLO_BREACH: u16 = 0x0240;
 
 /// Policy VM requested a session abort (mapped to cancel_begin/ack).
 ///
@@ -318,7 +249,7 @@ pub const POLICY_EFFECT: u16 = 0x0403;
 /// - `arg1`: Session identifier when known, otherwise 0
 pub const POLICY_RA_OK: u16 = 0x0404;
 
-/// Policy VM slot activated (Load→Commit→Activate completed).
+/// Policy VM slot activation scheduled after Load→Commit.
 ///
 /// - `arg0`: Slot identifier (0=Forward,1=EndpointRx,2=EndpointTx,3=Rendezvous)
 /// - `arg1`: Activated version identifier
@@ -329,3 +260,74 @@ pub const POLICY_COMMIT: u16 = 0x0405;
 /// - `arg0`: Slot identifier (0=Forward,1=EndpointRx,2=EndpointTx,3=Rendezvous)
 /// - `arg1`: Version identifier restored
 pub const POLICY_ROLLBACK: u16 = 0x0406;
+
+/// Policy audit core digest tuple.
+///
+/// - `arg0`: policy_digest
+/// - `arg1`: event_hash
+/// - `arg2`: signals_input_hash
+pub const POLICY_AUDIT: u16 = 0x0407;
+
+/// Policy audit extension digest tuple.
+///
+/// - `arg0`: signals_attrs_hash
+/// - `arg1`: transport_snapshot_hash
+/// - `arg2`: slot/mode metadata
+pub const POLICY_AUDIT_EXT: u16 = 0x0408;
+
+/// Policy audit verdict tuple.
+///
+/// - `arg0`: verdict metadata (`tag<<24 | arm<<16`)
+/// - `arg1`: reject reason (0 unless `Reject`)
+/// - `arg2`: fuel_used
+pub const POLICY_AUDIT_RESULT: u16 = 0x0409;
+
+/// Policy replay event tuple.
+///
+/// - `arg0`: triggering event id (u16 promoted to u32)
+/// - `arg1`: triggering event arg0
+/// - `arg2`: triggering event arg1
+pub(crate) const POLICY_REPLAY_EVENT: u16 = 0x040A;
+
+/// Policy replay input tuple (first three input words).
+///
+/// - `arg0`: policy_input[0]
+/// - `arg1`: policy_input[1]
+/// - `arg2`: policy_input[2]
+pub(crate) const POLICY_REPLAY_INPUT0: u16 = 0x040B;
+
+/// Policy replay input tuple (last input word).
+///
+/// - `arg0`: policy_input[3]
+/// - `arg1`: reserved (0)
+/// - `arg2`: reserved (0)
+pub(crate) const POLICY_REPLAY_INPUT1: u16 = 0x040C;
+
+/// Policy replay transport tuple (latency/queue/congestion).
+///
+/// - `arg0`: latency_us (saturated to u32, 0 when unavailable)
+/// - `arg1`: queue_depth
+/// - `arg2`: congestion_marks
+pub(crate) const POLICY_REPLAY_TRANSPORT0: u16 = 0x040D;
+
+/// Policy replay transport tuple (retry count).
+///
+/// - `arg0`: retransmissions
+/// - `arg1`: presence bitmask (bit0 latency, bit1 queue, bit2 congestion, bit3 retry)
+/// - `arg2`: reserved (0)
+pub(crate) const POLICY_REPLAY_TRANSPORT1: u16 = 0x040E;
+
+/// Policy replay event extension tuple.
+///
+/// - `arg0`: triggering event arg1
+/// - `arg1`: triggering event arg2
+/// - `arg2`: triggering event causal key (u16 promoted to u32)
+pub(crate) const POLICY_REPLAY_EVENT_EXT: u16 = 0x040F;
+
+/// Policy liveness/defer audit tuple.
+///
+/// - `arg0`: `defer_source<<24 | retry_hint<<16 | remaining_budget`
+/// - `arg1`: `scope_slot<<16 | selected_arm<<8 | ready_arm_mask`
+///            (`scope_slot=0xFFFF` means non-route frontier, `selected_arm=0xFF` means unknown)
+/// - `arg2`: `defer_reason<<16 | hint<<8 | frontier<<4 | binding_ready<<1 | exhausted_flag`
+pub(crate) const POLICY_AUDIT_DEFER: u16 = 0x0410;

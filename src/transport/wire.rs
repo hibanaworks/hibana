@@ -4,7 +4,7 @@
 //! (`WireEncode` / `WireDecode`) used by control / mgmt payloads plus the
 //! transport-facing payload wrapper (`Payload`) and lightweight codec traits
 //! (`CodecError`, `WireEncode`, `WireDecode`). Protocol-specific transports
-//! (QUIC, etc.) map typestate decisions onto their native frame formats and do
+//! map typestate decisions onto their native frame formats and do
 //! **not** put Hibana metadata on the wire. Application payloads are opaque
 //! byte slices; only control-plane messages implement the lightweight codecs
 //! defined here so that Hibana can stay `no_std` / `no_alloc`.
@@ -21,9 +21,7 @@ pub enum CodecError {
 /// Trait for encoding structured payloads into transport-provided buffers.
 pub trait WireEncode {
     /// Optional hint describing the encoded length if it is statically known.
-    fn encoded_len(&self) -> Option<usize> {
-        None
-    }
+    fn encoded_len(&self) -> Option<usize>;
 
     /// Encode into `out`, returning the number of bytes written.
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError>;
@@ -183,76 +181,35 @@ impl<'a, const N: usize> WireDecode<'a> for [u8; N] {
 /// Wire-level flags for frames (no external crates).
 ///
 /// Only transport fragmentation metadata remains here; control-plane signalling
-/// moved to typed labels (`control::cap::payload`) so that the data plane observes a
-/// uniform message model.
+/// stays on typed control messages so that the data plane observes a uniform
+/// message model.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Default)]
 #[repr(transparent)]
-pub struct FrameFlags(u8);
+pub(crate) struct FrameFlags(u8);
 
 impl FrameFlags {
     /// Mask of supported bits. Unknown bits are dropped when decoding.
-    pub const ALLOWED: u8 = 0x10 /*FRAG*/ | 0x20 /*IDX*/ | 0x40 /*TOT*/;
+    pub(crate) const ALLOWED: u8 = 0x10 /*FRAG*/ | 0x20 /*IDX*/ | 0x40 /*TOT*/;
 
-    pub const EMPTY: Self = Self(0x00);
-    pub const FRAG: Self = Self(0x10);
-    pub const IDX: Self = Self(0x20);
-    pub const TOT: Self = Self(0x40);
+    pub(crate) const EMPTY: Self = Self(0x00);
+    pub(crate) const FRAG: Self = Self(0x10);
+    pub(crate) const IDX: Self = Self(0x20);
+    pub(crate) const TOT: Self = Self(0x40);
 
     #[inline]
-    pub const fn empty() -> Self {
+    pub(crate) const fn empty() -> Self {
         Self::EMPTY
     }
 
     #[inline]
-    pub const fn bits(self) -> u8 {
+    pub(crate) const fn bits(self) -> u8 {
         self.0
-    }
-
-    /// Drop any unknown bits when converting from the wire representation.
-    #[inline]
-    pub const fn from_bits_truncate(bits: u8) -> Self {
-        Self(bits & Self::ALLOWED)
-    }
-
-    /// Accept the bit-pattern only if it does not contain unknown flag bits.
-    #[inline]
-    pub const fn from_bits_retain(bits: u8) -> Option<Self> {
-        if (bits & !Self::ALLOWED) == 0 {
-            Some(Self(bits))
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    pub const fn is_empty(self) -> bool {
-        self.0 == 0
     }
 
     /// True if *all* bits in `other` are set in `self`.
     #[inline]
-    pub const fn contains(self, other: Self) -> bool {
+    pub(crate) const fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
-    }
-
-    #[inline]
-    pub fn insert(&mut self, other: Self) {
-        self.0 |= other.0;
-        self.0 &= Self::ALLOWED;
-    }
-
-    #[inline]
-    pub fn remove(&mut self, other: Self) {
-        self.0 &= !other.0;
-    }
-
-    #[inline]
-    pub fn set(&mut self, other: Self, on: bool) {
-        if on {
-            self.insert(other);
-        } else {
-            self.remove(other);
-        }
     }
 }
 

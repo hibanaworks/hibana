@@ -5,23 +5,98 @@
 //! together with the successor index, allowing higher layers to drive endpoint
 //! transitions.
 
-use crate::control::cap::CapShot;
+use crate::control::cap::mint::CapShot;
 use crate::eff::{self, EffIndex, EffStruct};
-use crate::global::const_dsl::{EffList, HandlePlan, ScopeEvent, ScopeId, ScopeKind};
+use crate::global::const_dsl::{EffList, PolicyMode, ScopeEvent, ScopeId, ScopeKind};
 use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
 
 /// Index identifying a local state within the synthesized typestate graph.
-pub type StateIndex = u16;
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct StateIndex(u16);
+
+impl StateIndex {
+    pub const ZERO: Self = Self(0);
+    pub const MAX: Self = Self(u16::MAX);
+
+    #[inline(always)]
+    pub const fn new(raw: u16) -> Self {
+        Self(raw)
+    }
+
+    #[inline(always)]
+    pub const fn from_usize(idx: usize) -> Self {
+        if idx > (u16::MAX as usize) {
+            panic!("state index overflow");
+        }
+        Self(idx as u16)
+    }
+
+    #[inline(always)]
+    pub const fn raw(self) -> u16 {
+        self.0
+    }
+
+    #[inline(always)]
+    pub const fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+
+    #[inline(always)]
+    pub const fn is_max(self) -> bool {
+        self.0 == u16::MAX
+    }
+}
+
+impl PartialEq<u16> for StateIndex {
+    fn eq(&self, other: &u16) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<StateIndex> for u16 {
+    fn eq(&self, other: &StateIndex) -> bool {
+        *self == other.0
+    }
+}
+
+/// Index into the per-scope route-recv linked list and flattened recv table.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct RouteRecvIndex(u16);
+
+impl RouteRecvIndex {
+    pub(crate) const ZERO: Self = Self(0);
+    pub(crate) const MAX: Self = Self(u16::MAX);
+
+    #[inline(always)]
+    pub(crate) const fn from_usize(idx: usize) -> Self {
+        if idx > (u16::MAX as usize) {
+            panic!("route recv index overflow");
+        }
+        Self(idx as u16)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_max(self) -> bool {
+        self.0 == u16::MAX
+    }
+}
 
 /// Maximum number of local states tracked per role (one extra slot for the
 /// terminal state).
-pub const MAX_STATES: usize = eff::meta::MAX_EFF_NODES + 1;
+pub(crate) const MAX_STATES: usize = eff::meta::MAX_EFF_NODES + 1;
 
 /// Reason for an explicit control flow jump.
 ///
 /// Used for debugging and observability to track why a jump occurred.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum JumpReason {
+pub(crate) enum JumpReason {
     /// Route arm end → jump to scope_end.
     RouteArmEnd,
     /// Loop continue → jump to loop_start.
@@ -36,7 +111,7 @@ pub enum JumpReason {
 ///
 /// Indicates a bug in the typestate compiler (CFG cycle).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct JumpError {
+pub(crate) struct JumpError {
     /// Number of iterations before cycle detected.
     pub iterations: u32,
     /// Node index where cycle was detected.
@@ -48,7 +123,7 @@ pub struct JumpError {
 /// With CFG-pure design, all arms (including τ-eliminated ones) have
 /// ArmEmpty placeholder nodes, so navigation always returns a valid entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PassiveArmNavigation {
+pub(crate) enum PassiveArmNavigation {
     /// Jumped to a node within the arm.
     /// For τ-eliminated arms, this points to the ArmEmpty (RouteArmEnd) placeholder.
     WithinArm { entry: StateIndex },
@@ -56,7 +131,7 @@ pub enum PassiveArmNavigation {
 
 /// Local action associated with a typestate node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LocalAction {
+pub(crate) enum LocalAction {
     /// Placeholder used to prefill the backing array.
     None,
     /// Role sends a message to a peer.
@@ -67,7 +142,7 @@ pub enum LocalAction {
         resource: Option<u8>,
         is_control: bool,
         shot: Option<CapShot>,
-        plan: HandlePlan,
+        policy: PolicyMode,
         /// Type-level lane for parallel composition (default 0).
         lane: u8,
     },
@@ -79,7 +154,7 @@ pub enum LocalAction {
         resource: Option<u8>,
         is_control: bool,
         shot: Option<CapShot>,
-        plan: HandlePlan,
+        policy: PolicyMode,
         /// Type-level lane for parallel composition (default 0).
         lane: u8,
     },
@@ -90,7 +165,7 @@ pub enum LocalAction {
         resource: Option<u8>,
         is_control: bool,
         shot: Option<CapShot>,
-        plan: HandlePlan,
+        policy: PolicyMode,
         /// Type-level lane for parallel composition (default 0).
         lane: u8,
     },
@@ -109,37 +184,38 @@ pub enum LocalAction {
 impl LocalAction {
     /// True when the node corresponds to a send action.
     #[inline(always)]
-    pub const fn is_send(&self) -> bool {
+    pub(crate) const fn is_send(&self) -> bool {
         matches!(self, Self::Send { .. })
     }
 
     /// True when the node corresponds to a receive action.
     #[inline(always)]
-    pub const fn is_recv(&self) -> bool {
+    pub(crate) const fn is_recv(&self) -> bool {
         matches!(self, Self::Recv { .. })
     }
 
     /// True when the node marks a terminal state.
+    #[cfg(test)]
     #[inline(always)]
-    pub const fn is_terminal(&self) -> bool {
+    pub(crate) const fn is_terminal(&self) -> bool {
         matches!(self, Self::Terminate)
     }
 
     /// True when the node corresponds to a local action.
     #[inline(always)]
-    pub const fn is_local_action(&self) -> bool {
+    pub(crate) const fn is_local_action(&self) -> bool {
         matches!(self, Self::Local { .. })
     }
 
     /// True when the node corresponds to an explicit control flow jump.
     #[inline(always)]
-    pub const fn is_jump(&self) -> bool {
+    pub(crate) const fn is_jump(&self) -> bool {
         matches!(self, Self::Jump { .. })
     }
 
     /// Returns the jump reason if this is a Jump action.
     #[inline(always)]
-    pub const fn jump_reason(&self) -> Option<JumpReason> {
+    pub(crate) const fn jump_reason(&self) -> Option<JumpReason> {
         match self {
             Self::Jump { reason } => Some(*reason),
             _ => None,
@@ -149,7 +225,7 @@ impl LocalAction {
 
 /// Single node in the synthesized typestate graph.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LocalNode {
+pub(crate) struct LocalNode {
     action: LocalAction,
     next: StateIndex,
     scope: ScopeId,
@@ -162,9 +238,9 @@ pub struct LocalNode {
 
 impl LocalNode {
     /// Placeholder used to prefill the backing array.
-    pub const EMPTY: Self = Self {
+    pub(crate) const EMPTY: Self = Self {
         action: LocalAction::None,
-        next: 0,
+        next: StateIndex::ZERO,
         scope: ScopeId::none(),
         loop_scope: None,
         route_arm: None,
@@ -173,14 +249,14 @@ impl LocalNode {
 
     /// Construct a send node that advances to `next`.
     #[allow(clippy::too_many_arguments)]
-    pub const fn send(
+    pub(crate) const fn send(
         eff_index: EffIndex,
         peer: u8,
         label: u8,
         resource: Option<u8>,
         is_control: bool,
         shot: Option<CapShot>,
-        plan: HandlePlan,
+        policy: PolicyMode,
         lane: u8,
         next: StateIndex,
         scope: ScopeId,
@@ -196,7 +272,7 @@ impl LocalNode {
                 resource,
                 is_control,
                 shot,
-                plan,
+                policy,
                 lane,
             },
             next,
@@ -209,14 +285,14 @@ impl LocalNode {
 
     /// Construct a receive node that advances to `next`.
     #[allow(clippy::too_many_arguments)]
-    pub const fn recv(
+    pub(crate) const fn recv(
         eff_index: EffIndex,
         peer: u8,
         label: u8,
         resource: Option<u8>,
         is_control: bool,
         shot: Option<CapShot>,
-        plan: HandlePlan,
+        policy: PolicyMode,
         lane: u8,
         next: StateIndex,
         scope: ScopeId,
@@ -232,7 +308,7 @@ impl LocalNode {
                 resource,
                 is_control,
                 shot,
-                plan,
+                policy,
                 lane,
             },
             next,
@@ -245,13 +321,13 @@ impl LocalNode {
 
     /// Construct a local action node that advances to `next`.
     #[allow(clippy::too_many_arguments)]
-    pub const fn local(
+    pub(crate) const fn local(
         eff_index: EffIndex,
         label: u8,
         resource: Option<u8>,
         is_control: bool,
         shot: Option<CapShot>,
-        plan: HandlePlan,
+        policy: PolicyMode,
         lane: u8,
         next: StateIndex,
         scope: ScopeId,
@@ -266,7 +342,7 @@ impl LocalNode {
                 resource,
                 is_control,
                 shot,
-                plan,
+                policy,
                 lane,
             },
             next,
@@ -278,7 +354,7 @@ impl LocalNode {
     }
 
     /// Construct a terminal node that loops to itself.
-    pub const fn terminal(index: StateIndex) -> Self {
+    pub(crate) const fn terminal(index: StateIndex) -> Self {
         Self {
             action: LocalAction::Terminate,
             next: index,
@@ -293,7 +369,7 @@ impl LocalNode {
     ///
     /// Option C design: the `target` is stored in `next`, and `reason` provides
     /// debugging/observability information.
-    pub const fn jump(
+    pub(crate) const fn jump(
         target: StateIndex,
         reason: JumpReason,
         scope: ScopeId,
@@ -312,74 +388,62 @@ impl LocalNode {
 
     /// Action associated with the node.
     #[inline(always)]
-    pub const fn action(&self) -> LocalAction {
+    pub(crate) const fn action(&self) -> LocalAction {
         self.action
     }
 
     /// Successor state reached after performing the action.
     #[inline(always)]
-    pub const fn next(&self) -> StateIndex {
+    pub(crate) const fn next(&self) -> StateIndex {
         self.next
     }
 
     /// Scope identifier associated with the node, when present.
     #[inline(always)]
-    pub const fn scope(&self) -> ScopeId {
+    pub(crate) const fn scope(&self) -> ScopeId {
         self.scope
     }
 
     #[inline(always)]
-    pub const fn loop_scope(&self) -> Option<ScopeId> {
+    pub(crate) const fn loop_scope(&self) -> Option<ScopeId> {
         self.loop_scope
     }
 
     #[inline(always)]
-    pub const fn route_arm(&self) -> Option<u8> {
+    pub(crate) const fn route_arm(&self) -> Option<u8> {
         self.route_arm
     }
 
     /// Whether this node is a choice determinant (first recv of a route arm).
     #[inline(always)]
-    pub const fn is_choice_determinant(&self) -> bool {
+    pub(crate) const fn is_choice_determinant(&self) -> bool {
         self.is_choice_determinant
-    }
-
-    /// Returns the label associated with this node's action, if any.
-    #[inline(always)]
-    pub const fn label(&self) -> Option<u8> {
-        match self.action {
-            LocalAction::Send { label, .. }
-            | LocalAction::Recv { label, .. }
-            | LocalAction::Local { label, .. } => Some(label),
-            LocalAction::None | LocalAction::Terminate | LocalAction::Jump { .. } => None,
-        }
     }
 
     /// Returns a copy of this node with a different `next` value.
     ///
     /// Used for backpatching during typestate construction.
     #[inline(always)]
-    pub const fn with_next(self, next: StateIndex) -> Self {
+    pub(crate) const fn with_next(self, next: StateIndex) -> Self {
         Self { next, ..self }
     }
 
     #[inline(always)]
-    pub const fn with_scope(self, scope: ScopeId) -> Self {
+    pub(crate) const fn with_scope(self, scope: ScopeId) -> Self {
         Self { scope, ..self }
     }
 
     #[inline(always)]
-    pub const fn with_route_arm(self, route_arm: Option<u8>) -> Self {
+    pub(crate) const fn with_route_arm(self, route_arm: Option<u8>) -> Self {
         Self { route_arm, ..self }
     }
 }
 
 const SCOPE_ORDINAL_INDEX_CAPACITY: usize = ScopeId::ORDINAL_CAPACITY as usize;
 const SCOPE_ORDINAL_INDEX_EMPTY: u16 = u16::MAX;
-const ROUTE_RECV_LIST_EMPTY: u16 = u16::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ScopeEntry {
+pub(crate) struct ScopeEntry {
     pub scope_id: ScopeId,
     pub kind: ScopeKind,
     pub start: StateIndex,
@@ -388,15 +452,15 @@ pub struct ScopeEntry {
     pub nest: u16,
     pub linger: bool,
     pub parent: ScopeId,
-    pub route_recv_head: u16,
-    pub route_recv_tail: u16,
+    pub route_recv_head: RouteRecvIndex,
+    pub route_recv_tail: RouteRecvIndex,
     pub route_recv_len: u16,
-    pub route_recv_offset: u16,
+    pub route_recv_offset: RouteRecvIndex,
     pub route_send_len: u16,
-    pub route_plan: HandlePlan,
-    pub route_plan_eff: EffIndex,
-    pub route_plan_tag: u8,
-    pub has_route_plan: bool,
+    pub route_policy: PolicyMode,
+    pub route_policy_eff: EffIndex,
+    pub route_policy_tag: u8,
+    pub has_route_policy: bool,
     /// Jump node indices for passive observers in route scopes (both linger and non-linger).
     /// passive_arm_jump[arm] = Jump node index for that arm.
     /// Set to u16::MAX if no passive observer Jump exists for that arm.
@@ -428,8 +492,11 @@ pub struct ScopeEntry {
     /// Each arm's first cross-role node (Send or Recv) index.
     /// u16::MAX = arm not present or not yet set.
     pub passive_arm_entry: [StateIndex; 2],
+    /// First nested route scope containing the passive arm entry.
+    /// ScopeId::none() means the arm materializes directly to a node in this scope.
+    pub passive_arm_scope: [ScopeId; 2],
     /// Controller role for Route scopes.
-    /// Propagated from ScopeMarker::controller_role (set by route_chain<CONTROLLER>).
+    /// Propagated from ScopeMarker::controller_role (derived from the route arm entry).
     /// `None` if this role is a passive observer or the scope is not a Route.
     pub controller_role: Option<u8>,
     /// FIRST-recv dispatch table for passive observers.
@@ -439,7 +506,7 @@ pub struct ScopeEntry {
     /// - `arm` is the route arm (0 or 1), or ARM_SHARED when label maps to the same continuation
     /// - `target_idx` is the StateIndex of the leaf recv node
     /// Entries with label=0 and target=u16::MAX are unused.
-    pub first_recv_dispatch: [(u8, u8, StateIndex); 8],
+    pub first_recv_dispatch: [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     /// Number of valid entries in first_recv_dispatch.
     pub first_recv_len: u8,
     /// True when this role's arms are mergeable and the route can be elided locally.
@@ -448,6 +515,7 @@ pub struct ScopeEntry {
 
 /// Marker for dispatch entries where label → continuation is arm-agnostic.
 pub(crate) const ARM_SHARED: u8 = 0xFF;
+pub(crate) const MAX_FIRST_RECV_DISPATCH: usize = 16;
 
 const fn offer_lane_bit(lane: u8) -> u8 {
     if lane >= MAX_LANES as u8 {
@@ -474,49 +542,48 @@ impl ScopeEntry {
     const EMPTY: Self = Self {
         scope_id: ScopeId::none(),
         kind: ScopeKind::Generic,
-        start: u16::MAX,
-        end: u16::MAX,
+        start: StateIndex::MAX,
+        end: StateIndex::MAX,
         range: 0,
         nest: 0,
         linger: false,
         parent: ScopeId::none(),
-        route_recv_head: ROUTE_RECV_LIST_EMPTY,
-        route_recv_tail: ROUTE_RECV_LIST_EMPTY,
+        route_recv_head: RouteRecvIndex::MAX,
+        route_recv_tail: RouteRecvIndex::MAX,
         route_recv_len: 0,
-        route_recv_offset: 0,
+        route_recv_offset: RouteRecvIndex::ZERO,
         route_send_len: 0,
-        route_plan: HandlePlan::None,
-        route_plan_eff: EffIndex::MAX,
-        route_plan_tag: 0,
-        has_route_plan: false,
-        passive_arm_jump: [u16::MAX, u16::MAX],
+        route_policy: PolicyMode::Static,
+        route_policy_eff: EffIndex::MAX,
+        route_policy_tag: 0,
+        has_route_policy: false,
+        passive_arm_jump: [StateIndex::MAX, StateIndex::MAX],
         offer_lanes: 0,
-        offer_entry: u16::MAX,
+        offer_entry: StateIndex::MAX,
         lane_first_eff: [EffIndex::MAX; MAX_LANES],
         lane_last_eff: [EffIndex::MAX; MAX_LANES],
         arm_lane_last_eff: [[EffIndex::MAX; MAX_LANES]; 2],
-        controller_arm_entry: [u16::MAX, u16::MAX],
+        controller_arm_entry: [StateIndex::MAX, StateIndex::MAX],
         controller_arm_label: [0, 0],
-        passive_arm_entry: [u16::MAX, u16::MAX],
+        passive_arm_entry: [StateIndex::MAX, StateIndex::MAX],
+        passive_arm_scope: [ScopeId::none(), ScopeId::none()],
         controller_role: None,
-        first_recv_dispatch: [(0, 0, u16::MAX); 8],
+        first_recv_dispatch: [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH],
         first_recv_len: 0,
         mergeable: false,
     };
 }
 
-/// Two route plans are considered the same if they share policy_id and scope.
-/// The `meta` fields (static_weight, shard_hint) are resolution hints for
-/// selecting among arms and do not affect plan identity.
-const fn route_plan_differs(existing: HandlePlan, new_plan: HandlePlan) -> bool {
-    match (existing, new_plan) {
+/// Two route policies are considered the same if they share policy_id and scope.
+const fn route_policy_differs(existing: PolicyMode, new_policy: PolicyMode) -> bool {
+    match (existing, new_policy) {
         (
-            HandlePlan::Dynamic {
+            PolicyMode::Dynamic {
                 policy_id: existing_policy,
                 scope: existing_scope,
                 ..
             },
-            HandlePlan::Dynamic {
+            PolicyMode::Dynamic {
                 policy_id: new_policy,
                 scope: new_scope,
                 ..
@@ -574,9 +641,14 @@ const fn actions_equivalent(
             },
         ) => left_label == right_label && left_lane == right_lane,
         (LocalAction::Terminate, LocalAction::Terminate) => true,
-        (LocalAction::Jump { reason: left_reason }, LocalAction::Jump { reason: right_reason }) => {
-            jump_reason_eq(left_reason, right_reason) && left_next == right_next
-        }
+        (
+            LocalAction::Jump {
+                reason: left_reason,
+            },
+            LocalAction::Jump {
+                reason: right_reason,
+            },
+        ) => jump_reason_eq(left_reason, right_reason) && left_next.raw() == right_next.raw(),
         _ => false,
     }
 }
@@ -587,7 +659,10 @@ const fn jump_reason_eq(left: JumpReason, right: JumpReason) -> bool {
         (JumpReason::RouteArmEnd, JumpReason::RouteArmEnd)
             | (JumpReason::LoopContinue, JumpReason::LoopContinue)
             | (JumpReason::LoopBreak, JumpReason::LoopBreak)
-            | (JumpReason::PassiveObserverBranch, JumpReason::PassiveObserverBranch)
+            | (
+                JumpReason::PassiveObserverBranch,
+                JumpReason::PassiveObserverBranch
+            )
     )
 }
 
@@ -597,12 +672,12 @@ const fn arm_sequences_equal(
     arm0_entry: StateIndex,
     arm1_entry: StateIndex,
 ) -> bool {
-    if arm0_entry == u16::MAX || arm1_entry == u16::MAX {
+    if arm0_entry.is_max() || arm1_entry.is_max() {
         return false;
     }
-    let end = scope_end as usize;
-    let mut idx0 = arm0_entry as usize;
-    let mut idx1 = arm1_entry as usize;
+    let end = state_index_to_usize(scope_end);
+    let mut idx0 = state_index_to_usize(arm0_entry);
+    let mut idx1 = state_index_to_usize(arm1_entry);
     let mut steps = 0usize;
     while steps < MAX_STATES {
         if idx0 < end {
@@ -642,8 +717,16 @@ const fn arm_sequences_equal(
         }
         let next0 = node0.next();
         let next1 = node1.next();
-        idx0 = if next0 == u16::MAX { end } else { next0 as usize };
-        idx1 = if next1 == u16::MAX { end } else { next1 as usize };
+        idx0 = if next0.is_max() {
+            end
+        } else {
+            state_index_to_usize(next0)
+        };
+        idx1 = if next1.is_max() {
+            end
+        } else {
+            state_index_to_usize(next1)
+        };
         steps += 1;
     }
     false
@@ -655,7 +738,7 @@ const fn continuations_equivalent(
     left_entry: StateIndex,
     right_entry: StateIndex,
 ) -> bool {
-    if left_entry == right_entry {
+    if left_entry.raw() == right_entry.raw() {
         return true;
     }
     arm_sequences_equal(nodes, scope_end, left_entry, right_entry)
@@ -668,12 +751,12 @@ const fn arm_common_prefix_end(
     arm0_entry: StateIndex,
     arm1_entry: StateIndex,
 ) -> (StateIndex, StateIndex, usize) {
-    if arm0_entry == u16::MAX || arm1_entry == u16::MAX {
+    if arm0_entry.is_max() || arm1_entry.is_max() {
         return (arm0_entry, arm1_entry, 0);
     }
-    let end = scope_end as usize;
+    let end = state_index_to_usize(scope_end);
     let scope_raw = scope.raw();
-    let mut worklist = [(u16::MAX, u16::MAX); MAX_PREFIX_ACTIONS];
+    let mut worklist = [(StateIndex::MAX, StateIndex::MAX); MAX_PREFIX_ACTIONS];
     worklist[0] = (arm0_entry, arm1_entry);
     let mut work_len = 1usize;
     let mut prefix_len = 0usize;
@@ -683,8 +766,8 @@ const fn arm_common_prefix_end(
     while work_len > 0 {
         work_len -= 1;
         let (mut idx0, mut idx1) = worklist[work_len];
-        let mut idx0_us = idx0 as usize;
-        let mut idx1_us = idx1 as usize;
+        let mut idx0_us = state_index_to_usize(idx0);
+        let mut idx1_us = state_index_to_usize(idx1);
 
         if idx0_us < end {
             let node0 = nodes[idx0_us];
@@ -734,8 +817,8 @@ const fn arm_common_prefix_end(
 
         let next0 = node0.next();
         let next1 = node1.next();
-        end0 = if next0 == u16::MAX { scope_end } else { next0 };
-        end1 = if next1 == u16::MAX { scope_end } else { next1 };
+        end0 = if next0.is_max() { scope_end } else { next0 };
+        end1 = if next1.is_max() { scope_end } else { next1 };
         prefix_len += 1;
 
         if work_len >= worklist.len() {
@@ -749,7 +832,7 @@ const fn arm_common_prefix_end(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ScopeRegion {
+pub(crate) struct ScopeRegion {
     pub scope_id: ScopeId,
     pub kind: ScopeKind,
     pub start: usize,
@@ -757,7 +840,7 @@ pub struct ScopeRegion {
     pub range: u16,
     pub nest: u16,
     pub linger: bool,
-    /// Controller role for Route scopes (from `route_chain<CONTROLLER>`).
+    /// Controller role for Route scopes (derived from the route arm entry).
     /// `None` for non-Route scopes or when controller info is unavailable.
     pub controller_role: Option<u8>,
 }
@@ -765,13 +848,13 @@ pub struct ScopeRegion {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct RouteRecvNode {
     state: StateIndex,
-    next: u16,
+    next: RouteRecvIndex,
 }
 
 impl RouteRecvNode {
     const EMPTY: Self = Self {
-        state: 0,
-        next: ROUTE_RECV_LIST_EMPTY,
+        state: StateIndex::ZERO,
+        next: RouteRecvIndex::MAX,
     };
 }
 
@@ -805,7 +888,7 @@ const PREFIX_KIND_SEND: u8 = 0;
 const PREFIX_KIND_LOCAL: u8 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ScopeRecord {
+pub(crate) struct ScopeRecord {
     pub scope_id: ScopeId,
     pub kind: ScopeKind,
     pub start: usize,
@@ -814,13 +897,13 @@ pub struct ScopeRecord {
     pub nest: u16,
     pub linger: bool,
     pub parent: ScopeId,
-    pub route_recv_offset: u16,
+    pub route_recv_offset: RouteRecvIndex,
     pub route_recv_len: u16,
     pub present: bool,
-    pub route_plan: HandlePlan,
-    pub route_plan_eff: EffIndex,
-    pub route_plan_tag: u8,
-    pub has_route_plan: bool,
+    pub route_policy: PolicyMode,
+    pub route_policy_eff: EffIndex,
+    pub route_policy_tag: u8,
+    pub has_route_policy: bool,
     /// PassiveObserverBranch Jump targets for each arm (0 and 1).
     /// u16::MAX means no Jump is registered for that arm.
     pub passive_arm_jump: [StateIndex; 2],
@@ -848,13 +931,15 @@ pub struct ScopeRecord {
     pub controller_arm_label: [u8; 2],
     /// Passive observer arm entry indices.
     pub passive_arm_entry: [StateIndex; 2],
-    /// Controller role for Route scopes (from `route_chain<CONTROLLER>`).
+    /// First nested route scope containing the passive arm entry.
+    pub passive_arm_scope: [ScopeId; 2],
+    /// Controller role for Route scopes (derived from the route arm entry).
     /// `None` for non-Route scopes or when controller info is unavailable.
     pub controller_role: Option<u8>,
     /// FIRST-recv dispatch table for passive observers.
     /// Maps recv label → (arm, target_idx) for O(1) nested route resolution.
     /// `first_recv_dispatch[i] = (label, arm, target_idx)`.
-    pub first_recv_dispatch: [(u8, u8, StateIndex); 8],
+    pub first_recv_dispatch: [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     /// Number of valid entries in first_recv_dispatch.
     pub first_recv_len: u8,
     /// True when this role's arms are mergeable and the route can be elided locally.
@@ -871,26 +956,27 @@ impl ScopeRecord {
         nest: 0,
         linger: false,
         parent: ScopeId::none(),
-        route_recv_offset: 0,
+        route_recv_offset: RouteRecvIndex::ZERO,
         route_recv_len: 0,
         present: false,
-        route_plan: HandlePlan::None,
-        route_plan_eff: EffIndex::MAX,
-        route_plan_tag: 0,
-        has_route_plan: false,
-        passive_arm_jump: [u16::MAX, u16::MAX],
+        route_policy: PolicyMode::Static,
+        route_policy_eff: EffIndex::MAX,
+        route_policy_tag: 0,
+        has_route_policy: false,
+        passive_arm_jump: [StateIndex::MAX, StateIndex::MAX],
         offer_lanes: 0,
         offer_lane_list: [0; MAX_LANES],
         offer_lane_len: 0,
-        offer_entry: u16::MAX,
+        offer_entry: StateIndex::MAX,
         lane_first_eff: [EffIndex::MAX; MAX_LANES],
         lane_last_eff: [EffIndex::MAX; MAX_LANES],
         arm_lane_last_eff: [[EffIndex::MAX; MAX_LANES]; 2],
-        controller_arm_entry: [u16::MAX, u16::MAX],
+        controller_arm_entry: [StateIndex::MAX, StateIndex::MAX],
         controller_arm_label: [0, 0],
-        passive_arm_entry: [u16::MAX, u16::MAX],
+        passive_arm_entry: [StateIndex::MAX, StateIndex::MAX],
+        passive_arm_scope: [ScopeId::none(), ScopeId::none()],
         controller_role: None,
-        first_recv_dispatch: [(0, 0, u16::MAX); 8],
+        first_recv_dispatch: [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH],
         first_recv_len: 0,
         mergeable: false,
     };
@@ -899,7 +985,7 @@ impl ScopeRecord {
         if entry.scope_id.is_none() {
             panic!("scope registry entry missing scope id");
         }
-        if entry.start == u16::MAX || entry.end == u16::MAX {
+        if entry.start.is_max() || entry.end.is_max() {
             panic!("scope registry entry missing bounds");
         }
         let (offer_lane_list, offer_lane_len) = offer_lane_list_from_mask(entry.offer_lanes);
@@ -915,10 +1001,10 @@ impl ScopeRecord {
             route_recv_offset: entry.route_recv_offset,
             route_recv_len: entry.route_recv_len,
             present: true,
-            route_plan: entry.route_plan,
-            route_plan_eff: entry.route_plan_eff,
-            route_plan_tag: entry.route_plan_tag,
-            has_route_plan: entry.has_route_plan,
+            route_policy: entry.route_policy,
+            route_policy_eff: entry.route_policy_eff,
+            route_policy_tag: entry.route_policy_tag,
+            has_route_policy: entry.has_route_policy,
             passive_arm_jump: entry.passive_arm_jump,
             offer_lanes: entry.offer_lanes,
             offer_lane_list,
@@ -930,15 +1016,12 @@ impl ScopeRecord {
             controller_arm_entry: entry.controller_arm_entry,
             controller_arm_label: entry.controller_arm_label,
             passive_arm_entry: entry.passive_arm_entry,
+            passive_arm_scope: entry.passive_arm_scope,
             controller_role: entry.controller_role,
             first_recv_dispatch: entry.first_recv_dispatch,
             first_recv_len: entry.first_recv_len,
             mergeable: entry.mergeable,
         }
-    }
-
-    const fn contains(&self, idx: usize) -> bool {
-        self.start <= idx && idx < self.end
     }
 
     const fn region(&self) -> ScopeRegion {
@@ -1026,6 +1109,28 @@ impl ScopeRegistry {
         Some(record)
     }
 
+    #[inline]
+    fn lookup_slot(&self, scope_id: ScopeId) -> Option<usize> {
+        if scope_id.is_none() {
+            return None;
+        }
+        let canonical = scope_id.canonical();
+        let ordinal = canonical.local_ordinal() as usize;
+        if ordinal >= SCOPE_ORDINAL_INDEX_CAPACITY {
+            return None;
+        }
+        let slot = self.ordinal_index[ordinal];
+        if slot == SCOPE_ORDINAL_INDEX_EMPTY {
+            return None;
+        }
+        let slot_idx = slot as usize;
+        let record = &self.records[slot_idx];
+        if !record.present || record.scope_id != canonical {
+            return None;
+        }
+        Some(slot_idx)
+    }
+
     fn parent_of(&self, scope_id: ScopeId) -> Option<ScopeId> {
         self.lookup_record(scope_id).and_then(|record| {
             if record.parent.is_none() {
@@ -1040,31 +1145,6 @@ impl ScopeRegistry {
         self.lookup_record(scope_id).map(ScopeRecord::region)
     }
 
-    fn resolve_scope(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        let record = self.lookup_record(scope_id)?;
-        let canonical = scope_id.canonical();
-        let with_range = canonical.with_range_ordinal(record.range);
-        Some(with_range.with_nest_ordinal(record.nest))
-    }
-
-    fn covering_kind(
-        &self,
-        mut scope_id: ScopeId,
-        kind: ScopeKind,
-        index: usize,
-    ) -> Option<ScopeRegion> {
-        while let Some(record) = self.lookup_record(scope_id) {
-            if record.kind == kind && record.contains(index) {
-                return Some(record.region());
-            }
-            if record.parent.is_none() {
-                break;
-            }
-            scope_id = record.parent;
-        }
-        None
-    }
-
     fn route_recv_state(&self, scope_id: ScopeId, arm: u8) -> Option<StateIndex> {
         let record = self.lookup_record(scope_id)?;
         if record.route_recv_len == 0 {
@@ -1074,7 +1154,7 @@ impl ScopeRegistry {
         if arm_idx >= record.route_recv_len {
             return None;
         }
-        let offset = record.route_recv_offset as usize + arm as usize;
+        let offset = record.route_recv_offset.as_usize() + arm as usize;
         if offset >= self.route_recv_len {
             return None;
         }
@@ -1094,6 +1174,16 @@ impl ScopeRegistry {
     fn route_offer_entry(&self, scope_id: ScopeId) -> Option<StateIndex> {
         let record = self.lookup_record(scope_id)?;
         Some(record.offer_entry)
+    }
+
+    #[inline]
+    fn route_scope_slot(&self, scope_id: ScopeId) -> Option<usize> {
+        let slot = self.lookup_slot(scope_id)?;
+        let record = &self.records[slot];
+        if !record.present || record.kind != ScopeKind::Route {
+            return None;
+        }
+        Some(slot)
     }
 
     fn scope_lane_first_eff(&self, scope_id: ScopeId, lane: u8) -> Option<EffIndex> {
@@ -1146,17 +1236,13 @@ impl ScopeRegistry {
         }
     }
 
-    fn route_mergeable(&self, scope_id: ScopeId) -> Option<bool> {
-        let record = self.lookup_record(scope_id)?;
-        Some(record.mergeable)
-    }
-
     /// Get the controller arm entry index for a given label.
     /// Returns the StateIndex of the arm whose label matches, or None if not found.
     fn controller_arm_entry_for_label(&self, scope_id: ScopeId, label: u8) -> Option<StateIndex> {
         let record = self.lookup_record(scope_id)?;
         for i in 0..2 {
-            if record.controller_arm_entry[i] != u16::MAX && record.controller_arm_label[i] == label
+            if record.controller_arm_entry[i] != StateIndex::MAX
+                && record.controller_arm_label[i] == label
             {
                 return Some(record.controller_arm_entry[i]);
             }
@@ -1171,7 +1257,9 @@ impl ScopeRegistry {
             return false;
         };
         for i in 0..2 {
-            if record.controller_arm_entry[i] != u16::MAX && record.controller_arm_entry[i] == idx {
+            if record.controller_arm_entry[i] != StateIndex::MAX
+                && record.controller_arm_entry[i] == idx
+            {
                 return true;
             }
         }
@@ -1182,7 +1270,7 @@ impl ScopeRegistry {
     /// Returns (StateIndex, label) if the arm exists, None otherwise.
     fn controller_arm_entry_by_arm(&self, scope_id: ScopeId, arm: u8) -> Option<(StateIndex, u8)> {
         let record = self.lookup_record(scope_id)?;
-        if arm < 2 && record.controller_arm_entry[arm as usize] != u16::MAX {
+        if arm < 2 && record.controller_arm_entry[arm as usize] != StateIndex::MAX {
             Some((
                 record.controller_arm_entry[arm as usize],
                 record.controller_arm_label[arm as usize],
@@ -1192,15 +1280,15 @@ impl ScopeRegistry {
         }
     }
 
-    fn route_controller(&self, scope_id: ScopeId) -> Option<(HandlePlan, EffIndex, u8)> {
+    fn route_controller(&self, scope_id: ScopeId) -> Option<(PolicyMode, EffIndex, u8)> {
         let record = self.lookup_record(scope_id)?;
-        if !record.has_route_plan {
+        if !record.has_route_policy {
             return None;
         }
         Some((
-            record.route_plan,
-            record.route_plan_eff,
-            record.route_plan_tag,
+            record.route_policy,
+            record.route_policy_eff,
+            record.route_policy_tag,
         ))
     }
 
@@ -1214,7 +1302,7 @@ impl ScopeRegistry {
         }
         let record = self.lookup_record(scope_id)?;
         let target = record.passive_arm_jump[arm as usize];
-        if target == u16::MAX {
+        if target == StateIndex::MAX {
             None
         } else {
             Some(target)
@@ -1231,11 +1319,20 @@ impl ScopeRegistry {
         }
         let record = self.lookup_record(scope_id)?;
         let target = record.passive_arm_entry[arm as usize];
-        if target == u16::MAX {
+        if target == StateIndex::MAX {
             None
         } else {
             Some(target)
         }
+    }
+
+    fn passive_arm_scope(&self, scope_id: ScopeId, arm: u8) -> Option<ScopeId> {
+        if arm >= 2 {
+            return None;
+        }
+        let record = self.lookup_record(scope_id)?;
+        let target = record.passive_arm_scope[arm as usize];
+        (!target.is_none()).then_some(target)
     }
 
     /// FIRST-recv dispatch lookup for passive observers.
@@ -1263,61 +1360,18 @@ impl ScopeRegistry {
         None
     }
 
-}
-
-pub struct ScopeRegionIter<'a> {
-    registry: &'a ScopeRegistry,
-    idx: usize,
-}
-
-impl<'a> Iterator for ScopeRegionIter<'a> {
-    type Item = ScopeRegion;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        while self.idx < self.registry.len {
-            let record = self.registry.records[self.idx];
-            self.idx += 1;
-            if record.present {
-                return Some(record.region());
-            }
-        }
-        None
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct ScopeAtlasView<'a> {
-    registry: &'a ScopeRegistry,
-}
-
-impl<'a> ScopeAtlasView<'a> {
-    const fn new(registry: &'a ScopeRegistry) -> Self {
-        Self { registry }
-    }
-
-    pub fn resolve_scope(&self, scope: ScopeId) -> Option<ScopeId> {
-        self.registry.resolve_scope(scope)
-    }
-}
-
-/// Structured scope metadata describing the region around a cursor.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ScopeMetadata<const ROLE: u8> {
-    /// No structured scope associated with the current node.
-    None,
-    /// Loop scope exposing controller/target roles alongside the span.
-    Loop {
-        span_start: usize,
-        span_end: usize,
-        metadata: LoopMetadata<ROLE>,
-    },
-    /// Generic structured scope without specialised metadata (route, parallel, etc.).
-    Structured {
+    #[inline]
+    fn first_recv_dispatch_entry(
+        &self,
         scope_id: ScopeId,
-        kind: ScopeKind,
-        start: usize,
-        end: usize,
-    },
+        idx: usize,
+    ) -> Option<(u8, u8, StateIndex)> {
+        let record = self.lookup_record(scope_id)?;
+        if idx >= record.first_recv_len as usize {
+            return None;
+        }
+        Some(record.first_recv_dispatch[idx])
+    }
 }
 
 /// Role-specific typestate graph synthesized from a global effect list.
@@ -1390,35 +1444,10 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
         self.len
     }
 
-    /// Whether the typestate contains no transitions for this role.
-    #[inline(always)]
-    pub const fn is_empty(&self) -> bool {
-        self.len <= 1
-    }
-
     /// Access a node by index.
     #[inline(always)]
-    pub const fn node(&self, index: usize) -> LocalNode {
+    pub(crate) const fn node(&self, index: usize) -> LocalNode {
         self.nodes[index]
-    }
-
-    /// Borrow the active node slice (including the terminal node).
-    #[inline(always)]
-    pub fn nodes(&self) -> &[LocalNode] {
-        &self.nodes[..self.len]
-    }
-
-    #[inline(always)]
-    pub fn scope_regions(&self) -> ScopeRegionIter<'_> {
-        ScopeRegionIter {
-            registry: &self.scope_registry,
-            idx: 0,
-        }
-    }
-
-    #[inline(always)]
-    pub fn scope_atlas_view(&self) -> ScopeAtlasView<'_> {
-        ScopeAtlasView::new(&self.scope_registry)
     }
 
     fn scope_region_for(&self, scope_id: ScopeId) -> Option<ScopeRegion> {
@@ -1427,17 +1456,6 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
 
     fn scope_parent(&self, scope_id: ScopeId) -> Option<ScopeId> {
         self.scope_registry.parent_of(scope_id)
-    }
-
-    /// Test-only: Get scope record by scope ID.
-    #[cfg(any(test, debug_assertions, feature = "std"))]
-    fn scope_entry(&self, scope_id: ScopeId) -> Option<&ScopeRecord> {
-        self.scope_registry.lookup_record(scope_id)
-    }
-
-    fn scope_region_covering_kind(&self, index: usize, kind: ScopeKind) -> Option<ScopeRegion> {
-        let node = self.nodes[index];
-        self.scope_registry.covering_kind(node.scope(), kind, index)
     }
 
     /// Get the PassiveObserverBranch Jump target for the specified arm in a scope.
@@ -1456,6 +1474,10 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
         self.scope_registry.passive_arm_entry(scope_id, arm)
     }
 
+    fn passive_arm_scope(&self, scope_id: ScopeId, arm: u8) -> Option<ScopeId> {
+        self.scope_registry.passive_arm_scope(scope_id, arm)
+    }
+
     /// FIRST-recv dispatch lookup for passive observers.
     ///
     /// Given a recv label, returns the route arm and leaf recv StateIndex.
@@ -1465,17 +1487,16 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
     ///
     /// Returns `None` if label not found.
     /// Flattens nested routes for O(1) dispatch.
-    pub fn first_recv_target(&self, scope_id: ScopeId, label: u8) -> Option<(u8, StateIndex)> {
+    pub(crate) fn first_recv_target(
+        &self,
+        scope_id: ScopeId,
+        label: u8,
+    ) -> Option<(u8, StateIndex)> {
         self.scope_registry.first_recv_target(scope_id, label)
     }
 
-    /// Synthesize a typestate graph from a `'static` effect list (const context).
-    pub const fn from_static(program: &'static EffList) -> Self {
-        Self::build(program, program.as_static_slice())
-    }
-
     /// Synthesize a typestate graph from an arbitrary effect list borrow.
-    pub fn from_program(program: &EffList) -> Self {
+    pub const fn from_program(program: &EffList) -> Self {
         Self::build(program, program.as_slice())
     }
 
@@ -1539,7 +1560,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
         let mut last_step_was_scope = [false; eff::meta::MAX_EFF_NODES];
         // Scope-as-Block: Track the last node index for each arm in non-linger Route scopes.
         // route_arm_last_node[stack_idx][arm] = last node index for that arm.
-        let mut route_arm_last_node = [[u16::MAX; 2]; eff::meta::MAX_EFF_NODES];
+        let mut route_arm_last_node = [[StateIndex::MAX; 2]; eff::meta::MAX_EFF_NODES];
         // Non-linger Route passive observer tracking using is_immediate_reenter method.
         // The arm boundary is detected via Exit→Enter pairs in ScopeEvent, not via
         // other roles' self-send messages (which passive observers don't see).
@@ -1582,7 +1603,9 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                         if ordinal >= SCOPE_ORDINAL_INDEX_CAPACITY {
                             panic!("scope ordinal exceeds typestate capacity");
                         }
-                        let (entry_idx, is_new_ordinal) = match scope_entry_index_by_ordinal[ordinal] {
+                        let (entry_idx, is_new_ordinal) = match scope_entry_index_by_ordinal
+                            [ordinal]
+                        {
                             SCOPE_ORDINAL_INDEX_EMPTY => {
                                 if scope_entries_len >= eff::meta::MAX_EFF_NODES {
                                     panic!("structured scope metadata overflow");
@@ -1611,14 +1634,15 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                         // Initialize route tracking arrays only for NEW scope ordinals.
                         // This ensures seq(ROUTE1, ROUTE2) starts ROUTE2 at arm 0,
                         // while preserving arm count when re-entering the same route
-                        // scope (e.g., different arms within route_chain().and()).
+                        // scope (e.g., different arms within the same binary route).
                         if is_new_ordinal {
                             route_current_arm[scope_stack_len] = 0;
                             route_enter_count[scope_stack_len] = 0;
                             route_passive_arm_start[scope_stack_len] =
                                 [ROUTE_PASSIVE_ARM_UNSET, ROUTE_PASSIVE_ARM_UNSET];
                             route_is_passive[scope_stack_len] = false;
-                            route_arm_last_node[scope_stack_len] = [u16::MAX, u16::MAX];
+                            route_arm_last_node[scope_stack_len] =
+                                [StateIndex::MAX, StateIndex::MAX];
                             last_step_was_scope[scope_stack_len] = false;
                         }
                         scope_stack_len += 1;
@@ -1632,7 +1656,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                             if !entry.parent.is_none() && entry.parent.raw() != parent_scope.raw() {
                                 panic!("scope parent mismatch for ordinal");
                             }
-                            if entry.start == u16::MAX {
+                            if entry.start.is_max() {
                                 entry.start = as_state_index(node_len);
                             }
                             // Propagate controller_role from ScopeMarker to ScopeEntry.
@@ -1667,7 +1691,16 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                 let arm = route_current_arm[parent_idx] as usize;
                                 if arm < 2
                                     && scope_entries[parent_entry_idx].passive_arm_entry[arm]
-                                        == u16::MAX
+                                        .is_max()
+                                    && scope_entries[parent_entry_idx].passive_arm_scope[arm]
+                                        .is_none()
+                                    && matches!(marker.scope_kind, ScopeKind::Route)
+                                {
+                                    scope_entries[parent_entry_idx].passive_arm_scope[arm] = scope;
+                                }
+                                if arm < 2
+                                    && scope_entries[parent_entry_idx].passive_arm_entry[arm]
+                                        .is_max()
                                 {
                                     scope_entries[parent_entry_idx].passive_arm_entry[arm] =
                                         as_state_index(node_len);
@@ -1686,13 +1719,13 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                             }
                             route_current_arm[stack_idx] = route_enter_count[stack_idx] - 1;
                             let arm = route_current_arm[stack_idx] as usize;
-                            route_arm_last_node[stack_idx][arm] = u16::MAX;
+                            route_arm_last_node[stack_idx][arm] = StateIndex::MAX;
                             last_step_was_scope[stack_idx] = false;
 
-                            // At first Enter (enter_count == 1), set route_plan from eff_list.
-                            // This ensures route_plan is set independent of role projection.
+                            // At first Enter (enter_count == 1), set route policy from EffList.
+                            // This keeps route policy metadata independent of role projection.
                             if route_enter_count[stack_idx] == 1
-                                && !scope_entries[entry_idx].has_route_plan
+                                && !scope_entries[entry_idx].has_route_policy
                             {
                                 let scope_start = marker.offset;
                                 let mut scope_end = slice.len();
@@ -1700,7 +1733,8 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                 let mut nest_depth = 1usize;
                                 while scan_idx < scope_markers.len() {
                                     let scan_marker = scope_markers[scan_idx];
-                                    if scan_marker.scope_id.local_ordinal() == scope.local_ordinal() {
+                                    if scan_marker.scope_id.local_ordinal() == scope.local_ordinal()
+                                    {
                                         match scan_marker.event {
                                             ScopeEvent::Enter => nest_depth += 1,
                                             ScopeEvent::Exit => {
@@ -1714,13 +1748,15 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                     }
                                     scan_idx += 1;
                                 }
-                                if let Some((plan, eff_offset, tag)) =
-                                    program.first_dynamic_plan_in_range(scope_start, scope_end)
+                                if let Some((policy, eff_offset, tag)) =
+                                    program.first_dynamic_policy_in_range(scope_start, scope_end)
                                 {
-                                    scope_entries[entry_idx].route_plan = plan.with_scope(scope);
-                                    scope_entries[entry_idx].route_plan_eff = as_eff_index(eff_offset);
-                                    scope_entries[entry_idx].route_plan_tag = tag;
-                                    scope_entries[entry_idx].has_route_plan = true;
+                                    scope_entries[entry_idx].route_policy =
+                                        policy.with_scope(scope);
+                                    scope_entries[entry_idx].route_policy_eff =
+                                        as_eff_index(eff_offset);
+                                    scope_entries[entry_idx].route_policy_tag = tag;
+                                    scope_entries[entry_idx].has_route_policy = true;
                                 }
                             }
                         }
@@ -1739,19 +1775,21 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                         let mut offer_entry_locked = false;
 
                         // Check if the next scope marker is an Enter for the same scope.
-                        // If so, this is an intermediate Exit between arms in route_chain().and().
+                        // If so, this is an intermediate Exit between arms in the same binary route.
                         // We need to insert arm 0's Jump HERE, not at the final Exit.
                         let next_marker_idx = scope_marker_idx + 1;
                         let is_immediate_reenter = next_marker_idx < scope_markers.len()
-                            && scope_markers[next_marker_idx].offset == scope_markers[scope_marker_idx].offset
+                            && scope_markers[next_marker_idx].offset
+                                == scope_markers[scope_marker_idx].offset
                             && matches!(scope_markers[next_marker_idx].event, ScopeEvent::Enter)
-                            && scope_markers[next_marker_idx].scope_id.local_ordinal() == scope.local_ordinal();
+                            && scope_markers[next_marker_idx].scope_id.local_ordinal()
+                                == scope.local_ordinal();
 
                         // For linger (loop) scopes, insert Jump nodes at arm ends.
                         // We need to do this BEFORE setting scope_entries[entry_idx].end
                         // because the Jump nodes become part of the scope.
                         //
-                        // With route_chain().and(), we get multiple Exit/Enter pairs for the same scope:
+                        // With a binary route, we get multiple Exit/Enter pairs for the same scope:
                         // - Intermediate Exit (is_immediate_reenter=true): Insert arm 0's Jump
                         // - Final Exit (is_immediate_reenter=false): Insert arm 1's Jump
                         if is_linger {
@@ -1770,7 +1808,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                 let arm_last = linger_arm_last_node[linger_idx];
                                 let loop_start = scope_entries[entry_idx].start;
                                 // Passive observer detection using type-level controller_role.
-                                // controller_role is propagated from route_chain<CONTROLLER> via ScopeMarker.
+                                // controller_role is propagated from the route arm entry via ScopeMarker.
                                 let is_passive = match scope_entries[entry_idx].controller_role {
                                     Some(ctrl_role) => ctrl_role != ROLE,
                                     None => false, // No controller_role = not a route scope
@@ -1780,20 +1818,26 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                 // of each arm, which is more reliable than route_recv_indices
                                 // (which only tracks Recv nodes).
                                 let passive_starts = if is_passive {
-                                    let arm0_start =
-                                        if scope_entries[entry_idx].passive_arm_entry[0] != u16::MAX
-                                        {
-                                            scope_entries[entry_idx].passive_arm_entry[0] as usize
-                                        } else {
-                                            PASSIVE_ARM_UNSET
-                                        };
-                                    let arm1_start =
-                                        if scope_entries[entry_idx].passive_arm_entry[1] != u16::MAX
-                                        {
-                                            scope_entries[entry_idx].passive_arm_entry[1] as usize
-                                        } else {
-                                            PASSIVE_ARM_UNSET
-                                        };
+                                    let arm0_start = if !scope_entries[entry_idx].passive_arm_entry
+                                        [0]
+                                    .is_max()
+                                    {
+                                        state_index_to_usize(
+                                            scope_entries[entry_idx].passive_arm_entry[0],
+                                        )
+                                    } else {
+                                        PASSIVE_ARM_UNSET
+                                    };
+                                    let arm1_start = if !scope_entries[entry_idx].passive_arm_entry
+                                        [1]
+                                    .is_max()
+                                    {
+                                        state_index_to_usize(
+                                            scope_entries[entry_idx].passive_arm_entry[1],
+                                        )
+                                    } else {
+                                        PASSIVE_ARM_UNSET
+                                    };
                                     [arm0_start, arm1_start]
                                 } else {
                                     [PASSIVE_ARM_UNSET, PASSIVE_ARM_UNSET]
@@ -1810,9 +1854,11 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                         // This takes priority because passive observers don't control
                                         // the loop - they need arm entry navigation, not rewind logic.
                                         if node_len >= MAX_STATES {
-                                            panic!("node capacity exceeded inserting PassiveObserverBranch Jump for arm 0");
+                                            panic!(
+                                                "node capacity exceeded inserting PassiveObserverBranch Jump for arm 0"
+                                            );
                                         }
-                                        let continue_target = passive_starts[0] as StateIndex;
+                                        let continue_target = as_state_index(passive_starts[0]);
                                         let jump_node = LocalNode::jump(
                                             continue_target,
                                             JumpReason::PassiveObserverBranch,
@@ -1827,7 +1873,9 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                         // Also insert LoopContinue Jump if there are nodes to connect
                                         if arm_last[0] != LINGER_ARM_NO_NODE {
                                             if node_len >= MAX_STATES {
-                                                panic!("node capacity exceeded inserting LoopContinue Jump for passive");
+                                                panic!(
+                                                    "node capacity exceeded inserting LoopContinue Jump for passive"
+                                                );
                                             }
                                             let jump_node = LocalNode::jump(
                                                 loop_start,
@@ -1837,14 +1885,17 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                                 Some(0),
                                             );
                                             let prev_idx = arm_last[0];
-                                            nodes[prev_idx] = nodes[prev_idx].with_next(as_state_index(node_len));
+                                            nodes[prev_idx] =
+                                                nodes[prev_idx].with_next(as_state_index(node_len));
                                             nodes[node_len] = jump_node;
                                             node_len += 1;
                                         }
                                     } else if arm_last[0] != LINGER_ARM_NO_NODE {
                                         // Controller: LoopContinue Jump
                                         if node_len >= MAX_STATES {
-                                            panic!("node capacity exceeded inserting LoopContinue Jump");
+                                            panic!(
+                                                "node capacity exceeded inserting LoopContinue Jump"
+                                            );
                                         }
                                         // Create Jump node for LoopContinue
                                         // Target = loop_start (known at this point)
@@ -1857,12 +1908,15 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                         );
                                         // Update the previous node's `next` to point to this Jump
                                         let prev_idx = arm_last[0];
-                                        nodes[prev_idx] = nodes[prev_idx].with_next(as_state_index(node_len));
+                                        nodes[prev_idx] =
+                                            nodes[prev_idx].with_next(as_state_index(node_len));
                                         nodes[node_len] = jump_node;
                                         node_len += 1;
                                     } else if passive_starts[0] != PASSIVE_ARM_UNSET {
                                         if node_len >= MAX_STATES {
-                                            panic!("node capacity exceeded inserting PassiveObserverBranch Jump for arm 0");
+                                            panic!(
+                                                "node capacity exceeded inserting PassiveObserverBranch Jump for arm 0"
+                                            );
                                         }
                                         // Passive observer: insert PassiveObserverBranch Jump for arm 0
                                         // The target should be the start of arm 0's body, which is
@@ -1874,7 +1928,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                         // 1. Passive observers have nodes inside the scope (arm body)
                                         // 2. passive_starts[0] was set when the arm boundary was
                                         //    detected, which is the position where the body starts
-                                        let continue_target = passive_starts[0] as StateIndex;
+                                        let continue_target = as_state_index(passive_starts[0]);
                                         let jump_node = LocalNode::jump(
                                             continue_target,
                                             JumpReason::PassiveObserverBranch,
@@ -1891,12 +1945,14 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                     // Final Exit: Insert Jump for Break arm (arm 1) if it has nodes
                                     if arm_last[1] != LINGER_ARM_NO_NODE {
                                         if node_len >= MAX_STATES {
-                                            panic!("node capacity exceeded inserting LoopBreak Jump");
+                                            panic!(
+                                                "node capacity exceeded inserting LoopBreak Jump"
+                                            );
                                         }
                                         // Create Jump node for LoopBreak
                                         // Target = scope_end (needs backpatch)
                                         let jump_node = LocalNode::jump(
-                                            0, // Sentinel, will be backpatched
+                                            StateIndex::ZERO, // Sentinel, will be backpatched
                                             JumpReason::LoopBreak,
                                             scope,
                                             Some(scope), // loop_scope is this scope
@@ -1904,11 +1960,14 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                         );
                                         // Update the previous node's `next` to point to this Jump
                                         let prev_idx = arm_last[1];
-                                        nodes[prev_idx] = nodes[prev_idx].with_next(as_state_index(node_len));
+                                        nodes[prev_idx] =
+                                            nodes[prev_idx].with_next(as_state_index(node_len));
                                         nodes[node_len] = jump_node;
                                         // Record for backpatch
                                         if jump_backpatch_len >= MAX_JUMP_BACKPATCH {
-                                            panic!("jump backpatch capacity exceeded for LoopBreak");
+                                            panic!(
+                                                "jump backpatch capacity exceeded for LoopBreak"
+                                            );
                                         }
                                         jump_backpatch_indices[jump_backpatch_len] = node_len;
                                         jump_backpatch_scopes[jump_backpatch_len] = scope;
@@ -1917,7 +1976,9 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                         node_len += 1;
                                     } else if is_passive && passive_starts[1] != PASSIVE_ARM_UNSET {
                                         if node_len >= MAX_STATES {
-                                            panic!("node capacity exceeded inserting PassiveObserverBranch Jump for arm 1");
+                                            panic!(
+                                                "node capacity exceeded inserting PassiveObserverBranch Jump for arm 1"
+                                            );
                                         }
                                         // Passive observer: insert PassiveObserverBranch Jump for arm 1
                                         // Target = arm 1 body start (passive_starts[1]), similar to arm 0.
@@ -1946,7 +2007,9 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                             // Only patch if this is an actual action node (not a Jump)
                                             if !nodes[arm_last_node].action().is_jump() {
                                                 if jump_backpatch_len >= MAX_JUMP_BACKPATCH {
-                                                    panic!("jump backpatch capacity exceeded for arm last node");
+                                                    panic!(
+                                                        "jump backpatch capacity exceeded for arm last node"
+                                                    );
                                                 }
                                                 jump_backpatch_indices[jump_backpatch_len] =
                                                     arm_last_node;
@@ -1959,9 +2022,9 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                         // Target: if arm is empty, use sentinel for backpatch to scope_end
                                         // Otherwise, use the arm body start
                                         let break_target = if arm_is_empty {
-                                            0 // Sentinel, will be backpatched to scope_end
+                                            StateIndex::ZERO // Sentinel, will be backpatched to scope_end
                                         } else {
-                                            passive_starts[1] as StateIndex
+                                            as_state_index(passive_starts[1])
                                         };
                                         let jump_node = LocalNode::jump(
                                             break_target,
@@ -1977,7 +2040,9 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                         // If arm is empty, backpatch the Jump target to scope_end
                                         if arm_is_empty {
                                             if jump_backpatch_len >= MAX_JUMP_BACKPATCH {
-                                                panic!("jump backpatch capacity exceeded for empty arm");
+                                                panic!(
+                                                    "jump backpatch capacity exceeded for empty arm"
+                                                );
                                             }
                                             jump_backpatch_indices[jump_backpatch_len] = node_len;
                                             jump_backpatch_scopes[jump_backpatch_len] = scope;
@@ -1992,7 +2057,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                         }
                         // Non-linger Route Jump generation using is_immediate_reenter.
                         // Arm boundaries are visible via Exit→Enter pairs in ScopeEvent (generated by
-                        // route_chain().and() wrapping each arm with with_scope()).
+                        // binary route wrapping each arm with with_scope()).
                         //
                         // CFG-pure design: arm 0 ends with RouteArmEnd Jump → scope_end, NOT fall-through to arm 1.
                         // This eliminates sequential layout dependency and runtime arm repositioning.
@@ -2004,7 +2069,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                         //   - Passive observer: PassiveObserverBranch Jump → arm entry
                         //
                         // Passive observer detection using type-level controller_role.
-                        // controller_role is propagated from route_chain<CONTROLLER> via ScopeMarker.
+                        // controller_role is propagated from the route arm entry via ScopeMarker.
                         // If controller_role matches this role, we're the controller.
                         let _is_passive_observer = match scope_entries[entry_idx].controller_role {
                             Some(ctrl_role) => ctrl_role != ROLE,
@@ -2023,14 +2088,16 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                             // For τ-eliminated arm 0 (passive observer has no nodes in arm 0),
                             // this RouteArmEnd also serves as the arm entry placeholder.
                             let arm0_is_tau_eliminated =
-                                scope_entries[entry_idx].passive_arm_entry[0] == u16::MAX;
+                                scope_entries[entry_idx].passive_arm_entry[0].is_max();
 
                             if node_len >= MAX_STATES {
-                                panic!("node capacity exceeded inserting RouteArmEnd Jump for arm 0");
+                                panic!(
+                                    "node capacity exceeded inserting RouteArmEnd Jump for arm 0"
+                                );
                             }
                             // Target is scope_end, which will be backpatched after scope closes.
                             let jump_node = LocalNode::jump(
-                                0, // Sentinel, will be backpatched to scope_end
+                                StateIndex::ZERO, // Sentinel, will be backpatched to scope_end
                                 JumpReason::RouteArmEnd,
                                 scope,
                                 None, // Not a loop
@@ -2042,7 +2109,8 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                             // This ensures follow_passive_observer_arm_for_scope always returns
                             // a valid entry (ArmEmpty placeholder).
                             if arm0_is_tau_eliminated {
-                                scope_entries[entry_idx].passive_arm_entry[0] = as_state_index(node_len);
+                                scope_entries[entry_idx].passive_arm_entry[0] =
+                                    as_state_index(node_len);
                             }
 
                             // Record for backpatch to scope_end
@@ -2066,7 +2134,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                         {
                             let arm1_last = route_arm_last_node[scope_stack_len][1];
                             let last_was_scope = last_step_was_scope[scope_stack_len];
-                            if arm1_last != u16::MAX {
+                            if !arm1_last.is_max() {
                                 if last_was_scope {
                                     // Arm ended with a nested scope; insert RouteArmEnd at scope exit.
                                     if node_len >= MAX_STATES {
@@ -2075,7 +2143,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                         );
                                     }
                                     let jump_node = LocalNode::jump(
-                                        0, // Sentinel, will be backpatched to scope_end
+                                        StateIndex::ZERO, // Sentinel, will be backpatched to scope_end
                                         JumpReason::RouteArmEnd,
                                         scope,
                                         None, // Not a loop
@@ -2094,18 +2162,21 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                     node_len += 1;
                                 } else {
                                     if node_len >= MAX_STATES {
-                                        panic!("node capacity exceeded inserting RouteArmEnd Jump for arm 1");
+                                        panic!(
+                                            "node capacity exceeded inserting RouteArmEnd Jump for arm 1"
+                                        );
                                     }
                                     let jump_node = LocalNode::jump(
-                                        0, // Sentinel, will be backpatched to scope_end
+                                        StateIndex::ZERO, // Sentinel, will be backpatched to scope_end
                                         JumpReason::RouteArmEnd,
                                         scope,
                                         None, // Not a loop
                                         Some(1),
                                     );
                                     // Patch last node in arm 1 to jump to RouteArmEnd
-                                    let prev_idx = arm1_last as usize;
-                                    nodes[prev_idx] = nodes[prev_idx].with_next(as_state_index(node_len));
+                                    let prev_idx = state_index_to_usize(arm1_last);
+                                    nodes[prev_idx] =
+                                        nodes[prev_idx].with_next(as_state_index(node_len));
                                     nodes[node_len] = jump_node;
                                     if jump_backpatch_len >= MAX_JUMP_BACKPATCH {
                                         panic!(
@@ -2123,7 +2194,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
 
                         // Generate ArmEmpty placeholder for τ-eliminated arm 1 (final Exit).
                         // This ensures passive observers always have a valid arm entry,
-                        // eliminating the need for runtime ScopeExited fallback.
+                        // eliminating the need for runtime ScopeExited recovery.
                         //
                         // CFG-pure design: All τ-eliminated arms have ArmEmpty placeholder.
                         // For both linger (loop) and non-linger routes, passive_arm_entry must be set.
@@ -2133,11 +2204,14 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                         if matches!(scope_entries[entry_idx].kind, ScopeKind::Route)
                             && !is_immediate_reenter
                         {
-                            let arm1_has_content = scope_entries[entry_idx].passive_arm_entry[1] != u16::MAX;
+                            let arm1_has_content =
+                                !scope_entries[entry_idx].passive_arm_entry[1].is_max();
                             if !arm1_has_content {
                                 // τ-eliminated arm 1: insert ArmEmpty placeholder
                                 if node_len >= MAX_STATES {
-                                    panic!("node capacity exceeded inserting ArmEmpty placeholder for arm 1");
+                                    panic!(
+                                        "node capacity exceeded inserting ArmEmpty placeholder for arm 1"
+                                    );
                                 }
 
                                 let jump_node = if is_linger {
@@ -2162,7 +2236,8 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                 };
                                 nodes[node_len] = jump_node;
                                 // Update passive_arm_entry to point to this placeholder
-                                scope_entries[entry_idx].passive_arm_entry[1] = as_state_index(node_len);
+                                scope_entries[entry_idx].passive_arm_entry[1] =
+                                    as_state_index(node_len);
                                 node_len += 1;
                             }
                         }
@@ -2197,32 +2272,36 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                 } else {
                                     scope_entries[entry_idx].passive_arm_entry[1]
                                 };
-                                if arm0_entry != u16::MAX && arm1_entry != u16::MAX {
-                                    let (prefix_end0, prefix_end1, prefix_len) = arm_common_prefix_end(
-                                        &nodes,
-                                        scope_entries[entry_idx].scope_id,
-                                        scope_end,
-                                        arm0_entry,
-                                        arm1_entry,
-                                    );
+                                if !arm0_entry.is_max() && !arm1_entry.is_max() {
+                                    let (prefix_end0, prefix_end1, prefix_len) =
+                                        arm_common_prefix_end(
+                                            &nodes,
+                                            scope_entries[entry_idx].scope_id,
+                                            scope_end,
+                                            arm0_entry,
+                                            arm1_entry,
+                                        );
                                     if prefix_len > 0 {
                                         let parent_scope = scope_entries[entry_idx].parent;
                                         let mut arm = 0u8;
                                         while arm < 2 {
                                             let mut steps = 0usize;
-                                            let mut idx = if arm == 0 { arm0_entry } else { arm1_entry };
+                                            let mut idx =
+                                                if arm == 0 { arm0_entry } else { arm1_entry };
                                             while steps < prefix_len {
-                                                if idx == u16::MAX {
+                                                if idx.is_max() {
                                                     break;
                                                 }
-                                                let node_idx = idx as usize;
+                                                let node_idx = state_index_to_usize(idx);
                                                 if node_idx >= node_len {
                                                     break;
                                                 }
                                                 let node = nodes[node_idx];
-                                                nodes[node_idx] = node.with_scope(parent_scope).with_route_arm(None);
+                                                nodes[node_idx] = node
+                                                    .with_scope(parent_scope)
+                                                    .with_route_arm(None);
                                                 let next = node.next();
-                                                if next == u16::MAX {
+                                                if next.is_max() {
                                                     break;
                                                 }
                                                 idx = next;
@@ -2231,88 +2310,129 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                             arm += 1;
                                         }
 
-                                        let min_start = if prefix_end0 < prefix_end1 {
+                                        let min_start = if prefix_end0.raw() < prefix_end1.raw() {
                                             prefix_end0
                                         } else {
                                             prefix_end1
                                         };
-                                        if min_start != u16::MAX {
+                                        if !min_start.is_max() {
                                             scope_entries[entry_idx].start = min_start;
                                         }
                                         if is_controller {
-                                            scope_entries[entry_idx].controller_arm_entry[0] = prefix_end0;
-                                            scope_entries[entry_idx].controller_arm_entry[1] = prefix_end1;
+                                            scope_entries[entry_idx].controller_arm_entry[0] =
+                                                prefix_end0;
+                                            scope_entries[entry_idx].controller_arm_entry[1] =
+                                                prefix_end1;
 
                                             let mut arm = 0u8;
                                             while arm < 2 {
-                                                let entry =
-                                                    scope_entries[entry_idx].controller_arm_entry[arm as usize];
-                                                if entry != u16::MAX {
-                                                    let node_idx = entry as usize;
+                                                let entry = scope_entries[entry_idx]
+                                                    .controller_arm_entry
+                                                    [arm as usize];
+                                                if !entry.is_max() {
+                                                    let node_idx = state_index_to_usize(entry);
                                                     if node_idx < node_len {
                                                         match nodes[node_idx].action() {
-                                                            LocalAction::Local { label, .. } => {
-                                                                scope_entries[entry_idx].controller_arm_label
+                                                            LocalAction::Local {
+                                                                label, ..
+                                                            } => {
+                                                                scope_entries[entry_idx]
+                                                                    .controller_arm_label
                                                                     [arm as usize] = label;
                                                             }
                                                             _ => {
-                                                                scope_entries[entry_idx].controller_arm_entry
-                                                                    [arm as usize] = u16::MAX;
-                                                                scope_entries[entry_idx].controller_arm_label
+                                                                scope_entries[entry_idx]
+                                                                    .controller_arm_entry
+                                                                    [arm as usize] =
+                                                                    StateIndex::MAX;
+                                                                scope_entries[entry_idx]
+                                                                    .controller_arm_label
                                                                     [arm as usize] = 0;
                                                             }
                                                         }
                                                     } else {
-                                                        scope_entries[entry_idx].controller_arm_entry
-                                                            [arm as usize] = u16::MAX;
-                                                        scope_entries[entry_idx].controller_arm_label
+                                                        scope_entries[entry_idx]
+                                                            .controller_arm_entry
+                                                            [arm as usize] = StateIndex::MAX;
+                                                        scope_entries[entry_idx]
+                                                            .controller_arm_label
                                                             [arm as usize] = 0;
                                                     }
                                                 } else {
-                                                    scope_entries[entry_idx].controller_arm_label[arm as usize] = 0;
+                                                    scope_entries[entry_idx].controller_arm_label
+                                                        [arm as usize] = 0;
                                                 }
                                                 arm += 1;
                                             }
 
-                                            scope_entries[entry_idx].route_recv_head = ROUTE_RECV_LIST_EMPTY;
-                                            scope_entries[entry_idx].route_recv_tail = ROUTE_RECV_LIST_EMPTY;
+                                            scope_entries[entry_idx].route_recv_head =
+                                                RouteRecvIndex::MAX;
+                                            scope_entries[entry_idx].route_recv_tail =
+                                                RouteRecvIndex::MAX;
                                             scope_entries[entry_idx].route_recv_len = 0;
                                             scope_entries[entry_idx].offer_lanes = 0;
-                                            if prefix_end0 != prefix_end1 {
+                                            if prefix_end0.raw() != prefix_end1.raw() {
                                                 let mut arm = 0u8;
                                                 while arm < 2 {
-                                                    let arm_entry = if arm == 0 { prefix_end0 } else { prefix_end1 };
-                                                    if (arm as u16) == scope_entries[entry_idx].route_recv_len
-                                                        && arm_entry != u16::MAX
+                                                    let arm_entry = if arm == 0 {
+                                                        prefix_end0
+                                                    } else {
+                                                        prefix_end1
+                                                    };
+                                                    if (arm as u16)
+                                                        == scope_entries[entry_idx].route_recv_len
+                                                        && !arm_entry.is_max()
                                                     {
-                                                        let node_idx = arm_entry as usize;
+                                                        let node_idx =
+                                                            state_index_to_usize(arm_entry);
                                                         if node_idx < node_len {
-                                                            if let LocalAction::Recv { lane, .. } =
-                                                                nodes[node_idx].action()
+                                                            if let LocalAction::Recv {
+                                                                lane, ..
+                                                            } = nodes[node_idx].action()
                                                             {
-                                                                if route_recv_nodes_len >= MAX_STATES {
-                                                                    panic!("route recv node capacity exceeded");
-                                                                }
-                                                                route_recv_nodes[route_recv_nodes_len] = RouteRecvNode {
-                                                                    state: arm_entry,
-                                                                    next: ROUTE_RECV_LIST_EMPTY,
-                                                                };
-                                                                if scope_entries[entry_idx].route_recv_head
-                                                                    == ROUTE_RECV_LIST_EMPTY
+                                                                if route_recv_nodes_len
+                                                                    >= MAX_STATES
                                                                 {
-                                                                    scope_entries[entry_idx].route_recv_head =
-                                                                        route_recv_nodes_len as u16;
-                                                                } else {
-                                                                    let tail_idx =
-                                                                        scope_entries[entry_idx].route_recv_tail as usize;
-                                                                    route_recv_nodes[tail_idx].next =
-                                                                        route_recv_nodes_len as u16;
+                                                                    panic!(
+                                                                        "route recv node capacity exceeded"
+                                                                    );
                                                                 }
-                                                                scope_entries[entry_idx].route_recv_tail =
-                                                                    route_recv_nodes_len as u16;
-                                                                scope_entries[entry_idx].route_recv_len += 1;
+                                                                route_recv_nodes
+                                                                    [route_recv_nodes_len] =
+                                                                    RouteRecvNode {
+                                                                        state: arm_entry,
+                                                                        next: RouteRecvIndex::MAX,
+                                                                    };
+                                                                if scope_entries[entry_idx]
+                                                                    .route_recv_head
+                                                                    .is_max()
+                                                                {
+                                                                    scope_entries[entry_idx]
+                                                                        .route_recv_head =
+                                                                        RouteRecvIndex::from_usize(
+                                                                            route_recv_nodes_len,
+                                                                        );
+                                                                } else {
+                                                                    let tail_idx = scope_entries
+                                                                        [entry_idx]
+                                                                        .route_recv_tail
+                                                                        .as_usize();
+                                                                    route_recv_nodes[tail_idx]
+                                                                        .next =
+                                                                        RouteRecvIndex::from_usize(
+                                                                            route_recv_nodes_len,
+                                                                        );
+                                                                }
+                                                                scope_entries[entry_idx]
+                                                                    .route_recv_tail =
+                                                                    RouteRecvIndex::from_usize(
+                                                                        route_recv_nodes_len,
+                                                                    );
+                                                                scope_entries[entry_idx]
+                                                                    .route_recv_len += 1;
                                                                 route_recv_nodes_len += 1;
-                                                                scope_entries[entry_idx].offer_lanes |=
+                                                                scope_entries[entry_idx]
+                                                                    .offer_lanes |=
                                                                     offer_lane_bit(lane);
                                                             }
                                                         }
@@ -2321,202 +2441,279 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                                 }
                                             }
                                         } else {
-                                            scope_entries[entry_idx].passive_arm_entry[0] = prefix_end0;
-                                            scope_entries[entry_idx].passive_arm_entry[1] = prefix_end1;
+                                            scope_entries[entry_idx].passive_arm_entry[0] =
+                                                prefix_end0;
+                                            scope_entries[entry_idx].passive_arm_entry[1] =
+                                                prefix_end1;
                                         }
-                                        scope_entries[entry_idx].offer_entry = if prefix_end0 == prefix_end1 {
-                                            prefix_end0
-                                        } else {
-                                            u16::MAX
-                                        };
+                                        scope_entries[entry_idx].offer_entry =
+                                            if prefix_end0.raw() == prefix_end1.raw() {
+                                                prefix_end0
+                                            } else {
+                                                StateIndex::MAX
+                                            };
                                         offer_entry_locked = true;
                                     }
                                 }
                             }
+                            let mut arm = 0usize;
+                            while arm < 2 {
+                                if scope_entries[entry_idx].passive_arm_scope[arm].is_none() {
+                                    let arm_entry = scope_entries[entry_idx].passive_arm_entry[arm];
+                                    if !arm_entry.is_max() {
+                                        let arm_entry_idx = state_index_to_usize(arm_entry);
+                                        if arm_entry_idx < node_len {
+                                            let arm_scope = nodes[arm_entry_idx].scope();
+                                            if !arm_scope.is_none()
+                                                && arm_scope.raw()
+                                                    != scope_entries[entry_idx].scope_id.raw()
+                                                && matches!(arm_scope.kind(), ScopeKind::Route)
+                                            {
+                                                scope_entries[entry_idx].passive_arm_scope[arm] =
+                                                    arm_scope;
+                                            }
+                                        }
+                                    }
+                                }
+                                arm += 1;
+                            }
                             if is_controller {
-                                scope_entries[entry_idx].first_recv_dispatch = [(0, 0, u16::MAX); 8];
+                                scope_entries[entry_idx].first_recv_dispatch =
+                                    [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH];
                                 scope_entries[entry_idx].first_recv_len = 0;
                                 scope_entries[entry_idx].mergeable = false;
                             } else {
-                            let mut dispatch_len = 0u8;
-                            let mut dispatch_table: [(u8, u8, StateIndex); 8] = [(0, 0, u16::MAX); 8];
-                            let mut dispatch_functional = true;
-                            let mut prefix_actions = [[PrefixAction::EMPTY; MAX_PREFIX_ACTIONS]; 2];
-                            let mut prefix_lens = [0usize; 2];
-                            let mut arm_seen_recv = [false; 2];
+                                let mut dispatch_len = 0u8;
+                                let mut dispatch_table: [(u8, u8, StateIndex);
+                                    MAX_FIRST_RECV_DISPATCH] =
+                                    [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH];
+                                let mut dispatch_functional = true;
+                                let mut prefix_actions =
+                                    [[PrefixAction::EMPTY; MAX_PREFIX_ACTIONS]; 2];
+                                let mut prefix_lens = [0usize; 2];
+                                let mut arm_seen_recv = [false; 2];
 
-                            // Process both arms
-                            let mut arm = 0u8;
-                            while arm < 2 {
-                                let arm_idx = arm as usize;
-                                let arm_entry = scope_entries[entry_idx].passive_arm_entry[arm as usize];
-                                if arm_entry != u16::MAX {
-                                    // Collect FIRST labels for this arm, flattening nested routes.
-                                    // Use a stack-based approach to avoid recursion in const fn.
-                                    let mut scan_stack: [StateIndex; eff::meta::MAX_EFF_NODES] =
-                                        [u16::MAX; eff::meta::MAX_EFF_NODES];
-                                    let mut visited = [false; MAX_STATES];
-                                    let mut scan_len = 1usize;
-                                    scan_stack[0] = arm_entry;
+                                // Process both arms
+                                let mut arm = 0u8;
+                                while arm < 2 {
+                                    let arm_idx = arm as usize;
+                                    let arm_entry =
+                                        scope_entries[entry_idx].passive_arm_entry[arm as usize];
+                                    if !arm_entry.is_max() {
+                                        // Collect FIRST labels for this arm, flattening nested routes.
+                                        // Use a stack-based approach to avoid recursion in const fn.
+                                        let mut scan_stack: [StateIndex; eff::meta::MAX_EFF_NODES] =
+                                            [StateIndex::MAX; eff::meta::MAX_EFF_NODES];
+                                        let mut visited = [false; MAX_STATES];
+                                        let mut scan_len = 1usize;
+                                        scan_stack[0] = arm_entry;
 
-                                    while scan_len > 0 {
-                                        scan_len -= 1;
-                                        let scan_idx = scan_stack[scan_len] as usize;
-                                        if scan_idx >= node_len {
-                                            // Out of bounds, skip
-                                            arm += 1;
-                                            continue;
-                                        }
-                                        if visited[scan_idx] {
-                                            continue;
-                                        }
-                                        visited[scan_idx] = true;
-                                        let node = nodes[scan_idx];
-                                        let scan_scope = node.scope();
-                                        let scan_outer_scope = scope_entries[entry_idx].scope_id;
-                                        if matches!(scan_scope.kind(), ScopeKind::Route)
-                                            && !scan_scope.is_none()
-                                            && scan_scope.local_ordinal()
-                                                != scan_outer_scope.local_ordinal()
-                                        {
-                                            let nested_ordinal = scan_scope.local_ordinal();
-                                            let mut nested_entry_idx = 0usize;
-                                            while nested_entry_idx < scope_entries_len {
-                                                if scope_entries[nested_entry_idx]
-                                                    .scope_id
-                                                    .local_ordinal()
-                                                    == nested_ordinal
-                                                {
-                                                    let nested = &scope_entries[nested_entry_idx];
-                                                    let mut ni = 0usize;
-                                                    while ni < nested.first_recv_len as usize {
-                                                        let (nlabel, _narm, ntarget) =
-                                                            nested.first_recv_dispatch[ni];
-                                                        let mut nconflict = false;
-                                                        let mut nfound = false;
-                                                        let mut ei = 0usize;
-                                                        while ei < dispatch_len as usize {
-                                                            let (existing_label, existing_arm, existing_target) =
-                                                                dispatch_table[ei];
-                                                            if existing_label == nlabel {
-                                                                nfound = true;
-                                                                let same_continuation =
-                                                                    existing_target == ntarget
+                                        while scan_len > 0 {
+                                            scan_len -= 1;
+                                            let scan_idx =
+                                                state_index_to_usize(scan_stack[scan_len]);
+                                            if scan_idx >= node_len {
+                                                // Out of bounds, skip
+                                                arm += 1;
+                                                continue;
+                                            }
+                                            if visited[scan_idx] {
+                                                continue;
+                                            }
+                                            visited[scan_idx] = true;
+                                            let node = nodes[scan_idx];
+                                            let scan_scope = node.scope();
+                                            let scan_outer_scope =
+                                                scope_entries[entry_idx].scope_id;
+                                            if matches!(scan_scope.kind(), ScopeKind::Route)
+                                                && !scan_scope.is_none()
+                                                && scan_scope.local_ordinal()
+                                                    != scan_outer_scope.local_ordinal()
+                                            {
+                                                let nested_ordinal = scan_scope.local_ordinal();
+                                                let mut nested_entry_idx = 0usize;
+                                                while nested_entry_idx < scope_entries_len {
+                                                    if scope_entries[nested_entry_idx]
+                                                        .scope_id
+                                                        .local_ordinal()
+                                                        == nested_ordinal
+                                                    {
+                                                        let nested =
+                                                            &scope_entries[nested_entry_idx];
+                                                        let mut ni = 0usize;
+                                                        while ni < nested.first_recv_len as usize {
+                                                            let (nlabel, _narm, ntarget) =
+                                                                nested.first_recv_dispatch[ni];
+                                                            let mut nconflict = false;
+                                                            let mut nfound = false;
+                                                            let mut ei = 0usize;
+                                                            while ei < dispatch_len as usize {
+                                                                let (
+                                                                    existing_label,
+                                                                    existing_arm,
+                                                                    existing_target,
+                                                                ) = dispatch_table[ei];
+                                                                if existing_label == nlabel {
+                                                                    nfound = true;
+                                                                    let same_continuation =
+                                                                    existing_target.raw()
+                                                                        == ntarget.raw()
                                                                         || continuations_equivalent(
                                                                             &nodes,
                                                                             scope_end,
                                                                             existing_target,
                                                                             ntarget,
                                                                         );
-                                                                if same_continuation {
-                                                                    if existing_arm != arm
-                                                                        && existing_arm != ARM_SHARED
-                                                                    {
-                                                                        dispatch_table[ei] = (
-                                                                            nlabel,
-                                                                            ARM_SHARED,
-                                                                            existing_target,
-                                                                        );
+                                                                    if same_continuation {
+                                                                        if existing_arm != arm
+                                                                            && existing_arm
+                                                                                != ARM_SHARED
+                                                                        {
+                                                                            dispatch_table[ei] = (
+                                                                                nlabel,
+                                                                                ARM_SHARED,
+                                                                                existing_target,
+                                                                            );
+                                                                        }
+                                                                    } else {
+                                                                        nconflict = true;
                                                                     }
-                                                                } else {
-                                                                    nconflict = true;
+                                                                    break;
                                                                 }
-                                                                break;
+                                                                ei += 1;
                                                             }
-                                                            ei += 1;
-                                                        }
-                                                        if nconflict {
-                                                            dispatch_functional = false;
-                                                        } else if !nfound {
-                                                            if dispatch_len >= 8 {
-                                                                panic!(
-                                                                    "FIRST-recv dispatch table overflow from nested"
-                                                                );
+                                                            if nconflict {
+                                                                dispatch_functional = false;
+                                                            } else if !nfound {
+                                                                if dispatch_len
+                                                                    >= MAX_FIRST_RECV_DISPATCH as u8
+                                                                {
+                                                                    panic!(
+                                                                        "FIRST-recv dispatch table overflow from nested"
+                                                                    );
+                                                                }
+                                                                dispatch_table
+                                                                    [dispatch_len as usize] =
+                                                                    (nlabel, arm, ntarget);
+                                                                dispatch_len += 1;
                                                             }
-                                                            dispatch_table[dispatch_len as usize] =
-                                                                (nlabel, arm, ntarget);
-                                                            dispatch_len += 1;
-                                                        }
-                                                        ni += 1;
-                                                    }
-                                                    break;
-                                                }
-                                                nested_entry_idx += 1;
-                                            }
-                                            continue;
-                                        }
-                                        match node.action() {
-                                            LocalAction::Recv { label, .. } => {
-                                                // Found a recv - add to dispatch table
-                                                let target_idx = scan_idx as StateIndex;
-                                                arm_seen_recv[arm_idx] = true;
-
-                                                // Check for conflict with existing entries
-                                                let mut conflict = false;
-                                                let mut found = false;
-                                                let mut check_i = 0usize;
-                                                while check_i < dispatch_len as usize {
-                                                    let (existing_label, existing_arm, existing_target) = dispatch_table[check_i];
-                                                    if existing_label == label {
-                                                        found = true;
-                                                        let same_continuation = existing_target == target_idx
-                                                            || continuations_equivalent(
-                                                                &nodes,
-                                                                scope_end,
-                                                                existing_target,
-                                                                target_idx,
-                                                            );
-                                                        if same_continuation {
-                                                            // Same label maps to the same continuation
-                                                            if existing_arm != arm && existing_arm != ARM_SHARED {
-                                                                dispatch_table[check_i] =
-                                                                    (label, ARM_SHARED, existing_target);
-                                                            }
-                                                        } else {
-                                                            // Same label maps to different continuation → non-functional
-                                                            conflict = true;
+                                                            ni += 1;
                                                         }
                                                         break;
                                                     }
-                                                    check_i += 1;
+                                                    nested_entry_idx += 1;
                                                 }
+                                                continue;
+                                            }
+                                            match node.action() {
+                                                LocalAction::Recv { label, .. } => {
+                                                    // Found a recv - add to dispatch table
+                                                    let target_idx = as_state_index(scan_idx);
+                                                    arm_seen_recv[arm_idx] = true;
 
-                                                if conflict {
-                                                    dispatch_functional = false;
-                                                } else if !found {
-                                                    if dispatch_len >= 8 {
-                                                        panic!("FIRST-recv dispatch table overflow");
+                                                    // Check for conflict with existing entries
+                                                    let mut conflict = false;
+                                                    let mut found = false;
+                                                    let mut check_i = 0usize;
+                                                    while check_i < dispatch_len as usize {
+                                                        let (
+                                                            existing_label,
+                                                            existing_arm,
+                                                            existing_target,
+                                                        ) = dispatch_table[check_i];
+                                                        if existing_label == label {
+                                                            found = true;
+                                                            let same_continuation = existing_target
+                                                                .raw()
+                                                                == target_idx.raw()
+                                                                || continuations_equivalent(
+                                                                    &nodes,
+                                                                    scope_end,
+                                                                    existing_target,
+                                                                    target_idx,
+                                                                );
+                                                            if same_continuation {
+                                                                // Same label maps to the same continuation
+                                                                if existing_arm != arm
+                                                                    && existing_arm != ARM_SHARED
+                                                                {
+                                                                    dispatch_table[check_i] = (
+                                                                        label,
+                                                                        ARM_SHARED,
+                                                                        existing_target,
+                                                                    );
+                                                                }
+                                                            } else {
+                                                                // Same label maps to different continuation → non-functional
+                                                                conflict = true;
+                                                            }
+                                                            break;
+                                                        }
+                                                        check_i += 1;
                                                     }
-                                                    dispatch_table[dispatch_len as usize] = (label, arm, target_idx);
-                                                    dispatch_len += 1;
-                                                }
 
-                                                // Check if this recv is inside a nested Route scope.
-                                                // If so, merge that nested route's FIRST entries as well.
-                                                let recv_scope = node.scope();
-                                                let outer_scope = scope_entries[entry_idx].scope_id;
-                                                if matches!(recv_scope.kind(), ScopeKind::Route)
-                                                    && !recv_scope.is_none()
-                                                    && recv_scope.local_ordinal() != outer_scope.local_ordinal()
-                                                {
-                                                    // This recv is inside a nested route - merge its FIRST
-                                                    let nested_ordinal = recv_scope.local_ordinal();
-                                                    let mut nested_entry_idx = 0usize;
-                                                    while nested_entry_idx < scope_entries_len {
-                                                        if scope_entries[nested_entry_idx].scope_id.local_ordinal() == nested_ordinal {
-                                                            let nested = &scope_entries[nested_entry_idx];
-                                                            let mut ni = 0usize;
-                                                            while ni < nested.first_recv_len as usize {
-                                                                let (nlabel, _narm, ntarget) = nested.first_recv_dispatch[ni];
-                                                                // Check for conflict/duplicate with existing entries
-                                                                let mut nconflict = false;
-                                                                let mut nfound = false;
-                                                                let mut ei = 0usize;
-                                                                while ei < dispatch_len as usize {
-                                                                    let (existing_label, existing_arm, existing_target) = dispatch_table[ei];
-                                                                    if existing_label == nlabel {
-                                                                        nfound = true;
-                                                                        let same_continuation = existing_target == ntarget
+                                                    if conflict {
+                                                        dispatch_functional = false;
+                                                    } else if !found {
+                                                        if dispatch_len
+                                                            >= MAX_FIRST_RECV_DISPATCH as u8
+                                                        {
+                                                            panic!(
+                                                                "FIRST-recv dispatch table overflow"
+                                                            );
+                                                        }
+                                                        dispatch_table[dispatch_len as usize] =
+                                                            (label, arm, target_idx);
+                                                        dispatch_len += 1;
+                                                    }
+
+                                                    // Check if this recv is inside a nested Route scope.
+                                                    // If so, merge that nested route's FIRST entries as well.
+                                                    let recv_scope = node.scope();
+                                                    let outer_scope =
+                                                        scope_entries[entry_idx].scope_id;
+                                                    if matches!(recv_scope.kind(), ScopeKind::Route)
+                                                        && !recv_scope.is_none()
+                                                        && recv_scope.local_ordinal()
+                                                            != outer_scope.local_ordinal()
+                                                    {
+                                                        // This recv is inside a nested route - merge its FIRST
+                                                        let nested_ordinal =
+                                                            recv_scope.local_ordinal();
+                                                        let mut nested_entry_idx = 0usize;
+                                                        while nested_entry_idx < scope_entries_len {
+                                                            if scope_entries[nested_entry_idx]
+                                                                .scope_id
+                                                                .local_ordinal()
+                                                                == nested_ordinal
+                                                            {
+                                                                let nested = &scope_entries
+                                                                    [nested_entry_idx];
+                                                                let mut ni = 0usize;
+                                                                while ni
+                                                                    < nested.first_recv_len as usize
+                                                                {
+                                                                    let (nlabel, _narm, ntarget) =
+                                                                        nested.first_recv_dispatch
+                                                                            [ni];
+                                                                    // Check for conflict/duplicate with existing entries
+                                                                    let mut nconflict = false;
+                                                                    let mut nfound = false;
+                                                                    let mut ei = 0usize;
+                                                                    while ei < dispatch_len as usize
+                                                                    {
+                                                                        let (
+                                                                            existing_label,
+                                                                            existing_arm,
+                                                                            existing_target,
+                                                                        ) = dispatch_table[ei];
+                                                                        if existing_label == nlabel
+                                                                        {
+                                                                            nfound = true;
+                                                                            let same_continuation =
+                                                                                existing_target
+                                                                                    .raw()
+                                                                                    == ntarget.raw()
                                                                             || continuations_equivalent(
                                                                                 &nodes,
                                                                                 scope_end,
@@ -2530,392 +2727,525 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                                                                                     (nlabel, ARM_SHARED, existing_target);
                                                                                 }
                                                                             } else {
-                                                                            nconflict = true;
-                                                                        }
-                                                                        break;
-                                                                    }
-                                                                    ei += 1;
-                                                                }
-                                                                if nconflict {
-                                                                    dispatch_functional = false;
-                                                                } else if !nfound {
-                                                                    if dispatch_len >= 8 {
-                                                                        panic!("FIRST-recv dispatch table overflow from nested recv scope");
-                                                                    }
-                                                                    // Nested entries inherit the outer arm value
-                                                                    dispatch_table[dispatch_len as usize] = (nlabel, arm, ntarget);
-                                                                    dispatch_len += 1;
-                                                                }
-                                                                ni += 1;
-                                                            }
-                                                            break;
-                                                        }
-                                                        nested_entry_idx += 1;
-                                                    }
-                                                }
-                                            }
-                                            LocalAction::Send {
-                                                peer,
-                                                label,
-                                                lane,
-                                                ..
-                                            } => {
-                                                if !arm_seen_recv[arm_idx] {
-                                                    if prefix_lens[arm_idx] >= MAX_PREFIX_ACTIONS {
-                                                        panic!("route prefix action overflow");
-                                                    }
-                                                    let prefix_idx = prefix_lens[arm_idx];
-                                                    prefix_actions[arm_idx][prefix_idx] = PrefixAction {
-                                                        kind: PREFIX_KIND_SEND,
-                                                        peer,
-                                                        label,
-                                                        lane,
-                                                    };
-                                                    prefix_lens[arm_idx] += 1;
-                                                }
-                                                // Continue scan forward (decision frontier).
-                                                let next_state = node.next();
-                                                let next_idx = next_state as usize;
-                                                let mut nested_merged = false;
-                                                if next_idx < node_len && next_idx != scan_idx {
-                                                    let next_node = nodes[next_idx];
-                                                    let next_scope = next_node.scope();
-                                                    let current_scope = node.scope();
-
-                                                    if matches!(next_scope.kind(), ScopeKind::Route)
-                                                        && !next_scope.is_none()
-                                                        && next_scope.local_ordinal() != current_scope.local_ordinal()
-                                                    {
-                                                        let nested_ordinal = next_scope.local_ordinal();
-                                                        let mut nested_entry_idx = 0usize;
-                                                        while nested_entry_idx < scope_entries_len {
-                                                            if scope_entries[nested_entry_idx].scope_id.local_ordinal()
-                                                                == nested_ordinal
-                                                            {
-                                                                let nested = &scope_entries[nested_entry_idx];
-                                                                let mut ni = 0usize;
-                                                                while ni < nested.first_recv_len as usize {
-                                                                    let (nlabel, _narm, ntarget) =
-                                                                        nested.first_recv_dispatch[ni];
-                                                                    let mut nconflict = false;
-                                                                    let mut nfound = false;
-                                                                    let mut ci = 0usize;
-                                                                    while ci < dispatch_len as usize {
-                                                                        let (existing_label, existing_arm, existing_target) =
-                                                                            dispatch_table[ci];
-                                                                        if existing_label == nlabel {
-                                                                            nfound = true;
-                                                                            let same_continuation =
-                                                                                existing_target == ntarget
-                                                                                    || continuations_equivalent(
-                                                                                        &nodes,
-                                                                                        scope_end,
-                                                                                        existing_target,
-                                                                                        ntarget,
-                                                                                    );
-                                                                            if same_continuation {
-                                                                                if existing_arm != arm
-                                                                                    && existing_arm != ARM_SHARED
-                                                                                {
-                                                                                    dispatch_table[ci] =
-                                                                                        (nlabel, ARM_SHARED, existing_target);
-                                                                                }
-                                                                            } else {
                                                                                 nconflict = true;
                                                                             }
                                                                             break;
                                                                         }
-                                                                        ci += 1;
+                                                                        ei += 1;
                                                                     }
                                                                     if nconflict {
                                                                         dispatch_functional = false;
                                                                     } else if !nfound {
-                                                                        if dispatch_len >= 8 {
+                                                                        if dispatch_len
+                                                                            >= MAX_FIRST_RECV_DISPATCH as u8
+                                                                        {
                                                                             panic!(
-                                                                                "FIRST-recv dispatch table overflow from nested"
+                                                                                "FIRST-recv dispatch table overflow from nested recv scope"
                                                                             );
                                                                         }
-                                                                        dispatch_table[dispatch_len as usize] =
+                                                                        // Nested entries inherit the outer arm value
+                                                                        dispatch_table[dispatch_len
+                                                                            as usize] =
                                                                             (nlabel, arm, ntarget);
                                                                         dispatch_len += 1;
                                                                     }
                                                                     ni += 1;
                                                                 }
-                                                                nested_merged = true;
                                                                 break;
                                                             }
                                                             nested_entry_idx += 1;
                                                         }
                                                     }
                                                 }
-                                                if !nested_merged
-                                                    && next_state != u16::MAX
-                                                    && scan_len < scan_stack.len()
-                                                {
-                                                    scan_stack[scan_len] = next_state;
-                                                    scan_len += 1;
-                                                }
-                                            }
-                                            LocalAction::Local { label, lane, .. } => {
-                                                if !arm_seen_recv[arm_idx] {
-                                                    if prefix_lens[arm_idx] >= MAX_PREFIX_ACTIONS {
-                                                        panic!("route prefix action overflow");
+                                                LocalAction::Send {
+                                                    peer, label, lane, ..
+                                                } => {
+                                                    if !arm_seen_recv[arm_idx] {
+                                                        if prefix_lens[arm_idx]
+                                                            >= MAX_PREFIX_ACTIONS
+                                                        {
+                                                            panic!("route prefix action overflow");
+                                                        }
+                                                        let prefix_idx = prefix_lens[arm_idx];
+                                                        prefix_actions[arm_idx][prefix_idx] =
+                                                            PrefixAction {
+                                                                kind: PREFIX_KIND_SEND,
+                                                                peer,
+                                                                label,
+                                                                lane,
+                                                            };
+                                                        prefix_lens[arm_idx] += 1;
                                                     }
-                                                    let prefix_idx = prefix_lens[arm_idx];
-                                                    prefix_actions[arm_idx][prefix_idx] = PrefixAction {
-                                                        kind: PREFIX_KIND_LOCAL,
-                                                        peer: ROLE,
-                                                        label,
-                                                        lane,
-                                                    };
-                                                    prefix_lens[arm_idx] += 1;
-                                                }
-                                                let next_state = node.next();
-                                                let next_idx = next_state as usize;
-                                                let mut nested_merged = false;
-                                                if next_idx < node_len && next_idx != scan_idx {
-                                                    let next_node = nodes[next_idx];
-                                                    let next_scope = next_node.scope();
-                                                    let current_scope = node.scope();
+                                                    // Continue scan forward (decision frontier).
+                                                    let next_state = node.next();
+                                                    let next_idx = state_index_to_usize(next_state);
+                                                    let mut nested_merged = false;
+                                                    if next_idx < node_len && next_idx != scan_idx {
+                                                        let next_node = nodes[next_idx];
+                                                        let next_scope = next_node.scope();
+                                                        let current_scope = node.scope();
 
-                                                    if matches!(next_scope.kind(), ScopeKind::Route)
-                                                        && !next_scope.is_none()
-                                                        && next_scope.local_ordinal() != current_scope.local_ordinal()
-                                                    {
-                                                        let nested_ordinal = next_scope.local_ordinal();
-                                                        let mut nested_entry_idx = 0usize;
-                                                        while nested_entry_idx < scope_entries_len {
-                                                            if scope_entries[nested_entry_idx].scope_id.local_ordinal()
-                                                                == nested_ordinal
+                                                        if matches!(
+                                                            next_scope.kind(),
+                                                            ScopeKind::Route
+                                                        ) && !next_scope.is_none()
+                                                            && next_scope.local_ordinal()
+                                                                != current_scope.local_ordinal()
+                                                        {
+                                                            let nested_ordinal =
+                                                                next_scope.local_ordinal();
+                                                            let mut nested_entry_idx = 0usize;
+                                                            while nested_entry_idx
+                                                                < scope_entries_len
                                                             {
-                                                                let nested = &scope_entries[nested_entry_idx];
-                                                                let mut ni = 0usize;
-                                                                while ni < nested.first_recv_len as usize {
-                                                                    let (nlabel, _narm, ntarget) =
-                                                                        nested.first_recv_dispatch[ni];
-                                                                    let mut nconflict = false;
-                                                                    let mut nfound = false;
-                                                                    let mut ci = 0usize;
-                                                                    while ci < dispatch_len as usize {
-                                                                        let (existing_label, existing_arm, existing_target) =
-                                                                            dispatch_table[ci];
-                                                                        if existing_label == nlabel {
-                                                                            nfound = true;
-                                                                            let same_continuation =
-                                                                                existing_target == ntarget
+                                                                if scope_entries[nested_entry_idx]
+                                                                    .scope_id
+                                                                    .local_ordinal()
+                                                                    == nested_ordinal
+                                                                {
+                                                                    let nested = &scope_entries
+                                                                        [nested_entry_idx];
+                                                                    let mut ni = 0usize;
+                                                                    while ni
+                                                                        < nested.first_recv_len
+                                                                            as usize
+                                                                    {
+                                                                        let (
+                                                                            nlabel,
+                                                                            _narm,
+                                                                            ntarget,
+                                                                        ) = nested
+                                                                            .first_recv_dispatch
+                                                                            [ni];
+                                                                        let mut nconflict = false;
+                                                                        let mut nfound = false;
+                                                                        let mut ci = 0usize;
+                                                                        while ci
+                                                                            < dispatch_len as usize
+                                                                        {
+                                                                            let (
+                                                                                existing_label,
+                                                                                existing_arm,
+                                                                                existing_target,
+                                                                            ) = dispatch_table[ci];
+                                                                            if existing_label
+                                                                                == nlabel
+                                                                            {
+                                                                                nfound = true;
+                                                                                let same_continuation =
+                                                                                existing_target.raw()
+                                                                                    == ntarget.raw()
                                                                                     || continuations_equivalent(
                                                                                         &nodes,
                                                                                         scope_end,
                                                                                         existing_target,
                                                                                         ntarget,
                                                                                     );
-                                                                            if same_continuation {
-                                                                                if existing_arm != arm
+                                                                                if same_continuation
+                                                                                {
+                                                                                    if existing_arm != arm
                                                                                     && existing_arm != ARM_SHARED
                                                                                 {
                                                                                     dispatch_table[ci] =
                                                                                         (nlabel, ARM_SHARED, existing_target);
                                                                                 }
-                                                                            } else {
-                                                                                nconflict = true;
+                                                                                } else {
+                                                                                    nconflict =
+                                                                                        true;
+                                                                                }
+                                                                                break;
                                                                             }
-                                                                            break;
+                                                                            ci += 1;
                                                                         }
-                                                                        ci += 1;
-                                                                    }
-                                                                    if nconflict {
-                                                                        dispatch_functional = false;
-                                                                    } else if !nfound {
-                                                                        if dispatch_len >= 8 {
-                                                                            panic!(
-                                                                                "FIRST-recv dispatch table overflow from nested"
+                                                                        if nconflict {
+                                                                            dispatch_functional =
+                                                                                false;
+                                                                        } else if !nfound {
+                                                                            if dispatch_len
+                                                                                >= MAX_FIRST_RECV_DISPATCH as u8
+                                                                            {
+                                                                                panic!(
+                                                                                    "FIRST-recv dispatch table overflow from nested"
+                                                                                );
+                                                                            }
+                                                                            dispatch_table
+                                                                                [dispatch_len
+                                                                                    as usize] = (
+                                                                                nlabel, arm,
+                                                                                ntarget,
                                                                             );
+                                                                            dispatch_len += 1;
                                                                         }
-                                                                        dispatch_table[dispatch_len as usize] =
-                                                                            (nlabel, arm, ntarget);
-                                                                        dispatch_len += 1;
+                                                                        ni += 1;
                                                                     }
-                                                                    ni += 1;
+                                                                    nested_merged = true;
+                                                                    break;
                                                                 }
-                                                                nested_merged = true;
-                                                                break;
+                                                                nested_entry_idx += 1;
                                                             }
-                                                            nested_entry_idx += 1;
                                                         }
                                                     }
-                                                }
-                                                if !nested_merged
-                                                    && next_state != u16::MAX
-                                                    && scan_len < scan_stack.len()
-                                                {
-                                                    scan_stack[scan_len] = next_state;
-                                                    scan_len += 1;
-                                                }
-                                            }
-                                            LocalAction::Jump {
-                                                reason: JumpReason::PassiveObserverBranch,
-                                            } => {
-                                                // This is a passive observer branch - follow to target
-                                                let target = node.next();
-                                                if target != u16::MAX && scan_len < scan_stack.len() {
-                                                    scan_stack[scan_len] = target;
-                                                    scan_len += 1;
-                                                }
-                                            }
-                                            LocalAction::Jump {
-                                                reason:
-                                                    JumpReason::RouteArmEnd
-                                                    | JumpReason::LoopContinue
-                                                    | JumpReason::LoopBreak,
-                                            } => {
-                                                // Arm boundary or loop boundary - no recv labels to add.
-                                            }
-                                            _ => {
-                                                // Check if next node enters a nested Route scope.
-                                                // If next node has a different (inner) Route scope, merge its FIRST
-                                                // and stop scanning this path (decision frontier).
-                                                let next_state = node.next();
-                                                let next_idx = next_state as usize;
-                                                let mut nested_merged = false;
-                                                if next_idx < node_len && next_idx != scan_idx {
-                                                    let next_node = nodes[next_idx];
-                                                    let next_scope = next_node.scope();
-                                                    let current_scope = node.scope();
-
-                                                    if matches!(next_scope.kind(), ScopeKind::Route)
-                                                        && !next_scope.is_none()
-                                                        && next_scope.local_ordinal() != current_scope.local_ordinal()
+                                                    if !nested_merged
+                                                        && !next_state.is_max()
+                                                        && scan_len < scan_stack.len()
                                                     {
-                                                        let nested_ordinal = next_scope.local_ordinal();
-                                                        let mut nested_entry_idx = 0usize;
-                                                        while nested_entry_idx < scope_entries_len {
-                                                            if scope_entries[nested_entry_idx].scope_id.local_ordinal() == nested_ordinal {
-                                                                let nested = &scope_entries[nested_entry_idx];
-                                                                let mut ni = 0usize;
-                                                                while ni < nested.first_recv_len as usize {
-                                                                    let (nlabel, _narm, ntarget) = nested.first_recv_dispatch[ni];
-                                                                    let mut nconflict = false;
-                                                                    let mut nfound = false;
-                                                                    let mut ci = 0usize;
-                                                                    while ci < dispatch_len as usize {
-                                                                        let (existing_label, existing_arm, existing_target) = dispatch_table[ci];
-                                                                        if existing_label == nlabel {
-                                                                            nfound = true;
-                                                                            let same_continuation =
-                                                                                existing_target == ntarget
+                                                        scan_stack[scan_len] = next_state;
+                                                        scan_len += 1;
+                                                    }
+                                                }
+                                                LocalAction::Local { label, lane, .. } => {
+                                                    if !arm_seen_recv[arm_idx] {
+                                                        if prefix_lens[arm_idx]
+                                                            >= MAX_PREFIX_ACTIONS
+                                                        {
+                                                            panic!("route prefix action overflow");
+                                                        }
+                                                        let prefix_idx = prefix_lens[arm_idx];
+                                                        prefix_actions[arm_idx][prefix_idx] =
+                                                            PrefixAction {
+                                                                kind: PREFIX_KIND_LOCAL,
+                                                                peer: ROLE,
+                                                                label,
+                                                                lane,
+                                                            };
+                                                        prefix_lens[arm_idx] += 1;
+                                                    }
+                                                    let next_state = node.next();
+                                                    let next_idx = state_index_to_usize(next_state);
+                                                    let mut nested_merged = false;
+                                                    if next_idx < node_len && next_idx != scan_idx {
+                                                        let next_node = nodes[next_idx];
+                                                        let next_scope = next_node.scope();
+                                                        let current_scope = node.scope();
+
+                                                        if matches!(
+                                                            next_scope.kind(),
+                                                            ScopeKind::Route
+                                                        ) && !next_scope.is_none()
+                                                            && next_scope.local_ordinal()
+                                                                != current_scope.local_ordinal()
+                                                        {
+                                                            let nested_ordinal =
+                                                                next_scope.local_ordinal();
+                                                            let mut nested_entry_idx = 0usize;
+                                                            while nested_entry_idx
+                                                                < scope_entries_len
+                                                            {
+                                                                if scope_entries[nested_entry_idx]
+                                                                    .scope_id
+                                                                    .local_ordinal()
+                                                                    == nested_ordinal
+                                                                {
+                                                                    let nested = &scope_entries
+                                                                        [nested_entry_idx];
+                                                                    let mut ni = 0usize;
+                                                                    while ni
+                                                                        < nested.first_recv_len
+                                                                            as usize
+                                                                    {
+                                                                        let (
+                                                                            nlabel,
+                                                                            _narm,
+                                                                            ntarget,
+                                                                        ) = nested
+                                                                            .first_recv_dispatch
+                                                                            [ni];
+                                                                        let mut nconflict = false;
+                                                                        let mut nfound = false;
+                                                                        let mut ci = 0usize;
+                                                                        while ci
+                                                                            < dispatch_len as usize
+                                                                        {
+                                                                            let (
+                                                                                existing_label,
+                                                                                existing_arm,
+                                                                                existing_target,
+                                                                            ) = dispatch_table[ci];
+                                                                            if existing_label
+                                                                                == nlabel
+                                                                            {
+                                                                                nfound = true;
+                                                                                let same_continuation =
+                                                                                existing_target.raw()
+                                                                                    == ntarget.raw()
                                                                                     || continuations_equivalent(
                                                                                         &nodes,
                                                                                         scope_end,
                                                                                         existing_target,
                                                                                         ntarget,
                                                                                     );
-                                                                            if same_continuation {
-                                                                                if existing_arm != arm && existing_arm != ARM_SHARED {
+                                                                                if same_continuation
+                                                                                {
+                                                                                    if existing_arm != arm
+                                                                                    && existing_arm != ARM_SHARED
+                                                                                {
                                                                                     dispatch_table[ci] =
                                                                                         (nlabel, ARM_SHARED, existing_target);
                                                                                 }
-                                                                            } else {
-                                                                                nconflict = true;
+                                                                                } else {
+                                                                                    nconflict =
+                                                                                        true;
+                                                                                }
+                                                                                break;
                                                                             }
-                                                                            break;
+                                                                            ci += 1;
                                                                         }
-                                                                        ci += 1;
-                                                                    }
-                                                                    if nconflict {
-                                                                        dispatch_functional = false;
-                                                                    } else if !nfound {
-                                                                        if dispatch_len >= 8 {
-                                                                            panic!("FIRST-recv dispatch table overflow from nested");
+                                                                        if nconflict {
+                                                                            dispatch_functional =
+                                                                                false;
+                                                                        } else if !nfound {
+                                                                            if dispatch_len
+                                                                                >= MAX_FIRST_RECV_DISPATCH as u8
+                                                                            {
+                                                                                panic!(
+                                                                                    "FIRST-recv dispatch table overflow from nested"
+                                                                                );
+                                                                            }
+                                                                            dispatch_table
+                                                                                [dispatch_len
+                                                                                    as usize] = (
+                                                                                nlabel, arm,
+                                                                                ntarget,
+                                                                            );
+                                                                            dispatch_len += 1;
                                                                         }
-                                                                        dispatch_table[dispatch_len as usize] = (nlabel, arm, ntarget);
-                                                                        dispatch_len += 1;
+                                                                        ni += 1;
                                                                     }
-                                                                    ni += 1;
+                                                                    nested_merged = true;
+                                                                    break;
                                                                 }
-                                                                nested_merged = true;
-                                                                break;
+                                                                nested_entry_idx += 1;
                                                             }
-                                                            nested_entry_idx += 1;
                                                         }
                                                     }
+                                                    if !nested_merged
+                                                        && !next_state.is_max()
+                                                        && scan_len < scan_stack.len()
+                                                    {
+                                                        scan_stack[scan_len] = next_state;
+                                                        scan_len += 1;
+                                                    }
                                                 }
+                                                LocalAction::Jump {
+                                                    reason: JumpReason::PassiveObserverBranch,
+                                                } => {
+                                                    // This is a passive observer branch - follow to target
+                                                    let target = node.next();
+                                                    if !target.is_max()
+                                                        && scan_len < scan_stack.len()
+                                                    {
+                                                        scan_stack[scan_len] = target;
+                                                        scan_len += 1;
+                                                    }
+                                                }
+                                                LocalAction::Jump {
+                                                    reason:
+                                                        JumpReason::RouteArmEnd
+                                                        | JumpReason::LoopContinue
+                                                        | JumpReason::LoopBreak,
+                                                } => {
+                                                    // Arm boundary or loop boundary - no recv labels to add.
+                                                }
+                                                _ => {
+                                                    // Check if next node enters a nested Route scope.
+                                                    // If next node has a different (inner) Route scope, merge its FIRST
+                                                    // and stop scanning this path (decision frontier).
+                                                    let next_state = node.next();
+                                                    let next_idx = state_index_to_usize(next_state);
+                                                    let mut nested_merged = false;
+                                                    if next_idx < node_len && next_idx != scan_idx {
+                                                        let next_node = nodes[next_idx];
+                                                        let next_scope = next_node.scope();
+                                                        let current_scope = node.scope();
 
-                                                // If we didn't hit a nested route, continue scanning forward
-                                                // to find the first recv label (decision frontier).
-                                                if !nested_merged && next_state != u16::MAX && scan_len < scan_stack.len() {
-                                                    scan_stack[scan_len] = next_state;
-                                                    scan_len += 1;
+                                                        if matches!(
+                                                            next_scope.kind(),
+                                                            ScopeKind::Route
+                                                        ) && !next_scope.is_none()
+                                                            && next_scope.local_ordinal()
+                                                                != current_scope.local_ordinal()
+                                                        {
+                                                            let nested_ordinal =
+                                                                next_scope.local_ordinal();
+                                                            let mut nested_entry_idx = 0usize;
+                                                            while nested_entry_idx
+                                                                < scope_entries_len
+                                                            {
+                                                                if scope_entries[nested_entry_idx]
+                                                                    .scope_id
+                                                                    .local_ordinal()
+                                                                    == nested_ordinal
+                                                                {
+                                                                    let nested = &scope_entries
+                                                                        [nested_entry_idx];
+                                                                    let mut ni = 0usize;
+                                                                    while ni
+                                                                        < nested.first_recv_len
+                                                                            as usize
+                                                                    {
+                                                                        let (
+                                                                            nlabel,
+                                                                            _narm,
+                                                                            ntarget,
+                                                                        ) = nested
+                                                                            .first_recv_dispatch
+                                                                            [ni];
+                                                                        let mut nconflict = false;
+                                                                        let mut nfound = false;
+                                                                        let mut ci = 0usize;
+                                                                        while ci
+                                                                            < dispatch_len as usize
+                                                                        {
+                                                                            let (
+                                                                                existing_label,
+                                                                                existing_arm,
+                                                                                existing_target,
+                                                                            ) = dispatch_table[ci];
+                                                                            if existing_label
+                                                                                == nlabel
+                                                                            {
+                                                                                nfound = true;
+                                                                                let same_continuation =
+                                                                                existing_target.raw()
+                                                                                    == ntarget.raw()
+                                                                                    || continuations_equivalent(
+                                                                                        &nodes,
+                                                                                        scope_end,
+                                                                                        existing_target,
+                                                                                        ntarget,
+                                                                                    );
+                                                                                if same_continuation
+                                                                                {
+                                                                                    if existing_arm != arm && existing_arm != ARM_SHARED {
+                                                                                    dispatch_table[ci] =
+                                                                                        (nlabel, ARM_SHARED, existing_target);
+                                                                                }
+                                                                                } else {
+                                                                                    nconflict =
+                                                                                        true;
+                                                                                }
+                                                                                break;
+                                                                            }
+                                                                            ci += 1;
+                                                                        }
+                                                                        if nconflict {
+                                                                            dispatch_functional =
+                                                                                false;
+                                                                        } else if !nfound {
+                                                                            if dispatch_len
+                                                                                >= MAX_FIRST_RECV_DISPATCH as u8
+                                                                            {
+                                                                                panic!(
+                                                                                    "FIRST-recv dispatch table overflow from nested"
+                                                                                );
+                                                                            }
+                                                                            dispatch_table
+                                                                                [dispatch_len
+                                                                                    as usize] = (
+                                                                                nlabel, arm,
+                                                                                ntarget,
+                                                                            );
+                                                                            dispatch_len += 1;
+                                                                        }
+                                                                        ni += 1;
+                                                                    }
+                                                                    nested_merged = true;
+                                                                    break;
+                                                                }
+                                                                nested_entry_idx += 1;
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // If we didn't hit a nested route, continue scanning forward
+                                                    // to find the first recv label (decision frontier).
+                                                    if !nested_merged
+                                                        && !next_state.is_max()
+                                                        && scan_len < scan_stack.len()
+                                                    {
+                                                        scan_stack[scan_len] = next_state;
+                                                        scan_len += 1;
+                                                    }
                                                 }
                                             }
                                         }
                                     }
+                                    arm += 1;
                                 }
-                                arm += 1;
-                            }
 
-                            let mut prefix_mismatch = false;
-                            if dispatch_len > 0 {
-                                if prefix_lens[0] != prefix_lens[1] {
-                                    prefix_mismatch = true;
-                                } else {
-                                    let mut pi = 0usize;
-                                    while pi < prefix_lens[0] {
-                                        if !prefix_action_eq(prefix_actions[0][pi], prefix_actions[1][pi]) {
-                                            prefix_mismatch = true;
-                                            break;
+                                let mut prefix_mismatch = false;
+                                if dispatch_len > 0 {
+                                    if prefix_lens[0] != prefix_lens[1] {
+                                        prefix_mismatch = true;
+                                    } else {
+                                        let mut pi = 0usize;
+                                        while pi < prefix_lens[0] {
+                                            if !prefix_action_eq(
+                                                prefix_actions[0][pi],
+                                                prefix_actions[1][pi],
+                                            ) {
+                                                prefix_mismatch = true;
+                                                break;
+                                            }
+                                            pi += 1;
                                         }
-                                        pi += 1;
+                                    }
+                                    if prefix_mismatch {
+                                        dispatch_functional = false;
                                     }
                                 }
-                                if prefix_mismatch {
-                                    dispatch_functional = false;
-                                }
-                            }
 
-                            let scope_end = as_state_index(node_len);
-                            let arm0_entry = scope_entries[entry_idx].passive_arm_entry[0];
-                            let arm1_entry = scope_entries[entry_idx].passive_arm_entry[1];
-                            let mergeable = arm_sequences_equal(&nodes, scope_end, arm0_entry, arm1_entry);
-                            scope_entries[entry_idx].mergeable = mergeable;
+                                let scope_end = as_state_index(node_len);
+                                let arm0_entry = scope_entries[entry_idx].passive_arm_entry[0];
+                                let arm1_entry = scope_entries[entry_idx].passive_arm_entry[1];
+                                let mergeable =
+                                    arm_sequences_equal(&nodes, scope_end, arm0_entry, arm1_entry);
+                                scope_entries[entry_idx].mergeable = mergeable;
 
-                            if mergeable {
-                                scope_entries[entry_idx].passive_arm_entry[1] =
-                                    scope_entries[entry_idx].passive_arm_entry[0];
-                                scope_entries[entry_idx].first_recv_dispatch = [(0, 0, u16::MAX); 8];
-                                scope_entries[entry_idx].first_recv_len = 0;
-                            } else if dispatch_functional && dispatch_len > 0 {
-                                scope_entries[entry_idx].first_recv_dispatch = dispatch_table;
-                                scope_entries[entry_idx].first_recv_len = dispatch_len;
-                                let mut offer_lanes = scope_entries[entry_idx].offer_lanes;
-                                let mut di = 0u8;
-                                while di < dispatch_len {
-                                    let target_idx = dispatch_table[di as usize].2 as usize;
-                                    if target_idx < node_len {
-                                        if let LocalAction::Recv { lane, .. } = nodes[target_idx].action() {
+                                if mergeable {
+                                    scope_entries[entry_idx].passive_arm_entry[1] =
+                                        scope_entries[entry_idx].passive_arm_entry[0];
+                                    scope_entries[entry_idx].first_recv_dispatch =
+                                        [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH];
+                                    scope_entries[entry_idx].first_recv_len = 0;
+                                } else if dispatch_functional && dispatch_len > 0 {
+                                    scope_entries[entry_idx].first_recv_dispatch = dispatch_table;
+                                    scope_entries[entry_idx].first_recv_len = dispatch_len;
+                                    let mut offer_lanes = scope_entries[entry_idx].offer_lanes;
+                                    let mut di = 0u8;
+                                    while di < dispatch_len {
+                                        let target_idx =
+                                            state_index_to_usize(dispatch_table[di as usize].2);
+                                        if target_idx < node_len
+                                            && let LocalAction::Recv { lane, .. } =
+                                                nodes[target_idx].action()
+                                        {
                                             offer_lanes |= offer_lane_bit(lane);
                                         }
+                                        di += 1;
                                     }
-                                    di += 1;
+                                    scope_entries[entry_idx].offer_lanes = offer_lanes;
+                                } else if scope_entries[entry_idx].has_route_policy {
+                                    scope_entries[entry_idx].first_recv_dispatch =
+                                        [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH];
+                                    scope_entries[entry_idx].first_recv_len = 0;
+                                } else {
+                                    panic!(
+                                        "Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dynamic policy annotation provided"
+                                    );
                                 }
-                                scope_entries[entry_idx].offer_lanes = offer_lanes;
-                            } else if scope_entries[entry_idx].has_route_plan {
-                                // Resolver-based: no dispatch table
-                                scope_entries[entry_idx].first_recv_dispatch = [(0, 0, u16::MAX); 8];
-                                scope_entries[entry_idx].first_recv_len = 0;
-                            } else {
-                                panic!(
-                                    "Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dynamic plan provided"
-                                );
-                            }
                             }
                         }
 
-                        if matches!(scope_entries[entry_idx].kind, ScopeKind::Route) && !offer_entry_locked {
-                            scope_entries[entry_idx].offer_entry = if scope_entries[entry_idx].linger {
-                                u16::MAX
-                            } else {
-                                scope_entries[entry_idx].start
-                            };
+                        if matches!(scope_entries[entry_idx].kind, ScopeKind::Route)
+                            && !offer_entry_locked
+                        {
+                            scope_entries[entry_idx].offer_entry =
+                                if scope_entries[entry_idx].linger {
+                                    StateIndex::MAX
+                                } else {
+                                    scope_entries[entry_idx].start
+                                };
                         }
 
                         scope_entries[entry_idx].end = as_state_index(node_len);
@@ -2957,9 +3287,9 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
             let eff = slice[eff_idx];
             if matches!(eff.kind, eff::EffKind::Atom) {
                 let atom = eff.atom_data();
-                let plan = match program.control_plan_at(eff_idx) {
-                    Some(plan) => plan.with_scope(current_scope),
-                    None => HandlePlan::None,
+                let policy = match program.policy_at(eff_idx) {
+                    Some(policy) => policy.with_scope(current_scope),
+                    None => PolicyMode::Static,
                 };
                 let control_spec = if atom.is_control {
                     program.control_spec_at(eff_idx)
@@ -2979,20 +3309,22 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                 {
                     let entry_idx = scope_stack_entries[scope_stack_len - 1];
                     let entry = &mut scope_entries[entry_idx];
-                    if plan.is_dynamic() {
-                        if !entry.has_route_plan {
-                            entry.route_plan = plan;
-                            entry.route_plan_eff = as_eff_index(eff_idx);
-                            entry.route_plan_tag = match atom.resource {
+                    if policy.is_dynamic() {
+                        if !entry.has_route_policy {
+                            entry.route_policy = policy;
+                            entry.route_policy_eff = as_eff_index(eff_idx);
+                            entry.route_policy_tag = match atom.resource {
                                 Some(tag) => tag,
                                 None => 0,
                             };
-                            entry.has_route_plan = true;
-                        } else if route_plan_differs(entry.route_plan, plan) {
-                            panic!("route scope recorded conflicting controller handle plans");
+                            entry.has_route_policy = true;
+                        } else if route_policy_differs(entry.route_policy, policy) {
+                            panic!(
+                                "route scope recorded conflicting controller policy annotations"
+                            );
                         }
                     }
-                    if plan.is_dynamic()
+                    if policy.is_dynamic()
                         || atom.label == LABEL_LOOP_CONTINUE
                         || atom.label == LABEL_LOOP_BREAK
                     {
@@ -3026,7 +3358,8 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
 
                         let entry = &mut scope_entries[entry_idx];
                         debug_assert!(
-                            !matches!(entry.kind, ScopeKind::Route) || entry.controller_role.is_some(),
+                            !matches!(entry.kind, ScopeKind::Route)
+                                || entry.controller_role.is_some(),
                             "route scope missing controller_role"
                         );
                         let is_controller = match entry.controller_role {
@@ -3039,11 +3372,11 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                         // the first local action via passive_arm_entry when no wire recv exists.
                         if arm < 2 {
                             if is_controller {
-                                if entry.controller_arm_entry[arm] == u16::MAX {
+                                if entry.controller_arm_entry[arm].is_max() {
                                     entry.controller_arm_entry[arm] = as_state_index(node_len);
                                     entry.controller_arm_label[arm] = atom.label;
                                 }
-                            } else if entry.passive_arm_entry[arm] == u16::MAX {
+                            } else if entry.passive_arm_entry[arm].is_max() {
                                 entry.passive_arm_entry[arm] = as_state_index(node_len);
                             }
                         }
@@ -3075,7 +3408,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                         atom.resource,
                         atom.is_control,
                         shot,
-                        plan,
+                        policy,
                         atom.lane,
                         next,
                         current_scope,
@@ -3087,7 +3420,9 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                     let mut stack_idx = 0usize;
                     while stack_idx < scope_stack_len {
                         let entry_idx = scope_stack_entries[stack_idx];
-                        if scope_entries[entry_idx].lane_first_eff[lane_idx] == EffIndex::MAX {
+                        if scope_entries[entry_idx].lane_first_eff[lane_idx].raw()
+                            == EffIndex::MAX.raw()
+                        {
                             scope_entries[entry_idx].lane_first_eff[lane_idx] =
                                 as_eff_index(eff_idx);
                         }
@@ -3117,8 +3452,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                     if let Some(scope_id) = loop_scope {
                         let mut li = 0;
                         while li < linger_arm_len {
-                            if linger_arm_scope_ids[li].local_ordinal()
-                                == scope_id.local_ordinal()
+                            if linger_arm_scope_ids[li].local_ordinal() == scope_id.local_ordinal()
                             {
                                 if atom.label == LABEL_LOOP_BREAK {
                                     linger_arm_current[li] = 1;
@@ -3164,7 +3498,8 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                             // Track last node for current arm
                             if let Some(arm) = route_arm {
                                 if (arm as usize) < 2 {
-                                    route_arm_last_node[stack_idx][arm as usize] = node_len as u16;
+                                    route_arm_last_node[stack_idx][arm as usize] =
+                                        as_state_index(node_len);
                                 }
                             }
                         }
@@ -3190,7 +3525,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                         // This is used for passive observer arm navigation in linger routes
                         // where an arm may have Send nodes but no Recv nodes.
                         if (arm as usize) < 2
-                            && scope_entries[entry_idx].passive_arm_entry[arm as usize] == u16::MAX
+                            && scope_entries[entry_idx].passive_arm_entry[arm as usize].is_max()
                         {
                             scope_entries[entry_idx].passive_arm_entry[arm as usize] =
                                 as_state_index(node_len);
@@ -3224,7 +3559,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                         atom.resource,
                         atom.is_control,
                         shot,
-                        plan,
+                        policy,
                         atom.lane,
                         next,
                         current_scope,
@@ -3236,7 +3571,9 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                     let mut stack_idx = 0usize;
                     while stack_idx < scope_stack_len {
                         let entry_idx = scope_stack_entries[stack_idx];
-                        if scope_entries[entry_idx].lane_first_eff[lane_idx] == EffIndex::MAX {
+                        if scope_entries[entry_idx].lane_first_eff[lane_idx].raw()
+                            == EffIndex::MAX.raw()
+                        {
                             scope_entries[entry_idx].lane_first_eff[lane_idx] =
                                 as_eff_index(eff_idx);
                         }
@@ -3298,7 +3635,8 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                             // Track last node for current arm
                             if let Some(arm) = route_arm {
                                 if (arm as usize) < 2 {
-                                    route_arm_last_node[stack_idx][arm as usize] = node_len as u16;
+                                    route_arm_last_node[stack_idx][arm as usize] =
+                                        as_state_index(node_len);
                                 }
                             }
                         }
@@ -3324,10 +3662,10 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                         // Note: Send processing also sets this, so we check if not already set.
                         if (arm as usize) < 2 {
                             let existing = entry.passive_arm_entry[arm as usize];
-                            let should_set = if existing == u16::MAX {
+                            let should_set = if existing.is_max() {
                                 true
                             } else {
-                                let existing_node = nodes[existing as usize];
+                                let existing_node = nodes[state_index_to_usize(existing)];
                                 !matches!(existing_node.action(), LocalAction::Recv { .. })
                             };
                             if should_set {
@@ -3351,15 +3689,18 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                             let current_state = as_state_index(node_len);
                             route_recv_nodes[route_recv_nodes_len] = RouteRecvNode {
                                 state: current_state,
-                                next: ROUTE_RECV_LIST_EMPTY,
+                                next: RouteRecvIndex::MAX,
                             };
-                            if entry.route_recv_head == ROUTE_RECV_LIST_EMPTY {
-                                entry.route_recv_head = route_recv_nodes_len as u16;
+                            if entry.route_recv_head.is_max() {
+                                entry.route_recv_head =
+                                    RouteRecvIndex::from_usize(route_recv_nodes_len);
                             } else {
-                                let tail_idx = entry.route_recv_tail as usize;
-                                route_recv_nodes[tail_idx].next = route_recv_nodes_len as u16;
+                                let tail_idx = entry.route_recv_tail.as_usize();
+                                route_recv_nodes[tail_idx].next =
+                                    RouteRecvIndex::from_usize(route_recv_nodes_len);
                             }
-                            entry.route_recv_tail = route_recv_nodes_len as u16;
+                            entry.route_recv_tail =
+                                RouteRecvIndex::from_usize(route_recv_nodes_len);
                             entry.route_recv_len += 1;
                             route_recv_nodes_len += 1;
                             entry.offer_lanes |= offer_lane_bit(atom.lane);
@@ -3395,7 +3736,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                         atom.resource,
                         atom.is_control,
                         shot,
-                        plan,
+                        policy,
                         atom.lane,
                         next,
                         current_scope,
@@ -3407,7 +3748,9 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                     let mut stack_idx = 0usize;
                     while stack_idx < scope_stack_len {
                         let entry_idx = scope_stack_entries[stack_idx];
-                        if scope_entries[entry_idx].lane_first_eff[lane_idx] == EffIndex::MAX {
+                        if scope_entries[entry_idx].lane_first_eff[lane_idx].raw()
+                            == EffIndex::MAX.raw()
+                        {
                             scope_entries[entry_idx].lane_first_eff[lane_idx] =
                                 as_eff_index(eff_idx);
                         }
@@ -3469,7 +3812,8 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                             // Track last node for current arm
                             if let Some(arm) = route_arm {
                                 if (arm as usize) < 2 {
-                                    route_arm_last_node[stack_idx][arm as usize] = node_len as u16;
+                                    route_arm_last_node[stack_idx][arm as usize] =
+                                        as_state_index(node_len);
                                 }
                             }
                         }
@@ -3493,24 +3837,26 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
         let mut entry_idx = 0usize;
         while entry_idx < scope_entries_len {
             if scope_entries[entry_idx].route_recv_len > 0 {
-                scope_entries[entry_idx].route_recv_offset = route_recv_flat_len as u16;
+                scope_entries[entry_idx].route_recv_offset =
+                    RouteRecvIndex::from_usize(route_recv_flat_len);
                 let mut remaining = scope_entries[entry_idx].route_recv_len;
                 let mut cursor = scope_entries[entry_idx].route_recv_head;
                 while remaining > 0 {
-                    if cursor == ROUTE_RECV_LIST_EMPTY {
+                    if cursor.is_max() {
                         panic!("route recv list truncated");
                     }
                     if route_recv_flat_len >= MAX_STATES {
                         panic!("route recv table overflow");
                     }
-                    let node = route_recv_nodes[cursor as usize];
+                    let node = route_recv_nodes[cursor.as_usize()];
                     route_recv_flat[route_recv_flat_len] = node.state;
                     route_recv_flat_len += 1;
                     cursor = node.next;
                     remaining -= 1;
                 }
             } else {
-                scope_entries[entry_idx].route_recv_offset = route_recv_flat_len as u16;
+                scope_entries[entry_idx].route_recv_offset =
+                    RouteRecvIndex::from_usize(route_recv_flat_len);
             }
             entry_idx += 1;
         }
@@ -3534,7 +3880,9 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                 };
 
                 if entry_idx == u16::MAX {
-                    panic!("jump backpatch failed: scope ordinal not found in scope_entry_index_by_ordinal");
+                    panic!(
+                        "jump backpatch failed: scope ordinal not found in scope_entry_index_by_ordinal"
+                    );
                 }
                 let entry = &scope_entries[entry_idx as usize];
                 let target = if kind == 1 || kind == 2 {
@@ -3574,14 +3922,49 @@ pub struct SendMeta {
     pub scope: ScopeId,
     pub route_arm: Option<u8>,
     pub shot: Option<CapShot>,
-    pub plan: HandlePlan,
+    policy: PolicyMode,
     /// Type-level lane for parallel composition (default 0).
     pub lane: u8,
 }
 
+impl SendMeta {
+    pub(crate) const fn new(
+        eff_index: EffIndex,
+        peer: u8,
+        label: u8,
+        resource: Option<u8>,
+        is_control: bool,
+        next: usize,
+        scope: ScopeId,
+        route_arm: Option<u8>,
+        shot: Option<CapShot>,
+        policy: PolicyMode,
+        lane: u8,
+    ) -> Self {
+        Self {
+            eff_index,
+            peer,
+            label,
+            resource,
+            is_control,
+            next,
+            scope,
+            route_arm,
+            shot,
+            policy,
+            lane,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn policy(&self) -> PolicyMode {
+        self.policy
+    }
+}
+
 /// Metadata for a receive transition derived from typestate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RecvMeta {
+pub(crate) struct RecvMeta {
     pub eff_index: EffIndex,
     pub peer: u8,
     pub label: u8,
@@ -3593,14 +3976,14 @@ pub struct RecvMeta {
     /// Whether this recv is a choice determinant (first recv of a route arm).
     pub is_choice_determinant: bool,
     pub shot: Option<CapShot>,
-    pub plan: HandlePlan,
+    pub policy: PolicyMode,
     /// Type-level lane for parallel composition (default 0).
     pub lane: u8,
 }
 
 /// Metadata for a local action derived from typestate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LocalMeta {
+pub(crate) struct LocalMeta {
     pub eff_index: EffIndex,
     pub label: u8,
     pub resource: Option<u8>,
@@ -3609,14 +3992,17 @@ pub struct LocalMeta {
     pub scope: ScopeId,
     pub route_arm: Option<u8>,
     pub shot: Option<CapShot>,
-    pub plan: HandlePlan,
+    pub policy: PolicyMode,
     /// Type-level lane for parallel composition (default 0).
     pub lane: u8,
 }
 
 /// Try to fetch send metadata for a specific typestate location.
 /// Returns `None` if the node is not a Send action.
-pub(crate) fn try_send_meta<const ROLE: u8>(ts: &RoleTypestate<ROLE>, idx: usize) -> Option<SendMeta> {
+pub(crate) fn try_send_meta<const ROLE: u8>(
+    ts: &RoleTypestate<ROLE>,
+    idx: usize,
+) -> Option<SendMeta> {
     let node = ts.node(idx);
     match node.action() {
         LocalAction::Send {
@@ -3626,28 +4012,31 @@ pub(crate) fn try_send_meta<const ROLE: u8>(ts: &RoleTypestate<ROLE>, idx: usize
             resource,
             is_control,
             shot,
-            plan,
+            policy,
             lane,
-        } => Some(SendMeta {
+        } => Some(SendMeta::new(
             eff_index,
             peer,
             label,
             resource,
             is_control,
-            next: state_index_to_usize(node.next()),
-            scope: node.scope(),
-            route_arm: node.route_arm(),
+            state_index_to_usize(node.next()),
+            node.scope(),
+            node.route_arm(),
             shot,
-            plan,
+            policy,
             lane,
-        }),
+        )),
         _ => None,
     }
 }
 
 /// Try to fetch receive metadata for a specific typestate location.
 /// Returns `None` if the node is not a Recv action.
-pub(crate) fn try_recv_meta<const ROLE: u8>(ts: &RoleTypestate<ROLE>, idx: usize) -> Option<RecvMeta> {
+pub(crate) fn try_recv_meta<const ROLE: u8>(
+    ts: &RoleTypestate<ROLE>,
+    idx: usize,
+) -> Option<RecvMeta> {
     let node = ts.node(idx);
     match node.action() {
         LocalAction::Recv {
@@ -3657,7 +4046,7 @@ pub(crate) fn try_recv_meta<const ROLE: u8>(ts: &RoleTypestate<ROLE>, idx: usize
             resource,
             is_control,
             shot,
-            plan,
+            policy,
             lane,
         } => Some(RecvMeta {
             eff_index,
@@ -3670,7 +4059,7 @@ pub(crate) fn try_recv_meta<const ROLE: u8>(ts: &RoleTypestate<ROLE>, idx: usize
             route_arm: node.route_arm(),
             is_choice_determinant: node.is_choice_determinant(),
             shot,
-            plan,
+            policy,
             lane,
         }),
         _ => None,
@@ -3679,7 +4068,10 @@ pub(crate) fn try_recv_meta<const ROLE: u8>(ts: &RoleTypestate<ROLE>, idx: usize
 
 /// Try to fetch local action metadata for a specific typestate location.
 /// Returns `None` if the node is not a Local action.
-pub(crate) fn try_local_meta<const ROLE: u8>(ts: &RoleTypestate<ROLE>, idx: usize) -> Option<LocalMeta> {
+pub(crate) fn try_local_meta<const ROLE: u8>(
+    ts: &RoleTypestate<ROLE>,
+    idx: usize,
+) -> Option<LocalMeta> {
     let node = ts.node(idx);
     match node.action() {
         LocalAction::Local {
@@ -3688,7 +4080,7 @@ pub(crate) fn try_local_meta<const ROLE: u8>(ts: &RoleTypestate<ROLE>, idx: usiz
             resource,
             is_control,
             shot,
-            plan,
+            policy,
             lane,
         } => Some(LocalMeta {
             eff_index,
@@ -3699,7 +4091,7 @@ pub(crate) fn try_local_meta<const ROLE: u8>(ts: &RoleTypestate<ROLE>, idx: usiz
             scope: node.scope(),
             route_arm: node.route_arm(),
             shot,
-            plan,
+            policy,
             lane,
         }),
         _ => None,
@@ -3707,33 +4099,27 @@ pub(crate) fn try_local_meta<const ROLE: u8>(ts: &RoleTypestate<ROLE>, idx: usiz
 }
 
 const fn as_eff_index(idx: usize) -> EffIndex {
-    if idx > (u16::MAX as usize) {
-        panic!("eff index overflow");
-    }
-    idx as EffIndex
+    EffIndex::from_usize(idx)
 }
 
 const fn as_state_index(idx: usize) -> StateIndex {
-    if idx > (u16::MAX as usize) {
-        panic!("state index overflow");
-    }
-    idx as StateIndex
+    StateIndex::from_usize(idx)
 }
 
-pub const fn state_index_to_usize(index: StateIndex) -> usize {
-    index as usize
+pub(crate) const fn state_index_to_usize(index: StateIndex) -> usize {
+    index.as_usize()
 }
 
 /// Role perspective for a loop decision.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LoopRole {
+pub(crate) enum LoopRole {
     Controller,
     Target,
 }
 
 /// Metadata associated with a loop decision site.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LoopMetadata<const ROLE: u8> {
+pub(crate) struct LoopMetadata<const ROLE: u8> {
     pub scope: ScopeId,
     pub controller: u8,
     pub target: u8,
@@ -3747,13 +4133,13 @@ pub struct LoopMetadata<const ROLE: u8> {
 // =============================================================================
 // =============================================================================
 
-use crate::global::role_program::{LocalDirection, LocalStep, Phase, MAX_LANES};
+use crate::global::role_program::{LocalDirection, LocalStep, MAX_LANES, Phase};
 
 /// Maximum phases and steps that PhaseCursor can hold.
 const PHASE_CURSOR_MAX_PHASES: usize = 32;
 const PHASE_CURSOR_MAX_STEPS: usize = crate::eff::meta::MAX_EFF_NODES;
 const PHASE_CURSOR_NO_STEP: u16 = u16::MAX;
-const PHASE_CURSOR_NO_STATE: StateIndex = u16::MAX;
+const PHASE_CURSOR_NO_STATE: StateIndex = StateIndex::MAX;
 
 /// Phase-aware cursor for multi-lane parallel execution.
 ///
@@ -3769,10 +4155,10 @@ const PHASE_CURSOR_NO_STATE: StateIndex = u16::MAX;
 /// choreography is faithfully represented at runtime, with independent lane cursors
 /// and proper barrier semantics.
 #[derive(Clone, Copy, Debug)]
-pub struct PhaseCursor<const ROLE: u8> {
+pub(crate) struct PhaseCursor<const ROLE: u8> {
     // === Core Typestate (delegates to RoleTypestate) ===
     typestate: RoleTypestate<ROLE>,
-    /// Primary typestate index - used for scope queries and backward compat
+    /// Primary typestate index used for scope queries.
     idx: usize,
 
     /// Current phase index (0-based)
@@ -3798,28 +4184,30 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     // =========================================================================
 
     /// Create a PhaseCursor from a RoleProgram.
-    pub fn new<Steps, Mint>(
+    pub(crate) fn new<Steps, Mint>(
         program: &crate::global::role_program::RoleProgram<'_, ROLE, Steps, Mint>,
     ) -> Self
     where
-        Mint: crate::control::cap::MintConfigMarker,
+        Mint: crate::control::cap::mint::MintConfigMarker,
     {
+        let projection = program.projection();
+
         let mut phases = [Phase::EMPTY; PHASE_CURSOR_MAX_PHASES];
-        let phase_len = program.phase_count().min(PHASE_CURSOR_MAX_PHASES);
+        let phase_len = projection.phase_count().min(PHASE_CURSOR_MAX_PHASES);
         for i in 0..phase_len {
-            phases[i] = program.phases()[i];
+            phases[i] = projection.phases()[i];
         }
 
         let mut local_steps = [LocalStep::EMPTY; PHASE_CURSOR_MAX_STEPS];
-        let local_steps_len = program.len().min(PHASE_CURSOR_MAX_STEPS);
+        let local_steps_len = projection.len().min(PHASE_CURSOR_MAX_STEPS);
         for i in 0..local_steps_len {
-            local_steps[i] = program.steps()[i];
+            local_steps[i] = projection.steps()[i];
         }
 
         let mut eff_index_to_step = [PHASE_CURSOR_NO_STEP; PHASE_CURSOR_MAX_STEPS];
         let mut step_idx = 0usize;
         while step_idx < local_steps_len {
-            let eff_index = local_steps[step_idx].eff_index() as usize;
+            let eff_index = local_steps[step_idx].eff_index().as_usize();
             if eff_index < PHASE_CURSOR_MAX_STEPS {
                 debug_assert!(
                     eff_index_to_step[eff_index] == PHASE_CURSOR_NO_STEP,
@@ -3830,7 +4218,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
             step_idx += 1;
         }
 
-        let typestate = *program.typestate();
+        let typestate = *projection.typestate();
         let mut step_index_to_state = [PHASE_CURSOR_NO_STATE; PHASE_CURSOR_MAX_STEPS];
         let mut node_idx = 0usize;
         while node_idx < typestate.len() {
@@ -3920,21 +4308,9 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     // =========================================================================
     // =========================================================================
 
-    /// Current phase index.
-    #[inline(always)]
-    pub const fn phase_index(&self) -> usize {
-        self.phase_index
-    }
-
-    /// Total number of phases.
-    #[inline(always)]
-    pub const fn phase_len(&self) -> usize {
-        self.phase_len
-    }
-
     /// Get the current phase, if any.
     #[inline]
-    pub fn current_phase(&self) -> Option<&Phase> {
+    pub(crate) fn current_phase(&self) -> Option<&Phase> {
         if self.phase_index < self.phase_len {
             Some(&self.phases[self.phase_index])
         } else {
@@ -3945,22 +4321,6 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     // =========================================================================
     // Lane Access
     // =========================================================================
-
-    /// Per-lane cursor positions.
-    #[inline(always)]
-    pub const fn lane_cursors(&self) -> &[usize; MAX_LANES] {
-        &self.lane_cursors
-    }
-
-    /// Cursor position for a specific lane.
-    #[inline(always)]
-    pub const fn lane_cursor(&self, lane_idx: usize) -> usize {
-        if lane_idx < MAX_LANES {
-            self.lane_cursors[lane_idx]
-        } else {
-            0
-        }
-    }
 
     fn current_label_for_lane(&self, lane_idx: usize) -> Option<u8> {
         self.step_at_lane(lane_idx).map(|step| step.label())
@@ -4001,7 +4361,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     /// for the current phase to resolve the lane without scanning.
     ///
     /// Returns `Some((lane_idx, step))` if found, `None` otherwise.
-    pub fn find_step_for_label(&self, target_label: u8) -> Option<(usize, &LocalStep)> {
+    pub(crate) fn find_step_for_label(&self, target_label: u8) -> Option<(usize, &LocalStep)> {
         let lane_mask = self.label_lane_mask[target_label as usize];
         if lane_mask == 0 {
             return None;
@@ -4016,13 +4376,13 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     }
 
     /// Get the step at the current cursor position for a specific lane.
-    pub fn step_at_lane(&self, lane_idx: usize) -> Option<&LocalStep> {
+    pub(crate) fn step_at_lane(&self, lane_idx: usize) -> Option<&LocalStep> {
         let step_idx = self.step_index_at_lane(lane_idx)?;
         Some(&self.local_steps[step_idx])
     }
 
     /// Get the step index at the current cursor position for a specific lane.
-    pub fn step_index_at_lane(&self, lane_idx: usize) -> Option<usize> {
+    pub(crate) fn step_index_at_lane(&self, lane_idx: usize) -> Option<usize> {
         let phase = self.current_phase()?;
 
         if lane_idx >= MAX_LANES {
@@ -4054,28 +4414,17 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
             );
             return None;
         }
-        Some(state_idx as usize)
+        Some(state_idx.as_usize())
     }
 
     // =========================================================================
     // =========================================================================
-
-    /// Advance cursor for a specific lane by one step.
-    #[inline]
-    pub fn advance_lane(&mut self, lane_idx: usize) {
-        if lane_idx < MAX_LANES {
-            let old_label = self.current_label_for_lane(lane_idx);
-            self.lane_cursors[lane_idx] += 1;
-            let new_label = self.current_label_for_lane(lane_idx);
-            self.update_label_lane_mask(lane_idx, old_label, new_label);
-        }
-    }
 
     /// Set cursor for a specific lane to the step matching `eff_index`.
     ///
     /// Unlike `advance_lane_to_eff_index`, this positions the lane cursor at the
     /// step itself (not past it). Used for loop rewinds.
-    pub fn set_lane_cursor_to_eff_index(&mut self, lane_idx: usize, eff_index: EffIndex) {
+    pub(crate) fn set_lane_cursor_to_eff_index(&mut self, lane_idx: usize, eff_index: EffIndex) {
         let Some(phase) = self.current_phase() else {
             return;
         };
@@ -4086,7 +4435,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         if !lane_steps.is_active() {
             return;
         }
-        let eff_idx = eff_index as usize;
+        let eff_idx = eff_index.as_usize();
         if eff_idx >= PHASE_CURSOR_MAX_STEPS {
             debug_assert!(false, "eff_index out of bounds for phase cursor");
             return;
@@ -4107,8 +4456,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
             debug_assert!(
                 false,
                 "eff_index not in current lane scope: eff_index={} lane={}",
-                eff_index,
-                lane_idx
+                eff_index, lane_idx
             );
             return;
         }
@@ -4120,7 +4468,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     }
 
     /// Advance cursor for a specific lane to the step matching `eff_index`.
-    pub fn advance_lane_to_eff_index(&mut self, lane_idx: usize, eff_index: EffIndex) {
+    pub(crate) fn advance_lane_to_eff_index(&mut self, lane_idx: usize, eff_index: EffIndex) {
         let Some(phase) = self.current_phase() else {
             return;
         };
@@ -4131,7 +4479,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         if !lane_steps.is_active() {
             return;
         }
-        let eff_idx = eff_index as usize;
+        let eff_idx = eff_index.as_usize();
         if eff_idx >= PHASE_CURSOR_MAX_STEPS {
             debug_assert!(false, "eff_index out of bounds for phase cursor");
             return;
@@ -4152,8 +4500,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
             debug_assert!(
                 false,
                 "eff_index not in current lane scope: eff_index={} lane={}",
-                eff_index,
-                lane_idx
+                eff_index, lane_idx
             );
             return;
         }
@@ -4178,7 +4525,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         peer: u8,
         lane: u8,
     ) {
-        let eff_idx = eff_index as usize;
+        let eff_idx = eff_index.as_usize();
         if eff_idx >= PHASE_CURSOR_MAX_STEPS {
             debug_assert!(false, "eff_index out of bounds for typestate mapping");
             return;
@@ -4217,27 +4564,18 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         }
         if step_index_to_state[step_idx] == PHASE_CURSOR_NO_STATE {
             debug_assert!(node_idx <= u16::MAX as usize, "typestate index overflow");
-            step_index_to_state[step_idx] = node_idx as StateIndex;
+            step_index_to_state[step_idx] = as_state_index(node_idx);
         } else {
             debug_assert!(
-                step_index_to_state[step_idx] == node_idx as StateIndex,
+                step_index_to_state[step_idx] == as_state_index(node_idx),
                 "duplicate typestate mapping for step index"
             );
         }
     }
 
-    /// Advance to next phase, resetting lane cursors.
-    #[inline]
-    pub fn advance_phase(&mut self) {
-        self.phase_index += 1;
-        self.lane_cursors = [0; MAX_LANES];
-        self.sync_idx_to_phase_start();
-        self.rebuild_label_lane_mask();
-    }
-
     /// Advance to next phase without syncing the primary typestate index.
     #[inline]
-    pub fn advance_phase_without_sync(&mut self) {
+    pub(crate) fn advance_phase_without_sync(&mut self) {
         self.phase_index += 1;
         self.lane_cursors = [0; MAX_LANES];
         self.rebuild_label_lane_mask();
@@ -4260,11 +4598,11 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
             debug_assert!(false, "missing typestate index for phase start step");
             return;
         }
-        self.idx = state_idx as usize;
+        self.idx = state_idx.as_usize();
     }
 
     /// Check if all lanes in current phase are complete.
-    pub fn is_phase_complete(&self) -> bool {
+    pub(crate) fn is_phase_complete(&self) -> bool {
         let Some(phase) = self.current_phase() else {
             return true; // No more phases
         };
@@ -4281,39 +4619,19 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         true
     }
 
-    /// Return new cursor with the specified lane advanced (immutable).
-    pub fn with_lane_advanced(self, lane_idx: usize) -> Self {
-        let mut new = self;
-        new.advance_lane(lane_idx);
-        new
-    }
-
-    /// Return new cursor at next phase (immutable).
-    pub fn with_phase_advanced(self) -> Self {
-        let mut new = self;
-        new.advance_phase();
-        new
-    }
-
     // =========================================================================
     // Core Typestate Navigation
     // =========================================================================
 
     /// Current typestate index.
     #[inline(always)]
-    pub const fn index(&self) -> usize {
+    pub(crate) const fn index(&self) -> usize {
         self.idx
-    }
-
-    /// Total typestate length.
-    #[inline(always)]
-    pub fn typestate_len(&self) -> usize {
-        self.typestate.len()
     }
 
     /// Access a typestate node by index.
     #[inline(always)]
-    pub fn typestate_node(&self, index: usize) -> LocalNode {
+    pub(crate) fn typestate_node(&self, index: usize) -> LocalNode {
         self.typestate.node(index)
     }
 
@@ -4324,58 +4642,47 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
 
     /// Returns `true` when the cursor points at a send action.
     #[inline(always)]
-    pub fn is_send(&self) -> bool {
+    pub(crate) fn is_send(&self) -> bool {
         self.action().is_send()
     }
 
     /// Returns `true` when the cursor points at a receive action.
     #[inline(always)]
-    pub fn is_recv(&self) -> bool {
+    pub(crate) fn is_recv(&self) -> bool {
         self.action().is_recv()
     }
 
     /// Returns `true` when the cursor points at a local action.
     #[inline(always)]
-    pub fn is_local_action(&self) -> bool {
+    pub(crate) fn is_local_action(&self) -> bool {
         self.action().is_local_action()
     }
 
     /// Returns `true` when the cursor points at a Jump action.
     #[inline(always)]
-    pub fn is_jump(&self) -> bool {
+    pub(crate) fn is_jump(&self) -> bool {
         self.action().is_jump()
     }
 
     /// Returns the jump reason if the current node is a Jump action.
     #[inline(always)]
-    pub fn jump_reason(&self) -> Option<JumpReason> {
+    pub(crate) fn jump_reason(&self) -> Option<JumpReason> {
         self.action().jump_reason()
     }
 
     /// Returns the jump target index if the current node is a Jump action.
     #[inline(always)]
-    pub fn jump_target(&self) -> Option<usize> {
+    pub(crate) fn jump_target(&self) -> Option<usize> {
         if self.is_jump() {
-            Some(self.typestate.node(self.idx).next() as usize)
+            Some(state_index_to_usize(self.typestate.node(self.idx).next()))
         } else {
             None
         }
     }
 
-    /// EffIndex associated with the current typestate node, if any.
-    #[inline(always)]
-    pub fn eff_index(&self) -> Option<EffIndex> {
-        match self.action() {
-            LocalAction::Send { eff_index, .. }
-            | LocalAction::Recv { eff_index, .. }
-            | LocalAction::Local { eff_index, .. } => Some(eff_index),
-            LocalAction::None | LocalAction::Terminate | LocalAction::Jump { .. } => None,
-        }
-    }
-
     /// Returns the label associated with the current typestate node.
     #[inline(always)]
-    pub fn label(&self) -> Option<u8> {
+    pub(crate) fn label(&self) -> Option<u8> {
         match self.action() {
             LocalAction::Send { label, .. }
             | LocalAction::Recv { label, .. }
@@ -4386,7 +4693,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
 
     /// Advance typestate index to the successor.
     #[inline(always)]
-    pub fn advance(self) -> Self {
+    pub(crate) fn advance(self) -> Self {
         let next = state_index_to_usize(self.typestate.node(self.idx).next());
         Self { idx: next, ..self }
     }
@@ -4409,7 +4716,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     /// Returns `Err(JumpError)` if the Jump chain exceeds MAX_EFF_NODES iterations,
     /// indicating a CFG cycle bug in the typestate compiler.
     #[inline(always)]
-    pub fn try_follow_jumps(self) -> Result<Self, JumpError> {
+    pub(crate) fn try_follow_jumps(self) -> Result<Self, JumpError> {
         let mut cursor = self;
         let mut iter = 0u32;
         while cursor.is_jump() {
@@ -4435,31 +4742,12 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         Ok(cursor)
     }
 
-    /// Follow Jump nodes until reaching a non-Jump node.
-    ///
-    /// Panics if the Jump chain exceeds MAX_EFF_NODES iterations (CFG cycle bug).
-    /// Use `try_follow_jumps()` for fallible version.
-    #[inline(always)]
-    pub fn follow_jumps(self) -> Self {
-        self.try_follow_jumps()
-            .expect("follow_jumps: CFG cycle bug - exceeded max iterations")
-    }
-
     /// Advance to the next node, then follow Jump nodes.
     ///
     /// Returns `Err(JumpError)` if the Jump chain exceeds MAX_EFF_NODES iterations.
     #[inline(always)]
-    pub fn try_advance_past_jumps(self) -> Result<Self, JumpError> {
+    pub(crate) fn try_advance_past_jumps(self) -> Result<Self, JumpError> {
         self.advance().try_follow_jumps()
-    }
-
-    /// Advance to the next node, then follow Jump nodes.
-    ///
-    /// Panics if the Jump chain exceeds MAX_EFF_NODES iterations (CFG cycle bug).
-    /// Use `try_advance_past_jumps()` for fallible version.
-    #[inline(always)]
-    pub fn advance_past_jumps(self) -> Self {
-        self.advance().follow_jumps()
     }
 
     /// Follow a PassiveObserverBranch Jump to the specified arm's target.
@@ -4470,7 +4758,10 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     /// Returns `None` if:
     /// - Not in a scope
     /// - No PassiveObserverBranch Jump found for the specified arm
-    pub fn follow_passive_observer_arm(&self, target_arm: u8) -> Option<PassiveArmNavigation> {
+    pub(crate) fn follow_passive_observer_arm(
+        &self,
+        target_arm: u8,
+    ) -> Option<PassiveArmNavigation> {
         let scope_region = self.scope_region()?;
         self.follow_passive_observer_arm_for_scope(scope_region.scope_id, target_arm)
     }
@@ -4486,16 +4777,16 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     ///
     /// Navigation priority:
     /// 1. PassiveObserverBranch Jump (if available) - follows the jump to arm entry
-    /// 2. passive_arm_entry (fallback) - direct arm entry index
+    /// 2. passive_arm_entry (direct entry index)
     ///
-    /// The fallback is needed for nested routes where the inner route may have
+    /// The direct entry path is needed for nested routes where the inner route may have
     /// controller_arm_entry set (causing PassiveObserverBranch generation to skip),
     /// but passive_arm_entry is still valid for navigation.
     ///
     /// Note: τ-eliminated arms (no cross-role content) are handled at compile time
     /// by generating ArmEmpty (RouteArmEnd) placeholder nodes, ensuring
     /// passive_arm_entry is always set.
-    pub fn follow_passive_observer_arm_for_scope(
+    pub(crate) fn follow_passive_observer_arm_for_scope(
         &self,
         scope_id: ScopeId,
         target_arm: u8,
@@ -4505,11 +4796,11 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
 
         if let Some(jump_idx) = jump_node_idx {
             // Primary path: follow PassiveObserverBranch Jump to target
-            let jump_node = self.typestate.node(jump_idx as usize);
-            let target = jump_node.next() as StateIndex;
+            let jump_node = self.typestate.node(state_index_to_usize(jump_idx));
+            let target = jump_node.next();
             Some(PassiveArmNavigation::WithinArm { entry: target })
         } else if let Some(entry_idx) = self.typestate.passive_arm_entry(scope_id, target_arm) {
-            // Fallback: use passive_arm_entry directly
+            // Secondary path: use passive_arm_entry directly
             // This is needed for nested routes where the inner route may be incorrectly
             // classified as "controller" (due to some nodes having controller_arm_entry set),
             // preventing PassiveObserverBranch generation. However, passive_arm_entry is
@@ -4525,23 +4816,13 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         }
     }
 
-    /// Get the arm number from the current PassiveObserverBranch Jump, if any.
-    pub fn passive_observer_jump_arm(&self) -> Option<u8> {
-        if self.is_jump() {
-            if let Some(JumpReason::PassiveObserverBranch) = self.action().jump_reason() {
-                return self.typestate.node(self.idx).route_arm();
-            }
-        }
-        None
-    }
-
     /// Find the route arm containing a Send/Local node with the specified label.
     ///
     /// Uses O(1) registry lookup via `passive_arm_jump()` or `passive_arm_entry()`
     /// to check each arm's entry point label, avoiding full scope scan.
     ///
     /// For 2-arm routes, this performs at most 2 registry lookups + 2 node reads.
-    pub fn find_arm_for_send_label(&self, target_label: u8) -> Option<u8> {
+    pub(crate) fn find_arm_for_send_label(&self, target_label: u8) -> Option<u8> {
         let scope_region = self.scope_region()?;
         let scope_id = scope_region.scope_id;
 
@@ -4549,13 +4830,16 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         // 2-arm route constraint means at most 2 iterations
         for arm in 0..2u8 {
             // First try PassiveObserverBranch Jump (for linger routes)
-            let entry_idx = if let Some(jump_node_idx) = self.typestate.passive_arm_jump(scope_id, arm) {
-                let jump_node = self.typestate.node(jump_node_idx as usize);
-                Some(jump_node.next() as usize)
-            } else {
-                // Fallback: use passive_arm_entry directly (for non-linger routes)
-                self.typestate.passive_arm_entry(scope_id, arm).map(|idx| idx as usize)
-            };
+            let entry_idx =
+                if let Some(jump_node_idx) = self.typestate.passive_arm_jump(scope_id, arm) {
+                    let jump_node = self.typestate.node(state_index_to_usize(jump_node_idx));
+                    Some(state_index_to_usize(jump_node.next()))
+                } else {
+                    // Direct entry path for non-linger routes.
+                    self.typestate
+                        .passive_arm_entry(scope_id, arm)
+                        .map(state_index_to_usize)
+                };
 
             if let Some(target_idx) = entry_idx {
                 let entry_node = self.typestate.node(target_idx);
@@ -4577,13 +4861,14 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     /// Find the route arm containing a Recv node with the specified label.
     ///
     /// Uses FIRST-recv dispatch for O(1) lookup. The dispatch table now includes
-    /// the arm directly as `(label, arm, target_idx)`, eliminating positional heuristics.
+    /// the arm directly as `(label, arm, target_idx)`, eliminating positional inference.
     ///
     /// Returns `None` if label not found in dispatch table.
     ///
-    /// Fallback via passive_arm_entry is only needed for τ-eliminated arms or
+    /// Direct entry via passive_arm_entry is only needed for τ-eliminated arms or
     /// arms with no recv nodes (which have no FIRST entries).
-    pub fn find_arm_for_recv_label(&self, target_label: u8) -> Option<u8> {
+    #[cfg(test)]
+    pub(crate) fn find_arm_for_recv_label(&self, target_label: u8) -> Option<u8> {
         let scope_region = self.scope_region()?;
         let scope_id = scope_region.scope_id;
 
@@ -4596,14 +4881,17 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
             return Some(arm);
         }
 
-        // Fallback: O(4) scan of arm entry node labels (for τ-eliminated or local-only arms)
+        // Bounded O(4) scan of arm entry node labels for τ-eliminated or local-only arms.
         for arm in 0..2u8 {
-            let entry_idx = if let Some(jump_node_idx) = self.typestate.passive_arm_jump(scope_id, arm) {
-                let jump_node = self.typestate.node(jump_node_idx as usize);
-                Some(jump_node.next() as usize)
-            } else {
-                self.typestate.passive_arm_entry(scope_id, arm).map(|idx| idx as usize)
-            };
+            let entry_idx =
+                if let Some(jump_node_idx) = self.typestate.passive_arm_jump(scope_id, arm) {
+                    let jump_node = self.typestate.node(state_index_to_usize(jump_node_idx));
+                    Some(state_index_to_usize(jump_node.next()))
+                } else {
+                    self.typestate
+                        .passive_arm_entry(scope_id, arm)
+                        .map(state_index_to_usize)
+                };
 
             if let Some(target_idx) = entry_idx {
                 let entry_node = self.typestate.node(target_idx);
@@ -4621,43 +4909,25 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     ///
     /// This combines `find_arm_for_send_label` and `follow_passive_observer_arm`
     /// to directly navigate to the correct position for a passive observer.
-    pub fn follow_passive_observer_for_label(&self, label: u8) -> Option<Self> {
+    pub(crate) fn follow_passive_observer_for_label(&self, label: u8) -> Option<Self> {
         let target_arm = self.find_arm_for_send_label(label)?;
-        let PassiveArmNavigation::WithinArm { entry } = self.follow_passive_observer_arm(target_arm)?;
-        Some(self.with_index(entry as usize))
+        let PassiveArmNavigation::WithinArm { entry } =
+            self.follow_passive_observer_arm(target_arm)?;
+        Some(self.with_index(state_index_to_usize(entry)))
     }
 
     /// Create a cursor at a specific typestate index.
-    pub fn with_index(&self, idx: usize) -> Self {
+    pub(crate) fn with_index(&self, idx: usize) -> Self {
         debug_assert!(idx < self.typestate.len());
         Self { idx, ..*self }
-    }
-
-    /// Test-only cursor advancement helper.
-    #[cfg(any(test, debug_assertions))]
-    #[inline(always)]
-    pub fn advance_for_test(self) -> Self {
-        self.advance()
-    }
-
-    /// Test-only: Get scope record by scope ID.
-    #[cfg(any(test, debug_assertions, feature = "std"))]
-    pub fn scope_entry_for_test(&self, scope_id: ScopeId) -> Option<&ScopeRecord> {
-        self.typestate.scope_entry(scope_id)
     }
 
     // =========================================================================
     // Scope Queries (delegated to typestate)
     // =========================================================================
 
-    /// Iterate over all scope regions.
-    #[inline(always)]
-    pub fn scope_regions(&self) -> ScopeRegionIter<'_> {
-        self.typestate.scope_regions()
-    }
-
     /// Get scope region for current node.
-    pub fn scope_region(&self) -> Option<ScopeRegion> {
+    pub(crate) fn scope_region(&self) -> Option<ScopeRegion> {
         let scope_id = self.typestate.node(self.idx).scope();
         if scope_id.is_none() {
             None
@@ -4668,86 +4938,73 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
 
     /// Get scope region by scope ID.
     #[inline(always)]
-    pub fn scope_region_by_id(&self, scope_id: ScopeId) -> Option<ScopeRegion> {
+    pub(crate) fn scope_region_by_id(&self, scope_id: ScopeId) -> Option<ScopeRegion> {
         self.typestate.scope_region_for(scope_id)
     }
 
     /// FIRST-recv dispatch lookup for passive observers.
     ///
     /// Given a recv label, returns the route arm and leaf recv StateIndex.
-    /// Returns `(arm, target_idx)` for O(1) dispatch, eliminating heuristics.
+    /// Returns `(arm, target_idx)` for O(1) dispatch without extra inference.
     ///
     /// Returns `None` if label not found.
     #[inline]
-    pub fn first_recv_target(&self, scope_id: ScopeId, label: u8) -> Option<(u8, StateIndex)> {
+    pub(crate) fn first_recv_target(
+        &self,
+        scope_id: ScopeId,
+        label: u8,
+    ) -> Option<(u8, StateIndex)> {
+        if let Some((policy, _, _)) = self.route_scope_controller_policy(scope_id)
+            && policy.is_dynamic()
+        {
+            return None;
+        }
+        self.typestate.first_recv_target(scope_id, label)
+    }
+
+    #[inline]
+    pub(crate) fn first_recv_target_evidence(
+        &self,
+        scope_id: ScopeId,
+        label: u8,
+    ) -> Option<(u8, StateIndex)> {
         self.typestate.first_recv_target(scope_id, label)
     }
 
     /// Check if this role is the controller for the given route scope.
     ///
     /// Uses type-level `controller_role` from `ScopeRegion` (propagated from
-    /// `route_chain<CONTROLLER>` via `ScopeMarker`). This eliminates runtime
+    /// binary route construction via `ScopeMarker`). This eliminates runtime
     /// inference based on `controller_arm_entry` presence.
     ///
     /// Returns `true` if `controller_role == ROLE`, `false` otherwise.
     #[inline]
-    pub fn is_route_controller(&self, scope_id: ScopeId) -> bool {
+    pub(crate) fn is_route_controller(&self, scope_id: ScopeId) -> bool {
         self.scope_region_by_id(scope_id)
             .and_then(|region| region.controller_role)
             .map_or(false, |ctrl| ctrl == ROLE)
     }
 
     /// Get scope ID at current position.
-    pub fn scope_id(&self) -> Option<ScopeId> {
+    #[cfg(test)]
+    pub(crate) fn scope_id(&self) -> Option<ScopeId> {
         self.scope_region().map(|region| region.scope_id)
     }
 
     /// Scope ID stored on the current node (no parent traversal).
     #[inline(always)]
-    pub fn node_scope_id(&self) -> ScopeId {
+    pub(crate) fn node_scope_id(&self) -> ScopeId {
         self.typestate.node(self.idx).scope()
     }
 
     /// Get scope kind at current position.
-    pub fn scope_kind(&self) -> Option<ScopeKind> {
+    #[cfg(test)]
+    pub(crate) fn scope_kind(&self) -> Option<ScopeKind> {
         self.scope_region().map(|region| region.kind)
     }
 
-    /// Find enclosing scope of a specific kind.
-    pub fn enclosing_scope_of_kind(&self, kind: ScopeKind) -> Option<ScopeRegion> {
-        self.typestate.scope_region_covering_kind(self.idx, kind)
-    }
-
-    /// Scope atlas view for read-only access.
-    #[inline(always)]
-    pub fn scope_atlas_view(&self) -> ScopeAtlasView<'_> {
-        self.typestate.scope_atlas_view()
-    }
-
-    /// Scope start index for current scope.
-    pub fn scope_start_index(&self) -> Option<usize> {
-        self.scope_region().map(|r| r.start)
-    }
-
-    /// Scope end index for current scope.
-    pub fn scope_end_index(&self) -> Option<usize> {
-        self.scope_region().map(|r| r.end)
-    }
-
-    /// Enter scope by ID.
-    pub fn enter_scope(&self, scope_id: ScopeId) -> Option<Self> {
-        let region = self.scope_region_by_id(scope_id)?;
-        Some(self.with_index(region.start))
-    }
-
-    /// Exit scope by ID (position after scope end).
-    pub fn exit_scope(&self, scope_id: ScopeId) -> Option<Self> {
-        let region = self.scope_region_by_id(scope_id)?;
-        Some(self.with_index(region.end))
-    }
-
     /// Advance past the current scope if it matches the given kind.
-    pub fn advance_scope_if_kind(&self, kind: ScopeKind) -> Option<Self> {
+    pub(crate) fn advance_scope_if_kind(&self, kind: ScopeKind) -> Option<Self> {
         let region = self.scope_region()?;
         if region.kind == kind {
             Some(self.with_index(region.end))
@@ -4760,7 +5017,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     ///
     /// If cursor is already at or beyond scope.end, returns None since no
     /// advancement is needed (cursor has already exited the scope).
-    pub fn advance_scope_by_id(&self, scope_id: ScopeId) -> Option<Self> {
+    pub(crate) fn advance_scope_by_id(&self, scope_id: ScopeId) -> Option<Self> {
         let region = self.scope_region_by_id(scope_id)?;
         // Only advance if cursor is still inside the scope
         if self.idx < region.end {
@@ -4771,18 +5028,8 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         }
     }
 
-    /// Clamp cursor to scope end boundary.
-    pub fn clamp_scope_end(&self, scope_id: ScopeId) -> Self {
-        if let Some(region) = self.scope_region_by_id(scope_id) {
-            if self.idx > region.end {
-                return self.with_index(region.end);
-            }
-        }
-        *self
-    }
-
     /// Get parent scope.
-    pub fn scope_parent(&self, scope_id: ScopeId) -> Option<ScopeId> {
+    pub(crate) fn scope_parent(&self, scope_id: ScopeId) -> Option<ScopeId> {
         self.typestate.scope_parent(scope_id)
     }
 
@@ -4791,24 +5038,26 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     // =========================================================================
 
     /// Find cursor at node with given label.
+    #[cfg(test)]
     #[inline(always)]
-    pub fn seek_label(&self, label: u8) -> Option<Self> {
-        self.try_index_for_label(label).map(|idx| self.with_index(idx))
+    pub(crate) fn seek_label(&self, label: u8) -> Option<Self> {
+        self.try_index_for_label(label)
+            .map(|idx| self.with_index(idx))
     }
 
     /// Position after advancing from node with label.
-    pub fn successor_for_label(&self, label: u8) -> Self {
+    pub(crate) fn successor_for_label(&self, label: u8) -> Self {
         self.with_index(self.index_for_label(label)).advance()
     }
 
     /// Find index for label (panics if not found).
-    pub fn index_for_label(&self, label: u8) -> usize {
+    pub(crate) fn index_for_label(&self, label: u8) -> usize {
         self.try_index_for_label(label)
             .expect("label not found in typestate")
     }
 
     /// Try to find index for label.
-    pub fn try_index_for_label(&self, label: u8) -> Option<usize> {
+    pub(crate) fn try_index_for_label(&self, label: u8) -> Option<usize> {
         for i in 0..self.typestate.len() {
             let node = self.typestate.node(i);
             let node_label = match node.action() {
@@ -4822,35 +5071,6 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
             }
         }
         None
-    }
-
-    /// Search within current scope for label.
-    pub fn search_scope_for_label(&self, label: u8) -> Option<Self> {
-        let region = self.scope_region()?;
-        self.scan_range_for_label(region.start, region.end, label)
-    }
-
-    /// Linear scan for label within a range.
-    pub fn scan_range_for_label(&self, start: usize, end: usize, label: u8) -> Option<Self> {
-        for i in start..end {
-            let node = self.typestate.node(i);
-            let node_label = match node.action() {
-                LocalAction::Send { label: l, .. }
-                | LocalAction::Recv { label: l, .. }
-                | LocalAction::Local { label: l, .. } => Some(l),
-                LocalAction::None | LocalAction::Terminate | LocalAction::Jump { .. } => None,
-            };
-            if node_label == Some(label) {
-                return Some(self.with_index(i));
-            }
-        }
-        None
-    }
-
-    /// Scan within canonical scope for label.
-    pub fn scan_canonical_scope_for_label(&self, scope_id: ScopeId, label: u8) -> Option<Self> {
-        let region = self.scope_region_by_id(scope_id)?;
-        self.scan_range_for_label(region.start, region.end, label)
     }
 
     // =========================================================================
@@ -4884,7 +5104,9 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         &self,
         scope_id: ScopeId,
     ) -> Option<([u8; MAX_LANES], usize)> {
-        self.typestate.scope_registry.route_offer_lane_list(scope_id)
+        self.typestate
+            .scope_registry
+            .route_offer_lane_list(scope_id)
     }
 
     /// Get offer entry index for a route scope.
@@ -4893,12 +5115,32 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         self.typestate.scope_registry.route_offer_entry(scope_id)
     }
 
+    #[inline]
+    pub(crate) fn route_scope_first_recv_dispatch_entry(
+        &self,
+        scope_id: ScopeId,
+        idx: usize,
+    ) -> Option<(u8, u8, StateIndex)> {
+        self.typestate
+            .scope_registry
+            .first_recv_dispatch_entry(scope_id, idx)
+    }
+
+    #[inline]
+    pub(crate) fn route_scope_slot(&self, scope_id: ScopeId) -> Option<usize> {
+        self.typestate.scope_registry.route_scope_slot(scope_id)
+    }
+
     pub(crate) fn scope_lane_first_eff(&self, scope_id: ScopeId, lane: u8) -> Option<EffIndex> {
-        self.typestate.scope_registry.scope_lane_first_eff(scope_id, lane)
+        self.typestate
+            .scope_registry
+            .scope_lane_first_eff(scope_id, lane)
     }
 
     pub(crate) fn scope_lane_last_eff(&self, scope_id: ScopeId, lane: u8) -> Option<EffIndex> {
-        self.typestate.scope_registry.scope_lane_last_eff(scope_id, lane)
+        self.typestate
+            .scope_registry
+            .scope_lane_last_eff(scope_id, lane)
     }
 
     pub(crate) fn scope_lane_last_eff_for_arm(
@@ -4910,11 +5152,6 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         self.typestate
             .scope_registry
             .scope_lane_last_eff_for_arm(scope_id, arm, lane)
-    }
-
-    /// Returns true if this role's route arms are mergeable and the route is locally elidable.
-    pub(crate) fn route_scope_mergeable(&self, scope_id: ScopeId) -> Option<bool> {
-        self.typestate.scope_registry.route_mergeable(scope_id)
     }
 
     /// Get the controller arm entry index for a given label.
@@ -4934,7 +5171,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     pub(crate) fn is_at_controller_arm_entry(&self, scope_id: ScopeId) -> bool {
         self.typestate
             .scope_registry
-            .is_at_controller_arm_entry(scope_id, self.idx as StateIndex)
+            .is_at_controller_arm_entry(scope_id, as_state_index(self.idx))
     }
 
     /// Get the controller arm entry (index, label) for a given arm number.
@@ -4949,16 +5186,21 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
             .controller_arm_entry_by_arm(scope_id, arm)
     }
 
-    /// Get route controller plan metadata.
+    #[inline]
+    pub(crate) fn passive_arm_scope_by_arm(&self, scope_id: ScopeId, arm: u8) -> Option<ScopeId> {
+        self.typestate.passive_arm_scope(scope_id, arm)
+    }
+
+    /// Get route controller policy metadata.
     ///
-    /// The tuple `(HandlePlan, EffIndex, u8)` corresponds to the controller-provided
-    /// `HandlePlan`, the effect index of the send action that declared it, and the
-    /// control resource tag embedded in the DSL. Route plans are tracked for both
+    /// The tuple `(PolicyMode, EffIndex, u8)` corresponds to the controller-provided
+    /// policy mode, the effect index of the send action that declared it, and the
+    /// control resource tag embedded in the DSL. Route policies are tracked for both
     /// generic route decisions and loop-based routing (LoopContinue/LoopBreak).
-    pub fn route_scope_controller_plan(
+    pub(crate) fn route_scope_controller_policy(
         &self,
         scope_id: ScopeId,
-    ) -> Option<(HandlePlan, EffIndex, u8)> {
+    ) -> Option<(PolicyMode, EffIndex, u8)> {
         self.typestate.scope_registry.route_controller(scope_id)
     }
 
@@ -4968,47 +5210,20 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
 
     /// Try to get send metadata at the current cursor location.
     /// Returns `None` if the current node is not a Send action.
-    pub fn try_send_meta(&self) -> Option<SendMeta> {
+    pub(crate) fn try_send_meta(&self) -> Option<SendMeta> {
         try_send_meta(&self.typestate, self.idx)
     }
 
     /// Try to get receive metadata at the current cursor location.
     /// Returns `None` if the current node is not a Recv action.
-    pub fn try_recv_meta(&self) -> Option<RecvMeta> {
+    pub(crate) fn try_recv_meta(&self) -> Option<RecvMeta> {
         try_recv_meta(&self.typestate, self.idx)
     }
 
     /// Try to get local action metadata at the current cursor location.
     /// Returns `None` if the current node is not a Local action.
-    pub fn try_local_meta(&self) -> Option<LocalMeta> {
+    pub(crate) fn try_local_meta(&self) -> Option<LocalMeta> {
         try_local_meta(&self.typestate, self.idx)
-    }
-
-    /// Expect send metadata at the current cursor location.
-    ///
-    /// Panics if the node is not a Send action.
-    /// Only available in test and debug builds - use `try_send_meta()` in production code.
-    #[cfg(any(test, debug_assertions))]
-    pub fn expect_send_meta(&self) -> SendMeta {
-        self.try_send_meta().expect("cursor not at Send node")
-    }
-
-    /// Expect receive metadata at the current cursor location.
-    ///
-    /// Panics if the node is not a Recv action.
-    /// Only available in test and debug builds - use `try_recv_meta()` in production code.
-    #[cfg(any(test, debug_assertions))]
-    pub fn expect_recv_meta(&self) -> RecvMeta {
-        self.try_recv_meta().expect("cursor not at Recv node")
-    }
-
-    /// Expect local action metadata at the current cursor location.
-    ///
-    /// Panics if the node is not a Local action.
-    /// Only available in test and debug builds - use `try_local_meta()` in production code.
-    #[cfg(any(test, debug_assertions))]
-    pub fn expect_local_meta(&self) -> LocalMeta {
-        self.try_local_meta().expect("cursor not at Local node")
     }
 
     // =========================================================================
@@ -5016,7 +5231,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     // =========================================================================
 
     /// Get loop metadata for current scope.
-    pub fn loop_metadata_inner(&self) -> Option<LoopMetadata<ROLE>> {
+    pub(crate) fn loop_metadata_inner(&self) -> Option<LoopMetadata<ROLE>> {
         let node = self.typestate.node(self.idx);
         let action = node.action();
         let (label, eff_index, controller, target, role_kind) = match action {
@@ -5052,44 +5267,13 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         })
     }
 
-    /// Get scope metadata (None | Loop | Structured).
-    pub fn scope_metadata(&self) -> ScopeMetadata<ROLE> {
-        match self.scope_region() {
-            None => ScopeMetadata::None,
-            Some(region) => {
-                if let Some(meta) = self.loop_metadata_inner() {
-                    return ScopeMetadata::Loop {
-                        span_start: region.start,
-                        span_end: region.end,
-                        metadata: meta,
-                    };
-                }
-                ScopeMetadata::Structured {
-                    scope_id: region.scope_id,
-                    kind: region.kind,
-                    start: region.start,
-                    end: region.end,
-                }
-            }
-        }
-    }
-
-    /// Expect structured scope metadata at the current cursor location.
-    pub fn expect_scope_metadata(&self) -> ScopeMetadata<ROLE> {
-        match self.scope_metadata() {
-            ScopeMetadata::None => {
-                panic!("PhaseCursor not positioned within a structured scope")
-            }
-            meta => meta,
-        }
-    }
-
     // =========================================================================
     // Terminal State
     // =========================================================================
 
     /// Assert that the cursor is at a terminal state.
-    pub fn assert_terminal(&self) {
+    #[cfg(test)]
+    pub(crate) fn assert_terminal(&self) {
         assert!(
             matches!(self.action(), LocalAction::Terminate),
             "cursor at index {} is not terminal",
@@ -5101,38 +5285,28 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
 #[cfg(test)]
 mod tests {
     use super::{LocalAction, PhaseCursor, StateIndex};
-    use crate::control::cap::{
-        GenericCapToken,
-        resource_kinds::{LoopBreakKind, LoopContinueKind},
-    };
+    use crate::control::cap::mint::GenericCapToken;
+    use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
     use crate::eff::EffIndex;
-    use crate::g::steps::ProjectRole;
-    use crate::g::{
-        self, CanonicalControl, LoopBreakSteps, LoopContinueSteps, LoopDecisionSteps, LoopSteps,
-        Msg, Role, SendStep, StepConcat, StepCons, StepNil,
-    };
-    use crate::global::const_dsl::{DynamicMeta, HandlePlan, ScopeKind};
+    use crate::g::{self, Msg, Role};
+    use crate::global::const_dsl::{PolicyMode, ScopeKind};
     use crate::global::role_program;
+    use crate::global::role_program::{RoleProgram, project};
+    use crate::global::steps::{LoopSteps, ProjectRole, SendStep, StepConcat, StepCons, StepNil};
+    use crate::global::{CanonicalControl, MessageSpec};
     use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
 
-    type Controller = Role<0>;
-    type Target = Role<1>;
+    const BODY: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>> =
+        g::send::<Role<0>, Role<1>, Msg<7, ()>, 0>();
 
-    type LoopBodySteps = StepCons<SendStep<Controller, Target, Msg<7, ()>>, StepNil>;
-    const BODY: g::Program<LoopBodySteps> = g::send::<Controller, Target, Msg<7, ()>, 0>();
-
-    const LOOP_PLAN_POLICY_ID: u16 = 9300;
-    const ROUTE_PLAN_POLICY_ID: u16 = 9301;
-    const LOOP_PLAN_META: DynamicMeta = DynamicMeta::new();
-    const ROUTE_PLAN_META: DynamicMeta = DynamicMeta::new();
-
-    const EXIT: g::Program<StepNil> = g::Program::empty();
+    const LOOP_POLICY_ID: u16 = 9300;
+    const ROUTE_POLICY_ID: u16 = 9301;
 
     #[allow(clippy::type_complexity)]
     const LOOP_PROGRAM: g::Program<
         LoopSteps<
-            LoopBodySteps,
-            Controller,
+            StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>,
+            Role<0>,
             Msg<
                 { LABEL_LOOP_CONTINUE },
                 GenericCapToken<LoopContinueKind>,
@@ -5146,111 +5320,81 @@ mod tests {
             StepNil,
         >,
     > = {
-        type LoopContinueArm = LoopContinueSteps<
-            Controller,
-            Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
-            LoopBodySteps,
-        >;
-        type LoopBreakArm = LoopBreakSteps<
-            Controller,
-            Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
-            StepNil,
-        >;
-        type LoopDecision = LoopDecisionSteps<
-            Controller,
-            Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
-            Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
-            StepNil,
-            LoopBodySteps,
-        >;
         // Self-send for CanonicalControl: Controller → Controller
-        const CONTINUE_ARM: g::Program<LoopContinueArm> = g::with_control_plan(
-            g::send::<
-                Controller,
-                Controller, // self-send
-                Msg<
-                    { LABEL_LOOP_CONTINUE },
-                    GenericCapToken<LoopContinueKind>,
-                    CanonicalControl<LoopContinueKind>,
-                >,
-                0,
-            >(),
-            HandlePlan::dynamic(LOOP_PLAN_POLICY_ID, LOOP_PLAN_META),
-        )
-        .then(BODY);
-        const BREAK_ARM: g::Program<LoopBreakArm> = g::with_control_plan(
-            g::send::<
-                Controller,
-                Controller, // self-send
-                Msg<
-                    { LABEL_LOOP_BREAK },
-                    GenericCapToken<LoopBreakKind>,
-                    CanonicalControl<LoopBreakKind>,
-                >,
-                0,
-            >(),
-            HandlePlan::dynamic(LOOP_PLAN_POLICY_ID, LOOP_PLAN_META),
-        )
-        .then(EXIT);
+        let continue_control = g::send::<
+            Role<0>,
+            Role<0>, // self-send
+            Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            0,
+        >()
+        .policy::<LOOP_POLICY_ID>();
+        let continue_arm = g::seq(continue_control, BODY);
+        let break_arm = g::send::<
+            Role<0>,
+            Role<0>, // self-send
+            Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+            0,
+        >()
+        .policy::<LOOP_POLICY_ID>();
         // Route decision is local to Controller (0 → 0)
-        const DECISION: g::Program<LoopDecision> = g::route::<0, _>(
-            g::route_chain::<0, LoopContinueArm>(CONTINUE_ARM).and::<LoopBreakArm>(BREAK_ARM),
-        );
-        DECISION
+        g::route(continue_arm, break_arm)
     };
 
-    type ControllerLocal = <LoopSteps<
-        LoopBodySteps,
-        Controller,
-        Msg<
-            { LABEL_LOOP_CONTINUE },
-            GenericCapToken<LoopContinueKind>,
-            CanonicalControl<LoopContinueKind>,
-        >,
-        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
-        StepNil,
-    > as ProjectRole<Controller>>::Output;
+    const CONTROLLER_PROGRAM: RoleProgram<
+        'static,
+        0,
+        <LoopSteps<
+            StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>,
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+            StepNil,
+        > as ProjectRole<Role<0>>>::Output,
+    > = project(&LOOP_PROGRAM);
 
-    const CONTROLLER_PROGRAM: g::RoleProgram<'static, 0, ControllerLocal> =
-        g::project::<0, _, _>(&LOOP_PROGRAM);
+    const TARGET_PROGRAM: RoleProgram<
+        'static,
+        1,
+        <LoopSteps<
+            StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>,
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+            StepNil,
+        > as ProjectRole<Role<1>>>::Output,
+    > = project(&LOOP_PROGRAM);
 
-    type TargetLocal = <LoopSteps<
-        LoopBodySteps,
-        Controller,
-        Msg<
-            { LABEL_LOOP_CONTINUE },
-            GenericCapToken<LoopContinueKind>,
-            CanonicalControl<LoopContinueKind>,
-        >,
-        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
-        StepNil,
-    > as ProjectRole<Target>>::Output;
-
-    const TARGET_PROGRAM: g::RoleProgram<'static, 1, TargetLocal> =
-        g::project::<1, _, _>(&LOOP_PROGRAM);
-
-    type LocalMsg = Msg<9, ()>;
-    type LocalSteps = StepCons<SendStep<Controller, Controller, LocalMsg>, StepNil>;
-    const LOCAL_PROGRAM: g::Program<LocalSteps> = g::send::<Controller, Controller, LocalMsg, 0>();
-    type LocalProjection = <LocalSteps as ProjectRole<Controller>>::Output;
-    const LOCAL_ROLE: role_program::RoleProgram<'static, 0, LocalProjection> =
-        role_program::project::<0, LocalSteps, _>(&LOCAL_PROGRAM);
+    const LOCAL_PROGRAM: g::Program<StepCons<SendStep<Role<0>, Role<0>, Msg<9, ()>>, StepNil>> =
+        g::send::<Role<0>, Role<0>, Msg<9, ()>, 0>();
+    const LOCAL_ROLE: role_program::RoleProgram<
+        'static,
+        0,
+        <StepCons<SendStep<Role<0>, Role<0>, Msg<9, ()>>, StepNil> as ProjectRole<Role<0>>>::Output,
+    > = role_program::project(&LOCAL_PROGRAM);
 
     #[test]
     fn state_cursor_rewinds_on_loop_continue() {
@@ -5287,8 +5431,11 @@ mod tests {
         let break_branch = decision.seek_label(LABEL_LOOP_BREAK).expect("break branch");
         assert_eq!(break_branch.label(), Some(LABEL_LOOP_BREAK));
         // After advancing from Local(BREAK), we land on Jump(LoopBreak).
-        // Use follow_jumps() to follow the Jump to its target (terminal).
-        let break_cursor = break_branch.advance().follow_jumps();
+        // Follow the Jump to its target (terminal).
+        let break_cursor = break_branch
+            .advance()
+            .try_follow_jumps()
+            .expect("follow loop break jump");
         break_cursor.assert_terminal();
 
         // Target (Role<1>) only sees the LoopBody message (label 7), not the
@@ -5299,7 +5446,8 @@ mod tests {
         // Target sees label 7 (the loop body recv) directly
         assert_eq!(target_cursor.label(), Some(7));
 
-        let ts = TARGET_PROGRAM.typestate();
+        let target_projection = TARGET_PROGRAM.projection();
+        let ts = target_projection.typestate();
         let after_body = target_cursor.advance();
         // After advancing past the Recv, we encounter PassiveObserverBranch Jump nodes.
         // - Jump for arm 0 (Continue): loops back to loop_start
@@ -5309,10 +5457,17 @@ mod tests {
         // For a passive observer in a linger scope, the normal flow after Recv
         // is determined by which arm was selected. The arm 0 Jump loops back,
         // so we need to check that arm 1 (Break) properly terminates.
-        assert!(cursor.is_jump(), "after Recv should be arm 0 PassiveObserverBranch Jump");
+        assert!(
+            cursor.is_jump(),
+            "after Recv should be arm 0 PassiveObserverBranch Jump"
+        );
         let jump_node = ts.nodes[cursor.idx as usize];
         // Arm 0 Jump targets loop start (idx 0)
-        assert_eq!(jump_node.next(), 0 as StateIndex, "arm 0 should jump to loop start");
+        assert_eq!(
+            jump_node.next(),
+            StateIndex::ZERO,
+            "arm 0 should jump to loop start"
+        );
 
         // Advance past arm 0 Jump to find arm 1 Jump
         // Note: advance() on a Jump follows the target, so we need to check next node manually
@@ -5322,10 +5477,13 @@ mod tests {
             if arm1_node.action().is_jump() {
                 // Arm 1 (Break) Jump should target scope_end (which should be terminal)
                 let arm1_target = arm1_node.next();
-                let target_idx = arm1_target as usize;
+                let target_idx = arm1_target.as_usize();
                 if target_idx < ts.nodes.len() {
                     let terminal_node = ts.nodes[target_idx];
-                    assert!(terminal_node.action().is_terminal(), "arm 1 Break Jump should reach terminal");
+                    assert!(
+                        terminal_node.action().is_terminal(),
+                        "arm 1 Break Jump should reach terminal"
+                    );
                 }
             }
         }
@@ -5337,49 +5495,96 @@ mod tests {
 
     #[test]
     fn route_scope_kind_detected() {
-        type Controller = Role<0>;
-
-        // Self-send CanonicalControl messages for route decision
-        type RouteLeftMsg = Msg<
-            { LABEL_LOOP_CONTINUE },
-            GenericCapToken<LoopContinueKind>,
-            CanonicalControl<LoopContinueKind>,
-        >;
-        type RouteRightMsg = Msg<
-            { LABEL_LOOP_BREAK },
-            GenericCapToken<LoopBreakKind>,
-            CanonicalControl<LoopBreakKind>,
-        >;
-        // Self-send: Controller → Controller
-        type ArmA = StepCons<SendStep<Controller, Controller, RouteLeftMsg>, StepNil>;
-        type ArmB = StepCons<SendStep<Controller, Controller, RouteRightMsg>, StepNil>;
-        type RouteSteps = <ArmA as StepConcat<ArmB>>::Output;
-
         // Route is local to Controller (0 → 0)
-        const ROUTE: g::Program<RouteSteps> = g::route::<0, _>(
-            g::route_chain::<0, ArmA>(g::with_control_plan(
-                g::send::<Controller, Controller, RouteLeftMsg, 0>(),
-                HandlePlan::dynamic(ROUTE_PLAN_POLICY_ID, ROUTE_PLAN_META),
-            ))
-            .and::<ArmB>(g::with_control_plan(
-                g::send::<Controller, Controller, RouteRightMsg, 0>(),
-                HandlePlan::dynamic(ROUTE_PLAN_POLICY_ID, ROUTE_PLAN_META),
-            )),
+        const ROUTE: g::Program<
+            <StepCons<
+                SendStep<
+                    Role<0>,
+                    Role<0>,
+                    Msg<
+                        { LABEL_LOOP_CONTINUE },
+                        GenericCapToken<LoopContinueKind>,
+                        CanonicalControl<LoopContinueKind>,
+                    >,
+                >,
+                StepNil,
+            > as StepConcat<
+                StepCons<
+                    SendStep<
+                        Role<0>,
+                        Role<0>,
+                        Msg<
+                            { LABEL_LOOP_BREAK },
+                            GenericCapToken<LoopBreakKind>,
+                            CanonicalControl<LoopBreakKind>,
+                        >,
+                    >,
+                    StepNil,
+                >,
+            >>::Output,
+        > = g::route(
+            g::send::<
+                Role<0>,
+                Role<0>,
+                Msg<
+                    { LABEL_LOOP_CONTINUE },
+                    GenericCapToken<LoopContinueKind>,
+                    CanonicalControl<LoopContinueKind>,
+                >,
+                0,
+            >()
+            .policy::<ROUTE_POLICY_ID>(),
+            g::send::<
+                Role<0>,
+                Role<0>,
+                Msg<
+                    { LABEL_LOOP_BREAK },
+                    GenericCapToken<LoopBreakKind>,
+                    CanonicalControl<LoopBreakKind>,
+                >,
+                0,
+            >()
+            .policy::<ROUTE_POLICY_ID>(),
         );
 
-        type ControllerLocal = <RouteSteps as ProjectRole<Controller>>::Output;
-        const CONTROLLER: g::RoleProgram<'static, 0, ControllerLocal> =
-            g::project::<0, RouteSteps, _>(&ROUTE);
+        const CONTROLLER: RoleProgram<
+            'static,
+            0,
+            <<StepCons<
+                SendStep<
+                    Role<0>,
+                    Role<0>,
+                    Msg<
+                        { LABEL_LOOP_CONTINUE },
+                        GenericCapToken<LoopContinueKind>,
+                        CanonicalControl<LoopContinueKind>,
+                    >,
+                >,
+                StepNil,
+            > as StepConcat<
+                StepCons<
+                    SendStep<
+                        Role<0>,
+                        Role<0>,
+                        Msg<
+                            { LABEL_LOOP_BREAK },
+                            GenericCapToken<LoopBreakKind>,
+                            CanonicalControl<LoopBreakKind>,
+                        >,
+                    >,
+                    StepNil,
+                >,
+            >>::Output as ProjectRole<Role<0>>>::Output,
+        > = project(&ROUTE);
 
         let cursor = PhaseCursor::new(&CONTROLLER);
         assert_eq!(cursor.scope_kind(), Some(ScopeKind::Route));
         let scope_id = cursor.scope_id().expect("route scope id present");
-        let (plan, eff_index, _) = cursor
-            .route_scope_controller_plan(scope_id)
-            .expect("controller plan recorded");
-        let expected_plan =
-            HandlePlan::dynamic(ROUTE_PLAN_POLICY_ID, ROUTE_PLAN_META).with_scope(scope_id);
-        assert_eq!(plan, expected_plan);
+        let (policy, eff_index, _) = cursor
+            .route_scope_controller_policy(scope_id)
+            .expect("controller policy recorded");
+        let expected_policy = PolicyMode::dynamic(ROUTE_POLICY_ID).with_scope(scope_id);
+        assert_eq!(policy, expected_policy);
         assert_ne!(eff_index, EffIndex::MAX);
     }
 
@@ -5387,7 +5592,7 @@ mod tests {
     fn local_action_produces_metadata() {
         let cursor = PhaseCursor::<0>::new(&LOCAL_ROLE);
         assert!(cursor.is_local_action());
-        assert_eq!(cursor.label(), Some(<LocalMsg as crate::g::MessageSpec>::LABEL));
+        assert_eq!(cursor.label(), Some(<Msg<9, ()> as MessageSpec>::LABEL));
         let cursor = cursor.advance();
         cursor.assert_terminal();
     }

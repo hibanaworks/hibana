@@ -1,8 +1,11 @@
-use super::verifier::{Header, VerifiedImage, VerifyError, compute_hash};
+use super::{
+    Slot,
+    verifier::{Header, VerifiedImage, VerifyError, compute_hash},
+};
 
 /// Errors surfaced by the image loader.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LoaderError {
+pub(crate) enum LoaderError {
     AlreadyLoading,
     NotLoading,
     CodeTooLarge { declared: u16 },
@@ -17,8 +20,8 @@ pub enum LoaderError {
 /// The loader accepts a [`Header`] upfront (`begin`), followed by a series of
 /// `write` calls that must stream the code in-order. Once all bytes are present,
 /// `commit` validates the hash and returns a [`VerifiedImage`] view.
-#[derive(Debug)]
-pub struct ImageLoader {
+#[derive(Clone, Debug)]
+pub(crate) struct ImageLoader {
     header: Option<Header>,
     buffer: [u8; verify_buffer_len()],
     written: u32,
@@ -30,7 +33,7 @@ const fn verify_buffer_len() -> usize {
 
 impl ImageLoader {
     /// Construct an empty loader.
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             header: None,
             buffer: [0; verify_buffer_len()],
@@ -39,7 +42,7 @@ impl ImageLoader {
     }
 
     /// Begin a new load sequence.
-    pub fn begin(&mut self, header: Header) -> Result<(), LoaderError> {
+    pub(crate) fn begin(&mut self, header: Header) -> Result<(), LoaderError> {
         if self.header.is_some() {
             return Err(LoaderError::AlreadyLoading);
         }
@@ -54,7 +57,7 @@ impl ImageLoader {
     }
 
     /// Append a sequential chunk at the given offset.
-    pub fn write(&mut self, offset: u32, chunk: &[u8]) -> Result<(), LoaderError> {
+    pub(crate) fn write(&mut self, offset: u32, chunk: &[u8]) -> Result<(), LoaderError> {
         let header = self.header.ok_or(LoaderError::NotLoading)?;
         if offset != self.written {
             return Err(LoaderError::UnexpectedOffset {
@@ -77,7 +80,17 @@ impl ImageLoader {
     }
 
     /// Finalise the load, validating the hash and returning a verified view.
-    pub fn commit(&mut self) -> Result<VerifiedImage<'_>, LoaderError> {
+    #[cfg(test)]
+    pub(crate) fn commit(&mut self) -> Result<VerifiedImage<'_>, LoaderError> {
+        self.commit_inner(None)
+    }
+
+    /// Finalise the load with slot-specific verification rules.
+    pub(crate) fn commit_for_slot(&mut self, slot: Slot) -> Result<VerifiedImage<'_>, LoaderError> {
+        self.commit_inner(Some(slot))
+    }
+
+    fn commit_inner(&mut self, slot: Option<Slot>) -> Result<VerifiedImage<'_>, LoaderError> {
         let header = self.header.take().ok_or(LoaderError::NotLoading)?;
         if self.written != header.code_len as u32 {
             // Treat short write as a length mismatch from the verifier.
@@ -104,8 +117,11 @@ impl ImageLoader {
         let mut image = [0u8; Header::SIZE + verify_buffer_len()];
         image[..Header::SIZE].copy_from_slice(&header_bytes);
         image[Header::SIZE..Header::SIZE + code.len()].copy_from_slice(code);
-        let verified =
-            VerifiedImage::new(&image[..Header::SIZE + code.len()]).map_err(LoaderError::Verify)?;
+        let verified = match slot {
+            Some(slot) => VerifiedImage::new_for_slot(&image[..Header::SIZE + code.len()], slot),
+            None => VerifiedImage::new(&image[..Header::SIZE + code.len()]),
+        }
+        .map_err(LoaderError::Verify)?;
         Ok(VerifiedImage {
             header: verified.header,
             code: &self.buffer[..header.code_len as usize],
@@ -170,5 +186,28 @@ mod tests {
         loader.write(0, &[0x00, 0x01]).unwrap();
         let err = loader.commit().unwrap_err();
         assert!(matches!(err, LoaderError::HashMismatch { .. }));
+    }
+
+    #[test]
+    fn reject_get_input_when_slot_contract_forbids_it() {
+        let code = [
+            super::super::ops::instr::GET_INPUT,
+            0x00,
+            0x00,
+            super::super::ops::instr::HALT,
+        ];
+        let header = build_header(&code);
+        let mut loader = ImageLoader::new();
+        loader.begin(header).unwrap();
+        loader.write(0, &code).unwrap();
+
+        let err = loader.commit_for_slot(Slot::Forward).unwrap_err();
+        assert!(matches!(
+            err,
+            LoaderError::Verify(VerifyError::InputForbiddenForSlot {
+                slot: Slot::Forward,
+                ..
+            })
+        ));
     }
 }

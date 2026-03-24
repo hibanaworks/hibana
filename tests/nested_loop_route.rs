@@ -1,97 +1,571 @@
-use hibana::control::cap::GenericCapToken;
-use hibana::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
-use hibana::g::{self, Msg, Role, RoleProgram};
-use hibana::global::const_dsl::{DynamicMeta, HandlePlan};
-use hibana::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
+use hibana::g::advanced::steps::{
+    LoopDecisionSteps, ProjectRole, SendStep, SeqSteps, StepConcat, StepCons, StepNil,
+};
+use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
+use hibana::g::{self, Msg, Role};
+use hibana::substrate::cap::GenericCapToken;
+use hibana::substrate::cap::advanced::MintConfig;
+use hibana::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
 
-type Controller = Role<2>;
-type ObserverA = Role<3>;
-#[allow(dead_code)]
-type ObserverB = Role<4>;
+const LABEL_LOOP_CONTINUE: u8 = 48;
+const LABEL_LOOP_BREAK: u8 = 49;
 
-type TickMsg = Msg<1, ()>;
-// Self-send CanonicalControl messages for loop decisions
-type AckMsg = Msg<
-    { LABEL_LOOP_CONTINUE },
-    GenericCapToken<LoopContinueKind>,
-    g::CanonicalControl<LoopContinueKind>,
->;
-type LossMsg =
-    Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, g::CanonicalControl<LoopBreakKind>>;
-type ContinueMsg = Msg<
-    { LABEL_LOOP_CONTINUE },
-    GenericCapToken<LoopContinueKind>,
-    g::CanonicalControl<LoopContinueKind>,
->;
-type BreakMsg =
-    Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, g::CanonicalControl<LoopBreakKind>>;
-
-type TickSteps =
-    g::steps::StepCons<g::steps::SendStep<Controller, ObserverA, TickMsg>, g::steps::StepNil>;
-// AckBranch and LossBranch now use self-send for CanonicalControl
-type AckBranch = g::steps::StepCons<
-    g::steps::SendStep<Controller, Controller, AckMsg>,
-    g::steps::StepCons<g::steps::SendStep<Controller, Controller, AckMsg>, g::steps::StepNil>,
->;
-type LossBranch = g::steps::StepCons<
-    g::steps::SendStep<Controller, Controller, LossMsg>,
-    g::steps::StepCons<g::steps::SendStep<Controller, Controller, LossMsg>, g::steps::StepNil>,
->;
-type AckLossRoute = <AckBranch as g::steps::StepConcat<LossBranch>>::Output;
-type BodySteps = <TickSteps as g::steps::StepConcat<AckLossRoute>>::Output;
-// Loop continue/break steps are now self-send (no Target param)
-type ContinueArm = g::LoopContinueSteps<Controller, ContinueMsg, BodySteps>;
-type BreakArm = g::LoopBreakSteps<Controller, BreakMsg>;
-type Decision =
-    g::LoopDecisionSteps<Controller, ContinueMsg, BreakMsg, g::steps::StepNil, BodySteps>;
-type Steps = g::LoopSteps<BodySteps, Controller, ContinueMsg, BreakMsg, g::steps::StepNil>;
-
-const TICK: g::Program<TickSteps> = g::send::<Controller, ObserverA, TickMsg, 0>();
+const TICK: g::Program<StepCons<SendStep<Role<2>, Role<3>, Msg<1, ()>>, StepNil>> =
+    g::send::<Role<2>, Role<3>, Msg<1, ()>, 0>();
 // Self-send for CanonicalControl within route arms
-const ACK_BRANCH: g::Program<AckBranch> = g::with_control_plan(
-    g::send::<Controller, Controller, AckMsg, 0>(),
-    HandlePlan::dynamic(10, DynamicMeta::new()),
-)
-.then(g::send::<Controller, Controller, AckMsg, 0>());
-const LOSS_BRANCH: g::Program<LossBranch> = g::with_control_plan(
-    g::send::<Controller, Controller, LossMsg, 0>(),
-    HandlePlan::dynamic(10, DynamicMeta::new()),
-)
-.then(g::send::<Controller, Controller, LossMsg, 0>());
+const ACK_BRANCH: g::Program<
+    SeqSteps<
+        StepCons<
+            SendStep<
+                Role<2>,
+                Role<2>,
+                Msg<
+                    { LABEL_LOOP_CONTINUE },
+                    GenericCapToken<LoopContinueKind>,
+                    CanonicalControl<LoopContinueKind>,
+                >,
+            >,
+            StepNil,
+        >,
+        StepCons<
+            SendStep<
+                Role<2>,
+                Role<2>,
+                Msg<
+                    { LABEL_LOOP_CONTINUE },
+                    GenericCapToken<LoopContinueKind>,
+                    CanonicalControl<LoopContinueKind>,
+                >,
+            >,
+            StepNil,
+        >,
+    >,
+> = g::seq(
+    g::send::<
+        Role<2>,
+        Role<2>,
+        Msg<
+            { LABEL_LOOP_CONTINUE },
+            GenericCapToken<LoopContinueKind>,
+            CanonicalControl<LoopContinueKind>,
+        >,
+        0,
+    >()
+    .policy::<10>(),
+    g::send::<
+        Role<2>,
+        Role<2>,
+        Msg<
+            { LABEL_LOOP_CONTINUE },
+            GenericCapToken<LoopContinueKind>,
+            CanonicalControl<LoopContinueKind>,
+        >,
+        0,
+    >(),
+);
+const LOSS_BRANCH: g::Program<
+    SeqSteps<
+        StepCons<
+            SendStep<
+                Role<2>,
+                Role<2>,
+                Msg<
+                    { LABEL_LOOP_BREAK },
+                    GenericCapToken<LoopBreakKind>,
+                    CanonicalControl<LoopBreakKind>,
+                >,
+            >,
+            StepNil,
+        >,
+        StepCons<
+            SendStep<
+                Role<2>,
+                Role<2>,
+                Msg<
+                    { LABEL_LOOP_BREAK },
+                    GenericCapToken<LoopBreakKind>,
+                    CanonicalControl<LoopBreakKind>,
+                >,
+            >,
+            StepNil,
+        >,
+    >,
+> = g::seq(
+    g::send::<
+        Role<2>,
+        Role<2>,
+        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
+        0,
+    >()
+    .policy::<10>(),
+    g::send::<
+        Role<2>,
+        Role<2>,
+        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
+        0,
+    >(),
+);
 // Inner route is local to Controller (2 → 2)
-const ACK_LOSS_ROUTE: g::Program<AckLossRoute> =
-    g::route::<2, _>(g::route_chain::<2, AckBranch>(ACK_BRANCH).and::<LossBranch>(LOSS_BRANCH));
+const ACK_LOSS_ROUTE: g::Program<
+    <SeqSteps<
+        StepCons<
+            SendStep<
+                Role<2>,
+                Role<2>,
+                Msg<
+                    { LABEL_LOOP_CONTINUE },
+                    GenericCapToken<LoopContinueKind>,
+                    CanonicalControl<LoopContinueKind>,
+                >,
+            >,
+            StepNil,
+        >,
+        StepCons<
+            SendStep<
+                Role<2>,
+                Role<2>,
+                Msg<
+                    { LABEL_LOOP_CONTINUE },
+                    GenericCapToken<LoopContinueKind>,
+                    CanonicalControl<LoopContinueKind>,
+                >,
+            >,
+            StepNil,
+        >,
+    > as StepConcat<
+        SeqSteps<
+            StepCons<
+                SendStep<
+                    Role<2>,
+                    Role<2>,
+                    Msg<
+                        { LABEL_LOOP_BREAK },
+                        GenericCapToken<LoopBreakKind>,
+                        CanonicalControl<LoopBreakKind>,
+                    >,
+                >,
+                StepNil,
+            >,
+            StepCons<
+                SendStep<
+                    Role<2>,
+                    Role<2>,
+                    Msg<
+                        { LABEL_LOOP_BREAK },
+                        GenericCapToken<LoopBreakKind>,
+                        CanonicalControl<LoopBreakKind>,
+                    >,
+                >,
+                StepNil,
+            >,
+        >,
+    >>::Output,
+> = g::route(ACK_BRANCH, LOSS_BRANCH);
 // Self-send for loop continue/break
-const CONTINUE_ARM: g::Program<ContinueArm> = g::with_control_plan(
-    g::send::<Controller, Controller, ContinueMsg, 0>(),
-    HandlePlan::dynamic(11, DynamicMeta::new()),
-)
-.then(TICK)
-.then(ACK_LOSS_ROUTE);
-const BREAK_ARM: g::Program<BreakArm> = g::with_control_plan(
-    g::send::<Controller, Controller, BreakMsg, 0>(),
-    HandlePlan::dynamic(11, DynamicMeta::new()),
-)
-.then(g::Program::empty());
+const CONTINUE_ARM: g::Program<
+    SeqSteps<
+        StepCons<
+            SendStep<
+                Role<2>,
+                Role<2>,
+                Msg<
+                    { LABEL_LOOP_CONTINUE },
+                    GenericCapToken<LoopContinueKind>,
+                    CanonicalControl<LoopContinueKind>,
+                >,
+            >,
+            StepNil,
+        >,
+        SeqSteps<
+            StepCons<SendStep<Role<2>, Role<3>, Msg<1, ()>>, StepNil>,
+            <SeqSteps<
+                StepCons<
+                    SendStep<
+                        Role<2>,
+                        Role<2>,
+                        Msg<
+                            { LABEL_LOOP_CONTINUE },
+                            GenericCapToken<LoopContinueKind>,
+                            CanonicalControl<LoopContinueKind>,
+                        >,
+                    >,
+                    StepNil,
+                >,
+                StepCons<
+                    SendStep<
+                        Role<2>,
+                        Role<2>,
+                        Msg<
+                            { LABEL_LOOP_CONTINUE },
+                            GenericCapToken<LoopContinueKind>,
+                            CanonicalControl<LoopContinueKind>,
+                        >,
+                    >,
+                    StepNil,
+                >,
+            > as StepConcat<
+                SeqSteps<
+                    StepCons<
+                        SendStep<
+                            Role<2>,
+                            Role<2>,
+                            Msg<
+                                { LABEL_LOOP_BREAK },
+                                GenericCapToken<LoopBreakKind>,
+                                CanonicalControl<LoopBreakKind>,
+                            >,
+                        >,
+                        StepNil,
+                    >,
+                    StepCons<
+                        SendStep<
+                            Role<2>,
+                            Role<2>,
+                            Msg<
+                                { LABEL_LOOP_BREAK },
+                                GenericCapToken<LoopBreakKind>,
+                                CanonicalControl<LoopBreakKind>,
+                            >,
+                        >,
+                        StepNil,
+                    >,
+                >,
+            >>::Output,
+        >,
+    >,
+> = g::seq(
+    g::send::<
+        Role<2>,
+        Role<2>,
+        Msg<
+            { LABEL_LOOP_CONTINUE },
+            GenericCapToken<LoopContinueKind>,
+            CanonicalControl<LoopContinueKind>,
+        >,
+        0,
+    >()
+    .policy::<11>(),
+    g::seq(TICK, ACK_LOSS_ROUTE),
+);
+const BREAK_ARM: g::Program<
+    StepCons<
+        SendStep<
+            Role<2>,
+            Role<2>,
+            Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+        >,
+        StepNil,
+    >,
+> = g::send::<
+    Role<2>,
+    Role<2>,
+    Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
+    0,
+>()
+.policy::<11>();
 // Outer route is local to Controller (2 → 2)
-const DECISION: g::Program<Decision> =
-    g::route::<2, _>(g::route_chain::<2, ContinueArm>(CONTINUE_ARM).and::<BreakArm>(BREAK_ARM));
-const PROGRAM: g::Program<Steps> = DECISION;
+const DECISION: g::Program<
+    LoopDecisionSteps<
+        Role<2>,
+        Msg<
+            { LABEL_LOOP_CONTINUE },
+            GenericCapToken<LoopContinueKind>,
+            CanonicalControl<LoopContinueKind>,
+        >,
+        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
+        StepNil,
+        SeqSteps<
+            StepCons<SendStep<Role<2>, Role<3>, Msg<1, ()>>, StepNil>,
+            <SeqSteps<
+                StepCons<
+                    SendStep<
+                        Role<2>,
+                        Role<2>,
+                        Msg<
+                            { LABEL_LOOP_CONTINUE },
+                            GenericCapToken<LoopContinueKind>,
+                            CanonicalControl<LoopContinueKind>,
+                        >,
+                    >,
+                    StepNil,
+                >,
+                StepCons<
+                    SendStep<
+                        Role<2>,
+                        Role<2>,
+                        Msg<
+                            { LABEL_LOOP_CONTINUE },
+                            GenericCapToken<LoopContinueKind>,
+                            CanonicalControl<LoopContinueKind>,
+                        >,
+                    >,
+                    StepNil,
+                >,
+            > as StepConcat<
+                SeqSteps<
+                    StepCons<
+                        SendStep<
+                            Role<2>,
+                            Role<2>,
+                            Msg<
+                                { LABEL_LOOP_BREAK },
+                                GenericCapToken<LoopBreakKind>,
+                                CanonicalControl<LoopBreakKind>,
+                            >,
+                        >,
+                        StepNil,
+                    >,
+                    StepCons<
+                        SendStep<
+                            Role<2>,
+                            Role<2>,
+                            Msg<
+                                { LABEL_LOOP_BREAK },
+                                GenericCapToken<LoopBreakKind>,
+                                CanonicalControl<LoopBreakKind>,
+                            >,
+                        >,
+                        StepNil,
+                    >,
+                >,
+            >>::Output,
+        >,
+    >,
+> = g::route(CONTINUE_ARM, BREAK_ARM);
 
 #[test]
 fn nested_loop_scope_balanced() {
-    let _role_program: RoleProgram<'static, 2, <Steps as g::steps::ProjectRole<Role<2>>>::Output> =
-        g::project::<2, Steps, _>(&PROGRAM);
-
-    type HandshakeSteps =
-        g::steps::StepCons<g::steps::SendStep<Role<0>, Role<1>, Msg<10, ()>, 0>, g::steps::StepNil>;
-    const HANDSHAKE: g::Program<HandshakeSteps> = g::send::<Role<0>, Role<1>, Msg<10, ()>, 0>();
-    type CombinedSteps = <HandshakeSteps as g::steps::StepConcat<Steps>>::Output;
-    const COMBINED: g::Program<CombinedSteps> =
-        g::par(g::par_chain::<HandshakeSteps>(HANDSHAKE).and::<Steps>(PROGRAM));
-    let _transport_program: RoleProgram<
-        'static,
+    let _role_program: RoleProgram<
+        '_,
         2,
-        <CombinedSteps as g::steps::ProjectRole<Role<2>>>::Output,
-    > = g::project::<2, CombinedSteps, _>(&COMBINED);
+        <LoopDecisionSteps<
+            Role<2>,
+            Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+            StepNil,
+            SeqSteps<
+                StepCons<SendStep<Role<2>, Role<3>, Msg<1, ()>>, StepNil>,
+                <SeqSteps<
+                    StepCons<
+                        SendStep<
+                            Role<2>,
+                            Role<2>,
+                            Msg<
+                                { LABEL_LOOP_CONTINUE },
+                                GenericCapToken<LoopContinueKind>,
+                                CanonicalControl<LoopContinueKind>,
+                            >,
+                        >,
+                        StepNil,
+                    >,
+                    StepCons<
+                        SendStep<
+                            Role<2>,
+                            Role<2>,
+                            Msg<
+                                { LABEL_LOOP_CONTINUE },
+                                GenericCapToken<LoopContinueKind>,
+                                CanonicalControl<LoopContinueKind>,
+                            >,
+                        >,
+                        StepNil,
+                    >,
+                > as StepConcat<
+                    SeqSteps<
+                        StepCons<
+                            SendStep<
+                                Role<2>,
+                                Role<2>,
+                                Msg<
+                                    { LABEL_LOOP_BREAK },
+                                    GenericCapToken<LoopBreakKind>,
+                                    CanonicalControl<LoopBreakKind>,
+                                >,
+                            >,
+                            StepNil,
+                        >,
+                        StepCons<
+                            SendStep<
+                                Role<2>,
+                                Role<2>,
+                                Msg<
+                                    { LABEL_LOOP_BREAK },
+                                    GenericCapToken<LoopBreakKind>,
+                                    CanonicalControl<LoopBreakKind>,
+                                >,
+                            >,
+                            StepNil,
+                        >,
+                    >,
+                >>::Output,
+            >,
+        > as ProjectRole<Role<2>>>::Output,
+        MintConfig,
+    > = project(&DECISION);
+
+    const HANDSHAKE: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<10, ()>>, StepNil>> =
+        g::send::<Role<0>, Role<1>, Msg<10, ()>, 0>();
+    const COMBINED: g::Program<
+        <StepCons<SendStep<Role<0>, Role<1>, Msg<10, ()>>, StepNil> as StepConcat<
+            LoopDecisionSteps<
+                Role<2>,
+                Msg<
+                    { LABEL_LOOP_CONTINUE },
+                    GenericCapToken<LoopContinueKind>,
+                    CanonicalControl<LoopContinueKind>,
+                >,
+                Msg<
+                    { LABEL_LOOP_BREAK },
+                    GenericCapToken<LoopBreakKind>,
+                    CanonicalControl<LoopBreakKind>,
+                >,
+                StepNil,
+                SeqSteps<
+                    StepCons<SendStep<Role<2>, Role<3>, Msg<1, ()>>, StepNil>,
+                    <SeqSteps<
+                        StepCons<
+                            SendStep<
+                                Role<2>,
+                                Role<2>,
+                                Msg<
+                                    { LABEL_LOOP_CONTINUE },
+                                    GenericCapToken<LoopContinueKind>,
+                                    CanonicalControl<LoopContinueKind>,
+                                >,
+                            >,
+                            StepNil,
+                        >,
+                        StepCons<
+                            SendStep<
+                                Role<2>,
+                                Role<2>,
+                                Msg<
+                                    { LABEL_LOOP_CONTINUE },
+                                    GenericCapToken<LoopContinueKind>,
+                                    CanonicalControl<LoopContinueKind>,
+                                >,
+                            >,
+                            StepNil,
+                        >,
+                    > as StepConcat<
+                        SeqSteps<
+                            StepCons<
+                                SendStep<
+                                    Role<2>,
+                                    Role<2>,
+                                    Msg<
+                                        { LABEL_LOOP_BREAK },
+                                        GenericCapToken<LoopBreakKind>,
+                                        CanonicalControl<LoopBreakKind>,
+                                    >,
+                                >,
+                                StepNil,
+                            >,
+                            StepCons<
+                                SendStep<
+                                    Role<2>,
+                                    Role<2>,
+                                    Msg<
+                                        { LABEL_LOOP_BREAK },
+                                        GenericCapToken<LoopBreakKind>,
+                                        CanonicalControl<LoopBreakKind>,
+                                    >,
+                                >,
+                                StepNil,
+                            >,
+                        >,
+                    >>::Output,
+                >,
+            >,
+        >>::Output,
+    > = g::par(HANDSHAKE, DECISION);
+    let _transport_program: RoleProgram<
+        '_,
+        2,
+        <<StepCons<SendStep<Role<0>, Role<1>, Msg<10, ()>>, StepNil> as StepConcat<
+            LoopDecisionSteps<
+                Role<2>,
+                Msg<
+                    { LABEL_LOOP_CONTINUE },
+                    GenericCapToken<LoopContinueKind>,
+                    CanonicalControl<LoopContinueKind>,
+                >,
+                Msg<
+                    { LABEL_LOOP_BREAK },
+                    GenericCapToken<LoopBreakKind>,
+                    CanonicalControl<LoopBreakKind>,
+                >,
+                StepNil,
+                SeqSteps<
+                    StepCons<SendStep<Role<2>, Role<3>, Msg<1, ()>>, StepNil>,
+                    <SeqSteps<
+                        StepCons<
+                            SendStep<
+                                Role<2>,
+                                Role<2>,
+                                Msg<
+                                    { LABEL_LOOP_CONTINUE },
+                                    GenericCapToken<LoopContinueKind>,
+                                    CanonicalControl<LoopContinueKind>,
+                                >,
+                            >,
+                            StepNil,
+                        >,
+                        StepCons<
+                            SendStep<
+                                Role<2>,
+                                Role<2>,
+                                Msg<
+                                    { LABEL_LOOP_CONTINUE },
+                                    GenericCapToken<LoopContinueKind>,
+                                    CanonicalControl<LoopContinueKind>,
+                                >,
+                            >,
+                            StepNil,
+                        >,
+                    > as StepConcat<
+                        SeqSteps<
+                            StepCons<
+                                SendStep<
+                                    Role<2>,
+                                    Role<2>,
+                                    Msg<
+                                        { LABEL_LOOP_BREAK },
+                                        GenericCapToken<LoopBreakKind>,
+                                        CanonicalControl<LoopBreakKind>,
+                                    >,
+                                >,
+                                StepNil,
+                            >,
+                            StepCons<
+                                SendStep<
+                                    Role<2>,
+                                    Role<2>,
+                                    Msg<
+                                        { LABEL_LOOP_BREAK },
+                                        GenericCapToken<LoopBreakKind>,
+                                        CanonicalControl<LoopBreakKind>,
+                                    >,
+                                >,
+                                StepNil,
+                            >,
+                        >,
+                    >>::Output,
+                >,
+            >,
+        >>::Output as ProjectRole<Role<2>>>::Output,
+        MintConfig,
+    > = project(&COMBINED);
 }

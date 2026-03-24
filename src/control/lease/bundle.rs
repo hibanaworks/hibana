@@ -1,20 +1,21 @@
-//! LeaseGraph facet bundle combining delegation/splice contexts plus tap hooks.
+//! LeaseGraph facet bundle combining caps/splice contexts plus tap hooks.
 
 use core::{marker::PhantomData, ptr::NonNull};
 
 use crate::{
+    control::types::{Lane, RendezvousId},
     control::{
-        automaton::{delegation::DelegationGraphContext, splice::SpliceGraphContext},
-        cap::CapsMask,
+        automaton::splice::SpliceGraphContext,
+        cap::mint::CapsMask,
         lease::{
-            ControlCore as LeaseControlCore, LeaseObserve,
+            core::{ControlCore, LeaseObserve},
             graph::{LeaseFacet, LeaseGraph, LeaseGraphError, LeaseSpec},
             planner::LeaseFacetNeeds,
         },
     },
-    epf::Slot,
-    observe::TapEvent,
-    rendezvous::{CapTable, Lane, Rendezvous, RendezvousId, SlotArena},
+    epf::vm::Slot,
+    observe::core::TapEvent,
+    rendezvous::{capability::CapTable, core::Rendezvous, slots::SlotArena},
     runtime::{config::Clock, consts::LabelUniverse},
     transport::Transport,
 };
@@ -25,13 +26,13 @@ const SLOT_LOG_CAPACITY: usize = 4;
 
 /// Error returned when a lease bundle handle runs out of tracking capacity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LeaseBundleError {
+pub(crate) enum LeaseBundleError {
     Capacity,
 }
 
 #[derive(Clone, Copy)]
 struct CapsMintRecord {
-    nonce: [u8; crate::control::cap::CAP_NONCE_LEN],
+    nonce: [u8; crate::control::cap::mint::CAP_NONCE_LEN],
 }
 
 #[derive(Clone, Copy)]
@@ -41,18 +42,18 @@ struct CapsMaskRecord {
 }
 
 /// Handle that records minted capabilities and capability mask adjustments so rollback can purge them.
-pub struct CapsBundleHandle<'ctx, 'cfg, T, U, C, E>
+pub(crate) struct CapsBundleHandle<'ctx, 'cfg, T, U, C, E>
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     rendezvous: NonNull<Rendezvous<'ctx, 'cfg, T, U, C, E>>,
     table: NonNull<CapTable>,
     pending: [Option<CapsMintRecord>; CAP_LOG_CAPACITY],
     masks: [Option<CapsMaskRecord>; CAP_MASK_LOG_CAPACITY],
-    _marker: PhantomData<&'ctx crate::observe::TapRing<'cfg>>,
+    _marker: PhantomData<&'ctx crate::observe::core::TapRing<'cfg>>,
 }
 
 impl<'ctx, 'cfg, T, U, C, E> CapsBundleHandle<'ctx, 'cfg, T, U, C, E>
@@ -60,9 +61,9 @@ where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
-    pub const fn new(
+    pub(crate) const fn new(
         rendezvous: NonNull<Rendezvous<'ctx, 'cfg, T, U, C, E>>,
         table: NonNull<CapTable>,
     ) -> Self {
@@ -76,9 +77,9 @@ where
     }
 
     #[inline]
-    pub fn track_mint(
+    pub(crate) fn track_mint(
         &mut self,
-        nonce: [u8; crate::control::cap::CAP_NONCE_LEN],
+        nonce: [u8; crate::control::cap::mint::CAP_NONCE_LEN],
     ) -> Result<(), LeaseBundleError> {
         if self
             .pending
@@ -96,7 +97,11 @@ where
     }
 
     #[inline]
-    pub fn track_mask(&mut self, lane: Lane, previous: CapsMask) -> Result<(), LeaseBundleError> {
+    pub(crate) fn track_mask(
+        &mut self,
+        lane: Lane,
+        previous: CapsMask,
+    ) -> Result<(), LeaseBundleError> {
         if self
             .masks
             .iter()
@@ -148,14 +153,14 @@ struct SlotStageRecord {
 }
 
 /// Handle that records slot staging so rollback can scrub temporary buffers.
-pub struct SlotBundleHandle<'ctx, 'cfg> {
+pub(crate) struct SlotBundleHandle<'ctx, 'cfg> {
     arena: NonNull<SlotArena>,
     stages: [Option<SlotStageRecord>; SLOT_LOG_CAPACITY],
-    _marker: PhantomData<&'ctx crate::observe::TapRing<'cfg>>,
+    _marker: PhantomData<&'ctx crate::observe::core::TapRing<'cfg>>,
 }
 
 impl<'ctx, 'cfg> SlotBundleHandle<'ctx, 'cfg> {
-    pub const fn new(arena: NonNull<SlotArena>) -> Self {
+    pub(crate) const fn new(arena: NonNull<SlotArena>) -> Self {
         Self {
             arena,
             stages: [None; SLOT_LOG_CAPACITY],
@@ -164,7 +169,7 @@ impl<'ctx, 'cfg> SlotBundleHandle<'ctx, 'cfg> {
     }
 
     #[inline]
-    pub fn track_stage(&mut self, slot: Slot) -> Result<(), LeaseBundleError> {
+    pub(crate) fn track_stage(&mut self, slot: Slot) -> Result<(), LeaseBundleError> {
         if self
             .stages
             .iter()
@@ -200,19 +205,19 @@ impl<'ctx, 'cfg> SlotBundleHandle<'ctx, 'cfg> {
 
 /// Facet marker used by LeaseGraph nodes that require bundling.
 #[allow(clippy::type_complexity)]
-pub struct LeaseBundleFacet<T, U, C, E>(PhantomData<fn() -> (T, U, C, E)>)
+pub(crate) struct LeaseBundleFacet<T, U, C, E>(PhantomData<fn() -> (T, U, C, E)>)
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable;
+    E: crate::control::cap::mint::EpochTable;
 
 impl<T, U, C, E> Copy for LeaseBundleFacet<T, U, C, E>
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
 }
 
@@ -221,7 +226,7 @@ where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     fn clone(&self) -> Self {
         *self
@@ -233,7 +238,7 @@ where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     fn default() -> Self {
         Self(PhantomData)
@@ -242,15 +247,14 @@ where
 
 /// Per-node bundle stored in LeaseGraph when using [`LeaseBundleFacet`].
 #[allow(clippy::type_complexity)]
-pub struct LeaseBundleContext<'ctx, 'cfg, T, U, C, E>
+pub(crate) struct LeaseBundleContext<'ctx, 'cfg, T, U, C, E>
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     observe: Option<LeaseObserve<'ctx, 'cfg>>,
-    delegation: Option<DelegationGraphContext>,
     splice: Option<SpliceGraphContext>,
     caps: Option<CapsBundleHandle<'ctx, 'cfg, T, U, C, E>>,
     slots: Option<SlotBundleHandle<'ctx, 'cfg>>,
@@ -264,7 +268,7 @@ where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     fn default() -> Self {
         Self::new()
@@ -276,13 +280,12 @@ where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     #[inline]
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             observe: None,
-            delegation: None,
             splice: None,
             caps: None,
             slots: None,
@@ -293,67 +296,54 @@ where
     }
 
     #[inline]
-    pub fn set_observe(&mut self, observe: LeaseObserve<'ctx, 'cfg>) {
+    pub(crate) fn set_observe(&mut self, observe: LeaseObserve<'ctx, 'cfg>) {
         self.observe = Some(observe);
     }
 
     #[inline]
-    pub fn observe(&self) -> Option<LeaseObserve<'ctx, 'cfg>> {
+    #[cfg(test)]
+    pub(crate) fn observe(&self) -> Option<LeaseObserve<'ctx, 'cfg>> {
         self.observe
     }
 
     #[inline]
-    pub fn set_delegation(&mut self, ctx: DelegationGraphContext) {
-        self.delegation = Some(ctx);
-    }
-
-    #[inline]
-    pub fn delegation(&mut self) -> Option<&mut DelegationGraphContext> {
-        self.delegation.as_mut()
-    }
-
-    #[inline]
-    pub fn set_splice(&mut self, ctx: SpliceGraphContext) {
+    pub(crate) fn set_splice(&mut self, ctx: SpliceGraphContext) {
         self.splice = Some(ctx);
     }
 
     #[inline]
-    pub fn set_caps(&mut self, handle: CapsBundleHandle<'ctx, 'cfg, T, U, C, E>) {
+    pub(crate) fn set_caps(&mut self, handle: CapsBundleHandle<'ctx, 'cfg, T, U, C, E>) {
         self.caps = Some(handle);
     }
 
     #[inline]
-    pub fn set_slot_bundle(&mut self, handle: SlotBundleHandle<'ctx, 'cfg>) {
+    pub(crate) fn set_slot_bundle(&mut self, handle: SlotBundleHandle<'ctx, 'cfg>) {
         self.slots = Some(handle);
     }
 
     #[inline]
-    pub fn caps_mut(&mut self) -> Option<&mut CapsBundleHandle<'ctx, 'cfg, T, U, C, E>> {
+    pub(crate) fn caps_mut(&mut self) -> Option<&mut CapsBundleHandle<'ctx, 'cfg, T, U, C, E>> {
         self.caps.as_mut()
     }
 
     #[inline]
-    pub fn slots_mut(&mut self) -> Option<&mut SlotBundleHandle<'ctx, 'cfg>> {
+    pub(crate) fn slots_mut(&mut self) -> Option<&mut SlotBundleHandle<'ctx, 'cfg>> {
         self.slots.as_mut()
     }
 
     #[inline]
-    pub fn splice(&mut self) -> Option<&mut SpliceGraphContext> {
+    pub(crate) fn splice(&mut self) -> Option<&mut SpliceGraphContext> {
         self.splice.as_mut()
     }
 
     #[inline]
-    pub fn register_commit_tap(&mut self, event: TapEvent) {
+    #[cfg(test)]
+    pub(crate) fn register_commit_tap(&mut self, event: TapEvent) {
         self.commit_event = Some(event);
     }
 
     #[inline]
-    pub fn register_rollback_tap(&mut self, event: TapEvent) {
-        self.rollback_event = Some(event);
-    }
-
-    #[inline]
-    pub fn populate_local_with_needs(
+    pub(crate) fn populate_local_with_needs(
         &mut self,
         rendezvous: &mut Rendezvous<'ctx, 'cfg, T, U, C, E>,
         needs: LeaseFacetNeeds,
@@ -361,7 +351,7 @@ where
         'cfg: 'ctx,
     {
         let observe = rendezvous.observe_facet();
-        self.set_observe(LeaseObserve::new(observe.tap() as *const _));
+        self.set_observe(LeaseObserve::new(core::ptr::from_ref(observe.tap())));
 
         if needs.requires_caps() || needs.requires_delegation() || needs.requires_splice() {
             let rendezvous_ptr = NonNull::from(&mut *rendezvous);
@@ -377,7 +367,8 @@ where
     }
 
     #[inline]
-    pub fn populate_local(&mut self, rendezvous: &mut Rendezvous<'ctx, 'cfg, T, U, C, E>)
+    #[cfg(test)]
+    pub(crate) fn populate_local(&mut self, rendezvous: &mut Rendezvous<'ctx, 'cfg, T, U, C, E>)
     where
         'cfg: 'ctx,
     {
@@ -385,20 +376,7 @@ where
     }
 
     #[inline]
-    pub fn from_local_rendezvous(rendezvous: &mut Rendezvous<'ctx, 'cfg, T, U, C, E>) -> Self
-    where
-        'cfg: 'ctx,
-    {
-        let mut ctx = Self::new();
-        ctx.populate_local(rendezvous);
-        ctx
-    }
-
-    #[inline]
-    pub fn on_commit(&mut self) {
-        if let Some(ctx) = self.delegation.as_mut() {
-            ctx.reset();
-        }
+    pub(crate) fn on_commit(&mut self) {
         if let Some(handle) = self.caps.as_mut() {
             handle.on_commit();
         }
@@ -414,10 +392,7 @@ where
     }
 
     #[inline]
-    pub fn on_rollback(&mut self) {
-        if let Some(ctx) = self.delegation.as_mut() {
-            ctx.rollback();
-        }
+    pub(crate) fn on_rollback(&mut self) {
         if let Some(handle) = self.caps.as_mut() {
             handle.on_rollback();
         }
@@ -438,11 +413,11 @@ where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     #[inline]
-    pub fn from_control_core_with_needs<const MAX_RV: usize>(
-        core: &mut LeaseControlCore<'cfg, T, U, C, E, MAX_RV>,
+    pub(crate) fn from_control_core_with_needs<const MAX_RV: usize>(
+        core: &mut ControlCore<'cfg, T, U, C, E, MAX_RV>,
         rv_id: RendezvousId,
         needs: LeaseFacetNeeds,
     ) -> Option<Self> {
@@ -456,16 +431,17 @@ where
     }
 
     #[inline]
-    pub fn from_control_core<const MAX_RV: usize>(
-        core: &mut LeaseControlCore<'cfg, T, U, C, E, MAX_RV>,
+    #[cfg(test)]
+    pub(crate) fn from_control_core<const MAX_RV: usize>(
+        core: &mut ControlCore<'cfg, T, U, C, E, MAX_RV>,
         rv_id: RendezvousId,
     ) -> Option<Self> {
         Self::from_control_core_with_needs(core, rv_id, LeaseFacetNeeds::all())
     }
 
     #[inline]
-    pub fn from_control_core_or_default<const MAX_RV: usize>(
-        core: &mut LeaseControlCore<'cfg, T, U, C, E, MAX_RV>,
+    pub(crate) fn from_control_core_or_default<const MAX_RV: usize>(
+        core: &mut ControlCore<'cfg, T, U, C, E, MAX_RV>,
         rv_id: RendezvousId,
     ) -> Self {
         Self::from_control_core_with_needs(core, rv_id, LeaseFacetNeeds::all())
@@ -473,23 +449,24 @@ where
     }
 }
 
-pub trait LeaseGraphBundleExt<'graph, T, U, C, E, const MAX_RV: usize>
+pub(crate) trait LeaseGraphBundleExt<'graph, T, U, C, E, const MAX_RV: usize>
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
+    #[cfg(test)]
     fn add_child_with_bundle(
         &mut self,
-        core: &mut LeaseControlCore<'graph, T, U, C, E, MAX_RV>,
+        core: &mut ControlCore<'graph, T, U, C, E, MAX_RV>,
         parent: RendezvousId,
         child: RendezvousId,
     ) -> Result<(), LeaseGraphError>;
 
     fn add_child_with_bundle_config<F>(
         &mut self,
-        core: &mut LeaseControlCore<'graph, T, U, C, E, MAX_RV>,
+        core: &mut ControlCore<'graph, T, U, C, E, MAX_RV>,
         parent: RendezvousId,
         child: RendezvousId,
         configure: F,
@@ -504,13 +481,14 @@ where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
     S: LeaseSpec<NodeId = RendezvousId, Facet = LeaseBundleFacet<T, U, C, E>>,
 {
     #[inline]
+    #[cfg(test)]
     fn add_child_with_bundle(
         &mut self,
-        core: &mut LeaseControlCore<'graph, T, U, C, E, MAX_RV>,
+        core: &mut ControlCore<'graph, T, U, C, E, MAX_RV>,
         parent: RendezvousId,
         child: RendezvousId,
     ) -> Result<(), LeaseGraphError> {
@@ -521,7 +499,7 @@ where
     #[inline]
     fn add_child_with_bundle_config<F>(
         &mut self,
-        core: &mut LeaseControlCore<'graph, T, U, C, E, MAX_RV>,
+        core: &mut ControlCore<'graph, T, U, C, E, MAX_RV>,
         parent: RendezvousId,
         child: RendezvousId,
         configure: F,
@@ -540,7 +518,7 @@ where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     type Context<'ctx> = LeaseBundleContext<'ctx, 'ctx, T, U, C, E>;
 
@@ -563,21 +541,17 @@ mod tests {
     use std::boxed::Box;
 
     use crate::{
-        control::CpEffect,
-        control::automaton::delegation::{
-            DelegatedPortKey, DelegatedPortTable, DelegationGraphContext,
-        },
-        control::cap::{
-            CapShot, CapsMask, EndpointHandle, EndpointResource, ResourceKind, VerifiedCap,
-        },
-        control::types::{LaneId, RendezvousId, SessionId as CpSessionId},
-        observe::{self, TapRing},
-        rendezvous::{CapEntry, Lane, Rendezvous, SessionId},
+        control::cap::mint::{CapShot, CapsMask, EndpointResource, ResourceKind},
+        control::cluster::effects::CpEffect,
+        control::types::{Lane, RendezvousId, SessionId},
+        observe::core::TapRing,
+        observe::{self},
+        rendezvous::{capability::CapEntry, core::Rendezvous},
         runtime::{
             config::{Config, CounterClock},
             consts::{DefaultLabelUniverse, RING_EVENTS},
         },
-        transport::{NoopMetrics, Transport, TransportError, wire::Payload},
+        transport::{Transport, TransportError, wire::Payload},
     };
 
     struct DummyTransport;
@@ -600,7 +574,7 @@ mod tests {
             = core::future::Ready<Result<Payload<'a>, Self::Error>>
         where
             Self: 'a;
-        type Metrics = NoopMetrics;
+        type Metrics = ();
 
         fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
@@ -621,27 +595,63 @@ mod tests {
         fn recv<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
             core::future::ready(Err(TransportError::Offline))
         }
-    }
 
-    type DummyFacet = LeaseBundleFacet<
-        DummyTransport,
-        DefaultLabelUniverse,
-        CounterClock,
-        crate::control::cap::EpochInit,
-    >;
+        fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
+
+        fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
+
+        fn recv_label_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<u8> {
+            None
+        }
+
+        fn metrics(&self) -> Self::Metrics {
+            ()
+        }
+
+        fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
+    }
 
     struct TestSpec;
 
     impl LeaseSpec for TestSpec {
         type NodeId = RendezvousId;
-        type Facet = DummyFacet;
+        type Facet = LeaseBundleFacet<
+            DummyTransport,
+            DefaultLabelUniverse,
+            CounterClock,
+            crate::control::cap::mint::EpochTbl,
+        >;
         const MAX_NODES: usize = 4;
         const MAX_CHILDREN: usize = 3;
     }
 
+    fn leak_empty_control_core<const MAX_RV: usize>() -> &'static mut ControlCore<
+        'static,
+        DummyTransport,
+        DefaultLabelUniverse,
+        CounterClock,
+        crate::control::cap::mint::EpochTbl,
+        MAX_RV,
+    > {
+        let mut core = Box::<
+            ControlCore<
+                'static,
+                DummyTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                crate::control::cap::mint::EpochTbl,
+                MAX_RV,
+            >,
+        >::new_uninit();
+        unsafe {
+            ControlCore::init_empty(core.as_mut_ptr());
+            Box::leak(core.assume_init())
+        }
+    }
+
     #[test]
     fn populate_local_sets_handles() {
-        use crate::observe::TapEvent;
+        use crate::observe::core::TapEvent;
 
         let tap_storage = Box::leak(Box::new([TapEvent::default(); RING_EVENTS]));
         let slab = Box::leak(Box::new([0u8; 512]));
@@ -654,7 +664,7 @@ mod tests {
             DummyTransport,
             DefaultLabelUniverse,
             CounterClock,
-            crate::control::cap::EpochInit,
+            crate::control::cap::mint::EpochTbl,
         > = LeaseBundleContext::new();
         ctx.populate_local(&mut rendezvous);
 
@@ -665,7 +675,7 @@ mod tests {
 
     #[test]
     fn control_core_builder_returns_context() {
-        use crate::observe::TapEvent;
+        use crate::observe::core::TapEvent;
         use std::thread;
 
         const MAX_RV: usize = 4;
@@ -681,14 +691,7 @@ mod tests {
                 let rendezvous = Rendezvous::from_config(config, DummyTransport);
                 let rv_id = rendezvous.id();
 
-                let core: &mut LeaseControlCore<
-                    'static,
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    crate::control::cap::EpochInit,
-                    MAX_RV,
-                > = Box::leak(Box::new(LeaseControlCore::new()));
+                let core = leak_empty_control_core::<MAX_RV>();
                 core.register_local(rendezvous)
                     .expect("register rendezvous succeeds");
 
@@ -706,7 +709,7 @@ mod tests {
 
     #[test]
     fn lease_graph_bundle_adds_child_with_handles() {
-        use crate::observe::TapEvent;
+        use crate::observe::core::TapEvent;
         use std::thread;
 
         const MAX_RV: usize = 4;
@@ -728,14 +731,7 @@ mod tests {
                 let rendezvous_child = Rendezvous::from_config(config_child, DummyTransport);
                 let child_id = rendezvous_child.id();
 
-                let core: &mut LeaseControlCore<
-                    'static,
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    crate::control::cap::EpochInit,
-                    MAX_RV,
-                > = Box::leak(Box::new(LeaseControlCore::new()));
+                let core = leak_empty_control_core::<MAX_RV>();
                 core.register_local(rendezvous_root)
                     .expect("register root rendezvous");
                 core.register_local(rendezvous_child)
@@ -743,8 +739,16 @@ mod tests {
 
                 let root_ctx = LeaseBundleContext::from_control_core::<MAX_RV>(core, root_id)
                     .expect("root context available");
-                let mut graph =
-                    LeaseGraph::<TestSpec>::new(root_id, DummyFacet::default(), root_ctx);
+                let mut graph = LeaseGraph::<TestSpec>::new(
+                    root_id,
+                    LeaseBundleFacet::<
+                        DummyTransport,
+                        DefaultLabelUniverse,
+                        CounterClock,
+                        crate::control::cap::mint::EpochTbl,
+                    >::default(),
+                    root_ctx,
+                );
                 graph
                     .add_child_with_bundle(core, root_id, child_id)
                     .expect("child added");
@@ -771,13 +775,18 @@ mod tests {
             DummyTransport,
             DefaultLabelUniverse,
             CounterClock,
-            crate::control::cap::EpochInit,
+            crate::control::cap::mint::EpochTbl,
         > = LeaseBundleContext::new();
-        ctx.set_observe(LeaseObserve::new(static_ring as *const _));
-        let event = observe::DelegSplice::new(7, 1, 2);
+        ctx.set_observe(LeaseObserve::new(core::ptr::from_ref(static_ring)));
+        let event = observe::events::DelegSplice::new(7, 1, 2);
         ctx.register_commit_tap(event);
 
-        let facet = DummyFacet::default();
+        let facet = LeaseBundleFacet::<
+            DummyTransport,
+            DefaultLabelUniverse,
+            CounterClock,
+            crate::control::cap::mint::EpochTbl,
+        >::default();
         facet.on_commit(&mut ctx);
 
         assert_eq!(ring.head(), 1);
@@ -788,48 +797,10 @@ mod tests {
     }
 
     #[test]
-    fn rollback_clears_delegation_state() {
-        let mut table = DelegatedPortTable::new();
-        let key = DelegatedPortKey::new(RendezvousId::new(5), CpSessionId::new(2), LaneId::new(3));
-        let ptr = NonNull::from(&mut table);
-
-        let mut ctx: LeaseBundleContext<
-            'static,
-            'static,
-            DummyTransport,
-            DefaultLabelUniverse,
-            CounterClock,
-            crate::control::cap::EpochInit,
-        > = LeaseBundleContext::new();
-        ctx.set_delegation(DelegationGraphContext::for_claim(ptr, key));
-
-        if let Some(delegation) = ctx.delegation() {
-            let sid = SessionId::new(2);
-            let lane = Lane::new(3);
-            let handle = EndpointHandle::new(sid, lane, 1);
-            let cap = VerifiedCap::<EndpointResource>::new(
-                sid,
-                lane,
-                1,
-                CapShot::One,
-                CapsMask::allow_all(),
-                handle,
-                None,
-            );
-            delegation.store_claim(cap).expect("store claim succeeds");
-        }
-
-        let facet = DummyFacet::default();
-        facet.on_rollback(&mut ctx);
-
-        assert!(table.get(&key).is_none());
-    }
-
-    #[test]
     fn caps_mint_released_on_rollback() {
-        use crate::control::cap::{self, CapsMask};
-        use crate::observe::TapEvent;
-        use crate::rendezvous::CapError;
+        use crate::control::cap::mint::{CAP_HANDLE_LEN, CAP_NONCE_LEN, CapsMask};
+        use crate::observe::core::TapEvent;
+        use crate::rendezvous::error::CapError;
 
         let tap_storage = Box::leak(Box::new([TapEvent::default(); RING_EVENTS]));
         let slab = Box::leak(Box::new([0u8; 256]));
@@ -844,13 +815,13 @@ mod tests {
             DummyTransport,
             DefaultLabelUniverse,
             CounterClock,
-            crate::control::cap::EpochInit,
+            crate::control::cap::mint::EpochTbl,
         > = LeaseBundleContext::new();
         ctx.set_caps(CapsBundleHandle::new(rv_ptr, cap_ptr));
 
         let sid = SessionId::new(1);
         let lane = Lane::new(2);
-        let nonce = [0xAB; cap::CAP_NONCE_LEN];
+        let nonce = [0xAB; CAP_NONCE_LEN];
         let entry = CapEntry {
             sid,
             lane: Lane::new(lane.raw()),
@@ -860,8 +831,7 @@ mod tests {
             consumed: false,
             nonce,
             caps_mask: CapsMask::allow_all(),
-            handle: [0u8; cap::CAP_HANDLE_LEN],
-            scope: None,
+            handle: [0u8; CAP_HANDLE_LEN],
         };
         cap_table.insert_entry(entry).expect("insert succeeds");
 
@@ -877,6 +847,7 @@ mod tests {
             SessionId::new(1),
             Lane::new(2),
             EndpointResource::TAG,
+            7,
             CapShot::Many,
             CapsMask::allow_all(),
         );
@@ -885,7 +856,7 @@ mod tests {
 
     #[test]
     fn slot_staging_cleared_on_rollback() {
-        use crate::rendezvous::SlotArena;
+        use crate::rendezvous::slots::SlotArena;
 
         let mut arena = SlotArena::new();
         let arena_ptr = NonNull::from(&mut arena);
@@ -901,7 +872,7 @@ mod tests {
             DummyTransport,
             DefaultLabelUniverse,
             CounterClock,
-            crate::control::cap::EpochInit,
+            crate::control::cap::mint::EpochTbl,
         > = LeaseBundleContext::new();
         ctx.set_slot_bundle(SlotBundleHandle::new(arena_ptr));
 
@@ -930,7 +901,7 @@ mod tests {
 
     #[test]
     fn caps_mask_restored_on_rollback() {
-        use crate::observe::TapEvent;
+        use crate::observe::core::TapEvent;
 
         let tap_storage = Box::leak(Box::new([TapEvent::default(); RING_EVENTS]));
         let slab = Box::leak(Box::new([0u8; 256]));
@@ -946,7 +917,7 @@ mod tests {
             DummyTransport,
             DefaultLabelUniverse,
             CounterClock,
-            crate::control::cap::EpochInit,
+            crate::control::cap::mint::EpochTbl,
         > = LeaseBundleContext::new();
         ctx.set_caps(CapsBundleHandle::new(rv_ptr, cap_ptr));
 

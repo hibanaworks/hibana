@@ -2,8 +2,8 @@
 //!
 //! Implementations are expected to integrate with external async runtimes by
 //! returning `Future`s that complete once I/O finishes. Hibana never polls
-//! transports directly; callers drive futures to completion using whichever
-//! executor suits their environment (unikernel, hypervisor, user-space, ...).
+//! transports directly; callers drive futures to completion using the runtime
+//! that suits their environment (unikernel, hypervisor, user-space, ...).
 //!
 //! Receive buffers must be exposed as borrowed views. The rendezvous layer
 //! provides a slab (see [`crate::runtime::config::Config::slab`]) that transports can pin
@@ -209,82 +209,16 @@ pub struct TransportMetricsTapPayload {
 }
 
 /// Metrics facade returned by transports to feed routing SLO checks.
-pub trait TransportMetrics: Default {
-    /// Estimated one-way latency in microseconds.
-    fn latency_us(&self) -> Option<u64> {
-        None
-    }
-
-    /// Estimated queue depth for pending frames.
-    fn queue_depth(&self) -> Option<u32> {
-        None
-    }
-
-    /// Number of congestion marks observed over the sampling window.
-    fn pacing_interval_us(&self) -> Option<u64> {
-        None
-    }
-
-    /// Number of congestion marks observed over the sampling window.
-    fn congestion_marks(&self) -> Option<u32> {
-        None
-    }
-
-    /// Number of retransmissions (or retry attempts) recorded.
-    fn retransmissions(&self) -> Option<u32> {
-        None
-    }
-
-    /// Number of PTO (Probe Timeout) events recorded.
-    fn pto_count(&self) -> Option<u32> {
-        None
-    }
-
-    /// Smoothed RTT estimate in microseconds.
-    fn srtt_us(&self) -> Option<u64> {
-        None
-    }
-
-    /// Most recent acknowledged packet number (1-RTT space).
-    fn latest_ack_pn(&self) -> Option<u64> {
-        None
-    }
-
-    /// Congestion window estimate in bytes.
-    fn congestion_window(&self) -> Option<u64> {
-        None
-    }
-
-    /// Bytes currently considered in flight.
-    fn in_flight_bytes(&self) -> Option<u64> {
-        None
-    }
-
-    /// Congestion control algorithm reported by the transport.
-    fn algorithm(&self) -> Option<TransportAlgorithm> {
-        None
-    }
-
+pub trait TransportMetrics {
     /// Convert the current readings into a compact snapshot.
-    fn snapshot(&self) -> TransportSnapshot {
-        TransportSnapshot::new(self.latency_us(), self.queue_depth())
-            .with_congestion_marks(self.congestion_marks())
-            .with_pacing_interval(self.pacing_interval_us())
-            .with_retransmissions(self.retransmissions())
-            .with_pto_count(self.pto_count())
-            .with_srtt(self.srtt_us())
-            .with_latest_ack(self.latest_ack_pn())
-            .with_congestion_window(self.congestion_window())
-            .with_in_flight(self.in_flight_bytes())
-            .with_algorithm(self.algorithm())
-    }
+    fn snapshot(&self) -> TransportSnapshot;
 }
 
-/// Default metrics implementation that yields no observations.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct NoopMetrics;
-
-impl TransportMetrics for NoopMetrics {}
+impl TransportMetrics for () {
+    fn snapshot(&self) -> TransportSnapshot {
+        TransportSnapshot::new(None, None)
+    }
+}
 
 /// Semantic classification for transport-level telemetry events.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -532,8 +466,9 @@ pub trait Transport {
 
     /// Send a frame using the provided Tx handle.
     ///
-    /// Transport implementations select the appropriate QUIC packet type
-    /// (Initial, Handshake, or 1-RTT) based on their internal cryptographic
+    /// Transport implementations select the appropriate packet class
+    /// (for example, pre-auth, handshake, or application-data) based on
+    /// internal cryptographic
     /// state, not application-layer metadata.
     fn send<'a, 'f>(
         &'a self,
@@ -552,27 +487,24 @@ pub trait Transport {
     /// to enforce that the view is released before the next receive.
     /// Implementations should store the current waker whenever the future parks
     /// so that hardware interrupts or other I/O notifications can wake the task
-    /// without fallback polling.
+    /// directly instead of relying on polling loops.
     fn recv<'a>(&'a self, rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a>;
 
     /// Requeue the most recent frame obtained from [`recv`](Transport::recv).
     ///
-    /// Transports that support requeueing can override this to place the frame
-    /// back onto their pending queue when higher layers cannot consume it.
-    #[allow(unused_variables)]
-    fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {}
+    /// Transports that support requeueing place the frame back onto their
+    /// pending queue when higher layers cannot consume it.
+    fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>);
 
     /// Drain transport-level telemetry events and forward them to the observer.
     ///
-    /// The default implementation is a no-op; transports that expose ACK/Loss
-    /// telemetry should override this method and invoke `emit` for each drained
-    /// [`TransportEvent`].
-    fn drain_events(&self, _emit: &mut dyn FnMut(TransportEvent)) {}
+    /// Implementations invoke `emit` for each drained [`TransportEvent`].
+    fn drain_events(&self, emit: &mut dyn FnMut(TransportEvent));
 
     /// Hint label for the most recently received payload.
     ///
     /// When a transport receives a frame that maps to a specific hibana message
-    /// label (e.g., QUIC Retry or Version Negotiation), it can return that label
+    /// label (e.g., transport retry or version-negotiation control), it can return that label
     /// here to help route selection in passive observer mode.
     ///
     /// This must be non-blocking and must not perform I/O; it should only
@@ -581,71 +513,17 @@ pub trait Transport {
     /// Implementations may treat hints as one-shot and clear them after returning
     /// a label, so repeated calls within the same offer yield `None`.
     ///
-    /// # Default Implementation
-    ///
-    /// Returns `None`. Transports that support label hinting should override this
-    /// method to return the appropriate label for route arm selection.
-    #[allow(unused_variables)]
-    fn recv_label_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<u8> {
-        None
-    }
-
-    /// Quiesce and fence the transport for safe session migration.
-    ///
-    /// This method pauses all I/O operations and returns sequence numbers
-    /// for both transmit and receive sides. These sequence numbers establish
-    /// a fence point for ordered recovery after splice.
-    ///
-    /// # Default Implementation
-    ///
-    /// Returns placeholder values. Transports that support rerouting should
-    /// override this method with proper quiesce logic.
-    ///
-    /// # Returns
-    ///
-    /// - `(seq_tx, seq_rx)`: Sequence numbers at the fence point
-    #[allow(async_fn_in_trait)]
-    async fn quiesce_and_fence<'a>(
-        &'a self,
-        _tx: &'a mut Self::Tx<'a>,
-        _rx: &'a mut Self::Rx<'a>,
-    ) -> Result<(u64, u64), Self::Error> {
-        Ok((0, 0))
-    }
-
-    /// Resume transport operations after a splice.
-    ///
-    /// This method resumes I/O operations from the provided sequence numbers,
-    /// ensuring ordered delivery across the splice boundary.
-    ///
-    /// # Default Implementation
-    ///
-    /// No-op. Transports that support rerouting should override this method
-    /// with proper resume logic.
-    #[allow(async_fn_in_trait)]
-    async fn resume_after<'a>(
-        &'a self,
-        _tx: &'a mut Self::Tx<'a>,
-        _rx: &'a mut Self::Rx<'a>,
-        _seq_tx: u64,
-        _seq_rx: u64,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
+    fn recv_label_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<u8>;
 
     /// Provide transport-level metrics for routing decisions.
     ///
-    /// Implementations can override this method to supply latency estimates and
-    /// queue depth information. By default no observations are reported.
-    fn metrics(&self) -> Self::Metrics {
-        Self::Metrics::default()
-    }
+    /// Implementations supply latency estimates and queue depth information.
+    fn metrics(&self) -> Self::Metrics;
 
     /// Apply pacing updates sourced from control-plane feedback.
     ///
-    /// Implementations that expose pacing knobs should override this method.
-    /// The default implementation ignores the request.
-    fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
+    /// Implementations that expose pacing knobs apply the request explicitly.
+    fn apply_pacing_update(&self, interval_us: u32, burst_bytes: u16);
 }
 
 #[cfg(test)]
@@ -741,7 +619,7 @@ mod tests {
             = RecvFuture<'a>
         where
             Self: 'a;
-        type Metrics = crate::transport::NoopMetrics;
+        type Metrics = ();
 
         fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
@@ -767,6 +645,26 @@ mod tests {
                 payload: Some(payload),
             }
         }
+
+        fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
+            let _ = rx;
+        }
+
+        fn drain_events(&self, emit: &mut dyn FnMut(TransportEvent)) {
+            let _ = emit;
+        }
+
+        fn recv_label_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<u8> {
+            None
+        }
+
+        fn metrics(&self) -> Self::Metrics {
+            ()
+        }
+
+        fn apply_pacing_update(&self, interval_us: u32, burst_bytes: u16) {
+            let _ = (interval_us, burst_bytes);
+        }
     }
 
     struct FlagWake {
@@ -788,7 +686,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::let_unit_value)]
     fn recv_future_records_waker_and_wakes() {
         let transport = WakerAwareTransport::new();
         let shared = transport.state();
@@ -815,12 +712,9 @@ mod tests {
     }
 }
 
-/// Forward: data plane optimization (relay ≡ splice)
-pub mod forward;
-
-/// Observability helpers for logical frame inspection.
-pub mod trace;
-/// Wire helpers: payload wrappers and serialization traits.
-pub mod wire;
 /// Transport context provider for resolver state access.
-pub mod context;
+pub(crate) mod context;
+/// Observability helpers for logical frame inspection.
+pub(crate) mod trace;
+/// Wire helpers: payload wrappers and serialization traits.
+pub(crate) mod wire;

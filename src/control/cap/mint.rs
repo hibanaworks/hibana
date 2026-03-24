@@ -1,9 +1,9 @@
 //! CapMint 2.0 primitives for capability minting and validation.
 //!
 //! Hibana mints control tokens through const-first strategies baked into
-//! `RoleProgram` and `SessionCluster::canonical_session_token()`, with rendezvous
-//! tables enforcing nonce/tag side effects via `Rendezvous::mint_cap()` and
-//! `Rendezvous::claim_cap()`.
+//! `RoleProgram` and endpoint-owned canonical control send paths, with
+//! rendezvous tables enforcing nonce/tag side effects via
+//! `Rendezvous::mint_cap()` and `Rendezvous::claim_cap()`.
 //!
 //! # Epoch-Based Revocation (Witness System)
 //!
@@ -15,42 +15,33 @@
 //! ## Design Principles
 //!
 //! 1. **No global state**: Epoch is tracked via type-level witnesses, not global counters
-//! 2. **Affine linearity**: `Owner<E>` can be revoked exactly once, producing `Owner<E+1>`
-//! 3. **Compile-time safety**: Operations on old epochs fail because `&EpochTok<E>` is unavailable
+//! 2. **Affine linearity**: endpoint state carries a rendezvous-scoped owner witness
+//! 3. **Compile-time safety**: endpoint-owned epoch witnesses remain in the type system
 //! 4. **AMPST compliance**: Integrates with cancellation termination (ECOOP'22)
 //!
 //! ## Usage Example
 //!
-//! Internally, the rendezvous core calls `brand::Brand::with_lane` to mint a
-//! short-lived [`LaneToken`] witness for the active lane. Application code never
-//! receives the brand directly; the cursor endpoint stores the [`Owner`] witness
-//! and exposes typed control operations that ensure the epoch advances safely.
+//! Internally, the rendezvous core mints a rendezvous-scoped [`Owner`] witness
+//! for the active endpoint. Application code never receives the brand directly;
+//! the cursor endpoint stores the witness and exposes typed control operations.
 //!
 //! ## Integration with Endpoint
 //!
-//! EpochTok integration uses internal witness holding.
-//!
-//! The internal `Endpoint<'r, 'rv, S, Step>` implementation (in `endpoint/witness.rs`)
-//! holds [`Owner<'rv, Step>`] which provides epoch witnesses through [`Owner::token()`].
-//! Control plane operations (`reroute`, `rollback`, `cancel`) verify epoch progression
+//! The internal endpoint implementation stores [`Owner<'rv, Step>`] alongside
+//! [`EndpointEpoch<'rv, Table>`]. Control plane operations verify epoch progression
 //! through the `Step` type parameter, ensuring:
 //!
 //! - **Affine progression**: Each operation consumes `Endpoint<Step>` and produces
 //!   `Endpoint<NextStep>`, making reuse impossible at compile time.
-//! - **Internal witness verification**: `Owner::token()` generates `EpochTok<'rv, Step>`
-//!   internally when needed, without requiring external witness management.
 //! - **API simplicity**: Users work with `Endpoint` directly; witness mechanics are hidden
 //!   in the `pub(crate)` implementation.
 //!
 //! The approach keeps ledgers purely internal: the rendezvous retains the brand
 //! token and no global bookkeeping structure is required.
 //!
-//! **Note**: The `witness` module is currently `pub(crate)`. Future work may migrate
-//! the public `Endpoint` API to use this implementation (breaking change).
-//!
 //! # Wire Format
 //!
-//! CapToken is 32 bytes on the wire:
+//! Capability tokens are 32 bytes on the wire:
 //! ```text
 //! [16B nonce | 8B header | 8B HMAC]
 //! header = (sid:u32, lane:u8, role:u8, kind:u8, shot:u8)
@@ -62,10 +53,9 @@
 //! ## SessionCluster-driven canonical minting
 //!
 //! ```rust,ignore
-//! use hibana::endpoint::ControlOutcome;
-//! let controller = cluster.attach_cursor::<0, _>(rv_id, sid, &CONTROLLER)?;
+//! let controller = cluster.enter(rv_id, sid, &CONTROLLER, hibana::substrate::binding::NoBinding)?;
 //! let (controller, outcome) = controller.send::<CancelMsg>(()).await?;
-//! debug_assert!(matches!(outcome, ControlOutcome::Canonical(_)));
+//! let _ = outcome;
 //! ```
 //!
 //! ## Rendezvous validation
@@ -73,15 +63,15 @@
 //! ```rust,ignore
 //! let (worker, token) = worker.recv::<CancelMsg>().await?;
 //! let verified = rendezvous.claim_cap(&token)?;
-//! drop(verified); // attach via rendezvous.attach_verified()
+//! drop(verified);
 //! ```
 //!
 //! ## Custom Resource Example
 //!
 //! ```rust,ignore
 //! use core::sync::atomic::{AtomicUsize, Ordering};
-//! use hibana::control::cap::{CapToken, GenericCapToken, ResourceKind};
-//! use hibana::transport::wire::WireDecode;
+//! use hibana::substrate::cap::{CapError, GenericCapToken, ResourceKind};
+//! use hibana::substrate::wire::WireDecode;
 //!
 //! #[derive(Clone, Copy, Debug)]
 //! struct PageHandle {
@@ -102,7 +92,7 @@
 //!         buf
 //!     }
 //!
-//!     fn decode_handle(data: [u8; 6]) -> Result<Self::Handle, hibana::control::cap::CapError> {
+//!     fn decode_handle(data: [u8; 6]) -> Result<Self::Handle, CapError> {
 //!         let mut id_bytes = [0u8; 4];
 //!         id_bytes.copy_from_slice(&data[0..4]);
 //!         Ok(PageHandle {
@@ -116,17 +106,16 @@
 //!     }
 //! }
 //!
-//! fn round_trip(token: GenericCapToken<PageResource>) -> CapToken {
+//! fn round_trip(token: GenericCapToken<PageResource>) -> GenericCapToken<PageResource> {
 //!     // Convert to bytes and back so the token can traverse message routes.
 //!     let bytes = token.into_bytes();
-//!     CapToken::decode_from(&bytes).unwrap()
+//!     GenericCapToken::<PageResource>::decode_from(&bytes).unwrap()
 //! }
 //! ```
 
 use core::marker::PhantomData;
 
-use crate::control::CpEffect;
-use crate::control::brand::Guard as BrandGuard;
+use crate::control::cluster::effects::CpEffect;
 
 // ============================================================================
 // CapMint 2.0 core (const-first / no_std / no_alloc)
@@ -240,16 +229,6 @@ impl CapMintPolicy for CanonicalPolicy {
     const ALLOWS_CANONICAL: bool = true;
 }
 
-/// External mint policy – canonical control payloads must be provided externally.
-#[derive(Clone, Copy, Debug)]
-pub struct ExternalPolicy;
-
-impl CapMintPolicy for ExternalPolicy {
-    const POLICY_ID: CapPolicyId = CapPolicyId::new(1);
-    const KIND: CapPolicyKind = CapPolicyKind::External;
-    const ALLOWS_CANONICAL: bool = false;
-}
-
 /// Marker trait implemented by policies that permit canonical minting.
 pub trait AllowsCanonical {}
 
@@ -298,7 +277,7 @@ impl<S: CapMintSpec> CapMintStrategy<S> {
 
 /// Zero-sized mint configuration baked into role programs.
 #[derive(Debug)]
-pub struct MintConfig<S: CapMintSpec, P: CapMintPolicy> {
+pub struct MintConfig<S: CapMintSpec = NullMintSpec, P: CapMintPolicy = CanonicalPolicy> {
     strategy: CapMintStrategy<S>,
     _policy: PhantomData<P>,
 }
@@ -368,10 +347,7 @@ pub trait MintConfigMarker: Copy {
     type Policy: CapMintPolicy;
     const INSTANCE: Self;
 
-    #[inline(always)]
-    fn as_config(&self) -> MintConfig<Self::Spec, Self::Policy> {
-        MintConfig::<Self::Spec, Self::Policy>::new()
-    }
+    fn as_config(&self) -> MintConfig<Self::Spec, Self::Policy>;
 }
 
 impl<S, P> MintConfigMarker for MintConfig<S, P>
@@ -382,12 +358,12 @@ where
     type Spec = S;
     type Policy = P;
     const INSTANCE: Self = MintConfig::<S, P>::new();
+
+    #[inline(always)]
+    fn as_config(&self) -> MintConfig<Self::Spec, Self::Policy> {
+        MintConfig::<S, P>::new()
+    }
 }
-
-/// Default mint configuration used by RoleProgram unless overridden.
-pub type DefaultMintConfig = MintConfig<NullMintSpec, CanonicalPolicy>;
-
-pub const DEFAULT_MINT_CONFIG: DefaultMintConfig = DefaultMintConfig::new();
 
 /// Length of the nonce segment inside a capability token.
 pub const CAP_NONCE_LEN: usize = 16;
@@ -402,36 +378,15 @@ pub const CAP_FIXED_HEADER_LEN: usize = 10;
 pub const CAP_HANDLE_LEN: usize = CAP_HEADER_LEN - CAP_FIXED_HEADER_LEN;
 /// Total length of a capability token on the wire.
 pub const CAP_TOKEN_LEN: usize = CAP_NONCE_LEN + CAP_HEADER_LEN + CAP_TAG_LEN;
+use crate::control::types::Lane;
 use crate::control::types::SessionId;
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
-use crate::rendezvous::Lane;
 use crate::transport::wire::{CodecError, WireDecode, WireEncode};
 
 /// Marker trait ensuring that control-plane labels always carry capability tokens.
 pub trait ControlPayload {}
 
 impl<K: ResourceKind> ControlPayload for GenericCapToken<K> {}
-
-#[derive(Clone, Copy)]
-pub struct LaneKey<'rv> {
-    pub(crate) _rendezvous: BrandGuard<'rv>,
-    pub(crate) lane: Lane,
-}
-
-impl<'rv> LaneKey<'rv> {
-    #[inline]
-    pub(crate) fn new(rendezvous: BrandGuard<'rv>, lane: Lane) -> Self {
-        Self {
-            _rendezvous: rendezvous,
-            lane,
-        }
-    }
-
-    #[inline]
-    pub fn lane(&self) -> Lane {
-        self.lane
-    }
-}
 
 // ============================================================================
 // Generic capability abstraction
@@ -460,10 +415,10 @@ pub trait ResourceKind {
     /// handle (sid/lane/scope) when sending ExternalControl messages. The caller's
     /// payload is ignored.
     ///
-    /// When `false` (default), the caller must provide the token/payload directly.
+    /// When `false`, the caller must provide the token/payload directly.
     /// This is appropriate for management session tokens where the caller
     /// constructs the token with specific parameters.
-    const AUTO_MINT_EXTERNAL: bool = false;
+    const AUTO_MINT_EXTERNAL: bool;
 
     /// Encode the handle into the resource payload area of the header.
     fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN];
@@ -476,19 +431,14 @@ pub trait ResourceKind {
 
     /// Control-plane effect mask granted when this handle is owned.
     ///
-    /// Default implementation provides no additional permissions.
-    fn caps_mask(_handle: &Self::Handle) -> CapsMask {
-        CapsMask::empty()
-    }
+    fn caps_mask(handle: &Self::Handle) -> CapsMask;
 
     /// Structured scope identifier encoded in this handle, if any.
     ///
-    /// Control-plane resources that encode `ScopeId` values should override
-    /// this method so that downstream components (CapTable, EPF, observability)
-    /// can extract scope metadata without bespoke decoding.
-    fn scope_id(_handle: &Self::Handle) -> Option<ScopeId> {
-        None
-    }
+    /// Control-plane resources that encode `ScopeId` values should return it
+    /// here so that downstream components (CapTable, EPF, observability) can
+    /// extract scope metadata without bespoke decoding.
+    fn scope_id(handle: &Self::Handle) -> Option<ScopeId>;
 }
 
 /// Resource kinds that represent control-plane capabilities.
@@ -500,15 +450,12 @@ pub trait ControlResourceKind: ResourceKind {
     const HANDLING: crate::global::ControlHandling;
 }
 
-/// Placeholder resource kind used for non-control messages.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct NoControlKind;
-
-impl ResourceKind for NoControlKind {
+impl ResourceKind for () {
     type Handle = ();
 
     const TAG: u8 = 0;
     const NAME: &'static str = "NoControl";
+    const AUTO_MINT_EXTERNAL: bool = false;
 
     fn encode_handle(_handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
         [0u8; CAP_HANDLE_LEN]
@@ -519,6 +466,14 @@ impl ResourceKind for NoControlKind {
     }
 
     fn zeroize(_handle: &mut Self::Handle) {}
+
+    fn caps_mask(_handle: &Self::Handle) -> CapsMask {
+        CapsMask::empty()
+    }
+
+    fn scope_id(_handle: &Self::Handle) -> Option<ScopeId> {
+        None
+    }
 }
 
 /// Resource kinds whose handles are derived from session/lane context.
@@ -527,24 +482,22 @@ pub trait SessionScopedKind: ResourceKind {
     fn handle_for_session(sid: SessionId, lane: Lane) -> Self::Handle;
 
     /// Shot discipline enforced for automatically minted tokens.
-    fn shot() -> CapShot {
-        CapShot::One
-    }
+    fn shot() -> CapShot;
 }
 
 /// Trait for control kinds that can mint their handle from basic context.
 ///
 /// This trait enables external crates to define their own `CanonicalControl`
 /// message types without modifying hibana core. The `canonical_control_token`
-/// function uses this trait for the fallback case when the control kind is
+/// function uses this trait for the generic case when the control kind is
 /// not one of the special kinds requiring complex handle preparation.
 ///
 /// # Example
 ///
 /// ```ignore
-/// use hibana::control::cap::{ControlMint, ResourceKind};
-/// use hibana::rendezvous::{SessionId, Lane};
-/// use hibana::global::const_dsl::ScopeId;
+/// use hibana::substrate::cap::advanced::ScopeId;
+/// use hibana::substrate::{Lane, SessionId};
+/// use hibana::substrate::cap::{ControlMint, ResourceKind};
 ///
 /// struct MyMarkerKind;
 ///
@@ -569,14 +522,14 @@ pub trait ControlMint: ResourceKind {
 
 /// Handle describing an endpoint rendezvous slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EndpointHandle {
-    pub sid: SessionId,
-    pub lane: Lane,
-    pub role: u8,
+pub(crate) struct EndpointHandle {
+    pub(crate) sid: SessionId,
+    pub(crate) lane: Lane,
+    pub(crate) role: u8,
 }
 
 impl EndpointHandle {
-    pub const fn new(sid: SessionId, lane: Lane, role: u8) -> Self {
+    pub(crate) const fn new(sid: SessionId, lane: Lane, role: u8) -> Self {
         Self { sid, lane, role }
     }
 
@@ -589,17 +542,19 @@ impl EndpointHandle {
     }
 }
 
-impl super::ControlHandle for EndpointHandle {}
+impl super::ControlHandle for EndpointHandle {
+    fn visit_delegation_links(&self, _f: &mut dyn FnMut(crate::control::types::RendezvousId)) {}
+}
 
 /// Marker for endpoint capabilities (kept internal to hibana).
-#[doc(hidden)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EndpointResource {}
+pub(crate) enum EndpointResource {}
 
 impl ResourceKind for EndpointResource {
     type Handle = EndpointHandle;
     const TAG: u8 = 0;
     const NAME: &'static str = "EndpointResource";
+    const AUTO_MINT_EXTERNAL: bool = false;
 
     fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
         let mut data = [0u8; CAP_HANDLE_LEN];
@@ -623,11 +578,15 @@ impl ResourceKind for EndpointResource {
     fn caps_mask(_handle: &Self::Handle) -> CapsMask {
         CapsMask::allow_all()
     }
+
+    fn scope_id(_handle: &Self::Handle) -> Option<ScopeId> {
+        None
+    }
 }
 
 #[derive(Clone, Copy)]
-pub struct Owner<'rv, Step> {
-    lane: LaneKey<'rv>,
+pub(crate) struct Owner<'rv, Step> {
+    _brand: PhantomData<crate::control::brand::Guard<'rv>>,
     _step: PhantomData<Step>,
 }
 
@@ -636,93 +595,9 @@ where
     Step: EpochType,
 {
     #[inline]
-    pub(crate) fn new(lane: LaneKey<'rv>) -> Self {
+    pub(crate) fn new(_brand: crate::control::brand::Guard<'rv>) -> Self {
         Self {
-            lane,
-            _step: PhantomData,
-        }
-    }
-
-    #[inline]
-    pub fn token(&self) -> EpochTok<'rv, Step> {
-        EpochTok {
-            lane: self.lane,
-            _step: PhantomData,
-        }
-    }
-
-    #[inline]
-    pub fn lane(&self) -> Lane {
-        self.lane.lane()
-    }
-}
-
-pub struct LaneToken<'rv, Step> {
-    owner: Owner<'rv, Step>,
-}
-
-impl<'rv, Step> LaneToken<'rv, Step>
-where
-    Step: EpochType,
-{
-    #[inline]
-    pub(crate) fn new(owner: Owner<'rv, Step>) -> Self {
-        Self { owner }
-    }
-
-    #[inline]
-    pub fn lane(&self) -> Lane {
-        self.owner.lane()
-    }
-
-    /// Extract the underlying owner witness.
-    ///
-    /// This is used internally by `LaneLease::into_endpoint()` to construct
-    /// typed endpoints. Public API users attach endpoints via
-    /// [`SessionCluster::attach_cursor`](crate::runtime::SessionCluster::attach_cursor).
-    ///
-    /// # Example (Internal Use)
-    ///
-    /// ```rust,ignore
-    /// // Internal implementation inside SessionCluster::attach_cursor()
-    /// let lane_key = LaneKey::new(brand_guard, lane);
-    /// let owner = Owner::new(lane_key);
-    /// let epoch = EndpointEpoch::new();
-    /// Endpoint::new(port, sid, owner, epoch)
-    /// ```
-    #[inline]
-    pub fn into_owner(self) -> Owner<'rv, Step> {
-        self.owner
-    }
-}
-
-impl<'rv, Step> LaneToken<'rv, Step> {
-    /// Transmute the typestate of this token.
-    ///
-    /// # Safety
-    ///
-    /// This is only safe when called from control-plane operations (checkpoint, rollback, cancel)
-    /// that have already validated the state transition. The caller must ensure that the
-    /// typestate transition is valid according to the control-plane protocol.
-    #[inline]
-    pub(crate) unsafe fn transmute_step<NewStep>(self) -> LaneToken<'rv, NewStep> {
-        LaneToken {
-            owner: Owner {
-                lane: self.owner.lane,
-                _step: PhantomData,
-            },
-        }
-    }
-}
-
-impl<'rv, Step> Owner<'rv, Step>
-where
-    Step: NextEpoch,
-{
-    #[inline]
-    pub fn advance(self) -> Owner<'rv, Step::Next> {
-        Owner {
-            lane: self.lane,
+            _brand: PhantomData,
             _step: PhantomData,
         }
     }
@@ -732,163 +607,28 @@ where
 // Operations that require a short-lived brand witness
 // ============================================================================
 
-#[derive(Clone, Copy)]
-pub struct EpochTok<'rv, Step> {
-    lane: LaneKey<'rv>,
-    _step: PhantomData<Step>,
-}
-
-impl<'rv, Step> EpochTok<'rv, Step>
-where
-    Step: EpochType,
-{
-    #[inline]
-    pub fn lane(&self) -> Lane {
-        self.lane.lane()
-    }
-}
-
-pub trait EpochWitness {
-    type Table: EpochTable;
-}
-
 #[derive(Clone, Copy, Default)]
-pub struct EndpointEpoch<'r, Table: EpochTable> {
+pub(crate) struct EndpointEpoch<'r, Table: EpochTable> {
     _marker: PhantomData<&'r Table>,
-}
-
-impl<'r, Table: EpochTable> EpochWitness for EndpointEpoch<'r, Table> {
-    type Table = Table;
 }
 
 impl<'r, Table: EpochTable> EndpointEpoch<'r, Table> {
     #[inline]
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             _marker: PhantomData,
         }
     }
 }
 
-impl<'r, Table, const L: u8> BumpAt<L> for EndpointEpoch<'r, Table>
-where
-    Table: EpochTable + BumpAt<L>,
-    <Table as BumpAt<L>>::Out: EpochTable,
-{
-    type Out = EndpointEpoch<'r, <Table as BumpAt<L>>::Out>;
-}
-
 // ============================================================================
 // Epoch Witness System (Ledger-Free Revocation)
 // ============================================================================
 
-/// Type-level epoch witness for capability revocation.
-///
-/// Each epoch is identified by a unique constant `N`. Epochs form a
-/// monotonically increasing sequence: `Epoch0`, `Succ<Epoch0>`, `Succ<Succ<Epoch0>>`, ...
-///
-/// # Design Rationale
-///
-/// Instead of maintaining a global current epoch counter, we use type-level
-/// witnesses to track epoch validity. This design has several advantages:
-///
-/// 1. **No global state**: No need for `AtomicU64` or other shared mutable state
-/// 2. **Compile-time safety**: Operations on revoked epochs fail to compile
-/// 3. **Zero-cost abstraction**: Epoch is erased at runtime (PhantomData)
-/// 4. **Affine linearity**: Revocation consumes the owner, preventing reuse
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use hibana::control::cap::{self, E0, Owner};
-/// use hibana::rendezvous::Lane;
-///
-/// cap::with_lane(obtain_rendezvous_brand(), Lane(1), |token| {
-///     let owner: Owner<'_, '_, E0> = token.into_owner();
-///     let witness = owner.token();
-///     // ... use witness with checkpoint/reroute APIs ...
-/// });
-/// ```
-/// Zero-sized epoch marker using type-level successor representation.
-///
-/// Instead of const generic arithmetic (`N + 1`), we use type-level constructors
-/// to represent epoch progression. This avoids Rust's const generic limitations
-/// while maintaining compile-time epoch tracking.
-///
-/// # Type-Level Design
-///
-/// ```text
-/// Epoch0              // Initial epoch (generation 0)
-/// Succ<Epoch0>        // Next epoch (generation 1)
-/// Succ<Succ<Epoch0>>  // Next epoch (generation 2)
-/// ```
-///
-/// # Design Rationale
-///
-/// Using type-level constructors provides:
-/// 1. **Compile-time epoch tracking**: `Owner<Epoch0>` vs `Owner<Succ<Epoch0>>`
-/// 2. **Type safety**: Capabilities tied to different epochs are incompatible
-/// 3. **Zero runtime cost**: Epoch markers are phantom data
-/// 4. **Const generic compliance**: No arithmetic in const positions
-///
-/// The `EpochType` trait provides the runtime generation number when needed.
 pub trait EpochType {
     /// The generation number for this epoch type.
     const GENERATION: u64;
 }
-
-/// Initial epoch (generation 0).
-pub struct Epoch0;
-
-impl EpochType for Epoch0 {
-    const GENERATION: u64 = 0;
-}
-
-/// Successor type constructor for epoch progression.
-///
-/// `Succ<E>` represents the next epoch after `E`.
-pub struct Succ<E: EpochType>(PhantomData<E>);
-
-impl<E: EpochType> EpochType for Succ<E> {
-    const GENERATION: u64 = E::GENERATION + 1;
-}
-
-impl<E: EpochType> EpochStep for Succ<E> {}
-
-/// Type alias for the next epoch after `E`.
-///
-/// This trait provides a clean API for epoch succession without exposing
-/// the `Succ` constructor directly.
-pub trait NextEpoch: EpochType {
-    /// Epoch reached after advancing once from the current state.
-    type Next: EpochType;
-}
-
-/// Lane-specific scope marker for epoch types.
-///
-/// This isolates epochs across lanes so that witnesses minted for one lane
-/// cannot be mixed up with those from another.
-pub struct LaneScope<const L: u8>;
-
-/// Scoped epoch type that combines a scope with a logical step (generation).
-///
-/// A scoped epoch behaves like its underlying step for generation tracking
-/// while carrying an additional phantom marker that ties it to a lane scope.
-pub struct ScopedEpoch<Scope, Step: EpochType>(PhantomData<(Scope, Step)>);
-
-impl<Scope, Step: EpochType> EpochType for ScopedEpoch<Scope, Step> {
-    const GENERATION: u64 = Step::GENERATION;
-}
-
-impl<Scope, Step> NextEpoch for ScopedEpoch<Scope, Step>
-where
-    Step: NextEpoch,
-{
-    type Next = ScopedEpoch<Scope, Step::Next>;
-}
-
-/// Type alias for lane-scoped epochs.
-pub type LaneEpoch<const L: u8, Step> = ScopedEpoch<LaneScope<L>, Step>;
 
 /// Marker trait representing logical control-plane steps for a lane.
 pub trait EpochStep: EpochType {}
@@ -899,190 +639,93 @@ impl EpochType for E0 {
     const GENERATION: u64 = 0;
 }
 impl EpochStep for E0 {}
-impl NextEpoch for E0 {
-    type Next = Ckpt;
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Ckpt;
-impl EpochType for Ckpt {
-    const GENERATION: u64 = 1;
-}
-impl EpochStep for Ckpt {}
-impl NextEpoch for Ckpt {
-    type Next = Committed;
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Committed;
-impl EpochType for Committed {
-    const GENERATION: u64 = 2;
-}
-impl EpochStep for Committed {}
-impl NextEpoch for Committed {
-    type Next = RolledBack;
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RolledBack;
-impl EpochType for RolledBack {
-    const GENERATION: u64 = 3;
-}
-impl EpochStep for RolledBack {}
-impl NextEpoch for RolledBack {
-    type Next = Succ<RolledBack>;
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stop<S: EpochStep>(PhantomData<S>);
-impl<S: EpochStep> EpochType for Stop<S> {
-    const GENERATION: u64 = S::GENERATION;
-}
-impl<S: EpochStep> EpochStep for Stop<S> {}
-
-/// Compile-time equality marker used to ensure step transitions line up.
-pub trait SameStep<Other: EpochStep> {}
-
-impl SameStep<E0> for E0 {}
-impl SameStep<Ckpt> for Ckpt {}
-impl SameStep<Committed> for Committed {}
-impl SameStep<RolledBack> for RolledBack {}
-impl<S: EpochStep> SameStep<Succ<S>> for Succ<S> {}
-impl<S: EpochStep> SameStep<Stop<S>> for Stop<S> {}
-
-/// Marker trait permitting send operations from a session step.
-pub trait MaySend: EpochStep {}
-
-impl MaySend for E0 {}
-impl MaySend for Ckpt {}
-impl MaySend for Committed {}
-impl MaySend for RolledBack {}
-impl<S> MaySend for Succ<S> where S: EpochStep + MaySend {}
 
 pub trait EpochTable {}
 
-pub trait BumpAt<const L: u8> {
-    type Out;
-}
-
-impl NextEpoch for Epoch0 {
-    type Next = Succ<Epoch0>;
-}
-
-impl<E: EpochType> NextEpoch for Succ<E> {
-    type Next = Succ<Succ<E>>;
-}
-
 /// Compile-time epoch table carrying witnesses for each rendezvous lane.
 #[allow(clippy::type_complexity)]
-pub struct EpochTbl<E0, E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E11, E12, E13, E14, E15> {
+pub struct EpochTbl<
+    L0 = E0,
+    L1 = E0,
+    L2 = E0,
+    L3 = E0,
+    L4 = E0,
+    L5 = E0,
+    L6 = E0,
+    L7 = E0,
+    L8 = E0,
+    L9 = E0,
+    L10 = E0,
+    L11 = E0,
+    L12 = E0,
+    L13 = E0,
+    L14 = E0,
+    L15 = E0,
+> {
     _marker: PhantomData<(
-        E0,
-        E1,
-        E2,
-        E3,
-        E4,
-        E5,
-        E6,
-        E7,
-        E8,
-        E9,
-        E10,
-        E11,
-        E12,
-        E13,
-        E14,
-        E15,
+        L0,
+        L1,
+        L2,
+        L3,
+        L4,
+        L5,
+        L6,
+        L7,
+        L8,
+        L9,
+        L10,
+        L11,
+        L12,
+        L13,
+        L14,
+        L15,
     )>,
 }
 
-impl<E0, E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E11, E12, E13, E14, E15> EpochTable
-    for EpochTbl<E0, E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E11, E12, E13, E14, E15>
+impl<L0, L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15> EpochTable
+    for EpochTbl<L0, L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15>
 where
-    E0: EpochStep,
-    E1: EpochStep,
-    E2: EpochStep,
-    E3: EpochStep,
-    E4: EpochStep,
-    E5: EpochStep,
-    E6: EpochStep,
-    E7: EpochStep,
-    E8: EpochStep,
-    E9: EpochStep,
-    E10: EpochStep,
-    E11: EpochStep,
-    E12: EpochStep,
-    E13: EpochStep,
-    E14: EpochStep,
-    E15: EpochStep,
+    L0: EpochStep,
+    L1: EpochStep,
+    L2: EpochStep,
+    L3: EpochStep,
+    L4: EpochStep,
+    L5: EpochStep,
+    L6: EpochStep,
+    L7: EpochStep,
+    L8: EpochStep,
+    L9: EpochStep,
+    L10: EpochStep,
+    L11: EpochStep,
+    L12: EpochStep,
+    L13: EpochStep,
+    L14: EpochStep,
+    L15: EpochStep,
 {
 }
-
-/// Initial epoch table with all lanes at `E0`.
-pub type EpochInit = EpochTbl<E0, E0, E0, E0, E0, E0, E0, E0, E0, E0, E0, E0, E0, E0, E0, E0>;
 
 // ============================================================================
 // Original Capability Token System (Wire Format)
 // ============================================================================
 
-/// Minimal RNG trait for no_std/no_alloc capability token generation.
+/// Capability shot semantics embedded in the token wire/runtime encoding.
 ///
-/// Implementations must provide cryptographically secure randomness.
+/// `CapShot` records how many times a concrete token may be claimed:
+/// - `One`: Single-use (affine). Claiming the token consumes it immediately.
+/// - `Many`: Reusable. The token can be claimed multiple times under the
+///   resource kind's constraints.
 ///
-/// # Security
-/// - MUST use CSPRNG (e.g., ChaCha20, AES-CTR)
-/// - MUST be seeded from entropy source (RDRAND, virtio-rng, TPM, or PSK-derived)
-/// - MUST NOT use timestamp-based or predictable sources
-pub trait Rng32 {
-    /// Fill the 32-byte output buffer with cryptographically secure random bytes.
-    fn fill(&mut self, out: &mut [u8; 32]);
-}
-
-/// Fixed-length MAC tag (128 bits minimum for security).
-///
-/// Note: We use a fixed 16-byte array to avoid const generic issues.
-/// All MAC implementations must provide 128-bit (16-byte) tags.
-pub trait MacTag: Sized {
-    /// Convert tag into 16-byte array (128-bit minimum).
-    fn into_bytes(self) -> [u8; 16];
-}
-
-/// Minimal MAC trait for no_std/no_alloc authentication.
-///
-/// Implementations should use an authenticated construction such as HMAC-SHA256
-/// or BLAKE3 keyed mode supplied by the application.
-///
-/// # Security
-/// - Tag length MUST be at least 128 bits (16 bytes)
-/// - Key MUST be 256 bits (32 bytes) from secure source
-/// - Implementations MUST be constant-time
-pub trait Mac {
-    /// MAC tag type (must implement MacTag).
-    type Tag: MacTag;
-
-    /// Reset MAC with new key.
-    fn reset(&mut self, key: &[u8]);
-
-    /// Update MAC with additional data.
-    fn update(&mut self, chunk: &[u8]);
-
-    /// Finalize MAC and return tag.
-    fn finalize(self) -> Self::Tag;
-}
-
-/// Capability shot semantics: single-use vs. reusable.
-///
-/// Controls how many times a capability token can be claimed:
-/// - `One`: Single-use (affine). Claimed token is consumed immediately.
-/// - `Many`: Reusable. Token can be claimed multiple times (requires `MultiSafe` constraints).
+/// The compile-time shot discipline for resource kinds stays on
+/// `hibana::substrate::cap::{One, Many}`; `CapShot` is the runtime encoding of
+/// that decision inside a minted token, not the primary API for choosing shot
+/// discipline.
 ///
 /// # Usage
 /// ```rust,ignore
-/// // One-shot delegation (typical use case)
-/// let token = broker.mint_endpoint_token(sid, lane, role, CapShot::One);
-///
-/// // Multi-shot delegation (for load balancing, replication)
-/// let token = broker.mint_endpoint_token(sid, lane, role, CapShot::Many);
+/// let shot = token.shot()?;
+/// if matches!(shot, CapShot::One) {
+///     // single-use token
+/// }
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CapShot {
@@ -1164,17 +807,6 @@ impl Default for CapsMask {
     fn default() -> Self {
         Self::empty()
     }
-}
-
-/// Errors surfaced when exposing capability handles to the EPF VM.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VmHandleError {
-    /// No handle was supplied for this VM invocation.
-    NotAvailable,
-    /// Handle tag does not match the requested [`ResourceKind`].
-    TagMismatch { expected: u8, actual: u8 },
-    /// Decoding the handle payload failed.
-    DecodeFailed,
 }
 
 /// Typed view over a capability handle exposed to the EPF VM.
@@ -1495,12 +1127,6 @@ impl<'a, K: ResourceKind> WireDecode<'a> for GenericCapToken<K> {
     }
 }
 
-/// Type alias for endpoint capability tokens.
-///
-/// Use `GenericCapToken<K>` when you need a specific resource kind,
-/// or the typed token pipeline (`CapFlowToken<K>`, etc.) for the flow DSL.
-pub(crate) type CapToken = GenericCapToken<EndpointResource>;
-
 /// Zero-sized proof that MAC tag verification succeeded.
 ///
 /// This witness cannot be constructed outside of this module, ensuring that
@@ -1521,8 +1147,8 @@ struct Witness(());
 
 /// Verified capability after successful `claim()` operation.
 ///
-/// Contains all information needed to attach a Port to a Rendezvous.
-/// The MAC tag has been verified and the token has been consumed (for One-shot).
+/// This is an affine proof object: the MAC tag has been verified and the token
+/// has been consumed (for one-shot caps).
 ///
 /// # Security
 /// This struct cannot be constructed directly - it requires a private `Witness`
@@ -1532,27 +1158,12 @@ struct Witness(());
 /// # Usage
 /// ```rust,ignore
 /// let (cursor, token) = cursor.recv::<DelegateMsg>().await?;
-/// let claim = cluster.delegate_claim(rv_id, token)?;
-/// let delegated_cursor = claim.attach_cursor(&DELEGATE_PROGRAM)?;
-/// let epoch = rendezvous.epoch_token(lane);
-/// let endpoint = protocol.bind::<Role<0>, _>(port, verified.sid, epoch);
+/// let token = cursor.recv::<DelegateMsg>().await?.1;
+/// let _verified = rendezvous.claim_cap(&token)?;
 /// ```
 #[derive(Clone, Debug)]
-pub struct VerifiedCap<K: ResourceKind> {
-    /// Session ID associated with the capability.
-    pub sid: SessionId,
-    /// Lane within the session.
-    pub lane: Lane,
-    /// Role ID requested by the capability (endpoint resources reuse this).
-    pub role: u8,
-    /// Shot semantics (One or Many).
-    pub shot: CapShot,
-    /// Capability bits granted to the effect VM for this lane.
-    pub caps_mask: CapsMask,
-    /// Resource-specific handle payload decoded from the capability header.
-    pub handle: K::Handle,
-    /// Structured scope identifier encoded within the capability handle, if any.
-    pub scope: Option<ScopeId>,
+pub(crate) struct VerifiedCap<K: ResourceKind> {
+    handle: K::Handle,
     _marker: PhantomData<K>,
     /// Unforgeable witness proving this capability was validated.
     ///
@@ -1562,40 +1173,12 @@ pub struct VerifiedCap<K: ResourceKind> {
 }
 
 impl<K: ResourceKind> VerifiedCap<K> {
-    pub(crate) fn new(
-        sid: SessionId,
-        lane: Lane,
-        role: u8,
-        shot: CapShot,
-        caps_mask: CapsMask,
-        handle: K::Handle,
-        scope: Option<ScopeId>,
-    ) -> Self {
+    pub(crate) fn new(handle: K::Handle) -> Self {
         Self {
-            sid,
-            lane,
-            role,
-            shot,
-            caps_mask,
             handle,
-            scope,
             _marker: PhantomData,
             _witness: Witness(()),
         }
-    }
-
-    /// Borrow the decoded handle payload.
-    #[inline]
-    pub fn handle(&self) -> &K::Handle {
-        &self.handle
-    }
-}
-
-impl VerifiedCap<EndpointResource> {
-    /// Convenience accessor for the endpoint role encoded in the handle.
-    #[inline]
-    pub fn endpoint_role(&self) -> u8 {
-        self.handle.role
     }
 }
 
@@ -1635,43 +1218,25 @@ impl<K: ResourceKind> Drop for VerifiedCap<K> {
 mod tests {
     use super::{CAP_FIXED_HEADER_LEN, CAP_HANDLE_LEN, CAP_HEADER_LEN};
     use super::{
-        CapError, CapShot, CapToken, CapsMask, Ckpt, Committed, E0, EndpointHandle,
-        EndpointResource, EpochType, HandleView, LaneToken, Owner, ResourceKind, RolledBack,
+        CapError, CapShot, CapsMask, E0, EndpointHandle, EndpointResource, EpochType,
+        GenericCapToken, HandleView, Owner, ResourceKind,
     };
     use crate::{
-        SessionId,
         control::{
-            CpEffect,
             brand::with_brand,
             cap::resource_kinds::{LoopContinueKind, LoopDecisionHandle},
+            cluster::effects::CpEffect,
+            types::{Lane, SessionId},
         },
         global::const_dsl::ScopeId,
-        rendezvous::Lane,
     };
 
     #[test]
-    fn lane_owner_advances_through_epochs() {
+    fn owner_binds_rendezvous_brand() {
         with_brand(|rv_brand| {
-            rv_brand.with_lane(Lane(2), |brand_ref, lane_key| {
-                let owner: Owner<'_, E0> = Owner::new(lane_key);
-                let token: LaneToken<'_, E0> = LaneToken::new(owner);
-                let owner_e0 = token.into_owner();
-                assert_eq!(owner_e0.lane().0, 2);
-                assert_eq!(E0::GENERATION, 0);
-
-                let owner_ck = owner_e0.advance();
-                assert_eq!(Ckpt::GENERATION, 1);
-
-                let owner_committed = owner_ck.advance();
-                assert_eq!(Committed::GENERATION, 2);
-
-                let owner_rb = owner_committed.advance();
-                assert_eq!(RolledBack::GENERATION, 3);
-
-                let witness = owner_rb.token();
-                assert_eq!(witness.lane().0, 2);
-                let _ = brand_ref;
-            })
+            let owner: Owner<'_, E0> = Owner::new(rv_brand.guard());
+            let _ = owner;
+            assert_eq!(E0::GENERATION, 0);
         });
     }
 
@@ -1699,7 +1264,7 @@ mod tests {
         header[8..10].copy_from_slice(&mask.bits().to_be_bytes());
         header[CAP_FIXED_HEADER_LEN..CAP_FIXED_HEADER_LEN + CAP_HANDLE_LEN]
             .copy_from_slice(&handle_bytes);
-        let token = CapToken::from_parts([0u8; 16], header, [0u8; 16]);
+        let token = GenericCapToken::<EndpointResource>::from_parts([0u8; 16], header, [0u8; 16]);
         let caps = token.caps_mask_for_token().expect("caps mask");
         assert!(caps.allows(CpEffect::SpliceBegin));
         assert!(caps.allows(CpEffect::Checkpoint));
@@ -1707,7 +1272,11 @@ mod tests {
 
     #[test]
     fn handle_view_decodes_payload() {
-        let handle = LoopDecisionHandle::new(12, 4, ScopeId::route(3));
+        let handle = LoopDecisionHandle {
+            sid: 12,
+            lane: 4,
+            scope: ScopeId::route(3),
+        };
         let payload = LoopContinueKind::encode_handle(&handle);
         let expected_mask = LoopContinueKind::caps_mask(&handle);
         let view = HandleView::<LoopContinueKind>::decode(&payload, expected_mask).expect("decode");
@@ -1836,7 +1405,11 @@ mod tests {
                 generation in 0u32..10000,
                 lane in 0u16..256
             ) {
-                let handle = LoopDecisionHandle::new(generation, lane, ScopeId::loop_scope(1));
+                let handle = LoopDecisionHandle {
+                    sid: generation,
+                    lane,
+                    scope: ScopeId::loop_scope(1),
+                };
                 let payload = LoopContinueKind::encode_handle(&handle);
                 let mask = LoopContinueKind::caps_mask(&handle);
                 let view = HandleView::<LoopContinueKind>::decode(&payload, mask).expect("decode");

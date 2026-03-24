@@ -1,33 +1,39 @@
 mod common;
-mod support;
+#[path = "support/runtime.rs"]
+mod runtime_support;
 
 use common::TestTransport;
 use hibana::{
-    NoBinding,
-    endpoint::ControlOutcome,
-    g::{
-        self, Msg, Role,
-        steps::{ProjectRole, SendStep, StepCons, StepNil},
-    },
-    rendezvous::{Rendezvous, SessionId},
-    runtime::{SessionCluster, config::Config},
+    g::advanced::steps::{ProjectRole, SendStep, StepCons, StepNil},
+    g::advanced::{RoleProgram, project},
+    g::{self, Msg, Role},
+    substrate::{SessionCluster, SessionId, binding::NoBinding, runtime::Config},
 };
-use support::{leak_slab, leak_tap_storage};
+use runtime_support::{leak_slab, leak_tap_storage};
 
-type Origin = Role<0>;
-type Target = Role<1>;
-type PayloadMsg = Msg<1, u32>;
-type GlobalSteps = StepCons<SendStep<Origin, Target, PayloadMsg, 0>, StepNil>;
+const PROGRAM: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil>> =
+    g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
 
-const PROGRAM: g::Program<GlobalSteps> = g::send::<Origin, Target, PayloadMsg, 0>();
+static ORIGIN_PROGRAM: RoleProgram<
+    'static,
+    0,
+    <StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil> as ProjectRole<Role<0>>>::Output,
+> = project(&PROGRAM);
+static TARGET_PROGRAM: RoleProgram<
+    'static,
+    1,
+    <StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil> as ProjectRole<Role<1>>>::Output,
+> = project(&PROGRAM);
 
-type OriginLocal = <GlobalSteps as ProjectRole<Origin>>::Output;
-type TargetLocal = <GlobalSteps as ProjectRole<Target>>::Output;
-
-static ORIGIN_PROGRAM: g::RoleProgram<'static, 0, OriginLocal> =
-    g::project::<0, GlobalSteps, _>(&PROGRAM);
-static TARGET_PROGRAM: g::RoleProgram<'static, 1, TargetLocal> =
-    g::project::<1, GlobalSteps, _>(&PROGRAM);
+fn transport_queue_is_empty(transport: &TestTransport) -> bool {
+    transport
+        .state
+        .lock()
+        .expect("state lock")
+        .queues
+        .values()
+        .all(|queue| queue.is_empty())
+}
 
 #[test]
 fn cursor_send_and_recv_roundtrip() {
@@ -35,32 +41,25 @@ fn cursor_send_and_recv_roundtrip() {
     let slab = leak_slab(1024);
     let config = Config::new(tap_buf, slab);
     let transport = TestTransport::default();
-    let rendezvous: Rendezvous<
-        '_,
-        '_,
-        TestTransport,
-        hibana::runtime::consts::DefaultLabelUniverse,
-        hibana::runtime::config::CounterClock,
-    > = Rendezvous::from_config(config, transport.clone());
     let cluster: &mut SessionCluster<
         'static,
         TestTransport,
-        hibana::runtime::consts::DefaultLabelUniverse,
-        hibana::runtime::config::CounterClock,
+        hibana::substrate::runtime::DefaultLabelUniverse,
+        hibana::substrate::runtime::CounterClock,
         4,
-    > = Box::leak(Box::new(SessionCluster::new(support::leak_clock())));
+    > = Box::leak(Box::new(SessionCluster::new(runtime_support::leak_clock())));
     let rv_id = cluster
-        .add_rendezvous(rendezvous)
+        .add_rendezvous_from_config(config, transport.clone())
         .expect("register rendezvous");
 
     let sid = SessionId::new(1);
 
     // Attach both endpoints FIRST so they're both registered
     let origin_endpoint = cluster
-        .attach_cursor::<0, _, _, _>(rv_id, sid, &ORIGIN_PROGRAM, NoBinding)
+        .enter::<0, _, _, _>(rv_id, sid, &ORIGIN_PROGRAM, NoBinding)
         .expect("origin endpoint");
     let target_endpoint = cluster
-        .attach_cursor::<1, _, _, _>(rv_id, sid, &TARGET_PROGRAM, NoBinding)
+        .enter::<1, _, _, _>(rv_id, sid, &TARGET_PROGRAM, NoBinding)
         .expect("target endpoint");
 
     // Now run send/recv concurrently
@@ -78,14 +77,10 @@ fn cursor_send_and_recv_roundtrip() {
     });
 
     let (origin_endpoint, outcome) = send_result.expect("send succeeds");
-    assert!(matches!(outcome, ControlOutcome::None));
+    assert!(outcome.is_none());
     let (target_endpoint, payload) = recv_result.expect("recv succeeds");
     assert_eq!(payload, 42u32);
-    assert!(transport.queue_is_empty());
-
-    // Ensure typestate advanced to terminal state
-    #[cfg(feature = "test-utils")]
-    target_endpoint.phase_cursor().assert_terminal();
+    assert!(transport_queue_is_empty(&transport));
 
     drop(origin_endpoint);
     drop(target_endpoint);

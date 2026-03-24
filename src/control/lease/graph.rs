@@ -18,14 +18,14 @@
 //! leases, while splice stores child splice leases.
 //!
 //! ```rust,ignore
-//! use hibana::control::{LeaseGraph, LeaseSpec};
-//! use hibana::rendezvous::{SlotBundle, RendezvousId};
+//! use hibana::substrate::RendezvousId;
+//! use hibana::control::lease::graph::{LeaseGraph, LeaseSpec};
 //!
-//! // Example: Rendezvous IDs and SlotBundle as facets
+//! // Example: rendezvous IDs with a minimal unit facet.
 //! struct RvSlotSpec;
 //! impl LeaseSpec for RvSlotSpec {
 //!     type NodeId = RendezvousId;
-//!     type Facet = SlotBundle<'static, 'static>;
+//!     type Facet = ();
 //!     const MAX_NODES: usize = 8;
 //!     const MAX_CHILDREN: usize = 4;
 //! }
@@ -33,7 +33,7 @@
 //! // Acquire the root rendezvous slot lease
 //! let mut graph = LeaseGraph::<RvSlotSpec>::new(
 //!     root_id,
-//!     SlotFacet::default(),
+//!     (),
 //!     root_context,
 //! );
 //!
@@ -57,21 +57,19 @@ const GRAPH_MAX_CHILDREN: usize = 8;
 
 /// LeaseFacet is a zero-sized marker that carries behaviour for commit/rollback
 /// while delegating state storage to an explicit context object.
-pub trait LeaseFacet: Copy + Default {
+pub(crate) trait LeaseFacet: Copy + Default {
     /// Per-node context associated with the facet.
     type Context<'ctx>;
 
     /// Called during `LeaseGraph::commit` once all children have been committed.
-    #[inline]
-    fn on_commit<'ctx>(&self, _context: &mut Self::Context<'ctx>) {}
+    fn on_commit<'ctx>(&self, context: &mut Self::Context<'ctx>);
 
     /// Called during `LeaseGraph::rollback` once all children have been rolled back.
-    #[inline]
-    fn on_rollback<'ctx>(&self, _context: &mut Self::Context<'ctx>) {}
+    fn on_rollback<'ctx>(&self, context: &mut Self::Context<'ctx>);
 }
 
 /// LeaseSpec defines the node identifier and facet used by a LeaseGraph.
-pub trait LeaseSpec {
+pub(crate) trait LeaseSpec {
     /// Node identifier (e.g. RendezvousId)
     type NodeId: Copy + Eq + Ord + core::fmt::Debug;
 
@@ -85,33 +83,12 @@ pub trait LeaseSpec {
     const MAX_CHILDREN: usize;
 }
 
-pub type FacetContext<'graph, S> = <<S as LeaseSpec>::Facet as LeaseFacet>::Context<'graph>;
-
 impl LeaseFacet for () {
     type Context<'ctx> = ();
-}
 
-/// Facet used by [`NullLeaseSpec`] to provide a degenerate LeaseGraph configuration.
-#[derive(Clone, Copy, Default)]
-pub struct NullLeaseFacet;
+    fn on_commit<'ctx>(&self, _context: &mut Self::Context<'ctx>) {}
 
-impl LeaseFacet for NullLeaseFacet {
-    type Context<'ctx> = ();
-}
-
-/// Lease specification representing the absence of additional lease tracking.
-///
-/// This is useful for automatons that do not require a [`LeaseGraph`]. When used,
-/// the resulting graph contains only the root node paired with the rendezvous ID
-/// and an empty context.
-#[derive(Clone, Copy, Default)]
-pub struct NullLeaseSpec;
-
-impl LeaseSpec for NullLeaseSpec {
-    type NodeId = crate::control::types::RendezvousId;
-    type Facet = NullLeaseFacet;
-    const MAX_NODES: usize = 1;
-    const MAX_CHILDREN: usize = 0;
+    fn on_rollback<'ctx>(&self, _context: &mut Self::Context<'ctx>) {}
 }
 
 /// Global state of the lease graph.
@@ -126,14 +103,18 @@ enum GraphState {
 struct NodeData<'graph, S: LeaseSpec> {
     id: S::NodeId,
     facet: S::Facet,
-    context: FacetContext<'graph, S>,
+    context: <<S as LeaseSpec>::Facet as LeaseFacet>::Context<'graph>,
     /// Array of child node identifiers.
     children: [Option<S::NodeId>; GRAPH_MAX_CHILDREN],
     child_count: usize,
 }
 
 impl<'graph, S: LeaseSpec> NodeData<'graph, S> {
-    fn new(id: S::NodeId, facet: S::Facet, context: FacetContext<'graph, S>) -> Self {
+    fn new(
+        id: S::NodeId,
+        facet: S::Facet,
+        context: <<S as LeaseSpec>::Facet as LeaseFacet>::Context<'graph>,
+    ) -> Self {
         Self {
             id,
             facet,
@@ -151,35 +132,23 @@ impl<'graph, S: LeaseSpec> NodeData<'graph, S> {
         self.child_count += 1;
         Ok(())
     }
-
-    fn remove_child(&mut self, child_id: S::NodeId) -> bool {
-        for i in 0..self.child_count {
-            if self.children[i] == Some(child_id) {
-                // Move the last element into the slot we are removing.
-                if i < self.child_count - 1 {
-                    self.children[i] = self.children[self.child_count - 1];
-                }
-                self.children[self.child_count - 1] = None;
-                self.child_count -= 1;
-                return true;
-            }
-        }
-        false
-    }
 }
 
 /// Iterator over a node's direct children.
-pub struct ChildIter<'a, 'graph, S: LeaseSpec> {
+#[cfg(test)]
+pub(crate) struct ChildIter<'a, 'graph, S: LeaseSpec> {
     node: &'a NodeData<'graph, S>,
     index: usize,
 }
 
+#[cfg(test)]
 impl<'a, 'graph, S: LeaseSpec> ChildIter<'a, 'graph, S> {
     fn new(node: &'a NodeData<'graph, S>) -> Self {
         Self { node, index: 0 }
     }
 }
 
+#[cfg(test)]
 impl<'a, 'graph, S: LeaseSpec> Iterator for ChildIter<'a, 'graph, S> {
     type Item = S::NodeId;
 
@@ -196,24 +165,26 @@ impl<'a, 'graph, S: LeaseSpec> Iterator for ChildIter<'a, 'graph, S> {
 }
 
 /// Mutable handle exposing a facet marker and its associated context.
-pub struct FacetHandle<'a, 'graph, S: LeaseSpec> {
+pub(crate) struct FacetHandle<'a, 'graph, S: LeaseSpec> {
     facet: S::Facet,
-    context: &'a mut FacetContext<'graph, S>,
+    context: &'a mut <<S as LeaseSpec>::Facet as LeaseFacet>::Context<'graph>,
 }
 
 impl<'a, 'graph, S: LeaseSpec> FacetHandle<'a, 'graph, S> {
     #[inline]
-    pub fn facet(&self) -> S::Facet {
-        self.facet
-    }
-
-    #[inline]
-    pub fn context(&mut self) -> &mut FacetContext<'graph, S> {
+    pub(crate) fn context(
+        &mut self,
+    ) -> &mut <<S as LeaseSpec>::Facet as LeaseFacet>::Context<'graph> {
+        let _ = self.facet;
         self.context
     }
 
     #[inline]
-    pub fn with<R>(self, f: impl FnOnce(S::Facet, &mut FacetContext<'graph, S>) -> R) -> R {
+    #[cfg(test)]
+    pub(crate) fn with<R>(
+        self,
+        f: impl FnOnce(S::Facet, &mut <<S as LeaseSpec>::Facet as LeaseFacet>::Context<'graph>) -> R,
+    ) -> R {
         let FacetHandle { facet, context } = self;
         f(facet, context)
     }
@@ -221,7 +192,7 @@ impl<'a, 'graph, S: LeaseSpec> FacetHandle<'a, 'graph, S> {
 
 /// Errors emitted by `LeaseGraph` operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LeaseGraphError {
+pub(crate) enum LeaseGraphError {
     /// Graph capacity exceeded.
     GraphFull,
     /// Child capacity per node exceeded.
@@ -249,7 +220,7 @@ pub enum LeaseGraphError {
 ///
 /// - `commit(&mut self)` / `rollback(&mut self)` move the graph into a terminal
 ///   state; subsequent stateful operations are rejected.
-pub struct LeaseGraph<'graph, S: LeaseSpec> {
+pub(crate) struct LeaseGraph<'graph, S: LeaseSpec> {
     /// Storage backing every node.
     nodes: [Option<NodeData<'graph, S>>; GRAPH_MAX_NODES],
     /// Number of nodes currently present.
@@ -262,10 +233,10 @@ pub struct LeaseGraph<'graph, S: LeaseSpec> {
 
 impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
     /// Create a new `LeaseGraph` starting with the root node.
-    pub fn new(
+    pub(crate) fn new(
         root_id: S::NodeId,
         root_facet: S::Facet,
-        root_context: FacetContext<'graph, S>,
+        root_context: <<S as LeaseSpec>::Facet as LeaseFacet>::Context<'graph>,
     ) -> Self {
         debug_assert!(S::MAX_NODES > 0, "LeaseGraph requires MAX_NODES > 0");
         debug_assert!(S::MAX_CHILDREN > 0, "LeaseGraph requires MAX_CHILDREN > 0");
@@ -290,7 +261,7 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
     }
 
     /// Return the root node identifier.
-    pub fn root_id(&self) -> S::NodeId {
+    pub(crate) fn root_id(&self) -> S::NodeId {
         self.root_id
     }
 
@@ -306,7 +277,7 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
     /// ## Typestate
     ///
     /// Only valid while the graph is `Active`; returns `None` afterwards.
-    pub fn handle_mut(&mut self, id: S::NodeId) -> Option<FacetHandle<'_, 'graph, S>> {
+    pub(crate) fn handle_mut(&mut self, id: S::NodeId) -> Option<FacetHandle<'_, 'graph, S>> {
         // Reject if the graph already reached a terminal state.
         if self.state != GraphState::Active {
             return None;
@@ -320,14 +291,10 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
         })
     }
 
-    #[inline]
-    pub fn facet_mut(&mut self, id: S::NodeId) -> Option<FacetHandle<'_, 'graph, S>> {
-        self.handle_mut(id)
-    }
-
     /// Iterate over the direct children of the specified node.
     #[inline]
-    pub fn children(&self, id: S::NodeId) -> Option<ChildIter<'_, 'graph, S>> {
+    #[cfg(test)]
+    pub(crate) fn children(&self, id: S::NodeId) -> Option<ChildIter<'_, 'graph, S>> {
         let idx = self.find_node(id)?;
         let node = self.nodes[idx].as_ref()?;
         Some(ChildIter::new(node))
@@ -338,14 +305,9 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
     /// ## Typestate
     ///
     /// Only valid while the graph is `Active`; panics after commit/rollback.
-    pub fn root_handle_mut(&mut self) -> FacetHandle<'_, 'graph, S> {
+    pub(crate) fn root_handle_mut(&mut self) -> FacetHandle<'_, 'graph, S> {
         self.handle_mut(self.root_id)
             .expect("root node exists and graph is active")
-    }
-
-    #[inline]
-    pub fn root_facet_mut(&mut self) -> FacetHandle<'_, 'graph, S> {
-        self.root_handle_mut()
     }
 
     /// Add a child node under `parent_id` and register `child_facet`.
@@ -353,12 +315,12 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
     /// ## Typestate
     ///
     /// Only callable while the graph is `Active`; rejected after commit/rollback.
-    pub fn add_child(
+    pub(crate) fn add_child(
         &mut self,
         parent_id: S::NodeId,
         child_id: S::NodeId,
         child_facet: S::Facet,
-        child_context: FacetContext<'graph, S>,
+        child_context: <<S as LeaseSpec>::Facet as LeaseFacet>::Context<'graph>,
     ) -> Result<(), LeaseGraphError> {
         // Reject if the graph already reached a terminal state.
         if self.state == GraphState::Committed {
@@ -396,72 +358,6 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
         Ok(())
     }
 
-    /// Remove a child node (detaching it from the parent).
-    ///
-    /// All descendants of the removed node are pruned recursively.
-    ///
-    /// ## Typestate
-    ///
-    /// Only callable while the graph is `Active`; rejected after commit/rollback.
-    pub fn remove_child(
-        &mut self,
-        parent_id: S::NodeId,
-        child_id: S::NodeId,
-    ) -> Result<(), LeaseGraphError> {
-        // Reject if the graph already reached a terminal state.
-        if self.state == GraphState::Committed {
-            return Err(LeaseGraphError::AlreadyCommitted);
-        }
-        if self.state == GraphState::RolledBack {
-            return Err(LeaseGraphError::AlreadyRolledBack);
-        }
-
-        // Locate the parent node.
-        let parent_idx = self
-            .find_node(parent_id)
-            .ok_or(LeaseGraphError::NodeNotFound)?;
-
-        // Detach the child from its parent.
-        if !self.nodes[parent_idx]
-            .as_mut()
-            .unwrap()
-            .remove_child(child_id)
-        {
-            return Err(LeaseGraphError::NodeNotFound);
-        }
-
-        // Remove the child and all descendants.
-        self.remove_node_recursive(child_id);
-
-        Ok(())
-    }
-
-    /// Recursively prune a node and all descendants.
-    fn remove_node_recursive(&mut self, id: S::NodeId) {
-        let idx = match self.find_node(id) {
-            Some(i) => i,
-            None => return,
-        };
-
-        // Remove descendants first.
-        let children: [Option<S::NodeId>; GRAPH_MAX_CHILDREN] =
-            self.nodes[idx].as_ref().unwrap().children;
-        let child_count = self.nodes[idx].as_ref().unwrap().child_count;
-
-        for child_id in children[..child_count].iter().filter_map(|id| *id) {
-            self.remove_node_recursive(child_id);
-        }
-
-        // Remove the node itself.
-        self.nodes[idx] = None;
-
-        // Compact the array by moving the last occupied slot.
-        if idx < self.node_count - 1 {
-            self.nodes[idx] = self.nodes[self.node_count - 1].take();
-        }
-        self.node_count -= 1;
-    }
-
     /// Traverse a path of node IDs and return the matching facet.
     ///
     /// `path[0]` must equal `root_id`; every subsequent ID must be a child of
@@ -473,7 +369,11 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
     /// // Example path: root → child1 → grandchild
     /// let facet = graph.navigate_mut(&[root_id, child1_id, grandchild_id])?;
     /// ```
-    pub fn navigate_mut(&mut self, path: &[S::NodeId]) -> Option<FacetHandle<'_, 'graph, S>> {
+    #[cfg(test)]
+    pub(crate) fn navigate_mut(
+        &mut self,
+        path: &[S::NodeId],
+    ) -> Option<FacetHandle<'_, 'graph, S>> {
         if path.is_empty() || path[0] != self.root_id {
             return None;
         }
@@ -502,7 +402,7 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
     /// Consume the graph and commit every node.
     ///
     /// Facets drop in reverse topological order (child → parent).
-    pub fn commit(&mut self) {
+    pub(crate) fn commit(&mut self) {
         if self.state != GraphState::Active {
             return;
         }
@@ -539,7 +439,7 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
     /// Consume the graph and roll back every node.
     ///
     /// Mirrors `commit`: facets drop in reverse topological order.
-    pub fn rollback(&mut self) {
+    pub(crate) fn rollback(&mut self) {
         if self.state != GraphState::Active {
             return;
         }

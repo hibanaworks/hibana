@@ -1,15 +1,10 @@
 //! Control automaton hub.
 
 /// Delegation automata.
-pub mod delegation;
+pub(crate) mod delegation;
 /// Distributed splice automata.
-pub mod distributed;
+pub(crate) mod distributed;
 /// Splice automata.
-pub mod splice;
+pub(crate) mod splice;
 /// Transaction automata.
-pub mod txn;
-
-pub use delegation::*;
-pub use distributed::*;
-pub use splice::*;
-pub use txn::*;
+pub(crate) mod txn;

@@ -1,10 +1,10 @@
 //! Error types for ra module.
 
-use super::types::{Generation, Lane, SessionId};
+use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 
 /// Capability token errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CapError {
+pub(crate) enum CapError {
     /// Token not found in table.
     UnknownToken,
     /// Session ID or lane mismatch.
@@ -17,7 +17,7 @@ pub enum CapError {
 
 /// Generation update record for error reporting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct GenerationRecord {
+pub(crate) struct GenerationRecord {
     pub lane: Lane,
     pub last: Generation,
     pub new: Generation,
@@ -25,7 +25,7 @@ pub struct GenerationRecord {
 
 /// Generation table errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GenError {
+pub(crate) enum GenError {
     /// Stale or duplicate generation number.
     StaleOrDuplicate(GenerationRecord),
     /// Generation overflow.
@@ -44,7 +44,7 @@ pub enum RendezvousError {
     /// Session already registered on different lane.
     SessionAlreadyRegistered { sid: SessionId, lane: Lane },
     /// Cluster coordination error.
-    ClusterError(crate::control::CpError),
+    ClusterError(crate::control::cluster::error::CpError),
 }
 
 /// Splice operation errors.
@@ -72,13 +72,13 @@ pub enum SpliceError {
     InvalidInitial { lane: Lane, new: Generation },
     /// Remote rendezvous mismatch.
     RemoteRendezvousMismatch {
-        expected: super::types::RendezvousId,
-        got: super::types::RendezvousId,
+        expected: RendezvousId,
+        got: RendezvousId,
     },
     /// Rendezvous ID mismatch (distributed splice).
     RendezvousIdMismatch {
-        expected: super::types::RendezvousId,
-        got: super::types::RendezvousId,
+        expected: RendezvousId,
+        got: RendezvousId,
     },
     /// Sequence number mismatch.
     SeqnoMismatch { seq_tx: u32, seq_rx: u32 },
@@ -88,21 +88,21 @@ pub enum SpliceError {
 
 /// Cancel operation errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CancelError {
+pub(crate) enum CancelError {
     /// Unknown session ID.
     UnknownSession { sid: SessionId },
 }
 
 /// Checkpoint operation errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CheckpointError {
+pub(crate) enum CheckpointError {
     /// Unknown session ID.
     UnknownSession { sid: SessionId },
 }
 
 /// Rollback operation errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RollbackError {
+pub(crate) enum RollbackError {
     /// Unknown session ID.
     UnknownSession { sid: SessionId },
     /// No checkpoint found (cannot rollback without a checkpoint).
@@ -124,9 +124,7 @@ pub enum RollbackError {
 
 /// Commit operation errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CommitError {
-    /// Unknown session ID.
-    UnknownSession { sid: SessionId },
+pub(crate) enum CommitError {
     /// No checkpoint recorded for the session.
     NoCheckpoint { sid: SessionId },
     /// Checkpoint already committed.
@@ -137,26 +135,4 @@ pub enum CommitError {
         expected: Generation,
         got: Generation,
     },
-}
-
-/// Lane update errors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LaneUpdateError {
-    /// Update already in progress.
-    InProgress,
-    /// New lane is same as current lane.
-    SameLane,
-    /// New lane out of range.
-    OutOfRange,
-    /// New lane is busy.
-    Busy,
-}
-
-/// Lane commit errors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LaneCommitError {
-    /// No pending update.
-    NoPending,
-    /// Generation overflow.
-    GenerationOverflow,
 }

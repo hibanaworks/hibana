@@ -1,0 +1,31 @@
+name: quality-gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Public API allowlist
+        run: ./.github/scripts/check_hibana_public_api.sh
+      - name: Policy surface hygiene gate
+        run: ./.github/scripts/check_policy_surface_hygiene.sh
+      - name: Boundary contracts gate
+        run: ./.github/scripts/check_boundary_contracts.sh
+      - name: Direct projection binary gate
+        run: ./.github/scripts/check_direct_projection_binary.sh
+      - name: no_std build gate
+        run: ./.github/scripts/check_no_std_build.sh
+      - name: Cargo check
+        run: cargo check --all-targets -p hibana
+      - name: Cargo test std
+        run: cargo test -p hibana --features std
+      - name: UI gate
+        run: cargo test -p hibana --test ui --features std
+      - name: Policy replay gate
+        run: cargo test -p hibana --test policy_replay --features std

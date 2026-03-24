@@ -1,26 +1,8 @@
-error[E0107]: function takes 4 generic arguments but 3 generic arguments were supplied
- --> tests/ui/g-typelist-local-missing-step.rs:8:45
+error[E0271]: type mismatch resolving `<StepCons<LocalSend<Role<1>, Message<LabelMarker<7>, u16>>, StepNil> as StepConcat<StepNil>>::Output == StepNil`
+ --> tests/ui/g-typelist-local-missing-step.rs:9:50
   |
-8 | const PROGRAM: g::Program<GlobalSteps> = g::send::<Client, Server, g::Msg<7, u16>>();
-  |                                             ^^^^   ------  ------  -------------- supplied 3 generic arguments
-  |                                             |
-  |                                             expected 4 generic arguments
+9 | const CLIENT: RoleProgram<'static, 0, StepNil> = project(&PROGRAM);
+  |                                                  ^^^^^^^^^^^^^^^^^ expected `StepNil`, found `StepCons<LocalSend<Role<1>, ...>, ...>`
   |
-note: function defined here, with 4 generic parameters: `From`, `To`, `M`, `LANE`
- --> src/global.rs
-  |
-  | pub const fn send<From, To, M, const LANE: u8>() -> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
-  |              ^^^^ ----  --  -  --------------
-help: add missing generic argument
-  |
-8 | const PROGRAM: g::Program<GlobalSteps> = g::send::<Client, Server, g::Msg<7, u16>, LANE>();
-  |                                                                                  ++++++
-
-error[E0308]: mismatched types
-  --> tests/ui/g-typelist-local-missing-step.rs:13:58
-   |
-13 | const CLIENT: g::RoleProgram<'static, 0, MissingLocal> = g::project::<0, GlobalSteps, _>(&PROGRAM);
-   |                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `RoleProgram<'_, 0>`, found `RoleProgram<'_, 0, ..., _>`
-   |
-   = note: expected struct `RoleProgram<'static, 0, StepNil, MintConfig<NullMintSpec, CanonicalPolicy>>`
-              found struct `RoleProgram<'static, 0, StepCons<LocalSend<Role<1>, Message<LabelMarker<7>, u16>>, StepNil>, _>`
+  = note: expected struct `StepNil`
+             found struct `StepCons<LocalSend<Role<1>, hibana::global::Message<hibana::global::LabelMarker<7>, u16>>, StepNil>`

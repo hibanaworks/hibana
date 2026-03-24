@@ -5,22 +5,19 @@
 
 use core::{cell::UnsafeCell, marker::PhantomData};
 
-use super::{
-    error::CapError,
-    types::{Lane, SessionId},
-};
-use crate::control::cap::{
+use super::error::CapError;
+use crate::control::cap::mint::{
     CAP_HANDLE_LEN, CAP_NONCE_LEN, CapShot, CapsMask, EndpointResource, ResourceKind,
-    resource_kinds,
 };
-use crate::global::const_dsl::ScopeId;
+use crate::control::cap::resource_kinds;
+use crate::control::types::{Lane, SessionId};
 
 /// Maximum number of capability entries.
 const CAPS_MAX: usize = 64;
 
 /// Internal capability entry.
 #[derive(Clone, Copy, Debug)]
-pub struct CapEntry {
+pub(crate) struct CapEntry {
     pub(crate) sid: SessionId,
     pub(crate) lane: Lane,
     pub(crate) kind_tag: u8,
@@ -30,7 +27,6 @@ pub struct CapEntry {
     pub(crate) nonce: [u8; CAP_NONCE_LEN],
     pub(crate) caps_mask: CapsMask,
     pub(crate) handle: [u8; CAP_HANDLE_LEN],
-    pub(crate) scope: Option<ScopeId>,
 }
 
 /// Capability table (per-Rendezvous).
@@ -38,7 +34,7 @@ pub struct CapEntry {
 /// Tracks nonce-minted capability tokens scoped to a rendezvous. Each entry
 /// stores the originating session/lane pair, shot discipline, resource tag,
 /// and the precomputed capability mask for constant-time authorisation.
-pub struct CapTable {
+pub(crate) struct CapTable {
     slots: UnsafeCell<[Option<CapEntry>; CAPS_MAX]>,
     _no_send_sync: PhantomData<*mut ()>,
 }
@@ -50,7 +46,7 @@ impl Default for CapTable {
 }
 
 impl CapTable {
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             slots: UnsafeCell::new([None; CAPS_MAX]),
             _no_send_sync: PhantomData,
@@ -126,9 +122,10 @@ impl CapTable {
         sid: SessionId,
         lane: Lane,
         expected_tag: u8,
+        expected_role: u8,
         expected_shot: CapShot,
         expected_mask: CapsMask,
-    ) -> Result<(u8, CapsMask, bool, [u8; CAP_HANDLE_LEN], Option<ScopeId>), CapError> {
+    ) -> Result<(bool, [u8; CAP_HANDLE_LEN]), CapError> {
         unsafe {
             let slots = &mut *self.slots.get();
             for entry in slots.iter_mut().flatten() {
@@ -139,6 +136,9 @@ impl CapTable {
                     continue;
                 }
                 if entry.kind_tag != expected_tag {
+                    return Err(CapError::Mismatch);
+                }
+                if entry.role != expected_role {
                     return Err(CapError::Mismatch);
                 }
                 if entry.shot != expected_shot {
@@ -168,18 +168,16 @@ impl CapTable {
                 }
 
                 let handle_bytes = entry.handle;
-
-                let scope = entry.scope;
                 return match entry.shot {
                     CapShot::One => {
                         if entry.consumed {
                             Err(CapError::Exhausted)
                         } else {
                             entry.consumed = true;
-                            Ok((entry.role, computed_mask, true, handle_bytes, scope))
+                            Ok((true, handle_bytes))
                         }
                     }
-                    CapShot::Many => Ok((entry.role, computed_mask, false, handle_bytes, scope)),
+                    CapShot::Many => Ok((false, handle_bytes)),
                 };
             }
         }
@@ -190,11 +188,11 @@ impl CapTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::control::CpEffect;
-    use crate::control::cap::{EndpointHandle, EndpointResource};
+    use crate::control::cap::mint::{EndpointHandle, EndpointResource};
+    use crate::control::cluster::effects::CpEffect;
 
     #[test]
-    fn claim_by_nonce_returns_caps_mask() {
+    fn claim_by_nonce_returns_verified_handle() {
         let table = CapTable::new();
         let nonce = [0xAB; 16];
         let endpoint = EndpointHandle::new(SessionId::new(7), Lane::new(3), 9);
@@ -209,26 +207,24 @@ mod tests {
             nonce,
             caps_mask: caps,
             handle: EndpointResource::encode_handle(&endpoint),
-            scope: None,
         };
         table.insert_entry(entry).expect("insert succeeds");
 
-        let (role, returned_caps, exhausted, handle_bytes, scope) = table
+        let (exhausted, handle_bytes) = table
             .claim_by_nonce(
                 &nonce,
                 SessionId::new(7),
                 Lane::new(3),
                 EndpointResource::TAG,
+                endpoint.role,
                 CapShot::Many,
                 caps,
             )
             .expect("claim succeeds");
 
-        assert_eq!(role, 9);
         assert!(!exhausted);
-        assert!(returned_caps.allows(CpEffect::Checkpoint));
         assert_eq!(handle_bytes, EndpointResource::encode_handle(&endpoint));
-        assert!(scope.is_none());
+        assert!(caps.allows(CpEffect::Checkpoint));
     }
 
     #[test]
@@ -247,17 +243,17 @@ mod tests {
             nonce,
             caps_mask: caps,
             handle: EndpointResource::encode_handle(&endpoint),
-            scope: None,
         };
         table.insert_entry(entry).expect("insert succeeds");
 
         // First claim succeeds and marks as consumed
-        let (_, _, exhausted, _, _) = table
+        let (exhausted, _) = table
             .claim_by_nonce(
                 &nonce,
                 SessionId::new(8),
                 Lane::new(2),
                 EndpointResource::TAG,
+                endpoint.role,
                 CapShot::One,
                 caps,
             )
@@ -270,6 +266,7 @@ mod tests {
             SessionId::new(8),
             Lane::new(2),
             EndpointResource::TAG,
+            endpoint.role,
             CapShot::One,
             caps,
         );

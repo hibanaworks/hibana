@@ -3,25 +3,24 @@
 //! Reserved range: `0x40..=0x5F` for control-plane kinds.
 //!
 //! Each control operation (loop continue/break, checkpoint, rollback, etc.)
-//! is represented as its own ResourceKind. The minted CapToken<ResourceKind>
+//! is represented as its own ResourceKind. The minted `GenericCapToken<K>`
 //! serves simultaneously as:
-//! - The payload for protocol messages (e.g., `Msg<LAB, CapToken<LoopContinueKind>>`)
+//! - The payload for protocol messages (e.g., `Msg<LAB, GenericCapToken<LoopContinueKind>>`)
 //! - The Eff token carried through projection
 //! - The witness the control plane consumes
 
-use crate::control::CpEffect;
-use crate::control::cap::{
-    CAP_HANDLE_LEN, CapError, CapShot, CapsMask, ControlHandle, ControlMint, ControlResourceKind,
-    ResourceKind, SessionScopedKind,
+use crate::control::cap::ControlHandle;
+use crate::control::cap::mint::{
+    CAP_HANDLE_LEN, CapError, CapShot, CapsMask, ControlMint, ControlResourceKind, ResourceKind,
+    SessionScopedKind,
 };
+use crate::control::cluster::effects::CpEffect;
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 use crate::{
-    control::types::RendezvousId,
+    control::types::{Lane, RendezvousId, SessionId},
     observe::ids,
-    rendezvous::{Lane, SessionId},
     runtime::consts,
 };
-
 /// Implements a control resource with ResourceKind and ControlResourceKind.
 ///
 /// # Handle Types
@@ -41,49 +40,79 @@ macro_rules! impl_control_resource {
         label: $label:expr,
         handling: $handling:ident $(,)?
     ) => {
+        $crate::impl_control_resource!(
+            $kind,
+            handle: Unit,
+            tag: $tag,
+            name: $name,
+            label: $label,
+            scope: None,
+            tap_id: 0,
+            handling: $handling,
+        );
+    };
+
+    // Unit variant with explicit control scope owner
+    (
+        $kind:ident,
+        handle: Unit,
+        tag: $tag:expr,
+        name: $name:expr,
+        label: $label:expr,
+        scope: $scope:ident,
+        tap_id: $tap_id:expr,
+        handling: $handling:ident $(,)?
+    ) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub struct $kind;
 
-        impl $crate::control::cap::ResourceKind for $kind {
+        impl $crate::substrate::cap::ResourceKind for $kind {
             type Handle = ();
             const TAG: u8 = $tag;
             const NAME: &'static str = $name;
+            const AUTO_MINT_EXTERNAL: bool = false;
 
-            fn encode_handle(_handle: &Self::Handle) -> [u8; $crate::control::cap::CAP_HANDLE_LEN] {
-                [0u8; $crate::control::cap::CAP_HANDLE_LEN]
+            fn encode_handle(_handle: &Self::Handle) -> [u8; $crate::substrate::cap::advanced::CAP_HANDLE_LEN] {
+                [0u8; $crate::substrate::cap::advanced::CAP_HANDLE_LEN]
             }
 
             fn decode_handle(
-                _data: [u8; $crate::control::cap::CAP_HANDLE_LEN],
-            ) -> Result<Self::Handle, $crate::control::cap::CapError> {
+                _data: [u8; $crate::substrate::cap::advanced::CAP_HANDLE_LEN],
+            ) -> Result<Self::Handle, $crate::substrate::cap::advanced::CapError> {
                 Ok(())
             }
 
             fn zeroize(_handle: &mut Self::Handle) {}
 
-            fn caps_mask(_handle: &Self::Handle) -> $crate::control::cap::CapsMask {
-                $crate::control::cap::CapsMask::empty()
+            fn caps_mask(_handle: &Self::Handle) -> $crate::substrate::cap::advanced::CapsMask {
+                $crate::substrate::cap::advanced::CapsMask::empty()
+            }
+
+            fn scope_id(
+                _handle: &Self::Handle,
+            ) -> Option<$crate::substrate::cap::advanced::ScopeId> {
+                None
             }
         }
 
-        impl $crate::control::cap::ControlMint for $kind {
+        impl $crate::substrate::cap::advanced::ControlMint for $kind {
             fn mint_handle(
-                _sid: $crate::rendezvous::SessionId,
-                _lane: $crate::rendezvous::Lane,
-                _scope: $crate::global::const_dsl::ScopeId,
+                _sid: $crate::substrate::SessionId,
+                _lane: $crate::substrate::Lane,
+                _scope: $crate::substrate::cap::advanced::ScopeId,
             ) -> Self::Handle {
                 ()
             }
         }
 
-        impl $crate::control::cap::ControlResourceKind for $kind {
+        impl $crate::substrate::cap::ControlResourceKind for $kind {
             const LABEL: u8 = $label;
-            const SCOPE: $crate::global::const_dsl::ControlScopeKind =
-                $crate::global::const_dsl::ControlScopeKind::None;
-            const TAP_ID: u16 = 0;
-            const SHOT: $crate::control::cap::CapShot = $crate::control::cap::CapShot::One;
-            const HANDLING: $crate::global::ControlHandling =
-                $crate::global::ControlHandling::$handling;
+            const SCOPE: $crate::substrate::cap::advanced::ControlScopeKind =
+                $crate::substrate::cap::advanced::ControlScopeKind::$scope;
+            const TAP_ID: u16 = $tap_id;
+            const SHOT: $crate::substrate::cap::CapShot = $crate::substrate::cap::CapShot::One;
+            const HANDLING: $crate::substrate::cap::advanced::ControlHandling =
+                $crate::substrate::cap::advanced::ControlHandling::$handling;
         }
     };
     // SessionScoped variant: Handle = (u32, u16)
@@ -101,22 +130,22 @@ macro_rules! impl_control_resource {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub struct $kind;
 
-        impl $crate::control::cap::ResourceKind for $kind {
+        impl $crate::substrate::cap::ResourceKind for $kind {
             type Handle = (u32, u16);
             const TAG: u8 = $tag;
             const NAME: &'static str = $name;
+            const AUTO_MINT_EXTERNAL: bool = false;
 
-            fn encode_handle(handle: &Self::Handle) -> [u8; $crate::control::cap::CAP_HANDLE_LEN] {
-                let mut buf = [0u8; 6];
+            fn encode_handle(handle: &Self::Handle) -> [u8; $crate::substrate::cap::advanced::CAP_HANDLE_LEN] {
+                let mut buf = [0u8; $crate::substrate::cap::advanced::CAP_HANDLE_LEN];
                 buf[0..4].copy_from_slice(&handle.0.to_le_bytes());
                 buf[4..6].copy_from_slice(&handle.1.to_le_bytes());
-                $crate::control::cap::resource_kinds::pad_handle(buf)
+                buf
             }
 
             fn decode_handle(
-                data: [u8; $crate::control::cap::CAP_HANDLE_LEN],
-            ) -> Result<Self::Handle, $crate::control::cap::CapError> {
-                let data = $crate::control::cap::resource_kinds::trim_handle(data);
+                data: [u8; $crate::substrate::cap::advanced::CAP_HANDLE_LEN],
+            ) -> Result<Self::Handle, $crate::substrate::cap::advanced::CapError> {
                 let sid = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
                 let lane = u16::from_le_bytes([data[4], data[5]]);
                 Ok((sid, lane))
@@ -124,38 +153,48 @@ macro_rules! impl_control_resource {
 
             fn zeroize(_handle: &mut Self::Handle) {}
 
-            fn caps_mask(_handle: &Self::Handle) -> $crate::control::cap::CapsMask {
+            fn caps_mask(_handle: &Self::Handle) -> $crate::substrate::cap::advanced::CapsMask {
                 $caps
             }
+
+            fn scope_id(
+                _handle: &Self::Handle,
+            ) -> Option<$crate::substrate::cap::advanced::ScopeId> {
+                None
+            }
         }
 
-        impl $crate::control::cap::SessionScopedKind for $kind {
+        impl $crate::substrate::cap::advanced::SessionScopedKind for $kind {
             fn handle_for_session(
-                sid: $crate::rendezvous::SessionId,
-                lane: $crate::rendezvous::Lane,
+                sid: $crate::substrate::SessionId,
+                lane: $crate::substrate::Lane,
             ) -> Self::Handle {
                 (sid.raw(), lane.raw() as u16)
             }
+
+            fn shot() -> $crate::substrate::cap::CapShot {
+                $crate::substrate::cap::CapShot::One
+            }
         }
 
-        impl $crate::control::cap::ControlMint for $kind {
+        impl $crate::substrate::cap::advanced::ControlMint for $kind {
             fn mint_handle(
-                sid: $crate::rendezvous::SessionId,
-                lane: $crate::rendezvous::Lane,
-                _scope: $crate::global::const_dsl::ScopeId,
+                sid: $crate::substrate::SessionId,
+                lane: $crate::substrate::Lane,
+                _scope: $crate::substrate::cap::advanced::ScopeId,
             ) -> Self::Handle {
                 (sid.raw(), lane.raw() as u16)
             }
         }
 
-        impl $crate::control::cap::ControlResourceKind for $kind {
+        impl $crate::substrate::cap::ControlResourceKind for $kind {
             const LABEL: u8 = $label;
-            const SCOPE: $crate::global::const_dsl::ControlScopeKind =
-                $crate::global::const_dsl::ControlScopeKind::$scope;
+            const SCOPE: $crate::substrate::cap::advanced::ControlScopeKind =
+                $crate::substrate::cap::advanced::ControlScopeKind::$scope;
             const TAP_ID: u16 = $tap_id;
-            const SHOT: $crate::control::cap::CapShot = $crate::control::cap::CapShot::One;
-            const HANDLING: $crate::global::ControlHandling =
-                $crate::global::ControlHandling::$handling;
+            const SHOT: $crate::substrate::cap::CapShot = $crate::substrate::cap::CapShot::One;
+            const HANDLING: $crate::substrate::cap::advanced::ControlHandling =
+                $crate::substrate::cap::advanced::ControlHandling::$handling;
         }
     };
 
@@ -171,67 +210,74 @@ macro_rules! impl_control_resource {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub struct $kind;
 
-        impl $crate::control::cap::ResourceKind for $kind {
-            type Handle = $crate::control::cap::resource_kinds::LoopDecisionHandle;
+        impl $crate::substrate::cap::ResourceKind for $kind {
+            type Handle = $crate::substrate::cap::advanced::LoopDecisionHandle;
             const TAG: u8 = $tag;
             const NAME: &'static str = $name;
+            const AUTO_MINT_EXTERNAL: bool = false;
 
-            fn encode_handle(handle: &Self::Handle) -> [u8; $crate::control::cap::CAP_HANDLE_LEN] {
+            fn encode_handle(handle: &Self::Handle) -> [u8; $crate::substrate::cap::advanced::CAP_HANDLE_LEN] {
                 handle.encode()
             }
 
             fn decode_handle(
-                data: [u8; $crate::control::cap::CAP_HANDLE_LEN],
-            ) -> Result<Self::Handle, $crate::control::cap::CapError> {
-                $crate::control::cap::resource_kinds::LoopDecisionHandle::decode(data)
+                data: [u8; $crate::substrate::cap::advanced::CAP_HANDLE_LEN],
+            ) -> Result<Self::Handle, $crate::substrate::cap::advanced::CapError> {
+                $crate::substrate::cap::advanced::LoopDecisionHandle::decode(data)
             }
 
             fn zeroize(_handle: &mut Self::Handle) {}
 
-            fn caps_mask(_handle: &Self::Handle) -> $crate::control::cap::CapsMask {
+            fn caps_mask(_handle: &Self::Handle) -> $crate::substrate::cap::advanced::CapsMask {
                 $caps
             }
 
-            fn scope_id(handle: &Self::Handle) -> Option<$crate::global::const_dsl::ScopeId> {
+            fn scope_id(
+                handle: &Self::Handle,
+            ) -> Option<$crate::substrate::cap::advanced::ScopeId> {
                 Some(handle.scope)
             }
         }
 
-        impl $crate::control::cap::SessionScopedKind for $kind {
+        impl $crate::substrate::cap::advanced::SessionScopedKind for $kind {
             fn handle_for_session(
-                sid: $crate::rendezvous::SessionId,
-                lane: $crate::rendezvous::Lane,
+                sid: $crate::substrate::SessionId,
+                lane: $crate::substrate::Lane,
             ) -> Self::Handle {
-                $crate::control::cap::resource_kinds::LoopDecisionHandle::new(
-                    sid.raw(),
-                    lane.raw() as u16,
-                    $crate::global::const_dsl::ScopeId::generic(0),
-                )
+                $crate::substrate::cap::advanced::LoopDecisionHandle {
+                    sid: sid.raw(),
+                    lane: lane.raw() as u16,
+                    scope: $crate::substrate::cap::advanced::ScopeId::generic(0),
+                }
+            }
+
+            fn shot() -> $crate::substrate::cap::CapShot {
+                $crate::substrate::cap::CapShot::One
             }
         }
 
-        impl $crate::control::cap::ControlMint for $kind {
+        impl $crate::substrate::cap::advanced::ControlMint for $kind {
             fn mint_handle(
-                sid: $crate::rendezvous::SessionId,
-                lane: $crate::rendezvous::Lane,
-                scope: $crate::global::const_dsl::ScopeId,
+                sid: $crate::substrate::SessionId,
+                lane: $crate::substrate::Lane,
+                scope: $crate::substrate::cap::advanced::ScopeId,
             ) -> Self::Handle {
-                $crate::control::cap::resource_kinds::LoopDecisionHandle::new(
-                    sid.raw(),
-                    lane.raw() as u16,
+                $crate::substrate::cap::advanced::LoopDecisionHandle {
+                    sid: sid.raw(),
+                    lane: lane.raw() as u16,
                     scope,
-                )
+                }
             }
         }
 
-        impl $crate::control::cap::ControlResourceKind for $kind {
+        impl $crate::substrate::cap::ControlResourceKind for $kind {
             const LABEL: u8 = $label;
-            const SCOPE: $crate::global::const_dsl::ControlScopeKind =
-                $crate::global::const_dsl::ControlScopeKind::Loop;
+            const SCOPE: $crate::substrate::cap::advanced::ControlScopeKind =
+                $crate::substrate::cap::advanced::ControlScopeKind::Loop;
             const TAP_ID: u16 = $crate::observe::ids::LOOP_DECISION;
-            const SHOT: $crate::control::cap::CapShot = $crate::control::cap::CapShot::One;
-            const HANDLING: $crate::global::ControlHandling =
-                $crate::global::ControlHandling::Canonical;
+            const SHOT: $crate::substrate::cap::CapShot = $crate::substrate::cap::CapShot::One;
+            const HANDLING: $crate::substrate::cap::advanced::ControlHandling =
+                $crate::substrate::cap::advanced::ControlHandling::Canonical;
         }
     };
 
@@ -250,22 +296,22 @@ macro_rules! impl_control_resource {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub struct $kind;
 
-        impl $crate::control::cap::ResourceKind for $kind {
+        impl $crate::substrate::cap::ResourceKind for $kind {
             type Handle = (u32, u16);
             const TAG: u8 = $tag;
             const NAME: &'static str = $name;
+            const AUTO_MINT_EXTERNAL: bool = false;
 
-            fn encode_handle(handle: &Self::Handle) -> [u8; $crate::control::cap::CAP_HANDLE_LEN] {
-                let mut buf = [0u8; 6];
+            fn encode_handle(handle: &Self::Handle) -> [u8; $crate::substrate::cap::advanced::CAP_HANDLE_LEN] {
+                let mut buf = [0u8; $crate::substrate::cap::advanced::CAP_HANDLE_LEN];
                 buf[0..4].copy_from_slice(&handle.0.to_le_bytes());
                 buf[4..6].copy_from_slice(&handle.1.to_le_bytes());
-                $crate::control::cap::resource_kinds::pad_handle(buf)
+                buf
             }
 
             fn decode_handle(
-                data: [u8; $crate::control::cap::CAP_HANDLE_LEN],
-            ) -> Result<Self::Handle, $crate::control::cap::CapError> {
-                let data = $crate::control::cap::resource_kinds::trim_handle(data);
+                data: [u8; $crate::substrate::cap::advanced::CAP_HANDLE_LEN],
+            ) -> Result<Self::Handle, $crate::substrate::cap::advanced::CapError> {
                 let low = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
                 let high = u16::from_le_bytes([data[4], data[5]]);
                 Ok((low, high))
@@ -273,19 +319,25 @@ macro_rules! impl_control_resource {
 
             fn zeroize(_handle: &mut Self::Handle) {}
 
-            fn caps_mask(_handle: &Self::Handle) -> $crate::control::cap::CapsMask {
+            fn caps_mask(_handle: &Self::Handle) -> $crate::substrate::cap::advanced::CapsMask {
                 $caps
+            }
+
+            fn scope_id(
+                _handle: &Self::Handle,
+            ) -> Option<$crate::substrate::cap::advanced::ScopeId> {
+                None
             }
         }
 
-        impl $crate::control::cap::ControlResourceKind for $kind {
+        impl $crate::substrate::cap::ControlResourceKind for $kind {
             const LABEL: u8 = $label;
-            const SCOPE: $crate::global::const_dsl::ControlScopeKind =
-                $crate::global::const_dsl::ControlScopeKind::$scope;
+            const SCOPE: $crate::substrate::cap::advanced::ControlScopeKind =
+                $crate::substrate::cap::advanced::ControlScopeKind::$scope;
             const TAP_ID: u16 = $tap_id;
-            const SHOT: $crate::control::cap::CapShot = $crate::control::cap::CapShot::One;
-            const HANDLING: $crate::global::ControlHandling =
-                $crate::global::ControlHandling::$handling;
+            const SHOT: $crate::substrate::cap::CapShot = $crate::substrate::cap::CapShot::One;
+            const HANDLING: $crate::substrate::cap::advanced::ControlHandling =
+                $crate::substrate::cap::advanced::ControlHandling::$handling;
         }
     };
 
@@ -296,65 +348,88 @@ macro_rules! impl_control_resource {
         name: $name:expr,
         label: $label:expr $(,)?
     ) => {
+        $crate::impl_control_resource!(
+            $kind,
+            handle: RouteDecision,
+            name: $name,
+            label: $label,
+            arm: 0,
+        );
+    };
+
+    (
+        $kind:ident,
+        handle: RouteDecision,
+        name: $name:expr,
+        label: $label:expr,
+        arm: $arm:expr $(,)?
+    ) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub struct $kind;
 
-        impl $crate::control::cap::ResourceKind for $kind {
-            type Handle = $crate::control::cap::resource_kinds::RouteDecisionHandle;
+        impl $crate::substrate::cap::ResourceKind for $kind {
+            type Handle = $crate::substrate::cap::advanced::RouteDecisionHandle;
             const TAG: u8 =
-                <$crate::control::cap::resource_kinds::RouteDecisionKind as $crate::control::cap::ResourceKind>::TAG;
+                <$crate::substrate::cap::advanced::RouteDecisionKind as $crate::substrate::cap::ResourceKind>::TAG;
             const NAME: &'static str = $name;
+            const AUTO_MINT_EXTERNAL: bool = false;
 
-            fn encode_handle(handle: &Self::Handle) -> [u8; $crate::control::cap::CAP_HANDLE_LEN] {
+            fn encode_handle(handle: &Self::Handle) -> [u8; $crate::substrate::cap::advanced::CAP_HANDLE_LEN] {
                 handle.encode()
             }
 
             fn decode_handle(
-                data: [u8; $crate::control::cap::CAP_HANDLE_LEN],
-            ) -> Result<Self::Handle, $crate::control::cap::CapError> {
-                $crate::control::cap::resource_kinds::RouteDecisionHandle::decode(data)
+                data: [u8; $crate::substrate::cap::advanced::CAP_HANDLE_LEN],
+            ) -> Result<Self::Handle, $crate::substrate::cap::advanced::CapError> {
+                $crate::substrate::cap::advanced::RouteDecisionHandle::decode(data)
             }
 
             fn zeroize(handle: &mut Self::Handle) {
-                handle.arm = 0;
+                *handle = $crate::substrate::cap::advanced::RouteDecisionHandle::default();
             }
 
-            fn caps_mask(_handle: &Self::Handle) -> $crate::control::cap::CapsMask {
-                $crate::control::cap::CapsMask::empty()
+            fn caps_mask(_handle: &Self::Handle) -> $crate::substrate::cap::advanced::CapsMask {
+                $crate::substrate::cap::advanced::CapsMask::empty()
             }
 
-            fn scope_id(handle: &Self::Handle) -> Option<$crate::global::const_dsl::ScopeId> {
+            fn scope_id(
+                handle: &Self::Handle,
+            ) -> Option<$crate::substrate::cap::advanced::ScopeId> {
                 Some(handle.scope)
             }
         }
 
-        impl $crate::control::cap::SessionScopedKind for $kind {
+        impl $crate::substrate::cap::advanced::SessionScopedKind for $kind {
             fn handle_for_session(
-                _sid: $crate::rendezvous::SessionId,
-                _lane: $crate::rendezvous::Lane,
+                _sid: $crate::substrate::SessionId,
+                _lane: $crate::substrate::Lane,
             ) -> Self::Handle {
-                $crate::control::cap::resource_kinds::RouteDecisionHandle::default()
+                $crate::substrate::cap::advanced::RouteDecisionHandle::default()
+            }
+
+            fn shot() -> $crate::substrate::cap::CapShot {
+                $crate::substrate::cap::CapShot::One
             }
         }
 
-        impl $crate::control::cap::ControlMint for $kind {
+        impl $crate::substrate::cap::advanced::ControlMint for $kind {
             fn mint_handle(
-                _sid: $crate::rendezvous::SessionId,
-                _lane: $crate::rendezvous::Lane,
-                scope: $crate::global::const_dsl::ScopeId,
+                _sid: $crate::substrate::SessionId,
+                _lane: $crate::substrate::Lane,
+                scope: $crate::substrate::cap::advanced::ScopeId,
             ) -> Self::Handle {
-                $crate::control::cap::resource_kinds::RouteDecisionHandle::new(scope, 0)
+                $crate::substrate::cap::advanced::RouteDecisionHandle { scope, arm: $arm }
             }
         }
 
-        impl $crate::control::cap::ControlResourceKind for $kind {
+        impl $crate::substrate::cap::ControlResourceKind for $kind {
             const LABEL: u8 = $label;
-            const SCOPE: $crate::global::const_dsl::ControlScopeKind =
-                $crate::global::const_dsl::ControlScopeKind::Route;
-            const TAP_ID: u16 = <$crate::control::cap::resource_kinds::RouteDecisionKind as $crate::control::cap::ControlResourceKind>::TAP_ID;
-            const SHOT: $crate::control::cap::CapShot = $crate::control::cap::CapShot::One;
-            const HANDLING: $crate::global::ControlHandling =
-                $crate::global::ControlHandling::Canonical;
+            const SCOPE: $crate::substrate::cap::advanced::ControlScopeKind =
+                $crate::substrate::cap::advanced::ControlScopeKind::Route;
+            const TAP_ID: u16 = <$crate::substrate::cap::advanced::RouteDecisionKind as $crate::substrate::cap::ControlResourceKind>::TAP_ID;
+            const SHOT: $crate::substrate::cap::CapShot = $crate::substrate::cap::CapShot::One;
+            const HANDLING: $crate::substrate::cap::advanced::ControlHandling =
+                $crate::substrate::cap::advanced::ControlHandling::Canonical;
         }
     };
 }
@@ -372,9 +447,9 @@ pub fn trim_handle(data: [u8; CAP_HANDLE_LEN]) -> [u8; 6] {
 }
 
 /// Flags stored inside [`SpliceHandle::flags`].
-pub mod splice_flags {
+pub(crate) mod splice_flags {
     /// Indicates that `seq_tx` / `seq_rx` contain fence counters.
-    pub const FENCES_PRESENT: u16 = 0x0001;
+    pub(crate) const FENCES_PRESENT: u16 = 0x0001;
 }
 
 /// Handle payload for distributed splice operations (intent + ack).
@@ -405,32 +480,6 @@ pub struct SpliceHandle {
 }
 
 impl SpliceHandle {
-    /// Construct a new handle with explicit fields.
-    #[allow(clippy::too_many_arguments)]
-    pub const fn new(
-        src_rv: u16,
-        dst_rv: u16,
-        src_lane: u16,
-        dst_lane: u16,
-        old_gen: u16,
-        new_gen: u16,
-        seq_tx: u32,
-        seq_rx: u32,
-        flags: u16,
-    ) -> Self {
-        Self {
-            src_rv,
-            dst_rv,
-            src_lane,
-            dst_lane,
-            old_gen,
-            new_gen,
-            seq_tx,
-            seq_rx,
-            flags,
-        }
-    }
-
     /// Encode this handle into the `[u8; CAP_HANDLE_LEN]` payload.
     pub fn encode(self) -> [u8; CAP_HANDLE_LEN] {
         let mut buf = [0u8; CAP_HANDLE_LEN];
@@ -477,11 +526,9 @@ impl SpliceHandle {
 }
 
 /// Flags stored inside [`RerouteHandle::flags`].
-pub mod reroute_flags {
+pub(crate) mod reroute_flags {
     /// Indicates that sequence fences are populated.
-    pub const FENCES_PRESENT: u16 = 0x0001;
-    /// Indicates that the reroute targets a distributed rendezvous (not in-proc).
-    pub const DISTRIBUTED: u16 = 0x0002;
+    pub(crate) const FENCES_PRESENT: u16 = 0x0001;
 }
 
 /// Handle payload for reroute operations.
@@ -510,29 +557,6 @@ pub struct RerouteHandle {
 }
 
 impl RerouteHandle {
-    #[allow(clippy::too_many_arguments)]
-    pub const fn new(
-        src_rv: u16,
-        dst_rv: u16,
-        src_lane: u16,
-        dst_lane: u16,
-        seq_tx: u32,
-        seq_rx: u32,
-        shard: u32,
-        flags: u16,
-    ) -> Self {
-        Self {
-            src_rv,
-            dst_rv,
-            src_lane,
-            dst_lane,
-            seq_tx,
-            seq_rx,
-            shard,
-            flags,
-        }
-    }
-
     pub fn encode(self) -> [u8; CAP_HANDLE_LEN] {
         let mut buf = [0u8; CAP_HANDLE_LEN];
         buf[0..2].copy_from_slice(&self.src_rv.to_be_bytes());
@@ -580,10 +604,6 @@ pub struct RouteDecisionHandle {
 }
 
 impl RouteDecisionHandle {
-    pub const fn new(scope: ScopeId, arm: u8) -> Self {
-        Self { scope, arm }
-    }
-
     pub fn encode(self) -> [u8; CAP_HANDLE_LEN] {
         let mut buf = [0u8; CAP_HANDLE_LEN];
         buf[0] = self.arm;
@@ -610,10 +630,6 @@ pub struct LoopDecisionHandle {
 }
 
 impl LoopDecisionHandle {
-    pub const fn new(sid: u32, lane: u16, scope: ScopeId) -> Self {
-        Self { sid, lane, scope }
-    }
-
     pub fn encode(self) -> [u8; CAP_HANDLE_LEN] {
         let mut buf = [0u8; CAP_HANDLE_LEN];
         buf[0..4].copy_from_slice(&self.sid.to_le_bytes());
@@ -636,8 +652,13 @@ impl LoopDecisionHandle {
 }
 
 // ControlHandle implementations for custom handle types
-impl ControlHandle for LoopDecisionHandle {}
-impl ControlHandle for RouteDecisionHandle {}
+impl ControlHandle for LoopDecisionHandle {
+    fn visit_delegation_links(&self, _f: &mut dyn FnMut(RendezvousId)) {}
+}
+
+impl ControlHandle for RouteDecisionHandle {
+    fn visit_delegation_links(&self, _f: &mut dyn FnMut(RendezvousId)) {}
+}
 
 impl ControlHandle for SpliceHandle {
     fn visit_delegation_links(&self, f: &mut dyn FnMut(RendezvousId)) {
@@ -762,11 +783,29 @@ impl ResourceKind for SpliceIntentKind {
             .with(CpEffect::SpliceBegin)
             .with(CpEffect::SpliceCommit)
     }
+
+    fn scope_id(_handle: &Self::Handle) -> Option<ScopeId> {
+        None
+    }
 }
 
 impl SessionScopedKind for SpliceIntentKind {
     fn handle_for_session(_sid: SessionId, lane: Lane) -> Self::Handle {
-        SpliceHandle::new(0, 0, lane.raw() as u16, 0, 0, 0, 0, 0, 0)
+        SpliceHandle {
+            src_rv: 0,
+            dst_rv: 0,
+            src_lane: lane.raw() as u16,
+            dst_lane: 0,
+            old_gen: 0,
+            new_gen: 0,
+            seq_tx: 0,
+            seq_rx: 0,
+            flags: 0,
+        }
+    }
+
+    fn shot() -> CapShot {
+        CapShot::One
     }
 }
 
@@ -780,7 +819,17 @@ impl ControlResourceKind for SpliceIntentKind {
 
 impl ControlMint for SpliceIntentKind {
     fn mint_handle(_sid: SessionId, lane: Lane, _scope: ScopeId) -> Self::Handle {
-        SpliceHandle::new(0, 0, lane.raw() as u16, 0, 0, 0, 0, 0, 0)
+        SpliceHandle {
+            src_rv: 0,
+            dst_rv: 0,
+            src_lane: lane.raw() as u16,
+            dst_lane: 0,
+            old_gen: 0,
+            new_gen: 0,
+            seq_tx: 0,
+            seq_rx: 0,
+            flags: 0,
+        }
     }
 }
 
@@ -813,11 +862,29 @@ impl ResourceKind for SpliceAckKind {
     fn caps_mask(_handle: &Self::Handle) -> CapsMask {
         CapsMask::empty().with(CpEffect::SpliceAck)
     }
+
+    fn scope_id(_handle: &Self::Handle) -> Option<ScopeId> {
+        None
+    }
 }
 
 impl SessionScopedKind for SpliceAckKind {
     fn handle_for_session(_sid: SessionId, lane: Lane) -> Self::Handle {
-        SpliceHandle::new(0, 0, lane.raw() as u16, lane.raw() as u16, 0, 0, 0, 0, 0)
+        SpliceHandle {
+            src_rv: 0,
+            dst_rv: 0,
+            src_lane: lane.raw() as u16,
+            dst_lane: lane.raw() as u16,
+            old_gen: 0,
+            new_gen: 0,
+            seq_tx: 0,
+            seq_rx: 0,
+            flags: 0,
+        }
+    }
+
+    fn shot() -> CapShot {
+        CapShot::One
     }
 }
 
@@ -831,7 +898,17 @@ impl ControlResourceKind for SpliceAckKind {
 
 impl ControlMint for SpliceAckKind {
     fn mint_handle(_sid: SessionId, lane: Lane, _scope: ScopeId) -> Self::Handle {
-        SpliceHandle::new(0, 0, lane.raw() as u16, lane.raw() as u16, 0, 0, 0, 0, 0)
+        SpliceHandle {
+            src_rv: 0,
+            dst_rv: 0,
+            src_lane: lane.raw() as u16,
+            dst_lane: lane.raw() as u16,
+            old_gen: 0,
+            new_gen: 0,
+            seq_tx: 0,
+            seq_rx: 0,
+            flags: 0,
+        }
     }
 }
 
@@ -845,6 +922,7 @@ impl ResourceKind for RerouteKind {
     type Handle = RerouteHandle;
     const TAG: u8 = 0x49;
     const NAME: &'static str = "Reroute";
+    const AUTO_MINT_EXTERNAL: bool = false;
 
     fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
         handle.encode()
@@ -859,11 +937,28 @@ impl ResourceKind for RerouteKind {
     fn caps_mask(_handle: &Self::Handle) -> CapsMask {
         CapsMask::empty().with(CpEffect::Delegate)
     }
+
+    fn scope_id(_handle: &Self::Handle) -> Option<ScopeId> {
+        None
+    }
 }
 
 impl SessionScopedKind for RerouteKind {
     fn handle_for_session(_sid: SessionId, lane: Lane) -> Self::Handle {
-        RerouteHandle::new(0, 0, lane.raw() as u16, lane.raw() as u16, 0, 0, 0, 0)
+        RerouteHandle {
+            src_rv: 0,
+            dst_rv: 0,
+            src_lane: lane.raw() as u16,
+            dst_lane: lane.raw() as u16,
+            seq_tx: 0,
+            seq_rx: 0,
+            shard: 0,
+            flags: 0,
+        }
+    }
+
+    fn shot() -> CapShot {
+        CapShot::One
     }
 }
 
@@ -877,7 +972,16 @@ impl ControlResourceKind for RerouteKind {
 
 impl ControlMint for RerouteKind {
     fn mint_handle(_sid: SessionId, lane: Lane, _scope: ScopeId) -> Self::Handle {
-        RerouteHandle::new(0, 0, lane.raw() as u16, lane.raw() as u16, 0, 0, 0, 0)
+        RerouteHandle {
+            src_rv: 0,
+            dst_rv: 0,
+            src_lane: lane.raw() as u16,
+            dst_lane: lane.raw() as u16,
+            seq_tx: 0,
+            seq_rx: 0,
+            shard: 0,
+            flags: 0,
+        }
     }
 }
 
@@ -889,6 +993,7 @@ impl ResourceKind for RouteDecisionKind {
     type Handle = RouteDecisionHandle;
     const TAG: u8 = 0x4E;
     const NAME: &'static str = "RouteDecision";
+    const AUTO_MINT_EXTERNAL: bool = false;
 
     fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
         handle.encode()
@@ -915,6 +1020,10 @@ impl SessionScopedKind for RouteDecisionKind {
     fn handle_for_session(_sid: SessionId, _lane: Lane) -> Self::Handle {
         RouteDecisionHandle::default()
     }
+
+    fn shot() -> CapShot {
+        CapShot::One
+    }
 }
 
 impl ControlResourceKind for RouteDecisionKind {
@@ -927,9 +1036,137 @@ impl ControlResourceKind for RouteDecisionKind {
 
 impl ControlMint for RouteDecisionKind {
     fn mint_handle(_sid: SessionId, _lane: Lane, scope: ScopeId) -> Self::Handle {
-        RouteDecisionHandle::new(scope, 0)
+        RouteDecisionHandle { scope, arm: 0 }
     }
 }
+
+impl_control_resource!(
+    MgmtRouteLoadKind,
+    handle: RouteDecision,
+    name: "MgmtRouteLoad",
+    label: consts::LABEL_MGMT_ROUTE_LOAD,
+    arm: 0,
+);
+
+impl_control_resource!(
+    MgmtRouteActivateKind,
+    handle: RouteDecision,
+    name: "MgmtRouteActivate",
+    label: consts::LABEL_MGMT_ROUTE_ACTIVATE,
+    arm: 0,
+);
+
+impl_control_resource!(
+    MgmtRouteRevertKind,
+    handle: RouteDecision,
+    name: "MgmtRouteRevert",
+    label: consts::LABEL_MGMT_ROUTE_REVERT,
+    arm: 0,
+);
+
+impl_control_resource!(
+    MgmtRouteStatsKind,
+    handle: RouteDecision,
+    name: "MgmtRouteStats",
+    label: consts::LABEL_MGMT_ROUTE_STATS,
+    arm: 1,
+);
+
+impl_control_resource!(
+    MgmtRouteLoadFamilyKind,
+    handle: RouteDecision,
+    name: "MgmtRouteLoadFamily",
+    label: consts::LABEL_MGMT_ROUTE_LOAD_FAMILY,
+    arm: 0,
+);
+
+impl_control_resource!(
+    MgmtRouteLoadAndActivateKind,
+    handle: RouteDecision,
+    name: "MgmtRouteLoadAndActivate",
+    label: consts::LABEL_MGMT_ROUTE_LOAD_AND_ACTIVATE,
+    arm: 1,
+);
+
+impl_control_resource!(
+    MgmtRouteReplyErrorKind,
+    handle: RouteDecision,
+    name: "MgmtRouteReplyError",
+    label: consts::LABEL_MGMT_ROUTE_REPLY_ERROR,
+    arm: 0,
+);
+
+impl_control_resource!(
+    MgmtRouteReplyLoadedKind,
+    handle: RouteDecision,
+    name: "MgmtRouteReplyLoaded",
+    label: consts::LABEL_MGMT_ROUTE_REPLY_LOADED,
+    arm: 0,
+);
+
+impl_control_resource!(
+    MgmtRouteReplyActivatedKind,
+    handle: RouteDecision,
+    name: "MgmtRouteReplyActivated",
+    label: consts::LABEL_MGMT_ROUTE_REPLY_ACTIVATED,
+    arm: 0,
+);
+
+impl_control_resource!(
+    MgmtRouteReplyRevertedKind,
+    handle: RouteDecision,
+    name: "MgmtRouteReplyReverted",
+    label: consts::LABEL_MGMT_ROUTE_REPLY_REVERTED,
+    arm: 0,
+);
+
+impl_control_resource!(
+    MgmtRouteReplyStatsKind,
+    handle: RouteDecision,
+    name: "MgmtRouteReplyStats",
+    label: consts::LABEL_MGMT_ROUTE_REPLY_STATS,
+    arm: 1,
+);
+
+impl_control_resource!(
+    MgmtRouteCommandFamilyKind,
+    handle: RouteDecision,
+    name: "MgmtRouteCommandFamily",
+    label: consts::LABEL_MGMT_ROUTE_COMMAND_FAMILY,
+    arm: 1,
+);
+
+impl_control_resource!(
+    MgmtRouteCommandTailKind,
+    handle: RouteDecision,
+    name: "MgmtRouteCommandTail",
+    label: consts::LABEL_MGMT_ROUTE_COMMAND_TAIL,
+    arm: 1,
+);
+
+impl_control_resource!(
+    MgmtRouteReplySuccessFamilyKind,
+    handle: RouteDecision,
+    name: "MgmtRouteReplySuccessFamily",
+    label: consts::LABEL_MGMT_ROUTE_REPLY_SUCCESS_FAMILY,
+    arm: 1,
+);
+
+impl_control_resource!(
+    MgmtRouteReplySuccessTailKind,
+    handle: RouteDecision,
+    name: "MgmtRouteReplySuccessTail",
+    label: consts::LABEL_MGMT_ROUTE_REPLY_SUCCESS_TAIL,
+    arm: 1,
+);
+
+impl_control_resource!(
+    MgmtRouteReplySuccessFinalKind,
+    handle: RouteDecision,
+    name: "MgmtRouteReplySuccessFinal",
+    label: consts::LABEL_MGMT_ROUTE_REPLY_SUCCESS_FINAL,
+    arm: 1,
+);
 
 impl_control_resource!(
     PolicyLoadKind,
@@ -977,6 +1214,7 @@ impl ResourceKind for PolicyAnnotateKind {
     type Handle = (u32, u32); // (key, value) both u24 but stored as u32
     const TAG: u8 = 0x4D;
     const NAME: &'static str = "PolicyAnnotate";
+    const AUTO_MINT_EXTERNAL: bool = false;
 
     fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
         let mut buf = [0u8; 6];
@@ -996,6 +1234,10 @@ impl ResourceKind for PolicyAnnotateKind {
 
     fn caps_mask(_handle: &Self::Handle) -> CapsMask {
         CapsMask::empty().with(CpEffect::Fence)
+    }
+
+    fn scope_id(_handle: &Self::Handle) -> Option<ScopeId> {
+        None
     }
 }
 
@@ -1020,6 +1262,7 @@ impl ResourceKind for LoadBeginKind {
     type Handle = (u8, u64); // (slot, hash40)
     const TAG: u8 = 0x50;
     const NAME: &'static str = "LoadBegin";
+    const AUTO_MINT_EXTERNAL: bool = false;
 
     fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
         let mut buf = [0u8; 6];
@@ -1043,6 +1286,10 @@ impl ResourceKind for LoadBeginKind {
 
     fn caps_mask(_handle: &Self::Handle) -> CapsMask {
         CapsMask::empty().with(CpEffect::Fence)
+    }
+
+    fn scope_id(_handle: &Self::Handle) -> Option<ScopeId> {
+        None
     }
 }
 
@@ -1070,7 +1317,7 @@ pub struct LoadCommitKind;
 ///
 /// Used by the rendezvous control plane to validate capability tokens during
 /// mint/claim operations without reconstructing ResourceKind types at runtime.
-pub fn caps_mask_from_tag(tag: u8, raw: [u8; CAP_HANDLE_LEN]) -> Result<CapsMask, CapError> {
+pub(crate) fn caps_mask_from_tag(tag: u8, raw: [u8; CAP_HANDLE_LEN]) -> Result<CapsMask, CapError> {
     macro_rules! decode_mask {
         ($kind:ty) => {{
             let mut handle = <$kind as ResourceKind>::decode_handle(raw)?;
@@ -1106,6 +1353,7 @@ impl ResourceKind for LoadCommitKind {
     type Handle = u8; // slot
     const TAG: u8 = 0x51;
     const NAME: &'static str = "LoadCommit";
+    const AUTO_MINT_EXTERNAL: bool = false;
 
     fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
         let mut buf = [0u8; 6];
@@ -1123,6 +1371,10 @@ impl ResourceKind for LoadCommitKind {
     fn caps_mask(_handle: &Self::Handle) -> CapsMask {
         CapsMask::empty().with(CpEffect::Fence)
     }
+
+    fn scope_id(_handle: &Self::Handle) -> Option<ScopeId> {
+        None
+    }
 }
 
 impl ControlResourceKind for LoadCommitKind {
@@ -1138,4 +1390,3 @@ impl ControlMint for LoadCommitKind {
         0 // AUTO_MINT_EXTERNAL = false
     }
 }
-

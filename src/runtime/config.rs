@@ -7,12 +7,34 @@
 
 use core::{cell::Cell, fmt, ops::Range};
 
-use crate::observe::TapEvent;
+use crate::observe::core::TapEvent;
 use crate::runtime::consts::{DefaultLabelUniverse, LANES_MAX, LabelUniverse, RING_EVENTS};
 
 /// Clock source used to timestamp tap events.
 pub trait Clock {
     fn now32(&self) -> u32;
+}
+
+/// Offer-time liveness policy for dynamic route resolution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LivenessPolicy {
+    pub(crate) max_defer_per_offer: u8,
+    pub(crate) max_no_evidence_defer: u8,
+    pub(crate) force_poll_on_exhaustion: bool,
+    pub(crate) max_forced_poll_attempts: u8,
+    pub(crate) exhaust_reason: u16,
+}
+
+impl Default for LivenessPolicy {
+    fn default() -> Self {
+        Self {
+            max_defer_per_offer: 8,
+            max_no_evidence_defer: 1,
+            force_poll_on_exhaustion: true,
+            max_forced_poll_attempts: 1,
+            exhaust_reason: crate::epf::ENGINE_LIVENESS_EXHAUSTED,
+        }
+    }
 }
 
 /// Monotonic counter clock suitable for `no_std` deployments.
@@ -76,7 +98,7 @@ pub struct Config<'a, U: LabelUniverse = DefaultLabelUniverse, C: Clock = Counte
     lane_range: Range<u8>,
     universe: U,
     clock: C,
-    global_tap: bool,
+    liveness_policy: LivenessPolicy,
 }
 
 impl<'a, U: LabelUniverse, C: Clock> fmt::Debug for Config<'a, U, C> {
@@ -85,6 +107,7 @@ impl<'a, U: LabelUniverse, C: Clock> fmt::Debug for Config<'a, U, C> {
             .field("lane_range", &self.lane_range)
             .field("universe", &core::any::type_name::<U>())
             .field("clock", &core::any::type_name::<C>())
+            .field("liveness_policy", &self.liveness_policy)
             .finish()
     }
 }
@@ -98,7 +121,7 @@ impl<'a> Config<'a, DefaultLabelUniverse, CounterClock> {
             lane_range: 0..LANES_MAX,
             universe: DefaultLabelUniverse,
             clock: CounterClock::new(),
-            global_tap: false,
+            liveness_policy: LivenessPolicy::default(),
         }
     }
 }
@@ -142,7 +165,7 @@ impl<'a, U: LabelUniverse, C: Clock> Config<'a, U, C> {
             lane_range: self.lane_range,
             universe,
             clock: self.clock,
-            global_tap: self.global_tap,
+            liveness_policy: self.liveness_policy,
         }
     }
 
@@ -159,7 +182,7 @@ impl<'a, U: LabelUniverse, C: Clock> Config<'a, U, C> {
             lane_range: self.lane_range,
             universe: self.universe,
             clock,
-            global_tap: self.global_tap,
+            liveness_policy: self.liveness_policy,
         }
     }
 
@@ -168,29 +191,29 @@ impl<'a, U: LabelUniverse, C: Clock> Config<'a, U, C> {
         &self.clock
     }
 
-    pub(crate) fn into_parts(self) -> ConfigParts<'a, U, C> {
+    pub(crate) fn into_parts(self) -> ConfigParts<'a, C> {
+        let Self {
+            tap_buf,
+            slab,
+            lane_range,
+            clock,
+            liveness_policy,
+            ..
+        } = self;
         ConfigParts {
-            tap_buf: self.tap_buf,
-            slab: self.slab,
-            lane_range: self.lane_range,
-            universe: self.universe,
-            clock: self.clock,
-            global_tap: self.global_tap,
+            tap_buf,
+            slab,
+            lane_range,
+            clock,
+            liveness_policy,
         }
-    }
-
-    /// Enable global tap registration (requires the backing buffers to be `'static`).
-    pub fn enable_global_tap(mut self) -> Self {
-        self.global_tap = true;
-        self
     }
 }
 
-pub(crate) struct ConfigParts<'a, U: LabelUniverse, C: Clock> {
+pub(crate) struct ConfigParts<'a, C: Clock> {
     pub(crate) tap_buf: &'a mut [TapEvent; RING_EVENTS],
     pub(crate) slab: &'a mut [u8],
     pub(crate) lane_range: Range<u8>,
-    pub(crate) universe: U,
     pub(crate) clock: C,
-    pub(crate) global_tap: bool,
+    pub(crate) liveness_policy: LivenessPolicy,
 }

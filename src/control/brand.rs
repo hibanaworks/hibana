@@ -15,6 +15,7 @@ pub(crate) struct Brand<'brand> {
     _marker: PhantomData<&'brand mut &'brand ()>,
 }
 
+#[cfg(test)]
 impl<'brand> Brand<'brand> {
     #[inline]
     const fn new() -> Self {
@@ -23,57 +24,9 @@ impl<'brand> Brand<'brand> {
         }
     }
 
-    /// Reconstruct a `Brand` from a `Guard`.
-    ///
-    /// **Safety**: This is safe because `Guard` is crate-private and can only
-    /// be created from a valid `Brand`.
-    #[inline]
-    pub(crate) const fn from_guard(_guard: Guard<'brand>) -> Self {
-        Self {
-            _marker: PhantomData,
-        }
-    }
-
     #[inline]
     pub(crate) fn guard(&self) -> Guard<'brand> {
-        Guard {
-            _marker: PhantomData,
-        }
-    }
-
-    /// Execute `f` with a short-lived lane witness (`&'ln Brand<'rv>`).
-    ///
-    /// This is the **only** way to mint a `LaneKey`, ensuring that lane witnesses
-    /// cannot be forged and that lifetime `'ln` (lane) is always shorter than `'rv` (rendezvous).
-    ///
-    /// # Design Rationale
-    ///
-    /// The type system enforces `'rv: 'ln` (rendezvous outlives lane) by:
-    /// 1. `Brand<'rv>` is owned by the rendezvous and lives for the entire session.
-    /// 2. `&'ln Brand<'rv>` is generated transiently inside this higher-ranked closure.
-    /// 3. `LaneKey<'rv>` carries only `'rv`, never the short-lived `'ln`.
-    ///
-    /// As a result `Forward` and `Owner` can be stored without the lane lifetime,
-    /// addressing the classic E0521 borrow checker issue when returning values
-    /// from closures.
-    #[inline]
-    pub(crate) fn with_lane<R>(
-        &self,
-        lane: crate::rendezvous::Lane,
-        f: impl for<'ln> FnOnce(&'ln Brand<'brand>, crate::control::cap::LaneKey<'brand>) -> R,
-    ) -> R {
-        // Short-lived witness: &'ln Brand<'brand>
-        // Note: 'ln is fresh for each invocation, ensuring it cannot escape
-        fn call_inner<'brand, 'ln, R>(
-            brand: &'ln Brand<'brand>,
-            lane: crate::rendezvous::Lane,
-            f: impl FnOnce(&'ln Brand<'brand>, crate::control::cap::LaneKey<'brand>) -> R,
-        ) -> R {
-            let lane_key = crate::control::cap::LaneKey::new(brand.guard(), lane);
-            f(brand, lane_key)
-        }
-
-        call_inner(self, lane, f)
+        Guard::new()
     }
 }
 
@@ -84,9 +37,19 @@ pub(crate) struct Guard<'brand> {
     _marker: PhantomData<&'brand mut &'brand ()>,
 }
 
+impl<'brand> Guard<'brand> {
+    #[inline]
+    pub(crate) const fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
 /// Execute `f` with a freshly minted brand.  Each invocation receives a brand
 /// that is unique to the call site, ensuring that witnesses cannot outlive the
 /// rendezvous that produced them.
+#[cfg(test)]
 pub(crate) fn with_brand<R>(f: impl for<'brand> FnOnce(Brand<'brand>) -> R) -> R {
     struct Wrapper<F>(F);
 

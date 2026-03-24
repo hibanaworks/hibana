@@ -7,20 +7,20 @@ use core::cell::Cell;
 
 use crate::runtime::{config::Clock, consts::LabelUniverse};
 use crate::{
-    control::lease::{FullSpec, RendezvousLease},
-    rendezvous::Lane,
+    control::lease::core::{FullSpec, RendezvousLease},
+    control::types::Lane,
+    rendezvous::core::Rendezvous,
     transport::Transport,
 };
 
 /// Lease-backed lane guard.
 ///
 /// Dropping the guard releases the lane via the underlying rendezvous lease.
-/// Always uses EpochInit since LaneGuard is only used for creating new endpoints.
-pub struct LaneGuard<'cfg, T: Transport, U: LabelUniverse, C: Clock> {
+/// Always uses the default EpochTbl since LaneGuard is only used for creating new endpoints.
+pub(crate) struct LaneGuard<'cfg, T: Transport, U: LabelUniverse, C: Clock> {
     pub(crate) lease:
-        Option<RendezvousLease<'cfg, 'cfg, T, U, C, crate::control::cap::EpochInit, FullSpec>>,
-    rendezvous:
-        *const crate::rendezvous::Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::EpochInit>,
+        Option<RendezvousLease<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl, FullSpec>>,
+    rendezvous: *const Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>,
     lane: Lane,
     active_leases: &'cfg Cell<u32>,
     release_on_drop: bool,
@@ -32,8 +32,8 @@ where
     U: LabelUniverse,
     C: Clock,
 {
-    pub fn new(
-        lease: RendezvousLease<'cfg, 'cfg, T, U, C, crate::control::cap::EpochInit, FullSpec>,
+    pub(crate) fn new(
+        lease: RendezvousLease<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl, FullSpec>,
         lane: Lane,
         active_leases: &'cfg Cell<u32>,
         release_on_drop: bool,
@@ -47,25 +47,18 @@ where
         }
     }
 
-    /// Disable automatic release (used when ownership transfers elsewhere).
-    pub fn disarm(&mut self) {
-        self.release_on_drop = false;
-    }
-
-    /// Manually release the lane, returning the lease for further use.
-    pub fn into_inner(
-        mut self,
-    ) -> Option<RendezvousLease<'cfg, 'cfg, T, U, C, crate::control::cap::EpochInit, FullSpec>>
-    {
-        self.release_on_drop = false;
-        self.lease.take()
-    }
-
-    pub fn detach_lease(&mut self) {
+    pub(crate) fn detach_lease(&mut self) {
         if let Some(mut lease) = self.lease.take() {
-            let mut ptr = core::ptr::null();
+            let mut ptr: *const Rendezvous<
+                'cfg,
+                'cfg,
+                T,
+                U,
+                C,
+                crate::control::cap::mint::EpochTbl,
+            > = core::ptr::null();
             lease.with_rendezvous(|rv| {
-                ptr = rv as *mut _ as *const _;
+                ptr = core::ptr::from_mut(rv).cast_const();
             });
             self.rendezvous = ptr;
             drop(lease);

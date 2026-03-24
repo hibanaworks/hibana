@@ -1,103 +1,114 @@
 //! SessionCluster - Distributed control-plane coordination.
 //!
 //! This module implements SessionCluster, which coordinates multiple Rendezvous
-//! instances (local and remote) for distributed session management.
+//! instances for local distributed session management.
 
 use crate::control::automaton::{
-    delegation::{
-        DelegateClaimAutomaton, DelegateClaimSeed, DelegateMintAutomaton, DelegateMintSeed,
-        DelegatedPortClaimGuard, DelegatedPortKey, DelegatedPortSlot, DelegatedPortTable,
-        DelegatedPortWitness, DelegationGraphContext, DelegationLeaseSpec,
-    },
+    delegation::{DelegateMintAutomaton, DelegateMintSeed, DelegationLeaseSpec},
     distributed::{DistributedSplice, DistributedSpliceInv, SpliceAck, SpliceIntent},
     splice::{
         SpliceBeginAutomaton, SpliceCommitAutomaton, SpliceGraphContext, SplicePrepareAutomaton,
         SplicePrepareSeed,
     },
 };
+use crate::control::cap::ControlHandle;
+use crate::control::cap::mint::{AllowsCanonical, SessionScopedKind};
+use crate::control::cap::mint::{
+    CapShot, CapsMask, EndpointResource, GenericCapToken, MintConfigMarker, ResourceKind,
+};
 use crate::control::cap::resource_kinds::{
     CancelAckKind, CancelKind, CheckpointKind, CommitKind, LoopBreakKind, LoopContinueKind,
-    RerouteHandle, RerouteKind, RollbackKind, RouteDecisionHandle, RouteDecisionKind,
-    SpliceAckKind, SpliceHandle, SpliceIntentKind,
+    RerouteHandle, RerouteKind, RollbackKind, RouteDecisionKind, SpliceAckKind, SpliceHandle,
+    SpliceIntentKind,
 };
 use crate::control::cap::typed_tokens::CapFrameToken;
-use crate::control::cap::{
-    AllowsCanonical, CapShot, CapToken, CapsMask, ControlHandle, EndpointResource, GenericCapToken,
-    MintConfigMarker, ResourceKind, SessionScopedKind, VerifiedCap,
-};
 use crate::control::cluster::effects::CpEffect;
 use crate::control::handle::{bag::HandleBag, spec};
 use crate::control::lease::{
-    ControlAutomaton, ControlCore as LeaseControlCore, ControlStep, DelegationDriveError, FullSpec,
-    LeaseError, RegisterRendezvousError,
     bundle::{LeaseBundleContext, LeaseGraphBundleExt},
-    graph::{FacetContext, LeaseGraph, LeaseGraphError, LeaseSpec},
+    core::{
+        ControlAutomaton, ControlStep, DelegationDriveError, FullSpec, LeaseError,
+        RegisterRendezvousError,
+    },
+    graph::{LeaseFacet, LeaseGraph, LeaseGraphError, LeaseSpec},
     map::ArrayMap,
     planner::{
-        DELEGATION_CHILD_SET_CAPACITY, FacetCapsDelegation, FacetCapsSplice, LeaseFacetNeeds,
-        LeaseSpecFacetNeeds, facet_needs,
+        DELEGATION_CHILD_SET_CAPACITY, LeaseFacetNeeds, LeaseSpecFacetNeeds, facet_needs,
+        facets_caps_delegation, facets_caps_splice,
     },
 };
 use crate::endpoint::affine::LaneGuard;
-use core::{mem, ptr::NonNull};
+
 const MAX_CACHED_SPLICES: usize = 64;
 const HANDLE_RESOLVER_SLOTS: usize = 128;
 
-type MgmtManager = Manager<AwaitBegin, { crate::rendezvous::SLOT_COUNT }>;
+/// Typed policy identifier for dynamic resolver registration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct PolicyId(u16);
+
+impl PolicyId {
+    #[inline]
+    pub const fn new(raw: u16) -> Self {
+        Self(raw)
+    }
+
+    #[inline]
+    pub const fn as_u16(self) -> u16 {
+        self.0
+    }
+}
 
 fn splice_operands_from_handle(handle: SpliceHandle) -> SpliceOperands {
     SpliceOperands::new(
         RendezvousId::new(handle.src_rv),
         RendezvousId::new(handle.dst_rv),
-        LaneId::new(handle.src_lane as u32),
-        LaneId::new(handle.dst_lane as u32),
-        Gen::new(handle.old_gen),
-        Gen::new(handle.new_gen),
+        Lane::new(handle.src_lane as u32),
+        Lane::new(handle.dst_lane as u32),
+        Generation::new(handle.old_gen),
+        Generation::new(handle.new_gen),
         handle.seq_tx,
         handle.seq_rx,
     )
 }
 
-pub use super::effects::EffectEnvelope;
-use super::error::{CpError, DelegationError, SpliceError as CpSpliceError};
-use super::ffi::Hello;
+use super::error::{AttachError, CpError, DelegationError, SpliceError};
 use crate::control::automaton::txn::{InAcked, InBegin, NoopTap};
-use crate::control::types::{Gen, LaneId, RendezvousId, SessionId};
+use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 use crate::eff::EffIndex;
-use crate::endpoint::cursor::CursorEndpoint;
-use crate::global::const_dsl::{HandlePlan, ScopeId, StaticPlanKind};
-use crate::observe::ScopeTrace;
-use crate::runtime::mgmt::session;
+use crate::global::const_dsl::{PolicyMode, ScopeId};
+use crate::observe::scope::ScopeTrace;
+use crate::rendezvous::core::{LaneLease, Rendezvous};
+use crate::rendezvous::error::RendezvousError;
+use crate::rendezvous::slots::SLOT_COUNT;
 use crate::runtime::mgmt::{
     AwaitBegin, Cold, Manager, MgmtAutomaton, MgmtError, MgmtLeaseSpec, MgmtSeed, Reply,
 };
-use crate::transport::TransportSnapshot;
-
-#[cfg(test)]
-use std::boxed::Box;
+use crate::transport::context::{self, ContextValue};
+use crate::transport::{TransportAlgorithm, TransportSnapshot};
 
 /// Control-plane effect envelope encompassing the effect and its operands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SpliceOperands {
-    pub src_rv: RendezvousId,
-    pub dst_rv: RendezvousId,
-    pub src_lane: LaneId,
-    pub dst_lane: LaneId,
-    pub old_gen: Gen,
-    pub new_gen: Gen,
-    pub seq_tx: u32,
-    pub seq_rx: u32,
+pub(crate) struct SpliceOperands {
+    pub(crate) src_rv: RendezvousId,
+    pub(crate) dst_rv: RendezvousId,
+    pub(crate) src_lane: Lane,
+    pub(crate) dst_lane: Lane,
+    pub(crate) old_gen: Generation,
+    pub(crate) new_gen: Generation,
+    pub(crate) seq_tx: u32,
+    pub(crate) seq_rx: u32,
 }
 
 impl SpliceOperands {
     #[allow(clippy::too_many_arguments)]
-    pub const fn new(
+    pub(crate) const fn new(
         src_rv: RendezvousId,
         dst_rv: RendezvousId,
-        src_lane: LaneId,
-        dst_lane: LaneId,
-        old_gen: Gen,
-        new_gen: Gen,
+        src_lane: Lane,
+        dst_lane: Lane,
+        old_gen: Generation,
+        new_gen: Generation,
         seq_tx: u32,
         seq_rx: u32,
     ) -> Self {
@@ -113,7 +124,7 @@ impl SpliceOperands {
         }
     }
 
-    pub fn from_intent(intent: &SpliceIntent) -> Self {
+    pub(crate) fn from_intent(intent: &SpliceIntent) -> Self {
         Self {
             src_rv: intent.src_rv,
             dst_rv: intent.dst_rv,
@@ -126,7 +137,7 @@ impl SpliceOperands {
         }
     }
 
-    pub fn intent(&self, sid: SessionId) -> SpliceIntent {
+    pub(crate) fn intent(&self, sid: SessionId) -> SpliceIntent {
         SpliceIntent::new(
             self.src_rv,
             self.dst_rv,
@@ -140,7 +151,7 @@ impl SpliceOperands {
         )
     }
 
-    pub fn ack(&self, sid: SessionId) -> SpliceAck {
+    pub(crate) fn ack(&self, sid: SessionId) -> SpliceAck {
         SpliceAck::new(
             self.src_rv,
             self.dst_rv,
@@ -185,35 +196,13 @@ impl DelegationChildSet {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DelegatePhase {
-    Mint,
-    Claim,
+pub(crate) struct DelegateOperands {
+    pub claim: bool,
+    pub token: GenericCapToken<EndpointResource>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DelegateOperands {
-    pub phase: DelegatePhase,
-    pub token: CapToken,
-}
-
-impl DelegateOperands {
-    pub const fn mint(token: CapToken) -> Self {
-        Self {
-            phase: DelegatePhase::Mint,
-            token,
-        }
-    }
-
-    pub const fn claim(token: CapToken) -> Self {
-        Self {
-            phase: DelegatePhase::Claim,
-            token,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PendingEffect {
+pub(crate) enum PendingEffect {
     None,
     Dispatch {
         target: RendezvousId,
@@ -222,21 +211,21 @@ pub enum PendingEffect {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CpCommand {
-    pub effect: CpEffect,
-    pub sid: Option<SessionId>,
-    pub lane: Option<LaneId>,
-    pub generation: Option<Gen>,
-    pub prev_generation: Option<Gen>,
-    pub fences: Option<(u32, u32)>,
-    pub splice: Option<SpliceOperands>,
-    pub intent: Option<SpliceIntent>,
-    pub ack: Option<SpliceAck>,
-    pub delegate: Option<DelegateOperands>,
+pub(crate) struct CpCommand {
+    pub(crate) effect: CpEffect,
+    pub(crate) sid: Option<SessionId>,
+    pub(crate) lane: Option<Lane>,
+    pub(crate) generation: Option<Generation>,
+    pub(crate) prev_generation: Option<Generation>,
+    pub(crate) fences: Option<(u32, u32)>,
+    pub(crate) splice: Option<SpliceOperands>,
+    pub(crate) intent: Option<SpliceIntent>,
+    pub(crate) ack: Option<SpliceAck>,
+    pub(crate) delegate: Option<DelegateOperands>,
 }
 
 impl CpCommand {
-    pub const fn new(effect: CpEffect) -> Self {
+    pub(crate) const fn new(effect: CpEffect) -> Self {
         Self {
             effect,
             sid: None,
@@ -251,75 +240,79 @@ impl CpCommand {
         }
     }
 
-    pub fn with_sid(mut self, sid: SessionId) -> Self {
+    pub(crate) fn with_sid(mut self, sid: SessionId) -> Self {
         self.sid = Some(sid);
         self
     }
 
-    pub fn with_lane(mut self, lane: LaneId) -> Self {
+    pub(crate) fn with_lane(mut self, lane: Lane) -> Self {
         self.lane = Some(lane);
         self
     }
 
-    pub fn with_generation(mut self, generation: Gen) -> Self {
+    pub(crate) fn with_generation(mut self, generation: Generation) -> Self {
         self.generation = Some(generation);
         self
     }
 
-    pub fn with_prev_generation(mut self, generation: Gen) -> Self {
+    pub(crate) fn with_prev_generation(mut self, generation: Generation) -> Self {
         self.prev_generation = Some(generation);
         self
     }
 
-    pub fn with_fences(mut self, fences: Option<(u32, u32)>) -> Self {
+    pub(crate) fn with_fences(mut self, fences: Option<(u32, u32)>) -> Self {
         self.fences = fences;
         self
     }
 
-    pub fn with_splice(mut self, operands: SpliceOperands) -> Self {
+    pub(crate) fn with_splice(mut self, operands: SpliceOperands) -> Self {
         self.splice = Some(operands);
         self
     }
 
-    pub fn with_intent(mut self, intent: SpliceIntent) -> Self {
+    pub(crate) fn with_intent(mut self, intent: SpliceIntent) -> Self {
         self.intent = Some(intent);
         self
     }
 
-    pub fn with_ack(mut self, ack: SpliceAck) -> Self {
+    pub(crate) fn with_ack(mut self, ack: SpliceAck) -> Self {
         self.ack = Some(ack);
         self
     }
 
-    pub fn with_delegate(mut self, delegate: DelegateOperands) -> Self {
+    pub(crate) fn with_delegate(mut self, delegate: DelegateOperands) -> Self {
         self.delegate = Some(delegate);
         self
     }
 
-    fn derive_sid_lane(token: CapToken) -> (SessionId, LaneId) {
+    fn derive_sid_lane(token: GenericCapToken<EndpointResource>) -> (SessionId, Lane) {
         let header = token.header();
         let sid = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
         let lane = header[4] as u32;
-        (SessionId::new(sid), LaneId::new(lane))
+        (SessionId::new(sid), Lane::new(lane))
     }
 
-    pub fn delegate_mint(token: CapToken) -> Self {
-        let (sid, lane) = Self::derive_sid_lane(token);
-        Self::new(CpEffect::Delegate)
-            .with_sid(sid)
-            .with_lane(lane)
-            .with_delegate(DelegateOperands::mint(token))
+    pub(crate) fn canonicalize_delegate(mut self) -> Result<Self, CpError> {
+        let delegate = self
+            .delegate
+            .ok_or(CpError::Delegation(DelegationError::InvalidToken))?;
+        let (sid, lane) = Self::derive_sid_lane(delegate.token);
+        if self.sid.is_some_and(|current| current != sid) {
+            return Err(CpError::Delegation(DelegationError::InvalidToken));
+        }
+        if self.lane.is_some_and(|current| current != lane) {
+            return Err(CpError::Delegation(DelegationError::InvalidToken));
+        }
+        self.sid = Some(sid);
+        self.lane = Some(lane);
+        self = self.with_delegate(DelegateOperands {
+            claim: delegate.claim,
+            token: delegate.token,
+        });
+        Ok(self)
     }
 
-    pub fn delegate_claim(token: CapToken) -> Self {
-        let (sid, lane) = Self::derive_sid_lane(token);
-        Self::new(CpEffect::Delegate)
-            .with_sid(sid)
-            .with_lane(lane)
-            .with_delegate(DelegateOperands::claim(token))
-    }
-
-    pub fn splice_begin(sid: SessionId, operands: SpliceOperands) -> Self {
+    pub(crate) fn splice_begin(sid: SessionId, operands: SpliceOperands) -> Self {
         Self::new(CpEffect::SpliceBegin)
             .with_sid(sid)
             .with_lane(operands.src_lane)
@@ -330,7 +323,7 @@ impl CpCommand {
             .with_intent(operands.intent(sid))
     }
 
-    pub fn splice_ack(sid: SessionId, operands: SpliceOperands) -> Self {
+    pub(crate) fn splice_ack(sid: SessionId, operands: SpliceOperands) -> Self {
         Self::new(CpEffect::SpliceAck)
             .with_sid(sid)
             .with_lane(operands.dst_lane)
@@ -342,7 +335,7 @@ impl CpCommand {
             .with_ack(operands.ack(sid))
     }
 
-    pub fn splice_commit(sid: SessionId, operands: SpliceOperands) -> Self {
+    pub(crate) fn splice_commit(sid: SessionId, operands: SpliceOperands) -> Self {
         Self::new(CpEffect::SpliceCommit)
             .with_sid(sid)
             .with_lane(operands.src_lane)
@@ -353,52 +346,33 @@ impl CpCommand {
             .with_ack(operands.ack(sid))
     }
 
-    pub fn cancel_begin(sid: SessionId, lane: LaneId) -> Self {
+    pub(crate) fn cancel_begin(sid: SessionId, lane: Lane) -> Self {
         Self::new(CpEffect::CancelBegin)
             .with_sid(sid)
             .with_lane(lane)
     }
 
-    pub fn cancel_ack(sid: SessionId, lane: LaneId, generation: Gen) -> Self {
+    pub(crate) fn cancel_ack(sid: SessionId, lane: Lane, generation: Generation) -> Self {
         Self::new(CpEffect::CancelAck)
             .with_sid(sid)
             .with_lane(lane)
             .with_generation(generation)
     }
 
-    pub fn checkpoint(sid: SessionId, lane: LaneId) -> Self {
+    pub(crate) fn checkpoint(sid: SessionId, lane: Lane) -> Self {
         Self::new(CpEffect::Checkpoint)
             .with_sid(sid)
             .with_lane(lane)
     }
 
-    pub fn rollback(sid: SessionId, lane: LaneId, generation: Gen) -> Self {
+    pub(crate) fn rollback(sid: SessionId, lane: Lane, generation: Generation) -> Self {
         Self::new(CpEffect::Rollback)
             .with_sid(sid)
             .with_lane(lane)
             .with_generation(generation)
     }
 
-    pub fn splice_local_begin(
-        sid: SessionId,
-        lane: LaneId,
-        generation: Gen,
-        fences: Option<(u32, u32)>,
-    ) -> Self {
-        Self::new(CpEffect::SpliceBegin)
-            .with_sid(sid)
-            .with_lane(lane)
-            .with_generation(generation)
-            .with_fences(fences)
-    }
-
-    pub fn splice_local_commit(sid: SessionId, lane: LaneId) -> Self {
-        Self::new(CpEffect::SpliceCommit)
-            .with_sid(sid)
-            .with_lane(lane)
-    }
-
-    pub fn commit(sid: SessionId, lane: LaneId, generation: Gen) -> Self {
+    pub(crate) fn commit(sid: SessionId, lane: Lane, generation: Generation) -> Self {
         Self::new(CpEffect::Commit)
             .with_sid(sid)
             .with_lane(lane)
@@ -410,12 +384,12 @@ impl CpCommand {
 pub enum DynamicResolution {
     Splice {
         dst_rv: RendezvousId,
-        dst_lane: LaneId,
+        dst_lane: Lane,
         fences: Option<(u32, u32)>,
     },
     Reroute {
         dst_rv: RendezvousId,
-        dst_lane: LaneId,
+        dst_lane: Lane,
         shard: Option<u32>,
     },
     RouteArm {
@@ -424,31 +398,136 @@ pub enum DynamicResolution {
     Loop {
         decision: bool,
     },
+    Defer {
+        retry_hint: u8,
+    },
+}
+
+/// Semantic fail-closed error returned by Rust-side dynamic resolvers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResolverError {
+    Reject,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResolverContext {
-    pub rv_id: RendezvousId,
-    pub session: Option<SessionId>,
-    pub lane: LaneId,
-    pub eff_index: EffIndex,
-    pub tag: u8,
-    pub metrics: TransportSnapshot,
-    pub scope_id: ScopeId,
-    pub scope_trace: Option<ScopeTrace>,
-    /// Transport context snapshot for resolver functions.
-    /// This provides O(1) access to protocol-specific state without global registries.
-    pub transport_ctx: crate::transport::context::ContextSnapshot,
+    rv_id: RendezvousId,
+    session: Option<SessionId>,
+    lane: Lane,
+    eff_index: EffIndex,
+    tag: u8,
+    metrics: TransportSnapshot,
+    scope_id: ScopeId,
+    scope_trace: Option<ScopeTrace>,
+    /// Slot-scoped policy input arguments.
+    policy_input: [u32; 4],
+    /// Slot-scoped policy attributes.
+    policy_attrs: crate::transport::context::PolicyAttrs,
 }
 
 impl ResolverContext {
-    /// Query a transport context value by key.
-    ///
-    /// This is the primary mechanism for resolver functions to access
-    /// protocol-specific state (e.g., QUIC stream loop decisions, path validation).
     #[inline]
-    pub fn transport(&self, key: crate::transport::context::ContextKey) -> Option<crate::transport::context::ContextValue> {
-        self.transport_ctx.query(key)
+    pub(crate) fn new(
+        rv_id: RendezvousId,
+        session: Option<SessionId>,
+        lane: Lane,
+        eff_index: EffIndex,
+        tag: u8,
+        metrics: TransportSnapshot,
+        scope_id: ScopeId,
+        scope_trace: Option<ScopeTrace>,
+        input: [u32; 4],
+        attrs: crate::transport::context::PolicyAttrs,
+    ) -> Self {
+        Self {
+            rv_id,
+            session,
+            lane,
+            eff_index,
+            tag,
+            metrics,
+            scope_id,
+            scope_trace,
+            policy_input: input,
+            policy_attrs: attrs,
+        }
+    }
+
+    #[inline]
+    fn core_attr(&self, id: context::ContextId) -> Option<ContextValue> {
+        let raw = id.raw();
+        if raw == context::core::RV_ID.raw() {
+            return Some(ContextValue::from_u16(self.rv_id.raw()));
+        }
+        if raw == context::core::SESSION_ID.raw() {
+            return self
+                .session
+                .map(|session| ContextValue::from_u32(session.raw()));
+        }
+        if raw == context::core::LANE.raw() {
+            return Some(ContextValue::from_u32(self.lane.raw()));
+        }
+        if raw == context::core::TAG.raw() {
+            return Some(ContextValue::from_u8(self.tag));
+        }
+        if raw == context::core::LATENCY_US.raw() {
+            return self.metrics.latency_us.map(ContextValue::from_u64);
+        }
+        if raw == context::core::QUEUE_DEPTH.raw() {
+            return self.metrics.queue_depth.map(ContextValue::from_u32);
+        }
+        if raw == context::core::PACING_INTERVAL_US.raw() {
+            return self.metrics.pacing_interval_us.map(ContextValue::from_u64);
+        }
+        if raw == context::core::CONGESTION_MARKS.raw() {
+            return self.metrics.congestion_marks.map(ContextValue::from_u32);
+        }
+        if raw == context::core::RETRANSMISSIONS.raw() {
+            return self.metrics.retransmissions.map(ContextValue::from_u32);
+        }
+        if raw == context::core::PTO_COUNT.raw() {
+            return self.metrics.pto_count.map(ContextValue::from_u32);
+        }
+        if raw == context::core::SRTT_US.raw() {
+            return self.metrics.srtt_us.map(ContextValue::from_u64);
+        }
+        if raw == context::core::LATEST_ACK_PN.raw() {
+            return self.metrics.latest_ack_pn.map(ContextValue::from_u64);
+        }
+        if raw == context::core::CONGESTION_WINDOW.raw() {
+            return self.metrics.congestion_window.map(ContextValue::from_u64);
+        }
+        if raw == context::core::IN_FLIGHT_BYTES.raw() {
+            return self.metrics.in_flight_bytes.map(ContextValue::from_u64);
+        }
+        if raw == context::core::TRANSPORT_ALGORITHM.raw() {
+            return self.metrics.algorithm.map(encode_transport_algorithm);
+        }
+        None
+    }
+
+    /// Query a policy attribute by opaque id.
+    #[inline]
+    pub fn attr(
+        &self,
+        id: crate::transport::context::ContextId,
+    ) -> Option<crate::transport::context::ContextValue> {
+        self.core_attr(id).or_else(|| self.policy_attrs.query(id))
+    }
+
+    /// Read slot-scoped policy input argument by index.
+    #[inline]
+    pub fn input(&self, idx: u8) -> u32 {
+        self.policy_input.get(idx as usize).copied().unwrap_or(0)
+    }
+}
+
+#[inline]
+const fn encode_transport_algorithm(algorithm: TransportAlgorithm) -> ContextValue {
+    match algorithm {
+        TransportAlgorithm::Cubic => ContextValue::from_u32(1),
+        TransportAlgorithm::Reno => ContextValue::from_u32(2),
+        TransportAlgorithm::Other(tag) => ContextValue::from_u32(0x100 | tag as u32),
     }
 }
 
@@ -465,20 +544,17 @@ impl DynamicResolverKey {
     }
 }
 
-type DynamicResolverFn<'cfg, T, U, C, const MAX_RV: usize> = fn(
-    &SessionCluster<'cfg, T, U, C, MAX_RV>,
-    &crate::global::const_dsl::DynamicMeta,
-    ResolverContext,
-) -> Result<DynamicResolution, ()>;
-
 struct DynamicResolverEntry<'cfg, T, U, C, const MAX_RV: usize>
 where
     T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse,
     C: crate::runtime::config::Clock,
 {
-    resolver: DynamicResolverFn<'cfg, T, U, C, MAX_RV>,
-    plan: HandlePlan,
+    resolver: fn(
+        &crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
+        ResolverContext,
+    ) -> Result<DynamicResolution, ResolverError>,
+    policy: PolicyMode,
     scope_trace: Option<ScopeTrace>,
 }
 
@@ -496,16 +572,13 @@ const fn is_dynamic_control_tag(tag: u8) -> bool {
     )
 }
 
-fn session_caps_mask_for_tag(
-    tag: u8,
-    sid: SessionId,
-    lane: crate::rendezvous::Lane,
-) -> Option<CapsMask> {
+fn session_caps_mask_for_tag(tag: u8, sid: SessionId, lane: Lane) -> Option<CapsMask> {
+    use crate::control::cap::mint::ResourceKind;
+    use crate::control::cap::mint::SessionScopedKind;
     use crate::control::cap::resource_kinds;
-    use crate::control::cap::{ResourceKind, SessionScopedKind};
 
-    let sid_rv = crate::rendezvous::SessionId::new(sid.raw());
-    let lane_rv = crate::rendezvous::Lane::new(lane.raw());
+    let sid_rv = SessionId::new(sid.raw());
+    let lane_rv = Lane::new(lane.raw());
 
     macro_rules! mask_for {
         ($kind:ty) => {{
@@ -532,106 +605,22 @@ fn session_caps_mask_for_tag(
 }
 
 #[inline]
-fn initializer_command(effect: CpEffect, sid: SessionId, lane: LaneId) -> Option<CpCommand> {
+fn initializer_command(effect: CpEffect, sid: SessionId, lane: Lane) -> Option<CpCommand> {
     let _ = (effect, sid, lane);
     None
 }
 
-/// Trait implemented by local Rendezvous instances that can evaluate control-plane effects.
-pub trait EffectExecutor {
-    fn id(&self) -> RendezvousId;
+/// Trait implemented by local Rendezvous instances that can apply control-plane effects.
+pub(crate) trait EffectRunner {
     fn run_effect(&self, envelope: CpCommand) -> Result<(), CpError>;
     fn prepare_splice_operands(
         &self,
         sid: SessionId,
-        src_lane: LaneId,
+        src_lane: Lane,
         dst_rv: RendezvousId,
-        dst_lane: LaneId,
+        dst_lane: Lane,
         fences: Option<(u32, u32)>,
     ) -> Result<SpliceOperands, CpError>;
-    fn abort_distributed_splice(&self, sid: SessionId) -> Result<(), CpError>;
-}
-
-/// Control-plane adapter for remote Rendezvous communication.
-///
-/// This trait abstracts the communication channel between Rendezvous instances.
-/// Implementations can use in-process channels, QUIC, TCP, or other transports.
-pub trait ControlPlaneAdapter {
-    /// Get the peer Rendezvous ID.
-    fn peer(&self) -> RendezvousId;
-
-    /// Send a handshake message to establish connection.
-    fn handshake(&self, hello: &Hello) -> Result<Hello, CpError>;
-
-    /// Execute a control-plane effect on the remote Rendezvous.
-    ///
-    /// This is the core primitive for distributed coordination. All higher-level
-    /// operations (splice, delegation, etc.) are decomposed into effect sequences.
-    fn run(&self, envelope: CpCommand) -> Result<(), CpError>;
-}
-
-/// Slot for storing a local Rendezvous reference.
-///
-/// Stores a reference to an effect executor implementing the control-plane
-/// evaluation interface.
-pub struct RendezvousSlot<'a> {
-    executor: &'a dyn EffectExecutor,
-}
-
-impl<'a> RendezvousSlot<'a> {
-    /// Create a new slot with the given Rendezvous reference.
-    ///
-    /// # Lifetime
-    ///
-    /// The lifetime `'a` is the lifetime of the borrow, not the lifetime
-    /// of the Rendezvous itself. This allows temporary borrows to be registered
-    /// in SessionCluster via lifetime widening.
-    pub fn new<'b>(executor: &'b dyn EffectExecutor) -> RendezvousSlot<'b> {
-        RendezvousSlot { executor }
-    }
-
-    /// Get the Rendezvous ID.
-    pub fn id(&self) -> RendezvousId {
-        self.executor.id()
-    }
-
-    /// Execute a control-plane effect on the Rendezvous.
-    pub fn run(&self, envelope: CpCommand) -> Result<(), CpError> {
-        self.executor.run_effect(envelope)
-    }
-
-    pub fn prepare_splice_operands(
-        &self,
-        sid: SessionId,
-        src_lane: LaneId,
-        dst_rv: RendezvousId,
-        dst_lane: LaneId,
-        fences: Option<(u32, u32)>,
-    ) -> Result<SpliceOperands, CpError> {
-        self.executor
-            .prepare_splice_operands(sid, src_lane, dst_rv, dst_lane, fences)
-    }
-
-    pub fn abort_distributed_splice(&self, sid: SessionId) -> Result<(), CpError> {
-        self.executor.abort_distributed_splice(sid)
-    }
-}
-
-/// Slot for storing a remote Rendezvous adapter.
-pub struct ControlPlaneSlot<'a> {
-    adapter: &'a dyn ControlPlaneAdapter,
-}
-
-impl<'a> ControlPlaneSlot<'a> {
-    /// Create a new slot with the given adapter.
-    pub fn new(adapter: &'a dyn ControlPlaneAdapter) -> Self {
-        Self { adapter }
-    }
-
-    /// Get the adapter.
-    pub fn adapter(&self) -> &'a dyn ControlPlaneAdapter {
-        self.adapter
-    }
 }
 
 enum DistributedPhase {
@@ -652,7 +641,7 @@ struct DistributedEntry {
 /// Distributed splice state tracking.
 ///
 /// Tracks in-flight distributed splice operations to ensure exactly-once semantics.
-pub struct DistributedSpliceState<const MAX: usize> {
+pub(crate) struct DistributedSpliceState<const MAX: usize> {
     entries: ArrayMap<SessionId, DistributedEntry, MAX>,
 }
 
@@ -664,13 +653,13 @@ impl<const MAX: usize> Default for DistributedSpliceState<MAX> {
 
 impl<const MAX: usize> DistributedSpliceState<MAX> {
     /// Create a new empty state.
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             entries: ArrayMap::new(),
         }
     }
 
-    pub fn begin(
+    pub(crate) fn begin(
         &mut self,
         sid: SessionId,
         operands: SpliceOperands,
@@ -710,11 +699,11 @@ impl<const MAX: usize> DistributedSpliceState<MAX> {
         Ok((intent, operands.ack(sid)))
     }
 
-    pub fn acknowledge(&mut self, sid: SessionId) -> Result<SpliceAck, CpError> {
+    pub(crate) fn acknowledge(&mut self, sid: SessionId) -> Result<SpliceAck, CpError> {
         let entry = self
             .entries
             .get_mut(&sid)
-            .ok_or(CpError::Splice(CpSpliceError::InvalidSession))?;
+            .ok_or(CpError::Splice(SpliceError::InvalidSession))?;
 
         let txn = match &mut entry.phase {
             DistributedPhase::Begin { txn } => txn.take().ok_or(CpError::ReplayDetected {
@@ -737,7 +726,7 @@ impl<const MAX: usize> DistributedSpliceState<MAX> {
         Ok(ack)
     }
 
-    pub fn commit(
+    pub(crate) fn commit(
         &mut self,
         sid: SessionId,
         expected: Option<SpliceAck>,
@@ -745,7 +734,7 @@ impl<const MAX: usize> DistributedSpliceState<MAX> {
         let entry = self
             .entries
             .remove(&sid)
-            .ok_or(CpError::Splice(CpSpliceError::InvalidSession))?;
+            .ok_or(CpError::Splice(SpliceError::InvalidSession))?;
 
         let DistributedEntry { operands, phase } = entry;
 
@@ -754,50 +743,42 @@ impl<const MAX: usize> DistributedSpliceState<MAX> {
                 if let Some(exp) = expected
                     && exp != ack
                 {
-                    return Err(CpError::Splice(CpSpliceError::CommitFailed));
+                    return Err(CpError::Splice(SpliceError::CommitFailed));
                 }
 
                 let mut tap = NoopTap;
                 let _closed = DistributedSplice::commit(txn, &mut tap);
                 Ok(operands)
             }
-            DistributedPhase::Begin { .. } => Err(CpError::Splice(CpSpliceError::InvalidState)),
+            DistributedPhase::Begin { .. } => Err(CpError::Splice(SpliceError::InvalidState)),
         }
     }
 
-    pub fn abort(&mut self, sid: SessionId) -> Option<SpliceOperands> {
-        self.entries.remove(&sid).map(|entry| entry.operands)
-    }
-
-    pub fn get(&self, sid: SessionId) -> Option<&SpliceOperands> {
+    pub(crate) fn get(&self, sid: SessionId) -> Option<&SpliceOperands> {
         self.entries.get(&sid).map(|entry| &entry.operands)
     }
 }
 
 /// SessionCluster - Coordinates multiple Rendezvous instances.
 ///
-/// This is the top-level distributed control-plane coordinator. It manages:
-/// - Local Rendezvous instances (same process/node)
-/// - Remote Rendezvous instances (via ControlPlaneAdapter)
-/// - Distributed splice coordination
+/// This is the top-level local control-plane coordinator. It manages:
+/// - Local Rendezvous instances
+/// - Distributed splice coordination across registered local rendezvous
 /// - Intent/Ack routing
 ///
 /// # Type Parameters
 ///
-/// - `MAX_RV`: Maximum number of Rendezvous instances (local + remote)
+/// - `MAX_RV`: Maximum number of Rendezvous instances
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// use hibana::control::{SessionCluster, RendezvousId};
+/// use hibana::substrate::{RendezvousId, SessionCluster};
 ///
 /// let mut cluster: SessionCluster<8> = SessionCluster::new(leak_clock());
 ///
 /// // Register local Rendezvous
-/// cluster.register_local(RendezvousSlot::new(local_rv_executor))?;
-///
-/// // Register remote Rendezvous
-/// cluster.register_remote(RendezvousId::new(2), remote_adapter)?;
+/// cluster.add_rendezvous(local_rendezvous)?;
 ///
 /// // Perform distributed splice
 /// cluster.distributed_splice(
@@ -826,13 +807,10 @@ where
     T: crate::transport::Transport,
     U: crate::runtime::consts::LabelUniverse,
     C: crate::runtime::config::Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     /// Owned local Rendezvous instances (same process/node).
-    locals: LeaseControlCore<'cfg, T, U, C, E, MAX_RV>,
-
-    /// Remote Rendezvous instances (via control-plane adapters).
-    remotes: ArrayMap<RendezvousId, ControlPlaneSlot<'cfg>, MAX_RV>,
+    locals: crate::control::lease::core::ControlCore<'cfg, T, U, C, E, MAX_RV>,
 
     /// Distributed splice state tracking.
     splice_state: DistributedSpliceState<MAX_RV>,
@@ -844,10 +822,7 @@ where
     active_leases: core::cell::Cell<u32>,
 
     /// Cached management manager state per rendezvous.
-    mgmt_managers: ArrayMap<RendezvousId, MgmtManager, MAX_RV>,
-
-    /// Pending delegated port claims keyed by rendezvous/session/lane.
-    delegated_ports: DelegatedPortTable,
+    mgmt_managers: ArrayMap<RendezvousId, Manager<AwaitBegin, { SLOT_COUNT }>, MAX_RV>,
 }
 
 impl<'cfg, T, U, C, E, const MAX_RV: usize> ControlCore<'cfg, T, U, C, E, MAX_RV>
@@ -855,34 +830,18 @@ where
     T: crate::transport::Transport,
     U: crate::runtime::consts::LabelUniverse,
     C: crate::runtime::config::Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
-    fn issue_delegated_witness(&mut self, key: DelegatedPortKey) -> Option<DelegatedPortWitness> {
-        self.delegated_ports
-            .get_mut(&key)
-            .and_then(|slot| slot.issue())
-    }
-
-    fn take_delegated_claim(
-        &mut self,
-        key: DelegatedPortKey,
-    ) -> Result<DelegatedPortClaimGuard, DelegationError> {
-        match self.delegated_ports.get_mut(&key) {
-            Some(slot) => slot.claim(),
-            None => Err(DelegationError::InvalidToken),
-        }
-    }
-
-    fn has_delegated_claim(&self, key: DelegatedPortKey) -> bool {
-        self.delegated_ports
-            .get(&key)
-            .map(DelegatedPortSlot::has_pending)
-            .unwrap_or(false)
-    }
-
-    fn revoke_delegated_witness(&mut self, key: DelegatedPortKey) {
-        if let Some(slot) = self.delegated_ports.get_mut(&key) {
-            slot.revoke();
+    #[cfg(feature = "std")]
+    unsafe fn init_empty(dst: *mut Self) {
+        unsafe {
+            crate::control::lease::core::ControlCore::init_empty(core::ptr::addr_of_mut!(
+                (*dst).locals
+            ));
+            core::ptr::addr_of_mut!((*dst).splice_state).write(DistributedSpliceState::new());
+            ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).cached_operands));
+            core::ptr::addr_of_mut!((*dst).active_leases).write(core::cell::Cell::new(0));
+            ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).mgmt_managers));
         }
     }
 }
@@ -900,6 +859,20 @@ where
     >,
 }
 
+impl<'cfg, T, U, C, const MAX_RV: usize> ResolverCore<'cfg, T, U, C, MAX_RV>
+where
+    T: crate::transport::Transport,
+    U: crate::runtime::consts::LabelUniverse,
+    C: crate::runtime::config::Clock,
+{
+    #[cfg(feature = "std")]
+    unsafe fn init_empty(dst: *mut Self) {
+        unsafe {
+            ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).table));
+        }
+    }
+}
+
 /// SessionCluster - Distributed control-plane coordinator with interior mutability.
 ///
 /// Uses `UnsafeCell` to allow `&self` methods while maintaining mutable internal state.
@@ -913,38 +886,28 @@ where
 /// - Single writer at a time (Rust's `&mut` semantics within the closure scope)
 /// - Documented invariants (see `ControlCore`)
 /// - TAP event monitoring for lane lifecycle
-pub struct SessionCluster<'cfg, T, U, C, const MAX_RV: usize>
+pub(crate) struct SessionCluster<'cfg, T, U, C, const MAX_RV: usize>
 where
     T: crate::transport::Transport,
     U: crate::runtime::consts::LabelUniverse,
     C: crate::runtime::config::Clock,
 {
     /// Control-plane state guarded by interior mutability.
-    control:
-        core::cell::UnsafeCell<ControlCore<'cfg, T, U, C, crate::control::cap::EpochInit, MAX_RV>>,
+    #[cfg(feature = "std")]
+    control: core::cell::UnsafeCell<
+        std::boxed::Box<ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>>,
+    >,
+    #[cfg(not(feature = "std"))]
+    control: core::cell::UnsafeCell<
+        ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
+    >,
     /// Dynamic resolver table separated from core control state.
+    #[cfg(feature = "std")]
+    resolvers: core::cell::UnsafeCell<std::boxed::Box<ResolverCore<'cfg, T, U, C, MAX_RV>>>,
+    #[cfg(not(feature = "std"))]
     resolvers: core::cell::UnsafeCell<ResolverCore<'cfg, T, U, C, MAX_RV>>,
     /// Clock for timestamping tap events.
     clock: &'cfg C,
-}
-
-/// Errors raised while attaching cursor endpoints.
-#[derive(Debug)]
-pub enum AttachError {
-    Control(CpError),
-    Rendezvous(crate::rendezvous::RendezvousError),
-}
-
-impl From<CpError> for AttachError {
-    fn from(err: CpError) -> Self {
-        AttachError::Control(err)
-    }
-}
-
-impl From<crate::rendezvous::RendezvousError> for AttachError {
-    fn from(err: crate::rendezvous::RendezvousError) -> Self {
-        AttachError::Rendezvous(err)
-    }
 }
 
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionCluster<'cfg, T, U, C, MAX_RV>
@@ -954,16 +917,31 @@ where
     C: crate::runtime::config::Clock + 'cfg,
 {
     /// Create a new empty cluster with the given clock.
-    pub fn new(clock: &'cfg C) -> Self {
+    pub(crate) fn new(clock: &'cfg C) -> Self {
+        #[cfg(feature = "std")]
+        unsafe {
+            let mut control = std::boxed::Box::<
+                ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
+            >::new_uninit();
+            let mut resolvers =
+                std::boxed::Box::<ResolverCore<'cfg, T, U, C, MAX_RV>>::new_uninit();
+            ControlCore::init_empty(control.as_mut_ptr());
+            ResolverCore::init_empty(resolvers.as_mut_ptr());
+            return Self {
+                control: core::cell::UnsafeCell::new(control.assume_init()),
+                resolvers: core::cell::UnsafeCell::new(resolvers.assume_init()),
+                clock,
+            };
+        }
+
+        #[cfg(not(feature = "std"))]
         Self {
             control: core::cell::UnsafeCell::new(ControlCore {
-                locals: LeaseControlCore::new(),
-                remotes: ArrayMap::new(),
+                locals: crate::control::lease::core::ControlCore::new(),
                 splice_state: DistributedSpliceState::new(),
                 cached_operands: ArrayMap::new(),
                 active_leases: core::cell::Cell::new(0),
                 mgmt_managers: ArrayMap::new(),
-                delegated_ports: DelegatedPortTable::new(),
             }),
             resolvers: core::cell::UnsafeCell::new(ResolverCore {
                 table: ArrayMap::new(),
@@ -972,12 +950,77 @@ where
         }
     }
 
+    #[cfg(feature = "std")]
+    #[inline]
+    fn control_ptr(
+        &self,
+    ) -> *mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV> {
+        unsafe {
+            (&mut *self.control.get()).as_mut()
+                as *mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>
+        }
+    }
+
+    #[cfg(not(feature = "std"))]
+    #[inline]
+    fn control_ptr(
+        &self,
+    ) -> *mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV> {
+        self.control.get()
+    }
+
+    #[cfg(feature = "std")]
+    #[inline]
+    fn control_ref_ptr(
+        &self,
+    ) -> *const ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV> {
+        unsafe {
+            (&*self.control.get()).as_ref()
+                as *const ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>
+        }
+    }
+
+    #[cfg(not(feature = "std"))]
+    #[inline]
+    fn control_ref_ptr(
+        &self,
+    ) -> *const ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV> {
+        self.control.get()
+            as *const ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>
+    }
+
+    #[cfg(feature = "std")]
+    #[inline]
+    fn resolvers_ptr(&self) -> *mut ResolverCore<'cfg, T, U, C, MAX_RV> {
+        unsafe { (&mut *self.resolvers.get()).as_mut() as *mut ResolverCore<'cfg, T, U, C, MAX_RV> }
+    }
+
+    #[cfg(not(feature = "std"))]
+    #[inline]
+    fn resolvers_ptr(&self) -> *mut ResolverCore<'cfg, T, U, C, MAX_RV> {
+        self.resolvers.get()
+    }
+
+    #[cfg(feature = "std")]
+    #[inline]
+    fn resolvers_ref_ptr(&self) -> *const ResolverCore<'cfg, T, U, C, MAX_RV> {
+        unsafe { (&*self.resolvers.get()).as_ref() as *const ResolverCore<'cfg, T, U, C, MAX_RV> }
+    }
+
+    #[cfg(not(feature = "std"))]
+    #[inline]
+    fn resolvers_ref_ptr(&self) -> *const ResolverCore<'cfg, T, U, C, MAX_RV> {
+        self.resolvers.get() as *const ResolverCore<'cfg, T, U, C, MAX_RV>
+    }
+
     /// Internal helper to access mutable control core (NOT PUBLIC).
     fn with_control_mut<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&mut ControlCore<'cfg, T, U, C, crate::control::cap::EpochInit, MAX_RV>) -> R,
+        F: FnOnce(
+            &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
+        ) -> R,
     {
-        unsafe { f(&mut *self.control.get()) }
+        unsafe { f(&mut *self.control_ptr()) }
     }
 
     /// Internal helper to access mutable resolver state.
@@ -985,185 +1028,7 @@ where
     where
         F: FnOnce(&mut ResolverCore<'cfg, T, U, C, MAX_RV>) -> R,
     {
-        unsafe { f(&mut *self.resolvers.get()) }
-    }
-
-    pub fn delegated_witness(
-        &self,
-        rv_id: RendezvousId,
-        sid: SessionId,
-        lane: LaneId,
-    ) -> Option<DelegatedPortWitness> {
-        let key = DelegatedPortKey::new(rv_id, sid, lane);
-        self.with_control_mut(|core| core.issue_delegated_witness(key))
-    }
-
-    pub fn has_delegated_claim(&self, rv_id: RendezvousId, sid: SessionId, lane: LaneId) -> bool {
-        let key = DelegatedPortKey::new(rv_id, sid, lane);
-        self.with_control_mut(|core| core.has_delegated_claim(key))
-    }
-
-    pub fn delegate_claim(
-        &self,
-        rv_id: RendezvousId,
-        token: GenericCapToken<EndpointResource>,
-    ) -> Result<crate::endpoint::delegate::DelegatedPortClaim<'_, 'cfg, T, U, C, MAX_RV>, CpError>
-    {
-        let cp_sid = SessionId::new(token.sid().raw());
-        let cp_lane = LaneId::new(token.lane().raw());
-        self.claim_delegation_token(rv_id, token)?;
-        let witness = self
-            .delegated_witness(rv_id, cp_sid, cp_lane)
-            .ok_or(CpError::Delegation(DelegationError::InvalidToken))?;
-        Ok(crate::endpoint::delegate::DelegatedPortClaim::new(
-            self, rv_id, cp_sid, cp_lane, witness,
-        ))
-    }
-
-    pub(crate) fn revoke_delegated_witness(
-        &self,
-        rv_id: RendezvousId,
-        sid: SessionId,
-        lane: LaneId,
-    ) {
-        let key = DelegatedPortKey::new(rv_id, sid, lane);
-        self.with_control_mut(|core| core.revoke_delegated_witness(key));
-    }
-
-    pub fn consume_delegated_claim(
-        &self,
-        rv_id: RendezvousId,
-        sid: SessionId,
-        lane: LaneId,
-        witness: DelegatedPortWitness,
-    ) -> Result<VerifiedCap<EndpointResource>, DelegationError> {
-        let key = DelegatedPortKey::new(rv_id, sid, lane);
-        let result = self.with_control_mut(|core| {
-            core.take_delegated_claim(key)
-                .map(|claim| claim.into_verified())
-        });
-        let _ = witness;
-        result
-    }
-
-    pub(crate) fn attach_delegated_cursor<'lease, const ROLE: u8, LocalSteps, Mint>(
-        &'lease self,
-        rv_id: RendezvousId,
-        sid: SessionId,
-        lane: LaneId,
-        program: &'static crate::g::RoleProgram<'static, ROLE, LocalSteps, Mint>,
-        witness: DelegatedPortWitness,
-    ) -> Result<
-        crate::endpoint::CursorEndpoint<
-            'cfg,
-            ROLE,
-            T,
-            U,
-            C,
-            crate::control::cap::EpochInit,
-            MAX_RV,
-            Mint,
-        >,
-        AttachError,
-    >
-    where
-        'cfg: 'lease,
-        'lease: 'cfg,
-        Mint: MintConfigMarker,
-    {
-        let clock = self.clock;
-        let key = DelegatedPortKey::new(rv_id, sid, lane);
-        let cursor = program.phase_cursor();
-        let mint = program.mint_config();
-        let lane_wire = crate::rendezvous::Lane::new(lane.raw());
-        let sid_rv = crate::rendezvous::SessionId::new(sid.raw());
-        let lane_rv = crate::rendezvous::Lane::new(lane.raw());
-
-        // SAFETY: Exclusive access is guaranteed by &self usage pattern (identical to lease_port).
-        let core = unsafe { &mut *self.control.get() };
-
-        let claim_guard = core
-            .take_delegated_claim(key)
-            .map_err(|err| AttachError::Control(CpError::Delegation(err)))?;
-
-        let mut lease = match core.locals.lease::<FullSpec>(rv_id) {
-            Ok(lease) => lease,
-            Err(LeaseError::UnknownRendezvous(_)) => {
-                drop(claim_guard);
-                return Err(AttachError::Control(CpError::RendezvousMismatch {
-                    expected: rv_id.raw(),
-                    actual: 0,
-                }));
-            }
-            Err(LeaseError::AlreadyLeased(_)) => {
-                drop(claim_guard);
-                return Err(AttachError::Rendezvous(
-                    crate::rendezvous::RendezvousError::LaneBusy { lane: lane_rv },
-                ));
-            }
-        };
-
-        let (lane_key, rv_ptr): (
-            crate::control::cap::LaneKey<'cfg>,
-            *mut crate::rendezvous::Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::EpochInit>,
-        ) = lease.with_full(|rv| {
-            let key = crate::control::cap::LaneKey::new(rv.brand(), lane_rv);
-            (key, rv as *mut _)
-        });
-        let rv = unsafe { &*rv_ptr };
-
-        let raw_port = match rv.attach_verified(claim_guard.verified()) {
-            Ok(port) => port,
-            Err(err) => {
-                drop(claim_guard);
-                return Err(AttachError::Rendezvous(err));
-            }
-        };
-
-        claim_guard.commit();
-
-        let active = &core.active_leases;
-        active.set(active.get() + 1);
-
-        lease.emit_lane_acquire(clock.now32(), rv_id, sid_rv, lane_rv);
-
-        let mut guard = LaneGuard::new(lease, lane_rv, active, true);
-
-        guard.detach_lease();
-
-        let port = unsafe {
-            mem::transmute::<
-                crate::rendezvous::Port<'_, T, crate::control::cap::EpochInit>,
-                crate::rendezvous::Port<'cfg, T, crate::control::cap::EpochInit>,
-            >(raw_port)
-        };
-
-        let control_ctx =
-            crate::endpoint::control::SessionControlCtx::new(rv_id, lane_wire, Some(self), None);
-
-        let owner = crate::control::cap::Owner::new(lane_key);
-        let epoch = crate::control::cap::EndpointEpoch::new();
-        let _ = witness;
-
-        // Build ports/guards arrays with this single lane
-        let lane_idx = lane_rv.as_wire() as usize;
-        let mut ports = [None, None, None, None, None, None, None, None];
-        let mut guards = [None, None, None, None, None, None, None, None];
-        ports[lane_idx] = Some(port);
-        guards[lane_idx] = Some(guard);
-
-        Ok(crate::endpoint::CursorEndpoint::from_parts(
-            ports,
-            guards,
-            lane_idx,
-            sid_rv,
-            owner,
-            epoch,
-            cursor,
-            control_ctx,
-            mint,
-            crate::binding::NoBinding,
-        ))
+        unsafe { f(&mut *self.resolvers_ptr()) }
     }
 
     /// Add a local Rendezvous instance to the cluster (takes ownership).
@@ -1179,9 +1044,10 @@ where
     ///
     /// Returns `CpError::ResourceExhausted` if the cluster is full or
     /// the ID is already registered.
-    pub fn add_rendezvous(
+    #[cfg(test)]
+    pub(crate) fn add_rendezvous(
         &self,
-        rv: crate::rendezvous::Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::EpochInit>,
+        rv: Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>,
     ) -> Result<RendezvousId, CpError> {
         self.with_control_mut(|core| match core.locals.register_local(rv) {
             Ok(id) => Ok(id),
@@ -1190,41 +1056,21 @@ where
         })
     }
 
-    /// Emit an accept-time tap with packed ScopeTrace (range/nest) for observability alignment.
-    pub fn emit_accept_tap(
-        &self,
-        rv_id: RendezvousId,
-        sid: SessionId,
-        lane: LaneId,
-        scope: crate::global::const_dsl::ScopeId,
-    ) {
-        self.with_control_mut(|core| {
-            if let Some(rv) = core.locals.get_mut(&rv_id) {
-                let tap = rv.observe_facet();
-                let ts = rv.now32();
-                let causal = ((lane.as_wire() as u16) << 8) | 0;
-                let event = crate::observe::TapEvent {
-                    ts,
-                    id: crate::observe::ids::ENDPOINT_CONTROL,
-                    causal_key: causal,
-                    arg0: sid.raw(),
-                    arg1: scope.pack_range_nest(),
-                    arg2: scope.pack_range_nest(),
-                };
-                tap.emit(event);
-            }
-        });
-    }
-
-    /// Register a remote Rendezvous via a control-plane adapter.
+    /// Build and register a local rendezvous from runtime config + transport.
     ///
-    /// Returns an error if the cluster is full or the ID is already registered.
-    pub fn register_remote(&self, slot: ControlPlaneSlot<'cfg>) -> Result<(), CpError> {
-        let id = slot.adapter().peer();
+    /// Public callers should use this entrypoint instead of constructing
+    /// rendezvous internals directly.
+    pub(crate) fn add_rendezvous_from_config(
+        &self,
+        config: crate::runtime::config::Config<'cfg, U, C>,
+        transport: T,
+    ) -> Result<RendezvousId, CpError> {
         self.with_control_mut(|core| {
-            core.remotes
-                .insert(id, slot)
-                .map_err(|_| CpError::ResourceExhausted)
+            match core.locals.register_local_from_config(config, transport) {
+                Ok(id) => Ok(id),
+                Err(RegisterRendezvousError::CapacityExceeded) => Err(CpError::ResourceExhausted),
+                Err(RegisterRendezvousError::Duplicate(_)) => Err(CpError::ResourceExhausted),
+            }
         })
     }
 
@@ -1234,30 +1080,23 @@ where
     ///
     /// Returns a shared reference to the Rendezvous. Caller must ensure
     /// no concurrent mutation through `with_control_mut`.
-    pub fn get_local(
+    pub(crate) fn get_local(
         &self,
         id: &RendezvousId,
-    ) -> Option<&crate::rendezvous::Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::EpochInit>>
-    {
+    ) -> Option<&Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>> {
         // SAFETY: We're returning a shared reference from UnsafeCell.
         // This is safe because:
         // - The reference is borrowed from `&self`, so it can't outlive the cluster
         // - Caller must not call mutable methods while holding this reference
         // - This pattern is documented in SessionCluster's safety contract
-        unsafe { (*self.control.get()).locals.get(id) }
-    }
-
-    /// Get a remote Rendezvous adapter by ID.
-    pub fn get_remote(&self, id: &RendezvousId) -> Option<&ControlPlaneSlot<'cfg>> {
-        // SAFETY: Same as get_local - returning shared reference from UnsafeCell
-        unsafe { (*self.control.get()).remotes.get(id) }
+        unsafe { (*self.control_ref_ptr()).locals.get(id) }
     }
 
     pub(crate) fn canonical_session_token<K, Mint>(
         &self,
         rv_id: RendezvousId,
-        sid: crate::rendezvous::SessionId,
-        lane: crate::rendezvous::Lane,
+        sid: SessionId,
+        lane: Lane,
         dest_role: u8,
         shot: CapShot,
         mint: Mint,
@@ -1275,8 +1114,8 @@ where
     pub(crate) fn canonical_token_with_handle<K, Mint>(
         &self,
         rv_id: RendezvousId,
-        sid: crate::rendezvous::SessionId,
-        lane: crate::rendezvous::Lane,
+        sid: SessionId,
+        lane: Lane,
         dest_role: u8,
         shot: CapShot,
         handle: K::Handle,
@@ -1297,51 +1136,16 @@ where
         };
         let links = Self::collect_delegation_links::<K>(&seed.handle);
 
-        let mint_needs = FacetCapsDelegation::NEEDS;
+        let mint_needs = facets_caps_delegation();
 
         let outcome = self.drive::<DelegateMintAutomaton<K, Mint>, _, _>(
             rv_id,
             seed,
-            |core, rv| {
-                let mut ctx = Self::init_bundle_context_with_needs(core, rv, mint_needs);
-                let table_ptr = NonNull::from(&mut core.delegated_ports);
-                ctx.set_delegation(DelegationGraphContext::with_table(table_ptr));
-                ctx
-            },
+            |core, rv| Self::init_bundle_context_with_needs(core, rv, mint_needs),
             move |core, graph| Self::init_delegation_children(core, graph, rv_id, &links),
         );
 
         outcome.ok()
-    }
-
-    fn claim_delegation_token(
-        &self,
-        rv_id: RendezvousId,
-        token: CapToken,
-    ) -> Result<DelegatedPortWitness, CpError> {
-        let (sid, lane) = CpCommand::derive_sid_lane(token);
-        let key = DelegatedPortKey::new(rv_id, sid, lane);
-        let seed = DelegateClaimSeed { token };
-        let links = Self::collect_claim_links(&seed.token);
-        let claim_needs = FacetCapsDelegation::NEEDS;
-
-        match self.drive::<DelegateClaimAutomaton, _, _>(
-            rv_id,
-            seed,
-            |core, rv| {
-                let mut ctx = Self::init_bundle_context_with_needs(core, rv, claim_needs);
-                let table_ptr = NonNull::from(&mut core.delegated_ports);
-                ctx.set_delegation(DelegationGraphContext::for_claim(table_ptr, key));
-                ctx
-            },
-            move |core, graph| Self::init_delegation_children(core, graph, rv_id, &links),
-        ) {
-            Ok(outcome) => Ok(outcome),
-            Err(DelegationDriveError::Lease(_) | DelegationDriveError::Graph(_)) => {
-                Err(CpError::Delegation(DelegationError::InvalidToken))
-            }
-            Err(DelegationDriveError::Automaton(err)) => Err(err.into()),
-        }
     }
 
     /// **Acquire a lane lease (RAII handle bound to this cluster).**
@@ -1360,27 +1164,24 @@ where
     /// Emits `LANE_ACQUIRE` with:
     /// - `arg0`: Rendezvous ID (u32)
     /// - `arg1`: Packed session/lane (u32)
-    pub fn lease_port(
+    pub(crate) fn lease_port(
         &self,
         rv_id: RendezvousId,
-        sid: crate::rendezvous::SessionId,
-        lane: crate::rendezvous::Lane,
+        sid: SessionId,
+        lane: Lane,
         role: u8,
-    ) -> Result<
-        crate::rendezvous::LaneLease<'cfg, T, U, C, MAX_RV>,
-        crate::rendezvous::RendezvousError,
-    > {
+    ) -> Result<LaneLease<'cfg, T, U, C, MAX_RV>, RendezvousError> {
         // SAFETY: exclusive access is guaranteed by &self; we immediately move the
         // resulting rendezvous lease out, so no aliasing occurs.
-        let core = unsafe { &mut *self.control.get() };
+        let core = unsafe { &mut *self.control_ptr() };
 
         let mut lease = match core.locals.lease::<FullSpec>(rv_id) {
             Ok(lease) => lease,
             Err(LeaseError::UnknownRendezvous(_)) => {
-                return Err(crate::rendezvous::RendezvousError::LaneOutOfRange { lane });
+                return Err(RendezvousError::LaneOutOfRange { lane });
             }
             Err(LeaseError::AlreadyLeased(_)) => {
-                return Err(crate::rendezvous::RendezvousError::LaneBusy { lane });
+                return Err(RendezvousError::LaneBusy { lane });
             }
         };
 
@@ -1389,46 +1190,25 @@ where
         let current = active.get();
         active.set(current + 1);
 
-        // Extract lane key before moving lease into guard and emit acquire tap.
-        let lane_key = lease.lane_key(lane);
+        // Extract rendezvous brand before moving lease into guard and emit acquire tap.
+        let brand = lease.brand();
         lease.emit_lane_acquire(self.clock.now32(), rv_id, sid, lane);
 
         let guard = LaneGuard::new(lease, lane, active, true);
 
-        Ok(crate::rendezvous::LaneLease::new(
-            guard, sid, lane, role, lane_key,
-        ))
+        Ok(LaneLease::new(guard, sid, lane, role, brand))
     }
 
-    /// Perform a handshake with a remote Rendezvous.
-    ///
-    /// This establishes the connection and negotiates protocol version.
-    pub fn handshake(&self, remote_id: RendezvousId, hello: &Hello) -> Result<Hello, CpError> {
-        let slot = self
-            .get_remote(&remote_id)
-            .ok_or(CpError::RendezvousMismatch {
-                expected: remote_id.raw(),
-                actual: 0,
-            })?;
-
-        slot.adapter().handshake(hello)
-    }
-
-    /// Execute a control-plane effect on a specific Rendezvous.
-    ///
-    /// If the Rendezvous is remote, this sends the effect via the adapter.
-    /// If it's local, this executes the effect directly.
+    /// Execute a control-plane effect on a specific local Rendezvous.
     pub(crate) fn run_effect_step(
         &self,
         target: RendezvousId,
         envelope: CpCommand,
     ) -> Result<PendingEffect, CpError> {
-        // Try remote first
-        if let Some(slot) = self.get_remote(&target) {
-            let run_result = slot.adapter().run(envelope);
-            run_result?;
-            return Ok(PendingEffect::None);
-        }
+        let envelope = match envelope.effect {
+            CpEffect::Delegate => envelope.canonicalize_delegate()?,
+            _ => envelope,
+        };
 
         if self.get_local(&target).is_some() {
             match envelope.effect {
@@ -1436,7 +1216,7 @@ where
                     if let Some(lane_id) = envelope.lane
                         && let Some(rv) = self.get_local(&target)
                     {
-                        let lane = crate::rendezvous::Lane::new(lane_id.raw());
+                        let lane = Lane::new(lane_id.raw());
                         let caps = rv.caps_mask_for_lane(lane);
                         if !caps.allows(CpEffect::SpliceBegin) {
                             return Err(CpError::Authorisation {
@@ -1447,11 +1227,11 @@ where
 
                     let intent = envelope
                         .intent
-                        .ok_or(CpError::Splice(CpSpliceError::InvalidState))?;
+                        .ok_or(CpError::Splice(SpliceError::InvalidState))?;
                     let seed = intent;
                     let dst_rv = seed.dst_rv;
 
-                    let begin_needs = FacetCapsSplice::NEEDS;
+                    let begin_needs = facets_caps_splice();
 
                     let drive_result = self.drive::<SpliceBeginAutomaton, _, _>(
                         target,
@@ -1480,7 +1260,7 @@ where
                     if let Err(err) = drive_result {
                         return Err(match err {
                             DelegationDriveError::Lease(_) | DelegationDriveError::Graph(_) => {
-                                CpError::Splice(CpSpliceError::InvalidState)
+                                CpError::Splice(SpliceError::InvalidState)
                             }
                             DelegationDriveError::Automaton(err) => err.into(),
                         });
@@ -1491,18 +1271,16 @@ where
                 CpEffect::SpliceCommit => {
                     let sid = envelope
                         .sid
-                        .ok_or(CpError::Splice(CpSpliceError::InvalidSession))?;
+                        .ok_or(CpError::Splice(SpliceError::InvalidSession))?;
                     let ack = envelope
                         .ack
-                        .ok_or(CpError::Splice(CpSpliceError::InvalidState))?;
+                        .ok_or(CpError::Splice(SpliceError::InvalidState))?;
                     let cached_intent = {
                         let ack_for_cache = ack;
                         self.with_control_mut(|core| {
                             core.locals.get_mut(&target).and_then(|rv| {
-                                let session = crate::rendezvous::SessionId::new(ack_for_cache.sid);
-                                let dst = crate::rendezvous::RendezvousId::new(
-                                    ack_for_cache.dst_rv.raw(),
-                                );
+                                let session = SessionId::new(ack_for_cache.sid);
+                                let dst = RendezvousId::new(ack_for_cache.dst_rv.raw());
                                 rv.take_cached_distributed_intent(session, dst)
                             })
                         })
@@ -1511,7 +1289,7 @@ where
 
                     let dst_rv = ack.dst_rv;
 
-                    let commit_needs = FacetCapsSplice::NEEDS;
+                    let commit_needs = facets_caps_splice();
 
                     let drive_result = self.drive::<SpliceCommitAutomaton, _, _>(
                         target,
@@ -1540,7 +1318,7 @@ where
                     if let Err(err) = drive_result {
                         return Err(match err {
                             DelegationDriveError::Lease(_) | DelegationDriveError::Graph(_) => {
-                                CpError::Splice(CpSpliceError::InvalidState)
+                                CpError::Splice(SpliceError::InvalidState)
                             }
                             DelegationDriveError::Automaton(err) => err.into(),
                         });
@@ -1548,24 +1326,10 @@ where
 
                     return self.after_local_effect(envelope);
                 }
-                CpEffect::Delegate => {
-                    let delegate = envelope
-                        .delegate
-                        .ok_or(CpError::Delegation(DelegationError::InvalidToken))?;
-                    match delegate.phase {
-                        DelegatePhase::Claim => {
-                            self.claim_delegation_token(target, delegate.token)?;
-                            return self.after_local_effect(envelope);
-                        }
-                        DelegatePhase::Mint => {
-                            // Fall through to direct rendezvous execution for mint path.
-                        }
-                    }
-                }
                 _ => {
                     if let Some(rv) = self.get_local(&target) {
                         if let Some(lane_id) = envelope.lane {
-                            let lane = crate::rendezvous::Lane::new(lane_id.raw());
+                            let lane = Lane::new(lane_id.raw());
                             let caps = rv.caps_mask_for_lane(lane);
                             if !caps.allows(envelope.effect)
                                 && !matches!(
@@ -1578,8 +1342,7 @@ where
                                 });
                             }
                         }
-                        use EffectExecutor as _;
-                        let run_result = rv.run_effect(envelope.clone());
+                        let run_result = EffectRunner::run_effect(rv, envelope.clone());
                         run_result?;
                         return self.after_local_effect(envelope);
                     }
@@ -1637,33 +1400,92 @@ where
         &self,
         key: DynamicResolverKey,
     ) -> Option<&DynamicResolverEntry<'cfg, T, U, C, MAX_RV>> {
-        unsafe { (*self.resolvers.get()).table.get(&key) }
+        unsafe { (*self.resolvers_ref_ptr()).table.get(&key) }
     }
 
-    pub fn register_control_plan_resolver(
+    pub(crate) fn set_resolver<'prog, const ROLE: u8, LocalSteps, Mint>(
         &self,
         rv_id: RendezvousId,
-        info: &crate::global::role_program::ControlPlanInfo,
-        resolver: DynamicResolverFn<'cfg, T, U, C, MAX_RV>,
+        program: &crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
+        policy_id: PolicyId,
+        resolver: fn(
+            &crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
+            ResolverContext,
+        ) -> Result<DynamicResolution, ResolverError>,
+    ) -> Result<(), CpError>
+    where
+        Mint: MintConfigMarker,
+    {
+        let raw_policy_id = policy_id.as_u16();
+        let eff_list = program.eff_list();
+        for marker in eff_list.policies() {
+            let Some(dynamic_policy_id) = marker.policy.dynamic_policy_id() else {
+                continue;
+            };
+            if dynamic_policy_id != raw_policy_id {
+                continue;
+            }
+            let offset = marker.offset;
+            let eff_index = EffIndex::from_usize(offset);
+            let node = eff_list
+                .as_slice()
+                .get(offset)
+                .unwrap_or_else(|| panic!("policy marker offset {} out of bounds", offset));
+            debug_assert!(
+                matches!(node.kind, crate::eff::EffKind::Atom),
+                "policy marker offset must reference an atom"
+            );
+            let atom = node.atom_data();
+            let tag = atom
+                .resource
+                .ok_or(CpError::UnsupportedEffect(atom.label))?;
+            let scope_id = eff_list
+                .scope_id_for_offset(offset)
+                .unwrap_or_else(ScopeId::none);
+            self.register_dynamic_policy_resolver(
+                rv_id,
+                eff_index,
+                atom.label,
+                marker.policy.with_scope(scope_id),
+                tag,
+                None,
+                resolver,
+            )?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn register_dynamic_policy_resolver(
+        &self,
+        rv_id: RendezvousId,
+        eff_index: EffIndex,
+        label: u8,
+        policy: PolicyMode,
+        tag: u8,
+        scope_trace: Option<ScopeTrace>,
+        resolver: fn(
+            &crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
+            ResolverContext,
+        ) -> Result<DynamicResolution, ResolverError>,
     ) -> Result<(), CpError> {
-        let tag = info
-            .resource_tag
-            .ok_or(CpError::UnsupportedEffect(info.label))?;
-        let key = DynamicResolverKey::new(rv_id, info.eff_index, tag);
-        let plan = match info.plan {
-            HandlePlan::Dynamic { .. } => {
+        let key = DynamicResolverKey::new(rv_id, eff_index, tag);
+        let policy = match policy {
+            PolicyMode::Dynamic { .. } => {
+                let _ = policy
+                    .dynamic_policy_id()
+                    .ok_or(CpError::UnsupportedEffect(label))?;
                 // Validate that the tag is a known dynamic control tag
                 if !is_dynamic_control_tag(tag) {
                     return Err(CpError::UnsupportedEffect(tag));
                 }
-                info.plan
+                policy
             }
-            _ => return Err(CpError::UnsupportedEffect(tag)),
+            _ => return Err(CpError::UnsupportedEffect(label)),
         };
         let entry = DynamicResolverEntry {
             resolver,
-            plan,
-            scope_trace: info.scope_trace,
+            policy,
+            scope_trace,
         };
         self.with_resolvers_mut(|core| {
             core.table
@@ -1672,46 +1494,45 @@ where
         })
     }
 
-    pub(crate) fn resolve_dynamic_plan(
+    pub(crate) fn resolve_dynamic_policy(
         &self,
         rv_id: RendezvousId,
         session: Option<SessionId>,
-        lane: LaneId,
+        lane: Lane,
         eff_index: EffIndex,
         tag: u8,
         metrics: TransportSnapshot,
-        transport_ctx: crate::transport::context::ContextSnapshot,
+        input: [u32; 4],
+        attrs: crate::transport::context::PolicyAttrs,
     ) -> Result<DynamicResolution, CpError> {
         let key = DynamicResolverKey::new(rv_id, eff_index, tag);
         let entry = self
             .dynamic_resolver(key)
-            .ok_or_else(|| {
-                CpError::PolicyAbort { reason: 0 }
-            })?;
-        let plan = entry.plan;
+            .ok_or_else(|| CpError::PolicyAbort { reason: 0 })?;
+        let policy = entry.policy;
 
-        let (policy_id, meta) = plan
-            .dynamic_components()
+        let policy_id = policy
+            .dynamic_policy_id()
             .ok_or(CpError::PolicyAbort { reason: 6 })?;
 
-        let scope_hint = plan.scope();
+        let scope_hint = policy.scope();
 
-        let ctx = ResolverContext {
+        let ctx = ResolverContext::new(
             rv_id,
             session,
             lane,
             eff_index,
             tag,
             metrics,
-            scope_id: scope_hint,
-            scope_trace: entry.scope_trace,
-            transport_ctx,
-        };
+            scope_hint,
+            entry.scope_trace,
+            input,
+            attrs,
+        );
 
-        let resolution = (entry.resolver)(self, &meta, ctx)
-            .map_err(|_| {
-                CpError::PolicyAbort { reason: policy_id }
-            })?;
+        let resolution =
+            (entry.resolver)(crate::substrate::SessionCluster::from_kernel_ref(self), ctx)
+                .map_err(|_| CpError::PolicyAbort { reason: policy_id })?;
 
         // The resource tag determines the expected resolution type
         match (tag, resolution) {
@@ -1737,7 +1558,7 @@ where
             ) => Ok(DynamicResolution::Reroute {
                 dst_rv,
                 dst_lane,
-                shard: shard.or(meta.shard_hint),
+                shard,
             }),
             (
                 LoopContinueKind::TAG | LoopBreakKind::TAG | RouteDecisionKind::TAG,
@@ -1758,41 +1579,49 @@ where
                 }
                 Ok(DynamicResolution::Loop { decision })
             }
+            (
+                LoopContinueKind::TAG | LoopBreakKind::TAG | RouteDecisionKind::TAG,
+                DynamicResolution::Defer { retry_hint },
+            ) => {
+                if scope_hint.is_none() {
+                    return Err(CpError::PolicyAbort { reason: policy_id });
+                }
+                Ok(DynamicResolution::Defer { retry_hint })
+            }
             _ => Err(CpError::PolicyAbort { reason: policy_id }),
         }
     }
 
-    pub(crate) fn control_plan_for(
+    pub(crate) fn policy_mode_for(
         &self,
         rv_id: RendezvousId,
-        lane: LaneId,
+        lane: Lane,
         eff_index: EffIndex,
         tag: u8,
-    ) -> Result<HandlePlan, CpError> {
+    ) -> Result<PolicyMode, CpError> {
         let rv = self.get_local(&rv_id).ok_or(CpError::RendezvousMismatch {
             expected: rv_id.raw(),
             actual: 0,
         })?;
-        let lane_rv = crate::rendezvous::Lane::new(lane.raw());
+        let lane_rv = Lane::new(lane.raw());
         let key = DynamicResolverKey::new(rv_id, eff_index, tag);
-        let plan = rv
-            .control_plan(lane_rv, eff_index, tag)
-            .or_else(|| {
-                self.dynamic_resolver(key).map(|entry| entry.plan)
-            });
-        Ok(plan.unwrap_or(HandlePlan::None))
+        let policy = rv
+            .policy(lane_rv, eff_index, tag)
+            .or_else(|| self.dynamic_resolver(key).map(|entry| entry.policy));
+        Ok(policy.unwrap_or(PolicyMode::Static))
     }
 
-    pub(crate) fn prepare_splice_operands_from_plan(
+    pub(crate) fn prepare_splice_operands_from_policy(
         &self,
         rv_id: RendezvousId,
         sid: SessionId,
-        src_lane: LaneId,
+        src_lane: Lane,
         eff_index: EffIndex,
         tag: u8,
-        plan: HandlePlan,
+        policy: PolicyMode,
         metrics: TransportSnapshot,
-        transport_ctx: crate::transport::context::ContextSnapshot,
+        input: [u32; 4],
+        attrs: crate::transport::context::PolicyAttrs,
     ) -> Result<SpliceOperands, CpError> {
         if self.get_local(&rv_id).is_none() {
             return Err(CpError::RendezvousMismatch {
@@ -1801,9 +1630,9 @@ where
             });
         }
 
-        let plan_needs = facet_needs(tag, plan);
+        let policy_needs = facet_needs(tag, policy);
         let drive_prepare = |dst_rv: RendezvousId,
-                             dst_lane: LaneId,
+                             dst_lane: Lane,
                              fences: Option<(u32, u32)>|
          -> Result<SpliceOperands, CpError> {
             let result = self.drive::<SplicePrepareAutomaton, _, _>(
@@ -1816,12 +1645,12 @@ where
                     fences,
                 },
                 |core, rv| {
-                    let mut ctx = Self::init_bundle_context_with_needs(core, rv, plan_needs);
+                    let mut ctx = Self::init_bundle_context_with_needs(core, rv, policy_needs);
                     ctx.set_splice(SpliceGraphContext::default());
                     ctx
                 },
                 |core, graph| {
-                    if dst_rv != rv_id && plan_needs.requires_splice() {
+                    if dst_rv != rv_id && policy_needs.requires_splice() {
                         graph.add_child_with_bundle_config(
                             &mut core.locals,
                             rv_id,
@@ -1837,23 +1666,25 @@ where
             match result {
                 Ok(operands) => Ok(operands),
                 Err(DelegationDriveError::Lease(_)) | Err(DelegationDriveError::Graph(_)) => {
-                    Err(CpError::Splice(CpSpliceError::InvalidState))
+                    Err(CpError::Splice(SpliceError::InvalidState))
                 }
                 Err(DelegationDriveError::Automaton(err)) => Err(err),
             }
         };
 
-        let operands = match plan {
-            HandlePlan::Static {
-                kind: StaticPlanKind::SpliceLocal { dst_lane },
-            } => {
-                let dst_lane_id = LaneId::new(dst_lane as u32);
-                drive_prepare(rv_id, dst_lane_id, None)?
-            }
-            HandlePlan::Dynamic { .. } => {
-                let policy_id = plan.dynamic_components().map(|(id, _)| id).unwrap_or(0);
-                let resolution =
-                    self.resolve_dynamic_plan(rv_id, Some(sid), src_lane, eff_index, tag, metrics, transport_ctx)?;
+        let operands = match policy {
+            PolicyMode::Dynamic { .. } => {
+                let policy_id = policy.dynamic_policy_id().unwrap_or(0);
+                let resolution = self.resolve_dynamic_policy(
+                    rv_id,
+                    Some(sid),
+                    src_lane,
+                    eff_index,
+                    tag,
+                    metrics,
+                    input,
+                    attrs,
+                )?;
                 let (dst_rv, dst_lane, fences) = match resolution {
                     DynamicResolution::Splice {
                         dst_rv,
@@ -1865,10 +1696,7 @@ where
                 let result = drive_prepare(dst_rv, dst_lane, fences);
                 result?
             }
-            HandlePlan::None
-            | HandlePlan::Static {
-                kind: StaticPlanKind::RerouteLocal { .. },
-            } => {
+            PolicyMode::Static => {
                 return Err(CpError::UnsupportedEffect(CpEffect::SpliceBegin as u8));
             }
         };
@@ -1877,36 +1705,26 @@ where
         Ok(operands)
     }
 
-    pub(crate) fn prepare_reroute_handle_from_plan(
+    pub(crate) fn prepare_reroute_handle_from_policy(
         &self,
         rv_id: RendezvousId,
-        lane: LaneId,
+        lane: Lane,
         eff_index: EffIndex,
         tag: u8,
-        plan: HandlePlan,
+        policy: PolicyMode,
         metrics: TransportSnapshot,
-        transport_ctx: crate::transport::context::ContextSnapshot,
+        input: [u32; 4],
+        attrs: crate::transport::context::PolicyAttrs,
     ) -> Result<RerouteHandle, CpError> {
         let src_lane_u16 = lane.raw() as u16;
-        match plan {
-            HandlePlan::Static {
-                kind: StaticPlanKind::RerouteLocal { dst_lane, shard },
-            } => Ok(RerouteHandle::new(
-                rv_id.raw(),
-                rv_id.raw(),
-                src_lane_u16,
-                dst_lane,
-                0,
-                0,
-                shard,
-                0,
-            )),
-            HandlePlan::Dynamic { .. } => {
-                let (policy_id, meta) = plan
-                    .dynamic_components()
+        match policy {
+            PolicyMode::Dynamic { .. } => {
+                let policy_id = policy
+                    .dynamic_policy_id()
                     .ok_or(CpError::PolicyAbort { reason: 6 })?;
-                let resolution =
-                    self.resolve_dynamic_plan(rv_id, None, lane, eff_index, tag, metrics, transport_ctx)?;
+                let resolution = self.resolve_dynamic_policy(
+                    rv_id, None, lane, eff_index, tag, metrics, input, attrs,
+                )?;
                 let (dst_rv, dst_lane, shard_override) = match resolution {
                     DynamicResolution::Reroute {
                         dst_rv,
@@ -1915,52 +1733,19 @@ where
                     } => (dst_rv, dst_lane, shard),
                     _ => return Err(CpError::PolicyAbort { reason: policy_id }),
                 };
-                let shard = shard_override.or(meta.shard_hint).unwrap_or_default();
-                Ok(RerouteHandle::new(
-                    rv_id.raw(),
-                    dst_rv.raw(),
-                    src_lane_u16,
-                    dst_lane.raw() as u16,
-                    0,
-                    0,
+                let shard = shard_override.unwrap_or_default();
+                Ok(RerouteHandle {
+                    src_rv: rv_id.raw(),
+                    dst_rv: dst_rv.raw(),
+                    src_lane: src_lane_u16,
+                    dst_lane: dst_lane.raw() as u16,
+                    seq_tx: 0,
+                    seq_rx: 0,
                     shard,
-                    0,
-                ))
+                    flags: 0,
+                })
             }
-            HandlePlan::None
-            | HandlePlan::Static {
-                kind: StaticPlanKind::SpliceLocal { .. },
-            } => Err(CpError::UnsupportedEffect(CpEffect::Delegate as u8)),
-        }
-    }
-
-    pub(crate) fn prepare_route_decision_from_plan(
-        &self,
-        rv_id: RendezvousId,
-        lane: LaneId,
-        eff_index: EffIndex,
-        tag: u8,
-        plan: HandlePlan,
-        metrics: TransportSnapshot,
-        transport_ctx: crate::transport::context::ContextSnapshot,
-    ) -> Result<RouteDecisionHandle, CpError> {
-        match plan {
-            HandlePlan::Dynamic { .. } => {
-                let policy_id = plan.dynamic_components().map(|(id, _)| id).unwrap_or(0);
-                let scope = plan.scope();
-                if scope.is_none() {
-                    return Err(CpError::PolicyAbort { reason: policy_id });
-                }
-                let resolution =
-                    self.resolve_dynamic_plan(rv_id, None, lane, eff_index, tag, metrics, transport_ctx)?;
-                match resolution {
-                    DynamicResolution::RouteArm { arm } => Ok(RouteDecisionHandle::new(scope, arm)),
-                    _ => Err(CpError::PolicyAbort { reason: policy_id }),
-                }
-            }
-            HandlePlan::None | HandlePlan::Static { .. } => {
-                Err(CpError::UnsupportedEffect(CpEffect::Delegate as u8))
-            }
+            PolicyMode::Static => Err(CpError::UnsupportedEffect(CpEffect::Delegate as u8)),
         }
     }
 
@@ -1972,9 +1757,9 @@ where
         &self,
         rv_id: RendezvousId,
         cp_sid: SessionId,
-        cp_lane: LaneId,
-        view: crate::control::cap::HandleView<'_, SpliceIntentKind>,
-        generation: Option<Gen>,
+        cp_lane: Lane,
+        view: crate::control::cap::mint::HandleView<'_, SpliceIntentKind>,
+        generation: Option<Generation>,
     ) -> Result<(), CpError> {
         let handle = *view.handle();
 
@@ -1995,7 +1780,7 @@ where
         if let Some(header_gen) = generation
             && header_gen != operands.new_gen
         {
-            return Err(CpError::Splice(CpSpliceError::GenerationMismatch));
+            return Err(CpError::Splice(SpliceError::GenerationMismatch));
         }
 
         if rv_id != operands.src_rv {
@@ -2006,7 +1791,7 @@ where
         }
 
         if let Some(rv) = self.get_local(&operands.src_rv) {
-            let lane = crate::rendezvous::Lane::new(operands.src_lane.raw());
+            let lane = Lane::new(operands.src_lane.raw());
             let current = rv.caps_mask_for_lane(lane);
             if !current.allows(CpEffect::SpliceBegin) || !current.allows(CpEffect::SpliceCommit) {
                 let required = current
@@ -2017,7 +1802,7 @@ where
         }
 
         if let Some(rv) = self.get_local(&operands.dst_rv) {
-            let lane = crate::rendezvous::Lane::new(operands.dst_lane.raw());
+            let lane = Lane::new(operands.dst_lane.raw());
             let current = rv.caps_mask_for_lane(lane);
             if !current.allows(CpEffect::SpliceAck) {
                 let required = current.union(CapsMask::empty().with(CpEffect::SpliceAck));
@@ -2039,9 +1824,9 @@ where
         &self,
         rv_id: RendezvousId,
         cp_sid: SessionId,
-        cp_lane: LaneId,
-        view: crate::control::cap::HandleView<'_, SpliceAckKind>,
-        generation: Option<Gen>,
+        cp_lane: Lane,
+        view: crate::control::cap::mint::HandleView<'_, SpliceAckKind>,
+        generation: Option<Generation>,
     ) -> Result<(), CpError> {
         let handle = *view.handle();
 
@@ -2062,7 +1847,7 @@ where
         if let Some(header_gen) = generation
             && header_gen != operands.new_gen
         {
-            return Err(CpError::Splice(CpSpliceError::GenerationMismatch));
+            return Err(CpError::Splice(SpliceError::GenerationMismatch));
         }
 
         if rv_id != operands.dst_rv {
@@ -2073,17 +1858,24 @@ where
         }
 
         if let Some(rv) = self.get_local(&operands.dst_rv) {
-            let lane = crate::rendezvous::Lane::new(operands.dst_lane.raw());
+            let lane = Lane::new(operands.dst_lane.raw());
             let current = rv.caps_mask_for_lane(lane);
             if !current.allows(CpEffect::SpliceAck) {
                 let mut ctx = self.with_control_mut(
                     |core| -> Result<
-                        LeaseBundleContext<'cfg, 'cfg, T, U, C, crate::control::cap::EpochInit>,
+                        LeaseBundleContext<
+                            'cfg,
+                            'cfg,
+                            T,
+                            U,
+                            C,
+                            crate::control::cap::mint::EpochTbl,
+                        >,
                         CpError,
                     > {
                         let mut ctx = Self::init_bundle_context(core, operands.dst_rv);
                         if let Some(rv) = core.locals.get_mut(&operands.dst_rv) {
-                            let lane = crate::rendezvous::Lane::new(operands.dst_lane.raw());
+                            let lane = Lane::new(operands.dst_lane.raw());
                             let current = rv.caps_mask_for_lane(lane);
                             if !current.allows(CpEffect::SpliceAck) {
                                 if let Some(caps) = ctx.caps_mut() {
@@ -2119,20 +1911,20 @@ where
         &self,
         rv_id: RendezvousId,
         cp_sid: SessionId,
-        cp_lane: LaneId,
-        view: crate::control::cap::HandleView<'_, CancelKind>,
-        generation: Option<Gen>,
+        cp_lane: Lane,
+        view: crate::control::cap::mint::HandleView<'_, CancelKind>,
+        generation: Option<Generation>,
     ) -> Result<(), CpError> {
         let (sid_raw, lane_raw) = *view.handle();
         let handle_sid = SessionId::new(sid_raw);
-        let handle_lane = LaneId::new(lane_raw as u32);
+        let handle_lane = Lane::new(lane_raw as u32);
         if handle_sid != cp_sid || handle_lane != cp_lane {
             return Err(CpError::Authorisation {
                 effect: CpEffect::CancelBegin,
             });
         }
 
-        let effect_gen = generation.unwrap_or(Gen::ZERO);
+        let effect_gen = generation.unwrap_or(Generation::ZERO);
         self.run_effect(rv_id, CpCommand::cancel_begin(cp_sid, cp_lane))?;
         self.run_effect(rv_id, CpCommand::cancel_ack(cp_sid, cp_lane, effect_gen))
     }
@@ -2141,20 +1933,20 @@ where
         &self,
         rv_id: RendezvousId,
         cp_sid: SessionId,
-        cp_lane: LaneId,
-        view: crate::control::cap::HandleView<'_, CancelAckKind>,
-        generation: Option<Gen>,
+        cp_lane: Lane,
+        view: crate::control::cap::mint::HandleView<'_, CancelAckKind>,
+        generation: Option<Generation>,
     ) -> Result<(), CpError> {
         let (sid_raw, lane_raw) = *view.handle();
         let handle_sid = SessionId::new(sid_raw);
-        let handle_lane = LaneId::new(lane_raw as u32);
+        let handle_lane = Lane::new(lane_raw as u32);
         if handle_sid != cp_sid || handle_lane != cp_lane {
             return Err(CpError::Authorisation {
                 effect: CpEffect::CancelAck,
             });
         }
 
-        let effect_gen = generation.unwrap_or(Gen::ZERO);
+        let effect_gen = generation.unwrap_or(Generation::ZERO);
         self.run_effect(rv_id, CpCommand::cancel_ack(cp_sid, cp_lane, effect_gen))
     }
 
@@ -2162,11 +1954,11 @@ where
         &self,
         rv_id: RendezvousId,
         cp_sid: SessionId,
-        cp_lane: LaneId,
-        view: crate::control::cap::HandleView<'_, CheckpointKind>,
+        cp_lane: Lane,
+        view: crate::control::cap::mint::HandleView<'_, CheckpointKind>,
     ) -> Result<(), CpError> {
         let (sid_raw, lane_raw) = *view.handle();
-        if SessionId::new(sid_raw) != cp_sid || LaneId::new(lane_raw as u32) != cp_lane {
+        if SessionId::new(sid_raw) != cp_sid || Lane::new(lane_raw as u32) != cp_lane {
             return Err(CpError::Authorisation {
                 effect: CpEffect::Checkpoint,
             });
@@ -2179,18 +1971,18 @@ where
         &self,
         rv_id: RendezvousId,
         cp_sid: SessionId,
-        cp_lane: LaneId,
-        view: crate::control::cap::HandleView<'_, CommitKind>,
-        generation: Option<Gen>,
+        cp_lane: Lane,
+        view: crate::control::cap::mint::HandleView<'_, CommitKind>,
+        generation: Option<Generation>,
     ) -> Result<(), CpError> {
         let (sid_raw, lane_raw) = *view.handle();
-        if SessionId::new(sid_raw) != cp_sid || LaneId::new(lane_raw as u32) != cp_lane {
+        if SessionId::new(sid_raw) != cp_sid || Lane::new(lane_raw as u32) != cp_lane {
             return Err(CpError::Authorisation {
                 effect: CpEffect::Commit,
             });
         }
 
-        let effect_gen = generation.unwrap_or(Gen::ZERO);
+        let effect_gen = generation.unwrap_or(Generation::ZERO);
         self.run_effect(rv_id, CpCommand::commit(cp_sid, cp_lane, effect_gen))
     }
 
@@ -2198,18 +1990,18 @@ where
         &self,
         rv_id: RendezvousId,
         cp_sid: SessionId,
-        cp_lane: LaneId,
-        view: crate::control::cap::HandleView<'_, RollbackKind>,
-        generation: Option<Gen>,
+        cp_lane: Lane,
+        view: crate::control::cap::mint::HandleView<'_, RollbackKind>,
+        generation: Option<Generation>,
     ) -> Result<(), CpError> {
         let (sid_raw, lane_raw) = *view.handle();
-        if SessionId::new(sid_raw) != cp_sid || LaneId::new(lane_raw as u32) != cp_lane {
+        if SessionId::new(sid_raw) != cp_sid || Lane::new(lane_raw as u32) != cp_lane {
             return Err(CpError::Authorisation {
                 effect: CpEffect::Rollback,
             });
         }
 
-        let effect_gen = generation.unwrap_or(Gen::ZERO);
+        let effect_gen = generation.unwrap_or(Generation::ZERO);
         self.run_effect(rv_id, CpCommand::rollback(cp_sid, cp_lane, effect_gen))
     }
 
@@ -2222,9 +2014,9 @@ where
     pub(crate) fn dispatch_typed_control_frame<'cluster, K>(
         &'cluster self,
         rv_id: RendezvousId,
-        frame: crate::control::ControlFrame<'_, K>,
-        generation: Option<Gen>,
-    ) -> Result<Option<crate::control::CapRegisteredToken<'cluster, K>>, CpError>
+        frame: crate::control::handle::frame::ControlFrame<'_, K>,
+        generation: Option<Generation>,
+    ) -> Result<Option<crate::control::cap::typed_tokens::CapRegisteredToken<'cluster, K>>, CpError>
     where
         K: ResourceKind,
         'cfg: 'cluster,
@@ -2249,7 +2041,7 @@ where
                 );
                 bag.with_token(|token_ref, _tail| {
                     let cp_sid = token_ref.sid();
-                    let cp_lane = LaneId::new(token_ref.lane().raw());
+                    let cp_lane = Lane::new(token_ref.lane().raw());
                     let view = token_ref.as_view().map_err(|_| CpError::Authorisation {
                         effect: CpEffect::SpliceBegin,
                     })?;
@@ -2265,7 +2057,7 @@ where
                 );
                 bag.with_token(|token_ref, _tail| {
                     let cp_sid = token_ref.sid();
-                    let cp_lane = LaneId::new(token_ref.lane().raw());
+                    let cp_lane = Lane::new(token_ref.lane().raw());
                     let view = token_ref.as_view().map_err(|_| CpError::Authorisation {
                         effect: CpEffect::SpliceAck,
                     })?;
@@ -2279,7 +2071,7 @@ where
                 );
                 bag.with_token(|token_ref, _tail| {
                     let cp_sid = token_ref.sid();
-                    let cp_lane = LaneId::new(token_ref.lane().raw());
+                    let cp_lane = Lane::new(token_ref.lane().raw());
                     let view = token_ref.as_view().map_err(|_| CpError::Authorisation {
                         effect: CpEffect::CancelBegin,
                     })?;
@@ -2293,7 +2085,7 @@ where
                 );
                 bag.with_token(|token_ref, _tail| {
                     let cp_sid = token_ref.sid();
-                    let cp_lane = LaneId::new(token_ref.lane().raw());
+                    let cp_lane = Lane::new(token_ref.lane().raw());
                     let view = token_ref.as_view().map_err(|_| CpError::Authorisation {
                         effect: CpEffect::CancelAck,
                     })?;
@@ -2307,7 +2099,7 @@ where
                 );
                 bag.with_token(|token_ref, _tail| {
                     let cp_sid = token_ref.sid();
-                    let cp_lane = LaneId::new(token_ref.lane().raw());
+                    let cp_lane = Lane::new(token_ref.lane().raw());
                     let view = token_ref.as_view().map_err(|_| CpError::Authorisation {
                         effect: CpEffect::Checkpoint,
                     })?;
@@ -2321,7 +2113,7 @@ where
                 );
                 bag.with_token(|token_ref, _tail| {
                     let cp_sid = token_ref.sid();
-                    let cp_lane = LaneId::new(token_ref.lane().raw());
+                    let cp_lane = Lane::new(token_ref.lane().raw());
                     let view = token_ref.as_view().map_err(|_| CpError::Authorisation {
                         effect: CpEffect::Commit,
                     })?;
@@ -2335,7 +2127,7 @@ where
                 );
                 bag.with_token(|token_ref, _tail| {
                     let cp_sid = token_ref.sid();
-                    let cp_lane = LaneId::new(token_ref.lane().raw());
+                    let cp_lane = Lane::new(token_ref.lane().raw());
                     let view = token_ref.as_view().map_err(|_| CpError::Authorisation {
                         effect: CpEffect::Rollback,
                     })?;
@@ -2349,7 +2141,7 @@ where
             LoadBeginKind::TAG | LoadCommitKind::TAG => {
                 // Management session load tokens do not require additional control effects.
             }
-            // External control kinds (defined in hibana-quic, etc.) are simple markers
+            // External control kinds (defined in adapter crates, etc.) are simple markers
             // that don't require control-plane dispatch beyond token registration.
             // Examples: AcceptHookKind (0xE0), ServerZeroRttReplayReportKind (0xE1)
             _ => {}
@@ -2358,22 +2150,13 @@ where
         Ok(Some(registered))
     }
 
-    /// Number of registered Rendezvous instances (local + remote).
-    pub fn len(&self) -> usize {
-        // SAFETY: Read-only access to core fields
-        unsafe {
-            let core = &*self.control.get();
-            core.locals.len() + core.remotes.len()
-        }
-    }
-
     /// Initialize session effects from global protocol projection.
     ///
     /// This method wires the EffectEnvelope (produced by interpret_eff_list) into
     /// the Rendezvous control-plane state. The envelope contains:
     /// - Control-plane effects (CpEffect) to pre-configure
     /// - Tap events to emit during execution
-    /// - Resource handles (from CapToken<K>) for control operations
+    /// - Resource handles (from `GenericCapToken<K>`) for control operations
     ///
     /// Phase2: This enables the "Global → Local → Rendezvous" pipeline where
     /// the global protocol's Eff tree is projected into runtime state tables.
@@ -2387,17 +2170,17 @@ where
     /// # Errors
     ///
     /// Returns `CpError::RendezvousMismatch` if the Rendezvous ID is not registered.
-    pub fn init_session_effects<const ROLE: u8, LocalSteps, Mint>(
+    pub(crate) fn init_session_effects<'prog, const ROLE: u8, LocalSteps, Mint>(
         &self,
         rv_id: RendezvousId,
         sid: SessionId,
-        lane: crate::rendezvous::Lane,
-        program: &'static crate::g::RoleProgram<'static, ROLE, LocalSteps, Mint>,
+        lane: Lane,
+        program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
     ) -> Result<(), CpError>
     where
-        Mint: crate::control::cap::MintConfigMarker,
+        Mint: crate::control::cap::mint::MintConfigMarker,
     {
-        let core = unsafe { &*self.control.get() };
+        let core = unsafe { &*self.control_ref_ptr() };
 
         if !core.locals.is_registered(&rv_id) {
             return Err(CpError::RendezvousMismatch {
@@ -2415,13 +2198,12 @@ where
             actual: 0,
         })?;
 
-        rv.install_scope_regions(ROLE, program.scope_atlas_view());
         if rv.is_session_registered(sid) {
             return Ok(());
         }
 
         let envelope = crate::control::cluster::effects::interpret_eff_list(program.eff_list());
-        rv.reset_control_plan(lane);
+        rv.reset_policy(lane);
         let mut control_marker_count = 0u32;
         for marker in envelope.controls() {
             rv.initialise_control_marker(lane, marker);
@@ -2429,7 +2211,7 @@ where
         }
 
         let cp_sid = crate::control::types::SessionId::new(sid.raw());
-        let cp_lane = crate::control::types::LaneId::new(lane.raw());
+        let cp_lane = crate::control::types::Lane::new(lane.raw());
 
         let mut applied_effects = 0u32;
         for effect in envelope.cp_effects() {
@@ -2443,8 +2225,13 @@ where
         let mut caps_mask_acc = CapsMask::empty();
         for descriptor in envelope.resources() {
             resource_events = resource_events.saturating_add(1);
-            rv.register_control_plan(lane, descriptor.eff_index, descriptor.tag, descriptor.plan)?;
-            if let Some(mask) = session_caps_mask_for_tag(descriptor.tag, sid, lane) {
+            rv.register_policy(
+                lane,
+                descriptor.eff_index(),
+                descriptor.tag(),
+                descriptor.policy(),
+            )?;
+            if let Some(mask) = session_caps_mask_for_tag(descriptor.tag(), sid, lane) {
                 caps_mask_acc = caps_mask_acc.union(mask);
             }
         }
@@ -2466,7 +2253,11 @@ where
 
         if applied_effects > 0 {
             let ts = rv.now32();
-            crate::observe::push(crate::observe::EffectInit::new(ts, sid.raw(), applied_effects));
+            crate::observe::core::push(crate::observe::events::EffectInit::new(
+                ts,
+                sid.raw(),
+                applied_effects,
+            ));
         }
 
         Ok(())
@@ -2480,7 +2271,7 @@ where
                 };
                 let sid = envelope
                     .sid
-                    .ok_or(CpError::Splice(CpSpliceError::InvalidSession))?;
+                    .ok_or(CpError::Splice(SpliceError::InvalidSession))?;
                 self.with_control_mut(|core| {
                     let begin_result = core.splice_state.begin(sid, operands);
                     let (intent, ack) = begin_result?;
@@ -2500,7 +2291,7 @@ where
                 };
                 let sid = envelope
                     .sid
-                    .ok_or(CpError::Splice(CpSpliceError::InvalidSession))?;
+                    .ok_or(CpError::Splice(SpliceError::InvalidSession))?;
 
                 let expected_ack = envelope.ack.unwrap_or_else(|| operands.ack(sid));
 
@@ -2508,7 +2299,7 @@ where
                     let ack = core.splice_state.acknowledge(sid)?;
 
                     if ack != expected_ack {
-                        return Err(CpError::Splice(CpSpliceError::GenerationMismatch));
+                        return Err(CpError::Splice(SpliceError::GenerationMismatch));
                     }
 
                     let dispatch = CpCommand::splice_commit(sid, operands).with_ack(ack);
@@ -2524,18 +2315,13 @@ where
                 }
                 let sid = envelope
                     .sid
-                    .ok_or(CpError::Splice(CpSpliceError::InvalidSession))?;
+                    .ok_or(CpError::Splice(SpliceError::InvalidSession))?;
 
                 self.with_control_mut(|core| core.splice_state.commit(sid, envelope.ack))?;
                 Ok(PendingEffect::None)
             }
             _ => Ok(PendingEffect::None),
         }
-    }
-
-    /// Returns true if no Rendezvous instances are registered.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 }
 
@@ -2554,46 +2340,20 @@ where
         set
     }
 
-    fn collect_claim_links(token: &CapToken) -> DelegationChildSet {
-        let mut set = DelegationChildSet::new();
-        match token.resource_tag() {
-            SpliceIntentKind::TAG => {
-                if let Ok(handle) = SpliceIntentKind::decode_handle(token.handle_bytes()) {
-                    set.push(RendezvousId::new(handle.src_rv));
-                    set.push(RendezvousId::new(handle.dst_rv));
-                }
-            }
-            SpliceAckKind::TAG => {
-                if let Ok(handle) = SpliceAckKind::decode_handle(token.handle_bytes()) {
-                    set.push(RendezvousId::new(handle.src_rv));
-                    set.push(RendezvousId::new(handle.dst_rv));
-                }
-            }
-            RerouteKind::TAG => {
-                if let Ok(handle) = RerouteKind::decode_handle(token.handle_bytes()) {
-                    set.push(RendezvousId::new(handle.src_rv));
-                    set.push(RendezvousId::new(handle.dst_rv));
-                }
-            }
-            _ => {}
-        }
-        set
-    }
-
     fn init_delegation_children(
-        core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::EpochInit, MAX_RV>,
-        graph: &mut LeaseGraph<'cfg, DelegationLeaseSpec<T, U, C, crate::control::cap::EpochInit>>,
+        core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
+        graph: &mut LeaseGraph<
+            'cfg,
+            DelegationLeaseSpec<T, U, C, crate::control::cap::mint::EpochTbl>,
+        >,
         parent: RendezvousId,
         links: &DelegationChildSet,
     ) -> Result<(), LeaseGraphError> {
-        let table_ptr = NonNull::from(&mut core.delegated_ports);
         for child in links.iter() {
             if child == parent {
                 continue;
             }
-            match graph.add_child_with_bundle_config(&mut core.locals, parent, child, |child_ctx| {
-                child_ctx.set_delegation(DelegationGraphContext::with_table(table_ptr));
-            }) {
+            match graph.add_child_with_bundle_config(&mut core.locals, parent, child, |_| {}) {
                 Ok(()) | Err(LeaseGraphError::DuplicateId) => {}
                 Err(err) => return Err(err),
             }
@@ -2604,7 +2364,7 @@ where
     fn populate_mgmt_links<State>(
         &self,
         rv_id: RendezvousId,
-        sid: crate::rendezvous::SessionId,
+        sid: SessionId,
         seed: &mut MgmtSeed<State>,
     ) where
         State: crate::runtime::mgmt::ManagerState,
@@ -2632,8 +2392,8 @@ where
     }
 
     fn init_mgmt_children(
-        core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::EpochInit, MAX_RV>,
-        graph: &mut LeaseGraph<'cfg, MgmtLeaseSpec<T, U, C, crate::control::cap::EpochInit>>,
+        core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
+        graph: &mut LeaseGraph<'cfg, MgmtLeaseSpec<T, U, C, crate::control::cap::mint::EpochTbl>>,
         parent: RendezvousId,
         links: &DelegationChildSet,
     ) -> Result<(), LeaseGraphError> {
@@ -2649,21 +2409,28 @@ where
         Ok(())
     }
 
-    fn take_mgmt_manager(&self, rv_id: RendezvousId) -> MgmtManager {
+    pub(crate) fn take_mgmt_manager(
+        &self,
+        rv_id: RendezvousId,
+    ) -> Manager<AwaitBegin, { SLOT_COUNT }> {
         self.with_control_mut(|core| {
-            core.mgmt_managers.remove(&rv_id).unwrap_or_else(|| {
-                Manager::<Cold, { crate::rendezvous::SLOT_COUNT }>::new().into_await_begin()
-            })
+            core.mgmt_managers
+                .remove(&rv_id)
+                .unwrap_or_else(|| Manager::<Cold, { SLOT_COUNT }>::new().into_await_begin())
         })
     }
 
-    fn store_mgmt_manager(&self, rv_id: RendezvousId, manager: MgmtManager) {
+    pub(crate) fn store_mgmt_manager(
+        &self,
+        rv_id: RendezvousId,
+        manager: Manager<AwaitBegin, { SLOT_COUNT }>,
+    ) {
         self.with_control_mut(|core| {
             let _ = core.mgmt_managers.insert(rv_id, manager);
         });
     }
 
-    /// Attach a cursor endpoint for the specified role with transport binding.
+    /// Attach a projected endpoint for the specified role with transport binding.
     ///
     /// The binding parameter enables flow operations to automatically invoke
     /// transport operations (e.g., STREAM writes). Use `NoBinding` when the
@@ -2672,20 +2439,20 @@ where
     /// This method acquires all active lanes defined in the program's choreography.
     /// For `g::par` programs, multiple ports are acquired automatically.
     /// For single-lane programs, only lane 0 is acquired.
-    pub fn attach_cursor<'lease, const ROLE: u8, LocalSteps, Mint, B>(
+    pub(crate) fn attach_endpoint<'lease, 'prog, const ROLE: u8, LocalSteps, Mint, B>(
         &'lease self,
         rv_id: RendezvousId,
-        sid: crate::rendezvous::SessionId,
-        program: &'static crate::g::RoleProgram<'static, ROLE, LocalSteps, Mint>,
+        sid: SessionId,
+        program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
         binding: B,
     ) -> Result<
-        crate::endpoint::CursorEndpoint<
+        crate::endpoint::cursor::CursorEndpoint<
             'cfg,
             ROLE,
             T,
             U,
             C,
-            crate::control::cap::EpochInit,
+            crate::control::cap::mint::EpochTbl,
             MAX_RV,
             Mint,
             B,
@@ -2696,7 +2463,7 @@ where
         'cfg: 'lease,
         'lease: 'cfg,
         B: crate::binding::BindingSlot,
-        Mint: crate::control::cap::MintConfigMarker,
+        Mint: crate::control::cap::mint::MintConfigMarker,
     {
         use crate::global::role_program::MAX_LANES;
 
@@ -2707,61 +2474,63 @@ where
         // Ensure at least lane 0 is active (every endpoint needs at least one lane)
         active_lanes[0] = true;
 
-        // Find primary lane (first active logical lane, always 0 due to above)
-        let primary_logical_lane = active_lanes
-            .iter()
-            .position(|&active| active)
-            .unwrap_or(0);
+        // Find primary lane (first active lane, always 0 due to above)
+        let primary_lane_index = active_lanes.iter().position(|&active| active).unwrap_or(0);
 
-        // Acquire ports and guards for all active lanes
-        // Use binder.map_lane() to translate logical lanes to physical lanes
-        let mut ports: [Option<crate::rendezvous::Port<'cfg, T, crate::control::cap::EpochInit>>;
-            MAX_LANES] = [None, None, None, None, None, None, None, None];
+        // Acquire ports and guards for all active lanes directly on the
+        // choreography-defined rendezvous lanes.
+        let mut ports: [Option<
+            crate::rendezvous::port::Port<'cfg, T, crate::control::cap::mint::EpochTbl>,
+        >; MAX_LANES] = [None, None, None, None, None, None, None, None];
         let mut guards: [Option<LaneGuard<'cfg, T, U, C>>; MAX_LANES] =
             [None, None, None, None, None, None, None, None];
 
-        let mut primary_lane_key: Option<crate::control::cap::LaneKey<'cfg>> = None;
-        let mut primary_physical_lane: Option<crate::rendezvous::Lane> = None;
+        let mut primary_brand: Option<crate::control::brand::Guard<'cfg>> = None;
+        let mut primary_lane: Option<Lane> = None;
 
         for logical_idx in 0..MAX_LANES {
             if active_lanes[logical_idx] {
-                // Ask the binder for the physical lane mapping
-                let physical_lane = binding.map_lane(logical_idx as u8);
+                let physical_lane = Lane::new(logical_idx as u32);
                 self.init_session_effects(rv_id, sid, physical_lane, program)?;
                 let lease = self.lease_port(rv_id, sid, physical_lane, ROLE)?;
-                let (port, guard, lane_key) = lease
-                    .into_port_guard()
-                    .map_err(AttachError::Rendezvous)?;
+                let (port, guard, brand) =
+                    lease.into_port_guard().map_err(AttachError::Rendezvous)?;
                 ports[logical_idx] = Some(port);
                 guards[logical_idx] = Some(guard);
 
-                // Store primary lane's key for Owner creation
-                if logical_idx == primary_logical_lane {
-                    primary_lane_key = Some(lane_key);
-                    primary_physical_lane = Some(physical_lane);
+                // Store primary lane's rendezvous brand for Owner creation
+                if logical_idx == primary_lane_index {
+                    primary_brand = Some(brand);
+                    primary_lane = Some(physical_lane);
                 }
             }
         }
 
-        let lane_key = primary_lane_key.expect("primary lane key must be acquired");
-        let primary_wire_lane =
-            primary_physical_lane.expect("primary physical lane must be acquired");
+        let brand = primary_brand.expect("primary lane brand must be acquired");
+        let primary_wire_lane = primary_lane.expect("primary lane must be acquired");
 
-        let owner = crate::control::cap::Owner::new(lane_key);
-        let epoch = crate::control::cap::EndpointEpoch::new();
+        let owner = crate::control::cap::mint::Owner::new(brand);
+        let epoch = crate::control::cap::mint::EndpointEpoch::new();
 
-        // SessionControlCtx uses primary physical lane for control operations
+        // SessionControlCtx uses the primary endpoint lane for control operations
+        let liveness_policy = self.with_control_mut(|core| {
+            core.locals
+                .get_mut(&rv_id)
+                .map(|rv| rv.liveness_policy())
+                .unwrap_or_default()
+        });
         let control = crate::endpoint::control::SessionControlCtx::new(
             rv_id,
             primary_wire_lane,
             Some(self),
+            liveness_policy,
             None,
         );
 
-        Ok(crate::endpoint::CursorEndpoint::from_parts(
+        Ok(crate::endpoint::cursor::CursorEndpoint::from_parts(
             ports,
             guards,
-            primary_logical_lane,
+            primary_lane_index,
             sid,
             owner,
             epoch,
@@ -2773,11 +2542,42 @@ where
     }
 
     #[inline]
+    pub(crate) fn enter<'lease, 'prog, const ROLE: u8, LocalSteps, Mint, B>(
+        &'lease self,
+        rv_id: RendezvousId,
+        sid: SessionId,
+        program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
+        binding: B,
+    ) -> Result<
+        crate::endpoint::Endpoint<
+            'cfg,
+            ROLE,
+            T,
+            U,
+            C,
+            crate::control::cap::mint::EpochTbl,
+            MAX_RV,
+            Mint,
+            B,
+        >,
+        AttachError,
+    >
+    where
+        'cfg: 'lease,
+        'lease: 'cfg,
+        B: crate::binding::BindingSlot,
+        Mint: crate::control::cap::mint::MintConfigMarker,
+    {
+        self.attach_endpoint(rv_id, sid, program, binding)
+            .map(crate::endpoint::Endpoint::from_cursor)
+    }
+
+    #[inline]
     fn init_bundle_context_with_needs(
-        core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::EpochInit, MAX_RV>,
+        core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
         rv_id: RendezvousId,
         needs: LeaseFacetNeeds,
-    ) -> LeaseBundleContext<'cfg, 'cfg, T, U, C, crate::control::cap::EpochInit>
+    ) -> LeaseBundleContext<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>
     where
         T: crate::transport::Transport,
         U: crate::runtime::consts::LabelUniverse,
@@ -2788,9 +2588,9 @@ where
     }
 
     fn init_bundle_context(
-        core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::EpochInit, MAX_RV>,
+        core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
         rv_id: RendezvousId,
-    ) -> LeaseBundleContext<'cfg, 'cfg, T, U, C, crate::control::cap::EpochInit>
+    ) -> LeaseBundleContext<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>
     where
         T: crate::transport::Transport,
         U: crate::runtime::consts::LabelUniverse,
@@ -2799,63 +2599,16 @@ where
         Self::init_bundle_context_with_needs(core, rv_id, LeaseFacetNeeds::all())
     }
 
-    pub async fn init_mgmt<'lease, Mint>(
-        &'lease self,
-        rv_id: RendezvousId,
-        _sid: crate::rendezvous::SessionId,
-        lane: crate::rendezvous::Lane,
-        endpoint: CursorEndpoint<
-            'lease,
-            { session::ROLE_CLUSTER },
-            T,
-            U,
-            C,
-            crate::control::cap::EpochInit,
-            MAX_RV,
-            Mint,
-        >,
-    ) -> Result<
-        (
-            CursorEndpoint<
-                'lease,
-                { session::ROLE_CLUSTER },
-                T,
-                U,
-                C,
-                crate::control::cap::EpochInit,
-                MAX_RV,
-                Mint,
-            >,
-            MgmtSeed<AwaitBegin>,
-        ),
-        MgmtError,
-    >
-    where
-        'cfg: 'lease,
-        'lease: 'cfg,
-        Mint: MintConfigMarker,
-    {
-        let _ = lane;
-        let manager_state = self.take_mgmt_manager(rv_id);
-        match session::drive_cluster(manager_state, endpoint).await {
-            Ok(ok) => Ok(ok),
-            Err((err, manager)) => {
-                self.store_mgmt_manager(rv_id, manager);
-                Err(err)
-            }
-        }
-    }
-
-    pub fn drive_mgmt(
+    pub(crate) fn drive_mgmt(
         &self,
         rv_id: RendezvousId,
-        sid: crate::rendezvous::SessionId,
+        sid: SessionId,
         mut seed: MgmtSeed<AwaitBegin>,
     ) -> Result<Reply, MgmtError> {
         self.populate_mgmt_links(rv_id, sid, &mut seed);
         let mgmt_links = Self::collect_mgmt_links(&seed);
         let mgmt_needs =
-            <MgmtLeaseSpec<T, U, C, crate::control::cap::EpochInit> as LeaseSpecFacetNeeds>::facet_needs();
+            <MgmtLeaseSpec<T, U, C, crate::control::cap::mint::EpochTbl> as LeaseSpecFacetNeeds>::facet_needs();
 
         let drive_result = self.drive::<MgmtAutomaton<AwaitBegin>, _, _>(
             rv_id,
@@ -2880,6 +2633,22 @@ where
         Ok(reply)
     }
 
+    pub(crate) fn on_decision_boundary(&self, rv_id: RendezvousId) -> Result<(), MgmtError> {
+        let mut manager = self.take_mgmt_manager(rv_id);
+        let result = self.with_control_mut(|core| {
+            let mut lease = match core.locals.lease::<FullSpec>(rv_id) {
+                Ok(lease) => lease,
+                Err(_) => return Err(MgmtError::InvalidTransition),
+            };
+            lease.with_rendezvous(|rv| {
+                let facet = rv.slot_facet();
+                facet.on_decision_boundary(rv, &mut manager)
+            })
+        });
+        self.store_mgmt_manager(rv_id, manager);
+        result
+    }
+
     /// Drive a delegation automaton rooted at `rv_id` using a LeaseGraph.
     ///
     /// The `root_builder` closure constructs the root facet for the graph from the
@@ -2896,14 +2665,14 @@ where
         graph_init: Init,
     ) -> Result<A::Output, DelegationDriveError<A::Error>>
     where
-        A: ControlAutomaton<T, U, C, crate::control::cap::EpochInit>,
+        A: ControlAutomaton<T, U, C, crate::control::cap::mint::EpochTbl>,
         A::GraphSpec: LeaseSpec<NodeId = RendezvousId> + 'cfg,
         Root: FnOnce(
-            &mut ControlCore<'cfg, T, U, C, crate::control::cap::EpochInit, MAX_RV>,
+            &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
             RendezvousId,
-        ) -> FacetContext<'cfg, A::GraphSpec>,
+        ) -> <<A::GraphSpec as LeaseSpec>::Facet as LeaseFacet>::Context<'cfg>,
         Init: FnOnce(
-            &mut ControlCore<'cfg, T, U, C, crate::control::cap::EpochInit, MAX_RV>,
+            &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
             &mut LeaseGraph<'cfg, A::GraphSpec>,
         ) -> Result<(), crate::control::lease::graph::LeaseGraphError>,
     {
@@ -2963,7 +2732,7 @@ where
 {
     fn drop(&mut self) {
         // SAFETY: `core` is owned by `self` and we're in `drop`, so no aliases exist.
-        let core = unsafe { &*self.control.get() };
+        let core = unsafe { &*self.control_ref_ptr() };
         debug_assert_eq!(
             core.active_leases.get(),
             0,
@@ -2972,16 +2741,17 @@ where
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::control::cap::ResourceKind;
-    use crate::control::types::{Gen, LaneId, SessionId};
+    use crate::control::cap::mint::ResourceKind;
+    use crate::control::types::{Generation, Lane, SessionId};
     use crate::runtime::config::CounterClock;
     use crate::runtime::consts::DefaultLabelUniverse;
     use crate::transport::{Transport, TransportError, wire::Payload};
     use core::future::{Ready, ready};
+    use std::boxed::Box;
+    use std::string::String;
 
     // Dummy transport for testing
     struct DummyTransport;
@@ -3004,7 +2774,7 @@ mod tests {
             = Ready<Result<Payload<'a>, Self::Error>>
         where
             Self: 'a;
-        type Metrics = crate::transport::NoopMetrics;
+        type Metrics = ();
 
         fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
@@ -3025,11 +2795,25 @@ mod tests {
         fn recv<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
             ready(Err(TransportError::Failed))
         }
+
+        fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
+
+        fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
+
+        fn recv_label_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<u8> {
+            None
+        }
+
+        fn metrics(&self) -> Self::Metrics {
+            ()
+        }
+
+        fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
     }
 
     #[test]
     fn session_caps_mask_yields_checkpoint_permission() {
-        let lane = crate::rendezvous::Lane::new(0);
+        let lane = Lane::new(0);
         let mask = super::session_caps_mask_for_tag(
             crate::control::cap::resource_kinds::CheckpointKind::TAG,
             SessionId::new(42),
@@ -3053,14 +2837,14 @@ mod tests {
 
     #[test]
     fn run_effect_respects_caps_mask_before_dispatch() {
-        use crate::observe::TapEvent;
+        use crate::control::cap::mint::CapsMask;
+        use crate::observe::core::TapEvent;
         use crate::runtime::{config::Config, consts::RING_EVENTS};
-        use crate::{control::cap::CapsMask, rendezvous::Lane as RaLane};
         let mut tap_buf = [TapEvent::default(); RING_EVENTS];
         let mut slab = [0u8; 256];
         let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = crate::rendezvous::Rendezvous::from_config(config, DummyTransport);
-        rendezvous.set_caps_mask_for_lane(RaLane::new(0), CapsMask::empty());
+        let rendezvous = Rendezvous::from_config(config, DummyTransport);
+        rendezvous.set_caps_mask_for_lane(crate::control::types::Lane::new(0), CapsMask::empty());
         let rv_id = rendezvous.id();
 
         let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
@@ -3069,7 +2853,7 @@ mod tests {
             .expect("register rendezvous");
 
         let sid = SessionId::new(7);
-        let lane = LaneId::new(0);
+        let lane = Lane::new(0);
         let envelope = CpCommand::checkpoint(sid, lane);
 
         let err = cluster.run_effect(rv_id, envelope).unwrap_err();
@@ -3084,9 +2868,9 @@ mod tests {
     #[test]
     fn dispatch_splice_ack_tracks_masks_and_rolls_back() {
         use crate::{
-            control::cap::{CapsMask, HandleView, resource_kinds::SpliceHandle},
-            observe::TapEvent,
-            rendezvous::Lane as RaLane,
+            control::cap::mint::{CapsMask, HandleView},
+            control::cap::resource_kinds::SpliceHandle,
+            observe::core::TapEvent,
             runtime::{config::Config, consts::RING_EVENTS},
         };
 
@@ -3095,12 +2879,12 @@ mod tests {
         let tap_src = Box::leak(Box::new([TapEvent::default(); RING_EVENTS]));
         let slab_src = Box::leak(Box::new([0u8; 256]));
         let src_cfg = Config::new(tap_src, slab_src);
-        let src_rendezvous = crate::rendezvous::Rendezvous::from_config(src_cfg, DummyTransport);
+        let src_rendezvous = Rendezvous::from_config(src_cfg, DummyTransport);
 
         let tap_dst = Box::leak(Box::new([TapEvent::default(); RING_EVENTS]));
         let slab_dst = Box::leak(Box::new([0u8; 256]));
         let dst_cfg = Config::new(tap_dst, slab_dst);
-        let dst_rendezvous = crate::rendezvous::Rendezvous::from_config(dst_cfg, DummyTransport);
+        let dst_rendezvous = Rendezvous::from_config(dst_cfg, DummyTransport);
 
         let src_id = cluster
             .add_rendezvous(src_rendezvous)
@@ -3109,19 +2893,22 @@ mod tests {
             .add_rendezvous(dst_rendezvous)
             .expect("register dst");
 
-        let src_lane = LaneId::new(0);
-        let dst_lane = LaneId::new(1);
+        let src_lane = Lane::new(0);
+        let dst_lane = Lane::new(1);
 
         cluster.with_control_mut(|core| {
             let src_rv = core.locals.get_mut(&src_id).unwrap();
             src_rv.set_caps_mask_for_lane(
-                RaLane::new(src_lane.raw()),
+                crate::control::types::Lane::new(src_lane.raw()),
                 CapsMask::empty()
                     .with(CpEffect::SpliceBegin)
                     .with(CpEffect::SpliceCommit),
             );
             let dst_rv = core.locals.get_mut(&dst_id).unwrap();
-            dst_rv.set_caps_mask_for_lane(RaLane::new(dst_lane.raw()), CapsMask::empty());
+            dst_rv.set_caps_mask_for_lane(
+                crate::control::types::Lane::new(dst_lane.raw()),
+                CapsMask::empty(),
+            );
         });
 
         let ack_caps = CapsMask::empty().with(CpEffect::SpliceAck);
@@ -3132,8 +2919,8 @@ mod tests {
             dst_id,
             src_lane,
             dst_lane,
-            Gen::new(0),
-            Gen::new(1),
+            Generation::new(0),
+            Generation::new(1),
             0,
             0,
         );
@@ -3143,17 +2930,17 @@ mod tests {
             .expect("begin effect");
         assert!(matches!(pending, PendingEffect::Dispatch { .. }));
 
-        let handle = SpliceHandle::new(
-            src_id.raw(),
-            dst_id.raw(),
-            src_lane.raw() as u16,
-            dst_lane.raw() as u16,
-            operands.old_gen.raw(),
-            operands.new_gen.raw(),
-            operands.seq_tx,
-            operands.seq_rx,
-            0,
-        );
+        let handle = SpliceHandle {
+            src_rv: src_id.raw(),
+            dst_rv: dst_id.raw(),
+            src_lane: src_lane.raw() as u16,
+            dst_lane: dst_lane.raw() as u16,
+            old_gen: operands.old_gen.raw(),
+            new_gen: operands.new_gen.raw(),
+            seq_tx: operands.seq_tx,
+            seq_rx: operands.seq_rx,
+            flags: 0,
+        };
         let handle_bytes = handle.encode();
         let view = HandleView::decode(&handle_bytes, ack_caps).expect("decode view");
 
@@ -3163,9 +2950,12 @@ mod tests {
 
         cluster.with_control_mut(|core| {
             let rv = core.locals.get_mut(&dst_id).unwrap();
-            let mask = rv.caps_mask_for_lane(RaLane::new(dst_lane.raw()));
+            let mask = rv.caps_mask_for_lane(crate::control::types::Lane::new(dst_lane.raw()));
             assert!(mask.allows(CpEffect::SpliceAck));
-            rv.set_caps_mask_for_lane(RaLane::new(dst_lane.raw()), CapsMask::empty());
+            rv.set_caps_mask_for_lane(
+                crate::control::types::Lane::new(dst_lane.raw()),
+                CapsMask::empty(),
+            );
         });
 
         let sid_fail = SessionId::new(9);
@@ -3174,8 +2964,8 @@ mod tests {
             dst_id,
             src_lane,
             dst_lane,
-            Gen::new(1),
-            Gen::new(2),
+            Generation::new(1),
+            Generation::new(2),
             0,
             0,
         );
@@ -3186,20 +2976,23 @@ mod tests {
 
         cluster.with_control_mut(|core| {
             let rv = core.locals.get_mut(&dst_id).unwrap();
-            rv.set_caps_mask_for_lane(RaLane::new(dst_lane.raw()), CapsMask::empty());
+            rv.set_caps_mask_for_lane(
+                crate::control::types::Lane::new(dst_lane.raw()),
+                CapsMask::empty(),
+            );
         });
 
-        let failure_handle = SpliceHandle::new(
-            src_id.raw(),
-            dst_id.raw(),
-            src_lane.raw() as u16,
-            dst_lane.raw() as u16,
-            operands_fail.old_gen.raw(),
-            operands_fail.new_gen.raw(),
-            operands_fail.seq_tx,
-            operands_fail.seq_rx,
-            0,
-        );
+        let failure_handle = SpliceHandle {
+            src_rv: src_id.raw(),
+            dst_rv: dst_id.raw(),
+            src_lane: src_lane.raw() as u16,
+            dst_lane: dst_lane.raw() as u16,
+            old_gen: operands_fail.old_gen.raw(),
+            new_gen: operands_fail.new_gen.raw(),
+            seq_tx: operands_fail.seq_tx,
+            seq_rx: operands_fail.seq_rx,
+            flags: 0,
+        };
         let failure_bytes = failure_handle.encode();
         let failure_view =
             HandleView::decode(&failure_bytes, ack_caps).expect("decode failure view");
@@ -3211,8 +3004,8 @@ mod tests {
             matches!(
                 err,
                 CpError::Splice(
-                    crate::control::SpliceError::LaneMismatch
-                        | crate::control::SpliceError::InvalidState
+                    crate::control::cluster::error::SpliceError::LaneMismatch
+                        | crate::control::cluster::error::SpliceError::InvalidState
                 )
             ),
             "error was {:?}",
@@ -3221,9 +3014,177 @@ mod tests {
 
         cluster.with_control_mut(|core| {
             let rv = core.locals.get_mut(&dst_id).unwrap();
-            let mask = rv.caps_mask_for_lane(RaLane::new(dst_lane.raw()));
+            let mask = rv.caps_mask_for_lane(crate::control::types::Lane::new(dst_lane.raw()));
             assert_eq!(mask.bits(), CapsMask::empty().bits());
         });
     }
 
+    #[test]
+    fn resolver_defer_for_splice_or_reroute_is_policy_abort() {
+        use crate::control::cap::resource_kinds::{RerouteKind, SpliceIntentKind};
+        use crate::observe::core::TapEvent;
+        use crate::runtime::{config::Config, consts::RING_EVENTS};
+
+        fn defer_resolution(
+            _cluster: &crate::substrate::SessionCluster<
+                '_,
+                DummyTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                4,
+            >,
+            _ctx: ResolverContext,
+        ) -> Result<DynamicResolution, ResolverError> {
+            Ok(DynamicResolution::Defer { retry_hint: 2 })
+        }
+
+        let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+        let mut tap = [TapEvent::default(); RING_EVENTS];
+        let mut slab = [0u8; 256];
+        let config = Config::new(&mut tap, &mut slab);
+        let rendezvous = Rendezvous::from_config(config, DummyTransport);
+        let rv_id = rendezvous.id();
+        cluster
+            .add_rendezvous(rendezvous)
+            .expect("register rendezvous");
+
+        let policy_id = 913u16;
+        let eff_index = EffIndex::new(7);
+        let policy = crate::global::const_dsl::PolicyMode::dynamic(policy_id);
+
+        cluster.with_resolvers_mut(|core| {
+            assert!(
+                core.table
+                    .insert(
+                        DynamicResolverKey::new(rv_id, eff_index, SpliceIntentKind::TAG),
+                        DynamicResolverEntry {
+                            resolver: defer_resolution,
+                            policy,
+                            scope_trace: None,
+                        },
+                    )
+                    .is_ok()
+            );
+            assert!(
+                core.table
+                    .insert(
+                        DynamicResolverKey::new(rv_id, eff_index, RerouteKind::TAG),
+                        DynamicResolverEntry {
+                            resolver: defer_resolution,
+                            policy,
+                            scope_trace: None,
+                        },
+                    )
+                    .is_ok()
+            );
+        });
+
+        let splice_err = cluster
+            .resolve_dynamic_policy(
+                rv_id,
+                None,
+                Lane::new(0),
+                eff_index,
+                SpliceIntentKind::TAG,
+                crate::transport::TransportSnapshot::default(),
+                [0; 4],
+                crate::transport::context::PolicyAttrs::new(),
+            )
+            .expect_err("splice defer must be rejected");
+        assert_eq!(splice_err, CpError::PolicyAbort { reason: policy_id });
+
+        let reroute_err = cluster
+            .resolve_dynamic_policy(
+                rv_id,
+                None,
+                Lane::new(0),
+                eff_index,
+                RerouteKind::TAG,
+                crate::transport::TransportSnapshot::default(),
+                [0; 4],
+                crate::transport::context::PolicyAttrs::new(),
+            )
+            .expect_err("reroute defer must be rejected");
+        assert_eq!(reroute_err, CpError::PolicyAbort { reason: policy_id });
+    }
+
+    #[test]
+    fn resolver_context_has_no_internal_coordinate_getters() {
+        fn compact_ws(src: &str) -> String {
+            let mut out = String::with_capacity(src.len());
+            let mut prev_space = false;
+            for ch in src.chars() {
+                if ch.is_whitespace() {
+                    if !prev_space {
+                        out.push(' ');
+                        prev_space = true;
+                    }
+                } else {
+                    out.push(ch);
+                    prev_space = false;
+                }
+            }
+            out
+        }
+
+        fn resolver_context_impl_body(src: &str) -> &str {
+            let impl_anchor = src
+                .find("impl ResolverContext {")
+                .expect("ResolverContext impl must exist");
+            let open_brace = src[impl_anchor..]
+                .find('{')
+                .map(|idx| impl_anchor + idx)
+                .expect("ResolverContext impl opening brace");
+            let mut depth = 0usize;
+            for (offset, ch) in src[open_brace..].char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            let end = open_brace + offset;
+                            return &src[open_brace + 1..end];
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            panic!("ResolverContext impl closing brace");
+        }
+
+        let src = include_str!("core.rs");
+        let impl_body = compact_ws(resolver_context_impl_body(src));
+        assert!(
+            !impl_body.contains("fn eff_index("),
+            "ResolverContext must not expose eff_index getter"
+        );
+        assert!(
+            !impl_body.contains("fn scope_id("),
+            "ResolverContext must not expose scope_id getter"
+        );
+        assert!(
+            !impl_body.contains("fn scope_trace("),
+            "ResolverContext must not expose scope_trace getter"
+        );
+        assert!(
+            !impl_body.contains("fn rv_id("),
+            "ResolverContext must not expose rv_id getter"
+        );
+        assert!(
+            !impl_body.contains("fn session("),
+            "ResolverContext must not expose session getter"
+        );
+        assert!(
+            !impl_body.contains("fn lane("),
+            "ResolverContext must not expose lane getter"
+        );
+        assert!(
+            !impl_body.contains("fn tag("),
+            "ResolverContext must not expose tag getter"
+        );
+        assert!(
+            !impl_body.contains("fn metrics("),
+            "ResolverContext must not expose metrics getter"
+        );
+    }
 }

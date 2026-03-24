@@ -5,22 +5,29 @@
 
 use core::{cell::UnsafeCell, marker::PhantomData};
 
-use super::{
-    error::SpliceError,
-    types::{Generation, Lane, RendezvousId, SessionId},
-};
-use crate::rendezvous::types::LocalSpliceInvariant;
+use super::error::SpliceError;
 use crate::{
     control::{
-        automaton::distributed::{SpliceAck, SpliceIntent},
+        automaton::distributed::SpliceIntent,
         automaton::txn::InAcked,
-        types::One,
+        types::{
+            AtMostOnceCommit, Generation, Lane, NoCrossLaneAliasing, One, RendezvousId, SessionId,
+        },
     },
     runtime::consts::LANES_MAX,
 };
 
+/// Invariant marker for local splice transactions evaluated inside a rendezvous.
+///
+/// Guarantees that lane ownership is unique (no cross-lane aliasing) and that
+/// commits happen at most once per transaction.
+pub(super) struct LocalSpliceInvariant;
+
+impl NoCrossLaneAliasing for LocalSpliceInvariant {}
+impl AtMostOnceCommit for LocalSpliceInvariant {}
+
 /// Pending splice state tracked per lane.
-pub struct PendingSplice {
+pub(super) struct PendingSplice {
     sid: SessionId,
     target: Generation,
     state: InAcked<LocalSpliceInvariant, One>,
@@ -28,7 +35,7 @@ pub struct PendingSplice {
 }
 
 impl PendingSplice {
-    pub fn new(
+    pub(super) fn new(
         sid: SessionId,
         target: Generation,
         state: InAcked<LocalSpliceInvariant, One>,
@@ -43,28 +50,8 @@ impl PendingSplice {
     }
 
     #[inline]
-    pub fn sid(&self) -> SessionId {
-        self.sid
-    }
-
-    #[inline]
-    pub fn target(&self) -> Generation {
-        self.target
-    }
-
-    #[inline]
-    pub fn state(&self) -> &InAcked<LocalSpliceInvariant, One> {
-        &self.state
-    }
-
-    #[inline]
-    pub fn into_state(self) -> InAcked<LocalSpliceInvariant, One> {
-        self.state
-    }
-
-    #[inline]
     #[allow(clippy::type_complexity)]
-    pub fn into_parts(
+    pub(super) fn into_parts(
         self,
     ) -> (
         SessionId,
@@ -73,16 +60,6 @@ impl PendingSplice {
         Option<(u32, u32)>,
     ) {
         (self.sid, self.target, self.state, self.fences)
-    }
-
-    #[inline]
-    pub fn fences(&self) -> Option<(u32, u32)> {
-        self.fences
-    }
-
-    #[inline]
-    pub fn take_fences(&mut self) -> Option<(u32, u32)> {
-        self.fences.take()
     }
 }
 
@@ -96,18 +73,10 @@ impl core::fmt::Debug for PendingSplice {
     }
 }
 
-/// Snapshot representation used for read-only inspection.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PendingSpliceSnapshot {
-    pub sid: SessionId,
-    pub target: Generation,
-    pub fences: Option<(u32, u32)>,
-}
-
 /// Local splice state table (per-lane).
 ///
 /// Tracks pending splice operations within a single Rendezvous instance.
-pub struct SpliceStateTable {
+pub(super) struct SpliceStateTable {
     lanes: UnsafeCell<[Option<PendingSplice>; LANES_MAX as usize]>,
     _no_send_sync: PhantomData<*mut ()>,
 }
@@ -119,7 +88,7 @@ impl Default for SpliceStateTable {
 }
 
 impl SpliceStateTable {
-    pub const fn new() -> Self {
+    pub(super) const fn new() -> Self {
         Self {
             lanes: UnsafeCell::new([const { None }; LANES_MAX as usize]),
             _no_send_sync: PhantomData,
@@ -127,7 +96,7 @@ impl SpliceStateTable {
     }
 
     /// Begin a splice operation.
-    pub fn begin(&self, lane: Lane, pending: PendingSplice) -> Result<(), SpliceError> {
+    pub(super) fn begin(&self, lane: Lane, pending: PendingSplice) -> Result<(), SpliceError> {
         unsafe {
             let slots = &mut *self.lanes.get();
             let idx = lane.raw() as usize;
@@ -140,7 +109,7 @@ impl SpliceStateTable {
     }
 
     /// Take (consume) pending splice.
-    pub fn take(&self, lane: Lane) -> Option<PendingSplice> {
+    pub(super) fn take(&self, lane: Lane) -> Option<PendingSplice> {
         unsafe {
             let slots = &mut *self.lanes.get();
             let idx = lane.raw() as usize;
@@ -148,44 +117,17 @@ impl SpliceStateTable {
         }
     }
 
-    /// Peek at pending splice (non-consuming).
-    pub fn peek(&self, lane: Lane) -> Option<PendingSpliceSnapshot> {
-        unsafe {
-            let slots = &*self.lanes.get();
-            slots[lane.raw() as usize]
-                .as_ref()
-                .map(|pending| PendingSpliceSnapshot {
-                    sid: pending.sid,
-                    target: pending.target,
-                    fences: pending.fences,
-                })
-        }
-    }
-
     /// Reset lane (clear pending splice).
-    pub fn reset_lane(&self, lane: Lane) {
+    pub(super) fn reset_lane(&self, lane: Lane) {
         unsafe {
             (*self.lanes.get())[lane.raw() as usize] = None;
-        }
-    }
-
-    pub fn abort_sid(&self, sid: SessionId) {
-        unsafe {
-            let slots = &mut *self.lanes.get();
-            for slot in slots.iter_mut() {
-                if let Some(pending) = slot
-                    && pending.sid == sid
-                {
-                    *slot = None;
-                }
-            }
         }
     }
 
     /// Commit a pending splice operation.
     ///
     /// This validates that the pending splice matches the given sid and clears it.
-    pub fn commit(&self, lane: Lane, sid: SessionId) -> Result<(), SpliceError> {
+    pub(super) fn commit(&self, lane: Lane, sid: SessionId) -> Result<(), SpliceError> {
         unsafe {
             let slots = &mut *self.lanes.get();
             let idx = lane.raw() as usize;
@@ -203,7 +145,7 @@ impl SpliceStateTable {
 
 /// Distributed splice entry (internal).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct DistributedSpliceEntry {
+pub(super) struct DistributedSpliceEntry {
     pub(crate) intent: SpliceIntent,
     pub(crate) phase: DistributedSplicePhase,
 }
@@ -224,16 +166,15 @@ impl DistributedSpliceEntry {
 
 /// Distributed splice phase.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DistributedSplicePhase {
+pub(super) enum DistributedSplicePhase {
     IntentSent,
-    AckReceived(SpliceAck),
 }
 
 /// Table for tracking pending distributed splices.
 ///
 /// Uses a small fixed-size array to track splice operations that
 /// span multiple Rendezvous instances. Keyed by (sid, src_rv, dst_rv).
-pub struct DistributedSpliceTable {
+pub(super) struct DistributedSpliceTable {
     entries: UnsafeCell<[Option<DistributedSpliceEntry>; 8]>, // Max 8 concurrent distributed splices
     _no_send_sync: PhantomData<*mut ()>,
 }
@@ -246,7 +187,7 @@ impl Default for DistributedSpliceTable {
 }
 
 impl DistributedSpliceTable {
-    pub const fn new() -> Self {
+    pub(super) const fn new() -> Self {
         Self {
             entries: UnsafeCell::new([None; 8]),
             _no_send_sync: PhantomData,
@@ -254,7 +195,7 @@ impl DistributedSpliceTable {
     }
 
     /// Insert a new splice intent.
-    pub fn insert(&self, intent: SpliceIntent) -> Result<(), SpliceError> {
+    pub(super) fn insert(&self, intent: SpliceIntent) -> Result<(), SpliceError> {
         unsafe {
             let entries = &mut *self.entries.get();
             for slot in entries.iter_mut() {
@@ -270,28 +211,8 @@ impl DistributedSpliceTable {
         }
     }
 
-    /// Update with received ack.
-    pub fn update_with_ack(&self, ack: &SpliceAck) -> Result<(), SpliceError> {
-        unsafe {
-            let entries = &mut *self.entries.get();
-            for slot in entries.iter_mut() {
-                if let Some(entry) = slot
-                    && entry.sid() == SessionId::new(ack.sid)
-                    && entry.src_rv() == ack.src_rv
-                    && entry.dst_rv() == ack.dst_rv
-                {
-                    entry.phase = DistributedSplicePhase::AckReceived(*ack);
-                    return Ok(());
-                }
-            }
-            Err(SpliceError::UnknownSession {
-                sid: SessionId::new(ack.sid),
-            })
-        }
-    }
-
     /// Take (consume) a distributed splice entry.
-    pub(crate) fn take(
+    pub(super) fn take(
         &self,
         sid: SessionId,
         src_rv: RendezvousId,
@@ -309,20 +230,6 @@ impl DistributedSpliceTable {
                 }
             }
             None
-        }
-    }
-
-    /// Clear all entries for a session.
-    pub fn clear(&self, sid: SessionId) {
-        unsafe {
-            let entries = &mut *self.entries.get();
-            for slot in entries.iter_mut() {
-                if let Some(entry) = slot
-                    && entry.sid() == sid
-                {
-                    *slot = None;
-                }
-            }
         }
     }
 }

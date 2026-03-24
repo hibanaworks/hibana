@@ -8,32 +8,28 @@
 
 use super::{
     program::Program,
-    steps::{self, ProjectRole},
-    typestate::{PhaseCursor, RoleTypestate, ScopeAtlasView, ScopeRegionIter},
+    steps::ProjectRole,
+    typestate::{PhaseCursor, RoleTypestate},
 };
-use crate::control::cap::{CapShot, DefaultMintConfig, MintConfigMarker};
-use crate::g::{KnownRole, Role};
+use crate::control::cap::mint::{CapShot, MintConfig, MintConfigMarker};
 use crate::{
     eff::{self, EffIndex, EffKind},
-    global::const_dsl::{
-        ControlMarker, ControlPlanMarker, EffList, HandlePlan, ScopeEvent, ScopeId, ScopeKind,
-        ScopeMarker,
-    },
-    observe::ScopeTrace,
+    global::const_dsl::{EffList, ScopeEvent, ScopeId, ScopeKind, ScopeMarker},
+    global::{KnownRole, Role},
 };
 
 const MAX_STEPS: usize = eff::meta::MAX_EFF_NODES;
 /// Maximum number of parallel phases in a program.
 const MAX_PHASES: usize = 32;
 /// Maximum number of concurrent lanes (matches RoleLaneSet::LANE_COUNT).
-pub const MAX_LANES: usize = 8;
+pub(crate) const MAX_LANES: usize = 8;
 
 /// Steps for a single lane within a phase.
 ///
 /// References a contiguous slice of `LocalStep` entries within the RoleProgram's
 /// `local_steps` array. Empty lanes have `len == 0`.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct LaneSteps {
+pub(crate) struct LaneSteps {
     /// Start offset into the RoleProgram's `local_steps` array.
     pub start: usize,
     /// Number of steps in this lane.
@@ -52,7 +48,7 @@ impl LaneSteps {
 
 /// Route arm guard for a phase (outermost route scope only).
 #[derive(Clone, Copy, Debug)]
-pub struct PhaseRouteGuard {
+pub(crate) struct PhaseRouteGuard {
     pub scope: ScopeId,
     pub arm: u8,
 }
@@ -88,7 +84,7 @@ impl PhaseRouteGuard {
 ///   Lane 0: [C's steps...]
 /// ```
 #[derive(Clone, Copy, Debug)]
-pub struct Phase {
+pub(crate) struct Phase {
     /// Steps for each lane (up to MAX_LANES).
     /// Inactive lanes have `LaneSteps::EMPTY`.
     pub lanes: [LaneSteps; MAX_LANES],
@@ -113,35 +109,11 @@ impl Phase {
         min_start: 0,
         route_guard: PhaseRouteGuard::EMPTY,
     };
-
-    /// Whether this phase has any active lanes.
-    #[inline(always)]
-    pub const fn is_empty(&self) -> bool {
-        self.lane_mask == 0
-    }
-
-    /// Count of active lanes in this phase.
-    #[inline]
-    pub const fn active_lane_count(&self) -> usize {
-        let mut mask = self.lane_mask;
-        let mut count = 0usize;
-        while mask != 0 {
-            count += (mask & 1) as usize;
-            mask >>= 1;
-        }
-        count
-    }
-
-    /// Get steps for a specific lane.
-    #[inline(always)]
-    pub const fn lane(&self, lane: u8) -> LaneSteps {
-        self.lanes[lane as usize]
-    }
 }
 
 /// Local direction of a step in the projected program.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LocalDirection {
+pub(crate) enum LocalDirection {
     /// Placeholder used for uninitialised entries.
     None,
     /// Role sends a message to another participant.
@@ -154,7 +126,7 @@ pub enum LocalDirection {
 
 /// Metadata describing a single local transition for a role.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LocalStep {
+pub(crate) struct LocalStep {
     eff_index: EffIndex,
     label: u8,
     peer: u8,
@@ -169,7 +141,7 @@ pub struct LocalStep {
 impl LocalStep {
     /// Empty placeholder used to prefill the backing array.
     pub const EMPTY: Self = Self {
-        eff_index: 0,
+        eff_index: EffIndex::ZERO,
         label: 0,
         peer: 0,
         resource: None,
@@ -263,30 +235,6 @@ impl LocalStep {
         self.peer
     }
 
-    /// Direction (send/recv) carried by this step.
-    #[inline(always)]
-    pub const fn direction(&self) -> LocalDirection {
-        self.direction
-    }
-
-    /// Whether the step corresponds to a control-plane label.
-    #[inline(always)]
-    pub const fn is_control(&self) -> bool {
-        self.is_control
-    }
-
-    /// Shot discipline attached to the control message (if any).
-    #[inline(always)]
-    pub const fn shot(&self) -> Option<CapShot> {
-        self.shot
-    }
-
-    /// Optional resource identifier for control-plane coordination.
-    #[inline(always)]
-    pub const fn resource(&self) -> Option<u8> {
-        self.resource
-    }
-
     /// True when this step is a send transition.
     #[inline(always)]
     pub const fn is_send(&self) -> bool {
@@ -310,201 +258,184 @@ impl LocalStep {
     pub const fn lane(&self) -> u8 {
         self.lane
     }
-
-    /// Lightweight view of this step for label/flag reconstruction.
-    #[inline(always)]
-    pub const fn meta(&self) -> LocalStepMeta {
-        LocalStepMeta {
-            eff_index: self.eff_index,
-            label: self.label,
-            peer: self.peer,
-            direction: self.direction,
-            is_control: self.is_control,
-            lane: self.lane,
-        }
-    }
-}
-
-/// Compact metadata for label/flags reconstruction without carrying full steps.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LocalStepMeta {
-    pub eff_index: EffIndex,
-    pub label: u8,
-    pub peer: u8,
-    pub direction: LocalDirection,
-    pub is_control: bool,
-    pub lane: u8,
-}
-
-impl LocalStepMeta {
-    pub const EMPTY: Self = Self {
-        eff_index: 0,
-        label: 0,
-        peer: 0,
-        direction: LocalDirection::None,
-        is_control: false,
-        lane: 0,
-    };
 }
 
 /// Role-specific view over a global effect list.
 ///
 /// ## Phased Multi-Lane Architecture
 ///
-/// `RoleProgram` supports parallel execution through phases:
-/// - **phases**: Array of `Phase` structures, each representing a fork-join barrier
-/// - **local_steps**: Flat array of all steps; phases index into this array
-///
-/// For non-parallel programs (most common case), there is a single phase with
-/// all steps on Lane 0.
-///
-/// For `g::par` programs, steps are distributed across phases and lanes according
-/// to the choreography structure.
+/// `RoleProgram` is the thin, typed owner of a role projection. Runtime
+/// metadata such as local-step tables, phase splits, and typestate graphs are
+/// materialized on demand so that stack-local `project(&program)` values remain
+/// small and cheap to move.
 #[derive(Clone, Copy)]
-pub struct RoleProgram<'prog, const ROLE: u8, LocalSteps = steps::StepNil, Mint = DefaultMintConfig>
+pub(crate) struct ProjectedRoleLayout {
+    local_steps: [LocalStep; MAX_STEPS],
+    local_len: usize,
+    phases: [Phase; MAX_PHASES],
+    phase_len: usize,
+}
+
+impl ProjectedRoleLayout {
+    #[inline(always)]
+    pub(crate) const fn len(&self) -> usize {
+        self.local_len
+    }
+
+    #[inline(always)]
+    pub(crate) fn steps(&self) -> &[LocalStep] {
+        &self.local_steps[..self.local_len]
+    }
+
+    #[inline(always)]
+    pub(crate) const fn phase_count(&self) -> usize {
+        self.phase_len
+    }
+
+    #[inline(always)]
+    pub(crate) fn phases(&self) -> &[Phase] {
+        &self.phases[..self.phase_len]
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ProjectedRoleData<const ROLE: u8> {
+    layout: ProjectedRoleLayout,
+    typestate: RoleTypestate<ROLE>,
+}
+
+impl<const ROLE: u8> ProjectedRoleData<ROLE> {
+    #[inline(always)]
+    pub(crate) const fn len(&self) -> usize {
+        self.layout.len()
+    }
+
+    #[inline(always)]
+    pub(crate) fn steps(&self) -> &[LocalStep] {
+        self.layout.steps()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn phase_count(&self) -> usize {
+        self.layout.phase_count()
+    }
+
+    #[inline(always)]
+    pub(crate) fn phases(&self) -> &[Phase] {
+        self.layout.phases()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn typestate(&self) -> &RoleTypestate<ROLE> {
+        &self.typestate
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct RoleProgram<'prog, const ROLE: u8, LocalSteps, Mint = MintConfig>
 where
     Mint: MintConfigMarker,
 {
     eff_list: &'prog EffList,
-    lease_budget: crate::control::LeaseGraphBudget,
-    local_steps: [LocalStep; MAX_STEPS],
-    local_metas: [LocalStepMeta; MAX_STEPS],
-    meta_by_eff: [LocalStepMeta; MAX_STEPS],
-    local_len: usize,
-    /// Phased structure for multi-lane parallel execution.
-    phases: [Phase; MAX_PHASES],
-    phase_len: usize,
-    typestate: RoleTypestate<ROLE>,
+    lease_budget: crate::control::lease::planner::LeaseGraphBudget,
     mint: Mint,
     _local_steps: core::marker::PhantomData<LocalSteps>,
-}
-
-/// Control plan metadata exposed to runtime initialisation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ControlPlanInfo {
-    pub eff_index: EffIndex,
-    pub label: u8,
-    pub plan: HandlePlan,
-    pub scope_id: ScopeId,
-    /// Packed `{range,nest}` trace derived from the typestate atlas (if any).
-    pub scope_trace: Option<ScopeTrace>,
-    /// Canonical control resource tag attached to the send atom (if any).
-    pub resource_tag: Option<u8>,
-}
-
-pub struct ControlPlanIter<'prog, const ROLE: u8> {
-    eff_list: &'prog EffList,
-    markers: &'prog [ControlPlanMarker],
-    idx: usize,
-    cursor: PhaseCursor<ROLE>,
-}
-
-impl<'prog, const ROLE: u8> ControlPlanIter<'prog, ROLE> {
-    fn new(eff_list: &'prog EffList, cursor: PhaseCursor<ROLE>) -> Self {
-        Self {
-            eff_list,
-            markers: eff_list.control_plans(),
-            idx: 0,
-            cursor,
-        }
-    }
-}
-
-impl<'prog, const ROLE: u8> Iterator for ControlPlanIter<'prog, ROLE> {
-    type Item = ControlPlanInfo;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.idx >= self.markers.len() {
-            return None;
-        }
-        let marker = self.markers[self.idx];
-        self.idx += 1;
-
-        let offset = marker.offset;
-        let eff_index = offset as EffIndex;
-        let node = self
-            .eff_list
-            .as_slice()
-            .get(offset)
-            .unwrap_or_else(|| panic!("control plan offset {} out of bounds", offset));
-
-        debug_assert!(
-            matches!(node.kind, eff::EffKind::Atom),
-            "control plan offset must reference an atom"
-        );
-
-        let atom = node.atom_data();
-        let label = atom.label;
-        let resource_tag = atom.resource;
-        let scope_id = self
-            .eff_list
-            .scope_id_for_offset(offset)
-            .unwrap_or_else(ScopeId::none);
-        let scope_trace = self
-            .cursor
-            .scope_region_by_id(scope_id)
-            .map(|region| ScopeTrace::new(region.range, region.nest));
-        Some(ControlPlanInfo {
-            eff_index,
-            label,
-            plan: marker.plan.with_scope(scope_id),
-            scope_id,
-            scope_trace,
-            resource_tag,
-        })
-    }
 }
 
 impl<'prog, const ROLE: u8, LocalSteps, Mint> RoleProgram<'prog, ROLE, LocalSteps, Mint>
 where
     Mint: MintConfigMarker,
 {
-    const fn new(
-        eff_list: &'prog EffList,
-        steps: [LocalStep; MAX_STEPS],
-        len: usize,
-        typestate: RoleTypestate<ROLE>,
-        mint: Mint,
-    ) -> Self {
-        let mut metas = [LocalStepMeta::EMPTY; MAX_STEPS];
-        let mut meta_idx = 0usize;
-        while meta_idx < len {
-            metas[meta_idx] = steps[meta_idx].meta();
-            meta_idx += 1;
-        }
-        let mut meta_by_eff = [LocalStepMeta::EMPTY; MAX_STEPS];
-        let mut by_eff_idx = 0usize;
-        while by_eff_idx < len {
-            let meta = metas[by_eff_idx];
-            let eff_idx = meta.eff_index as usize;
-            if eff_idx >= MAX_STEPS {
-                panic!("eff index overflow");
-            }
-            if !matches!(meta_by_eff[eff_idx].direction, LocalDirection::None) {
-                panic!("duplicate eff index in local steps");
-            }
-            meta_by_eff[eff_idx] = meta;
-            by_eff_idx += 1;
-        }
-        let budget = crate::control::LeaseGraphBudget::from_eff_list(eff_list);
+    const fn new(eff_list: &'prog EffList, mint: Mint) -> Self {
+        let budget = crate::control::lease::planner::LeaseGraphBudget::from_eff_list(eff_list);
         budget.validate();
-
-        // Build phases from steps based on lane assignment and g::par scope boundaries
-        let (phases, phase_len) = Self::build_phases(&steps, len, eff_list);
 
         Self {
             eff_list,
             lease_budget: budget,
-            local_steps: steps,
-            local_metas: metas,
-            meta_by_eff,
-            local_len: len,
-            phases,
-            phase_len,
-            typestate,
             mint,
             _local_steps: core::marker::PhantomData,
         }
+    }
+
+    fn layout(&self) -> ProjectedRoleLayout {
+        let (steps, len) = Self::build_local_steps(self.eff_list, self.eff_list.as_slice());
+        let (phases, phase_len) = Self::build_phases(&steps, len, self.eff_list);
+        ProjectedRoleLayout {
+            local_steps: steps,
+            local_len: len,
+            phases,
+            phase_len,
+        }
+    }
+
+    pub(crate) fn projection(&self) -> ProjectedRoleData<ROLE> {
+        ProjectedRoleData {
+            layout: self.layout(),
+            typestate: super::typestate::RoleTypestate::<ROLE>::from_program(self.eff_list),
+        }
+    }
+
+    const fn build_local_steps(
+        program: &EffList,
+        slice: &[eff::EffStruct],
+    ) -> ([LocalStep; MAX_STEPS], usize) {
+        let mut steps = [LocalStep::EMPTY; MAX_STEPS];
+        let mut len = 0usize;
+        let mut idx = 0usize;
+
+        while idx < slice.len() {
+            let node = slice[idx];
+            if matches!(node.kind, EffKind::Atom) {
+                let atom = node.atom_data();
+                let eff_index = EffIndex::from_usize(idx);
+                let shot = if atom.is_control {
+                    match program.control_spec_at(idx) {
+                        Some(spec) => Some(spec.shot),
+                        None => None,
+                    }
+                } else {
+                    None
+                };
+                if atom.from == ROLE && atom.to == ROLE {
+                    steps[len] = LocalStep::local(
+                        eff_index,
+                        ROLE,
+                        atom.label,
+                        atom.resource,
+                        atom.is_control,
+                        shot,
+                        atom.lane,
+                    );
+                    len += 1;
+                } else if atom.from == ROLE {
+                    steps[len] = LocalStep::send(
+                        eff_index,
+                        atom.to,
+                        atom.label,
+                        atom.resource,
+                        atom.is_control,
+                        shot,
+                        atom.lane,
+                    );
+                    len += 1;
+                } else if atom.to == ROLE {
+                    steps[len] = LocalStep::recv(
+                        eff_index,
+                        atom.from,
+                        atom.label,
+                        atom.resource,
+                        atom.is_control,
+                        shot,
+                        atom.lane,
+                    );
+                    len += 1;
+                }
+            }
+            idx += 1;
+        }
+
+        (steps, len)
     }
 
     /// Build phases from steps based on lane assignment and g::par scope boundaries.
@@ -571,9 +502,8 @@ where
         let mut outer_arm = 0u8;
         let mut step_idx = 0usize;
         while step_idx < len {
-            let eff_index = steps[step_idx].eff_index as usize;
-            while marker_idx < scope_markers.len()
-                && scope_markers[marker_idx].offset <= eff_index
+            let eff_index = steps[step_idx].eff_index.as_usize();
+            while marker_idx < scope_markers.len() && scope_markers[marker_idx].offset <= eff_index
             {
                 let marker = scope_markers[marker_idx];
                 if matches!(marker.scope_kind, ScopeKind::Route) {
@@ -731,7 +661,7 @@ where
 
             let seq_start = current_step;
             let mut seq_end = current_step;
-            while seq_end < len && (steps[seq_end].eff_index as usize) < enter_eff {
+            while seq_end < len && steps[seq_end].eff_index.as_usize() < enter_eff {
                 seq_end += 1;
             }
 
@@ -743,7 +673,7 @@ where
 
             let par_start = seq_end;
             let mut par_end = par_start;
-            while par_end < len && (steps[par_end].eff_index as usize) < exit_eff {
+            while par_end < len && steps[par_end].eff_index.as_usize() < exit_eff {
                 par_end += 1;
             }
 
@@ -843,48 +773,25 @@ where
         self.eff_list
     }
 
-    /// Static LeaseGraph capacity requirements inferred from control plans.
+    /// Static LeaseGraph capacity requirements inferred from policy markers.
     #[inline(always)]
-    pub const fn lease_budget(&self) -> crate::control::LeaseGraphBudget {
+    pub(crate) const fn lease_budget(&self) -> crate::control::lease::planner::LeaseGraphBudget {
         self.lease_budget
-    }
-
-    /// Number of local steps participating in this program.
-    #[inline(always)]
-    pub const fn len(&self) -> usize {
-        self.local_len
-    }
-
-    /// Number of phases in this program.
-    #[inline(always)]
-    pub const fn phase_count(&self) -> usize {
-        self.phase_len
-    }
-
-    /// Access a specific phase by index.
-    #[inline(always)]
-    pub const fn phase(&self, index: usize) -> &Phase {
-        &self.phases[index]
-    }
-
-    /// Borrow the phases slice.
-    #[inline(always)]
-    pub fn phases(&self) -> &[Phase] {
-        &self.phases[..self.phase_len]
     }
 
     /// Returns an array indicating which lanes are active in this program.
     ///
     /// A lane is considered active if it has at least one step in any phase.
-    /// This is used by `attach_cursor()` to acquire all necessary lane resources.
+    /// This is used by `SessionCluster::enter()` to acquire all necessary lane resources.
     ///
     /// # Returns
     ///
     /// An array of booleans where `result[i]` is `true` if lane `i` is active.
-    pub fn active_lanes(&self) -> [bool; MAX_LANES] {
+    pub(crate) fn active_lanes(&self) -> [bool; MAX_LANES] {
+        let layout = self.layout();
         let mut active = [false; MAX_LANES];
-        for phase_idx in 0..self.phase_len {
-            let phase = &self.phases[phase_idx];
+        for phase_idx in 0..layout.phase_count() {
+            let phase = &layout.phases[phase_idx];
             for lane_idx in 0..MAX_LANES {
                 if phase.lanes[lane_idx].is_active() {
                     active[lane_idx] = true;
@@ -894,349 +801,233 @@ where
         active
     }
 
-    /// Borrow the projected local steps as a slice.
-    #[inline(always)]
-    pub fn steps(&self) -> &[LocalStep] {
-        &self.local_steps[..self.local_len]
-    }
-
-    /// Lookup minimal metadata for an eff_index (O(1) table lookup).
-    #[inline]
-    pub fn step_meta_for(&self, eff_index: EffIndex) -> Option<LocalStepMeta> {
-        let idx = eff_index as usize;
-        if idx >= MAX_STEPS {
-            return None;
-        }
-        let meta = self.meta_by_eff[idx];
-        if meta.direction == LocalDirection::None {
-            None
-        } else {
-            Some(meta)
-        }
-    }
-
-    /// Iterate over metadata views for all local steps.
-    #[inline]
-    pub fn step_metas(&self) -> impl Iterator<Item = LocalStepMeta> + '_ {
-        self.local_metas[..self.local_len].iter().copied()
-    }
-
-    /// Borrow a table view over local metadata for quick lookup.
-    #[inline(always)]
-    pub fn meta_table(&self) -> LocalMetaTable<'_> {
-        LocalMetaTable {
-            metas: &self.local_metas[..self.local_len],
-            meta_by_eff: &self.meta_by_eff,
-        }
-    }
-
-    /// Iterate over scope regions recorded in the typestate atlas.
-    #[inline]
-    pub fn scope_regions(&self) -> ScopeRegionIter<'_> {
-        self.typestate.scope_regions()
-    }
-
-    /// Borrow a view over the typestate scope atlas for canonical lookups.
-    #[inline(always)]
-    pub fn scope_atlas_view(&self) -> ScopeAtlasView<'_> {
-        self.typestate.scope_atlas_view()
-    }
-
-    /// Whether the projected program is empty for the role.
-    #[inline(always)]
-    pub const fn is_empty(&self) -> bool {
-        self.local_len == 0
-    }
-
-    /// Iterate over scope markers defined at the global level.
-    #[inline(always)]
-    pub fn scope_markers(&self) -> &'prog [ScopeMarker] {
-        self.eff_list.scope_markers()
-    }
-
-    /// Iterate over control markers defined at the global level.
-    #[inline(always)]
-    pub fn control_markers(&self) -> &'prog [ControlMarker] {
-        self.eff_list.control_markers()
-    }
-
-    /// Iterate over control plan metadata (eff_index + plan).
-    #[inline(always)]
-    pub fn control_plans(&self) -> ControlPlanIter<'prog, ROLE> {
-        ControlPlanIter::new(self.eff_list, self.phase_cursor())
-    }
-
-    /// Borrow the synthesized typestate graph.
-    #[inline(always)]
-    pub(crate) const fn typestate(&self) -> &RoleTypestate<ROLE> {
-        &self.typestate
-    }
-
     /// Create a PhaseCursor positioned at the initial node.
     ///
     /// PhaseCursor is the unified cursor type for typestate navigation,
     /// supporting both linear and phase-driven multi-lane execution.
-    #[cfg(feature = "test-utils")]
-    #[inline(always)]
-    pub fn phase_cursor(&'prog self) -> PhaseCursor<ROLE> {
-        PhaseCursor::new(self)
-    }
-
-    /// Create a PhaseCursor positioned at the initial node.
-    #[cfg(not(feature = "test-utils"))]
     #[inline(always)]
     pub(crate) fn phase_cursor(&'prog self) -> PhaseCursor<ROLE> {
         PhaseCursor::new(self)
     }
 
-    /// Total number of local steps tracked for this role.
-    #[inline(always)]
-    pub const fn local_len(&self) -> usize {
-        self.local_len
-    }
-
     /// Mint configuration baked into the RoleProgram.
     #[inline(always)]
-    pub const fn mint_config(&self) -> Mint {
+    pub(crate) const fn mint_config(&self) -> Mint {
         self.mint
     }
 }
 
-/// Immutable view over local step metadata for a role.
-pub struct LocalMetaTable<'a> {
-    metas: &'a [LocalStepMeta],
-    meta_by_eff: &'a [LocalStepMeta; MAX_STEPS],
-}
-
-impl<'a> LocalMetaTable<'a> {
-    /// Iterate over all metadata entries.
-    #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = LocalStepMeta> + '_ {
-        self.metas.iter().copied()
-    }
-
-    /// Lookup metadata by eff_index.
-    #[inline]
-    pub fn get(&self, eff_index: EffIndex) -> Option<LocalStepMeta> {
-        let idx = eff_index as usize;
-        if idx >= MAX_STEPS {
-            return None;
-        }
-        let meta = self.meta_by_eff[idx];
-        if meta.direction == LocalDirection::None {
-            None
-        } else {
-            Some(meta)
-        }
-    }
-}
-
-impl<const ROLE: u8, LocalSteps, Mint> RoleProgram<'static, ROLE, LocalSteps, Mint>
-where
-    Mint: MintConfigMarker,
-{
-    /// Const-friendly accessor for local step metadata.
-    #[inline(always)]
-    pub const fn step_meta(&'static self, idx: usize) -> LocalStep {
-        if idx >= self.local_len {
-            panic!("step index out of bounds");
-        }
-        self.local_steps[idx]
-    }
-
-    /// Accessor for the synthesized typestate graph with `'static` lifetime.
-    #[inline(always)]
-    pub const fn step_graph(&'static self) -> &'static RoleTypestate<ROLE> {
-        &self.typestate
-    }
-}
-
-impl<'prog, const ROLE: u8, LocalSteps, Mint> core::ops::Deref
-    for RoleProgram<'prog, ROLE, LocalSteps, Mint>
-where
-    Mint: MintConfigMarker,
-{
-    type Target = [LocalStep];
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        &self.local_steps[..self.local_len]
-    }
-}
-
-impl<'prog, const ROLE: u8, LocalSteps, Mint> AsRef<[LocalStep]>
-    for RoleProgram<'prog, ROLE, LocalSteps, Mint>
-where
-    Mint: MintConfigMarker,
-{
-    #[inline(always)]
-    fn as_ref(&self) -> &[LocalStep] {
-        &self.local_steps[..self.local_len]
-    }
-}
-
-/// Internal helper shared by const and runtime projection paths.
-const fn build_from_slice_with_mint<const ROLE: u8, LocalSteps, Mint>(
-    program: &'static EffList,
-    slice: &'static [eff::EffStruct],
-    mint: Mint,
-) -> RoleProgram<'static, ROLE, LocalSteps, Mint>
-where
-    Mint: MintConfigMarker,
-{
-    let mut steps = [LocalStep::EMPTY; MAX_STEPS];
-    let mut len = 0usize;
-    let mut idx = 0usize;
-
-    while idx < slice.len() {
-        let node = slice[idx];
-        if matches!(node.kind, EffKind::Atom) {
-            let atom = node.atom_data();
-            let eff_index = idx as EffIndex;
-            let shot = if atom.is_control {
-                match program.control_spec_at(idx) {
-                    Some(spec) => Some(spec.shot),
-                    None => None,
-                }
-            } else {
-                None
-            };
-            if atom.from == ROLE && atom.to == ROLE {
-                steps[len] = LocalStep::local(
-                    eff_index,
-                    ROLE,
-                    atom.label,
-                    atom.resource,
-                    atom.is_control,
-                    shot,
-                    atom.lane,
-                );
-                len += 1;
-            } else if atom.from == ROLE {
-                steps[len] = LocalStep::send(
-                    eff_index,
-                    atom.to,
-                    atom.label,
-                    atom.resource,
-                    atom.is_control,
-                    shot,
-                    atom.lane,
-                );
-                len += 1;
-            } else if atom.to == ROLE {
-                steps[len] = LocalStep::recv(
-                    eff_index,
-                    atom.from,
-                    atom.label,
-                    atom.resource,
-                    atom.is_control,
-                    shot,
-                    atom.lane,
-                );
-                len += 1;
-            }
-        }
-        idx += 1;
-    }
-
-    let typestate = super::typestate::RoleTypestate::<ROLE>::from_static(program);
-
-    RoleProgram::new(program, steps, len, typestate, mint)
-}
-
-/// Project a typed program into the local view for `ROLE` (const context).
-pub const fn project<const ROLE: u8, Steps, Mint>(
-    program: &'static Program<Steps>,
-) -> RoleProgram<'static, ROLE, <Steps as ProjectRole<Role<ROLE>>>::Output, Mint>
+/// Project a typed program into the local view for `ROLE`.
+pub const fn project<'prog, const ROLE: u8, Steps, Mint>(
+    program: &'prog Program<Steps>,
+) -> RoleProgram<'prog, ROLE, <Steps as ProjectRole<Role<ROLE>>>::Output, Mint>
 where
     Role<ROLE>: KnownRole,
     Steps: ProjectRole<Role<ROLE>>,
     Mint: MintConfigMarker,
 {
     let eff = program.eff_list();
-    build_from_slice_with_mint::<ROLE, <Steps as ProjectRole<Role<ROLE>>>::Output, Mint>(
-        eff,
-        eff.as_static_slice(),
-        Mint::INSTANCE,
-    )
+    let _ = super::typestate::RoleTypestate::<ROLE>::from_program(eff);
+    RoleProgram::new(eff, Mint::INSTANCE)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::control::cap::{CapShot, GenericCapToken, resource_kinds::CancelKind};
-    use crate::g::{self, LocalProgram, Msg, Role};
-    use crate::global::steps::{self, StepCons, StepNil};
+    use crate::control::cap::mint::{CapShot, GenericCapToken};
+    use crate::control::cap::resource_kinds::CancelKind;
+    use crate::g::{self, Msg, Role};
+    use crate::global::CanonicalControl;
+    use crate::global::const_dsl::{ScopeEvent, ScopeKind};
+    use crate::global::steps::{self, ProjectRole, SeqSteps, StepConcat, StepCons, StepNil};
 
-    type Client = Role<0>;
-    type Server = Role<1>;
-
-    type StepsGlobal = StepCons<
-        steps::SendStep<Client, Server, Msg<1, ()>, 0>,
-        StepCons<steps::SendStep<Server, Client, Msg<2, ()>, 0>, StepNil>,
-    >;
-
-    const PROTOCOL: Program<StepsGlobal> = g::seq(
-        g::send::<Client, Server, Msg<1, ()>, 0>(),
-        g::send::<Server, Client, Msg<2, ()>, 0>(),
+    const PROTOCOL: Program<
+        SeqSteps<
+            StepCons<steps::SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>,
+            StepCons<steps::SendStep<Role<1>, Role<0>, Msg<2, ()>, 0>, StepNil>,
+        >,
+    > = g::seq(
+        g::send::<Role<0>, Role<1>, Msg<1, ()>, 0>(),
+        g::send::<Role<1>, Role<0>, Msg<2, ()>, 0>(),
     );
 
-    type ClientLocal = LocalProgram<Client, StepsGlobal>;
-    type ServerLocal = LocalProgram<Server, StepsGlobal>;
-
-    const ROLE_ZERO: RoleProgram<'static, 0, ClientLocal> = project::<0, StepsGlobal, _>(&PROTOCOL);
-    const ROLE_ONE: RoleProgram<'static, 1, ServerLocal> = project::<1, StepsGlobal, _>(&PROTOCOL);
+    const ROLE_ZERO: RoleProgram<
+        'static,
+        0,
+        <SeqSteps<
+            StepCons<steps::SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>,
+            StepCons<steps::SendStep<Role<1>, Role<0>, Msg<2, ()>, 0>, StepNil>,
+        > as ProjectRole<Role<0>>>::Output,
+    > = project(&PROTOCOL);
+    const ROLE_ONE: RoleProgram<
+        'static,
+        1,
+        <SeqSteps<
+            StepCons<steps::SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>,
+            StepCons<steps::SendStep<Role<1>, Role<0>, Msg<2, ()>, 0>, StepNil>,
+        > as ProjectRole<Role<1>>>::Output,
+    > = project(&PROTOCOL);
 
     // CancelMsg uses CanonicalControl which requires self-send (From == To)
-    type CancelMsg = Msg<
-        { crate::runtime::consts::LABEL_CANCEL },
-        GenericCapToken<CancelKind>,
-        crate::g::CanonicalControl<CancelKind>,
-    >;
+    const CANCEL_PROGRAM: Program<
+        StepCons<
+            steps::SendStep<
+                Role<0>,
+                Role<0>,
+                Msg<
+                    { crate::runtime::consts::LABEL_CANCEL },
+                    GenericCapToken<CancelKind>,
+                    CanonicalControl<CancelKind>,
+                >,
+                0,
+            >,
+            StepNil,
+        >,
+    > = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { crate::runtime::consts::LABEL_CANCEL },
+            GenericCapToken<CancelKind>,
+            CanonicalControl<CancelKind>,
+        >,
+        0,
+    >();
 
-    // Self-send for CanonicalControl (Client→Client)
-    type CancelSteps = StepCons<steps::SendStep<Client, Client, CancelMsg, 0>, StepNil>;
+    const CANCEL_ROLE: RoleProgram<
+        'static,
+        0,
+        <StepCons<
+            steps::SendStep<
+                Role<0>,
+                Role<0>,
+                Msg<
+                    { crate::runtime::consts::LABEL_CANCEL },
+                    GenericCapToken<CancelKind>,
+                    CanonicalControl<CancelKind>,
+                >,
+                0,
+            >,
+            StepNil,
+        > as ProjectRole<Role<0>>>::Output,
+    > = project(&CANCEL_PROGRAM);
 
-    const CANCEL_PROGRAM: Program<CancelSteps> = g::send::<Client, Client, CancelMsg, 0>();
+    const LOCAL_PROGRAM: Program<
+        StepCons<steps::SendStep<Role<0>, Role<0>, Msg<5, ()>, 0>, StepNil>,
+    > = g::send::<Role<0>, Role<0>, Msg<5, ()>, 0>();
 
-    type CancelLocal = LocalProgram<Client, CancelSteps>;
+    const LOCAL_ROLE: RoleProgram<
+        'static,
+        0,
+        <StepCons<steps::SendStep<Role<0>, Role<0>, Msg<5, ()>, 0>, StepNil> as ProjectRole<
+            Role<0>,
+        >>::Output,
+    > = project(&LOCAL_PROGRAM);
 
-    const CANCEL_ROLE: RoleProgram<'static, 0, CancelLocal> =
-        project::<0, CancelSteps, _>(&CANCEL_PROGRAM);
+    const PREFIX_PROGRAM: Program<
+        StepCons<steps::SendStep<Role<0>, Role<0>, Msg<6, ()>, 0>, StepNil>,
+    > = g::send::<Role<0>, Role<0>, Msg<6, ()>, 0>();
+    const MIDDLE_PROGRAM: Program<
+        StepCons<steps::SendStep<Role<0>, Role<1>, Msg<7, ()>, 0>, StepNil>,
+    > = g::send::<Role<0>, Role<1>, Msg<7, ()>, 0>();
+    const APP_PROGRAM: Program<
+        StepCons<steps::SendStep<Role<1>, Role<0>, Msg<8, ()>, 0>, StepNil>,
+    > = g::send::<Role<1>, Role<0>, Msg<8, ()>, 0>();
+    const CHAIN_PROGRAM: Program<
+        SeqSteps<
+            StepCons<steps::SendStep<Role<0>, Role<0>, Msg<6, ()>, 0>, StepNil>,
+            SeqSteps<
+                StepCons<steps::SendStep<Role<0>, Role<1>, Msg<7, ()>, 0>, StepNil>,
+                StepCons<steps::SendStep<Role<1>, Role<0>, Msg<8, ()>, 0>, StepNil>,
+            >,
+        >,
+    > = g::seq(PREFIX_PROGRAM, g::seq(MIDDLE_PROGRAM, APP_PROGRAM));
+    const CHAIN_ROLE: RoleProgram<
+        'static,
+        0,
+        <SeqSteps<
+            StepCons<steps::SendStep<Role<0>, Role<0>, Msg<6, ()>, 0>, StepNil>,
+            SeqSteps<
+                StepCons<steps::SendStep<Role<0>, Role<1>, Msg<7, ()>, 0>, StepNil>,
+                StepCons<steps::SendStep<Role<1>, Role<0>, Msg<8, ()>, 0>, StepNil>,
+            >,
+        > as ProjectRole<Role<0>>>::Output,
+    > = project(&CHAIN_PROGRAM);
 
-    type LocalMsg = Msg<5, ()>;
-    type LocalSteps = StepCons<steps::SendStep<Client, Client, LocalMsg, 0>, StepNil>;
+    const PING_PROGRAM: Program<
+        StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil>,
+    > = g::send::<Role<0>, Role<1>, Msg<9, ()>, 0>();
+    const PONG_PROGRAM: Program<
+        StepCons<steps::SendStep<Role<1>, Role<0>, Msg<10, ()>, 1>, StepNil>,
+    > = g::send::<Role<1>, Role<0>, Msg<10, ()>, 1>();
+    const PARALLEL_PROGRAM: Program<
+        <StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil> as StepConcat<
+            StepCons<steps::SendStep<Role<1>, Role<0>, Msg<10, ()>, 1>, StepNil>,
+        >>::Output,
+    > = g::par(PING_PROGRAM, PONG_PROGRAM);
 
-    const LOCAL_PROGRAM: Program<LocalSteps> = g::send::<Client, Client, LocalMsg, 0>();
-
-    type LocalProjection = LocalProgram<Client, LocalSteps>;
-
-    const LOCAL_ROLE: RoleProgram<'static, 0, LocalProjection> =
-        project::<0, LocalSteps, _>(&LOCAL_PROGRAM);
+    const LANE0_PROGRAM: Program<
+        SeqSteps<
+            StepCons<steps::SendStep<Role<0>, Role<1>, Msg<14, ()>, 0>, StepNil>,
+            StepCons<steps::SendStep<Role<1>, Role<0>, Msg<15, ()>, 0>, StepNil>,
+        >,
+    > = g::seq(
+        g::send::<Role<0>, Role<1>, Msg<14, ()>, 0>(),
+        g::send::<Role<1>, Role<0>, Msg<15, ()>, 0>(),
+    );
+    const CONTINUE_ARM_PROGRAM: Program<
+        SeqSteps<
+            StepCons<steps::SendStep<Role<2>, Role<2>, Msg<11, ()>, 1>, StepNil>,
+            StepCons<steps::SendStep<Role<2>, Role<1>, Msg<13, ()>, 1>, StepNil>,
+        >,
+    > = g::seq(
+        g::send::<Role<2>, Role<2>, Msg<11, ()>, 1>().policy::<77>(),
+        g::send::<Role<2>, Role<1>, Msg<13, ()>, 1>(),
+    );
+    const BREAK_ARM_PROGRAM: Program<
+        StepCons<steps::SendStep<Role<2>, Role<2>, Msg<12, ()>, 1>, StepNil>,
+    > = g::send::<Role<2>, Role<2>, Msg<12, ()>, 1>().policy::<77>();
+    const PARALLEL_ROUTE_PROGRAM: Program<
+        <SeqSteps<
+            StepCons<steps::SendStep<Role<0>, Role<1>, Msg<14, ()>, 0>, StepNil>,
+            StepCons<steps::SendStep<Role<1>, Role<0>, Msg<15, ()>, 0>, StepNil>,
+        > as StepConcat<
+            <SeqSteps<
+                StepCons<steps::SendStep<Role<2>, Role<2>, Msg<11, ()>, 1>, StepNil>,
+                StepCons<steps::SendStep<Role<2>, Role<1>, Msg<13, ()>, 1>, StepNil>,
+            > as StepConcat<
+                StepCons<steps::SendStep<Role<2>, Role<2>, Msg<12, ()>, 1>, StepNil>,
+            >>::Output,
+        >>::Output,
+    > = g::par(
+        LANE0_PROGRAM,
+        g::route(CONTINUE_ARM_PROGRAM, BREAK_ARM_PROGRAM),
+    );
 
     #[test]
     fn projection_extracts_role_view() {
-        assert_eq!(ROLE_ZERO.len(), 2);
-        assert!(!ROLE_ZERO.is_empty());
-        assert!(ROLE_ZERO[0].is_send());
-        assert!(ROLE_ZERO[1].is_recv());
-        assert_eq!(ROLE_ZERO[0].peer(), 1);
-        assert_eq!(ROLE_ZERO[1].peer(), 1);
+        let role_zero = ROLE_ZERO.projection();
+        assert_eq!(role_zero.len(), 2);
+        assert!(role_zero.steps()[0].is_send());
+        assert!(role_zero.steps()[1].is_recv());
+        assert_eq!(role_zero.steps()[0].peer(), 1);
+        assert_eq!(role_zero.steps()[1].peer(), 1);
 
-        assert_eq!(ROLE_ONE.len(), 2);
-        assert!(ROLE_ONE[0].is_recv());
-        assert!(ROLE_ONE[1].is_send());
+        let role_one = ROLE_ONE.projection();
+        assert_eq!(role_one.len(), 2);
+        assert!(role_one.steps()[0].is_recv());
+        assert!(role_one.steps()[1].is_send());
 
         assert_eq!(
-            ROLE_ZERO.control_markers().len(),
+            ROLE_ZERO.eff_list().control_markers().len(),
             PROTOCOL.eff_list().control_markers().len()
         );
         assert_eq!(
-            ROLE_ONE.scope_markers().len(),
+            ROLE_ONE.eff_list().scope_markers().len(),
             PROTOCOL.eff_list().scope_markers().len()
         );
 
-        let ts_zero = ROLE_ZERO.typestate();
+        let ts_zero = role_zero.typestate();
         assert_eq!(ts_zero.len(), 3);
         assert!(matches!(
             ts_zero.node(0).action(),
@@ -1248,7 +1039,7 @@ mod tests {
         ));
         assert!(ts_zero.node(2).action().is_terminal());
 
-        let ts_one = ROLE_ONE.typestate();
+        let ts_one = role_one.typestate();
         assert_eq!(ts_one.len(), 3);
         assert!(matches!(
             ts_one.node(0).action(),
@@ -1264,24 +1055,134 @@ mod tests {
     #[test]
     fn control_step_carries_shot_metadata() {
         // CancelMsg is a self-send (Client→Client), which projects to LocalAction
-        assert_eq!(CANCEL_ROLE.len(), 1);
-        let step = CANCEL_ROLE[0];
+        let cancel_role = CANCEL_ROLE.projection();
+        assert_eq!(cancel_role.len(), 1);
+        let step = cancel_role.steps()[0];
         assert!(step.is_local_action());
-        assert!(step.is_control());
-        assert_eq!(step.shot(), Some(CapShot::One));
+        assert!(step.is_control);
+        assert_eq!(step.shot, Some(CapShot::One));
     }
 
     #[test]
     fn local_action_projects_as_local_step() {
-        assert_eq!(LOCAL_ROLE.len(), 1);
-        let step = LOCAL_ROLE[0];
+        let local_role = LOCAL_ROLE.projection();
+        assert_eq!(local_role.len(), 1);
+        let step = local_role.steps()[0];
         assert!(step.is_local_action());
-        let ts = LOCAL_ROLE.typestate();
+        let ts = local_role.typestate();
         assert_eq!(ts.len(), 2);
         assert!(matches!(
             ts.node(0).action(),
             super::super::typestate::LocalAction::Local { .. }
         ));
         assert!(ts.node(1).action().is_terminal());
+    }
+
+    #[test]
+    fn chained_projection_preserves_typed_local_steps() {
+        let chain_role = CHAIN_ROLE.projection();
+        assert_eq!(chain_role.len(), 3);
+        assert!(chain_role.steps()[0].is_local_action());
+        assert!(chain_role.steps()[1].is_send());
+        assert!(chain_role.steps()[2].is_recv());
+        assert_eq!(chain_role.steps()[1].peer(), 1);
+        assert_eq!(chain_role.steps()[2].peer(), 1);
+    }
+
+    #[test]
+    fn parallel_projection_keeps_phase_and_lane_split_internal() {
+        let client: RoleProgram<
+            '_,
+            0,
+            <<StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil> as StepConcat<
+                StepCons<steps::SendStep<Role<1>, Role<0>, Msg<10, ()>, 1>, StepNil>,
+            >>::Output as ProjectRole<Role<0>>>::Output,
+            MintConfig,
+        > = project(&PARALLEL_PROGRAM);
+        let server: RoleProgram<
+            '_,
+            1,
+            <<StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil> as StepConcat<
+                StepCons<steps::SendStep<Role<1>, Role<0>, Msg<10, ()>, 1>, StepNil>,
+            >>::Output as ProjectRole<Role<1>>>::Output,
+            MintConfig,
+        > = project(&PARALLEL_PROGRAM);
+
+        let client_projection = client.projection();
+        let server_projection = server.projection();
+
+        assert_eq!(client_projection.phase_count(), 1);
+        assert_eq!(server_projection.phase_count(), 1);
+
+        let client_phase = client_projection.phases()[0];
+        assert!(client_phase.lanes[0].is_active());
+        assert!(client_phase.lanes[1].is_active());
+
+        let server_phase = server_projection.phases()[0];
+        assert!(server_phase.lanes[0].is_active());
+        assert!(server_phase.lanes[1].is_active());
+
+        let client_lane0 = client_projection
+            .steps()
+            .iter()
+            .filter(|step| step.lane() == 0)
+            .count();
+        let client_lane1 = client_projection
+            .steps()
+            .iter()
+            .filter(|step| step.lane() == 1)
+            .count();
+        assert_eq!(client_lane0, 1);
+        assert_eq!(client_lane1, 1);
+
+        let server_lane0 = server_projection
+            .steps()
+            .iter()
+            .filter(|step| step.lane() == 0)
+            .count();
+        let server_lane1 = server_projection
+            .steps()
+            .iter()
+            .filter(|step| step.lane() == 1)
+            .count();
+        assert_eq!(server_lane0, 1);
+        assert_eq!(server_lane1, 1);
+    }
+
+    #[test]
+    fn parallel_route_projection_keeps_scope_markers_without_public_step_surface() {
+        let program: RoleProgram<
+            '_,
+            0,
+            <<SeqSteps<
+                StepCons<steps::SendStep<Role<0>, Role<1>, Msg<14, ()>, 0>, StepNil>,
+                StepCons<steps::SendStep<Role<1>, Role<0>, Msg<15, ()>, 0>, StepNil>,
+            > as StepConcat<
+                <SeqSteps<
+                    StepCons<steps::SendStep<Role<2>, Role<2>, Msg<11, ()>, 1>, StepNil>,
+                    StepCons<steps::SendStep<Role<2>, Role<1>, Msg<13, ()>, 1>, StepNil>,
+                > as StepConcat<
+                    StepCons<steps::SendStep<Role<2>, Role<2>, Msg<12, ()>, 1>, StepNil>,
+                >>::Output,
+            >>::Output as ProjectRole<Role<0>>>::Output,
+            MintConfig,
+        > = project(&PARALLEL_ROUTE_PROGRAM);
+        let eff_list = program.eff_list();
+        let scope_markers = eff_list.scope_markers();
+
+        assert!(
+            scope_markers
+                .iter()
+                .any(|marker| matches!(marker.scope_kind, ScopeKind::Parallel)
+                    && matches!(marker.event, ScopeEvent::Enter)),
+            "parallel projection should preserve parallel enter marker"
+        );
+        assert!(
+            scope_markers
+                .iter()
+                .any(|marker| matches!(marker.scope_kind, ScopeKind::Route)
+                    && matches!(marker.event, ScopeEvent::Enter)),
+            "parallel route projection should preserve route enter marker"
+        );
     }
 }

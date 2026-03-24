@@ -3,7 +3,26 @@
 //! This module consolidates all control-plane errors into a single `CpError` enum,
 //! making replay detection and rendezvous-ID mismatches part of a unified error surface.
 
-use crate::control::CpEffect;
+use crate::control::cluster::effects::CpEffect;
+
+/// Errors raised while attaching cursor endpoints to the control cluster.
+#[derive(Debug)]
+pub enum AttachError {
+    Control(CpError),
+    Rendezvous(crate::rendezvous::error::RendezvousError),
+}
+
+impl From<CpError> for AttachError {
+    fn from(err: CpError) -> Self {
+        Self::Control(err)
+    }
+}
+
+impl From<crate::rendezvous::error::RendezvousError> for AttachError {
+    fn from(err: crate::rendezvous::error::RendezvousError) -> Self {
+        Self::Rendezvous(err)
+    }
+}
 
 /// Unified control-plane error type.
 ///
@@ -106,22 +125,37 @@ pub enum SpliceError {
     PendingTableFull,
 }
 
-impl From<crate::rendezvous::SpliceError> for SpliceError {
-    fn from(err: crate::rendezvous::SpliceError) -> Self {
-        use crate::rendezvous::SpliceError as RaSpliceError;
+impl From<crate::rendezvous::error::SpliceError> for SpliceError {
+    fn from(err: crate::rendezvous::error::SpliceError) -> Self {
         match err {
-            RaSpliceError::LaneOutOfRange { .. } => SpliceError::LaneOutOfRange,
-            RaSpliceError::UnknownSession { .. } => SpliceError::InvalidSession,
-            RaSpliceError::LaneMismatch { .. } => SpliceError::LaneMismatch,
-            RaSpliceError::InProgress { .. } => SpliceError::InProgress,
-            RaSpliceError::NoPending { .. } => SpliceError::NoPending,
-            RaSpliceError::StaleGeneration { .. } => SpliceError::StaleGeneration,
-            RaSpliceError::GenerationOverflow { .. } => SpliceError::GenerationOverflow,
-            RaSpliceError::InvalidInitial { .. } => SpliceError::InvalidInitial,
-            RaSpliceError::RemoteRendezvousMismatch { .. }
-            | RaSpliceError::RendezvousIdMismatch { .. } => SpliceError::RendezvousIdMismatch,
-            RaSpliceError::SeqnoMismatch { .. } => SpliceError::SeqnoMismatch,
-            RaSpliceError::PendingTableFull => SpliceError::PendingTableFull,
+            crate::rendezvous::error::SpliceError::LaneOutOfRange { .. } => {
+                SpliceError::LaneOutOfRange
+            }
+            crate::rendezvous::error::SpliceError::UnknownSession { .. } => {
+                SpliceError::InvalidSession
+            }
+            crate::rendezvous::error::SpliceError::LaneMismatch { .. } => SpliceError::LaneMismatch,
+            crate::rendezvous::error::SpliceError::InProgress { .. } => SpliceError::InProgress,
+            crate::rendezvous::error::SpliceError::NoPending { .. } => SpliceError::NoPending,
+            crate::rendezvous::error::SpliceError::StaleGeneration { .. } => {
+                SpliceError::StaleGeneration
+            }
+            crate::rendezvous::error::SpliceError::GenerationOverflow { .. } => {
+                SpliceError::GenerationOverflow
+            }
+            crate::rendezvous::error::SpliceError::InvalidInitial { .. } => {
+                SpliceError::InvalidInitial
+            }
+            crate::rendezvous::error::SpliceError::RemoteRendezvousMismatch { .. }
+            | crate::rendezvous::error::SpliceError::RendezvousIdMismatch { .. } => {
+                SpliceError::RendezvousIdMismatch
+            }
+            crate::rendezvous::error::SpliceError::SeqnoMismatch { .. } => {
+                SpliceError::SeqnoMismatch
+            }
+            crate::rendezvous::error::SpliceError::PendingTableFull => {
+                SpliceError::PendingTableFull
+            }
         }
     }
 }

@@ -22,7 +22,7 @@
 //! These types are derived from typestate at compile time and baked into
 //! the endpoint/kernel pipeline.
 
-use crate::control::cap::ResourceKind;
+use crate::control::cap::mint::ResourceKind;
 use core::marker::PhantomData;
 
 /// Marker trait for type-level handle specification lists.
@@ -35,7 +35,7 @@ use core::marker::PhantomData;
 ///
 /// This trait is sealed and cannot be implemented outside this module.
 /// Only `Nil` and `Cons<K, Tail>` implement this trait.
-pub trait HandleSpecList: private::Sealed {}
+pub(crate) trait HandleSpecList: private::Sealed {}
 
 /// Empty handle specification list.
 ///
@@ -43,7 +43,7 @@ pub trait HandleSpecList: private::Sealed {}
 /// Attempting to access any handle from a `HandleBag<Nil>` will
 /// fail at compile time.
 #[derive(Debug, Clone, Copy)]
-pub struct Nil;
+pub(crate) struct Nil;
 
 impl HandleSpecList for Nil {}
 
@@ -64,7 +64,7 @@ impl HandleSpecList for Nil {}
 /// //             ^~~~ head              ^~~~ tail
 /// ```
 #[derive(Debug, Clone, Copy)]
-pub struct Cons<K: ResourceKind, Tail: HandleSpecList> {
+pub(crate) struct Cons<K: ResourceKind, Tail: HandleSpecList> {
     _marker: PhantomData<(K, Tail)>,
 }
 
@@ -74,7 +74,7 @@ impl<K: ResourceKind, Tail: HandleSpecList> HandleSpecList for Cons<K, Tail> {}
 mod private {
     use super::*;
 
-    pub trait Sealed {}
+    pub(crate) trait Sealed {}
     impl Sealed for Nil {}
     impl<K: ResourceKind, Tail: HandleSpecList> Sealed for Cons<K, Tail> {}
 }
@@ -82,7 +82,7 @@ mod private {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::control::cap::EndpointResource;
+    use crate::control::cap::mint::EndpointResource;
     use crate::control::cap::resource_kinds::LoopContinueKind;
 
     #[test]

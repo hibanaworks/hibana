@@ -1,8 +1,9 @@
 //! Compile-time typed handle bag for VM execution contexts.
 //!
 //! `HandleBag<'ctx, Spec>` stores capability tokens according to a type-level
-//! specification `Spec` (a cons-list built from [`crate::control::Nil`] /
-//! [`crate::control::Cons`]). Each node holds exactly one `GenericCapToken<K>`
+//! specification `Spec` (a cons-list built from [`crate::control::handle::spec::Nil`] /
+//! [`crate::control::handle::spec::Cons`]). Each node holds exactly one
+//! `GenericCapToken<K>`
 //! together with the tail bag, enabling affine consumption without heap
 //! allocation.
 //!
@@ -13,15 +14,13 @@
 //! - **Zero alloc** — storage is stack-based; no `Box` / heap usage.
 //! - **Type safety** — incorrect resource kinds fail to compile.
 
-use crate::control::cap::{
-    GenericCapToken, ResourceKind,
-    typed_tokens::{CapFrameToken, CapRegisteredToken},
-};
+use crate::control::cap::mint::{GenericCapToken, ResourceKind};
+use crate::control::cap::typed_tokens::CapFrameToken;
 use crate::control::handle::spec::{Cons, HandleSpecList, Nil};
 use core::marker::PhantomData;
 
 /// Typed handle bag parameterised by the specification list `Spec`.
-pub struct HandleBag<'ctx, Spec>
+pub(crate) struct HandleBag<'ctx, Spec>
 where
     Spec: HandleSpecList + BagStorage<'ctx>,
 {
@@ -30,7 +29,7 @@ where
 
 impl<'ctx> HandleBag<'ctx, Nil> {
     #[inline(always)]
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self { storage: () }
     }
 }
@@ -48,25 +47,10 @@ where
 {
     /// Construct from an inbound frame token.
     #[inline]
-    pub fn from_frame(tail: HandleBag<'ctx, Tail>, token: CapFrameToken<'ctx, K>) -> Self {
+    pub(crate) fn from_frame(tail: HandleBag<'ctx, Tail>, token: CapFrameToken<'ctx, K>) -> Self {
         Self {
             storage: Node {
                 token: GenericCapToken::from_bytes(*token.bytes()),
-                tail: tail.into_storage(),
-                _marker: PhantomData,
-            },
-        }
-    }
-
-    /// Construct from a registered token (canonical mint path).
-    #[inline]
-    pub fn from_registered(
-        tail: HandleBag<'ctx, Tail>,
-        token: CapRegisteredToken<'ctx, K>,
-    ) -> Self {
-        Self {
-            storage: Node {
-                token: token.into_handle(),
                 tail: tail.into_storage(),
                 _marker: PhantomData,
             },
@@ -79,7 +63,7 @@ where
     /// bag. Returning the token is optional – affine discipline is enforced by
     /// the type system.
     #[inline]
-    pub fn with_token<R>(
+    pub(crate) fn with_token<R>(
         self,
         f: impl FnOnce(GenericCapToken<K>, HandleBag<'ctx, Tail>) -> R,
     ) -> R {
@@ -103,11 +87,11 @@ where
 // Internal storage machinery
 // ---------------------------------------------------------------------------
 
-pub trait BagStorage<'ctx>: HandleSpecList {
+pub(crate) trait BagStorage<'ctx>: HandleSpecList {
     type Storage: StorageLifetime<'ctx>;
 }
 
-pub trait StorageLifetime<'ctx> {}
+pub(crate) trait StorageLifetime<'ctx> {}
 
 impl<'ctx> BagStorage<'ctx> for Nil {
     type Storage = ();
@@ -115,7 +99,7 @@ impl<'ctx> BagStorage<'ctx> for Nil {
 
 impl<'ctx> StorageLifetime<'ctx> for () {}
 
-pub struct Node<'ctx, K, Tail>
+pub(crate) struct Node<'ctx, K, Tail>
 where
     K: ResourceKind,
     Tail: HandleSpecList + BagStorage<'ctx>,
@@ -147,11 +131,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::control::cap::resource_kinds::{LoopContinueKind, LoopDecisionHandle};
-    use crate::control::cap::{
+    use crate::control::cap::mint::{
         CAP_FIXED_HEADER_LEN, CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TAG_LEN,
         CAP_TOKEN_LEN, CapShot,
     };
+    use crate::control::cap::resource_kinds::{LoopContinueKind, LoopDecisionHandle};
     use crate::global::const_dsl::ScopeId;
 
     fn make_test_bytes(handle: &LoopDecisionHandle) -> [u8; CAP_TOKEN_LEN] {
@@ -182,7 +166,11 @@ mod tests {
 
     #[test]
     fn single_handle_roundtrip() {
-        let handle = LoopDecisionHandle::new(7, 3, ScopeId::route(1));
+        let handle = LoopDecisionHandle {
+            sid: 7,
+            lane: 3,
+            scope: ScopeId::route(1),
+        };
         let bytes = make_test_bytes(&handle);
         let token = CapFrameToken::<LoopContinueKind>::new(&bytes);
         let bag = HandleBagSingle::from_frame(HandleBag::new(), token);
@@ -200,8 +188,16 @@ mod tests {
     fn chained_handles_are_affine() {
         type Spec = Cons<LoopContinueKind, Cons<LoopContinueKind, Nil>>;
 
-        let h1 = LoopDecisionHandle::new(10, 1, ScopeId::route(2));
-        let h2 = LoopDecisionHandle::new(11, 2, ScopeId::loop_scope(3));
+        let h1 = LoopDecisionHandle {
+            sid: 10,
+            lane: 1,
+            scope: ScopeId::route(2),
+        };
+        let h2 = LoopDecisionHandle {
+            sid: 11,
+            lane: 2,
+            scope: ScopeId::loop_scope(3),
+        };
         let bytes1 = make_test_bytes(&h1);
         let bytes2 = make_test_bytes(&h2);
         let token1 = CapFrameToken::<LoopContinueKind>::new(&bytes1);

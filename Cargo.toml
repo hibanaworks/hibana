@@ -14,35 +14,6 @@ categories    = ["asynchronous", "concurrency", "embedded", "network-programming
 [features]
 default = []
 std = []
-test-utils = []
-
-[[example]]
-name = "tcp_tokio"
-required-features = ["std"]
-
-[[example]]
-name = "custom_binding"
-required-features = ["std"]
-
-[[example]]
-name = "transactional_session"
-required-features = ["std"]
-
-[[example]]
-name = "distributed_migration"
-required-features = ["std"]
-
-[[example]]
-name = "mgmt_epf_observe"
-required-features = ["std"]
-
-[[example]]
-name = "mgmt_epf_control"
-required-features = ["std"]
-
-[[example]]
-name = "epf_adaptive_control"
-required-features = ["std"]
 
 [package.metadata.docs.rs]
 all-features = false
@@ -59,11 +30,6 @@ static_assertions = "1.1"
 proptest = { version = "1", default-features = false, features = ["std"] }
 trybuild = "1.0"
 tokio = { version = "1", features = ["macros", "rt", "sync", "time", "net", "io-util"] }
-# Crypto for examples (not part of hibana core)
-hmac = "0.12"
-sha2 = "0.10"
-rand = "0.8"
-rand_chacha = "0.3"
 
 [badges]
 maintenance = { status = "actively-developed" }

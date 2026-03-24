@@ -5,29 +5,68 @@
 
 use core::marker::PhantomData;
 
-use crate::control::cap::{ControlPayload, ControlResourceKind, ResourceKind};
+use self::program::Program;
+use self::steps::{SendStep, SeqSteps, StepConcat, StepCons, StepNil};
+use crate::control::cap::mint::{ControlPayload, ControlResourceKind, ResourceKind};
 
 /// Const-evaluated DSL and effect list plumbing.
-pub mod const_dsl;
-/// Control message definitions.
-pub mod control_messages;
+pub(crate) mod const_dsl;
 /// Program combinators and route builders.
-pub mod program;
+pub(crate) mod program;
 /// Role-local program projection and metadata.
-pub mod role_program;
+pub(crate) mod role_program;
 /// Type-level step combinators.
-pub mod steps;
+pub(crate) mod steps;
 /// Typestate graph and cursor infrastructure.
-pub mod typestate;
+pub(crate) mod typestate;
+/// Protocol-implementor compile-time SPI.
+pub mod advanced {
+    pub use super::role_program::{RoleProgram, project};
+    pub use super::{
+        CanonicalControl, ControlMessage, ControlMessageKind, ExternalControl, MessageSpec,
+        const_dsl::EffList,
+    };
 
-pub use const_dsl::{EffList, HandlePlan, StaticPlanKind};
-pub use program::{
-    LoopBreakSteps, LoopBreakStepsL, LoopContinueSteps, LoopContinueStepsL, LoopDecisionSteps,
-    LoopDecisionStepsL, LoopSteps, LoopStepsL, ParChainBuilder, Program, RouteChainBuilder,
-};
-pub use role_program::{RoleProgram, project};
-pub use steps::{LocalAction, LocalRecv, LocalSend, SendStep, StepConcat, StepCons, StepNil};
-pub use typestate::{LoopMetadata, LoopRole, PhaseCursor, RoleTypestate};
+    pub mod compose {
+        pub use super::super::program::seq;
+    }
+
+    pub mod steps {
+        pub use super::super::steps::{
+            LocalAction, LocalRecv, LocalSend, LoopBreakSteps, LoopBreakStepsL, LoopContinueSteps,
+            LoopContinueStepsL, LoopDecisionSteps, LoopDecisionStepsL, LoopSteps, LoopStepsL,
+            ProjectRole, SendStep, SeqSteps, StepConcat, StepCons, StepNil,
+        };
+    }
+}
+#[diagnostic::on_unimplemented(
+    message = "`g::route(left, right)` arms must begin with a controller self-send",
+    label = "route arm must begin with a controller self-send"
+)]
+pub trait RouteArmHead {
+    type Controller: RoleMarker;
+    type Label: LabelTag;
+}
+
+#[diagnostic::on_unimplemented(
+    message = "`g::route(left, right)` arms must start with the same controller self-send",
+    label = "route arms use different controller self-sends"
+)]
+pub trait SameRouteController<Other> {}
+
+#[diagnostic::on_unimplemented(
+    message = "`g::route(left, right)` arms must use distinct labels",
+    label = "route arms reuse the same label"
+)]
+pub trait DistinctRouteLabels<Other> {}
+
+#[diagnostic::on_unimplemented(
+    message = "`g::par(left, right)` arms must be non-empty protocol fragments",
+    label = "parallel arm is empty"
+)]
+pub trait NonEmptyParallelArm {
+    const ROLE_LANE_SET: steps::RoleLaneSet;
+}
 
 // -----------------------------------------------------------------------------
 // Roles
@@ -35,15 +74,15 @@ pub use typestate::{LoopMetadata, LoopRole, PhaseCursor, RoleTypestate};
 
 /// Compile-time role marker (0 ≤ IDX < 16).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Role<const IDX: u8>;
+pub struct Role<const ROLE_INDEX: u8>;
 
 /// Marker trait exposing the numeric role index.
 pub trait RoleMarker {
     const INDEX: u8;
 }
 
-impl<const IDX: u8> RoleMarker for Role<IDX> {
-    const INDEX: u8 = IDX;
+impl<const ROLE_INDEX: u8> RoleMarker for Role<ROLE_INDEX> {
+    const INDEX: u8 = ROLE_INDEX;
 }
 
 /// Trait implemented by every role type participating in a protocol.
@@ -66,10 +105,10 @@ pub trait LabelTag {
 
 /// Concrete label marker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct LabelMarker<const LABEL: u8>;
+pub struct LabelMarker<const LABEL_VALUE: u8>;
 
-impl<const LABEL: u8> LabelTag for LabelMarker<LABEL> {
-    const VALUE: u8 = LABEL;
+impl<const LABEL_VALUE: u8> LabelTag for LabelMarker<LABEL_VALUE> {
+    const VALUE: u8 = LABEL_VALUE;
 }
 
 /// Phantom message descriptor tying a label to a payload.
@@ -103,7 +142,7 @@ pub trait ControlMessageKind: ControlPayloadKind {}
 pub struct NoControl;
 
 impl ControlPayloadKind for NoControl {
-    type ResourceKind = crate::control::cap::NoControlKind;
+    type ResourceKind = ();
     const HANDLING: ControlHandling = ControlHandling::None;
 }
 
@@ -193,41 +232,162 @@ where
     );
 }
 
-/// Marker trait implemented for payloads permitted on control labels.
-pub trait ControlLabelPayload<const LABEL: u8> {}
-
-impl<const LABEL: u8, K> ControlLabelPayload<LABEL> for crate::control::cap::GenericCapToken<K> where
-    K: ResourceKind
-{
-}
-
 /// Marker trait for labels that may appear in outbound messages.
 pub trait SendableLabel {
     const LABEL: u8;
-    #[allow(clippy::empty_loop)]
-    fn assert_sendable() {
-        // Future work: enforce crash/no-send invariants here.
-    }
+    fn assert_sendable();
 }
 
-impl<const LABEL: u8, Payload, Control> SendableLabel
-    for Message<LabelMarker<LABEL>, Payload, Control>
+impl<const SEND_LABEL: u8, Payload, Control> SendableLabel
+    for Message<LabelMarker<SEND_LABEL>, Payload, Control>
 where
-    Message<LabelMarker<LABEL>, Payload, Control>: MessageControlSpec,
+    Message<LabelMarker<SEND_LABEL>, Payload, Control>: MessageControlSpec,
 {
-    const LABEL: u8 = LABEL;
+    const LABEL: u8 = SEND_LABEL;
 
     fn assert_sendable() {
-        if LABEL > crate::runtime::consts::LABEL_MAX {
+        if SEND_LABEL > crate::runtime::consts::LABEL_MAX {
             panic!("label exceeds universe");
         }
-        if LABEL >= crate::runtime::consts::LABEL_CONTROL_START
-            && LABEL <= crate::runtime::consts::LABEL_CONTROL_END
+        if SEND_LABEL >= crate::runtime::consts::LABEL_CONTROL_START
+            && SEND_LABEL <= crate::runtime::consts::LABEL_CONTROL_END
             && !<Self as MessageControlSpec>::IS_CONTROL
         {
             panic!("control labels require capability payloads");
         }
     }
+}
+
+trait LabelEq<Other> {
+    type Output: steps::Bool;
+}
+
+#[diagnostic::on_unimplemented(
+    message = "`g::route(left, right)` arms must use distinct labels",
+    label = "route arms reuse the same label"
+)]
+trait RequireFalse {}
+
+impl RequireFalse for steps::False {}
+
+macro_rules! impl_label_eq {
+    () => {};
+    ($head:literal $(,$tail:literal)*) => {
+        impl LabelEq<LabelMarker<$head>> for LabelMarker<$head> {
+            type Output = steps::True;
+        }
+        $(
+            impl LabelEq<LabelMarker<$tail>> for LabelMarker<$head> {
+                type Output = steps::False;
+            }
+
+            impl LabelEq<LabelMarker<$head>> for LabelMarker<$tail> {
+                type Output = steps::False;
+            }
+        )*
+        impl_label_eq!($($tail),*);
+    };
+}
+
+impl_label_eq!(
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+    26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
+    50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
+    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97,
+    98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116,
+    117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127
+);
+
+#[diagnostic::do_not_recommend]
+impl<RouteController, const LABEL: u8, Payload, Control, const LANE: u8, Tail> RouteArmHead
+    for StepCons<
+        SendStep<
+            RouteController,
+            RouteController,
+            Message<LabelMarker<LABEL>, Payload, Control>,
+            LANE,
+        >,
+        Tail,
+    >
+where
+    RouteController: RoleMarker,
+    Message<LabelMarker<LABEL>, Payload, Control>: MessageSpec + SendableLabel,
+{
+    type Controller = RouteController;
+    type Label = LabelMarker<LABEL>;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Left, Right> RouteArmHead for SeqSteps<Left, Right>
+where
+    Left: RouteArmHead,
+{
+    type Controller = <Left as RouteArmHead>::Controller;
+    type Label = <Left as RouteArmHead>::Label;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Right> RouteArmHead for SeqSteps<StepNil, Right>
+where
+    Right: RouteArmHead,
+{
+    type Controller = <Right as RouteArmHead>::Controller;
+    type Label = <Right as RouteArmHead>::Label;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Left, Right, Controller> SameRouteController<Right> for Left
+where
+    Left: RouteArmHead<Controller = Controller>,
+    Right: RouteArmHead<Controller = Controller>,
+    Controller: RoleMarker,
+{
+}
+
+#[diagnostic::do_not_recommend]
+impl<Left> SameRouteController<StepNil> for Left where Left: RouteArmHead {}
+
+#[diagnostic::do_not_recommend]
+impl<Left, Right> DistinctRouteLabels<Right> for Left
+where
+    Left: RouteArmHead,
+    Right: RouteArmHead,
+    <Left as RouteArmHead>::Label: LabelEq<<Right as RouteArmHead>::Label>,
+    <<Left as RouteArmHead>::Label as LabelEq<<Right as RouteArmHead>::Label>>::Output:
+        RequireFalse,
+{
+}
+
+#[diagnostic::do_not_recommend]
+impl<Left> DistinctRouteLabels<StepNil> for Left where Left: RouteArmHead {}
+
+#[diagnostic::do_not_recommend]
+impl<Head, Tail> NonEmptyParallelArm for StepCons<Head, Tail>
+where
+    StepCons<Head, Tail>: steps::StepRoleSet,
+{
+    const ROLE_LANE_SET: steps::RoleLaneSet =
+        <StepCons<Head, Tail> as steps::StepRoleSet>::ROLE_LANE_SET;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Left, Right> NonEmptyParallelArm for SeqSteps<Left, Right>
+where
+    Left: NonEmptyParallelArm,
+    SeqSteps<Left, Right>: steps::StepRoleSet,
+{
+    const ROLE_LANE_SET: steps::RoleLaneSet =
+        <SeqSteps<Left, Right> as steps::StepRoleSet>::ROLE_LANE_SET;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Right> NonEmptyParallelArm for SeqSteps<StepNil, Right>
+where
+    Right: NonEmptyParallelArm,
+    SeqSteps<StepNil, Right>: steps::StepRoleSet,
+{
+    const ROLE_LANE_SET: steps::RoleLaneSet =
+        <SeqSteps<StepNil, Right> as steps::StepRoleSet>::ROLE_LANE_SET;
 }
 
 /// Static control-message metadata used across the DSL and runtime.
@@ -237,7 +397,7 @@ pub struct ControlLabelSpec {
     pub resource_tag: u8,
     pub scope_kind: const_dsl::ControlScopeKind,
     pub tap_id: u16,
-    pub shot: crate::control::cap::CapShot,
+    pub shot: crate::control::cap::mint::CapShot,
     pub handling: ControlHandling,
 }
 
@@ -247,7 +407,7 @@ impl ControlLabelSpec {
         resource_tag: u8,
         scope_kind: const_dsl::ControlScopeKind,
         tap_id: u16,
-        shot: crate::control::cap::CapShot,
+        shot: crate::control::cap::mint::CapShot,
         handling: ControlHandling,
     ) -> Self {
         Self {
@@ -291,13 +451,13 @@ where
         0,
         const_dsl::ControlScopeKind::None,
         0,
-        crate::control::cap::CapShot::One,
+        crate::control::cap::mint::CapShot::One,
         ControlHandling::None,
     );
 }
 
 impl<L, K> MessageControlSpec
-    for Message<L, crate::control::cap::GenericCapToken<K>, CanonicalControl<K>>
+    for Message<L, crate::control::cap::mint::GenericCapToken<K>, CanonicalControl<K>>
 where
     L: LabelTag,
     K: ControlResourceKind,
@@ -308,7 +468,7 @@ where
 }
 
 impl<L, K> MessageControlSpec
-    for Message<L, crate::control::cap::GenericCapToken<K>, ExternalControl<K>>
+    for Message<L, crate::control::cap::mint::GenericCapToken<K>, ExternalControl<K>>
 where
     L: LabelTag,
     K: ControlResourceKind,
@@ -317,13 +477,6 @@ where
     const CONTROL_SPEC: ControlLabelSpec =
         ControlLabelSpec::from_message::<L, K>(ControlHandling::External);
 }
-
-/// Convenience alias exposing the projected local typelist for `Role`.
-///
-/// This resolves to the `ProjectRole` associated type and therefore fails to
-/// compile whenever the requested role is absent from `Steps` or when payload /
-/// label annotations do not line up.
-pub type LocalProgram<Role, Steps> = <Steps as steps::ProjectRole<Role>>::Output;
 
 // -----------------------------------------------------------------------------
 // High-level combinators
@@ -342,11 +495,12 @@ pub type LocalProgram<Role, Steps> = <Steps as steps::ProjectRole<Role>>::Output
 ///
 /// // Parallel composition with different Lanes (same roles)
 /// g::par(
-///     g::par_chain(g::send::<Client, Server, MsgA, 0>())
-///         .and(g::send::<Server, Client, MsgB, 1>())
+///     g::send::<Client, Server, MsgA, 0>(),
+///     g::send::<Server, Client, MsgB, 1>(),
 /// )
 /// ```
-pub const fn send<From, To, M, const LANE: u8>() -> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
+pub const fn send<From, To, M, const LANE: u8>()
+-> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
 where
     From: KnownRole + RoleMarker + steps::RoleEq<To>,
     To: KnownRole + RoleMarker,
@@ -358,73 +512,40 @@ where
     Program::build()
 }
 
-/// Empty protocol fragment.
-pub const fn idle() -> Program<StepNil> {
-    Program::empty()
-}
-
 /// Sequentially compose two protocol fragments.
 pub const fn seq<LeftSteps, RightSteps>(
     left: Program<LeftSteps>,
     right: Program<RightSteps>,
+) -> Program<SeqSteps<LeftSteps, RightSteps>> {
+    program::seq(left, right)
+}
+
+/// Construct a binary route.
+///
+/// The controller is derived from the first self-send control point in each arm.
+/// Both arms must begin with the same controller self-send.
+pub const fn route<LeftSteps, RightSteps>(
+    left: Program<LeftSteps>,
+    right: Program<RightSteps>,
 ) -> Program<<LeftSteps as StepConcat<RightSteps>>::Output>
 where
-    LeftSteps: StepConcat<RightSteps>,
+    LeftSteps: StepConcat<RightSteps>
+        + RouteArmHead
+        + SameRouteController<RightSteps>
+        + DistinctRouteLabels<RightSteps>,
+    RightSteps: RouteArmHead,
 {
-    left.then(right)
+    program::route_binary(left, right)
 }
 
-/// Construct a route with two or more arms controlled by `Controller`.
-///
-/// Each arm must begin with a self-send from `CONTROLLER` (processed via
-/// `flow().send()`). Other roles discover the selected arm via resolver or
-/// [`poll_route_decision`].
-///
-/// [`poll_route_decision`]: crate::endpoint::CursorEndpoint::poll_route_decision
-pub const fn route<const CONTROLLER: u8, Steps>(
-    builder: program::RouteChainBuilder<CONTROLLER, Steps>,
-) -> Program<Steps> {
-    program::route::<CONTROLLER, Steps>(builder)
-}
-
-/// Begin building a route.
-///
-/// Each arm must begin with a self-send from `CONTROLLER`. This is enforced
-/// at compile time by the [`RouteArm`] trait.
-///
-/// [`RouteArm`]: crate::global::steps::RouteArm
-pub const fn route_chain<const CONTROLLER: u8, Steps>(
-    arm: Program<Steps>,
-) -> program::RouteChainBuilder<CONTROLLER, Steps>
+/// Construct a binary parallel composition.
+pub const fn par<LeftSteps, RightSteps>(
+    left: Program<LeftSteps>,
+    right: Program<RightSteps>,
+) -> Program<<LeftSteps as StepConcat<RightSteps>>::Output>
 where
-    Steps: steps::RouteArm<CONTROLLER>,
+    LeftSteps: StepConcat<RightSteps> + NonEmptyParallelArm,
+    RightSteps: NonEmptyParallelArm,
 {
-    program::route_chain::<CONTROLLER, Steps>(arm)
-}
-
-/// Construct a parallel composition with two or more disjoint lanes.
-pub const fn par<Steps>(builder: program::ParChainBuilder<Steps>) -> Program<Steps> {
-    program::par(builder)
-}
-
-/// Begin building a parallel composition.
-pub const fn par_chain<Steps>(lane: Program<Steps>) -> program::ParChainBuilder<Steps>
-where
-    Steps: steps::StepRoleSet + steps::StepNonEmpty,
-{
-    program::par_chain(lane)
-}
-
-/// Attach a control plan hint to a program fragment.
-pub const fn with_control_plan<Steps>(program: Program<Steps>, plan: HandlePlan) -> Program<Steps>
-where
-    Steps: crate::global::steps::ControlPlanEligible,
-{
-    program.with_control_plan(plan)
-}
-
-/// Internal helpers exposed for tests and compile-fail fixtures.
-pub mod __internal {
-    /// Effect-list accumulator kept for compile-fail fixtures.
-    pub use super::const_dsl::EffList;
+    program::par_binary(left, right)
 }

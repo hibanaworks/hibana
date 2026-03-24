@@ -16,9 +16,9 @@
 //! 5. **No hidden state**: Single typed pipeline from mint to HandleView
 
 use crate::{
-    control::cap::{CAP_NONCE_LEN, CAP_TOKEN_LEN, GenericCapToken, ResourceKind},
-    global::{const_dsl::ScopeId, typestate::SendMeta},
-    rendezvous::CapTable,
+    control::cap::mint::{CAP_NONCE_LEN, CAP_TOKEN_LEN, GenericCapToken, ResourceKind},
+    global::const_dsl::ScopeId,
+    rendezvous::capability::CapTable,
 };
 use core::{fmt, marker::PhantomData, ptr::NonNull};
 
@@ -33,7 +33,6 @@ use core::{fmt, marker::PhantomData, ptr::NonNull};
 /// Dropping without consumption will panic to prevent silent token leakage.
 pub struct CapFlowToken<K: ResourceKind> {
     bytes: [u8; CAP_TOKEN_LEN],
-    meta: SendMeta,
     consumed: bool,
     _marker: PhantomData<K>,
 }
@@ -47,10 +46,9 @@ impl<K: ResourceKind> CapFlowToken<K> {
     /// - Bytes represent a valid GenericCapToken<K>
     /// - Token's resource tag matches `K::TAG`
     #[inline]
-    pub fn new(meta: SendMeta, token: GenericCapToken<K>) -> Self {
+    pub(crate) fn new(token: GenericCapToken<K>) -> Self {
         Self {
             bytes: token.into_bytes(),
-            meta,
             consumed: false,
             _marker: PhantomData,
         }
@@ -78,12 +76,6 @@ impl<K: ResourceKind> CapFlowToken<K> {
         GenericCapToken::from_bytes(self.bytes)
     }
 
-    /// Borrow the send metadata associated with this token.
-    #[inline]
-    pub fn meta(&self) -> SendMeta {
-        self.meta
-    }
-
     /// Convert this flow token into a `ControlFrame` for the typed pipeline.
     ///
     /// This is the primary integration point for the ControlFrame DSL:
@@ -97,12 +89,11 @@ impl<K: ResourceKind> CapFlowToken<K> {
     ///
     /// # Design Notes
     ///
-    /// The ControlFrame carries both the token bytes and send metadata,
-    /// enabling SessionCluster and the EPF kernel to work with typed frames
-    /// instead of raw `GenericCapToken` instances.
+    /// The ControlFrame carries the typed token bytes into the control pipeline
+    /// without widening the resource kind to an untyped runtime payload.
     #[inline]
-    pub fn into_frame<'ctx>(self) -> crate::control::ControlFrame<'ctx, K> {
-        crate::control::ControlFrame::from_flow(self)
+    pub(crate) fn into_frame<'ctx>(self) -> crate::control::handle::frame::ControlFrame<'ctx, K> {
+        crate::control::handle::frame::ControlFrame::from_flow(self)
     }
 }
 
@@ -140,12 +131,6 @@ impl<'f, K: ResourceKind> CapFrameToken<'f, K> {
     #[inline]
     pub fn bytes(&self) -> &'f [u8; CAP_TOKEN_LEN] {
         self.bytes
-    }
-
-    /// Interpret this token as GenericCapToken<K> for HandleView extraction.
-    #[inline]
-    pub fn as_generic(&self) -> GenericCapToken<K> {
-        GenericCapToken::from_bytes(*self.bytes)
     }
 }
 
@@ -252,14 +237,12 @@ impl<'rv, K: ResourceKind> Drop for CapRegisteredToken<'rv, K> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::control::cap::resource_kinds::{LoopContinueKind, LoopDecisionHandle};
-    use crate::control::cap::{
+    use crate::control::cap::mint::{
         CAP_FIXED_HEADER_LEN, CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TAG_LEN,
         CAP_TOKEN_LEN, CapShot,
     };
-    use crate::eff::EffIndex;
-    use crate::global::const_dsl::{HandlePlan, ScopeId};
-    use crate::global::typestate::SendMeta;
+    use crate::control::cap::resource_kinds::{LoopContinueKind, LoopDecisionHandle};
+    use crate::global::const_dsl::ScopeId;
 
     /// Helper to build a test token
     fn make_test_token_bytes<K: ResourceKind>(handle: &K::Handle) -> [u8; CAP_TOKEN_LEN] {
@@ -283,33 +266,16 @@ mod tests {
         bytes
     }
 
-    fn test_meta(label: u8, resource: Option<u8>, shot: Option<CapShot>) -> SendMeta {
-        SendMeta {
-            eff_index: 11 as EffIndex,
-            peer: 1,
-            label,
-            resource,
-            is_control: resource.is_some(),
-            next: 0,
-            scope: ScopeId::none(),
-            route_arm: None,
-            shot,
-            plan: HandlePlan::None,
-            lane: 0,
-        }
-    }
-
     #[test]
     fn cap_flow_token_into_bytes() {
-        let handle = LoopDecisionHandle::new(42, 7, ScopeId::route(5));
+        let handle = LoopDecisionHandle {
+            sid: 42,
+            lane: 7,
+            scope: ScopeId::route(5),
+        };
         let bytes = make_test_token_bytes::<LoopContinueKind>(&handle);
         let token = GenericCapToken::<LoopContinueKind>::from_bytes(bytes);
-        let meta = test_meta(
-            LoopContinueKind::TAG,
-            Some(LoopContinueKind::TAG),
-            Some(CapShot::One),
-        );
-        let flow_token = CapFlowToken::<LoopContinueKind>::new(meta, token);
+        let flow_token = CapFlowToken::<LoopContinueKind>::new(token);
 
         let result = flow_token.into_bytes();
         assert_eq!(result, bytes);
@@ -317,13 +283,17 @@ mod tests {
 
     #[test]
     fn cap_frame_token_borrow() {
-        let handle = LoopDecisionHandle::new(100, 3, ScopeId::loop_scope(2));
+        let handle = LoopDecisionHandle {
+            sid: 100,
+            lane: 3,
+            scope: ScopeId::loop_scope(2),
+        };
         let bytes = make_test_token_bytes::<LoopContinueKind>(&handle);
 
         let frame_token = CapFrameToken::<LoopContinueKind>::new(&bytes);
         assert_eq!(frame_token.bytes(), &bytes);
 
-        let generic = frame_token.as_generic();
+        let generic = GenericCapToken::<LoopContinueKind>::from_bytes(bytes);
         let view = generic.as_view().expect("as_view should succeed");
         assert_eq!(view.handle(), &handle);
     }
@@ -331,29 +301,27 @@ mod tests {
     #[test]
     #[should_panic(expected = "CapFlowToken")]
     fn cap_flow_token_drop_panics() {
-        let handle = LoopDecisionHandle::new(1, 0, ScopeId::route(1));
+        let handle = LoopDecisionHandle {
+            sid: 1,
+            lane: 0,
+            scope: ScopeId::route(1),
+        };
         let bytes = make_test_token_bytes::<LoopContinueKind>(&handle);
         let token = GenericCapToken::<LoopContinueKind>::from_bytes(bytes);
-        let meta = test_meta(
-            LoopContinueKind::TAG,
-            Some(LoopContinueKind::TAG),
-            Some(CapShot::One),
-        );
-        let _flow_token = CapFlowToken::<LoopContinueKind>::new(meta, token);
+        let _flow_token = CapFlowToken::<LoopContinueKind>::new(token);
         // Drop without consumption → panic
     }
 
     #[test]
     fn cap_flow_token_consumption_prevents_drop_panic() {
-        let handle = LoopDecisionHandle::new(5, 2, ScopeId::route(6));
+        let handle = LoopDecisionHandle {
+            sid: 5,
+            lane: 2,
+            scope: ScopeId::route(6),
+        };
         let bytes = make_test_token_bytes::<LoopContinueKind>(&handle);
         let token = GenericCapToken::<LoopContinueKind>::from_bytes(bytes);
-        let meta = test_meta(
-            LoopContinueKind::TAG,
-            Some(LoopContinueKind::TAG),
-            Some(CapShot::One),
-        );
-        let flow_token = CapFlowToken::<LoopContinueKind>::new(meta, token);
+        let flow_token = CapFlowToken::<LoopContinueKind>::new(token);
         let _consumed = flow_token.into_bytes();
         // No panic because token was consumed
     }

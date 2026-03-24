@@ -3,28 +3,28 @@
 //! This module implements a typestate-based transaction protocol that enforces:
 //! - No cross-lane aliasing (via `NoCrossLaneAliasing`)
 //! - At-most-once commit (via `AtMostOnceCommit`)
-//! - Strictly increasing generation (via `StrictlyIncreasingGen`)
-//! - Shot discipline (One vs Many)
+//! - Strictly increasing generation (via `IncreasingGen`)
+//! - Shot discipline (single-use `One` vs reusable `Many`)
 //!
 //! The typestate machine ensures that operations are performed in the correct order
 //! and that invariants are maintained at compile time.
 
-use crate::control::CpEffect;
+use crate::control::cluster::effects::CpEffect;
 use crate::control::types::{
-    AtMostOnceCommit, Gen, IncreasingGen, LaneId, NoCrossLaneAliasing, OneShot,
+    AtMostOnceCommit, Generation, IncreasingGen, Lane, NoCrossLaneAliasing, One,
 };
 use core::marker::PhantomData;
 
 /// Trait for emitting control-plane effects.
 ///
 /// This is typically implemented by the tap/observe infrastructure.
-pub trait Tap {
+pub(crate) trait Tap {
     /// Emit a control-plane effect.
     fn emit(&mut self, effect: CpEffect);
 }
 
 /// No-op tap for testing.
-pub struct NoopTap;
+pub(crate) struct NoopTap;
 
 impl Tap for NoopTap {
     fn emit(&mut self, _effect: CpEffect) {}
@@ -34,11 +34,12 @@ impl Tap for NoopTap {
 ///
 /// The type parameters encode the invariants that must hold:
 /// - `Inv`: Invariant marker (e.g., `NoCrossLaneAliasing + AtMostOnceCommit`)
-/// - `GenOrd`: Generation ordering (e.g., `StrictlyIncreasingGen`)
+/// - `GenOrd`: Generation ordering marker (e.g., `IncreasingGen`)
 /// - `Shot`: Shot discipline (e.g., `One` or `Many`)
-pub struct Txn<Inv, GenOrd, Shot> {
-    lane: LaneId,
-    generation: Gen,
+pub(crate) struct Txn<Inv, GenOrd, Shot> {
+    lane: Lane,
+    #[cfg(test)]
+    generation: Generation,
     _p: PhantomData<(Inv, GenOrd, Shot)>,
 }
 
@@ -49,22 +50,13 @@ impl<Inv, GenOrd, Shot> Txn<Inv, GenOrd, Shot> {
     ///
     /// The caller must ensure that the invariants encoded in the type parameters
     /// are actually satisfied. This is typically enforced by the rendezvous layer.
-    pub(crate) unsafe fn new(lane: LaneId, generation: Gen) -> Self {
+    pub(crate) unsafe fn new(lane: Lane, _generation: Generation) -> Self {
         Self {
             lane,
-            generation,
+            #[cfg(test)]
+            generation: _generation,
             _p: PhantomData,
         }
-    }
-
-    /// Get the lane identifier.
-    pub fn lane(&self) -> LaneId {
-        self.lane
-    }
-
-    /// Get the generation number.
-    pub fn generation(&self) -> Gen {
-        self.generation
     }
 }
 
@@ -72,51 +64,34 @@ impl<Inv: AtMostOnceCommit + NoCrossLaneAliasing, S> Txn<Inv, IncreasingGen, S> 
     /// Begin a splice operation.
     ///
     /// Emits `CpEffect::SpliceBegin` and transitions to `InBegin` state.
-    pub fn begin(self, tap: &mut impl Tap) -> InBegin<Inv, S> {
+    pub(crate) fn begin(self, tap: &mut impl Tap) -> InBegin<Inv, S> {
         tap.emit(CpEffect::SpliceBegin);
         InBegin {
             lane: self.lane,
+            #[cfg(test)]
             generation: self.generation,
             _p: PhantomData,
         }
     }
-
-    /// Open a new lane.
-    ///
-    /// Emits `CpEffect::Open`.
-    pub fn open(tap: &mut impl Tap) -> Self {
-        tap.emit(CpEffect::Open);
-        // In a real implementation, this would allocate a new lane ID
-        // For now, we use a placeholder
-        unsafe { Self::new(LaneId::new(0), Gen::ZERO) }
-    }
 }
 
 /// Transaction in "begin" state (after `begin()`, before `ack()`).
-pub struct InBegin<Inv, Shot> {
-    lane: LaneId,
-    generation: Gen,
+pub(crate) struct InBegin<Inv, Shot> {
+    lane: Lane,
+    #[cfg(test)]
+    generation: Generation,
     _p: PhantomData<(Inv, Shot)>,
 }
 
 impl<Inv, S> InBegin<Inv, S> {
-    /// Lane identifier associated with this transaction.
-    pub fn lane(&self) -> LaneId {
-        self.lane
-    }
-
-    /// Generation observed when the transaction began.
-    pub fn generation(&self) -> Gen {
-        self.generation
-    }
-
     /// Acknowledge the splice operation.
     ///
     /// Emits `CpEffect::SpliceAck` and transitions to `InAcked` state.
-    pub fn ack(self, tap: &mut impl Tap) -> InAcked<Inv, S> {
+    pub(crate) fn ack(self, tap: &mut impl Tap) -> InAcked<Inv, S> {
         tap.emit(CpEffect::SpliceAck);
         InAcked {
             lane: self.lane,
+            #[cfg(test)]
             generation: self.generation,
             _p: PhantomData,
         }
@@ -124,44 +99,45 @@ impl<Inv, S> InBegin<Inv, S> {
 }
 
 /// Transaction in "acked" state (after `ack()`, before `commit()` or `abort()`).
-pub struct InAcked<Inv, Shot> {
-    lane: LaneId,
-    generation: Gen,
+pub(crate) struct InAcked<Inv, Shot> {
+    lane: Lane,
+    #[cfg(test)]
+    generation: Generation,
     _p: PhantomData<(Inv, Shot)>,
 }
 
-impl<Inv: AtMostOnceCommit, S: OneShot> InAcked<Inv, S> {
+impl<Inv: AtMostOnceCommit> InAcked<Inv, One> {
     /// Lane identifier associated with this transaction.
-    pub fn lane(&self) -> LaneId {
+    pub(crate) fn lane(&self) -> Lane {
         self.lane
-    }
-
-    /// Generation observed when the transaction was acknowledged.
-    pub fn generation(&self) -> Gen {
-        self.generation
     }
 
     /// Commit the transaction.
     ///
     /// Emits `CpEffect::SpliceCommit` and transitions to `Closed` state.
     /// The generation number is bumped.
-    pub fn commit(self, tap: &mut impl Tap) -> Closed<Inv> {
+    pub(crate) fn commit(self, tap: &mut impl Tap) -> Closed<Inv> {
         tap.emit(CpEffect::SpliceCommit);
         Closed {
+            #[cfg(test)]
             lane: self.lane,
+            #[cfg(test)]
             generation: self.generation.bump(),
             _p: PhantomData,
         }
     }
 
+    #[cfg(test)]
     /// Abort the transaction.
     ///
     /// Emits `CpEffect::Abort` and transitions to `Closed` state.
     /// The generation number is NOT bumped.
-    pub fn abort(self, tap: &mut impl Tap) -> Closed<Inv> {
+    pub(crate) fn abort(self, tap: &mut impl Tap) -> Closed<Inv> {
         tap.emit(CpEffect::Abort);
         Closed {
+            #[cfg(test)]
             lane: self.lane,
+            #[cfg(test)]
             generation: self.generation,
             _p: PhantomData,
         }
@@ -169,20 +145,24 @@ impl<Inv: AtMostOnceCommit, S: OneShot> InAcked<Inv, S> {
 }
 
 /// Transaction in "closed" state (terminal state).
-pub struct Closed<Inv> {
-    lane: LaneId,
-    generation: Gen,
+pub(crate) struct Closed<Inv> {
+    #[cfg(test)]
+    lane: Lane,
+    #[cfg(test)]
+    generation: Generation,
     _p: PhantomData<Inv>,
 }
 
 impl<Inv> Closed<Inv> {
+    #[cfg(test)]
     /// Get the final lane identifier.
-    pub fn lane(&self) -> LaneId {
+    pub(crate) fn lane(&self) -> Lane {
         self.lane
     }
 
+    #[cfg(test)]
     /// Get the final generation number.
-    pub fn generation(&self) -> Gen {
+    pub(crate) fn generation(&self) -> Generation {
         self.generation
     }
 }
@@ -202,7 +182,7 @@ mod tests {
 
         // Create a transaction
         let txn: Txn<TestInv, IncreasingGen, crate::control::types::One> =
-            unsafe { Txn::new(LaneId::new(42), Gen::new(10)) };
+            unsafe { Txn::new(Lane::new(42), Generation::new(10)) };
 
         // Begin -> Ack -> Commit
         let in_begin = txn.begin(&mut tap);
@@ -210,8 +190,8 @@ mod tests {
         let closed = in_acked.commit(&mut tap);
 
         // Check final state
-        assert_eq!(closed.lane(), LaneId::new(42));
-        assert_eq!(closed.generation(), Gen::new(11)); // Generation bumped
+        assert_eq!(closed.lane(), Lane::new(42));
+        assert_eq!(closed.generation(), Generation::new(11)); // Generation bumped
     }
 
     #[test]
@@ -219,7 +199,7 @@ mod tests {
         let mut tap = NoopTap;
 
         let txn: Txn<TestInv, IncreasingGen, crate::control::types::One> =
-            unsafe { Txn::new(LaneId::new(42), Gen::new(10)) };
+            unsafe { Txn::new(Lane::new(42), Generation::new(10)) };
 
         // Begin -> Ack -> Abort
         let in_begin = txn.begin(&mut tap);
@@ -227,7 +207,7 @@ mod tests {
         let closed = in_acked.abort(&mut tap);
 
         // Check final state
-        assert_eq!(closed.lane(), LaneId::new(42));
-        assert_eq!(closed.generation(), Gen::new(10)); // Generation NOT bumped
+        assert_eq!(closed.lane(), Lane::new(42));
+        assert_eq!(closed.generation(), Generation::new(10)); // Generation NOT bumped
     }
 }

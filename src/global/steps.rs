@@ -8,7 +8,8 @@
 use core::marker::PhantomData;
 
 use super::const_dsl;
-use crate::g::{KnownRole, Role};
+use super::program::Program;
+use crate::global::{KnownRole, MessageSpec, Role, RoleMarker, SendableLabel};
 
 // =============================================================================
 // RoleLaneSet — Lane-aware role set for g::par disjoint checking
@@ -22,7 +23,7 @@ use crate::g::{KnownRole, Role};
 /// communicate in parallel on different Lanes without violating linearity.
 ///
 /// # Capacity
-/// - Maximum 8 Lanes (sufficient for HTTP/3 with Control, QPACK, Request, etc.)
+/// - Maximum 8 Lanes (sufficient for layered control/data parallelism)
 /// - Maximum 32 Roles per Lane (same as the original `StepRoleSet::MASK`)
 /// - Copy: 32 bytes (compile-time checking only, zero runtime cost)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,7 +43,7 @@ impl RoleLaneSet {
     ///
     /// # Panics
     /// Panics if `lane >= 8` or `role_index >= 32`.
-    pub const fn with_role(mut self, role_index: u8, lane: u8) -> Self {
+    pub(crate) const fn with_role(mut self, role_index: u8, lane: u8) -> Self {
         assert!(lane < 8, "lane must be < 8");
         assert!(role_index < 32, "role_index must be < 32");
         self.lanes[lane as usize] |= 1u32 << role_index;
@@ -79,18 +80,6 @@ impl RoleLaneSet {
         }
         false
     }
-
-    /// Check if the set is empty (no roles in any lane).
-    pub const fn is_empty(&self) -> bool {
-        let mut i = 0;
-        while i < 8 {
-            if self.lanes[i] != 0 {
-                return false;
-            }
-            i += 1;
-        }
-        true
-    }
 }
 
 /// Empty typelist.
@@ -101,18 +90,10 @@ pub struct StepCons<Head, Tail>(PhantomData<(Head, Tail)>);
 
 /// Global send step from `From` to `To` carrying message `Msg` on `LANE`.
 ///
-/// The `LANE` parameter defaults to 0 for backward compatibility. When using
-/// `g::par`, different Lanes allow the same roles to communicate in parallel
+/// The `LANE` parameter defaults to 0. When using `g::par`, different lanes allow
+/// the same roles to communicate in parallel
 /// without violating the disjoint constraint.
 pub struct SendStep<From, To, Msg, const LANE: u8 = 0>(PhantomData<(From, To, Msg)>);
-
-/// Trait implemented by typelists that contain at least one step.
-pub trait StepNonEmpty {}
-
-/// Trait exposing whether a typelist is empty.
-pub trait StepIsEmpty {
-    const IS_EMPTY: bool;
-}
 
 /// Trait exposing the set of (role, lane) pairs participating in a typelist.
 ///
@@ -125,7 +106,7 @@ pub trait StepRoleSet {
 }
 
 /// Typelist beginning with a control message send.
-pub trait ControlPlanEligible {}
+pub trait PolicyEligible {}
 
 /// Local send transition (current role is the sender).
 pub struct LocalSend<To, Msg>(PhantomData<(To, Msg)>);
@@ -136,6 +117,77 @@ pub struct LocalRecv<From, Msg>(PhantomData<(From, Msg)>);
 /// Local action transition (self-send: sender == receiver).
 pub struct LocalAction<Msg>(PhantomData<Msg>);
 
+/// Sequence witness that preserves segment boundaries for substrate composition.
+pub struct SeqSteps<Left, Right>(PhantomData<(Left, Right)>);
+
+/// Loop continue arm with a controller self-send head.
+pub type LoopContinueSteps<Controller, ContMsg, Tail = StepNil> =
+    SeqSteps<StepCons<SendStep<Controller, Controller, ContMsg>, StepNil>, Tail>;
+
+/// Loop break arm with a controller self-send head.
+pub type LoopBreakSteps<Controller, BreakMsg, Tail = StepNil> =
+    StepCons<SendStep<Controller, Controller, BreakMsg>, Tail>;
+
+/// Lane-qualified loop continue arm with a controller self-send head.
+pub type LoopContinueStepsL<Controller, ContMsg, const LANE: u8, Tail = StepNil> =
+    SeqSteps<StepCons<SendStep<Controller, Controller, ContMsg, LANE>, StepNil>, Tail>;
+
+/// Lane-qualified loop break arm with a controller self-send head.
+pub type LoopBreakStepsL<Controller, BreakMsg, const LANE: u8, Tail = StepNil> =
+    StepCons<SendStep<Controller, Controller, BreakMsg, LANE>, Tail>;
+
+/// Binary loop decision witness composed from continue and break arms.
+pub type LoopDecisionSteps<Controller, ContMsg, BreakMsg, BreakTail = StepNil, ContTail = StepNil> =
+    <LoopContinueSteps<Controller, ContMsg, ContTail> as StepConcat<
+        LoopBreakSteps<Controller, BreakMsg, BreakTail>,
+    >>::Output;
+
+/// Lane-qualified binary loop decision witness.
+pub type LoopDecisionStepsL<
+    Controller,
+    ContMsg,
+    BreakMsg,
+    const LANE: u8,
+    BreakTail = StepNil,
+    ContTail = StepNil,
+> = <LoopContinueStepsL<Controller, ContMsg, LANE, ContTail> as StepConcat<
+    LoopBreakStepsL<Controller, BreakMsg, LANE, BreakTail>,
+>>::Output;
+
+/// Canonical loop witness that preserves the body segment in the continue arm.
+pub type LoopSteps<
+    BodySteps,
+    Controller,
+    ContMsg,
+    BreakMsg,
+    BreakTail = StepNil,
+    ContTail = StepNil,
+> = LoopDecisionSteps<
+    Controller,
+    ContMsg,
+    BreakMsg,
+    BreakTail,
+    <BodySteps as StepConcat<ContTail>>::Output,
+>;
+
+/// Lane-qualified canonical loop witness that preserves the body segment.
+pub type LoopStepsL<
+    BodySteps,
+    Controller,
+    ContMsg,
+    BreakMsg,
+    const LANE: u8,
+    BreakTail = StepNil,
+    ContTail = StepNil,
+> = LoopDecisionStepsL<
+    Controller,
+    ContMsg,
+    BreakMsg,
+    LANE,
+    BreakTail,
+    <BodySteps as StepConcat<ContTail>>::Output,
+>;
+
 impl Default for StepNil {
     fn default() -> Self {
         Self::new()
@@ -143,6 +195,9 @@ impl Default for StepNil {
 }
 
 impl StepNil {
+    /// Canonical zero-fragment program witness for substrate-side composition.
+    pub const PROGRAM: Program<Self> = Program::<Self>::empty();
+
     pub const fn new() -> Self {
         Self
     }
@@ -205,14 +260,15 @@ impl BuildEffList for StepNil {
     const EFF: const_dsl::EffList = const_dsl::EffList::new();
 }
 
-impl<From, To, Msg, const LANE: u8, Tail> BuildEffList for StepCons<SendStep<From, To, Msg, LANE>, Tail>
+impl<From, To, Msg, const LANE: u8, Tail> BuildEffList
+    for StepCons<SendStep<From, To, Msg, LANE>, Tail>
 where
-    From: KnownRole + crate::g::RoleMarker + RoleEq<To>,
-    To: KnownRole + crate::g::RoleMarker,
-    Msg: crate::g::MessageSpec + crate::g::SendableLabel + crate::global::MessageControlSpec,
+    From: KnownRole + RoleMarker + RoleEq<To>,
+    To: KnownRole + RoleMarker,
+    Msg: MessageSpec + SendableLabel + crate::global::MessageControlSpec,
     Tail: BuildEffList,
     // Enforce: CanonicalControl requires self-send (From == To)
-    <Msg as crate::g::MessageSpec>::ControlKind:
+    <Msg as MessageSpec>::ControlKind:
         crate::global::RequireSelfSendForCanonical<<From as RoleEq<To>>::Output>,
 {
     const EFF: const_dsl::EffList = {
@@ -237,21 +293,19 @@ where
     type Output = StepCons<Head, <Tail as StepConcat<Other>>::Output>;
 }
 
-impl StepIsEmpty for StepNil {
-    const IS_EMPTY: bool = true;
+impl<Left, Right, Other> StepConcat<Other> for SeqSteps<Left, Right>
+where
+    Right: StepConcat<Other>,
+{
+    type Output = SeqSteps<Left, <Right as StepConcat<Other>>::Output>;
 }
-
-impl<Head, Tail> StepIsEmpty for StepCons<Head, Tail> {
-    const IS_EMPTY: bool = false;
-}
-
-impl<Head, Tail> StepNonEmpty for StepCons<Head, Tail> {}
 
 impl StepRoleSet for StepNil {
     const ROLE_LANE_SET: RoleLaneSet = RoleLaneSet::empty();
 }
 
-impl<From, To, Msg, const LANE: u8, Tail> StepRoleSet for StepCons<SendStep<From, To, Msg, LANE>, Tail>
+impl<From, To, Msg, const LANE: u8, Tail> StepRoleSet
+    for StepCons<SendStep<From, To, Msg, LANE>, Tail>
 where
     From: KnownRole,
     To: KnownRole,
@@ -262,39 +316,21 @@ where
         .with_role(To::INDEX, LANE);
 }
 
-impl<From, To, Msg, const LANE: u8> ControlPlanEligible for StepCons<SendStep<From, To, Msg, LANE>, StepNil>
+impl<Left, Right> StepRoleSet for SeqSteps<Left, Right>
 where
-    From: KnownRole + crate::g::RoleMarker,
-    To: KnownRole + crate::g::RoleMarker,
-    Msg: crate::g::MessageSpec + crate::g::SendableLabel + crate::global::MessageControlSpec,
+    Left: StepRoleSet,
+    Right: StepRoleSet,
 {
+    const ROLE_LANE_SET: RoleLaneSet = Left::ROLE_LANE_SET.union(Right::ROLE_LANE_SET);
 }
 
-/// Constraint ensuring a route arm begins with a self-send from the controller.
-///
-/// A route arm must start with `SendStep<Role<CONTROLLER>, Role<CONTROLLER>, Msg>`.
-/// This enforces the hibana design where route decisions are made via local
-/// self-send control messages processed by `flow().send()`.
-///
-/// Other roles discover the selected arm via resolver or [`poll_route_decision`].
-///
-/// [`poll_route_decision`]: crate::endpoint::CursorEndpoint::poll_route_decision
-pub trait RouteArm<const CONTROLLER: u8> {
-    /// Message dispatched by the controller at the beginning of the arm (self-send).
-    type Msg: crate::g::MessageSpec + crate::g::SendableLabel;
-    /// Remaining steps after the initial controller send.
-    type Tail;
-}
-
-// Implementation: route arm must be self-send (CONTROLLER → CONTROLLER)
-// Note: const LANE is added for completeness but route arms are typically on Lane 0
-impl<const CONTROLLER: u8, Msg, const LANE: u8, Tail> RouteArm<CONTROLLER>
-    for StepCons<SendStep<Role<CONTROLLER>, Role<CONTROLLER>, Msg, LANE>, Tail>
+impl<From, To, Msg, const LANE: u8> PolicyEligible
+    for StepCons<SendStep<From, To, Msg, LANE>, StepNil>
 where
-    Msg: crate::g::MessageSpec + crate::g::SendableLabel,
+    From: KnownRole + RoleMarker,
+    To: KnownRole + RoleMarker,
+    Msg: MessageSpec + SendableLabel + crate::global::MessageControlSpec,
 {
-    type Msg = Msg;
-    type Tail = Tail;
 }
 
 /// Type-level booleans used during projection.
@@ -309,17 +345,12 @@ pub trait RoleEq<Other> {
     type Output: Bool;
 }
 
-/// Marker trait for self-equality (From == To).
-/// This is automatically true for `Role<N>: RoleEq<Role<N>>`.
-pub trait IsSelfSend {}
-
 macro_rules! impl_role_eq {
     () => {};
     ($head:literal $(,$tail:literal)*) => {
         impl RoleEq<Role<$head>> for Role<$head> {
             type Output = True;
         }
-        impl IsSelfSend for Role<$head> {}
         $(
             impl RoleEq<Role<$tail>> for Role<$head> {
                 type Output = False;
@@ -342,7 +373,7 @@ pub trait SelectLocal<SendFlag: Bool, RecvFlag: Bool, Local, From, To, Msg> {
 impl<Local, From, To, Msg> SelectLocal<True, False, Local, From, To, Msg> for ()
 where
     To: KnownRole,
-    Msg: crate::g::MessageSpec,
+    Msg: MessageSpec,
 {
     type Output = StepCons<LocalSend<To, Msg>, StepNil>;
 }
@@ -350,21 +381,21 @@ where
 impl<Local, From, To, Msg> SelectLocal<False, True, Local, From, To, Msg> for ()
 where
     From: KnownRole,
-    Msg: crate::g::MessageSpec,
+    Msg: MessageSpec,
 {
     type Output = StepCons<LocalRecv<From, Msg>, StepNil>;
 }
 
 impl<Local, From, To, Msg> SelectLocal<False, False, Local, From, To, Msg> for ()
 where
-    Msg: crate::g::MessageSpec,
+    Msg: MessageSpec,
 {
     type Output = StepNil;
 }
 
 impl<Local, From, To, Msg> SelectLocal<True, True, Local, From, To, Msg> for ()
 where
-    Msg: crate::g::MessageSpec,
+    Msg: MessageSpec,
 {
     type Output = StepCons<LocalAction<Msg>, StepNil>;
 }
@@ -378,12 +409,13 @@ impl<Local> ProjectRole<Local> for StepNil {
     type Output = StepNil;
 }
 
-impl<Local, From, To, Msg, const LANE: u8, Tail> ProjectRole<Local> for StepCons<SendStep<From, To, Msg, LANE>, Tail>
+impl<Local, From, To, Msg, const LANE: u8, Tail> ProjectRole<Local>
+    for StepCons<SendStep<From, To, Msg, LANE>, Tail>
 where
     Local: KnownRole,
     From: KnownRole + RoleEq<Local>,
     To: KnownRole + RoleEq<Local>,
-    Msg: crate::g::MessageSpec,
+    Msg: MessageSpec,
     Tail: ProjectRole<Local>,
     (): SelectLocal<
             <From as RoleEq<Local>>::Output,
@@ -410,4 +442,15 @@ where
         To,
         Msg,
     >>::Output as StepConcat<<Tail as ProjectRole<Local>>::Output>>::Output;
+}
+
+impl<Local, Left, Right> ProjectRole<Local> for SeqSteps<Left, Right>
+where
+    Left: ProjectRole<Local>,
+    Right: ProjectRole<Local>,
+    <Left as ProjectRole<Local>>::Output: StepConcat<<Right as ProjectRole<Local>>::Output>,
+{
+    type Output = <<Left as ProjectRole<Local>>::Output as StepConcat<
+        <Right as ProjectRole<Local>>::Output,
+    >>::Output;
 }

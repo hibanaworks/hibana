@@ -7,124 +7,80 @@
 //! clear extension points.
 
 use core::{
-    convert::TryFrom,
     marker::PhantomData,
-    mem,
     ops::Range,
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use super::error::{
-    CommitError as RaCommitError, GenError as RaGenError, GenerationRecord as RaGenerationRecord,
-    SpliceError as RaSpliceError,
+use super::{
+    association::AssocTable,
+    capability::{CapEntry, CapTable},
+    error::{
+        CancelError, CapError, CheckpointError, CommitError, GenError, GenerationRecord,
+        RendezvousError, RollbackError, SpliceError,
+    },
+    port::Port,
+    slots::{SLOT_COUNT, SlotArena, SlotStorage},
+    splice::{DistributedSpliceTable, PendingSplice, SpliceStateTable},
+    tables::{
+        AckTable, CheckpointTable, FenceTable, GenTable, LoopTable, PolicyTable, RouteTable,
+        VmCapsTable,
+    },
 };
-use super::slots::SlotArena;
-use super::splice::PendingSplice as RaPendingSplice;
 use crate::{
     control::{
-        CancelError as CpCancelError, CheckpointError as CpCheckpointError,
-        CommitError as CpCommitError, CpEffect, CpError, DelegationError as CpDelegationError,
-        RollbackError as CpRollbackError, SpliceError as CpSpliceError,
         automaton::txn::{NoopTap, Txn},
-        brand::{self, Guard as BrandGuard},
-        cap::{
+        brand::{self, Guard},
+        cap::mint::{
             CapShot, CapsMask, EndpointHandle, EndpointResource, GenericCapToken, NonceSeed,
             ResourceKind, VerifiedCap,
         },
-        cluster::{CpCommand, DelegatePhase, EffectExecutor, SpliceOperands},
+        cluster::{
+            core::{CpCommand, EffectRunner, SpliceOperands},
+            effects::CpEffect,
+            error::CpError,
+        },
         types::{IncreasingGen, One},
     },
     eff::EffIndex,
     endpoint::affine::LaneGuard,
     epf::{host::HostSlots, vm::Slot},
-    global::const_dsl::{ControlMarker, ControlScopeKind, HandlePlan},
-    global::typestate::ScopeAtlasView,
+    global::const_dsl::{ControlMarker, ControlScopeKind, PolicyMode},
+    observe::core::{TapEvent, TapRing, emit},
     observe::{
-        AckCounters, AssociationSnapshot, DelegAbort, DelegBegin, DelegSplice, EndpointControl,
-        FenceCounters, LaneRelease, RawEvent, RollbackOk, SpliceCommit, TapEvent, TapRing, emit,
-        events as tap_events, ids, policy_abort, policy_effect, policy_effect_ok, policy_trap,
+        events::{DelegBegin, DelegSplice, LaneRelease, RawEvent, RollbackOk},
+        ids, policy_abort, policy_trap,
     },
     runtime::consts::{DefaultLabelUniverse, LabelUniverse},
     runtime::{
         config::{Clock, Config, ConfigParts, CounterClock},
         mgmt,
     },
-    transport::forward::Forward,
-    transport::{
-        Transport, TransportEvent as TransportEventData, TransportEventKind,
-        TransportMetrics as TransportMetricsTrait,
-    },
+    transport::{Transport, TransportEventKind, TransportMetrics},
 };
 
 const ENDPOINT_TAG: u8 = 0;
-const ROLE_CAPACITY: usize = 16;
+use super::splice::LocalSpliceInvariant;
+use crate::control::automaton::distributed::{SpliceAck, SpliceIntent};
+use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 
-struct ScopeAtlasTable {
-    roles: core::cell::UnsafeCell<[Option<ScopeAtlasView<'static>>; ROLE_CAPACITY]>,
-}
-
-impl ScopeAtlasTable {
-    const fn new() -> Self {
-        Self {
-            roles: core::cell::UnsafeCell::new([None; ROLE_CAPACITY]),
-        }
-    }
-
-    fn install(&self, role: u8, view: ScopeAtlasView<'static>) {
-        if (role as usize) >= ROLE_CAPACITY {
-            return;
-        }
-        unsafe {
-            (*self.roles.get())[role as usize] = Some(view);
-        }
-    }
-}
-
-pub use super::types::{Generation, Lane, LocalSpliceInvariant, RendezvousId, SessionId};
-pub use super::error::*;
-pub use super::tables::*;
-pub use super::capability::*;
-pub use super::association::*;
-pub use super::splice::*;
-pub use super::port::*;
-pub use crate::control::automaton::distributed::{SpliceAck, SpliceIntent};
-
-/// Abstraction over control-plane implementations capable of minting ports.
-///
-/// Note: Splice operations now go through `control::CpCommand`, keeping the
-/// control-plane as the single authority for rendezvous mutations.
-pub trait ControlPlane<'rv> {
-    /// Transport implementation used by the control plane.
-    type Transport: Transport;
-    /// Epoch table bound to the control plane instance.
-    type Epoch: crate::control::cap::EpochTable;
-
-    /// Retrieve the rendezvous identifier.
-    fn rendezvous_id(&self) -> RendezvousId;
-
-    /// Release the specified lane back to the control plane.
-    fn release_lane(&self, lane: Lane);
-}
-
-pub struct Rendezvous<
+pub(crate) struct Rendezvous<
     'rv,
     'cfg,
     T: Transport,
     U: LabelUniverse = DefaultLabelUniverse,
     C: Clock = CounterClock,
-    E: crate::control::cap::EpochTable = crate::control::cap::EpochInit,
+    E: crate::control::cap::mint::EpochTable = crate::control::cap::mint::EpochTbl,
 > where
     'cfg: 'rv,
 {
-    brand_guard: BrandGuard<'static>,
     brand_marker: PhantomData<brand::Brand<'rv>>,
     id: RendezvousId,
     tap: TapRing<'cfg>,
-    tap_registered: bool,
     slab: *mut [u8],
     slab_marker: PhantomData<&'cfg mut [u8]>,
     lane_range: Range<u32>,
-    universe: U,
+    universe_marker: PhantomData<U>,
     transport: T,
     r#gen: GenTable,
     fences: FenceTable,
@@ -137,19 +93,19 @@ pub struct Rendezvous<
     caps: CapTable,
     loops: LoopTable,
     routes: RouteTable,
-    control_plans: ControlPlanTable,
+    policies: PolicyTable,
     vm_caps: VmCapsTable,
     slot_arena: SlotArena,
     host_slots: HostSlots<'cfg>,
     clock: C,
+    liveness_policy: crate::runtime::config::LivenessPolicy,
     /// Counter for generating unique RV IDs
     _next_rv_id: core::cell::Cell<u32>,
     _epoch_marker: PhantomData<E>,
-    scope_atlas: ScopeAtlasTable,
 }
 
 /// Affine bundle combining slot storage and host registry access.
-pub struct SlotBundle<'rv, 'cfg: 'rv> {
+pub(crate) struct SlotBundle<'rv, 'cfg: 'rv> {
     arena: &'rv mut SlotArena,
     host_slots: &'rv mut HostSlots<'cfg>,
 }
@@ -162,48 +118,20 @@ impl<'rv, 'cfg: 'rv> SlotBundle<'rv, 'cfg> {
 
     /// Borrow the underlying slot arena.
     #[inline]
-    pub fn arena(&mut self) -> &mut SlotArena {
+    pub(crate) fn arena(&mut self) -> &mut SlotArena {
         self.arena
     }
 
     /// Borrow mutable storage for the given policy slot.
     #[inline]
-    pub fn storage_mut(&mut self, slot: Slot) -> &mut crate::rendezvous::SlotStorage {
+    pub(crate) fn storage_mut(&mut self, slot: Slot) -> &mut SlotStorage {
         self.arena.storage_mut(slot)
     }
 
-    /// Borrow the host machine registry associated with this rendezvous.
-    #[inline]
-    pub fn host_mut(&mut self) -> &mut HostSlots<'cfg> {
-        self.host_slots
-    }
-
-    /// Borrow both storage and host registry for `slot` in a single call.
-    #[inline]
-    pub fn storage_and_host_mut(
+    pub(crate) fn load_commit_with<State>(
         &mut self,
         slot: Slot,
-    ) -> (&mut crate::rendezvous::SlotStorage, &mut HostSlots<'cfg>) {
-        let storage = self.arena.storage_mut(slot);
-        let host = &mut *self.host_slots;
-        (storage, host)
-    }
-
-    /// Execute `f` with mutable access to storage and host registry for `slot`.
-    #[inline]
-    pub fn with_storage_and_host_mut<R, F>(&mut self, slot: Slot, f: F) -> R
-    where
-        F: FnOnce(&mut crate::rendezvous::SlotStorage, &mut HostSlots<'cfg>) -> R,
-    {
-        let storage = self.arena.storage_mut(slot);
-        let host = &mut *self.host_slots;
-        f(storage, host)
-    }
-
-    pub fn load_commit_with<State>(
-        &mut self,
-        slot: Slot,
-        manager: &mut mgmt::Manager<State, { crate::rendezvous::SLOT_COUNT }>,
+        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
     ) -> Result<(), mgmt::MgmtError>
     where
         State: mgmt::ManagerState,
@@ -213,35 +141,62 @@ impl<'rv, 'cfg: 'rv> SlotBundle<'rv, 'cfg> {
             .map(|_| ())
     }
 
-    pub fn activate_with<State>(
+    pub(crate) fn schedule_activate_with<State>(
         &mut self,
         slot: Slot,
-        manager: &mut mgmt::Manager<State, { crate::rendezvous::SLOT_COUNT }>,
+        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
     ) -> Result<mgmt::TransitionReport, mgmt::MgmtError>
     where
         State: mgmt::ManagerState,
     {
-        let storage_ptr = self.arena.storage_mut(slot) as *mut crate::rendezvous::SlotStorage;
-        let host_ptr = &mut *self.host_slots as *mut HostSlots<'cfg>;
-        unsafe { manager.activate(slot, &mut *storage_ptr, &mut *host_ptr) }
+        manager.schedule_activate(slot)
     }
 
-    pub fn revert_with<State>(
+    pub(crate) fn on_decision_boundary_with<State>(
+        &mut self,
+        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
+    ) -> Result<(), mgmt::MgmtError>
+    where
+        State: mgmt::ManagerState,
+    {
+        let mut idx = 0usize;
+        while idx < crate::runtime::mgmt::ALL_SLOTS.len() {
+            let slot = crate::runtime::mgmt::ALL_SLOTS[idx];
+            let _ = self.on_decision_boundary_for_slot_with(slot, manager)?;
+            idx += 1;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn on_decision_boundary_for_slot_with<State>(
         &mut self,
         slot: Slot,
-        manager: &mut mgmt::Manager<State, { crate::rendezvous::SLOT_COUNT }>,
+        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
+    ) -> Result<Option<mgmt::TransitionReport>, mgmt::MgmtError>
+    where
+        State: mgmt::ManagerState,
+    {
+        let host_ptr = &mut *self.host_slots as *mut HostSlots<'cfg>;
+        let storage_ptr = self.arena.storage_mut(slot) as *mut SlotStorage;
+        unsafe { manager.on_decision_boundary(slot, &mut *storage_ptr, &mut *host_ptr) }
+    }
+
+    pub(crate) fn revert_with<State>(
+        &mut self,
+        slot: Slot,
+        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
     ) -> Result<mgmt::TransitionReport, mgmt::MgmtError>
     where
         State: mgmt::ManagerState,
     {
-        let storage_ptr = self.arena.storage_mut(slot) as *mut crate::rendezvous::SlotStorage;
+        let storage_ptr = self.arena.storage_mut(slot) as *mut SlotStorage;
         let host_ptr = &mut *self.host_slots as *mut HostSlots<'cfg>;
         unsafe { manager.revert(slot, &mut *storage_ptr, &mut *host_ptr) }
     }
 }
 
 /// Lease guard that retains exclusive access to rendezvous slot resources.
-pub struct SlotBundleLease<'rv, 'cfg: 'rv> {
+pub(crate) struct SlotBundleLease<'rv, 'cfg: 'rv> {
     bundle: SlotBundle<'rv, 'cfg>,
 }
 
@@ -252,15 +207,10 @@ impl<'rv, 'cfg: 'rv> SlotBundleLease<'rv, 'cfg> {
     }
 
     #[inline]
-    pub fn bundle_mut(&mut self) -> &mut SlotBundle<'rv, 'cfg> {
-        &mut self.bundle
-    }
-
-    #[inline]
-    pub fn load_commit_with<State>(
+    pub(crate) fn load_commit_with<State>(
         &mut self,
         slot: Slot,
-        manager: &mut mgmt::Manager<State, { crate::rendezvous::SLOT_COUNT }>,
+        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
     ) -> Result<(), mgmt::MgmtError>
     where
         State: mgmt::ManagerState,
@@ -269,22 +219,46 @@ impl<'rv, 'cfg: 'rv> SlotBundleLease<'rv, 'cfg> {
     }
 
     #[inline]
-    pub fn activate_with<State>(
+    pub(crate) fn schedule_activate_with<State>(
         &mut self,
         slot: Slot,
-        manager: &mut mgmt::Manager<State, { crate::rendezvous::SLOT_COUNT }>,
+        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
     ) -> Result<mgmt::TransitionReport, mgmt::MgmtError>
     where
         State: mgmt::ManagerState,
     {
-        self.bundle.activate_with(slot, manager)
+        self.bundle.schedule_activate_with(slot, manager)
     }
 
     #[inline]
-    pub fn revert_with<State>(
+    pub(crate) fn on_decision_boundary_with<State>(
+        &mut self,
+        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
+    ) -> Result<(), mgmt::MgmtError>
+    where
+        State: mgmt::ManagerState,
+    {
+        self.bundle.on_decision_boundary_with(manager)
+    }
+
+    #[inline]
+    pub(crate) fn on_decision_boundary_for_slot_with<State>(
         &mut self,
         slot: Slot,
-        manager: &mut mgmt::Manager<State, { crate::rendezvous::SLOT_COUNT }>,
+        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
+    ) -> Result<Option<mgmt::TransitionReport>, mgmt::MgmtError>
+    where
+        State: mgmt::ManagerState,
+    {
+        self.bundle
+            .on_decision_boundary_for_slot_with(slot, manager)
+    }
+
+    #[inline]
+    pub(crate) fn revert_with<State>(
+        &mut self,
+        slot: Slot,
+        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
     ) -> Result<mgmt::TransitionReport, mgmt::MgmtError>
     where
         State: mgmt::ManagerState,
@@ -356,17 +330,17 @@ enum EffectError {
     Commit(super::error::CommitError),
     MissingGeneration,
     Unsupported,
-    Splice(RaSpliceError),
+    Splice(SpliceError),
     Delegation(super::error::CapError),
 }
 
 #[derive(Clone, Copy, Debug)]
 struct DelegateContext {
-    phase: DelegatePhase,
-    token: crate::control::cap::CapToken,
+    claim: bool,
+    token: GenericCapToken<EndpointResource>,
 }
 
-impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::EpochTable>
+impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
     Rendezvous<'rv, 'cfg, T, U, C, E>
 where
     'cfg: 'rv,
@@ -378,31 +352,6 @@ where
     {
         let ptr: *const Self = self;
         unsafe { &*ptr.cast::<Rendezvous<'short, 'cfg, T, U, C, E>>() }
-    }
-
-    fn register_tap(&mut self) {
-        if self.tap_registered {
-            return;
-        }
-        if crate::observe::head().is_some() {
-            return;
-        }
-        unsafe {
-            let static_ref = self.tap.assume_static();
-            let _ = crate::observe::install_ring(static_ref);
-        }
-        self.tap_registered = true;
-    }
-
-    fn unregister_tap(&mut self) {
-        if !self.tap_registered {
-            return;
-        }
-        unsafe {
-            let ptr = self.tap.as_static_ptr();
-            let _ = crate::observe::uninstall_ring(ptr);
-        }
-        self.tap_registered = false;
     }
 
     pub(crate) fn with_slot_bundle_lease<'short, F, R>(&'short mut self, f: F) -> R
@@ -430,29 +379,24 @@ where
         SlotBundleLease::new(self.slot_bundle())
     }
 
-    pub(crate) fn register_control_plan(
+    pub(crate) fn register_policy(
         &self,
         lane: Lane,
         eff_index: EffIndex,
         tag: u8,
-        plan: HandlePlan,
+        policy: PolicyMode,
     ) -> Result<(), CpError> {
-        self.control_plans
-            .register(lane, eff_index, tag, plan)
+        self.policies
+            .register(lane, eff_index, tag, policy)
             .map_err(|_| CpError::ResourceExhausted)
     }
 
-    pub(crate) fn control_plan(
-        &self,
-        lane: Lane,
-        eff_index: EffIndex,
-        tag: u8,
-    ) -> Option<HandlePlan> {
-        self.control_plans.get(lane, eff_index, tag)
+    pub(crate) fn policy(&self, lane: Lane, eff_index: EffIndex, tag: u8) -> Option<PolicyMode> {
+        self.policies.get(lane, eff_index, tag)
     }
 
-    pub(crate) fn reset_control_plan(&self, lane: Lane) {
-        self.control_plans.reset_lane(lane);
+    pub(crate) fn reset_policy(&self, lane: Lane) {
+        self.policies.reset_lane(lane);
     }
 
     fn prepare_distributed_splice_operands(
@@ -477,7 +421,9 @@ where
         };
         emit(
             self.tap(),
-            RawEvent::new(self.clock.now32(), event_id, sid.raw(), arg),
+            RawEvent::new(self.clock.now32(), event_id)
+                .with_arg0(sid.raw())
+                .with_arg1(arg),
         );
     }
 
@@ -496,7 +442,40 @@ where
 
         emit(
             self.tap(),
-            RawEvent::with_causal(self.clock.now32(), id, causal, arg0, arg1),
+            RawEvent::new(self.clock.now32(), id)
+                .with_causal_key(causal)
+                .with_arg0(arg0)
+                .with_arg1(arg1),
+        );
+    }
+
+    fn emit_policy_event_with_arg2(
+        &self,
+        id: u16,
+        lane: Option<Lane>,
+        arg0: u32,
+        arg1: u32,
+        arg2: u32,
+    ) {
+        let causal = lane
+            .map(|lane| {
+                let raw = lane.raw();
+                debug_assert!(
+                    raw <= u32::from(u8::MAX),
+                    "lane id must fit within causal key encoding"
+                );
+                let marker = raw as u8 + 1;
+                TapEvent::make_causal_key(marker, 0)
+            })
+            .unwrap_or(0);
+
+        emit(
+            self.tap(),
+            RawEvent::new(self.clock.now32(), id)
+                .with_causal_key(causal)
+                .with_arg0(arg0)
+                .with_arg1(arg1)
+                .with_arg2(arg2),
         );
     }
 
@@ -509,15 +488,14 @@ where
         );
     }
 
-    #[allow(clippy::type_complexity)]
     fn apply_policy_action(
         &self,
         action: crate::epf::Action,
         sid: Option<SessionId>,
         lane: Option<Lane>,
-    ) -> Result<(Option<CpCommand>, Option<(CpEffect, Option<u32>)>), CpError> {
+    ) -> Result<(), CpError> {
         match action {
-            crate::epf::Action::Proceed => Ok((None, None)),
+            crate::epf::Action::Proceed => Ok(()),
             crate::epf::Action::Abort(info) => {
                 self.handle_policy_abort(info, sid, lane);
                 Err(CpError::PolicyAbort {
@@ -526,25 +504,15 @@ where
             }
             crate::epf::Action::Tap { id, arg0, arg1 } => {
                 self.emit_policy_event(id, lane, arg0, arg1);
-                Ok((None, None))
+                Ok(())
             }
             crate::epf::Action::Route { .. } => {
                 // Route decisions are only meaningful for Slot::Route; ignore here.
-                Ok((None, None))
+                Ok(())
             }
-            crate::epf::Action::Ra(op) => {
-                let decision = self.apply_policy_ra(op, sid, lane)?;
-
-                if let Some((effect, operand)) = decision.1 {
-                    self.emit_policy_event(
-                        policy_effect(),
-                        lane,
-                        effect as u16 as u32,
-                        operand.unwrap_or(0),
-                    );
-                }
-
-                Ok(decision)
+            crate::epf::Action::Defer { .. } => {
+                // Defer is a route re-evaluation signal; non-route slots treat it as proceed.
+                Ok(())
             }
         }
     }
@@ -571,57 +539,18 @@ where
         }
     }
 
-    #[allow(clippy::type_complexity)]
-    fn apply_policy_ra(
-        &self,
-        op: crate::epf::RaOp,
-        sid: Option<SessionId>,
-        lane: Option<Lane>,
-    ) -> Result<(Option<CpCommand>, Option<(CpEffect, Option<u32>)>), CpError> {
-        let (sid_val, lane_val) = match (sid, lane) {
-            (Some(s), Some(l)) => (s, l),
-            _ => {
-                return Err(CpError::UnsupportedEffect(op.effect() as u8));
-            }
-        };
-
-        use crate::control::CpEffect;
-
-        let cp_sid = crate::control::types::SessionId::new(sid_val.raw());
-        let cp_lane = crate::control::types::LaneId::new(lane_val.raw());
-
-        let command = match op {
-            crate::epf::RaOp::Checkpoint => CpCommand::checkpoint(cp_sid, cp_lane),
-            crate::epf::RaOp::Rollback { generation } => {
-                if generation > u16::MAX as u32 {
-                    return Err(CpError::UnsupportedEffect(CpEffect::Rollback as u8));
-                }
-                let generation_tag =
-                    crate::control::types::Gen::new(u16::try_from(generation).unwrap());
-                CpCommand::rollback(cp_sid, cp_lane, generation_tag)
-            }
-            crate::epf::RaOp::SpliceAbort { .. }
-            | crate::epf::RaOp::SpliceBegin { .. }
-            | crate::epf::RaOp::SpliceCommit { .. } => {
-                return Err(CpError::UnsupportedEffect(op.effect() as u8));
-            }
-        };
-
-        Ok((Some(command), Some((op.effect(), op.operand()))))
-    }
-
     fn perform_effect(&self, envelope: CpCommand) -> Result<(), CpError> {
         match envelope.effect {
             CpEffect::SpliceBegin => {
-                let sid = envelope
-                    .sid
-                    .ok_or(CpError::Splice(CpSpliceError::InvalidSession))?;
-                let lane = envelope
-                    .lane
-                    .ok_or(CpError::Splice(CpSpliceError::InvalidLane))?;
-                let generation_input = envelope
-                    .generation
-                    .ok_or(CpError::Splice(CpSpliceError::GenerationMismatch))?;
+                let sid = envelope.sid.ok_or(CpError::Splice(
+                    crate::control::cluster::error::SpliceError::InvalidSession,
+                ))?;
+                let lane = envelope.lane.ok_or(CpError::Splice(
+                    crate::control::cluster::error::SpliceError::InvalidLane,
+                ))?;
+                let generation_input = envelope.generation.ok_or(CpError::Splice(
+                    crate::control::cluster::error::SpliceError::GenerationMismatch,
+                ))?;
                 let fences = envelope.fences;
                 let sid = SessionId::new(sid.raw());
                 let lane = Lane::new(lane.raw());
@@ -630,13 +559,13 @@ where
                     .map_err(map_splice_error)
             }
             CpEffect::SpliceAck => {
-                let sid = envelope
-                    .sid
-                    .ok_or(CpError::Splice(CpSpliceError::InvalidSession))?;
+                let sid = envelope.sid.ok_or(CpError::Splice(
+                    crate::control::cluster::error::SpliceError::InvalidSession,
+                ))?;
                 let Some(intent) = envelope.intent else {
-                    let lane = envelope
-                        .lane
-                        .ok_or(CpError::Splice(CpSpliceError::InvalidLane))?;
+                    let lane = envelope.lane.ok_or(CpError::Splice(
+                        crate::control::cluster::error::SpliceError::InvalidLane,
+                    ))?;
                     let sid = SessionId::new(sid.raw());
                     let lane = Lane::new(lane.raw());
                     return match self
@@ -645,7 +574,9 @@ where
                         Ok(_) => Ok(()),
                         Err(EffectError::Splice(err)) => Err(map_splice_error(err)),
                         Err(EffectError::MissingGeneration) | Err(EffectError::Rollback(_)) => {
-                            Err(CpError::Splice(CpSpliceError::InvalidState))
+                            Err(CpError::Splice(
+                                crate::control::cluster::error::SpliceError::InvalidState,
+                            ))
                         }
                         Err(EffectError::Unsupported) | Err(EffectError::Delegation(_)) => {
                             Err(CpError::UnsupportedEffect(CpEffect::SpliceAck as u8))
@@ -655,16 +586,18 @@ where
                         }
                     };
                 };
-                let ack_expected = envelope
-                    .ack
-                    .ok_or(CpError::Splice(CpSpliceError::InvalidState))?;
+                let ack_expected = envelope.ack.ok_or(CpError::Splice(
+                    crate::control::cluster::error::SpliceError::InvalidState,
+                ))?;
 
                 let ack_result = self
                     .process_splice_intent(&intent)
                     .map_err(map_splice_error)?;
 
                 if ack_result != ack_expected {
-                    return Err(CpError::Splice(CpSpliceError::GenerationMismatch));
+                    return Err(CpError::Splice(
+                        crate::control::cluster::error::SpliceError::GenerationMismatch,
+                    ));
                 }
 
                 let dst_lane = Lane::new(intent.dst_lane.raw());
@@ -676,12 +609,12 @@ where
                 Ok(())
             }
             CpEffect::SpliceCommit => {
-                let sid = envelope
-                    .sid
-                    .ok_or(CpError::Splice(CpSpliceError::InvalidSession))?;
-                let lane = envelope
-                    .lane
-                    .ok_or(CpError::Splice(CpSpliceError::InvalidLane))?;
+                let sid = envelope.sid.ok_or(CpError::Splice(
+                    crate::control::cluster::error::SpliceError::InvalidSession,
+                ))?;
+                let lane = envelope.lane.ok_or(CpError::Splice(
+                    crate::control::cluster::error::SpliceError::InvalidLane,
+                ))?;
                 let sid = SessionId::new(sid.raw());
                 let lane = Lane::new(lane.raw());
                 let Some(operands) = envelope.splice else {
@@ -696,9 +629,9 @@ where
                 Ok(())
             }
             CpEffect::Delegate => {
-                let delegate = envelope
-                    .delegate
-                    .ok_or(CpError::Delegation(CpDelegationError::InvalidToken))?;
+                let delegate = envelope.delegate.ok_or(CpError::Delegation(
+                    crate::control::cluster::error::DelegationError::InvalidToken,
+                ))?;
 
                 let header = delegate.token.header();
                 let sid_raw = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
@@ -707,19 +640,23 @@ where
                 if let Some(sid) = envelope.sid
                     && sid.raw() != sid_raw
                 {
-                    return Err(CpError::Delegation(CpDelegationError::InvalidToken));
+                    return Err(CpError::Delegation(
+                        crate::control::cluster::error::DelegationError::InvalidToken,
+                    ));
                 }
                 if let Some(lane) = envelope.lane
                     && lane.raw() != lane_raw
                 {
-                    return Err(CpError::Delegation(CpDelegationError::InvalidToken));
+                    return Err(CpError::Delegation(
+                        crate::control::cluster::error::DelegationError::InvalidToken,
+                    ));
                 }
 
                 let sid = SessionId::new(sid_raw);
                 let lane = Lane::new(lane_raw);
 
                 let ctx = EffectContext::new(sid, lane).with_delegate(DelegateContext {
-                    phase: delegate.phase,
+                    claim: delegate.claim,
                     token: delegate.token,
                 });
 
@@ -732,43 +669,45 @@ where
                     Err(EffectError::Splice(_))
                     | Err(EffectError::MissingGeneration)
                     | Err(EffectError::Rollback(_))
-                    | Err(EffectError::Commit(_)) => {
-                        Err(CpError::Delegation(CpDelegationError::InvalidToken))
-                    }
+                    | Err(EffectError::Commit(_)) => Err(CpError::Delegation(
+                        crate::control::cluster::error::DelegationError::InvalidToken,
+                    )),
                 }
             }
             CpEffect::Commit => {
-                let sid = envelope
-                    .sid
-                    .ok_or(CpError::Commit(CpCommitError::SessionNotFound))?;
-                let lane = envelope
-                    .lane
-                    .ok_or(CpError::Commit(CpCommitError::SessionNotFound))?;
-                let generation_input = envelope
-                    .generation
-                    .ok_or(CpError::Commit(CpCommitError::GenerationMismatch))?;
+                let sid = envelope.sid.ok_or(CpError::Commit(
+                    crate::control::cluster::error::CommitError::SessionNotFound,
+                ))?;
+                let lane = envelope.lane.ok_or(CpError::Commit(
+                    crate::control::cluster::error::CommitError::SessionNotFound,
+                ))?;
+                let generation_input = envelope.generation.ok_or(CpError::Commit(
+                    crate::control::cluster::error::CommitError::GenerationMismatch,
+                ))?;
                 let sid = SessionId::new(sid.raw());
                 let lane = Lane::new(lane.raw());
                 if self.assoc.get_sid(lane) != Some(sid) {
-                    return Err(CpError::Commit(CpCommitError::SessionNotFound));
+                    return Err(CpError::Commit(
+                        crate::control::cluster::error::CommitError::SessionNotFound,
+                    ));
                 }
                 self.commit_at_lane(sid, lane, Generation(generation_input.raw()))
                     .map_err(map_commit_error)
             }
             CpEffect::CancelBegin => {
-                let sid = envelope
-                    .sid
-                    .ok_or(CpError::Cancel(CpCancelError::SessionNotFound))?;
+                let sid = envelope.sid.ok_or(CpError::Cancel(
+                    crate::control::cluster::error::CancelError::SessionNotFound,
+                ))?;
                 self.cancel_begin(SessionId::new(sid.raw()))
                     .map_err(map_cancel_error)
             }
             CpEffect::CancelAck => {
-                let sid = envelope
-                    .sid
-                    .ok_or(CpError::Cancel(CpCancelError::SessionNotFound))?;
-                let generation_input = envelope
-                    .generation
-                    .ok_or(CpError::Cancel(CpCancelError::GenerationMismatch))?;
+                let sid = envelope.sid.ok_or(CpError::Cancel(
+                    crate::control::cluster::error::CancelError::SessionNotFound,
+                ))?;
+                let generation_input = envelope.generation.ok_or(CpError::Cancel(
+                    crate::control::cluster::error::CancelError::GenerationMismatch,
+                ))?;
                 self.cancel_ack(
                     SessionId::new(sid.raw()),
                     Generation(generation_input.raw()),
@@ -776,20 +715,20 @@ where
                 .map_err(map_cancel_error)
             }
             CpEffect::Checkpoint => {
-                let sid = envelope
-                    .sid
-                    .ok_or(CpError::Checkpoint(CpCheckpointError::SessionNotFound))?;
+                let sid = envelope.sid.ok_or(CpError::Checkpoint(
+                    crate::control::cluster::error::CheckpointError::SessionNotFound,
+                ))?;
                 self.checkpoint(SessionId::new(sid.raw()))
                     .map(|_| ())
                     .map_err(map_checkpoint_error)
             }
             CpEffect::Rollback => {
-                let sid = envelope
-                    .sid
-                    .ok_or(CpError::Rollback(CpRollbackError::SessionNotFound))?;
-                let generation_input = envelope
-                    .generation
-                    .ok_or(CpError::Rollback(CpRollbackError::EpochMismatch))?;
+                let sid = envelope.sid.ok_or(CpError::Rollback(
+                    crate::control::cluster::error::RollbackError::SessionNotFound,
+                ))?;
+                let generation_input = envelope.generation.ok_or(CpError::Rollback(
+                    crate::control::cluster::error::RollbackError::EpochMismatch,
+                ))?;
                 self.rollback(
                     SessionId::new(sid.raw()),
                     Generation(generation_input.raw()),
@@ -824,7 +763,7 @@ where
                 let in_begin = txn.begin(&mut tap);
                 let in_acked = in_begin.ack(&mut tap);
 
-                let pending = RaPendingSplice::new(ctx.sid, target, in_acked, ctx.fences);
+                let pending = PendingSplice::new(ctx.sid, target, in_acked, ctx.fences);
 
                 self.splice
                     .begin(ctx.lane, pending)
@@ -842,7 +781,7 @@ where
             CpEffect::SpliceAck => Ok(EffectResult::None),
             CpEffect::SpliceCommit => {
                 let pending = self.splice.take(ctx.lane).ok_or(EffectError::Splice(
-                    RaSpliceError::NoPending { lane: ctx.lane },
+                    SpliceError::NoPending { lane: ctx.lane },
                 ))?;
 
                 let (sid, target, state, fences) = pending.into_parts();
@@ -851,8 +790,8 @@ where
                     // Reinsert to preserve state before returning error.
                     let _ = self
                         .splice
-                        .begin(ctx.lane, RaPendingSplice::new(sid, target, state, fences));
-                    return Err(EffectError::Splice(RaSpliceError::UnknownSession {
+                        .begin(ctx.lane, PendingSplice::new(sid, target, state, fences));
+                    return Err(EffectError::Splice(SpliceError::UnknownSession {
                         sid: ctx.sid,
                     }));
                 }
@@ -863,16 +802,16 @@ where
                 if let Err(err) = self.r#gen.check_and_update(ctx.lane, target) {
                     let _ = self
                         .splice
-                        .begin(ctx.lane, RaPendingSplice::new(sid, target, state, fences));
+                        .begin(ctx.lane, PendingSplice::new(sid, target, state, fences));
                     let splice_err = match err {
-                        RaGenError::StaleOrDuplicate(RaGenerationRecord { lane, last, new }) => {
-                            RaSpliceError::StaleGeneration { lane, last, new }
+                        GenError::StaleOrDuplicate(GenerationRecord { lane, last, new }) => {
+                            SpliceError::StaleGeneration { lane, last, new }
                         }
-                        RaGenError::Overflow { lane, last } => {
-                            RaSpliceError::GenerationOverflow { lane, last }
+                        GenError::Overflow { lane, last } => {
+                            SpliceError::GenerationOverflow { lane, last }
                         }
-                        RaGenError::InvalidInitial { lane, new } => {
-                            RaSpliceError::InvalidInitial { lane, new }
+                        GenError::InvalidInitial { lane, new } => {
+                            SpliceError::InvalidInitial { lane, new }
                         }
                     };
                     return Err(EffectError::Splice(splice_err));
@@ -909,17 +848,17 @@ where
                     return Err(EffectError::Delegation(super::error::CapError::Mismatch));
                 }
 
-                let cp_shot = crate::control::cap::CapShot::from_u8(shot_raw)
+                let cp_shot = crate::control::cap::mint::CapShot::from_u8(shot_raw)
                     .ok_or(EffectError::Delegation(super::error::CapError::Mismatch))?;
                 if kind_raw != ENDPOINT_TAG {
                     return Err(EffectError::Delegation(super::error::CapError::Mismatch));
                 }
                 let shot = match cp_shot {
-                    crate::control::cap::CapShot::One => CapShot::One,
-                    crate::control::cap::CapShot::Many => CapShot::Many,
+                    crate::control::cap::mint::CapShot::One => CapShot::One,
+                    crate::control::cap::mint::CapShot::Many => CapShot::Many,
                 };
 
-                if matches!(delegate.phase, DelegatePhase::Mint) {
+                if !delegate.claim {
                     emit(
                         self.tap(),
                         DelegBegin::new(
@@ -930,39 +869,35 @@ where
                     );
                 }
 
-                match delegate.phase {
-                    DelegatePhase::Mint => {
-                        let mut handle = EndpointHandle::new(
-                            crate::control::types::SessionId::new(ctx.sid.raw()),
-                            ctx.lane,
-                            role,
-                        );
-                        self.mint_cap::<EndpointResource>(
-                            ctx.sid, ctx.lane, shot, role, nonce, handle,
-                        );
-                        EndpointResource::zeroize(&mut handle);
-                        Ok(EffectResult::None)
-                    }
-                    DelegatePhase::Claim => self
-                        .claim_cap(&token)
+                if !delegate.claim {
+                    let mut handle = EndpointHandle::new(
+                        crate::control::types::SessionId::new(ctx.sid.raw()),
+                        ctx.lane,
+                        role,
+                    );
+                    self.mint_cap::<EndpointResource>(ctx.sid, ctx.lane, shot, role, nonce, handle);
+                    EndpointResource::zeroize(&mut handle);
+                    Ok(EffectResult::None)
+                } else {
+                    self.claim_cap(&token)
                         .map(|_cap| EffectResult::None)
-                        .map_err(EffectError::Delegation),
+                        .map_err(EffectError::Delegation)
                 }
             }
             CpEffect::Commit => {
                 let generation = ctx.generation.ok_or(EffectError::MissingGeneration)?;
                 let checkpoint = self.checkpoints.last(ctx.lane).ok_or(EffectError::Commit(
-                    RaCommitError::NoCheckpoint { sid: ctx.sid },
+                    CommitError::NoCheckpoint { sid: ctx.sid },
                 ))?;
 
                 if self.checkpoints.is_consumed(ctx.lane) {
-                    return Err(EffectError::Commit(RaCommitError::AlreadyCommitted {
+                    return Err(EffectError::Commit(CommitError::AlreadyCommitted {
                         sid: ctx.sid,
                     }));
                 }
 
                 if checkpoint != generation {
-                    return Err(EffectError::Commit(RaCommitError::GenerationMismatch {
+                    return Err(EffectError::Commit(CommitError::GenerationMismatch {
                         sid: ctx.sid,
                         expected: checkpoint,
                         got: generation,
@@ -1023,11 +958,7 @@ where
                 self.emit_effect(effect, ctx.sid, requested.0 as u32);
                 emit(
                     self.tap(),
-                    RollbackOk::new(
-                        self.clock.now32(),
-                        ctx.sid.raw(),
-                        requested.0 as u32,
-                    ),
+                    RollbackOk::new(self.clock.now32(), ctx.sid.raw(), requested.0 as u32),
                 );
 
                 Ok(EffectResult::Generation(requested))
@@ -1045,146 +976,90 @@ where
     pub(crate) fn set_caps_mask_for_lane(&self, lane: Lane, caps: CapsMask) {
         self.vm_caps.set(lane, caps);
     }
-
-    /// Central method to advance epoch state for a lane, updating Gen/Ack/Checkpoint tables
-    /// and recording tap events. This ensures type and runtime state stay in sync.
-    ///
-    /// # Arguments
-    ///
-    /// * `tok` - Current epoch witness
-    ///
-    /// # Returns
-    ///
-    /// New epoch witness with advanced type state for the specified lane
-    pub fn bump_const<const L: u8>(
-        &self,
-        _tok: &crate::control::cap::EndpointEpoch<'rv, E>,
-    ) -> crate::control::cap::EndpointEpoch<'rv, <E as crate::control::cap::BumpAt<L>>::Out>
-    where
-        E: crate::control::cap::BumpAt<L>,
-        <E as crate::control::cap::BumpAt<L>>::Out: crate::control::cap::EpochTable,
-    {
-        // Get current generation for the lane
-        let lane = Lane::new(L as u32);
-        let current_gen = self.r#gen.last(lane).unwrap_or(Generation(0));
-        let new_gen = Generation(current_gen.0.saturating_add(1));
-
-        // Update generation table
-        if self.r#gen.check_and_update(lane, new_gen).is_err() {
-            // Handle overflow or other errors if needed
-            // For now, we'll continue with the saturated value
-        }
-
-        // Update ack table to maintain monotonicity
-        let last_ack = self.acks.last_ack_gen(lane);
-        if last_ack.map(|g| g.0 < new_gen.0).unwrap_or(true) {
-            // Record this as an ack with the new generation
-            self.acks.record_cancel_ack(lane, new_gen);
-        }
-
-        // Record tap event for the epoch advancement
-        let ts = self.clock.now32();
-        emit(
-            self.tap(),
-            EndpointControl::with_causal(ts, L as u16, new_gen.0 as u32, L as u32),
-        );
-
-        // Return new witness with advanced type
-        crate::control::cap::EndpointEpoch::new()
-    }
 }
 
 impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock>
-    Rendezvous<'rv, 'cfg, T, U, C, crate::control::cap::EpochInit>
+    Rendezvous<'rv, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>
 where
     'cfg: 'rv,
 {
-    pub fn from_config(config: Config<'cfg, U, C>, transport: T) -> Self {
+    #[inline]
+    pub(crate) fn allocate_id() -> RendezvousId {
         static GLOBAL_RV_COUNTER: core::sync::atomic::AtomicU32 =
             core::sync::atomic::AtomicU32::new(1);
-        let rv_id = GLOBAL_RV_COUNTER.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        RendezvousId::new(
+            GLOBAL_RV_COUNTER.fetch_add(1, core::sync::atomic::Ordering::Relaxed) as u16,
+        )
+    }
+
+    /// Write a rendezvous directly into the destination slot.
+    ///
+    /// # Safety
+    /// `dst` must point to valid, writable storage for `Self`.
+    pub(crate) unsafe fn init_from_config(
+        dst: *mut Self,
+        rv_id: RendezvousId,
+        config: Config<'cfg, U, C>,
+        transport: T,
+    ) {
         let ConfigParts {
             tap_buf,
             slab,
             lane_range,
-            universe,
             clock,
-            global_tap,
+            liveness_policy,
         } = config.into_parts();
 
-        brand::with_brand(|brand| {
-            let guard = brand.guard();
-            let guard_static =
-                unsafe { mem::transmute::<BrandGuard<'_>, BrandGuard<'static>>(guard) };
-            let mut rendezvous = Self {
-                brand_guard: guard_static,
-                brand_marker: PhantomData,
-                id: RendezvousId(rv_id as u16),
-                tap: TapRing::from_storage(tap_buf),
-                tap_registered: false,
-                slab: slab as *mut [u8],
-                slab_marker: PhantomData,
-                lane_range: (lane_range.start as u32)..(lane_range.end as u32),
-                universe,
-                transport,
-                slot_arena: SlotArena::new(),
-                host_slots: HostSlots::new(),
-                r#gen: GenTable::new(),
-                fences: FenceTable::new(),
-                acks: AckTable::new(),
-                assoc: AssocTable::new(),
-                checkpoints: CheckpointTable::new(),
-                splice: SpliceStateTable::new(),
-                distributed_splice: DistributedSpliceTable::new(),
-                cap_nonce: AtomicU64::new(0),
-                caps: CapTable::new(),
-                loops: LoopTable::new(),
-                routes: RouteTable::new(),
-                control_plans: ControlPlanTable::new(),
-                vm_caps: VmCapsTable::new(),
-                clock,
-                _next_rv_id: core::cell::Cell::new(rv_id + 1000), // Reserve space for child RVs
-                _epoch_marker: PhantomData,
-                scope_atlas: ScopeAtlasTable::new(),
-            };
-            if global_tap {
-                rendezvous.register_tap();
-            }
-            rendezvous
-        })
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).brand_marker).write(PhantomData);
+            core::ptr::addr_of_mut!((*dst).id).write(rv_id);
+            core::ptr::addr_of_mut!((*dst).tap).write(TapRing::from_storage(tap_buf));
+            core::ptr::addr_of_mut!((*dst).slab).write(slab as *mut [u8]);
+            core::ptr::addr_of_mut!((*dst).slab_marker).write(PhantomData);
+            core::ptr::addr_of_mut!((*dst).lane_range)
+                .write((lane_range.start as u32)..(lane_range.end as u32));
+            core::ptr::addr_of_mut!((*dst).universe_marker).write(PhantomData);
+            core::ptr::addr_of_mut!((*dst).transport).write(transport);
+            core::ptr::addr_of_mut!((*dst).r#gen).write(GenTable::new());
+            core::ptr::addr_of_mut!((*dst).fences).write(FenceTable::new());
+            core::ptr::addr_of_mut!((*dst).acks).write(AckTable::new());
+            core::ptr::addr_of_mut!((*dst).assoc).write(AssocTable::new());
+            core::ptr::addr_of_mut!((*dst).checkpoints).write(CheckpointTable::new());
+            core::ptr::addr_of_mut!((*dst).splice).write(SpliceStateTable::new());
+            core::ptr::addr_of_mut!((*dst).distributed_splice).write(DistributedSpliceTable::new());
+            core::ptr::addr_of_mut!((*dst).cap_nonce).write(AtomicU64::new(0));
+            core::ptr::addr_of_mut!((*dst).caps).write(CapTable::new());
+            core::ptr::addr_of_mut!((*dst).loops).write(LoopTable::new());
+            core::ptr::addr_of_mut!((*dst).routes).write(RouteTable::new());
+            core::ptr::addr_of_mut!((*dst).policies).write(PolicyTable::new());
+            core::ptr::addr_of_mut!((*dst).vm_caps).write(VmCapsTable::new());
+            core::ptr::addr_of_mut!((*dst).slot_arena).write(SlotArena::new());
+            core::ptr::addr_of_mut!((*dst).host_slots).write(HostSlots::new());
+            core::ptr::addr_of_mut!((*dst).clock).write(clock);
+            core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
+            core::ptr::addr_of_mut!((*dst)._next_rv_id)
+                .write(core::cell::Cell::new(u32::from(rv_id.raw()) + 1000));
+            core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
+        }
     }
 
-    /// Create a [`Forward`] helper for relay/splice operations.
-    ///
-    /// Forward never stores owner state; the rendezvous drives ownership through
-    /// its `SpliceDelegate` implementation, which holds the internal brand needed
-    /// to mint or retire capability tokens.
-    ///
-    /// # Example
-    /// ```ignore
-    /// rendezvous.with_forward(sid, lane, role, |mut fwd| {
-    ///     block_on(fwd.relay(frame)).unwrap();
-    ///     block_on(fwd.try_splice(&rendezvous_src, Generation(0))).unwrap();
-    /// })
-    /// ```
-    pub fn with_forward<R>(
-        &'rv self,
-        sid: SessionId,
-        lane: Lane,
-        role: u8,
-        f: impl FnOnce(Forward<'rv, T, crate::control::cap::EpochInit>) -> R,
-    ) -> Result<R, RendezvousError> {
-        let port = self.port(sid, lane, role)?;
-        Ok(f(Forward::new(port, sid)))
+    #[cfg(test)]
+    pub(crate) fn from_config(config: Config<'cfg, U, C>, transport: T) -> Self {
+        let rv_id = Self::allocate_id();
+        let mut rendezvous = core::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            Self::init_from_config(rendezvous.as_mut_ptr(), rv_id, config, transport);
+            rendezvous.assume_init()
+        }
     }
 }
 
-impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::EpochTable>
+impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
     Rendezvous<'rv, 'cfg, T, U, C, E>
 where
     'cfg: 'rv,
 {
-    pub fn initialise_control_marker(&self, lane: Lane, marker: &ControlMarker) {
+    pub(crate) fn initialise_control_marker(&self, lane: Lane, marker: &ControlMarker) {
         match marker.scope_kind {
             ControlScopeKind::Loop => {
                 self.loops.reset_lane(lane);
@@ -1205,10 +1080,6 @@ where
         }
     }
 
-    pub(crate) fn install_scope_regions(&self, role: u8, view: ScopeAtlasView<'static>) {
-        self.scope_atlas.install(role, view);
-    }
-
     #[inline]
     pub(crate) fn checkpoint_at_lane(&self, sid: SessionId, lane: Lane) -> Generation {
         match self.eval_effect(CpEffect::Checkpoint, EffectContext::new(sid, lane)) {
@@ -1224,7 +1095,7 @@ where
         sid: SessionId,
         lane: Lane,
         generation: Generation,
-    ) -> Result<(), RaCommitError> {
+    ) -> Result<(), CommitError> {
         match self.eval_effect(
             CpEffect::Commit,
             EffectContext::new(sid, lane).with_generation(generation),
@@ -1247,38 +1118,11 @@ where
             .expect("cancel begin evaluation must not fail");
     }
 
-    pub fn association(&self, sid: SessionId) -> Option<AssociationSnapshot> {
-        let lane = self.assoc.find_lane(sid)?;
-        let pending = self.splice.peek(lane);
-        let pending_generation = pending.map(|p| p.target);
-        let pending_fences = pending.and_then(|p| p.fences);
-        let in_splice = pending.is_some();
-        Some(AssociationSnapshot {
-            sid,
-            lane,
-            active: self.assoc.is_active(lane),
-            last_generation: self.r#gen.last(lane),
-            last_checkpoint: self.checkpoints.last(lane),
-            in_splice,
-            pending_fences,
-            pending_generation,
-            fences: FenceCounters {
-                tx: self.fences.last_tx(lane),
-                rx: self.fences.last_rx(lane),
-            },
-            acks: AckCounters {
-                last_gen: self.acks.last_ack_gen(lane),
-                cancel_begin: self.acks.cancel_begin(lane),
-                cancel_ack: self.acks.cancel_ack(lane),
-            },
-        })
-    }
-
-    pub fn is_session_registered(&self, sid: SessionId) -> bool {
+    pub(crate) fn is_session_registered(&self, sid: SessionId) -> bool {
         self.assoc.find_lane(sid).is_some()
     }
 
-    pub fn release_lane(&self, lane: Lane) -> Option<SessionId> {
+    pub(crate) fn release_lane(&self, lane: Lane) -> Option<SessionId> {
         let sid = self.assoc.get_sid(lane)?;
         let remaining = self.assoc.decrement(lane, sid)?;
         if remaining > 0 {
@@ -1286,15 +1130,6 @@ where
         }
         self.reset_lane_state(lane);
         Some(sid)
-    }
-
-    pub fn force_release_lane(&self, lane: Lane) {
-        let sid = self.assoc.get_sid(lane);
-        self.assoc.unregister_lane(lane);
-        self.reset_lane_state(lane);
-        if let Some(sid) = sid {
-            self.emit_lane_release(sid, lane);
-        }
     }
 
     fn reset_lane_state(&self, lane: Lane) {
@@ -1320,14 +1155,6 @@ where
                 lane.raw() as u16,
             ),
         );
-    }
-}
-
-impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::EpochTable> Drop
-    for Rendezvous<'rv, 'cfg, T, U, C, E>
-{
-    fn drop(&mut self) {
-        self.unregister_tap();
     }
 }
 
@@ -1390,7 +1217,7 @@ impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap
 ///
 /// This type is internal implementation, hidden from public docs but
 /// accessible to integration tests. Public API users obtain endpoints via
-/// [`SessionCluster::attach_cursor`](crate::runtime::SessionCluster::attach_cursor).
+/// [`SessionCluster::enter`](crate::substrate::SessionCluster::enter).
 ///
 /// # Cluster Ownership Model
 ///
@@ -1412,15 +1239,14 @@ impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap
 /// - LANE_ACQUIRE tap event on lease creation (via `SessionCluster::lease_port`)
 /// - LANE_RELEASE tap event on Drop
 /// - Streaming checker verifies acquire/release pairs match (similar to cancel begin/ack)
-#[cfg_attr(not(test), doc(hidden))]
-pub struct LaneLease<'cfg, T, U, C, const MAX_RV: usize>
+pub(crate) struct LaneLease<'cfg, T, U, C, const MAX_RV: usize>
 where
     T: Transport,
     U: LabelUniverse + 'cfg,
     C: Clock + 'cfg,
 {
     /// Lease-backed guard over the parent rendezvous.
-    /// Uses EpochInit because LaneLease is only used to create new endpoints.
+    /// Uses the default EpochTbl because LaneLease is only used to create new endpoints.
     guard: Option<LaneGuard<'cfg, T, U, C>>,
     /// Session identifier.
     sid: SessionId,
@@ -1428,9 +1254,8 @@ where
     lane: Lane,
     /// Role for the port.
     role: u8,
-    /// LaneKey for capability management (generated at lease creation).
-    /// This is stored here to avoid needing Rendezvous access in into_endpoint().
-    lane_key: crate::control::cap::LaneKey<'cfg>,
+    /// Rendezvous brand for typed owner construction.
+    brand: crate::control::brand::Guard<'cfg>,
 }
 
 impl<'cfg, T, U, C, const MAX_RV: usize> LaneLease<'cfg, T, U, C, MAX_RV>
@@ -1446,111 +1271,41 @@ where
         sid: SessionId,
         lane: Lane,
         role: u8,
-        lane_key: crate::control::cap::LaneKey<'cfg>,
+        brand: crate::control::brand::Guard<'cfg>,
     ) -> Self {
         Self {
             guard: Some(guard),
             sid,
             lane,
             role,
-            lane_key,
+            brand,
         }
     }
 
-    pub fn sid(&self) -> SessionId {
-        self.sid
-    }
-
-    pub fn lane(&self) -> Lane {
-        self.lane
-    }
-
     #[allow(clippy::type_complexity)]
-    pub fn into_port_guard(
+    pub(crate) fn into_port_guard(
         mut self,
     ) -> Result<
         (
-            Port<'cfg, T, crate::control::cap::EpochInit>,
+            Port<'cfg, T, crate::control::cap::mint::EpochTbl>,
             LaneGuard<'cfg, T, U, C>,
-            crate::control::cap::LaneKey<'cfg>,
+            crate::control::brand::Guard<'cfg>,
         ),
         RendezvousError,
     > {
         let mut guard = self.guard.take().expect("lane lease retains guard");
-        let port =
-            {
-                let lease_ref = guard.lease.as_mut().expect("guard retains lease");
-                lease_ref.with_rendezvous(|rv| {
-                    rv.acquire_port(self.sid, self.lane, self.role).map(|short| unsafe {
-                    core::mem::transmute::<_, Port<'cfg, T, crate::control::cap::EpochInit>>(short)
-                })
-                })?
-            };
+        let port = {
+            let lease_ref = guard.lease.as_mut().expect("guard retains lease");
+            let rv_ptr: *mut Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl> =
+                lease_ref.with_rendezvous(core::ptr::from_mut);
+            // SAFETY: `LaneLease` holds the unique rendezvous lease while the guard
+            // is alive, so the rendezvous cannot move or be aliased here.
+            let rv: &'cfg Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl> =
+                unsafe { &*rv_ptr };
+            rv.acquire_port(self.sid, self.lane, self.role)?
+        };
         guard.detach_lease();
-        Ok((port, guard, self.lane_key))
-    }
-
-    /// Convert this lease into a cursor endpoint with the given binding.
-    ///
-    /// The binding parameter enables flow operations to automatically invoke
-    /// transport operations (e.g., STREAM writes). Use `NoBinding` when the
-    /// transport layer is handled separately.
-    pub fn into_cursor_endpoint<const ROLE: u8, Mint, B>(
-        mut self,
-        cursor: crate::global::typestate::PhaseCursor<ROLE>,
-        control: crate::endpoint::control::SessionControlCtx<
-            'cfg,
-            T,
-            U,
-            C,
-            crate::control::cap::EpochInit,
-            MAX_RV,
-        >,
-        mint: Mint,
-        binding: B,
-    ) -> Result<
-        crate::endpoint::CursorEndpoint<
-            'cfg,
-            ROLE,
-            T,
-            U,
-            C,
-            crate::control::cap::EpochInit,
-            MAX_RV,
-            Mint,
-            B,
-        >,
-        RendezvousError,
-    >
-    where
-        Mint: crate::control::cap::MintConfigMarker,
-        B: crate::binding::BindingSlot,
-    {
-        let mut guard = self.guard.take().expect("lane lease retains guard");
-        let port =
-            {
-                let lease_ref = guard.lease.as_mut().expect("guard retains lease");
-                lease_ref.with_rendezvous(|rv| {
-                    rv.acquire_port(self.sid, self.lane, self.role).map(|short| unsafe {
-                    core::mem::transmute::<_, Port<'cfg, T, crate::control::cap::EpochInit>>(short)
-                })
-                })?
-            };
-        guard.detach_lease();
-        let owner = crate::control::cap::Owner::new(self.lane_key);
-        let epoch = crate::control::cap::EndpointEpoch::new();
-
-        // Build ports/guards arrays with this single lane
-        let lane_idx = self.lane.as_wire() as usize;
-        let mut ports = [None, None, None, None, None, None, None, None];
-        let mut guards = [None, None, None, None, None, None, None, None];
-        ports[lane_idx] = Some(port);
-        guards[lane_idx] = Some(guard);
-
-        Ok(crate::endpoint::CursorEndpoint::from_parts(
-            ports, guards, lane_idx, self.sid, owner, epoch, cursor, control, mint,
-            binding,
-        ))
+        Ok((port, guard, self.brand))
     }
 }
 
@@ -1567,40 +1322,34 @@ where
     }
 }
 
-impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::EpochTable>
+impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
     Rendezvous<'rv, 'cfg, T, U, C, E>
 where
     'cfg: 'rv,
 {
     /// Get the unique identifier for this Rendezvous instance.
-    pub fn id(&self) -> RendezvousId {
+    #[cfg(test)]
+    pub(crate) fn id(&self) -> RendezvousId {
         self.id
     }
 
     #[inline]
-    pub(crate) fn brand(&self) -> BrandGuard<'rv> {
-        unsafe { mem::transmute::<BrandGuard<'static>, BrandGuard<'rv>>(self.brand_guard) }
+    pub(crate) fn brand(&self) -> Guard<'rv> {
+        Guard::new()
     }
 
     /// Observability ring; pushing events only needs `&self` because the ring
     /// is single-producer and internally synchronised.
-    pub fn tap(&self) -> &TapRing<'cfg> {
+    pub(crate) fn tap(&self) -> &TapRing<'cfg> {
         &self.tap
     }
 
-    pub fn slab(&mut self) -> &mut [u8] {
-        unsafe { &mut *self.slab }
+    #[inline]
+    pub(crate) fn liveness_policy(&self) -> crate::runtime::config::LivenessPolicy {
+        self.liveness_policy
     }
 
-    pub fn universe(&self) -> &U {
-        &self.universe
-    }
-
-    pub fn lane_range(&self) -> Range<u32> {
-        self.lane_range.clone()
-    }
-
-    pub fn now32(&self) -> u32 {
+    pub(crate) fn now32(&self) -> u32 {
         self.clock.now32()
     }
 
@@ -1612,7 +1361,10 @@ where
 
     /// Release a capability from the CapTable by nonce.
     #[inline]
-    pub(crate) fn release_cap_by_nonce(&self, nonce: &[u8; crate::control::cap::CAP_NONCE_LEN]) {
+    pub(crate) fn release_cap_by_nonce(
+        &self,
+        nonce: &[u8; crate::control::cap::mint::CAP_NONCE_LEN],
+    ) {
         self.caps.release_by_nonce(nonce);
     }
 
@@ -1621,7 +1373,7 @@ where
         sid: SessionId,
         lane: Lane,
         role: u8,
-    ) -> Result<Port<'a, T, crate::control::cap::EpochInit>, RendezvousError>
+    ) -> Result<Port<'a, T, crate::control::cap::mint::EpochTbl>, RendezvousError>
     where
         'rv: 'a,
     {
@@ -1650,10 +1402,10 @@ where
                 self.tap(),
                 RawEvent::new(
                     self.clock.now32(),
-                    crate::control::CpEffect::Open.to_tap_event_id(),
-                    sid.raw(),
-                    lane.0,
-                ),
+                    crate::control::cluster::effects::CpEffect::Open.to_tap_event_id(),
+                )
+                .with_arg0(sid.raw())
+                .with_arg1(lane.0),
             );
 
             self.r#gen.reset_lane(lane);
@@ -1675,146 +1427,6 @@ where
             &self.routes,
             &self.host_slots,
             self.slab,
-            sid,
-            lane,
-            role,
-            self.id,
-            tx,
-            rx,
-        ))
-    }
-
-    pub fn port<'a>(
-        &'a self,
-        sid: SessionId,
-        lane: Lane,
-        role: u8,
-    ) -> Result<Port<'a, T, crate::control::cap::EpochInit>, RendezvousError>
-    where
-        'rv: 'a,
-    {
-        self.acquire_port(sid, lane, role)
-    }
-
-    /// Attach a verified capability to create a Port.
-    ///
-    /// This is the primary entry point for capability-based delegation. After claiming
-    /// a capability token with `Rendezvous::claim_cap()`, use this method to attach the verified
-    /// capability to this Rendezvous and obtain a `Port` for endpoint binding.
-    ///
-    /// # Parameters
-    /// - `cap`: Verified capability from `Rendezvous::claim_cap()`
-    ///
-    /// # Returns
-    /// - `Ok(Port)`: Port ready for protocol binding
-    /// - `Err(RendezvousError::LaneOutOfRange)`: Lane not in this Rendezvous's range
-    /// - `Err(RendezvousError::LaneBusy)`: Lane already in use
-    ///
-    /// # Usage
-    /// ```rust,ignore
-    /// let verified = broker.claim(&token)?;
-    /// let port = rendezvous.attach_verified(&verified)?;
-    /// let endpoint = protocol.bind::<Role<0>, _>(port, verified.sid);
-    /// ```
-    ///
-    /// # Trust Assumption
-    /// This method assumes `VerifiedCap` was obtained through `Rendezvous::claim_cap()`,
-    /// which validates the capability against the CapTable. Direct construction
-    /// of `VerifiedCap` bypasses security checks and should never be done.
-    pub fn attach_verified(
-        &'rv self,
-        cap: &crate::control::cap::VerifiedCap<crate::control::cap::EndpointResource>,
-    ) -> Result<Port<'rv, T, crate::control::cap::EpochInit>, RendezvousError> {
-        let port = self.acquire_port(cap.sid, cap.lane, cap.role)?;
-        self.vm_caps.set(cap.lane, cap.caps_mask);
-        Ok(port)
-    }
-
-    /// Attach a verified capability with typestate tracking.
-    ///
-    /// Similar to [`attach_verified`](Self::attach_verified), but provides a lane token
-    /// for epoch-based control operations.
-    pub fn with_attach_verified<R>(
-        &'rv self,
-        cap: &crate::control::cap::VerifiedCap<crate::control::cap::EndpointResource>,
-        f: impl FnOnce(
-            Port<'rv, T, crate::control::cap::EpochInit>,
-            crate::control::cap::LaneToken<'rv, crate::control::cap::E0>,
-        ) -> R,
-    ) -> Result<R, RendezvousError> {
-        let port = self.attach_verified(cap)?;
-        let brand = brand::Brand::from_guard(self.brand());
-        let lane = cap.lane;
-        Ok(brand.with_lane(lane, move |_brand_ref, lane_key| {
-            let owner = crate::control::cap::Owner::new(lane_key);
-            let token = crate::control::cap::LaneToken::new(owner);
-            f(port, token)
-        }))
-    }
-
-    /// Alias for `attach_verified()` with symmetric naming.
-    ///
-    /// Provided for API consistency with send/receive terminology.
-    /// Functionally identical to `attach_verified()`.
-    pub fn accept_verified(
-        &'rv self,
-        cap: &crate::control::cap::VerifiedCap<crate::control::cap::EndpointResource>,
-    ) -> Result<Port<'rv, T, crate::control::cap::EpochInit>, RendezvousError> {
-        self.attach_verified(cap)
-    }
-
-    /// Alias for `with_attach_verified()` with symmetric naming.
-    pub fn with_accept_verified<R>(
-        &'rv self,
-        cap: &crate::control::cap::VerifiedCap<crate::control::cap::EndpointResource>,
-        f: impl FnOnce(
-            Port<'rv, T, crate::control::cap::EpochInit>,
-            crate::control::cap::LaneToken<'rv, crate::control::cap::E0>,
-        ) -> R,
-    ) -> Result<R, RendezvousError> {
-        self.with_attach_verified(cap, f)
-    }
-
-    /// Adopt a port for a session that has already been registered on this rendezvous.
-    ///
-    /// Unlike [`port`](Self::port), this helper assumes that the association table already
-    /// records `sid` at `lane` (for example after a distributed splice commit) and therefore
-    /// skips lane resets. It merely opens fresh transport handles and hands back a `Port`
-    /// bound to the existing control-plane state.
-    pub fn adopt_port(
-        &'rv self,
-        sid: SessionId,
-        lane: Lane,
-        role: u8,
-    ) -> Result<Port<'rv, T, E>, RendezvousError> {
-        if !self.lane_range.contains(&lane.0) {
-            return Err(RendezvousError::LaneOutOfRange { lane });
-        }
-
-        match self.assoc.get_sid(lane) {
-            Some(actual) if actual == sid => {
-                if !self.assoc.is_active(lane) {
-                    return Err(RendezvousError::LaneBusy { lane });
-                }
-            }
-            _ => {
-                return Err(RendezvousError::LaneBusy { lane });
-            }
-        }
-
-        let tap = self.tap();
-        let clock_ref: &dyn Clock = &self.clock;
-        let (tx, rx) = self.transport.open(role, sid.raw());
-        Ok(Port::new(
-            &self.transport,
-            tap,
-            clock_ref,
-            &self.vm_caps,
-            &self.loops,
-            &self.routes,
-            &self.host_slots,
-            self.slab,
-            sid,
             lane,
             role,
             self.id,
@@ -1833,8 +1445,7 @@ where
         NonceSeed::counter(ordinal)
     }
 
-    #[doc(hidden)]
-    pub fn mint_cap<K: ResourceKind>(
+    pub(crate) fn mint_cap<K: ResourceKind>(
         &self,
         sid: SessionId,
         lane: Lane,
@@ -1857,7 +1468,6 @@ where
             "lane must be active before minting capabilities"
         );
 
-        let scope = K::scope_id(&handle);
         let handle_bytes = K::encode_handle(&handle);
         let caps_mask = K::caps_mask(&handle);
         K::zeroize(&mut handle);
@@ -1872,7 +1482,6 @@ where
             nonce,
             caps_mask,
             handle: handle_bytes,
-            scope,
         };
         self.caps
             .insert_entry(entry)
@@ -1881,18 +1490,13 @@ where
         let tap = self.tap();
         emit(
             tap,
-            RawEvent::new(
-                self.clock.now32(),
-                crate::observe::cap_mint::<K>(),
-                sid.raw(),
-                ((lane.as_wire() as u32) << 16) | (dest_role as u32),
-            ),
+            RawEvent::new(self.clock.now32(), crate::observe::cap_mint::<K>())
+                .with_arg0(sid.raw())
+                .with_arg1(((lane.as_wire() as u32) << 16) | (dest_role as u32)),
         );
     }
 
-    #[doc(hidden)]
-    #[doc(hidden)]
-    pub fn claim_cap<K: crate::control::cap::ResourceKind>(
+    pub(crate) fn claim_cap<K: crate::control::cap::mint::ResourceKind>(
         &self,
         token: &GenericCapToken<K>,
     ) -> Result<VerifiedCap<K>, CapError> {
@@ -1911,8 +1515,8 @@ where
         let shot = CapShot::from_u8(shot_u8).ok_or(CapError::UnknownToken)?;
 
         // Check if AUTO (all zeros)
-        if nonce == [0u8; crate::control::cap::CAP_NONCE_LEN]
-            && header == [0u8; crate::control::cap::CAP_HEADER_LEN]
+        if nonce == [0u8; crate::control::cap::mint::CAP_NONCE_LEN]
+            && header == [0u8; crate::control::cap::mint::CAP_HEADER_LEN]
         {
             return Err(CapError::UnknownToken);
         }
@@ -1926,19 +1530,15 @@ where
         }
 
         // Use nonce-based claim path (trusted domain - no MAC verification)
-        let (claimed_role, computed_mask, exhausted, handle_bytes, scope) = self
+        let (exhausted, handle_bytes) = self
             .caps
-            .claim_by_nonce(&nonce, sid, lane, kind_tag, shot, token.caps_mask())
+            .claim_by_nonce(&nonce, sid, lane, kind_tag, role, shot, token.caps_mask())
             .map_err(|e| match e {
                 CapError::UnknownToken => CapError::UnknownToken,
                 CapError::WrongSessionOrLane => CapError::WrongSessionOrLane,
                 CapError::Exhausted => CapError::Exhausted,
                 CapError::Mismatch => CapError::Mismatch,
             })?;
-
-        if claimed_role != role {
-            return Err(CapError::WrongSessionOrLane);
-        }
 
         let claim_id = crate::observe::cap_claim::<K>();
         let exhaust_id = crate::observe::cap_exhaust::<K>();
@@ -1947,49 +1547,39 @@ where
             let tap = self.tap();
             emit(
                 tap,
-                RawEvent::new(self.clock.now32(), exhaust_id, sid.raw(), 0),
+                RawEvent::new(self.clock.now32(), exhaust_id)
+                    .with_arg0(sid.raw())
+                    .with_arg1(0),
             );
         }
 
         let tap = self.tap();
         emit(
             tap,
-            RawEvent::new(self.clock.now32(), claim_id, sid.raw(), 0),
+            RawEvent::new(self.clock.now32(), claim_id)
+                .with_arg0(sid.raw())
+                .with_arg1(0),
         );
 
-        let mut handle = K::decode_handle(handle_bytes).map_err(|_| CapError::Mismatch)?;
-        let caps_mask = K::caps_mask(&handle);
-        if caps_mask.bits() != computed_mask.bits() {
-            K::zeroize(&mut handle);
-            return Err(CapError::Mismatch);
-        }
-
-        Ok(VerifiedCap::new(
-            sid,
-            lane,
-            claimed_role,
-            shot,
-            computed_mask,
-            handle,
-            scope,
-        ))
+        let handle = K::decode_handle(handle_bytes).map_err(|_| CapError::Mismatch)?;
+        Ok(VerifiedCap::new(handle))
     }
 
     // ============================================================================
     // Distributed splice methods
     // ============================================================================
 
-    pub fn begin_distributed_splice(
+    pub(crate) fn begin_distributed_splice(
         &self,
         sid: SessionId,
         src_lane: Lane,
         dst_rv: RendezvousId,
         dst_lane: Lane,
         fences: Option<(u32, u32)>,
-    ) -> Result<SpliceIntent, RaSpliceError> {
+    ) -> Result<SpliceIntent, SpliceError> {
         // Verify session exists and is on the expected lane
         if self.assoc.get_sid(src_lane) != Some(sid) {
-            return Err(RaSpliceError::UnknownSession { sid });
+            return Err(SpliceError::UnknownSession { sid });
         }
 
         // Get current generation and calculate next
@@ -1997,7 +1587,7 @@ where
         let new_gen = Generation(old_gen.0.saturating_add(1));
 
         if new_gen.0 == 0 {
-            return Err(RaSpliceError::GenerationOverflow {
+            return Err(SpliceError::GenerationOverflow {
                 lane: src_lane,
                 last: old_gen,
             });
@@ -2031,7 +1621,7 @@ where
         Ok(intent)
     }
 
-    pub fn take_cached_distributed_intent(
+    pub(crate) fn take_cached_distributed_intent(
         &self,
         sid: SessionId,
         dst_rv: RendezvousId,
@@ -2041,7 +1631,10 @@ where
             .map(|entry| entry.intent)
     }
 
-    pub fn process_splice_intent(&self, intent: &SpliceIntent) -> Result<SpliceAck, RaSpliceError> {
+    pub(crate) fn process_splice_intent(
+        &self,
+        intent: &SpliceIntent,
+    ) -> Result<SpliceAck, SpliceError> {
         let dst_rv: RendezvousId = intent.dst_rv;
         let dst_lane: Lane = intent.dst_lane;
         let old_gen: Generation = intent.old_gen;
@@ -2049,7 +1642,7 @@ where
 
         // Validate this RV is the intended destination
         if dst_rv != self.id {
-            return Err(RaSpliceError::RendezvousIdMismatch {
+            return Err(SpliceError::RendezvousIdMismatch {
                 expected: dst_rv,
                 got: self.id,
             });
@@ -2057,12 +1650,12 @@ where
 
         // Validate lane is in range
         if !self.lane_range.contains(&dst_lane.raw()) {
-            return Err(RaSpliceError::LaneOutOfRange { lane: dst_lane });
+            return Err(SpliceError::LaneOutOfRange { lane: dst_lane });
         }
 
         // Check lane is available
         if self.assoc.is_active(dst_lane) {
-            return Err(RaSpliceError::LaneMismatch {
+            return Err(SpliceError::LaneMismatch {
                 expected: dst_lane,
                 provided: Lane(0), // Dummy value
             });
@@ -2073,7 +1666,7 @@ where
 
         // Allow old_gen to be 0 (new session) or match the last generation
         if old_gen.0 != 0 && old_gen.0 != last_gen.0 {
-            return Err(RaSpliceError::StaleGeneration {
+            return Err(SpliceError::StaleGeneration {
                 lane: dst_lane,
                 last: last_gen,
                 new: new_gen,
@@ -2087,7 +1680,7 @@ where
         let in_begin = txn.begin(&mut tap);
         let in_acked = in_begin.ack(&mut tap);
 
-        let pending = RaPendingSplice::new(
+        let pending = PendingSplice::new(
             SessionId(intent.sid),
             new_gen,
             in_acked,
@@ -2102,28 +1695,28 @@ where
             self.r#gen
                 .check_and_update(dst_lane, new_gen)
                 .map_err(|err| match err {
-                    RaGenError::StaleOrDuplicate(RaGenerationRecord { lane, last, new }) => {
-                        RaSpliceError::StaleGeneration { lane, last, new }
+                    GenError::StaleOrDuplicate(GenerationRecord { lane, last, new }) => {
+                        SpliceError::StaleGeneration { lane, last, new }
                     }
-                    RaGenError::Overflow { lane, last } => {
-                        RaSpliceError::GenerationOverflow { lane, last }
+                    GenError::Overflow { lane, last } => {
+                        SpliceError::GenerationOverflow { lane, last }
                     }
-                    RaGenError::InvalidInitial { lane, new } => {
-                        RaSpliceError::InvalidInitial { lane, new }
+                    GenError::InvalidInitial { lane, new } => {
+                        SpliceError::InvalidInitial { lane, new }
                     }
                 })?;
         } else {
             self.r#gen
                 .check_and_update(dst_lane, new_gen)
                 .map_err(|err| match err {
-                    RaGenError::StaleOrDuplicate(RaGenerationRecord { lane, last, new }) => {
-                        RaSpliceError::StaleGeneration { lane, last, new }
+                    GenError::StaleOrDuplicate(GenerationRecord { lane, last, new }) => {
+                        SpliceError::StaleGeneration { lane, last, new }
                     }
-                    RaGenError::Overflow { lane, last } => {
-                        RaSpliceError::GenerationOverflow { lane, last }
+                    GenError::Overflow { lane, last } => {
+                        SpliceError::GenerationOverflow { lane, last }
                     }
-                    RaGenError::InvalidInitial { lane, new } => {
-                        RaSpliceError::InvalidInitial { lane, new }
+                    GenError::InvalidInitial { lane, new } => {
+                        SpliceError::InvalidInitial { lane, new }
                     }
                 })?;
         }
@@ -2142,67 +1735,11 @@ where
         Ok(ack)
     }
 
-    pub fn commit_distributed_splice(&self, ack: &SpliceAck) -> Result<(), RaSpliceError> {
-        let sid = SessionId(ack.sid);
-        let src_rv: RendezvousId = ack.src_rv;
-        let dst_rv: RendezvousId = ack.dst_rv;
-        let new_lane: Lane = ack.new_lane;
-        let new_gen: Generation = ack.new_gen;
-
-        // Validate ack matches a pending intent
-        let entry = self
-            .distributed_splice
-            .take(sid, src_rv, dst_rv)
-            .ok_or(RaSpliceError::UnknownSession { sid })?;
-
-        // Validate seqno matches
-        if let DistributedSplicePhase::IntentSent = entry.phase
-            && (ack.seq_tx != entry.intent.seq_tx || ack.seq_rx != entry.intent.seq_rx)
-        {
-            return Err(RaSpliceError::SeqnoMismatch {
-                seq_tx: ack.seq_tx,
-                seq_rx: ack.seq_rx,
-            });
-        }
-
-        // Release old lane
-        let src_lane: Lane = entry.intent.src_lane;
-        self.force_release_lane(src_lane);
-
-        // Register new association
-        self.assoc.register(new_lane, sid);
-
-        // Emit tap event for completion
-        emit(
-            self.tap(),
-            SpliceCommit::new(
-                self.clock.now32(),
-                sid.raw(),
-                new_gen.0 as u32,
-            ),
-        );
-
-        Ok(())
-    }
-
-    pub fn abort_distributed_splice(&self, sid: SessionId) {
-        self.splice.abort_sid(sid);
-        self.distributed_splice.clear(sid);
-        emit(
-            self.tap(),
-            DelegAbort::new(self.clock.now32(), sid.raw(), 0),
-        );
-    }
-
-    pub fn clear_distributed_entry(&self, sid: SessionId) {
-        self.distributed_splice.clear(sid);
-    }
-
     // ============================================================================
     // Checkpoint / Cancel / Rollback methods
     // ============================================================================
 
-    pub fn cancel_begin(&self, sid: SessionId) -> Result<(), CancelError> {
+    pub(crate) fn cancel_begin(&self, sid: SessionId) -> Result<(), CancelError> {
         let lane = self
             .assoc
             .find_lane(sid)
@@ -2211,7 +1748,7 @@ where
         Ok(())
     }
 
-    pub fn cancel_ack(&self, sid: SessionId, r#gen: Generation) -> Result<(), CancelError> {
+    pub(crate) fn cancel_ack(&self, sid: SessionId, r#gen: Generation) -> Result<(), CancelError> {
         let lane = self
             .assoc
             .find_lane(sid)
@@ -2224,7 +1761,7 @@ where
         Ok(())
     }
 
-    pub fn checkpoint(&self, sid: SessionId) -> Result<Generation, CheckpointError> {
+    pub(crate) fn checkpoint(&self, sid: SessionId) -> Result<Generation, CheckpointError> {
         let lane = self
             .assoc
             .find_lane(sid)
@@ -2232,15 +1769,7 @@ where
         Ok(self.checkpoint_at_lane(sid, lane))
     }
 
-    pub fn commit(&self, sid: SessionId, generation: Generation) -> Result<(), CommitError> {
-        let lane = self
-            .assoc
-            .find_lane(sid)
-            .ok_or(CommitError::UnknownSession { sid })?;
-        self.commit_at_lane(sid, lane, generation)
-    }
-
-    pub fn rollback(&self, sid: SessionId, epoch: Generation) -> Result<(), RollbackError> {
+    pub(crate) fn rollback(&self, sid: SessionId, epoch: Generation) -> Result<(), RollbackError> {
         let lane = self
             .assoc
             .find_lane(sid)
@@ -2274,20 +1803,20 @@ where
         &self,
         lane: Lane,
         new_gen: Generation,
-    ) -> Result<(), RaSpliceError> {
+    ) -> Result<(), SpliceError> {
         match self.r#gen.last(lane) {
             None => {
                 if new_gen.0 >= 1 {
                     Ok(())
                 } else {
-                    Err(RaSpliceError::InvalidInitial { lane, new: new_gen })
+                    Err(SpliceError::InvalidInitial { lane, new: new_gen })
                 }
             }
             Some(prev) if prev.0 == u16::MAX => {
-                Err(RaSpliceError::GenerationOverflow { lane, last: prev })
+                Err(SpliceError::GenerationOverflow { lane, last: prev })
             }
             Some(prev) if new_gen.0 > prev.0 => Ok(()),
-            Some(prev) => Err(RaSpliceError::StaleGeneration {
+            Some(prev) => Err(SpliceError::StaleGeneration {
                 lane,
                 last: prev,
                 new: new_gen,
@@ -2298,38 +1827,48 @@ where
 
 // ============================================================================
 // SpliceDelegate trait has been DELETED.
-// All splice operations now go through control::CpCommand and EffectExecutor.
+// All splice operations now go through control::CpCommand and EffectRunner.
 // The control-plane mini-kernel architecture is responsible for rendezvous access control.
 
-fn map_splice_error(err: RaSpliceError) -> CpError {
+fn map_splice_error(err: SpliceError) -> CpError {
     match err {
-        RaSpliceError::LaneOutOfRange { .. } => CpError::Splice(CpSpliceError::InvalidLane),
-        RaSpliceError::LaneMismatch { .. }
-        | RaSpliceError::InProgress { .. }
-        | RaSpliceError::NoPending { .. }
-        | RaSpliceError::SeqnoMismatch { .. } => CpError::Splice(CpSpliceError::InvalidState),
-        RaSpliceError::UnknownSession { .. } => CpError::Splice(CpSpliceError::InvalidSession),
-        RaSpliceError::StaleGeneration { .. }
-        | RaSpliceError::GenerationOverflow { .. }
-        | RaSpliceError::InvalidInitial { .. } => {
-            CpError::Splice(CpSpliceError::GenerationMismatch)
+        SpliceError::LaneOutOfRange { .. } => {
+            CpError::Splice(crate::control::cluster::error::SpliceError::InvalidLane)
         }
-        RaSpliceError::RemoteRendezvousMismatch { expected, got }
-        | RaSpliceError::RendezvousIdMismatch { expected, got } => CpError::RendezvousMismatch {
+        SpliceError::LaneMismatch { .. }
+        | SpliceError::InProgress { .. }
+        | SpliceError::NoPending { .. }
+        | SpliceError::SeqnoMismatch { .. } => {
+            CpError::Splice(crate::control::cluster::error::SpliceError::InvalidState)
+        }
+        SpliceError::UnknownSession { .. } => {
+            CpError::Splice(crate::control::cluster::error::SpliceError::InvalidSession)
+        }
+        SpliceError::StaleGeneration { .. }
+        | SpliceError::GenerationOverflow { .. }
+        | SpliceError::InvalidInitial { .. } => {
+            CpError::Splice(crate::control::cluster::error::SpliceError::GenerationMismatch)
+        }
+        SpliceError::RemoteRendezvousMismatch { expected, got }
+        | SpliceError::RendezvousIdMismatch { expected, got } => CpError::RendezvousMismatch {
             expected: expected.raw(),
             actual: got.raw(),
         },
-        RaSpliceError::PendingTableFull => CpError::ResourceExhausted,
+        SpliceError::PendingTableFull => CpError::ResourceExhausted,
     }
 }
 
 fn map_delegate_error(err: super::error::CapError) -> CpError {
     let deleg_err = match err {
         super::error::CapError::UnknownToken | super::error::CapError::WrongSessionOrLane => {
-            CpDelegationError::InvalidToken
+            crate::control::cluster::error::DelegationError::InvalidToken
         }
-        super::error::CapError::Exhausted => CpDelegationError::Exhausted,
-        super::error::CapError::Mismatch => CpDelegationError::ShotMismatch,
+        super::error::CapError::Exhausted => {
+            crate::control::cluster::error::DelegationError::Exhausted
+        }
+        super::error::CapError::Mismatch => {
+            crate::control::cluster::error::DelegationError::ShotMismatch
+        }
     };
     CpError::Delegation(deleg_err)
 }
@@ -2337,7 +1876,7 @@ fn map_delegate_error(err: super::error::CapError) -> CpError {
 fn map_cancel_error(err: super::error::CancelError) -> CpError {
     match err {
         super::error::CancelError::UnknownSession { .. } => {
-            CpError::Cancel(CpCancelError::SessionNotFound)
+            CpError::Cancel(crate::control::cluster::error::CancelError::SessionNotFound)
         }
     }
 }
@@ -2345,24 +1884,21 @@ fn map_cancel_error(err: super::error::CancelError) -> CpError {
 fn map_checkpoint_error(err: super::error::CheckpointError) -> CpError {
     match err {
         super::error::CheckpointError::UnknownSession { .. } => {
-            CpError::Checkpoint(CpCheckpointError::SessionNotFound)
+            CpError::Checkpoint(crate::control::cluster::error::CheckpointError::SessionNotFound)
         }
     }
 }
 
 fn map_commit_error(err: super::error::CommitError) -> CpError {
     match err {
-        super::error::CommitError::UnknownSession { .. } => {
-            CpError::Commit(CpCommitError::SessionNotFound)
-        }
         super::error::CommitError::NoCheckpoint { .. } => {
-            CpError::Commit(CpCommitError::NoCheckpoint)
+            CpError::Commit(crate::control::cluster::error::CommitError::NoCheckpoint)
         }
         super::error::CommitError::AlreadyCommitted { .. } => {
-            CpError::Commit(CpCommitError::AlreadyCommitted)
+            CpError::Commit(crate::control::cluster::error::CommitError::AlreadyCommitted)
         }
         super::error::CommitError::GenerationMismatch { .. } => {
-            CpError::Commit(CpCommitError::GenerationMismatch)
+            CpError::Commit(crate::control::cluster::error::CommitError::GenerationMismatch)
         }
     }
 }
@@ -2370,23 +1906,23 @@ fn map_commit_error(err: super::error::CommitError) -> CpError {
 fn map_rollback_error(err: super::error::RollbackError) -> CpError {
     match err {
         super::error::RollbackError::UnknownSession { .. } => {
-            CpError::Rollback(CpRollbackError::SessionNotFound)
+            CpError::Rollback(crate::control::cluster::error::RollbackError::SessionNotFound)
         }
         super::error::RollbackError::NoCheckpoint { .. } => {
-            CpError::Rollback(CpRollbackError::EpochNotFound)
+            CpError::Rollback(crate::control::cluster::error::RollbackError::EpochNotFound)
         }
         super::error::RollbackError::StaleCheckpoint { .. }
         | super::error::RollbackError::EpochMismatch { .. } => {
-            CpError::Rollback(CpRollbackError::EpochMismatch)
+            CpError::Rollback(crate::control::cluster::error::RollbackError::EpochMismatch)
         }
         super::error::RollbackError::AlreadyConsumed { .. } => {
-            CpError::Rollback(CpRollbackError::AfterCommit)
+            CpError::Rollback(crate::control::cluster::error::RollbackError::AfterCommit)
         }
     }
 }
 
 // ============================================================================
-// Local splice operations (used by EffectExecutor)
+// Local splice operations (used by EffectRunner)
 // ============================================================================
 
 impl<'rv, 'cfg, T, U, C, E> Rendezvous<'rv, 'cfg, T, U, C, E>
@@ -2395,18 +1931,18 @@ where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     /// Begin a local splice operation.
     ///
-    /// This is called by EffectExecutor::run_effect() for CpEffect::SpliceBegin.
+    /// This is called by EffectRunner::run_effect() for CpEffect::SpliceBegin.
     fn begin_splice(
         &self,
         sid: SessionId,
         lane: Lane,
         fences: Option<(u32, u32)>,
         generation: Generation,
-    ) -> Result<(), RaSpliceError> {
+    ) -> Result<(), SpliceError> {
         let ctx = EffectContext::new(sid, lane)
             .with_generation(generation)
             .with_fences(fences);
@@ -2424,28 +1960,10 @@ where
         }
     }
 
-    /// Acknowledge a local splice operation.
-    ///
-    /// This is called by EffectExecutor::run_effect() for CpEffect::SpliceAck.
-    fn acknowledge_splice(&self, sid: SessionId, lane: Lane) -> Result<(), RaSpliceError> {
-        let ctx = EffectContext::new(sid, lane);
-        match self.eval_effect(CpEffect::SpliceAck, ctx) {
-            Ok(_) => Ok(()),
-            Err(EffectError::Splice(err)) => Err(err),
-            Err(EffectError::MissingGeneration)
-            | Err(EffectError::Unsupported)
-            | Err(EffectError::Delegation(_))
-            | Err(EffectError::Rollback(_))
-            | Err(EffectError::Commit(_)) => {
-                unreachable!("splice ack failure is fully covered")
-            }
-        }
-    }
-
     /// Commit a local splice operation.
     ///
-    /// This is called by EffectExecutor::run_effect() for CpEffect::SpliceCommit.
-    fn commit_splice(&self, sid: SessionId, lane: Lane) -> Result<(), RaSpliceError> {
+    /// This is called by EffectRunner::run_effect() for CpEffect::SpliceCommit.
+    fn commit_splice(&self, sid: SessionId, lane: Lane) -> Result<(), SpliceError> {
         let ctx = EffectContext::new(sid, lane);
         match self.eval_effect(CpEffect::SpliceCommit, ctx) {
             Ok(_) => Ok(()),
@@ -2461,18 +1979,18 @@ where
     }
 
     /// Drain transport telemetry and emit tap events for downstream observers.
-    fn flush_transport_events(&self) -> Option<TransportEventData> {
+    fn flush_transport_events(&self) -> Option<crate::transport::TransportEvent> {
         let tap = self.tap();
         let clock = &self.clock;
         let mut last_loss = None;
-        let mut emit_event = |event: TransportEventData| {
+        let mut emit_event = |event: crate::transport::TransportEvent| {
             let (arg0, arg1) = event.encode_tap_args();
             if matches!(event.kind, TransportEventKind::Loss) {
                 last_loss = Some(event);
             }
             emit(
                 tap,
-                tap_events::TransportEvent::new(clock.now32(), arg0, arg1),
+                crate::observe::events::TransportEvent::new(clock.now32(), arg0, arg1),
             );
         };
         self.transport.drain_events(&mut emit_event);
@@ -2481,12 +1999,12 @@ where
             let (arg0, arg1) = payload.primary;
             emit(
                 tap,
-                tap_events::TransportMetrics::new(clock.now32(), arg0, arg1),
+                crate::observe::events::TransportMetrics::new(clock.now32(), arg0, arg1),
             );
             if let Some((ext0, ext1)) = payload.extension {
                 emit(
                     tap,
-                    tap_events::TransportMetricsExt::new(clock.now32(), ext0, ext1),
+                    crate::observe::events::TransportMetricsExt::new(clock.now32(), ext0, ext1),
                 );
             }
         }
@@ -2494,132 +2012,28 @@ where
     }
 }
 
-// ============================================================================
-// Capability token witness methods
-// ============================================================================
-
-impl<'rv, 'cfg, T, U, C, E> Rendezvous<'rv, 'cfg, T, U, C, E>
+impl<'rv, 'cfg, T, U, C, E> EffectRunner for Rendezvous<'rv, 'cfg, T, U, C, E>
 where
     'cfg: 'rv,
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
-    /// Checkpoint with witness-carrying token.
-    ///
-    /// This method performs a checkpoint operation and advances the LaneToken's
-    /// typestate from E0 to Ckpt.
-    pub fn checkpoint_token(
-        &self,
-        sid: SessionId,
-        _epoch: &crate::control::cap::EndpointEpoch<'rv, E>,
-        token: crate::control::cap::LaneToken<'rv, crate::control::cap::E0>,
-    ) -> Result<
-        (
-            crate::control::cap::LaneToken<'rv, crate::control::cap::Ckpt>,
-            Generation,
-        ),
-        CheckpointError,
-    > {
-        // Perform the checkpoint operation
-        let generation = self.checkpoint(sid)?;
-        // Advance the token typestate to Ckpt
-        // SAFETY: checkpoint() succeeded, so the state transition E0 → Ckpt is valid
-        let next_token = unsafe { token.transmute_step() };
-        Ok((next_token, generation))
-    }
-
-    /// Commit with witness-carrying token.
-    ///
-    /// Advances the LaneToken typestate from Ckpt to Committed after a successful commit.
-    pub fn commit_token(
-        &self,
-        sid: SessionId,
-        _epoch: &crate::control::cap::EndpointEpoch<'rv, E>,
-        token: crate::control::cap::LaneToken<'rv, crate::control::cap::Ckpt>,
-        generation: Generation,
-    ) -> Result<crate::control::cap::LaneToken<'rv, crate::control::cap::Committed>, CommitError>
-    {
-        self.commit(sid, generation)?;
-        // SAFETY: commit() succeeded, so Ckpt → Committed transition is valid
-        let next_token = unsafe { token.transmute_step() };
-        Ok(next_token)
-    }
-
-    /// Rollback with witness-carrying token.
-    ///
-    /// This method performs a rollback operation and advances the LaneToken's
-    /// typestate from Committed to RolledBack.
-    pub fn rollback_token(
-        &self,
-        sid: SessionId,
-        _epoch: &crate::control::cap::EndpointEpoch<'rv, E>,
-        token: crate::control::cap::LaneToken<'rv, crate::control::cap::Committed>,
-        at: Generation,
-    ) -> Result<crate::control::cap::LaneToken<'rv, crate::control::cap::RolledBack>, RollbackError>
-    {
-        // Perform the rollback operation
-        self.rollback(sid, at)?;
-        // Advance the token typestate to RolledBack
-        // SAFETY: rollback() succeeded, so the state transition Committed → RolledBack is valid
-        let next_token = unsafe { token.transmute_step() };
-        Ok(next_token)
-    }
-
-    /// Cancel with witness-carrying token.
-    ///
-    /// This method performs cancellation and advances the LaneToken's
-    /// typestate from RolledBack to its terminal stop state.
-    pub fn cancel_token(
-        &self,
-        sid: SessionId,
-        _epoch: &crate::control::cap::EndpointEpoch<'rv, E>,
-        token: crate::control::cap::LaneToken<'rv, crate::control::cap::RolledBack>,
-    ) -> Result<
-        crate::control::cap::LaneToken<
-            'rv,
-            crate::control::cap::Stop<crate::control::cap::RolledBack>,
-        >,
-        CancelError,
-    > {
-        // For cancel, we need both begin and ack
-        self.cancel_begin(sid)?;
-        // We don't have the generation here, so we use a placeholder
-        // This is safe because cancel should be idempotent
-        self.cancel_ack(sid, Generation(0))?;
-        // Advance the token typestate to the terminal stop state
-        // SAFETY: cancel operations succeeded, so the state transition is valid
-        let next_token = unsafe { token.transmute_step() };
-        Ok(next_token)
-    }
-}
-
-impl<'rv, 'cfg, T, U, C, E> EffectExecutor for Rendezvous<'rv, 'cfg, T, U, C, E>
-where
-    'cfg: 'rv,
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::EpochTable,
-{
-    fn id(&self) -> RendezvousId {
-        self.id
-    }
-
     fn run_effect(&self, envelope: CpCommand) -> Result<(), CpError> {
+        let envelope = match envelope.effect {
+            CpEffect::Delegate => envelope.canonicalize_delegate()?,
+            _ => envelope,
+        };
         let lane_opt = envelope.lane.map(|lane| Lane::new(lane.raw()));
         let sid_opt = envelope.sid.map(|sid| SessionId::new(sid.raw()));
         let caps_mask = lane_opt
             .map(|lane| self.vm_caps.get(lane))
             .unwrap_or(CapsMask::allow_all());
 
-        let policy_event = RawEvent::new(
-            self.clock.now32(),
-            envelope.effect.to_tap_event_id(),
-            sid_opt.map_or(0, |sid| sid.raw()),
-            lane_opt.map_or(0, |lane| lane.raw()),
-        );
+        let policy_event = RawEvent::new(self.clock.now32(), envelope.effect.to_tap_event_id())
+            .with_arg0(sid_opt.map_or(0, |sid| sid.raw()))
+            .with_arg1(lane_opt.map_or(0, |lane| lane.raw()));
 
         let handle_data = envelope.delegate.as_ref().map(|delegate| {
             (
@@ -2631,44 +2045,111 @@ where
 
         let _ = self.flush_transport_events();
         let transport_metrics = self.transport.metrics().snapshot();
+        let policy_input =
+            crate::epf::slot_contract::slot_default_input(crate::epf::vm::Slot::Rendezvous);
+        let policy_digest = self
+            .host_slots
+            .active_digest(crate::epf::vm::Slot::Rendezvous);
+        let event_hash = crate::epf::hash_tap_event(&policy_event);
+        let signals_input_hash = crate::epf::hash_policy_input(policy_input);
+        let transport_snapshot_hash = crate::epf::hash_transport_snapshot(transport_metrics);
+        let replay_transport = crate::epf::replay_transport_inputs(transport_metrics);
+        let replay_transport_presence = crate::epf::replay_transport_presence(transport_metrics);
+        let mode_id = crate::epf::policy_mode_tag(
+            self.host_slots
+                .policy_mode(crate::epf::vm::Slot::Rendezvous),
+        );
+        self.emit_policy_event_with_arg2(
+            ids::POLICY_AUDIT,
+            lane_opt,
+            policy_digest,
+            event_hash,
+            signals_input_hash,
+        );
+        self.emit_policy_event_with_arg2(
+            ids::POLICY_AUDIT_EXT,
+            lane_opt,
+            0,
+            transport_snapshot_hash,
+            ((crate::epf::slot_tag(crate::epf::vm::Slot::Rendezvous) as u32) << 24)
+                | ((mode_id as u32) << 16),
+        );
+        self.emit_policy_event_with_arg2(
+            ids::POLICY_REPLAY_EVENT,
+            lane_opt,
+            policy_event.ts,
+            policy_event.id as u32,
+            policy_event.arg0,
+        );
+        self.emit_policy_event_with_arg2(
+            ids::POLICY_REPLAY_EVENT_EXT,
+            lane_opt,
+            policy_event.arg1,
+            policy_event.arg2,
+            policy_event.causal_key as u32,
+        );
+        self.emit_policy_event_with_arg2(
+            ids::POLICY_REPLAY_INPUT0,
+            lane_opt,
+            policy_input[0],
+            policy_input[1],
+            policy_input[2],
+        );
+        self.emit_policy_event_with_arg2(
+            ids::POLICY_REPLAY_INPUT1,
+            lane_opt,
+            policy_input[3],
+            0,
+            0,
+        );
+        self.emit_policy_event_with_arg2(
+            ids::POLICY_REPLAY_TRANSPORT0,
+            lane_opt,
+            replay_transport[0],
+            replay_transport[1],
+            replay_transport[2],
+        );
+        self.emit_policy_event_with_arg2(
+            ids::POLICY_REPLAY_TRANSPORT1,
+            lane_opt,
+            replay_transport[3],
+            replay_transport_presence as u32,
+            0,
+        );
         let action = crate::epf::run_with(
             &self.host_slots,
-            crate::epf::Slot::Rendezvous,
+            crate::epf::vm::Slot::Rendezvous,
             &policy_event,
             caps_mask,
             sid_opt,
             lane_opt,
             move |ctx| {
-                if let Some((tag, payload, mask)) = handle_data {
-                    ctx.set_handle(tag, payload, mask);
-                }
+                let _ = handle_data;
                 ctx.set_transport_snapshot(transport_metrics);
+                ctx.set_policy_input(policy_input);
             },
         );
+        let verdict = action.verdict();
+        let verdict_meta = ((crate::epf::verdict_tag(verdict) as u32) << 24)
+            | ((crate::epf::verdict_arm(verdict) as u32) << 16);
+        self.emit_policy_event_with_arg2(
+            ids::POLICY_AUDIT_RESULT,
+            lane_opt,
+            verdict_meta,
+            crate::epf::verdict_reason(verdict) as u32,
+            self.host_slots
+                .last_fuel_used(crate::epf::vm::Slot::Rendezvous) as u32,
+        );
 
-        let (override_command, effect_feedback) =
-            self.apply_policy_action(action, sid_opt, lane_opt)?;
+        self.apply_policy_action(action, sid_opt, lane_opt)?;
 
-        let selected_envelope = override_command.unwrap_or(envelope);
-
-        if !caps_mask.allows(selected_envelope.effect) {
+        if !caps_mask.allows(envelope.effect) {
             return Err(CpError::Authorisation {
-                effect: selected_envelope.effect,
+                effect: envelope.effect,
             });
         }
 
-        let result = self.perform_effect(selected_envelope);
-
-        if let (Ok(()), Some((effect, operand))) = (&result, effect_feedback) {
-            self.emit_policy_event(
-                policy_effect_ok(),
-                lane_opt,
-                effect as u16 as u32,
-                operand.unwrap_or(0),
-            );
-        }
-
-        result
+        self.perform_effect(envelope)
     }
 
     fn prepare_splice_operands(
@@ -2681,11 +2162,6 @@ where
     ) -> Result<SpliceOperands, CpError> {
         self.prepare_distributed_splice_operands(sid, src_lane, dst_rv, dst_lane, fences)
     }
-
-    fn abort_distributed_splice(&self, sid: SessionId) -> Result<(), CpError> {
-        self.abort_distributed_splice(sid);
-        Ok(())
-    }
 }
 
 // ============================================================================
@@ -2694,10 +2170,10 @@ where
 mod epf_tests {
     use super::*;
     use crate::{
-        control::cap::CapsMask,
-        control::cluster::{CpCommand, EffectExecutor},
-        control::types::{LaneId as CpLaneId, SessionId as CpSessionId},
-        observe::TapEvent,
+        control::cap::mint::CapsMask,
+        control::cluster::core::{CpCommand, EffectRunner},
+        control::types::{Lane, SessionId},
+        observe::core::TapEvent,
         runtime::{config::Config, consts::RING_EVENTS},
         transport::{Transport, TransportError, wire::Payload},
     };
@@ -2723,7 +2199,7 @@ mod epf_tests {
             = Ready<Result<Payload<'a>, Self::Error>>
         where
             Self: 'a;
-        type Metrics = crate::transport::NoopMetrics;
+        type Metrics = ();
 
         fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
@@ -2744,6 +2220,20 @@ mod epf_tests {
         fn recv<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
             ready(Err(TransportError::Offline))
         }
+
+        fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
+
+        fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
+
+        fn recv_label_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<u8> {
+            None
+        }
+
+        fn metrics(&self) -> Self::Metrics {
+            ()
+        }
+
+        fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
     }
 
     #[test]
@@ -2758,10 +2248,9 @@ mod epf_tests {
 
         rendezvous.vm_caps.set(lane, CapsMask::empty());
 
-        let envelope =
-            CpCommand::checkpoint(CpSessionId::new(sid.raw()), CpLaneId::new(lane.raw()));
+        let envelope = CpCommand::checkpoint(SessionId::new(sid.raw()), Lane::new(lane.raw()));
 
-        let result = EffectExecutor::run_effect(&rendezvous, envelope);
+        let result = EffectRunner::run_effect(&rendezvous, envelope);
 
         assert!(matches!(
             result,
@@ -2781,1817 +2270,11 @@ mod epf_tests {
         let sid = SessionId::new(2);
         let lane = Lane::new(1);
 
-        let envelope =
-            CpCommand::checkpoint(CpSessionId::new(sid.raw()), CpLaneId::new(lane.raw()));
+        let envelope = CpCommand::checkpoint(SessionId::new(sid.raw()), Lane::new(lane.raw()));
 
-        let result = EffectExecutor::run_effect(&rendezvous, envelope);
+        let result = EffectRunner::run_effect(&rendezvous, envelope);
 
         assert!(matches!(result, Err(CpError::Checkpoint(_))));
-    }
-}
-
-#[cfg(disabled_test)]
-mod tests {
-    use super::*;
-    use crate::{
-        control::cap::{EndpointResource, ResourceKind},
-        control::{
-            cap::CapToken,
-            cluster::{EffectEnvelope, EffectExecutor},
-            effects::CpEffect,
-            error::{
-                CancelError as CpCancelError, CpError, DelegationError as CpDelegationError,
-                SpliceError as CpSpliceError,
-            },
-            types::{Gen as CpGen, LaneId as CpLaneId, SessionId as CpSessionId},
-        },
-        global::const_dsl::{ControlMarker, ControlScopeKind},
-        observe::{TapEvent, ids},
-        rendezvous::capability::CapShot,
-        runtime::{
-            config::{Config, CounterClock},
-            consts::{DefaultLabelUniverse, RING_EVENTS},
-        },
-        transport::{Transport, TransportError, wire::Payload},
-    };
-    use core::future::{Ready, ready};
-    #[cfg(all(test, feature = "std"))]
-    use proptest::test_runner::TestCaseResult;
-    use static_assertions::assert_not_impl_any;
-
-    struct DummyTransport;
-
-    impl Transport for DummyTransport {
-        type Error = TransportError;
-        type Tx<'a>
-            = ()
-        where
-            Self: 'a;
-        type Rx<'a>
-            = ()
-        where
-            Self: 'a;
-        type Send<'a>
-            = Ready<core::result::Result<(), Self::Error>>
-        where
-            Self: 'a;
-        type Recv<'a>
-            = Ready<core::result::Result<Payload<'a>, Self::Error>>
-        where
-            Self: 'a;
-        type Metrics = crate::transport::NoopMetrics;
-
-        fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
-            ((), ())
-        }
-
-        fn send<'a, 'f>(
-            &'a self,
-            _tx: &'a mut Self::Tx<'a>,
-            _payload: Payload<'f>,
-            _dest_role: u8,
-        ) -> Self::Send<'a>
-        where
-            'a: 'f,
-        {
-            ready(Ok(()))
-        }
-
-        fn recv<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
-            ready(Err(TransportError::Offline))
-        }
-    }
-
-    assert_not_impl_any!(Port<'static, DummyTransport, crate::control::cap::EpochInit>: Send, Sync);
-    assert_not_impl_any!(Rendezvous<'static, 'static, DummyTransport>: Send, Sync);
-
-    #[test]
-    fn association_reports_witness_counters() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(5);
-        let lane = Lane(0);
-        let role = 0;
-        {
-            let lease = rendezvous
-                .lease_port(sid, lane, role)
-                .expect("port registration succeeds");
-
-            let initial = rendezvous.association(sid).expect("association exists");
-            assert_eq!(initial.sid, sid);
-            assert_eq!(initial.lane, lane);
-            assert_eq!(initial.last_generation, None);
-            assert_eq!(initial.last_checkpoint, None);
-            assert!(initial.active);
-            assert_eq!(initial.fences.tx, None);
-            assert_eq!(initial.fences.rx, None);
-            assert_eq!(initial.acks.last_gen, None);
-            assert_eq!(initial.acks.cancel_begin, 0);
-            assert_eq!(initial.acks.cancel_ack, 0);
-
-            let port = lease.port();
-            port.r#gen()
-                .check_and_update(lane, Generation(0))
-                .expect("initial zero accepted");
-            port.r#gen()
-                .check_and_update(lane, Generation(7))
-                .expect("strictly increasing generation accepted");
-
-            rendezvous.fences.record_tx(lane, 12);
-            rendezvous.fences.record_rx(lane, 24);
-            rendezvous.acks.record_cancel_begin(lane);
-            rendezvous.acks.record_cancel_ack(lane, Generation(7));
-
-            let snapshot = rendezvous.association(sid).expect("association exists");
-            assert_eq!(snapshot.sid, sid);
-            assert_eq!(snapshot.lane, lane);
-            assert_eq!(snapshot.last_generation, Some(Generation(7)));
-            assert_eq!(snapshot.last_checkpoint, None);
-            assert!(snapshot.active);
-            assert!(!snapshot.in_splice);
-            assert_eq!(snapshot.pending_fences, None);
-            assert_eq!(snapshot.pending_generation, None);
-            assert_eq!(snapshot.fences.tx, Some(12));
-            assert_eq!(snapshot.fences.rx, Some(24));
-            assert_eq!(snapshot.acks.last_gen, Some(Generation(7)));
-            assert_eq!(snapshot.acks.cancel_begin, 1);
-            assert_eq!(snapshot.acks.cancel_ack, 1);
-        }
-
-        assert!(rendezvous.association(sid).is_none());
-    }
-
-    #[test]
-    fn policy_tap_action_writes_event() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(9);
-        let lane = Lane(0);
-        let head_before = rendezvous.tap().head();
-
-        rendezvous
-            .apply_policy_action(
-                crate::epf::Action::Tap {
-                    id: ids::SLO_BREACH,
-                    arg0: 321,
-                    arg1: 45,
-                },
-                Some(sid),
-                Some(lane),
-            )
-            .expect("tap action succeeds");
-
-        let tap = rendezvous.tap();
-        let head_after = tap.head();
-        assert_eq!(head_after, head_before + 1);
-        let event = tap.as_slice()[(head_after - 1) % RING_EVENTS];
-        assert_eq!(event.id, ids::SLO_BREACH);
-        assert_eq!(event.arg0, 321);
-        assert_eq!(event.arg1, 45);
-    }
-
-    #[test]
-    fn initialise_control_marker_resets_cancel_tables() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId::new(42);
-        let lane = Lane::new(0);
-
-        {
-            let _lease = rendezvous
-                .lease_port(sid, lane, 0)
-                .expect("lane registration succeeds");
-            rendezvous.acks.record_cancel_begin(lane);
-            rendezvous.acks.record_cancel_ack(lane, Generation(3));
-        }
-
-        let marker = ControlMarker {
-            offset: 0,
-            scope_kind: ControlScopeKind::Cancel,
-            tap_id: 0,
-        };
-        rendezvous.initialise_control_marker(lane, &marker);
-
-        assert_eq!(rendezvous.acks.cancel_begin(lane), 0);
-        assert_eq!(rendezvous.acks.cancel_ack(lane), 0);
-        assert!(rendezvous.acks.last_gen(lane).is_none());
-    }
-
-    #[test]
-    fn association_tracks_lane_per_sid() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid_a = SessionId(10);
-        let sid_b = SessionId(11);
-        let lane_a = Lane(2);
-        let lane_b = Lane(3);
-
-        {
-            let _lease_a = rendezvous
-                .lease_port(sid_a, lane_a, 0)
-                .expect("sid_a registers lane");
-            let _lease_b = rendezvous
-                .lease_port(sid_b, lane_b, 0)
-                .expect("sid_b registers lane");
-
-            let snap_a = rendezvous.association(sid_a).expect("sid_a present");
-            let snap_b = rendezvous.association(sid_b).expect("sid_b present");
-
-            assert_eq!(snap_a.lane, lane_a);
-            assert_eq!(snap_b.lane, lane_b);
-            assert_eq!(snap_a.last_checkpoint, None);
-            assert_eq!(snap_b.last_checkpoint, None);
-            assert!(snap_a.active);
-            assert!(snap_b.active);
-        }
-    }
-
-    #[test]
-    fn lane_reuse_resets_state() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let lane = Lane(1);
-        let sid_old = SessionId(42);
-        let sid_new = SessionId(43);
-
-        {
-            let lease = rendezvous
-                .lease_port(sid_old, lane, 0)
-                .expect("initial port registration");
-            let port = lease.port();
-            port.r#gen()
-                .check_and_update(lane, Generation(0))
-                .expect("initial zero accepted");
-            port.r#gen()
-                .check_and_update(lane, Generation(10))
-                .expect("first update accepted");
-            rendezvous.fences.record_tx(lane, 100);
-            rendezvous.fences.record_rx(lane, 200);
-            rendezvous.acks.record_cancel_begin(lane);
-            rendezvous.acks.record_cancel_ack(lane, Generation(10));
-        }
-
-        assert!(rendezvous.association(sid_old).is_none());
-
-        {
-            let lease = rendezvous
-                .lease_port(sid_new, lane, 0)
-                .expect("re-registration");
-            let port_new = lease.port();
-            let snapshot = rendezvous.association(sid_new).expect("sid_new present");
-            assert_eq!(snapshot.sid, sid_new);
-            assert_eq!(snapshot.lane, lane);
-            assert!(snapshot.active);
-            assert_eq!(snapshot.last_generation, None);
-            assert_eq!(snapshot.last_checkpoint, None);
-            assert!(!snapshot.in_splice);
-            assert_eq!(snapshot.pending_fences, None);
-            assert_eq!(snapshot.pending_generation, None);
-            assert_eq!(snapshot.fences.tx, None);
-            assert_eq!(snapshot.fences.rx, None);
-            assert_eq!(snapshot.acks.last_gen, None);
-            assert_eq!(snapshot.acks.cancel_begin, 0);
-            assert_eq!(snapshot.acks.cancel_ack, 0);
-
-            // ensure new updates proceed normally
-            port_new
-                .r#gen()
-                .check_and_update(lane, Generation(0))
-                .expect("initial zero accepted");
-            port_new
-                .r#gen()
-                .check_and_update(lane, Generation(5))
-                .expect("fresh lane accepts update");
-        }
-    }
-
-    #[test]
-    fn association_reflects_pending_splice() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(55);
-        let lane = Lane::new(2);
-        let role = 1;
-
-        let _lease = rendezvous
-            .lease_port(sid, lane, role)
-            .expect("port registration");
-
-        // Begin splice using the new CpCommand-based API
-        rendezvous
-            .begin_splice(sid, lane, Some((11, 22)), Generation(1))
-            .expect("begin splice");
-
-        // Check that association reflects the pending splice
-        let snapshot = rendezvous.association(sid).expect("snapshot present");
-        assert!(snapshot.in_splice);
-        assert_eq!(snapshot.pending_generation, Some(Generation(1)));
-        assert_eq!(snapshot.pending_fences, Some((11, 22)));
-
-        // Abort by clearing the pending splice (take removes it)
-        rendezvous.splice.take(lane);
-
-        let snapshot = rendezvous.association(sid).expect("snapshot present");
-        assert!(!snapshot.in_splice);
-        assert_eq!(snapshot.pending_generation, None);
-        assert_eq!(snapshot.pending_fences, None);
-    }
-
-    #[test]
-    fn association_returns_none_for_unknown_sid() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        assert!(rendezvous.association(SessionId(999)).is_none());
-    }
-
-    #[test]
-    fn generation_overflow_after_max() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let lane = Lane(0);
-        let sid = SessionId(55);
-        {
-            let lease = rendezvous
-                .lease_port(sid, lane, 0)
-                .expect("port registration");
-            let port = lease.port();
-
-            port.r#gen()
-                .check_and_update(lane, Generation(0))
-                .expect("initial zero accepted");
-            port.r#gen()
-                .check_and_update(lane, Generation(u16::MAX))
-                .expect("max accepted");
-
-            let err = port
-                .r#gen()
-                .check_and_update(lane, Generation(u16::MAX))
-                .unwrap_err();
-            assert!(matches!(
-                err,
-                RaGenError::Overflow {
-                    lane: l,
-                    last: Generation(val)
-                } if l == lane && val == u16::MAX
-            ));
-        }
-
-        assert!(rendezvous.association(sid).is_none());
-
-        {
-            let lease = rendezvous
-                .lease_port(SessionId(56), lane, 0)
-                .expect("port re-registration after release");
-            let port = lease.port();
-            port.r#gen()
-                .check_and_update(lane, Generation(0))
-                .expect("lane reset accepts zero");
-        }
-    }
-
-    #[test]
-    fn capability_mint_and_claim_one_shot_records_events() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(7);
-        let lane = Lane(1);
-        let role = 3;
-        let _lease = rendezvous
-            .lease_port(sid, lane, role)
-            .expect("port registration succeeds");
-
-        let dest_role = 5;
-        let mut nonce = [0u8; crate::control::cap::CAP_NONCE_LEN];
-        nonce[0..4].copy_from_slice(&sid.raw().to_be_bytes());
-        nonce[4..8].copy_from_slice(&lane.raw().to_be_bytes());
-        let mut handle = EndpointHandle::new(
-            crate::control::types::SessionId::new(sid.raw()),
-            lane,
-            dest_role,
-        );
-        let encoded_handle = EndpointResource::encode_handle(&handle);
-        let caps_mask = EndpointResource::caps_mask(&handle);
-        rendezvous.mint_cap::<EndpointResource>(sid, lane, CapShot::One, dest_role, nonce, handle);
-
-        let mut header = [0u8; crate::control::cap::CAP_HEADER_LEN];
-        header[0..4].copy_from_slice(&sid.raw().to_be_bytes());
-        header[4] = lane.as_wire();
-        header[5] = dest_role;
-        header[6] = EndpointResource::TAG;
-        header[7] = crate::control::cap::CapShot::One.as_u8();
-        header[8..10].copy_from_slice(&caps_mask.bits().to_be_bytes());
-        header[crate::control::cap::CAP_FIXED_HEADER_LEN
-            ..crate::control::cap::CAP_FIXED_HEADER_LEN + crate::control::cap::CAP_HANDLE_LEN]
-            .copy_from_slice(&encoded_handle);
-        EndpointResource::zeroize(&mut handle);
-
-        let token = crate::control::cap::CapToken::from_parts(
-            nonce,
-            header,
-            [0u8; crate::control::cap::CAP_TAG_LEN],
-        );
-
-        let token_sid = token.sid();
-        let token_lane = token.lane();
-        let token_role = token.role();
-        let token_mask = token.caps_mask();
-        assert_eq!(token_sid.raw(), sid.raw());
-        assert_eq!(token_lane.raw(), lane.raw());
-        assert_eq!(token_role, dest_role);
-        assert_eq!(token_mask.bits(), caps_mask.bits());
-
-        let verified = rendezvous.claim_cap(&token).expect("first claim succeeds");
-        assert_eq!(verified.sid, sid);
-        assert_eq!(verified.lane, lane);
-        assert_eq!(verified.role, dest_role);
-        assert_eq!(verified.shot, CapShot::One);
-        assert_eq!(verified.caps_mask.bits(), caps_mask.bits());
-
-        let err = rendezvous
-            .claim_cap(&token)
-            .expect_err("one-shot exhausted");
-        assert_eq!(err, CapError::Exhausted);
-
-        let events = rendezvous.tap().as_slice();
-        let minted = events
-            .iter()
-            .filter(|e| e.id == crate::observe::cap_mint::<EndpointResource>())
-            .count();
-        let claimed = events
-            .iter()
-            .filter(|e| e.id == crate::observe::cap_claim::<EndpointResource>())
-            .count();
-        let exhausted = events
-            .iter()
-            .filter(|e| e.id == crate::observe::cap_exhaust::<EndpointResource>())
-            .count();
-
-        assert_eq!(minted, 1, "expected a single CAP_MINT event");
-        assert_eq!(claimed, 1, "expected a single CAP_CLAIM event");
-        assert_eq!(exhausted, 1, "expected a single CAP_EXHAUST event");
-    }
-
-    #[test]
-    fn capability_many_allows_repeated_claims_without_exhaustion() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(8);
-        let lane = Lane(2);
-        let role = 4;
-        let _lease = rendezvous
-            .lease_port(sid, lane, role)
-            .expect("port registration succeeds");
-
-        let dest_role = 4;
-        let mut nonce = [0u8; crate::control::cap::CAP_NONCE_LEN];
-        nonce[0..4].copy_from_slice(&sid.raw().to_be_bytes());
-        nonce[4..8].copy_from_slice(&lane.raw().to_be_bytes());
-        let mut handle = EndpointHandle::new(
-            crate::control::types::SessionId::new(sid.raw()),
-            lane,
-            dest_role,
-        );
-        let encoded_handle = EndpointResource::encode_handle(&handle);
-        let caps_mask = EndpointResource::caps_mask(&handle);
-        rendezvous.mint_cap::<EndpointResource>(sid, lane, CapShot::Many, dest_role, nonce, handle);
-
-        let mut header = [0u8; crate::control::cap::CAP_HEADER_LEN];
-        header[0..4].copy_from_slice(&sid.raw().to_be_bytes());
-        header[4] = lane.as_wire();
-        header[5] = dest_role;
-        header[6] = EndpointResource::TAG;
-        header[7] = crate::control::cap::CapShot::Many.as_u8();
-        header[8..10].copy_from_slice(&caps_mask.bits().to_be_bytes());
-        header[crate::control::cap::CAP_FIXED_HEADER_LEN
-            ..crate::control::cap::CAP_FIXED_HEADER_LEN + crate::control::cap::CAP_HANDLE_LEN]
-            .copy_from_slice(&encoded_handle);
-        EndpointResource::zeroize(&mut handle);
-
-        let token = crate::control::cap::CapToken::from_parts(
-            nonce,
-            header,
-            [0u8; crate::control::cap::CAP_TAG_LEN],
-        );
-
-        for _ in 0..3 {
-            let verified = rendezvous
-                .claim_cap(&token)
-                .expect("many-shot claim succeeds");
-            assert_eq!(verified.sid, sid);
-            assert_eq!(verified.lane, lane);
-            assert_eq!(verified.role, dest_role);
-            assert_eq!(verified.shot, CapShot::Many);
-            assert_eq!(verified.caps_mask.bits(), caps_mask.bits());
-        }
-
-        let events = rendezvous.tap().as_slice();
-        let minted = events
-            .iter()
-            .filter(|e| e.id == crate::observe::cap_mint::<EndpointResource>())
-            .count();
-        let claimed = events
-            .iter()
-            .filter(|e| e.id == crate::observe::cap_claim::<EndpointResource>())
-            .count();
-        let exhausted = events
-            .iter()
-            .filter(|e| e.id == crate::observe::cap_exhaust::<EndpointResource>())
-            .count();
-
-        assert_eq!(minted, 1, "expected a single CAP_MINT event");
-        assert_eq!(claimed, 3, "expected three CAP_CLAIM events");
-        assert_eq!(
-            exhausted, 0,
-            "many-shot capabilities must not emit CAP_EXHAUST"
-        );
-    }
-
-    #[test]
-    fn capability_claim_rejects_wrong_lane_and_purges_on_release() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(42);
-        let lane = Lane(3);
-        let role = 1;
-        let lease = rendezvous
-            .lease_port(sid, lane, role)
-            .expect("port registration succeeds");
-
-        let dest_role = 7;
-        let mut nonce = [0u8; crate::control::cap::CAP_NONCE_LEN];
-        nonce[0..4].copy_from_slice(&sid.raw().to_be_bytes());
-        nonce[4..8].copy_from_slice(&lane.raw().to_be_bytes());
-        let mut handle = EndpointHandle::new(
-            crate::control::types::SessionId::new(sid.raw()),
-            lane,
-            dest_role,
-        );
-        let encoded_handle = EndpointResource::encode_handle(&handle);
-        let caps_mask = EndpointResource::caps_mask(&handle);
-        rendezvous.mint_cap::<EndpointResource>(sid, lane, CapShot::One, dest_role, nonce, handle);
-
-        let mut header = [0u8; crate::control::cap::CAP_HEADER_LEN];
-        header[0..4].copy_from_slice(&sid.raw().to_be_bytes());
-        header[4] = lane.as_wire();
-        header[5] = dest_role;
-        header[6] = EndpointResource::TAG;
-        header[7] = crate::control::cap::CapShot::One.as_u8();
-        header[8..10].copy_from_slice(&caps_mask.bits().to_be_bytes());
-        header[crate::control::cap::CAP_FIXED_HEADER_LEN
-            ..crate::control::cap::CAP_FIXED_HEADER_LEN + crate::control::cap::CAP_HANDLE_LEN]
-            .copy_from_slice(&encoded_handle);
-        EndpointResource::zeroize(&mut handle);
-
-        let token = crate::control::cap::CapToken::from_parts(
-            nonce,
-            header,
-            [0u8; crate::control::cap::CAP_TAG_LEN],
-        );
-
-        // Forge lane by modifying header byte 4
-        let mut forged = token;
-        forged.bytes[crate::control::cap::CAP_NONCE_LEN + 4] ^= 1; // header[4] = lane
-        let err = rendezvous
-            .claim_cap(&forged)
-            .expect_err("forged lane should be rejected");
-        assert_eq!(err, CapError::WrongSessionOrLane);
-
-        // Forge role by modifying header byte 5
-        let mut forged_role = token;
-        forged_role.bytes[crate::control::cap::CAP_NONCE_LEN + 5] ^= 1; // header[5] = role
-        let err = rendezvous
-            .claim_cap(&forged_role)
-            .expect_err("forged role should be rejected");
-        assert_eq!(err, CapError::WrongSessionOrLane);
-
-        drop(lease);
-        let err = rendezvous
-            .claim_cap(&token)
-            .expect_err("released lane should reject claim");
-        assert_eq!(err, CapError::WrongSessionOrLane);
-    }
-
-    #[test]
-    fn delegate_effect_mint_and_claim_records_events() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 128];
-        let config = Config::<DefaultLabelUniverse, CounterClock>::new(&mut tap_buf, &mut slab)
-            .with_lane_range(0..8);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(314);
-        let lane = Lane::new(4);
-        let role = 7;
-        let _lease = rendezvous
-            .lease_port(sid, lane, role)
-            .expect("session registers lane");
-
-        let mut handle =
-            EndpointHandle::new(crate::control::types::SessionId::new(sid.raw()), lane, role);
-        let handle_bytes = EndpointResource::encode_handle(&handle);
-        let mask = EndpointResource::caps_mask(&handle);
-        let mut header = [0u8; crate::control::cap::CAP_HEADER_LEN];
-        header[0..4].copy_from_slice(&sid.raw().to_be_bytes());
-        header[4] = lane.as_wire();
-        header[5] = role;
-        header[6] = ENDPOINT_TAG;
-        header[7] = crate::control::cap::CapShot::One.as_u8();
-        header[8..10].copy_from_slice(&mask.bits().to_be_bytes());
-        header[crate::control::cap::CAP_FIXED_HEADER_LEN
-            ..crate::control::cap::CAP_FIXED_HEADER_LEN + crate::control::cap::CAP_HANDLE_LEN]
-            .copy_from_slice(&handle_bytes);
-        EndpointResource::zeroize(&mut handle);
-        let nonce = [0xA5; crate::control::cap::CAP_NONCE_LEN];
-        let tag = [0u8; crate::control::cap::CAP_TAG_LEN];
-        let token = CapToken::from_parts(nonce, header, tag);
-
-        rendezvous
-            .run_effect(CpCommand::delegate_mint(token))
-            .expect("delegate mint succeeds");
-
-        let tap_events = rendezvous.tap().as_slice();
-        assert!(
-            tap_events
-                .iter()
-                .any(|e| e.id == crate::observe::cap_mint::<EndpointResource>())
-        );
-        assert!(tap_events.iter().any(|e| e.id == ids::DELEG_BEGIN));
-
-        rendezvous
-            .run_effect(CpCommand::delegate_claim(token))
-            .expect("delegate claim succeeds");
-
-        let tap_events = rendezvous.tap().as_slice();
-        assert!(
-            tap_events
-                .iter()
-                .any(|e| e.id == crate::observe::cap_claim::<EndpointResource>())
-        );
-        assert!(
-            tap_events
-                .iter()
-                .any(|e| e.id == crate::observe::cap_exhaust::<EndpointResource>())
-        );
-
-        let err = rendezvous
-            .run_effect(CpCommand::delegate_claim(token))
-            .expect_err("second claim must report exhaustion");
-        assert!(matches!(
-            err,
-            CpError::Delegation(CpDelegationError::Exhausted)
-        ));
-    }
-
-    #[test]
-    fn splice_begin_without_sid_is_rejected() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 128];
-        let config = Config::<DefaultLabelUniverse, CounterClock>::new(&mut tap_buf, &mut slab)
-            .with_lane_range(0..4);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(1);
-        let lane = Lane::new(0);
-        let _lease = rendezvous
-            .lease_port(sid, lane, 0)
-            .expect("lane registration succeeds");
-
-        let envelope = CpCommand::new(CpEffect::SpliceBegin).with_lane(CpLaneId::new(lane.raw()));
-
-        let result = EffectExecutor::run_effect(&rendezvous, envelope);
-        assert!(matches!(
-            result,
-            Err(CpError::Splice(CpSpliceError::InvalidSession))
-        ));
-    }
-
-    #[test]
-    fn splice_begin_without_lane_is_rejected() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 128];
-        let config = Config::<DefaultLabelUniverse, CounterClock>::new(&mut tap_buf, &mut slab)
-            .with_lane_range(0..4);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(2);
-        let lane = Lane::new(1);
-        let _lease = rendezvous
-            .lease_port(sid, lane, 0)
-            .expect("lane registration succeeds");
-
-        let envelope = CpCommand::new(CpEffect::SpliceBegin).with_sid(CpSessionId::new(sid.raw()));
-
-        let result = EffectExecutor::run_effect(&rendezvous, envelope);
-        assert!(matches!(
-            result,
-            Err(CpError::Splice(CpSpliceError::InvalidLane))
-        ));
-    }
-
-    #[test]
-    fn cancel_ack_missing_generation_is_rejected() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 128];
-        let config = Config::<DefaultLabelUniverse, CounterClock>::new(&mut tap_buf, &mut slab)
-            .with_lane_range(0..4);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(3);
-        let lane = Lane::new(2);
-        let _lease = rendezvous
-            .lease_port(sid, lane, 0)
-            .expect("lane registration succeeds");
-
-        // CancelBegin succeeds with sid registered
-        EffectExecutor::run_effect(
-            &rendezvous,
-            CpCommand::new(CpEffect::CancelBegin)
-                .with_sid(CpSessionId::new(sid.raw()))
-                .with_lane(CpLaneId::new(lane.raw())),
-        )
-        .expect("cancel begin succeeds");
-
-        // Missing generation in CancelAck should be rejected
-        let envelope = CpCommand::new(CpEffect::CancelAck)
-            .with_sid(CpSessionId::new(sid.raw()))
-            .with_lane(CpLaneId::new(lane.raw()));
-        let result = EffectExecutor::run_effect(&rendezvous, envelope);
-        assert!(matches!(
-            result,
-            Err(CpError::Cancel(CpCancelError::GenerationMismatch))
-        ));
-    }
-
-    #[test]
-    fn splice_begin_records_fences() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 128];
-        let config = Config::<DefaultLabelUniverse, CounterClock>::new(&mut tap_buf, &mut slab)
-            .with_lane_range(0..4);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(11);
-        let lane = Lane::new(0);
-        let _lease = rendezvous.lease_port(sid, lane, 0).expect("lane registers");
-
-        let envelope = CpCommand::splice_local_begin(
-            CpSessionId::new(sid.raw()),
-            CpLaneId::new(lane.raw()),
-            CpGen::new(1),
-            Some((11, 22)),
-        );
-
-        EffectExecutor::run_effect(&rendezvous, envelope).expect("splice begin succeeds");
-
-        let pending = rendezvous
-            .splice
-            .peek(lane)
-            .expect("pending splice present");
-        assert_eq!(pending.fences, Some((11, 22)));
-        assert_eq!(rendezvous.fences.last_tx(lane), Some(11));
-        assert_eq!(rendezvous.fences.last_rx(lane), Some(22));
-    }
-
-    #[test]
-    fn commit_without_checkpoint_fails() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::<DefaultLabelUniverse, CounterClock>::new(&mut tap_buf, &mut slab)
-            .with_lane_range(0..4);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(41);
-        let lane = Lane::new(0);
-        let lease = rendezvous.lease_port(sid, lane, 0).expect("lane registers");
-
-        let err = rendezvous
-            .commit(sid, Generation(0))
-            .expect_err("commit must fail without checkpoint");
-        assert!(matches!(err, CommitError::NoCheckpoint { sid: s } if s == sid));
-
-        drop(lease);
-    }
-
-    #[test]
-    fn commit_marks_checkpoint_consumed() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::<DefaultLabelUniverse, CounterClock>::new(&mut tap_buf, &mut slab)
-            .with_lane_range(0..4);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(42);
-        let lane = Lane::new(1);
-        let lease = rendezvous.lease_port(sid, lane, 0).expect("lane registers");
-
-        let generation = rendezvous.checkpoint(sid).expect("checkpoint succeeds");
-        rendezvous.commit(sid, generation).expect("commit succeeds");
-
-        assert!(rendezvous.checkpoints.is_consumed(lane));
-
-        let rollback_err = rendezvous.rollback(sid, generation);
-        assert!(matches!(rollback_err, Err(RollbackError::AlreadyConsumed { sid: s }) if s == sid));
-
-        let tap_events = rendezvous.tap().as_slice();
-        assert!(
-            tap_events
-                .iter()
-                .any(|event| event.id == CpEffect::Commit.to_tap_event_id())
-        );
-
-        drop(lease);
-    }
-
-    #[test]
-    fn invalid_initial_generation_rejected() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let lane = Lane(0);
-        let sid = SessionId(90);
-        let lease = rendezvous
-            .lease_port(sid, lane, 0)
-            .expect("port registration");
-        let port = lease.port();
-
-        let err = port
-            .r#gen()
-            .check_and_update(lane, Generation(5))
-            .unwrap_err();
-        assert!(matches!(
-            err,
-            RaGenError::InvalidInitial {
-                lane: l,
-                new: Generation(val)
-            } if l == lane && val == 5
-        ));
-    }
-
-    #[test]
-    fn cancel_begin_ack_updates_snapshot_and_tap() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(77);
-        let lane = Lane(0);
-        let _lease = rendezvous
-            .lease_port(sid, lane, 0)
-            .expect("port registration succeeded");
-
-        let begin_head = rendezvous.tap().head();
-        rendezvous.cancel_begin(sid).expect("cancel begin");
-        let begin_idx = begin_head % RING_EVENTS;
-
-        let r#gen = Generation(9);
-        rendezvous.cancel_ack(sid, r#gen).expect("cancel ack");
-        let ack_idx = (begin_head + 1) % RING_EVENTS;
-
-        let snapshot = rendezvous.association(sid).expect("association present");
-        assert_eq!(snapshot.acks.cancel_begin, 1);
-        assert_eq!(snapshot.acks.cancel_ack, 1);
-        assert_eq!(snapshot.acks.last_gen, Some(r#gen));
-
-        let taps = rendezvous.tap().as_slice();
-        assert_eq!(taps[begin_idx].id, ids::CANCEL_BEGIN);
-        assert_eq!(taps[begin_idx].arg0, sid.0);
-        assert_eq!(taps[begin_idx].arg1, lane.0 as u32);
-        assert_eq!(taps[ack_idx].id, ids::CANCEL_ACK);
-        assert_eq!(taps[ack_idx].arg0, sid.0);
-        assert_eq!(taps[ack_idx].arg1, r#gen.0 as u32);
-    }
-
-    #[test]
-    fn checkpoint_records_epoch_and_updates_snapshot() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(11);
-        let lane = Lane(0);
-        let lease = rendezvous
-            .lease_port(sid, lane, 0)
-            .expect("port registration succeeded");
-        let port = lease.port();
-        port.r#gen()
-            .check_and_update(lane, Generation(0))
-            .expect("initial generation set");
-        port.r#gen()
-            .check_and_update(lane, Generation(5))
-            .expect("generation advanced");
-
-        let head_before = rendezvous.tap().head();
-        let epoch = rendezvous.checkpoint(sid).expect("checkpoint succeeds");
-        assert_eq!(epoch, Generation(5));
-        assert_eq!(rendezvous.tap().head(), head_before + 1);
-
-        let idx = head_before % RING_EVENTS;
-        let tap = rendezvous.tap().as_slice()[idx];
-        assert_eq!(tap.id, ids::CHECKPOINT_REQ);
-        assert_eq!(tap.arg0, sid.0);
-        assert_eq!(tap.arg1, 5);
-
-        let snapshot = rendezvous.association(sid).expect("association present");
-        assert_eq!(snapshot.last_checkpoint, Some(Generation(5)));
-    }
-
-    #[test]
-    fn checkpoint_unknown_session_does_not_touch_tap() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let head_before = rendezvous.tap().head();
-        let err = rendezvous.checkpoint(SessionId(99));
-        assert!(matches!(
-            err,
-            Err(CheckpointError::UnknownSession { sid }) if sid == SessionId(99)
-        ));
-        assert_eq!(rendezvous.tap().head(), head_before);
-    }
-
-    #[test]
-    fn rollback_succeeds_when_epoch_matches_checkpoint_and_generation() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(12);
-        let lane = Lane(0);
-        let lease = rendezvous
-            .lease_port(sid, lane, 0)
-            .expect("port registration succeeded");
-        let port = lease.port();
-        port.r#gen()
-            .check_and_update(lane, Generation(0))
-            .expect("initial generation set");
-        port.r#gen()
-            .check_and_update(lane, Generation(3))
-            .expect("generation advanced");
-
-        let epoch = rendezvous.checkpoint(sid).expect("checkpoint succeeds");
-        assert_eq!(epoch, Generation(3));
-
-        let head_before = rendezvous.tap().head();
-        rendezvous.rollback(sid, epoch).expect("rollback succeeds");
-        assert_eq!(rendezvous.tap().head(), head_before + 2);
-
-        let start = head_before % RING_EVENTS;
-        let tap = rendezvous.tap().as_slice();
-        assert_eq!(tap[start].id, ids::ROLLBACK_REQ);
-        assert_eq!(tap[start].arg0, sid.0);
-        assert_eq!(tap[start].arg1, epoch.0 as u32);
-        assert_eq!(tap[(start + 1) % RING_EVENTS].id, ids::ROLLBACK_OK);
-        assert_eq!(tap[(start + 1) % RING_EVENTS].arg0, sid.0);
-        assert_eq!(tap[(start + 1) % RING_EVENTS].arg1, epoch.0 as u32);
-    }
-
-    #[test]
-    fn rollback_rejects_without_checkpoint_and_preserves_tap() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(13);
-        let lane = Lane(0);
-        let lease = rendezvous
-            .lease_port(sid, lane, 0)
-            .expect("port registration succeeded");
-        let port = lease.port();
-        port.r#gen()
-            .check_and_update(lane, Generation(0))
-            .expect("initial generation set");
-
-        let head_before = rendezvous.tap().head();
-        let err = rendezvous.rollback(sid, Generation(0));
-        assert!(
-            matches!(err, Err(RollbackError::NoCheckpoint { sid: _ })),
-            "expected NoCheckpoint, got {:?}",
-            err
-        );
-        assert_eq!(rendezvous.tap().head(), head_before);
-    }
-
-    #[test]
-    fn rollback_rejects_epoch_mismatch_and_keeps_tap_clean() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(14);
-        let lane = Lane(0);
-        {
-            let lease = rendezvous
-                .lease_port(sid, lane, 0)
-                .expect("port registration succeeded");
-            let port = lease.port();
-            port.r#gen()
-                .check_and_update(lane, Generation(0))
-                .expect("initial generation set");
-            port.r#gen()
-                .check_and_update(lane, Generation(4))
-                .expect("generation advanced");
-
-            let epoch = rendezvous.checkpoint(sid).expect("checkpoint succeeds");
-            assert_eq!(epoch, Generation(4));
-
-            let head_before = rendezvous.tap().head();
-            let err = rendezvous.rollback(sid, Generation(3));
-            assert!(
-                matches!(
-                    err,
-                    Err(RollbackError::StaleCheckpoint {
-                        sid: _,
-                        requested: Generation(3),
-                        current: Generation(4)
-                    })
-                ),
-                "expected StaleCheckpoint, got {:?}",
-                err
-            );
-            assert_eq!(rendezvous.tap().head(), head_before);
-
-            // The failed rollback must not emit request/ok events; only the checkpoint remains.
-            let idx = (head_before - 1) % RING_EVENTS;
-            let tap = rendezvous.tap().as_slice()[idx];
-            assert_eq!(tap.id, ids::CHECKPOINT_REQ);
-        }
-    }
-
-    #[test]
-    fn rollback_is_idempotent_and_does_not_dirty_tap() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(0xA0);
-        let lane = Lane(1);
-        {
-            let lease = rendezvous
-                .lease_port(sid, lane, 0)
-                .expect("port registration succeeds");
-            let port = lease.port();
-            port.r#gen()
-                .check_and_update(lane, Generation(0))
-                .expect("initial generation accepted");
-            port.r#gen()
-                .check_and_update(lane, Generation(9))
-                .expect("generation update accepted");
-
-            let epoch = rendezvous.checkpoint(sid).expect("checkpoint succeeds");
-            let head_before = rendezvous.tap().head();
-            rendezvous
-                .rollback(sid, epoch)
-                .expect("first rollback succeeds");
-            let head_after = rendezvous.tap().head();
-            assert_eq!(head_after, head_before + 2);
-
-            let tap = rendezvous.tap().as_slice();
-            let idx_req = (head_after - 2) % RING_EVENTS;
-            let idx_ok = (head_after - 1) % RING_EVENTS;
-            assert_eq!(tap[idx_req].id, ids::ROLLBACK_REQ);
-            assert_eq!(tap[idx_ok].id, ids::ROLLBACK_OK);
-
-            let head_retry = rendezvous.tap().head();
-            let err = rendezvous
-                .rollback(sid, epoch)
-                .expect_err("second rollback reports consumed");
-            assert!(
-                matches!(err, RollbackError::AlreadyConsumed { sid: _ }),
-                "expected AlreadyConsumed, got {:?}",
-                err
-            );
-            assert_eq!(
-                rendezvous.tap().head(),
-                head_retry,
-                "second rollback must not emit taps"
-            );
-        }
-    }
-
-    #[test]
-    fn rollback_unknown_session_preserves_tap() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let unknown_sid = SessionId(0xFFFF);
-        let head_before = rendezvous.tap().head();
-
-        let err = rendezvous.rollback(unknown_sid, Generation(42));
-        assert!(matches!(
-            err,
-            Err(RollbackError::UnknownSession { sid }) if sid == unknown_sid
-        ));
-
-        assert_eq!(
-            rendezvous.tap().head(),
-            head_before,
-            "UnknownSession rollback must not emit any tap events"
-        );
-    }
-
-    #[test]
-    fn rollback_epoch_mismatch_preserves_tap() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(0x1234);
-        let lane = Lane(0);
-        {
-            let lease = rendezvous
-                .lease_port(sid, lane, 0)
-                .expect("port registration succeeded");
-            let port = lease.port();
-            port.r#gen()
-                .check_and_update(lane, Generation(0))
-                .expect("initial generation set");
-            port.r#gen()
-                .check_and_update(lane, Generation(7))
-                .expect("generation advanced");
-
-            let epoch = rendezvous.checkpoint(sid).expect("checkpoint succeeds");
-            assert_eq!(epoch, Generation(7));
-
-            let head_before = rendezvous.tap().head();
-            let err = rendezvous.rollback(sid, Generation(5));
-            assert!(
-                matches!(
-                    err,
-                    Err(RollbackError::StaleCheckpoint {
-                        sid: _,
-                        requested: Generation(5),
-                        current: Generation(7)
-                    })
-                ),
-                "expected StaleCheckpoint, got {:?}",
-                err
-            );
-            assert_eq!(
-                rendezvous.tap().head(),
-                head_before,
-                "StaleCheckpoint rollback must not emit any tap events"
-            );
-        }
-    }
-
-    #[test]
-    fn rollback_consumed_session_preserves_tap() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(0xABCD);
-        let lane = Lane(3);
-        {
-            let lease = rendezvous
-                .lease_port(sid, lane, 0)
-                .expect("port registration succeeded");
-            let port = lease.port();
-            port.r#gen()
-                .check_and_update(lane, Generation(0))
-                .expect("initial generation set");
-            port.r#gen()
-                .check_and_update(lane, Generation(10))
-                .expect("generation advanced");
-
-            let epoch = rendezvous.checkpoint(sid).expect("checkpoint succeeds");
-            assert_eq!(epoch, Generation(10));
-
-            let head_before = rendezvous.tap().head();
-            rendezvous
-                .rollback(sid, epoch)
-                .expect("first rollback succeeds");
-
-            let head_after_first = rendezvous.tap().head();
-            assert_eq!(
-                head_after_first,
-                head_before + 2,
-                "first rollback emits ROLLBACK_REQ and ROLLBACK_OK"
-            );
-
-            let head_before_second = rendezvous.tap().head();
-            let err = rendezvous
-                .rollback(sid, epoch)
-                .expect_err("second rollback should fail with consumed state");
-            assert!(
-                matches!(err, RollbackError::AlreadyConsumed { sid: _ }),
-                "expected AlreadyConsumed, got {:?}",
-                err
-            );
-            assert_eq!(
-                rendezvous.tap().head(),
-                head_before_second,
-                "Consumed (second) rollback must not emit any tap events"
-            );
-        }
-    }
-
-    #[test]
-    fn repeated_checkpoint_preserves_snapshot() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(0xB0);
-        let lane = Lane(2);
-        {
-            let lease = rendezvous
-                .lease_port(sid, lane, 0)
-                .expect("port registration succeeds");
-            let port = lease.port();
-            port.r#gen()
-                .check_and_update(lane, Generation(0))
-                .expect("initial generation accepted");
-            port.r#gen()
-                .check_and_update(lane, Generation(5))
-                .expect("generation update accepted");
-
-            let first = rendezvous.checkpoint(sid).expect("first checkpoint");
-            assert_eq!(first, Generation(5));
-            let head_before = rendezvous.tap().head();
-            let second = rendezvous.checkpoint(sid).expect("second checkpoint");
-            assert_eq!(second, first);
-            assert_eq!(rendezvous.tap().head(), head_before + 1);
-
-            let snapshot = rendezvous.association(sid).expect("snapshot present");
-            assert_eq!(snapshot.last_checkpoint, Some(Generation(5)));
-        }
-    }
-
-    #[test]
-    fn splice_failure_does_not_emit_taps() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(0xC0);
-        let lane = Lane(3);
-        {
-            let lease = rendezvous
-                .lease_port(sid, lane, 0)
-                .expect("port registration succeeds");
-            let port = lease.port();
-            port.r#gen()
-                .check_and_update(lane, Generation(0))
-                .expect("initial generation accepted");
-            port.r#gen()
-                .check_and_update(lane, Generation(4))
-                .expect("generation update accepted");
-
-            // Try to begin splice with stale generation (2 < 4)
-            let head_before = rendezvous.tap().head();
-            let err = rendezvous
-                .begin_splice(sid, lane, None, Generation(2))
-                .unwrap_err();
-
-            // Should fail with StaleGeneration
-            assert!(matches!(err, RaSpliceError::StaleGeneration { .. }));
-
-            // Should not emit any tap events on failure
-            assert_eq!(rendezvous.tap().head(), head_before);
-        }
-    }
-
-    #[test]
-    fn tap_uses_injected_clock() {
-        use core::cell::Cell;
-
-        struct StepClock {
-            next: Cell<u32>,
-            step: u32,
-        }
-
-        impl StepClock {
-            fn new(start: u32, step: u32) -> Self {
-                Self {
-                    next: Cell::new(start),
-                    step,
-                }
-            }
-        }
-
-        impl Clock for StepClock {
-            fn now32(&self) -> u32 {
-                let current = self.next.get();
-                self.next.set(current.saturating_add(self.step));
-                current
-            }
-        }
-
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab).with_clock(StepClock::new(100, 7));
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(0xD0);
-        let lane = Lane(4);
-        {
-            let lease = rendezvous
-                .lease_port(sid, lane, 0)
-                .expect("port registration succeeds");
-            let port = lease.port();
-            port.r#gen()
-                .check_and_update(lane, Generation(0))
-                .expect("initial generation accepted");
-
-            rendezvous.cancel_begin(sid).expect("begin succeeds");
-            let head = rendezvous.tap().head();
-            let idx_begin = (head - 1) % RING_EVENTS;
-            assert_eq!(rendezvous.tap().as_slice()[idx_begin].ts, 107); // port() emitted CpEffect::Open at ts=100
-
-            rendezvous
-                .cancel_ack(sid, Generation(0))
-                .expect("ack succeeds");
-            let head = rendezvous.tap().head();
-            let idx_ack = (head - 1) % RING_EVENTS;
-            assert_eq!(rendezvous.tap().as_slice()[idx_ack].ts, 114); // Now at ts=114
-        }
-    }
-
-    #[test]
-    fn port_rejects_busy_lane() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let lane = Lane(2);
-        let sid_a = SessionId(100);
-        let sid_b = SessionId(101);
-
-        {
-            let lease_a = rendezvous.lease_port(sid_a, lane, 0).expect("lane is free");
-
-            let err = rendezvous.lease_port(sid_b, lane, 0);
-            assert!(matches!(err, Err(RendezvousError::LaneBusy { lane: l }) if l == lane));
-
-            drop(lease_a);
-            rendezvous
-                .lease_port(sid_b, lane, 0)
-                .expect("lane available after release");
-        }
-    }
-
-    #[test]
-    fn port_allows_multi_lane_session() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 64];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let sid = SessionId(200);
-        let lane_a = Lane(0);
-        let lane_b = Lane(1);
-
-        {
-            let lease_a = rendezvous.lease_port(sid, lane_a, 0).expect("lane a free");
-            let lease_b = rendezvous.lease_port(sid, lane_b, 0).expect("lane b free for same sid");
-
-            drop(lease_b);
-            drop(lease_a);
-
-            rendezvous
-                .lease_port(sid, lane_a, 0)
-                .expect("lane a available after release");
-        }
-    }
-
-    #[cfg(all(test, feature = "std"))]
-    mod prop {
-        use super::*;
-        use crate::observe::ids;
-        use crate::runtime::consts::LANES_MAX;
-        use proptest::collection;
-        use proptest::prelude::*;
-        use std::collections::{BTreeMap, btree_map::Entry};
-        use std::vec::Vec;
-
-        fn resize_or_fill(mut values: Vec<u16>, target_len: usize) -> Vec<u16> {
-            if values.len() >= target_len {
-                values.truncate(target_len);
-                return values;
-            }
-            values.resize(target_len, 0);
-            values
-        }
-
-        fn lane_distribution() -> impl Strategy<Value = Vec<(u8, u8, Vec<u16>)>> {
-            // Generate up to eight programme entries; duplicates are folded by the
-            // property under test so we don't need to enforce uniqueness here.
-            let lanes = 0u8..LANES_MAX;
-            let counts = 0u8..=5;
-            let gens = collection::vec(any::<u16>(), 0..=5);
-            collection::vec((lanes, counts, gens), 1..=8)
-        }
-
-        fn cancel_script() -> impl Strategy<Value = Vec<(u8, bool, u16, u8)>> {
-            collection::vec(
-                (0u8..LANES_MAX, any::<bool>(), any::<u16>(), any::<u8>()),
-                1..=64,
-            )
-        }
-
-        struct LaneState<'rv, 'cfg> {
-            sid: SessionId,
-            begins: u32,
-            acks: u32,
-            last_gen: Option<Generation>,
-            _lease: LaneLease<
-                'rv,
-                'cfg,
-                DummyTransport,
-                DefaultLabelUniverse,
-                CounterClock,
-                crate::control::cap::EpochInit,
-            >,
-        }
-
-        proptest! {
-            #![proptest_config(ProptestConfig { cases: 256, .. ProptestConfig::default() })]
-
-            #[test]
-            fn cancel_counters_remain_balanced(entries in lane_distribution()) {
-                let result: TestCaseResult = {
-                    let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-                    let mut slab = [0u8; 64];
-                    let config = Config::new(&mut tap_buf, &mut slab);
-                    let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-                    let mut totals: BTreeMap<u32, (Lane, u32, u32, Option<Generation>)> =
-                        BTreeMap::new();
-                    let mut leases: BTreeMap<
-                        u8,
-                        (
-                            SessionId,
-                            LaneLease<
-                                '_,
-                                '_,
-                                DummyTransport,
-                                DefaultLabelUniverse,
-                                CounterClock,
-                                crate::control::cap::EpochInit,
-                            >,
-                        ),
-                    > = BTreeMap::new();
-                    let mut ack_progress: BTreeMap<u8, Option<Generation>> = BTreeMap::new();
-
-                    let head_before = rendezvous.tap().head();
-
-                    for (lane_id, count_raw, gens_raw) in entries {
-                        if count_raw == 0 {
-                            continue;
-                        }
-                        let lane = Lane::new(lane_id as u32);
-                        let sid = match leases.entry(lane_id) {
-                            Entry::Occupied(entry) => entry.get().0,
-                            Entry::Vacant(entry) => {
-                                let sid = SessionId(0x1000 + lane_id as u32);
-                                let lease = rendezvous
-                                    .lease_port(sid, lane, 0)
-                                    .expect("lane registration succeeds");
-                                entry.insert((sid, lease));
-                                sid
-                            }
-                        };
-                        let sid_val = sid.raw();
-
-                        let count = count_raw as usize;
-                        let mut gens = resize_or_fill(gens_raw, count);
-
-                        let mut last = ack_progress
-                            .get(&lane_id)
-                            .and_then(|opt| opt.map(|g| g.0))
-                            .unwrap_or(0);
-
-                        for value in gens.iter_mut() {
-                            let delta = *value;
-                            let next = last.saturating_add(delta % 4 + 1);
-                            *value = next;
-                            last = next;
-                        }
-
-                        for _ in 0..count {
-                            rendezvous
-                                .cancel_begin(sid)
-                                .expect("begin increments succeed");
-                        }
-
-                        let mut last_ack = None;
-                        for value in gens {
-                            let generation = Generation(value);
-                            if let Some(prev) = ack_progress.get(&lane_id).copied().flatten() {
-                                prop_assert!(
-                                    generation.0 >= prev.0,
-                                    "ack generation must be non-decreasing"
-                                );
-                            }
-                            rendezvous
-                                .cancel_ack(sid, generation)
-                                .expect("ack increments succeed");
-                            last_ack = Some(generation);
-                            ack_progress.insert(lane_id, Some(generation));
-                        }
-
-                        let entry = totals.entry(sid_val).or_insert((lane, 0, 0, None));
-                        entry.1 += count_raw as u32;
-                        entry.2 += count_raw as u32;
-                        if let Some(last) = last_ack {
-                            entry.3 = Some(last);
-                        }
-                    }
-
-                    let head_after = rendezvous.tap().head();
-                    let total_events = head_after.saturating_sub(head_before);
-
-                    let storage = rendezvous.tap().as_slice();
-                    let mut observed_begin: BTreeMap<u32, u32> = BTreeMap::new();
-                    let mut observed_ack: BTreeMap<u32, u32> = BTreeMap::new();
-
-                    for offset in 0..total_events {
-                        let idx = (head_before + offset) % RING_EVENTS;
-                        let event = storage[idx];
-                        match event.id {
-                            ids::CANCEL_BEGIN => {
-                                *observed_begin.entry(event.arg0).or_default() += 1;
-                            }
-                            ids::CANCEL_ACK => {
-                                *observed_ack.entry(event.arg0).or_default() += 1;
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    assert!(
-                        total_events <= RING_EVENTS,
-                        "trace must not wrap in test"
-                    );
-
-                    for (sid_val, (lane, expected_begin, expected_ack, expected_last)) in totals {
-                        let sid = SessionId(sid_val);
-                        let snapshot = rendezvous
-                            .association(sid)
-                            .expect("association must exist for registered lane");
-
-                        assert_eq!(snapshot.acks.cancel_begin, expected_begin);
-                        assert_eq!(snapshot.acks.cancel_ack, expected_ack);
-                        match expected_last {
-                            Some(val) => assert_eq!(snapshot.acks.last_gen, Some(val)),
-                            None => assert_eq!(snapshot.acks.last_gen, None),
-                        }
-
-                        assert_eq!(snapshot.lane, lane);
-
-                        let begins = observed_begin.get(&sid_val).copied().unwrap_or(0);
-                        let acks = observed_ack.get(&sid_val).copied().unwrap_or(0);
-                        assert_eq!(begins, expected_begin);
-                        assert_eq!(acks, expected_ack);
-                    }
-
-                    let unknown_sid = SessionId(0xDEAD_0000);
-                    let head_unknown = rendezvous.tap().head();
-                    assert!(matches!(
-                        rendezvous.cancel_begin(unknown_sid),
-                        Err(CancelError::UnknownSession { sid }) if sid == unknown_sid
-                    ));
-                    assert_eq!(
-                        rendezvous.tap().head(),
-                        head_unknown,
-                        "unknown cancel_begin must not emit taps"
-                    );
-
-                    let head_unknown_ack = rendezvous.tap().head();
-                    assert!(matches!(
-                        rendezvous.cancel_ack(unknown_sid, Generation(1)),
-                        Err(CancelError::UnknownSession { sid }) if sid == unknown_sid
-                    ));
-                    assert_eq!(
-                        rendezvous.tap().head(),
-                        head_unknown_ack,
-                        "unknown cancel_ack must not emit taps"
-                    );
-
-                    Ok(())
-                };
-
-                result
-            }
-
-        }
-
-        proptest! {
-            #![proptest_config(ProptestConfig { cases: 200, .. ProptestConfig::default() })]
-
-            #[test]
-            fn cancel_monotonic_and_lane_reuse(script in cancel_script()) {
-                let result: TestCaseResult = {
-                let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-                let mut slab = [0u8; 64];
-                let config = Config::new(&mut tap_buf, &mut slab);
-                let rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-                let mut lanes: BTreeMap<
-                    u8,
-                    LaneState<
-                        '_,
-                        '_,
-                    >,
-                > = BTreeMap::new();
-                let mut sid_seed: u32 = 0xBEEF_0000;
-
-                for (idx, (lane_id, is_ack, raw_gen, control)) in script.into_iter().enumerate() {
-                    let lane = Lane::new(lane_id as u32);
-
-                    if control % 11 == 0 {
-                        if let Some(old_state) = lanes.remove(&lane_id) {
-                            let old_sid = old_state.sid;
-                            drop(old_state);
-                            prop_assert!(rendezvous.association(old_sid).is_none());
-
-                            let head_before = rendezvous.tap().head();
-                            let err = rendezvous
-                                .cancel_begin(old_sid)
-                                .expect_err("released session must be unknown");
-                            match err {
-                                CancelError::UnknownSession { sid } => {
-                                    prop_assert_eq!(sid, old_sid);
-                                }
-                            }
-                            prop_assert_eq!(rendezvous.tap().head(), head_before);
-
-                            let head_before_ack = rendezvous.tap().head();
-                            let err = rendezvous
-                                .cancel_ack(old_sid, Generation(raw_gen))
-                                .expect_err("released session must be unknown");
-                            match err {
-                                CancelError::UnknownSession { sid } => {
-                                    prop_assert_eq!(sid, old_sid);
-                                }
-                            }
-                            prop_assert_eq!(rendezvous.tap().head(), head_before_ack);
-                        }
-                        continue;
-                    }
-
-                        if !lanes.contains_key(&lane_id) {
-                            let sid = SessionId(sid_seed);
-                            sid_seed = sid_seed.wrapping_add(1);
-                            let lease = rendezvous
-                                .lease_port(sid, lane, 0)
-                                .expect("lane registration succeeds");
-                            lanes.insert(
-                                lane_id,
-                                LaneState {
-                                    sid,
-                                    begins: 0,
-                                    acks: 0,
-                                    last_gen: None,
-                                    _lease: lease,
-                                },
-                            );
-                        }
-
-                    if control % 5 == 0 {
-                        let unknown_sid = SessionId(0xDEAD_0000u32.wrapping_add(idx as u32));
-                        let head = rendezvous.tap().head();
-                        let err = rendezvous
-                            .cancel_begin(unknown_sid)
-                            .expect_err("unknown cancel_begin must error");
-                        match err {
-                            CancelError::UnknownSession { sid } => {
-                                prop_assert_eq!(sid, unknown_sid);
-                            }
-                        }
-                        prop_assert_eq!(rendezvous.tap().head(), head);
-                    }
-
-                    if control % 7 == 0 {
-                        let unknown_sid = SessionId(0xDEAD_8000u32.wrapping_add(idx as u32));
-                        let head = rendezvous.tap().head();
-                        let err = rendezvous
-                            .cancel_ack(unknown_sid, Generation(raw_gen))
-                            .expect_err("unknown cancel_ack must error");
-                        match err {
-                            CancelError::UnknownSession { sid } => {
-                                prop_assert_eq!(sid, unknown_sid);
-                            }
-                        }
-                        prop_assert_eq!(rendezvous.tap().head(), head);
-                    }
-
-                    let state = lanes.get_mut(&lane_id).expect("lane state exists");
-
-                    if !is_ack {
-                        let head_before = rendezvous.tap().head();
-                        rendezvous
-                            .cancel_begin(state.sid)
-                            .expect("begin for registered lane succeeds");
-                        state.begins = state.begins.saturating_add(1);
-
-                        let snapshot = rendezvous
-                            .association(state.sid)
-                            .expect("association available for active lane");
-                        prop_assert_eq!(snapshot.acks.cancel_begin, state.begins);
-                        prop_assert_eq!(snapshot.acks.cancel_ack, state.acks);
-                        prop_assert_eq!(snapshot.acks.last_gen, state.last_gen);
-                        prop_assert_eq!(rendezvous.tap().head(), head_before.saturating_add(1));
-                        continue;
-                    }
-
-                    let stale = control % 3 == 0 && state.last_gen.is_some();
-                    let candidate_val = if stale {
-                        let base = state.last_gen.unwrap().0;
-                        base.saturating_sub(((raw_gen % 4) as u16).saturating_add(1))
-                    } else {
-                        let step = ((raw_gen % 5) as u16).saturating_add(1);
-                        state.last_gen.map(|g| g.0).unwrap_or(0).saturating_add(step)
-                    };
-                    let candidate = Generation(candidate_val);
-
-                    let head_before = rendezvous.tap().head();
-                    rendezvous
-                        .cancel_ack(state.sid, candidate)
-                        .expect("ack for registered lane succeeds");
-                    prop_assert_eq!(rendezvous.tap().head(), head_before.saturating_add(1));
-
-                    state.acks = state.acks.saturating_add(1);
-                    state.last_gen = match state.last_gen {
-                        Some(prev) if prev.0 >= candidate.0 => Some(prev),
-                        _ => Some(candidate),
-                    };
-
-                    let snapshot = rendezvous
-                        .association(state.sid)
-                        .expect("association available after ack");
-                    prop_assert_eq!(snapshot.acks.cancel_begin, state.begins);
-                    prop_assert_eq!(snapshot.acks.cancel_ack, state.acks);
-                    prop_assert_eq!(snapshot.acks.last_gen, state.last_gen);
-                }
-
-                for (lane_id, state) in &lanes {
-                    let lane = Lane::new(*lane_id as u32);
-                    let snapshot = rendezvous
-                        .association(state.sid)
-                        .expect("association remains for active lane");
-                    prop_assert!(snapshot.active);
-                    prop_assert_eq!(snapshot.lane, lane);
-                    prop_assert_eq!(snapshot.acks.cancel_begin, state.begins);
-                    prop_assert_eq!(snapshot.acks.cancel_ack, state.acks);
-                    prop_assert_eq!(snapshot.acks.last_gen, state.last_gen);
-                }
-                Ok(())
-            };
-            result
-            }
-        }
     }
 }
 
@@ -4605,7 +2288,7 @@ where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     /// Borrow slot storage and host registry as a constrained facet.
     ///
@@ -4634,19 +2317,19 @@ where
 
 /// Capability-focused facet that exposes only CapTable operations.
 #[derive(Default)]
-pub struct CapsFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)
+pub(crate) struct CapsFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable;
+    E: crate::control::cap::mint::EpochTable;
 
 impl<T, U, C, E> Copy for CapsFacet<T, U, C, E>
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
 }
 
@@ -4655,7 +2338,7 @@ where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     fn clone(&self) -> Self {
         *self
@@ -4667,21 +2350,21 @@ where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     #[inline]
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self(PhantomData)
     }
 
     /// Mint a capability token and register it in the CapTable.
     #[allow(clippy::too_many_arguments)]
-    pub fn mint_cap<K: crate::control::cap::ResourceKind>(
+    pub(crate) fn mint_cap<K: crate::control::cap::mint::ResourceKind>(
         self,
         rendezvous: &Rendezvous<'_, '_, T, U, C, E>,
         sid: SessionId,
         lane: Lane,
-        shot: crate::control::cap::CapShot,
+        shot: crate::control::cap::mint::CapShot,
         dest_role: u8,
         nonce: [u8; 16],
         handle: K::Handle,
@@ -4691,117 +2374,29 @@ where
 
     /// Generate the next nonce seed for capability minting.
     #[inline]
-    pub fn next_nonce_seed(
+    pub(crate) fn next_nonce_seed(
         self,
         rendezvous: &Rendezvous<'_, '_, T, U, C, E>,
-    ) -> crate::control::cap::NonceSeed {
+    ) -> crate::control::cap::mint::NonceSeed {
         rendezvous.next_nonce_seed()
-    }
-
-    /// Claim a capability from the CapTable.
-    pub fn claim_cap<K: crate::control::cap::ResourceKind>(
-        self,
-        rendezvous: &mut Rendezvous<'_, '_, T, U, C, E>,
-        token: &crate::control::cap::GenericCapToken<K>,
-    ) -> Result<crate::control::cap::VerifiedCap<K>, crate::rendezvous::error::CapError> {
-        rendezvous.claim_cap(token)
-    }
-}
-
-/// Delegation-focused facet that builds on capability operations.
-#[derive(Default)]
-pub struct DelegationFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::EpochTable;
-
-impl<T, U, C, E> Copy for DelegationFacet<T, U, C, E>
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::EpochTable,
-{
-}
-
-impl<T, U, C, E> Clone for DelegationFacet<T, U, C, E>
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::EpochTable,
-{
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T, U, C, E> DelegationFacet<T, U, C, E>
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::EpochTable,
-{
-    #[inline]
-    pub const fn new() -> Self {
-        Self(PhantomData)
-    }
-
-    /// Derive the next nonce seed for delegation capability minting.
-    #[inline]
-    pub fn next_nonce_seed(
-        self,
-        rendezvous: &Rendezvous<'_, '_, T, U, C, E>,
-    ) -> crate::control::cap::NonceSeed {
-        CapsFacet::<T, U, C, E>::new().next_nonce_seed(rendezvous)
-    }
-
-    /// Mint a delegation capability token under canonical policy.
-    #[inline]
-    #[allow(clippy::too_many_arguments)]
-    pub fn mint_cap<K: crate::control::cap::ResourceKind>(
-        self,
-        rendezvous: &Rendezvous<'_, '_, T, U, C, E>,
-        sid: SessionId,
-        lane: Lane,
-        shot: crate::control::cap::CapShot,
-        dest_role: u8,
-        nonce: [u8; 16],
-        handle: K::Handle,
-    ) {
-        CapsFacet::<T, U, C, E>::new()
-            .mint_cap::<K>(rendezvous, sid, lane, shot, dest_role, nonce, handle);
-    }
-
-    /// Claim a previously minted capability token.
-    #[inline]
-    pub fn claim_cap<K: crate::control::cap::ResourceKind>(
-        self,
-        rendezvous: &mut Rendezvous<'_, '_, T, U, C, E>,
-        token: &crate::control::cap::GenericCapToken<K>,
-    ) -> Result<crate::control::cap::VerifiedCap<K>, crate::rendezvous::error::CapError> {
-        CapsFacet::<T, U, C, E>::new().claim_cap(rendezvous, token)
     }
 }
 
 /// Splice-focused facet that exposes only splice coordination operations.
 #[derive(Default)]
-pub struct SpliceFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)
+pub(crate) struct SpliceFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable;
+    E: crate::control::cap::mint::EpochTable;
 
 impl<T, U, C, E> Copy for SpliceFacet<T, U, C, E>
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
 }
 
@@ -4810,7 +2405,7 @@ where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     fn clone(&self) -> Self {
         *self
@@ -4822,43 +2417,34 @@ where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     #[inline]
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self(PhantomData)
     }
 
-    pub fn begin(
+    pub(crate) fn begin(
         self,
         rendezvous: &mut Rendezvous<'_, '_, T, U, C, E>,
         sid: SessionId,
         lane: Lane,
         fences: Option<(u32, u32)>,
         generation: Generation,
-    ) -> Result<(), crate::rendezvous::error::SpliceError> {
+    ) -> Result<(), super::error::SpliceError> {
         rendezvous.begin_splice(sid, lane, fences, generation)
     }
 
-    pub fn acknowledge(
+    pub(crate) fn commit(
         self,
         rendezvous: &mut Rendezvous<'_, '_, T, U, C, E>,
         sid: SessionId,
         lane: Lane,
-    ) -> Result<(), crate::rendezvous::error::SpliceError> {
-        rendezvous.acknowledge_splice(sid, lane)
-    }
-
-    pub fn commit(
-        self,
-        rendezvous: &mut Rendezvous<'_, '_, T, U, C, E>,
-        sid: SessionId,
-        lane: Lane,
-    ) -> Result<(), crate::rendezvous::error::SpliceError> {
+    ) -> Result<(), super::error::SpliceError> {
         rendezvous.commit_splice(sid, lane)
     }
 
-    pub fn release_lane(self, rendezvous: &Rendezvous<'_, '_, T, U, C, E>, lane: Lane) {
+    pub(crate) fn release_lane(self, rendezvous: &Rendezvous<'_, '_, T, U, C, E>, lane: Lane) {
         if let Some(sid) = rendezvous.release_lane(lane) {
             rendezvous.emit_lane_release(sid, lane);
         }
@@ -4867,31 +2453,19 @@ where
 
 /// Observation facet that exposes tap emission without leaking rendezvous state.
 #[derive(Clone, Copy)]
-pub struct ObserveFacet<'tap, 'cfg> {
-    tap: &'tap crate::observe::TapRing<'cfg>,
+pub(crate) struct ObserveFacet<'tap, 'cfg> {
+    tap: &'tap crate::observe::core::TapRing<'cfg>,
 }
 
 impl<'tap, 'cfg> ObserveFacet<'tap, 'cfg> {
     #[inline]
-    pub const fn new(tap: &'tap crate::observe::TapRing<'cfg>) -> Self {
+    pub(crate) const fn new(tap: &'tap crate::observe::core::TapRing<'cfg>) -> Self {
         Self { tap }
-    }
-
-    /// Emit an already constructed tap event.
-    #[inline]
-    pub fn emit(&self, event: crate::observe::TapEvent) {
-        crate::observe::emit(self.tap, event);
-    }
-
-    /// Emit a tap event from individual fields.
-    #[inline]
-    pub fn emit_fields(&self, ts: u32, id: u16, arg0: u32, arg1: u32) {
-        crate::observe::emit(self.tap, crate::observe::RawEvent::new(ts, id, arg0, arg1));
     }
 
     /// Borrow the underlying tap ring (read-only).
     #[inline]
-    pub fn tap(&self) -> &'tap crate::observe::TapRing<'cfg> {
+    pub(crate) fn tap(&self) -> &'tap crate::observe::core::TapRing<'cfg> {
         self.tap
     }
 }
@@ -4902,19 +2476,19 @@ impl<'tap, 'cfg> ObserveFacet<'tap, 'cfg> {
 /// receive the rendezvous handle, keeping the facet trivially copyable and suitable for
 /// `const fn` projection.
 #[derive(Default)]
-pub struct SlotFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)
+pub(crate) struct SlotFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable;
+    E: crate::control::cap::mint::EpochTable;
 
 impl<T, U, C, E> Copy for SlotFacet<T, U, C, E>
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
 }
 
@@ -4923,7 +2497,7 @@ where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     fn clone(&self) -> Self {
         *self
@@ -4935,19 +2509,19 @@ where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     #[inline]
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self(PhantomData)
     }
 
     /// Load and commit bytecode to a slot.
-    pub fn load_commit<State>(
+    pub(crate) fn load_commit<State>(
         self,
         rendezvous: &mut Rendezvous<'_, '_, T, U, C, E>,
-        slot: crate::epf::Slot,
-        manager: &mut crate::runtime::mgmt::Manager<State, { crate::rendezvous::SLOT_COUNT }>,
+        slot: crate::epf::vm::Slot,
+        manager: &mut crate::runtime::mgmt::Manager<State, { SLOT_COUNT }>,
     ) -> Result<(), crate::runtime::mgmt::MgmtError>
     where
         State: crate::runtime::mgmt::ManagerState,
@@ -4955,25 +2529,51 @@ where
         rendezvous.with_slot_bundle_lease(|lease| lease.load_commit_with(slot, manager))
     }
 
-    /// Activate a slot, making its policy bytecode active.
-    pub fn activate<State>(
+    /// Schedule activation for a slot after staging a verified policy image.
+    pub(crate) fn schedule_activate<State>(
         self,
         rendezvous: &mut Rendezvous<'_, '_, T, U, C, E>,
-        slot: crate::epf::Slot,
-        manager: &mut crate::runtime::mgmt::Manager<State, { crate::rendezvous::SLOT_COUNT }>,
+        slot: crate::epf::vm::Slot,
+        manager: &mut crate::runtime::mgmt::Manager<State, { SLOT_COUNT }>,
     ) -> Result<crate::runtime::mgmt::TransitionReport, crate::runtime::mgmt::MgmtError>
     where
         State: crate::runtime::mgmt::ManagerState,
     {
-        rendezvous.with_slot_bundle_lease(|lease| lease.activate_with(slot, manager))
+        rendezvous.with_slot_bundle_lease(|lease| lease.schedule_activate_with(slot, manager))
+    }
+
+    /// Apply pending policy activations at a decision boundary.
+    pub(crate) fn on_decision_boundary<State>(
+        self,
+        rendezvous: &mut Rendezvous<'_, '_, T, U, C, E>,
+        manager: &mut crate::runtime::mgmt::Manager<State, { SLOT_COUNT }>,
+    ) -> Result<(), crate::runtime::mgmt::MgmtError>
+    where
+        State: crate::runtime::mgmt::ManagerState,
+    {
+        rendezvous.with_slot_bundle_lease(|lease| lease.on_decision_boundary_with(manager))
+    }
+
+    /// Apply pending policy activation for a specific slot at a decision boundary.
+    pub(crate) fn on_decision_boundary_for_slot<State>(
+        self,
+        rendezvous: &mut Rendezvous<'_, '_, T, U, C, E>,
+        slot: crate::epf::vm::Slot,
+        manager: &mut crate::runtime::mgmt::Manager<State, { SLOT_COUNT }>,
+    ) -> Result<Option<crate::runtime::mgmt::TransitionReport>, crate::runtime::mgmt::MgmtError>
+    where
+        State: crate::runtime::mgmt::ManagerState,
+    {
+        rendezvous
+            .with_slot_bundle_lease(|lease| lease.on_decision_boundary_for_slot_with(slot, manager))
     }
 
     /// Revert a slot to the previous active policy.
-    pub fn revert<State>(
+    pub(crate) fn revert<State>(
         self,
         rendezvous: &mut Rendezvous<'_, '_, T, U, C, E>,
-        slot: crate::epf::Slot,
-        manager: &mut crate::runtime::mgmt::Manager<State, { crate::rendezvous::SLOT_COUNT }>,
+        slot: crate::epf::vm::Slot,
+        manager: &mut crate::runtime::mgmt::Manager<State, { SLOT_COUNT }>,
     ) -> Result<crate::runtime::mgmt::TransitionReport, crate::runtime::mgmt::MgmtError>
     where
         State: crate::runtime::mgmt::ManagerState,

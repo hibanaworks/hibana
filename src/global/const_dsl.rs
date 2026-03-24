@@ -5,44 +5,13 @@
 //! be populated entirely within const contexts and exposed as an `EffStruct`
 //! slice via standard slice traits.
 
-use crate::control::cap::CapShot;
+use crate::control::cap::mint::CapShot;
 use crate::eff::{self, EffSlice, EffStruct};
-use crate::global::{ControlHandling, ControlLabelSpec, MessageControlSpec};
+use crate::global::{
+    ControlHandling, ControlLabelSpec, MessageControlSpec, MessageSpec, RoleMarker, SendableLabel,
+};
 
 const MAX_CAPACITY: usize = eff::meta::MAX_EFF_NODES;
-
-/// Static policy metadata propagated alongside dynamic handle plans.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DynamicMeta {
-    pub shard_hint: Option<u32>,
-    pub static_weight: u8,
-}
-
-impl Default for DynamicMeta {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl DynamicMeta {
-    pub const fn new() -> Self {
-        Self {
-            shard_hint: None,
-            static_weight: 0,
-        }
-    }
-
-    pub const fn with_shard_hint(self, shard_hint: Option<u32>) -> Self {
-        Self { shard_hint, ..self }
-    }
-
-    pub const fn with_static_weight(self, weight: u8) -> Self {
-        Self {
-            static_weight: weight,
-            ..self
-        }
-    }
-}
 
 /// Structured scope classification used by the global DSL to tag composite
 /// fragments such as routes, loops, or parallel lanes.
@@ -99,7 +68,7 @@ impl ScopeId {
 
     pub const ORDINAL_CAPACITY: u16 = Self::LOCAL_MASK as u16;
 
-    pub const fn compose(kind: ScopeKind, local: u16, range: u16, nest: u16) -> Self {
+    pub(crate) const fn compose(kind: ScopeKind, local: u16, range: u16, nest: u16) -> Self {
         if local as u64 > Self::LOCAL_MASK
             || range as u64 > Self::RANGE_MASK
             || nest as u64 > Self::NEST_MASK
@@ -113,7 +82,7 @@ impl ScopeId {
         Self { raw }
     }
 
-    pub const fn new(kind: ScopeKind, local: u16) -> Self {
+    pub(crate) const fn new(kind: ScopeKind, local: u16) -> Self {
         Self::compose(kind, local, 0, 0)
     }
 
@@ -278,47 +247,20 @@ impl ScopeId {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StaticPlanKind {
-    SpliceLocal { dst_lane: u16 },
-    RerouteLocal { dst_lane: u16, shard: u32 },
+pub(crate) enum PolicyMode {
+    Static,
+    Dynamic { policy_id: u16, scope: ScopeId },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HandlePlan {
-    None,
-    Static {
-        kind: StaticPlanKind,
-    },
-    Dynamic {
-        policy_id: u16,
-        meta: DynamicMeta,
-        scope: ScopeId,
-    },
-}
-
-impl HandlePlan {
-    pub const fn none() -> Self {
-        Self::None
+impl PolicyMode {
+    pub(crate) const fn static_mode() -> Self {
+        Self::Static
     }
 
-    pub const fn splice_local(dst_lane: u16) -> Self {
-        Self::Static {
-            kind: StaticPlanKind::SpliceLocal { dst_lane },
-        }
-    }
-
-    pub const fn reroute_local(dst_lane: u16, shard: u32) -> Self {
-        Self::Static {
-            kind: StaticPlanKind::RerouteLocal { dst_lane, shard },
-        }
-    }
-
-    /// Create a dynamic control plan with the given policy_id and metadata.
+    /// Create a dynamic policy annotation with the given policy id.
     ///
-    /// **IMPORTANT**: Using a dynamic plan requires registering a resolver via
-    /// [`SessionCluster::register_control_plan_resolver`] before executing the
-    /// choreography. If no resolver is registered for the policy_id, the
-    /// operation will fail with [`CpError::PolicyAbort`] at runtime.
+    /// Route decisions are evaluated with fixed priority:
+    /// `EPF(Route) -> resolver -> PolicyAbort`.
     ///
     /// The actual control operation (route, splice, reroute) is determined by
     /// the resource tag of the control message, not by the plan itself.
@@ -326,102 +268,81 @@ impl HandlePlan {
     /// # Example
     ///
     /// ```ignore
-    /// // Define a route with dynamic plan
+    /// // Define a route with dynamic policy annotation
     /// const MY_POLICY_ID: u16 = 0x1234;
-    /// const MY_ROUTE: Program<Steps> = g::route(
-    ///     g::route_chain::<0, 0, Arm1>(
-    ///         g::with_control_plan(arm1, HandlePlan::dynamic(MY_POLICY_ID, DynamicMeta::new()))
-    ///     ).and(arm2)
-    /// );
+    /// const MY_ROUTE: Program<Steps> =
+    ///     g::route(arm1.policy::<MY_POLICY_ID>(), arm2.policy::<MY_POLICY_ID>());
     ///
     /// // Register resolver before use
-    /// cluster.register_control_plan_resolver(rv_id, &info, |ctx| {
-    ///     // Return selected arm index
-    ///     Ok(DynamicResolution::arm(0))
-    /// })?;
+    /// let controller = hibana::g::advanced::project(&MY_ROUTE);
+    ///
+    /// cluster.set_resolver(
+    ///     rv_id,
+    ///     &controller,
+    ///     hibana::substrate::policy::PolicyId::new(MY_POLICY_ID),
+    ///     |_cluster, ctx| {
+    ///         // Return selected arm index
+    ///         Ok(hibana::substrate::policy::DynamicResolution::RouteArm { arm: 0 })
+    ///     },
+    /// )?;
     /// ```
     ///
-    /// [`SessionCluster::register_control_plan_resolver`]: crate::control::cluster::SessionCluster::register_control_plan_resolver
-    /// [`CpError::PolicyAbort`]: crate::control::CpError::PolicyAbort
-    pub const fn dynamic(policy_id: u16, meta: DynamicMeta) -> Self {
+    /// [`SessionCluster::set_resolver`]: crate::substrate::SessionCluster::set_resolver
+    /// [`CpError::PolicyAbort`]: crate::substrate::CpError::PolicyAbort
+    pub(crate) const fn dynamic(policy_id: u16) -> Self {
         Self::Dynamic {
             policy_id,
-            meta,
             scope: ScopeId::none(),
         }
     }
 
-    pub const fn static_kind(self) -> Option<StaticPlanKind> {
-        match self {
-            Self::Static { kind } => Some(kind),
-            _ => None,
-        }
-    }
-
-    pub const fn is_dynamic(self) -> bool {
+    pub(crate) const fn is_dynamic(self) -> bool {
         matches!(self, Self::Dynamic { .. })
     }
 
-    pub const fn is_none(self) -> bool {
-        matches!(self, Self::None)
+    pub(crate) const fn is_static(self) -> bool {
+        matches!(self, Self::Static)
     }
 
-    pub const fn dynamic_components(self) -> Option<(u16, DynamicMeta)> {
+    pub(crate) const fn dynamic_policy_id(self) -> Option<u16> {
         match self {
-            Self::Dynamic {
-                policy_id, meta, ..
-            } => Some((policy_id, meta)),
+            Self::Dynamic { policy_id, .. } => Some(policy_id),
             _ => None,
         }
     }
 
-    pub const fn scope(self) -> ScopeId {
+    pub(crate) const fn scope(self) -> ScopeId {
         match self {
             Self::Dynamic { scope, .. } => scope,
             _ => ScopeId::none(),
         }
     }
 
-    pub const fn with_scope(self, scope: ScopeId) -> Self {
+    pub(crate) const fn with_scope(self, scope: ScopeId) -> Self {
         match self {
-            Self::Dynamic {
-                policy_id, meta, ..
-            } => Self::Dynamic {
-                policy_id,
-                meta,
-                scope,
-            },
+            Self::Dynamic { policy_id, .. } => Self::Dynamic { policy_id, scope },
             other => other,
         }
     }
 }
 
 #[derive(Clone, Copy)]
-pub struct ControlPlanMarker {
-    pub offset: usize,
-    pub plan: HandlePlan,
+pub(crate) struct PolicyMarker {
+    pub(crate) offset: usize,
+    pub(crate) policy: PolicyMode,
 }
 
-impl ControlPlanMarker {
+impl PolicyMarker {
     const fn empty() -> Self {
         Self {
             offset: 0,
-            plan: HandlePlan::None,
+            policy: PolicyMode::Static,
         }
     }
 
-    const fn new(offset: usize, plan: HandlePlan) -> Self {
-        Self { offset, plan }
+    const fn new(offset: usize, policy: PolicyMode) -> Self {
+        Self { offset, policy }
     }
-}
-
-const SCOPE_MARKER_INDEX_NONE: u16 = u16::MAX;
-
-#[derive(Clone, Copy)]
-struct DynamicPlanInfo {
-    plan: HandlePlan,
-    offset: u16,
-    tag: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -431,7 +352,7 @@ pub struct ScopeMarker {
     pub scope_kind: ScopeKind,
     pub event: ScopeEvent,
     pub linger: bool,
-    /// Controller role for Route scopes (from `route_chain<CONTROLLER>`).
+    /// Controller role for Route scopes (derived from the arm-entry self-send).
     /// `None` for non-Route scopes or when controller info is unavailable.
     pub controller_role: Option<u8>,
 }
@@ -467,9 +388,9 @@ impl ControlMarker {
 }
 
 #[derive(Clone, Copy)]
-pub struct ControlSpecMarker {
-    pub offset: usize,
-    pub spec: ControlLabelSpec,
+pub(crate) struct ControlSpecMarker {
+    pub(crate) offset: usize,
+    pub(crate) spec: ControlLabelSpec,
 }
 
 impl ControlSpecMarker {
@@ -500,21 +421,12 @@ pub struct EffList {
     scope_budget: u16,
     scope_markers: [ScopeMarker; MAX_CAPACITY],
     scope_marker_len: usize,
-    scope_by_offset: [ScopeId; MAX_CAPACITY],
-    scope_linger_by_ordinal: [bool; ScopeId::ORDINAL_CAPACITY as usize],
-    scope_marker_head_by_ordinal: [u16; ScopeId::ORDINAL_CAPACITY as usize],
-    scope_marker_next: [u16; MAX_CAPACITY],
     control_markers: [ControlMarker; MAX_CAPACITY],
     control_marker_len: usize,
-    control_plans: [ControlPlanMarker; MAX_CAPACITY],
-    control_plan_len: usize,
-    control_plan_by_offset: [Option<HandlePlan>; MAX_CAPACITY],
-    control_plan_index_by_offset: [u16; MAX_CAPACITY],
-    dynamic_plan_from_offset: [Option<DynamicPlanInfo>; MAX_CAPACITY],
+    policy_markers: [PolicyMarker; MAX_CAPACITY],
+    policy_marker_len: usize,
     control_specs: [ControlSpecMarker; MAX_CAPACITY],
     control_spec_len: usize,
-    control_spec_by_offset: [Option<ControlLabelSpec>; MAX_CAPACITY],
-    control_spec_index_by_offset: [u16; MAX_CAPACITY],
 }
 
 impl Default for EffList {
@@ -532,21 +444,12 @@ impl EffList {
             scope_budget: 0,
             scope_markers: [ScopeMarker::empty(); MAX_CAPACITY],
             scope_marker_len: 0,
-            scope_by_offset: [ScopeId::none(); MAX_CAPACITY],
-            scope_linger_by_ordinal: [false; ScopeId::ORDINAL_CAPACITY as usize],
-            scope_marker_head_by_ordinal: [SCOPE_MARKER_INDEX_NONE; ScopeId::ORDINAL_CAPACITY as usize],
-            scope_marker_next: [SCOPE_MARKER_INDEX_NONE; MAX_CAPACITY],
             control_markers: [ControlMarker::empty(); MAX_CAPACITY],
             control_marker_len: 0,
-            control_plans: [ControlPlanMarker::empty(); MAX_CAPACITY],
-            control_plan_len: 0,
-            control_plan_by_offset: [None; MAX_CAPACITY],
-            control_plan_index_by_offset: [SCOPE_MARKER_INDEX_NONE; MAX_CAPACITY],
-            dynamic_plan_from_offset: [None; MAX_CAPACITY],
+            policy_markers: [PolicyMarker::empty(); MAX_CAPACITY],
+            policy_marker_len: 0,
             control_specs: [ControlSpecMarker::empty(); MAX_CAPACITY],
             control_spec_len: 0,
-            control_spec_by_offset: [None; MAX_CAPACITY],
-            control_spec_index_by_offset: [SCOPE_MARKER_INDEX_NONE; MAX_CAPACITY],
         }
     }
 
@@ -555,7 +458,7 @@ impl EffList {
         let mut acc = Self::new();
         let mut idx = 0;
         while idx < list.len() {
-            acc = acc.push(list[idx]);
+            acc = acc.push(list.at(idx));
             idx += 1;
         }
         acc
@@ -611,23 +514,20 @@ impl EffList {
             }
             idx += 1;
         }
-        let mut plan_idx = 0usize;
-        while plan_idx < self.control_plan_len {
-            let marker = self.control_plans[plan_idx];
-            let mut plan = marker.plan;
-            let scope = plan.scope();
+        let mut policy_idx = 0usize;
+        while policy_idx < self.policy_marker_len {
+            let marker = self.policy_markers[policy_idx];
+            let mut policy = marker.policy;
+            let scope = policy.scope();
             if !scope.is_none() {
                 let rebased = scope.add_ordinal(offset);
-                plan = plan.with_scope(rebased);
+                policy = policy.with_scope(rebased);
             }
-            self.control_plans[plan_idx] = ControlPlanMarker::new(marker.offset, plan);
-            if marker.offset < MAX_CAPACITY {
-                self.control_plan_by_offset[marker.offset] = Some(plan);
-            }
-            plan_idx += 1;
+            self.policy_markers[policy_idx] = PolicyMarker::new(marker.offset, policy);
+            policy_idx += 1;
         }
         self.scope_budget = max;
-        self.rebuild_scope_by_offset().rebuild_dynamic_plan_index()
+        self
     }
 
     /// Return the last atom contained in the list (panic if empty or last node not atom).
@@ -656,8 +556,8 @@ impl EffList {
 
     /// Borrow the accumulated effects as a slice.
     #[inline(always)]
-    pub fn as_slice(&self) -> &[EffStruct] {
-        &self.data[..self.len]
+    pub const fn as_slice(&self) -> &[EffStruct] {
+        unsafe { core::slice::from_raw_parts(self.data.as_ptr(), self.len) }
     }
 
     /// Borrow the accumulated effects as a `'static` slice.
@@ -668,7 +568,7 @@ impl EffList {
     /// (e.g., a `pub static` value).
     #[inline(always)]
     pub const fn as_static_slice(&'static self) -> EffSlice {
-        unsafe { core::slice::from_raw_parts(self.data.as_ptr(), self.len) }
+        EffSlice::new(unsafe { core::slice::from_raw_parts(self.data.as_ptr(), self.len) })
     }
 
     #[inline(always)]
@@ -727,11 +627,11 @@ impl EffList {
             self = self.push_control_marker(base + marker.offset, marker.scope_kind, marker.tap_id);
             ctrl_idx += 1;
         }
-        let mut plan_idx = 0;
-        while plan_idx < other.control_plan_len {
-            let plan = other.control_plans[plan_idx];
-            self = self.push_control_plan(base + plan.offset, plan.plan);
-            plan_idx += 1;
+        let mut policy_idx = 0;
+        while policy_idx < other.policy_marker_len {
+            let marker = other.policy_markers[policy_idx];
+            self = self.push_policy(base + marker.offset, marker.policy);
+            policy_idx += 1;
         }
         let mut spec_idx = 0;
         while spec_idx < other.control_spec_len {
@@ -812,7 +712,7 @@ impl EffList {
             controller_role,
         };
         self.scope_marker_len += 1;
-        self.rebuild_scope_by_offset()
+        self
     }
 
     const fn push_scope_marker(self, offset: usize, scope: ScopeId, event: ScopeEvent) -> Self {
@@ -859,7 +759,7 @@ impl EffList {
             controller_role: None,
         };
         self.scope_marker_len += 1;
-        self.rebuild_scope_by_offset()
+        self
     }
 
     pub const fn push_control_marker(
@@ -887,18 +787,23 @@ impl EffList {
     }
 
     /// Wrap the effect list with a Route scope that has controller role information.
-    /// Used by `route_chain` to propagate the CONTROLLER const parameter.
-    pub const fn with_scope_controller(self, scope: ScopeId, controller_role: u8) -> Self {
+    /// Used by binary `route(left, right)` after deriving the controller from the arm entry.
+    pub(crate) const fn with_scope_controller(self, scope: ScopeId, controller_role: u8) -> Self {
         // Use with_scope for correct marker ordering, then update controller_role
-        self.with_scope(scope).with_scope_controller_role(scope, controller_role)
+        self.with_scope(scope)
+            .with_scope_controller_role(scope, controller_role)
     }
 
     /// Update controller_role for all markers with the given scope_id.
-    pub const fn with_scope_controller_role(self, scope: ScopeId, controller_role: u8) -> Self {
+    pub(crate) const fn with_scope_controller_role(
+        self,
+        scope: ScopeId,
+        controller_role: u8,
+    ) -> Self {
         self.update_scope_markers(scope, None, Some(controller_role))
     }
 
-    pub const fn with_scope_linger(self, scope: ScopeId, linger: bool) -> Self {
+    pub(crate) const fn with_scope_linger(self, scope: ScopeId, linger: bool) -> Self {
         self.update_scope_markers(scope, Some(linger), None)
     }
 
@@ -906,23 +811,26 @@ impl EffList {
         if scope.is_none() {
             return false;
         }
-        let canonical = scope.canonical();
-        let ordinal = canonical.local_ordinal() as usize;
-        if ordinal >= ScopeId::ORDINAL_CAPACITY as usize {
-            return false;
+        let mut marker_idx = 0usize;
+        while marker_idx < self.scope_marker_len {
+            let marker = self.scope_markers[marker_idx];
+            if marker.scope_id.raw() == scope.raw() && marker.linger {
+                return true;
+            }
+            marker_idx += 1;
         }
-        self.scope_linger_by_ordinal[ordinal]
+        false
     }
 
-    pub const fn with_control(self, scope_kind: ControlScopeKind, tap_id: u16) -> Self {
+    pub(crate) const fn with_control(self, scope_kind: ControlScopeKind, tap_id: u16) -> Self {
         self.push_control_marker(0, scope_kind, tap_id)
     }
 
-    pub(crate) const fn with_control_plan(self, plan: HandlePlan) -> Self {
+    pub(crate) const fn with_policy(self, policy: PolicyMode) -> Self {
         if self.len == 0 {
             panic!("EffList is empty");
         }
-        self.push_control_plan(self.len - 1, plan)
+        self.push_policy(self.len - 1, policy)
     }
 
     pub const fn with_control_spec(self, spec: ControlLabelSpec) -> Self {
@@ -932,150 +840,118 @@ impl EffList {
         self.push_control_spec(self.len - 1, spec)
     }
 
-    pub const fn push_control_plan(mut self, offset: usize, plan: HandlePlan) -> Self {
+    pub(crate) const fn push_policy(mut self, offset: usize, policy: PolicyMode) -> Self {
         if offset >= MAX_CAPACITY {
-            panic!("EffList control plan offset out of bounds");
+            panic!("EffList policy marker offset out of bounds");
         }
-        let plan_idx = self.control_plan_index_by_offset[offset];
-        if plan_idx != SCOPE_MARKER_INDEX_NONE {
-            let idx = plan_idx as usize;
-            self.control_plans[idx] = ControlPlanMarker::new(offset, plan);
-            self.control_plan_by_offset[offset] = Some(plan);
-            return self.rebuild_dynamic_plan_index();
+        let mut idx = 0usize;
+        while idx < self.policy_marker_len {
+            if self.policy_markers[idx].offset == offset {
+                self.policy_markers[idx] = PolicyMarker::new(offset, policy);
+                return self;
+            }
+            idx += 1;
         }
-        if self.control_plan_len >= MAX_CAPACITY {
-            panic!("EffList control plan capacity exceeded");
+        if self.policy_marker_len >= MAX_CAPACITY {
+            panic!("EffList policy marker capacity exceeded");
         }
-        self.control_plans[self.control_plan_len] = ControlPlanMarker::new(offset, plan);
-        self.control_plan_index_by_offset[offset] = self.control_plan_len as u16;
-        self.control_plan_len += 1;
-        self.control_plan_by_offset[offset] = Some(plan);
-        self.rebuild_dynamic_plan_index()
+        self.policy_markers[self.policy_marker_len] = PolicyMarker::new(offset, policy);
+        self.policy_marker_len += 1;
+        self
     }
 
-    pub fn push_control_plan_mut(&mut self, offset: usize, plan: HandlePlan) {
-        if offset >= MAX_CAPACITY {
-            panic!("EffList control plan offset out of bounds");
-        }
-        let plan_idx = self.control_plan_index_by_offset[offset];
-        if plan_idx != SCOPE_MARKER_INDEX_NONE {
-            let idx = plan_idx as usize;
-            self.control_plans[idx] = ControlPlanMarker::new(offset, plan);
-            self.control_plan_by_offset[offset] = Some(plan);
-            self.rebuild_dynamic_plan_index_mut();
-            return;
-        }
-        if self.control_plan_len >= MAX_CAPACITY {
-            panic!("EffList control plan capacity exceeded");
-        }
-        self.control_plans[self.control_plan_len] = ControlPlanMarker::new(offset, plan);
-        self.control_plan_index_by_offset[offset] = self.control_plan_len as u16;
-        self.control_plan_len += 1;
-        self.control_plan_by_offset[offset] = Some(plan);
-        self.rebuild_dynamic_plan_index_mut();
-    }
-
-    pub const fn control_plan_at(&self, offset: usize) -> Option<HandlePlan> {
+    pub(crate) const fn policy_at(&self, offset: usize) -> Option<PolicyMode> {
         if offset >= MAX_CAPACITY {
             return None;
         }
-        self.control_plan_by_offset[offset]
+        let mut idx = 0usize;
+        while idx < self.policy_marker_len {
+            let marker = self.policy_markers[idx];
+            if marker.offset == offset {
+                return Some(marker.policy);
+            }
+            idx += 1;
+        }
+        None
     }
 
-    /// Find the first Dynamic control plan within an offset range [start, end).
+    /// Find the first dynamic policy marker within an offset range [start, end).
     ///
-    /// Returns (plan, eff_offset, resource_tag) if found.
-    /// Used at scope Enter to set route_plan independent of role projection.
-    pub const fn first_dynamic_plan_in_range(
+    /// Returns (policy, eff_offset, resource_tag) if found.
+    /// Used at scope Enter to set route policy independent of role projection.
+    pub(crate) const fn first_dynamic_policy_in_range(
         &self,
         scope_start: usize,
         scope_end: usize,
-    ) -> Option<(HandlePlan, usize, u8)> {
-        if scope_start >= MAX_CAPACITY {
+    ) -> Option<(PolicyMode, usize, u8)> {
+        if scope_start >= MAX_CAPACITY || scope_start >= scope_end {
             return None;
         }
-        let entry = match self.dynamic_plan_from_offset[scope_start] {
-            Some(entry) => entry,
-            None => return None,
-        };
-        let offset = entry.offset as usize;
-        if offset >= scope_end {
-            return None;
+        let mut best_offset = MAX_CAPACITY;
+        let mut best_policy = None;
+        let mut idx = 0usize;
+        while idx < self.policy_marker_len {
+            let marker = self.policy_markers[idx];
+            if marker.policy.is_dynamic()
+                && marker.offset >= scope_start
+                && marker.offset < scope_end
+                && marker.offset < best_offset
+            {
+                best_offset = marker.offset;
+                best_policy = Some(marker.policy);
+            }
+            idx += 1;
         }
-        Some((entry.plan, offset, entry.tag))
+        match best_policy {
+            Some(policy) => {
+                let eff_struct = self.data[best_offset];
+                let tag = if matches!(eff_struct.kind, eff::EffKind::Atom) {
+                    match eff_struct.atom_data().resource {
+                        Some(tag) => tag,
+                        None => 0,
+                    }
+                } else {
+                    0
+                };
+                Some((policy, best_offset, tag))
+            }
+            None => None,
+        }
     }
 
-    pub fn scope_id_for_offset(&self, offset: usize) -> Option<ScopeId> {
+    pub(crate) const fn scope_id_for_offset(&self, offset: usize) -> Option<ScopeId> {
         if offset >= MAX_CAPACITY {
             return None;
-        }
-        let scope = self.scope_by_offset[offset];
-        if scope.is_none() {
-            None
-        } else {
-            Some(scope)
-        }
-    }
-
-    const fn rebuild_scope_by_offset(mut self) -> Self {
-        let mut table = [ScopeId::none(); MAX_CAPACITY];
-        let mut linger_by_ordinal = [false; ScopeId::ORDINAL_CAPACITY as usize];
-        let mut head_by_ordinal = [SCOPE_MARKER_INDEX_NONE; ScopeId::ORDINAL_CAPACITY as usize];
-        let mut next_by_index = [SCOPE_MARKER_INDEX_NONE; MAX_CAPACITY];
-        let mut marker_idx = 0usize;
-        while marker_idx < self.scope_marker_len {
-            let marker = self.scope_markers[marker_idx];
-            if !marker.scope_id.is_none() {
-                let ordinal = marker.scope_id.local_ordinal() as usize;
-                if ordinal >= ScopeId::ORDINAL_CAPACITY as usize {
-                    panic!("scope ordinal overflow");
-                }
-                if marker.linger {
-                    linger_by_ordinal[ordinal] = true;
-                }
-                next_by_index[marker_idx] = head_by_ordinal[ordinal];
-                head_by_ordinal[ordinal] = marker_idx as u16;
-            }
-            marker_idx += 1;
         }
         let mut stack = [ScopeId::none(); MAX_CAPACITY];
         let mut stack_len = 0usize;
         let mut marker_idx = 0usize;
-        let mut offset = 0usize;
-        while offset < MAX_CAPACITY {
-            while marker_idx < self.scope_marker_len {
-                let marker = self.scope_markers[marker_idx];
-                if marker.offset > offset {
-                    break;
-                }
-                match marker.event {
-                    ScopeEvent::Enter => {
-                        if stack_len >= MAX_CAPACITY {
-                            panic!("EffList scope stack overflow");
-                        }
-                        stack[stack_len] = marker.scope_id;
-                        stack_len += 1;
-                    }
-                    ScopeEvent::Exit => {
-                        if stack_len > 0 {
-                            stack_len -= 1;
-                        }
-                    }
-                }
-                marker_idx += 1;
+        while marker_idx < self.scope_marker_len {
+            let marker = self.scope_markers[marker_idx];
+            if marker.offset > offset {
+                break;
             }
-            table[offset] = if stack_len == 0 {
-                ScopeId::none()
-            } else {
-                stack[stack_len - 1]
-            };
-            offset += 1;
+            match marker.event {
+                ScopeEvent::Enter => {
+                    if stack_len >= MAX_CAPACITY {
+                        panic!("EffList scope stack overflow");
+                    }
+                    stack[stack_len] = marker.scope_id;
+                    stack_len += 1;
+                }
+                ScopeEvent::Exit => {
+                    if stack_len > 0 {
+                        stack_len -= 1;
+                    }
+                }
+            }
+            marker_idx += 1;
         }
-        self.scope_by_offset = table;
-        self.scope_linger_by_ordinal = linger_by_ordinal;
-        self.scope_marker_head_by_ordinal = head_by_ordinal;
-        self.scope_marker_next = next_by_index;
-        self
+        if stack_len == 0 {
+            None
+        } else {
+            Some(stack[stack_len - 1])
+        }
     }
 
     /// Update scope markers by ordinal-indexed lists (no full scan).
@@ -1088,17 +964,9 @@ impl EffList {
         if scope.is_none() {
             return self;
         }
-        let canonical = scope.canonical();
-        let ordinal = canonical.local_ordinal() as usize;
-        if ordinal >= ScopeId::ORDINAL_CAPACITY as usize {
-            return self;
-        }
-        if let Some(value) = linger {
-            self.scope_linger_by_ordinal[ordinal] = value;
-        }
-        let mut marker_idx = self.scope_marker_head_by_ordinal[ordinal];
-        while marker_idx != SCOPE_MARKER_INDEX_NONE {
-            let marker = self.scope_markers[marker_idx as usize];
+        let mut marker_idx = 0usize;
+        while marker_idx < self.scope_marker_len {
+            let marker = self.scope_markers[marker_idx];
             if marker.scope_id.raw() == scope.raw() {
                 let mut updated = marker;
                 if let Some(value) = linger {
@@ -1107,133 +975,54 @@ impl EffList {
                 if let Some(role) = controller_role {
                     updated.controller_role = Some(role);
                 }
-                self.scope_markers[marker_idx as usize] = updated;
+                self.scope_markers[marker_idx] = updated;
             }
-            marker_idx = self.scope_marker_next[marker_idx as usize];
+            marker_idx += 1;
         }
         self
     }
 
-    pub fn control_plan_with_scope(&self, offset: usize) -> Option<(HandlePlan, ScopeId)> {
-        let plan = self.control_plan_at(offset)?;
+    pub(crate) fn policy_with_scope(&self, offset: usize) -> Option<(PolicyMode, ScopeId)> {
+        let policy = self.policy_at(offset)?;
         let scope = self
             .scope_id_for_offset(offset)
             .unwrap_or_else(ScopeId::none);
-        Some((plan.with_scope(scope), scope))
+        Some((policy.with_scope(scope), scope))
     }
 
-
-    pub const fn push_control_spec(mut self, offset: usize, spec: ControlLabelSpec) -> Self {
+    pub(crate) const fn push_control_spec(mut self, offset: usize, spec: ControlLabelSpec) -> Self {
         if offset >= MAX_CAPACITY {
             panic!("EffList control spec offset out of bounds");
         }
-        let spec_idx = self.control_spec_index_by_offset[offset];
-        if spec_idx != SCOPE_MARKER_INDEX_NONE {
-            let idx = spec_idx as usize;
-            self.control_specs[idx] = ControlSpecMarker::new(offset, spec);
-            self.control_spec_by_offset[offset] = Some(spec);
-            return self;
+        let mut idx = 0usize;
+        while idx < self.control_spec_len {
+            if self.control_specs[idx].offset == offset {
+                self.control_specs[idx] = ControlSpecMarker::new(offset, spec);
+                return self;
+            }
+            idx += 1;
         }
         if self.control_spec_len >= MAX_CAPACITY {
             panic!("EffList control spec capacity exceeded");
         }
         self.control_specs[self.control_spec_len] = ControlSpecMarker::new(offset, spec);
-        self.control_spec_index_by_offset[offset] = self.control_spec_len as u16;
         self.control_spec_len += 1;
-        self.control_spec_by_offset[offset] = Some(spec);
         self
-    }
-
-    pub fn push_control_spec_mut(&mut self, offset: usize, spec: ControlLabelSpec) {
-        if offset >= MAX_CAPACITY {
-            panic!("EffList control spec offset out of bounds");
-        }
-        let spec_idx = self.control_spec_index_by_offset[offset];
-        if spec_idx != SCOPE_MARKER_INDEX_NONE {
-            let idx = spec_idx as usize;
-            self.control_specs[idx] = ControlSpecMarker::new(offset, spec);
-            self.control_spec_by_offset[offset] = Some(spec);
-            return;
-        }
-        if self.control_spec_len >= MAX_CAPACITY {
-            panic!("EffList control spec capacity exceeded");
-        }
-        self.control_specs[self.control_spec_len] = ControlSpecMarker::new(offset, spec);
-        self.control_spec_index_by_offset[offset] = self.control_spec_len as u16;
-        self.control_spec_len += 1;
-        self.control_spec_by_offset[offset] = Some(spec);
     }
 
     pub const fn control_spec_at(&self, offset: usize) -> Option<ControlLabelSpec> {
         if offset >= MAX_CAPACITY {
             return None;
         }
-        self.control_spec_by_offset[offset]
-    }
-
-    const fn rebuild_dynamic_plan_index(mut self) -> Self {
-        let mut table: [Option<DynamicPlanInfo>; MAX_CAPACITY] = [None; MAX_CAPACITY];
-        let mut next: Option<DynamicPlanInfo> = None;
-        let mut offset = MAX_CAPACITY;
-        while offset > 0 {
-            offset -= 1;
-            if let Some(plan) = self.control_plan_by_offset[offset] {
-                if plan.is_dynamic() {
-                    let tag = if offset < self.len {
-                        let eff_struct = self.data[offset];
-                        if matches!(eff_struct.kind, eff::EffKind::Atom) {
-                            match eff_struct.atom_data().resource {
-                                Some(t) => t,
-                                None => 0,
-                            }
-                        } else {
-                            0
-                        }
-                    } else {
-                        0
-                    };
-                    next = Some(DynamicPlanInfo {
-                        plan,
-                        offset: offset as u16,
-                        tag,
-                    });
-                }
+        let mut idx = 0usize;
+        while idx < self.control_spec_len {
+            let marker = self.control_specs[idx];
+            if marker.offset == offset {
+                return Some(marker.spec);
             }
-            table[offset] = next;
+            idx += 1;
         }
-        self.dynamic_plan_from_offset = table;
-        self
-    }
-
-    fn rebuild_dynamic_plan_index_mut(&mut self) {
-        let mut next: Option<DynamicPlanInfo> = None;
-        let mut offset = MAX_CAPACITY;
-        while offset > 0 {
-            offset -= 1;
-            if let Some(plan) = self.control_plan_by_offset[offset] {
-                if plan.is_dynamic() {
-                    let tag = if offset < self.len {
-                        let eff_struct = self.data[offset];
-                        if matches!(eff_struct.kind, eff::EffKind::Atom) {
-                            match eff_struct.atom_data().resource {
-                                Some(t) => t,
-                                None => 0,
-                            }
-                        } else {
-                            0
-                        }
-                    } else {
-                        0
-                    };
-                    next = Some(DynamicPlanInfo {
-                        plan,
-                        offset: offset as u16,
-                        tag,
-                    });
-                }
-            }
-            self.dynamic_plan_from_offset[offset] = next;
-        }
+        None
     }
 
     pub const fn scope_markers(&self) -> &[ScopeMarker] {
@@ -1246,8 +1035,8 @@ impl EffList {
         }
     }
 
-    pub const fn control_plans(&self) -> &[ControlPlanMarker] {
-        unsafe { core::slice::from_raw_parts(self.control_plans.as_ptr(), self.control_plan_len) }
+    pub(crate) const fn policies(&self) -> &[PolicyMarker] {
+        unsafe { core::slice::from_raw_parts(self.policy_markers.as_ptr(), self.policy_marker_len) }
     }
 }
 
@@ -1302,55 +1091,14 @@ const fn is_reserved_control_label(label: u8) -> bool {
     }
 }
 
-/// Construct a single send atom with lane parameter.
-pub const fn const_send<const FROM: u8, const TO: u8, M, const LANE: u8>() -> EffList
-where
-    M: crate::g::MessageSpec + crate::g::SendableLabel + crate::global::MessageControlSpec,
-{
-    if FROM == TO {
-        panic!("sender and receiver roles must be distinct");
-    }
-    let label = <M as crate::global::MessageSpec>::LABEL;
-    if label > crate::runtime::consts::LABEL_MAX {
-        panic!("label exceeds universe");
-    }
-    if !<M as MessageControlSpec>::IS_CONTROL && is_reserved_control_label(label) {
-        panic!("control labels require capability payloads");
-    }
-    let spec = if <M as MessageControlSpec>::IS_CONTROL {
-        Some(<M as MessageControlSpec>::CONTROL_SPEC)
-    } else {
-        None
-    };
-    let atom = eff::EffAtom {
-        from: FROM,
-        to: TO,
-        label,
-        is_control: spec.is_some(),
-        resource: match spec {
-            Some(rule) => Some(rule.resource_tag),
-            None => None,
-        },
-        direction: eff::EffDirection::Send,
-        lane: LANE,
-    };
-    let mut list = EffList::new().push(EffStruct::atom(atom));
-    if let Some(rule) = spec {
-        list = list.with_control(rule.scope_kind, rule.tap_id);
-        list = list.with_control_spec(rule);
-        list = list.with_control_plan(HandlePlan::none());
-    }
-    list
-}
-
 /// Construct a single send atom using type-level roles with lane parameter.
-pub const fn const_send_typed<From, To, M, const LANE: u8>() -> EffList
+pub(crate) const fn const_send_typed<From, To, M, const LANE: u8>() -> EffList
 where
-    From: crate::g::RoleMarker,
-    To: crate::g::RoleMarker,
-    M: crate::g::MessageSpec + crate::g::SendableLabel + crate::global::MessageControlSpec,
+    From: RoleMarker,
+    To: RoleMarker,
+    M: MessageSpec + SendableLabel + crate::global::MessageControlSpec,
 {
-    let label = <M as crate::g::MessageSpec>::LABEL;
+    let label = <M as MessageSpec>::LABEL;
     if label > crate::runtime::consts::LABEL_MAX {
         panic!("label exceeds universe");
     }
@@ -1378,19 +1126,129 @@ where
     if let Some(rule) = spec {
         list = list.with_control(rule.scope_kind, rule.tap_id);
         list = list.with_control_spec(rule);
-        list = list.with_control_plan(HandlePlan::none());
+        list = list.with_policy(PolicyMode::static_mode());
     }
     list
 }
 
-pub const fn splice_local_plan<const DST_LANE: u16>() -> HandlePlan {
-    HandlePlan::splice_local(DST_LANE)
-}
+#[cfg(test)]
+mod tests {
+    use super::{EffList, ScopeKind};
+    use crate::g;
+    use crate::g::advanced::steps::{
+        LoopBreakSteps, LoopContinueSteps, LoopDecisionSteps, ProjectRole, SendStep, StepCons,
+        StepNil,
+    };
+    use crate::g::advanced::{CanonicalControl, project};
+    use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
+    use crate::substrate::cap::GenericCapToken;
+    use crate::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
 
-pub const fn reroute_local_plan<const DST_LANE: u16, const SHARD: u32>() -> HandlePlan {
-    HandlePlan::reroute_local(DST_LANE, SHARD)
-}
+    const LOOP_POLICY_ID: u16 = 120;
+    const LOOP_BODY: g::Program<
+        StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u32>>, StepNil>,
+    > = g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u32>, 0>();
+    const LOOP_BREAK_ARM: g::Program<
+        LoopBreakSteps<
+            g::Role<0>,
+            g::Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+            StepNil,
+        >,
+    > = g::send::<
+        g::Role<0>,
+        g::Role<0>,
+        g::Msg<
+            { LABEL_LOOP_BREAK },
+            GenericCapToken<LoopBreakKind>,
+            CanonicalControl<LoopBreakKind>,
+        >,
+        0,
+    >()
+    .policy::<LOOP_POLICY_ID>();
+    const LOOP_CONTINUE_ARM: g::Program<
+        LoopContinueSteps<
+            g::Role<0>,
+            g::Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u32>>, StepNil>,
+        >,
+    > = g::seq(
+        g::send::<
+            g::Role<0>,
+            g::Role<0>,
+            g::Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            0,
+        >()
+        .policy::<LOOP_POLICY_ID>(),
+        LOOP_BODY,
+    );
+    const LOOP_DECISION: g::Program<
+        LoopDecisionSteps<
+            g::Role<0>,
+            g::Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            g::Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+            StepNil,
+            StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u32>>, StepNil>,
+        >,
+    > = g::route(LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
+    static SENDER_PROGRAM: crate::g::advanced::RoleProgram<
+        'static,
+        0,
+        <LoopDecisionSteps<
+            g::Role<0>,
+            g::Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            g::Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+            StepNil,
+            StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u32>>, StepNil>,
+        > as ProjectRole<g::Role<0>>>::Output,
+    > = project(&LOOP_DECISION);
 
-pub const fn dynamic_plan(policy_id: u16, meta: DynamicMeta) -> HandlePlan {
-    HandlePlan::dynamic(policy_id, meta)
+    #[test]
+    fn policy_scope_stays_internal() {
+        let list: &EffList = SENDER_PROGRAM.eff_list();
+        let mut policies = 0usize;
+        let mut offset = 0usize;
+        while offset < list.len() {
+            if list.policy_at(offset).is_some() {
+                policies += 1;
+                let (_, scope) = list
+                    .policy_with_scope(offset)
+                    .expect("policy scope should be derivable");
+                assert!(!scope.is_none(), "loop policy should expose a scope id");
+                assert_eq!(scope.kind(), ScopeKind::Route, "loop scope kind matches");
+            }
+            offset += 1;
+        }
+        assert!(
+            policies >= 2,
+            "loop continue/break policies should be present"
+        );
+    }
 }

@@ -1,16 +1,11 @@
-use hibana::g::{self, SendStep, StepCons, StepNil};
-use hibana::runtime::consts::LABEL_CANCEL;
+use hibana::g::advanced::steps::{SendStep, StepCons, StepNil};
+use hibana::g::{self};
 
-type Controller = g::Role<0>;
-type Target = g::Role<1>;
+const LABEL_CANCEL: u8 = 60;
 
-type Steps = StepCons<
-    SendStep<Controller, Target, g::Msg<LABEL_CANCEL, ()>>,
-    StepNil,
->;
-
-const BAD: g::Program<Steps> =
-    g::send::<Controller, Target, g::Msg<LABEL_CANCEL, ()>>();
+const BAD: g::Program<
+    StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<LABEL_CANCEL, ()>, 0>, StepNil>,
+> = g::send::<g::Role<0>, g::Role<1>, g::Msg<LABEL_CANCEL, ()>, 0>();
 
 fn main() {
     let _ = BAD;

@@ -15,14 +15,14 @@ use core::mem::MaybeUninit;
 /// - `K`: Key type (must implement `Copy + Eq`)
 /// - `V`: Value type
 /// - `N`: Maximum number of entries
-pub struct ArrayMap<K, V, const N: usize> {
+pub(crate) struct ArrayMap<K, V, const N: usize> {
     entries: [MaybeUninit<(K, V)>; N],
     len: usize,
 }
 
 impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
     /// Create a new empty map.
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             // SAFETY: MaybeUninit::uninit() creates an uninitialized array of MaybeUninit entries.
             entries: unsafe { MaybeUninit::uninit().assume_init() },
@@ -30,25 +30,39 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
         }
     }
 
+    /// Initialize an empty map in place without first materializing the full
+    /// backing array on the caller's stack.
+    ///
+    /// # Safety
+    /// `dst` must point to valid, writable memory for `Self`.
+    #[cfg(any(test, feature = "std"))]
+    pub(crate) unsafe fn init_empty(dst: *mut Self) {
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).len).write(0);
+        }
+    }
+
     /// Returns the number of entries in the map.
-    pub const fn len(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) const fn len(&self) -> usize {
         self.len
     }
 
     /// Returns true if the map is empty.
-    pub const fn is_empty(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) const fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     /// Returns true if the map is full.
-    pub const fn is_full(&self) -> bool {
+    pub(crate) const fn is_full(&self) -> bool {
         self.len == N
     }
 
     /// Insert a key-value pair.
     ///
     /// Returns `Ok(())` if the insertion succeeded, or `Err(value)` if the map is full.
-    pub fn insert(&mut self, key: K, value: V) -> Result<(), V> {
+    pub(crate) fn insert(&mut self, key: K, value: V) -> Result<(), V> {
         // Check if key already exists
         for i in 0..self.len {
             // SAFETY: entries[0..len] are initialized
@@ -75,8 +89,26 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
         Ok(())
     }
 
+    /// Append a freshly initialised entry in place.
+    ///
+    /// This is the lower-layer constructor used when the caller needs to
+    /// materialise the `(K, V)` pair directly into backing storage instead of
+    /// first building a large temporary on the caller stack.
+    pub(crate) fn push_with(
+        &mut self,
+        init: impl FnOnce(&mut MaybeUninit<(K, V)>),
+    ) -> Result<(), ()> {
+        if self.is_full() {
+            return Err(());
+        }
+
+        init(&mut self.entries[self.len]);
+        self.len += 1;
+        Ok(())
+    }
+
     /// Get a reference to the value associated with the key.
-    pub fn get(&self, key: &K) -> Option<&V> {
+    pub(crate) fn get(&self, key: &K) -> Option<&V> {
         for i in 0..self.len {
             // SAFETY: entries[0..len] are initialized
             let (k, v) = unsafe { self.entries[i].assume_init_ref() };
@@ -88,7 +120,7 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
     }
 
     /// Get a mutable reference to the value associated with the key.
-    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+    pub(crate) fn get_mut(&mut self, key: &K) -> Option<&mut V> {
         // Find the index first
         let mut found_idx = None;
         for i in 0..self.len {
@@ -113,7 +145,7 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
     /// Remove a key-value pair.
     ///
     /// Returns the value if the key was present, or `None` otherwise.
-    pub fn remove(&mut self, key: &K) -> Option<V> {
+    pub(crate) fn remove(&mut self, key: &K) -> Option<V> {
         for i in 0..self.len {
             // SAFETY: entries[0..len] are initialized
             let (k, _) = unsafe { self.entries[i].assume_init_ref() };
@@ -138,7 +170,7 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
     }
 
     /// Clear all entries.
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         for i in 0..self.len {
             // SAFETY: entries[0..len] are initialized
             unsafe {
@@ -149,26 +181,16 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
     }
 
     /// Returns true if the map contains the given key.
-    pub fn contains_key(&self, key: &K) -> bool {
+    pub(crate) fn contains_key(&self, key: &K) -> bool {
         self.get(key).is_some()
     }
 
     /// Iterate over all key/value pairs by reference.
     #[inline]
-    pub fn for_each(&self, mut f: impl FnMut(&K, &V)) {
+    pub(crate) fn for_each(&self, mut f: impl FnMut(&K, &V)) {
         for i in 0..self.len {
             // SAFETY: entries[0..len] are initialised
             let (k, v) = unsafe { self.entries[i].assume_init_ref() };
-            f(k, v);
-        }
-    }
-
-    /// Iterate over all key/value pairs by mutable reference.
-    #[inline]
-    pub fn for_each_mut(&mut self, mut f: impl FnMut(&K, &mut V)) {
-        for i in 0..self.len {
-            // SAFETY: entries[0..len] are initialised
-            let (k, v) = unsafe { self.entries[i].assume_init_mut() };
             f(k, v);
         }
     }

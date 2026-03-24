@@ -1,35 +1,21 @@
-error[E0107]: function takes 4 generic arguments but 3 generic arguments were supplied
-  --> tests/ui/g-par-role-conflict.rs:12:40
-   |
-12 |     let lane_a: g::Program<LaneA> = g::send::<R0, R1, g::Msg<3, ()>>();
-   |                                        ^^^^   --  --  ------------- supplied 3 generic arguments
-   |                                        |
-   |                                        expected 4 generic arguments
-   |
-note: function defined here, with 4 generic parameters: `From`, `To`, `M`, `LANE`
-  --> src/global.rs
-   |
-   | pub const fn send<From, To, M, const LANE: u8>() -> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
-   |              ^^^^ ----  --  -  --------------
-help: add missing generic argument
-   |
-12 |     let lane_a: g::Program<LaneA> = g::send::<R0, R1, g::Msg<3, ()>, LANE>();
-   |                                                                    ++++++
-
-error[E0107]: function takes 4 generic arguments but 3 generic arguments were supplied
-  --> tests/ui/g-par-role-conflict.rs:13:40
-   |
-13 |     let lane_b: g::Program<LaneB> = g::send::<R0, R2, g::Msg<4, ()>>();
-   |                                        ^^^^   --  --  ------------- supplied 3 generic arguments
-   |                                        |
-   |                                        expected 4 generic arguments
-   |
-note: function defined here, with 4 generic parameters: `From`, `To`, `M`, `LANE`
-  --> src/global.rs
-   |
-   | pub const fn send<From, To, M, const LANE: u8>() -> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
-   |              ^^^^ ----  --  -  --------------
-help: add missing generic argument
-   |
-13 |     let lane_b: g::Program<LaneB> = g::send::<R0, R2, g::Msg<4, ()>, LANE>();
-   |                                                                    ++++++
+error[E0080]: evaluation panicked: parallel lanes must use disjoint (role, lane) pairs
+ --> tests/ui/g-par-role-conflict.rs:9:13
+  |
+9 |     let _ = g::par(lane_a, lane_b);
+  |             ^^^^^^^^^^^^^^^^^^^^^^ evaluation of `_` failed inside this call
+  |
+note: inside `par::<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<3>, ()>>, StepNil>, StepCons<SendStep<Role<0>, Role<2>, hibana::global::Message<hibana::global::LabelMarker<4>, ()>>, StepNil>>`
+ --> src/global.rs
+  |
+  |     program::par_binary(left, right)
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::program::par_binary::<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<3>, ()>>, StepNil>, StepCons<SendStep<Role<0>, Role<2>, hibana::global::Message<hibana::global::LabelMarker<4>, ()>>, StepNil>>`
+ --> $RUST/core/src/panic.rs
+  |
+  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: src/global/program.rs
+  |
+  |         panic!("parallel lanes must use disjoint (role, lane) pairs");
+  |         ------------------------------------------------------------- in this macro invocation

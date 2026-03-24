@@ -1,16 +1,18 @@
-use hibana::control::cap::{
-    resource_kinds::LoopContinueKind,
-    GenericCapToken,
-};
 use hibana::g;
-use hibana::runtime::consts::LABEL_LOOP_CONTINUE;
+use hibana::g::advanced::ExternalControl;
+use hibana::substrate::cap::{GenericCapToken, advanced::LoopContinueKind};
 
-type BadMsg = g::Msg<
-    { LABEL_LOOP_CONTINUE },
-    GenericCapToken<LoopContinueKind>,
-    g::ExternalControl<LoopContinueKind>,
->;
+const LABEL_LOOP_CONTINUE: u8 = 48;
 
 fn main() {
-    let _ = g::send::<g::Role<0>, g::Role<1>, BadMsg>();
+    let _ = g::send::<
+        g::Role<0>,
+        g::Role<1>,
+        g::Msg<
+            { LABEL_LOOP_CONTINUE },
+            GenericCapToken<LoopContinueKind>,
+            ExternalControl<LoopContinueKind>,
+        >,
+        0,
+    >();
 }

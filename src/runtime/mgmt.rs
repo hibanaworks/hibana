@@ -7,101 +7,331 @@
 //! is provided by the rendezvous-resident `SlotArena`/`HostSlots` and is passed
 //! in by the caller when constructing the manager.
 
-/// Session choreography for EPF management.
-pub mod session;
+/// Internal management kernel choreography.
+mod kernel;
 
-use core::{fmt, marker::PhantomData};
+use core::marker::PhantomData;
 
 use crate::{
     control::{
-        cap::ResourceKind,
-        cap::resource_kinds::{
-            LoadBeginKind, LoadCommitKind, PolicyActivateKind, PolicyAnnotateKind, PolicyLoadKind,
-            PolicyRevertKind,
-        },
         lease::{
-            ControlAutomaton, ControlStep, RendezvousLease, SlotSpec,
             bundle::LeaseBundleFacet,
+            core::{ControlAutomaton, ControlStep, RendezvousLease, SlotSpec},
             graph::{LeaseGraph, LeaseSpec},
-            planner::{FacetSlots, LeaseFacetNeeds, LeaseSpecFacetNeeds},
+            planner::{LeaseFacetNeeds, LeaseSpecFacetNeeds, facets_slots},
         },
         types::RendezvousId,
     },
     epf::{
-        Slot,
+        PolicyMode,
         host::{HostError, HostSlots, Machine},
         loader::{ImageLoader, LoaderError},
         verifier::{Header, VerifyError},
+        vm::Slot,
     },
     observe::{
-        self, PolicyCommit, PolicyEvent, PolicyEventKind, PolicyRollback, policy_commit,
-        policy_rollback, push,
+        core::{TAP_BATCH_MAX_EVENTS, TapBatch, TapEvent, push},
+        events::{PolicyCommit, PolicyRollback},
     },
-    rendezvous::{SLOT_COUNT as RENDEZVOUS_SLOT_COUNT, SlotStorage, slot_index},
+    rendezvous::slots::{SLOT_COUNT, SlotStorage, slot_index},
     transport::wire::{CodecError, WireDecode, WireEncode},
 };
 
-const SLOT_COUNT: usize = RENDEZVOUS_SLOT_COUNT;
+const MGMT_FACET_NEEDS: LeaseFacetNeeds = facets_slots();
+const LOAD_CHUNK_MAX: usize = 1024;
 
-const MGMT_RESOURCE_NEEDS: LeaseFacetNeeds = FacetSlots::NEEDS;
+#[cfg(test)]
+pub(crate) fn management_eff_lists() -> (
+    &'static crate::global::const_dsl::EffList,
+    &'static crate::global::const_dsl::EffList,
+) {
+    kernel::management_eff_lists()
+}
 
-/// Facet/tap profile for the management session automaton.
-pub struct MgmtFacetProfile;
+pub(crate) fn enter_controller<'lease, 'cfg, T, U, C, B, const MAX_RV: usize>(
+    cluster: &'lease crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>,
+    rv_id: crate::control::types::RendezvousId,
+    sid: crate::control::types::SessionId,
+    binding: B,
+) -> Result<
+    crate::Endpoint<
+        'cfg,
+        0,
+        T,
+        U,
+        C,
+        crate::control::cap::mint::EpochTbl,
+        MAX_RV,
+        crate::control::cap::mint::MintConfig,
+        B,
+    >,
+    crate::control::cluster::error::AttachError,
+>
+where
+    'cfg: 'lease,
+    'lease: 'cfg,
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+    B: crate::binding::BindingSlot,
+{
+    kernel::enter_controller(cluster, rv_id, sid, binding)
+}
 
-impl MgmtFacetProfile {
-    const RESOURCE_TAGS: [u8; 6] = [
-        PolicyLoadKind::TAG,
-        PolicyActivateKind::TAG,
-        PolicyRevertKind::TAG,
-        PolicyAnnotateKind::TAG,
-        LoadBeginKind::TAG,
-        LoadCommitKind::TAG,
-    ];
+pub(crate) fn enter_cluster<'lease, 'cfg, T, U, C, B, const MAX_RV: usize>(
+    cluster: &'lease crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>,
+    rv_id: crate::control::types::RendezvousId,
+    sid: crate::control::types::SessionId,
+    binding: B,
+) -> Result<
+    crate::Endpoint<
+        'cfg,
+        1,
+        T,
+        U,
+        C,
+        crate::control::cap::mint::EpochTbl,
+        MAX_RV,
+        crate::control::cap::mint::MintConfig,
+        B,
+    >,
+    crate::control::cluster::error::AttachError,
+>
+where
+    'cfg: 'lease,
+    'lease: 'cfg,
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+    B: crate::binding::BindingSlot,
+{
+    kernel::enter_cluster(cluster, rv_id, sid, binding)
+}
 
-    const POLICY_EVENT_IDS: [u16; 2] = [policy_commit(), policy_rollback()];
+pub(crate) fn enter_stream_controller<'lease, 'cfg, T, U, C, B, const MAX_RV: usize>(
+    cluster: &'lease crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>,
+    rv_id: crate::control::types::RendezvousId,
+    sid: crate::control::types::SessionId,
+    binding: B,
+) -> Result<
+    crate::Endpoint<
+        'cfg,
+        0,
+        T,
+        U,
+        C,
+        crate::control::cap::mint::EpochTbl,
+        MAX_RV,
+        crate::control::cap::mint::MintConfig,
+        B,
+    >,
+    crate::control::cluster::error::AttachError,
+>
+where
+    'cfg: 'lease,
+    'lease: 'cfg,
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+    B: crate::binding::BindingSlot,
+{
+    kernel::enter_stream_controller(cluster, rv_id, sid, binding)
+}
 
-    /// Facet requirements advertised by the management automaton.
-    pub const FACET_NEEDS: LeaseFacetNeeds = FacetSlots::NEEDS;
-    /// Facet requirements derived from resource tags.
-    pub const RESOURCE_FACETS: LeaseFacetNeeds = MGMT_RESOURCE_NEEDS;
+pub(crate) fn enter_stream_cluster<'lease, 'cfg, T, U, C, B, const MAX_RV: usize>(
+    cluster: &'lease crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>,
+    rv_id: crate::control::types::RendezvousId,
+    sid: crate::control::types::SessionId,
+    binding: B,
+) -> Result<
+    crate::Endpoint<
+        'cfg,
+        1,
+        T,
+        U,
+        C,
+        crate::control::cap::mint::EpochTbl,
+        MAX_RV,
+        crate::control::cap::mint::MintConfig,
+        B,
+    >,
+    crate::control::cluster::error::AttachError,
+>
+where
+    'cfg: 'lease,
+    'lease: 'cfg,
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+    B: crate::binding::BindingSlot,
+{
+    kernel::enter_stream_cluster(cluster, rv_id, sid, binding)
+}
 
-    #[inline(always)]
-    pub const fn facet_needs() -> LeaseFacetNeeds {
-        Self::FACET_NEEDS
-    }
+pub(crate) async fn drive_controller<'lease, 'request, T, U, C, Mint, B, const MAX_RV: usize>(
+    endpoint: crate::Endpoint<
+        'lease,
+        0,
+        T,
+        U,
+        C,
+        crate::control::cap::mint::EpochTbl,
+        MAX_RV,
+        Mint,
+        B,
+    >,
+    request: Request<'request>,
+) -> Result<
+    (
+        crate::Endpoint<'lease, 0, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV, Mint, B>,
+        Reply,
+    ),
+    MgmtError,
+>
+where
+    T: crate::transport::Transport + 'lease,
+    U: crate::runtime::consts::LabelUniverse,
+    C: crate::runtime::config::Clock,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    Mint::Policy: crate::control::cap::mint::AllowsCanonical,
+    B: crate::binding::BindingSlot,
+{
+    let (endpoint, reply) = kernel::drive_controller(endpoint.into_cursor(), request).await?;
+    Ok((crate::Endpoint::from_cursor(endpoint), reply))
+}
 
-    #[inline(always)]
-    pub const fn resource_facets() -> LeaseFacetNeeds {
-        Self::RESOURCE_FACETS
-    }
+pub(crate) async fn drive_cluster<'lease, 'cfg, T, U, C, Mint, B, const MAX_RV: usize>(
+    cluster: &'lease crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>,
+    rv_id: crate::control::types::RendezvousId,
+    sid: crate::control::types::SessionId,
+    endpoint: crate::Endpoint<
+        'lease,
+        1,
+        T,
+        U,
+        C,
+        crate::control::cap::mint::EpochTbl,
+        MAX_RV,
+        Mint,
+        B,
+    >,
+) -> Result<
+    crate::Endpoint<'lease, 1, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV, Mint, B>,
+    MgmtError,
+>
+where
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse,
+    C: crate::runtime::config::Clock,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    Mint::Policy: crate::control::cap::mint::AllowsCanonical,
+    B: crate::binding::BindingSlot,
+{
+    let endpoint = kernel::drive_cluster(cluster, rv_id, sid, endpoint.into_cursor()).await?;
+    Ok(crate::Endpoint::from_cursor(endpoint))
+}
 
-    #[inline(always)]
-    pub const fn resource_tags() -> [u8; 6] {
-        Self::RESOURCE_TAGS
-    }
+fn apply_seed<'cfg, T, U, C, const MAX_RV: usize>(
+    cluster: &crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>,
+    rv_id: crate::control::types::RendezvousId,
+    sid: crate::control::types::SessionId,
+    seed: MgmtSeed<AwaitBegin>,
+) -> Result<Reply, MgmtError>
+where
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+{
+    cluster.drive_mgmt(rv_id, sid, seed)
+}
 
-    #[inline(always)]
-    pub const fn policy_event_ids() -> [u16; 2] {
-        Self::POLICY_EVENT_IDS
-    }
-
-    #[inline(always)]
-    pub const fn supports_policy_id(id: u16) -> bool {
-        id == Self::POLICY_EVENT_IDS[0] || id == Self::POLICY_EVENT_IDS[1]
-    }
-
-    #[inline(always)]
-    pub const fn supports_policy_kind(kind: PolicyEventKind) -> bool {
-        matches!(kind, PolicyEventKind::Commit | PolicyEventKind::Rollback)
+pub(crate) fn apply_request_action<'cfg, T, U, C, const MAX_RV: usize>(
+    cluster: &crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>,
+    rv_id: crate::control::types::RendezvousId,
+    sid: crate::control::types::SessionId,
+    backup: Manager<AwaitBegin, SLOT_COUNT>,
+    manager: Manager<AwaitBegin, SLOT_COUNT>,
+    request: RequestAction,
+) -> Result<Reply, MgmtError>
+where
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
+{
+    let seed = MgmtSeed {
+        request,
+        manager,
+        links: MgmtLinks::new(),
+    };
+    match apply_seed(cluster, rv_id, sid, seed) {
+        Ok(reply) => Ok(reply),
+        Err(err) => {
+            cluster.store_mgmt_manager(rv_id, backup);
+            Err(err)
+        }
     }
 }
 
-impl LeaseSpecFacetNeeds for MgmtFacetProfile {
-    const FACET_NEEDS: LeaseFacetNeeds = MgmtFacetProfile::FACET_NEEDS;
+pub(crate) async fn drive_stream_cluster<'lease, T, U, C, Mint, F, B, const MAX_RV: usize>(
+    endpoint: crate::Endpoint<
+        'lease,
+        1,
+        T,
+        U,
+        C,
+        crate::control::cap::mint::EpochTbl,
+        MAX_RV,
+        Mint,
+        B,
+    >,
+    should_continue: F,
+) -> Result<
+    crate::Endpoint<'lease, 1, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV, Mint, B>,
+    MgmtError,
+>
+where
+    T: crate::transport::Transport + 'lease,
+    U: crate::runtime::consts::LabelUniverse,
+    C: crate::runtime::config::Clock,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    Mint::Policy: crate::control::cap::mint::AllowsCanonical,
+    F: FnMut() -> bool,
+    B: crate::binding::BindingSlot,
+{
+    let endpoint = kernel::drive_stream_cluster(endpoint.into_cursor(), should_continue).await?;
+    Ok(crate::Endpoint::from_cursor(endpoint))
 }
 
-const MGMT_FACET_NEEDS: LeaseFacetNeeds = MgmtFacetProfile::FACET_NEEDS;
-pub const LOAD_CHUNK_MAX: usize = 1024;
+pub(crate) async fn drive_stream_controller<'lease, T, U, C, Mint, F, B, const MAX_RV: usize>(
+    endpoint: crate::Endpoint<
+        'lease,
+        0,
+        T,
+        U,
+        C,
+        crate::control::cap::mint::EpochTbl,
+        MAX_RV,
+        Mint,
+        B,
+    >,
+    subscribe: SubscribeReq,
+    on_event: F,
+) -> Result<
+    crate::Endpoint<'lease, 0, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV, Mint, B>,
+    MgmtError,
+>
+where
+    T: crate::transport::Transport + 'lease,
+    U: crate::runtime::consts::LabelUniverse,
+    C: crate::runtime::config::Clock,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    F: FnMut(TapEvent) -> bool,
+    B: crate::binding::BindingSlot,
+{
+    let endpoint =
+        kernel::drive_stream_controller(endpoint.into_cursor(), subscribe, on_event).await?;
+    Ok(crate::Endpoint::from_cursor(endpoint))
+}
 
 /// Errors that can occur during the management session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,10 +394,104 @@ impl From<HostError> for MgmtError {
     }
 }
 
+impl WireEncode for MgmtError {
+    fn encoded_len(&self) -> Option<usize> {
+        Some(match self {
+            MgmtError::InvalidSlot(_) => 2,
+            MgmtError::ChunkOutOfOrder { .. } => 9,
+            MgmtError::ChunkTooLarge { .. } => 9,
+            _ => 1,
+        })
+    }
+
+    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
+        let need = self.encoded_len().unwrap_or(1);
+        if out.len() < need {
+            return Err(CodecError::Truncated);
+        }
+        match self {
+            MgmtError::InvalidSlot(slot) => {
+                out[0] = 0;
+                out[1] = *slot;
+            }
+            MgmtError::InvalidTransition => out[0] = 1,
+            MgmtError::ChunkOutOfOrder { expected, got } => {
+                out[0] = 2;
+                out[1..5].copy_from_slice(&expected.to_be_bytes());
+                out[5..9].copy_from_slice(&got.to_be_bytes());
+            }
+            MgmtError::ChunkTooLarge {
+                remaining,
+                provided,
+            } => {
+                out[0] = 3;
+                out[1..5].copy_from_slice(&remaining.to_be_bytes());
+                out[5..9].copy_from_slice(&provided.to_be_bytes());
+            }
+            MgmtError::LoaderNotFinalised => out[0] = 4,
+            MgmtError::NoStagedImage => out[0] = 5,
+            MgmtError::NoActiveImage => out[0] = 6,
+            MgmtError::NoPreviousImage => out[0] = 7,
+            MgmtError::CapabilityMismatch => out[0] = 8,
+            MgmtError::ObserveUnavailable => out[0] = 9,
+            MgmtError::HostInstallFailed => out[0] = 10,
+            MgmtError::HostUninstallFailed => out[0] = 11,
+            MgmtError::StreamEnded => out[0] = 12,
+        }
+        Ok(need)
+    }
+}
+
+impl<'a> WireDecode<'a> for MgmtError {
+    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
+        if input.is_empty() {
+            return Err(CodecError::Truncated);
+        }
+        match input[0] {
+            0 => {
+                if input.len() < 2 {
+                    return Err(CodecError::Truncated);
+                }
+                Ok(MgmtError::InvalidSlot(input[1]))
+            }
+            1 => Ok(MgmtError::InvalidTransition),
+            2 => {
+                if input.len() < 9 {
+                    return Err(CodecError::Truncated);
+                }
+                Ok(MgmtError::ChunkOutOfOrder {
+                    expected: u32::from_be_bytes([input[1], input[2], input[3], input[4]]),
+                    got: u32::from_be_bytes([input[5], input[6], input[7], input[8]]),
+                })
+            }
+            3 => {
+                if input.len() < 9 {
+                    return Err(CodecError::Truncated);
+                }
+                Ok(MgmtError::ChunkTooLarge {
+                    remaining: u32::from_be_bytes([input[1], input[2], input[3], input[4]]),
+                    provided: u32::from_be_bytes([input[5], input[6], input[7], input[8]]),
+                })
+            }
+            4 => Ok(MgmtError::LoaderNotFinalised),
+            5 => Ok(MgmtError::NoStagedImage),
+            6 => Ok(MgmtError::NoActiveImage),
+            7 => Ok(MgmtError::NoPreviousImage),
+            8 => Ok(MgmtError::CapabilityMismatch),
+            9 => Ok(MgmtError::ObserveUnavailable),
+            10 => Ok(MgmtError::HostInstallFailed),
+            11 => Ok(MgmtError::HostUninstallFailed),
+            12 => Ok(MgmtError::StreamEnded),
+            _ => Err(CodecError::Invalid("unknown management error tag")),
+        }
+    }
+}
+
 /// Typical management protocol replies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reply {
-    Activated(TransitionReport),
+    Loaded(LoadReport),
+    ActivationScheduled(TransitionReport),
     Reverted(TransitionReport),
     Stats {
         stats: StatsResp,
@@ -175,12 +499,42 @@ pub enum Reply {
     },
 }
 
-/// Commands understood by the management session.
+/// One-shot report returned when an image is staged but not activated.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Command {
-    Activate { slot: Slot },
-    Revert { slot: Slot },
-    Stats { slot: Slot },
+pub struct LoadReport {
+    pub staged_version: u32,
+}
+
+/// Payload carried by the stats reply route.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StatsReply {
+    pub stats: StatsResp,
+    pub staged_version: Option<u32>,
+}
+
+/// Request payload for code upload branches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LoadRequest<'a> {
+    pub slot: crate::substrate::policy::epf::Slot,
+    pub code: &'a [u8],
+    pub fuel_max: u16,
+    pub mem_len: u16,
+}
+
+/// Request payload for slot-scoped command branches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SlotRequest {
+    pub slot: crate::substrate::policy::epf::Slot,
+}
+
+/// Management requests carried by the request/reply management session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Request<'a> {
+    Load(LoadRequest<'a>),
+    LoadAndActivate(LoadRequest<'a>),
+    Activate(SlotRequest),
+    Revert(SlotRequest),
+    Stats(SlotRequest),
 }
 
 /// Slot-level metrics.
@@ -192,16 +546,16 @@ pub struct StatsResp {
     pub active_version: u32,
 }
 
-/// Observation snapshot collected during transitions.
+/// Policy statistics collected during transitions.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TransitionReport {
     pub version: u32,
-    pub policy: PolicySnapshot,
+    pub policy_stats: PolicyStats,
 }
 
 /// Policy event statistics harvested from tap events.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PolicySnapshot {
+pub struct PolicyStats {
     pub aborts: u32,
     pub traps: u32,
     pub annotations: u32,
@@ -213,44 +567,88 @@ pub struct PolicySnapshot {
     pub last_rollback: Option<u32>,
 }
 
-impl PolicySnapshot {
-    fn record(&mut self, event: PolicyEvent) {
-        match event.kind {
-            PolicyEventKind::Abort => self.aborts = self.aborts.saturating_add(1),
-            PolicyEventKind::Trap => self.traps = self.traps.saturating_add(1),
-            PolicyEventKind::Annotate => self.annotations = self.annotations.saturating_add(1),
-            PolicyEventKind::Effect => self.effects = self.effects.saturating_add(1),
-            PolicyEventKind::EffectOk => self.effects_ok = self.effects_ok.saturating_add(1),
-            PolicyEventKind::Commit => {
-                self.commits = self.commits.saturating_add(1);
-                self.last_commit = Some(event.arg1);
-            }
-            PolicyEventKind::Rollback => {
-                self.rollbacks = self.rollbacks.saturating_add(1);
-                self.last_rollback = Some(event.arg1);
-            }
+/// Per-slot digest pointers for O(1) activation/revert bookkeeping.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PolicyDigestState {
+    pub active_digest: Option<u32>,
+    pub standby_digest: Option<u32>,
+    pub last_good_digest: Option<u32>,
+}
+
+#[cfg(test)]
+/// Promotion gate thresholds for Shadow → Enforce rollout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PromotionGateThresholds {
+    pub min_samples: u32,
+    pub max_divergence_ppm: u32,
+    pub max_reject_delta_ppm: u32,
+    pub max_p99_eval_us: u32,
+    pub max_latency_increase_ppm: u32,
+    pub max_fail_closed_ppm: u32,
+    pub required_consecutive_windows: u8,
+}
+
+#[cfg(test)]
+impl Default for PromotionGateThresholds {
+    fn default() -> Self {
+        Self {
+            min_samples: 10_000,
+            max_divergence_ppm: 1_000, // 0.10%
+            max_reject_delta_ppm: 500, // 0.05%
+            max_p99_eval_us: 250,
+            max_latency_increase_ppm: 200_000, // +20%
+            max_fail_closed_ppm: 100,          // 0.01%
+            required_consecutive_windows: 3,
         }
     }
 }
 
-const fn empty_policy_snapshot() -> PolicySnapshot {
-    PolicySnapshot {
-        aborts: 0,
-        traps: 0,
-        annotations: 0,
-        effects: 0,
-        effects_ok: 0,
-        commits: 0,
-        rollbacks: 0,
-        last_commit: None,
-        last_rollback: None,
+#[cfg(test)]
+/// Single promotion-gate measurement window.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PromotionGateWindow {
+    pub sample_count: u32,
+    pub divergence_ppm: u32,
+    pub reject_delta_ppm: u32,
+    pub p99_eval_us: u32,
+    pub latency_increase_ppm: u32,
+    pub fail_closed_ppm: u32,
+}
+
+#[cfg(test)]
+/// Running promotion-gate status for a slot.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PromotionGateState {
+    pub consecutive_windows: u8,
+}
+
+#[cfg(test)]
+impl PromotionGateState {
+    #[inline]
+    pub(crate) fn observe(
+        &mut self,
+        window: PromotionGateWindow,
+        thresholds: PromotionGateThresholds,
+    ) -> bool {
+        let pass = window.sample_count >= thresholds.min_samples
+            && window.divergence_ppm <= thresholds.max_divergence_ppm
+            && window.reject_delta_ppm <= thresholds.max_reject_delta_ppm
+            && window.p99_eval_us <= thresholds.max_p99_eval_us
+            && window.latency_increase_ppm <= thresholds.max_latency_increase_ppm
+            && window.fail_closed_ppm <= thresholds.max_fail_closed_ppm;
+        if pass {
+            self.consecutive_windows = self.consecutive_windows.saturating_add(1);
+        } else {
+            self.consecutive_windows = 0;
+        }
+        self.consecutive_windows >= thresholds.required_consecutive_windows
     }
 }
 
 /// Payload carried by the `LoadBegin` message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LoadBegin {
-    pub slot: u8,
+    pub slot: crate::substrate::policy::epf::Slot,
     pub code_len: u32,
     pub fuel_max: u16,
     pub mem_len: u16,
@@ -258,35 +656,32 @@ pub struct LoadBegin {
 }
 
 /// Payload for `LoadChunk`; the chunk body lives in a fixed-size buffer.
-///
-/// The `is_last` flag indicates whether this is the final chunk in the stream.
-/// This allows the receiver (Cluster) to determine loop termination without
-/// relying on route control messages, keeping CanonicalControl purely local.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoadChunk {
     pub offset: u32,
     pub len: u16,
-    /// Indicates this is the final chunk; Cluster breaks the recv loop.
-    pub is_last: bool,
     pub bytes: [u8; LOAD_CHUNK_MAX],
 }
 
-/// `Activate` message payload.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Activate {
-    pub slot: u8,
-}
+impl LoadChunk {
+    pub fn new(offset: u32, chunk: &[u8]) -> Self {
+        assert!(
+            chunk.len() <= LOAD_CHUNK_MAX,
+            "chunk length exceeds management chunk capacity"
+        );
+        let mut bytes = [0u8; LOAD_CHUNK_MAX];
+        bytes[..chunk.len()].copy_from_slice(chunk);
+        Self {
+            offset,
+            len: chunk.len() as u16,
+            bytes,
+        }
+    }
 
-/// `Revert` message payload.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Revert {
-    pub slot: u8,
-}
-
-/// `Stats` request payload.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StatsReq {
-    pub slot: u8,
+    #[inline]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes[..self.len as usize]
+    }
 }
 
 /// Subscribe request for streaming observe (single-event streaming).
@@ -324,7 +719,7 @@ impl<'a> WireDecode<'a> for SubscribeReq {
 // ts(4) + id(2) + causal_key(2) + arg0(4) + arg1(4) + arg2(4)
 const TAP_EVENT_WIRE_LEN: usize = 20;
 
-impl WireEncode for observe::TapEvent {
+impl WireEncode for TapEvent {
     fn encoded_len(&self) -> Option<usize> {
         Some(TAP_EVENT_WIRE_LEN)
     }
@@ -343,12 +738,12 @@ impl WireEncode for observe::TapEvent {
     }
 }
 
-impl<'a> WireDecode<'a> for observe::TapEvent {
+impl<'a> WireDecode<'a> for TapEvent {
     fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
         if input.len() < TAP_EVENT_WIRE_LEN {
             return Err(CodecError::Truncated);
         }
-        Ok(observe::TapEvent {
+        Ok(TapEvent {
             ts: u32::from_be_bytes([input[0], input[1], input[2], input[3]]),
             id: u16::from_be_bytes([input[4], input[5]]),
             causal_key: u16::from_be_bytes([input[6], input[7]]),
@@ -363,7 +758,7 @@ impl<'a> WireDecode<'a> for observe::TapEvent {
 // count(1) + lost_events(4) + events(count × 20)
 const TAP_BATCH_HEADER_LEN: usize = 5;
 
-impl WireEncode for observe::TapBatch {
+impl WireEncode for TapBatch {
     fn encoded_len(&self) -> Option<usize> {
         Some(TAP_BATCH_HEADER_LEN + self.len() * TAP_EVENT_WIRE_LEN)
     }
@@ -387,14 +782,14 @@ impl WireEncode for observe::TapBatch {
     }
 }
 
-impl<'a> WireDecode<'a> for observe::TapBatch {
+impl<'a> WireDecode<'a> for TapBatch {
     fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
         if input.len() < TAP_BATCH_HEADER_LEN {
             return Err(CodecError::Truncated);
         }
 
         let count = input[0] as usize;
-        if count > observe::TAP_BATCH_MAX_EVENTS {
+        if count > TAP_BATCH_MAX_EVENTS {
             return Err(CodecError::Invalid("batch count exceeds maximum"));
         }
 
@@ -404,17 +799,189 @@ impl<'a> WireDecode<'a> for observe::TapBatch {
             return Err(CodecError::Truncated);
         }
 
-        let mut batch = observe::TapBatch::empty();
+        let mut batch = TapBatch::empty();
         batch.set_lost_events(lost_events);
 
         let mut offset = TAP_BATCH_HEADER_LEN;
         for _ in 0..count {
-            let event = observe::TapEvent::decode_from(&input[offset..])?;
+            let event = TapEvent::decode_from(&input[offset..])?;
             batch.push(event);
             offset += TAP_EVENT_WIRE_LEN;
         }
 
         Ok(batch)
+    }
+}
+
+impl WireEncode for StatsResp {
+    fn encoded_len(&self) -> Option<usize> {
+        Some(16)
+    }
+
+    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
+        if out.len() < 16 {
+            return Err(CodecError::Truncated);
+        }
+        out[0..4].copy_from_slice(&self.traps.to_be_bytes());
+        out[4..8].copy_from_slice(&self.aborts.to_be_bytes());
+        out[8..12].copy_from_slice(&self.fuel_used.to_be_bytes());
+        out[12..16].copy_from_slice(&self.active_version.to_be_bytes());
+        Ok(16)
+    }
+}
+
+impl<'a> WireDecode<'a> for StatsResp {
+    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
+        if input.len() < 16 {
+            return Err(CodecError::Truncated);
+        }
+        Ok(StatsResp {
+            traps: u32::from_be_bytes([input[0], input[1], input[2], input[3]]),
+            aborts: u32::from_be_bytes([input[4], input[5], input[6], input[7]]),
+            fuel_used: u32::from_be_bytes([input[8], input[9], input[10], input[11]]),
+            active_version: u32::from_be_bytes([input[12], input[13], input[14], input[15]]),
+        })
+    }
+}
+
+impl WireEncode for PolicyStats {
+    fn encoded_len(&self) -> Option<usize> {
+        Some(38)
+    }
+
+    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
+        if out.len() < 36 {
+            return Err(CodecError::Truncated);
+        }
+        out[0..4].copy_from_slice(&self.aborts.to_be_bytes());
+        out[4..8].copy_from_slice(&self.traps.to_be_bytes());
+        out[8..12].copy_from_slice(&self.annotations.to_be_bytes());
+        out[12..16].copy_from_slice(&self.effects.to_be_bytes());
+        out[16..20].copy_from_slice(&self.effects_ok.to_be_bytes());
+        out[20..24].copy_from_slice(&self.commits.to_be_bytes());
+        out[24..28].copy_from_slice(&self.rollbacks.to_be_bytes());
+        out[28..32].copy_from_slice(&self.last_commit.unwrap_or(0).to_be_bytes());
+        out[32] = u8::from(self.last_commit.is_some());
+        out[33..37].copy_from_slice(&self.last_rollback.unwrap_or(0).to_be_bytes());
+        out[37] = u8::from(self.last_rollback.is_some());
+        Ok(38)
+    }
+}
+
+impl<'a> WireDecode<'a> for PolicyStats {
+    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
+        if input.len() < 38 {
+            return Err(CodecError::Truncated);
+        }
+        let last_commit = u32::from_be_bytes([input[28], input[29], input[30], input[31]]);
+        let last_rollback = u32::from_be_bytes([input[33], input[34], input[35], input[36]]);
+        Ok(PolicyStats {
+            aborts: u32::from_be_bytes([input[0], input[1], input[2], input[3]]),
+            traps: u32::from_be_bytes([input[4], input[5], input[6], input[7]]),
+            annotations: u32::from_be_bytes([input[8], input[9], input[10], input[11]]),
+            effects: u32::from_be_bytes([input[12], input[13], input[14], input[15]]),
+            effects_ok: u32::from_be_bytes([input[16], input[17], input[18], input[19]]),
+            commits: u32::from_be_bytes([input[20], input[21], input[22], input[23]]),
+            rollbacks: u32::from_be_bytes([input[24], input[25], input[26], input[27]]),
+            last_commit: if input[32] == 0 {
+                None
+            } else {
+                Some(last_commit)
+            },
+            last_rollback: if input[37] == 0 {
+                None
+            } else {
+                Some(last_rollback)
+            },
+        })
+    }
+}
+
+impl WireEncode for TransitionReport {
+    fn encoded_len(&self) -> Option<usize> {
+        Some(42)
+    }
+
+    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
+        if out.len() < 42 {
+            return Err(CodecError::Truncated);
+        }
+        out[0..4].copy_from_slice(&self.version.to_be_bytes());
+        self.policy_stats.encode_into(&mut out[4..])?;
+        Ok(42)
+    }
+}
+
+impl<'a> WireDecode<'a> for TransitionReport {
+    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
+        if input.len() < 42 {
+            return Err(CodecError::Truncated);
+        }
+        Ok(TransitionReport {
+            version: u32::from_be_bytes([input[0], input[1], input[2], input[3]]),
+            policy_stats: PolicyStats::decode_from(&input[4..42])?,
+        })
+    }
+}
+
+impl WireEncode for LoadReport {
+    fn encoded_len(&self) -> Option<usize> {
+        Some(4)
+    }
+
+    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
+        if out.len() < 4 {
+            return Err(CodecError::Truncated);
+        }
+        out[0..4].copy_from_slice(&self.staged_version.to_be_bytes());
+        Ok(4)
+    }
+}
+
+impl<'a> WireDecode<'a> for LoadReport {
+    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
+        if input.len() < 4 {
+            return Err(CodecError::Truncated);
+        }
+        Ok(LoadReport {
+            staged_version: u32::from_be_bytes([input[0], input[1], input[2], input[3]]),
+        })
+    }
+}
+
+impl WireEncode for StatsReply {
+    fn encoded_len(&self) -> Option<usize> {
+        Some(21)
+    }
+
+    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
+        if out.len() < 21 {
+            return Err(CodecError::Truncated);
+        }
+        self.stats.encode_into(out)?;
+        out[16] = u8::from(self.staged_version.is_some());
+        out[17..21].copy_from_slice(&self.staged_version.unwrap_or(0).to_be_bytes());
+        Ok(21)
+    }
+}
+
+impl<'a> WireDecode<'a> for StatsReply {
+    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
+        if input.len() < 21 {
+            return Err(CodecError::Truncated);
+        }
+        let stats = StatsResp::decode_from(&input[..16])?;
+        let staged_version = if input[16] == 0 {
+            None
+        } else {
+            Some(u32::from_be_bytes([
+                input[17], input[18], input[19], input[20],
+            ]))
+        };
+        Ok(StatsReply {
+            stats,
+            staged_version,
+        })
     }
 }
 
@@ -427,7 +994,7 @@ impl WireEncode for LoadBegin {
         if out.len() < 13 {
             return Err(CodecError::Truncated);
         }
-        out[0] = self.slot;
+        out[0] = slot_id(self.slot) as u8;
         out[1..5].copy_from_slice(&self.code_len.to_be_bytes());
         out[5..7].copy_from_slice(&self.fuel_max.to_be_bytes());
         out[7..9].copy_from_slice(&self.mem_len.to_be_bytes());
@@ -441,7 +1008,7 @@ impl<'a> WireDecode<'a> for LoadBegin {
         if input.len() < 13 {
             return Err(CodecError::Truncated);
         }
-        let slot = input[0];
+        let slot = decode_slot(input[0])?;
         let code_len = u32::from_be_bytes([input[1], input[2], input[3], input[4]]);
         let fuel_max = u16::from_be_bytes([input[5], input[6]]);
         let mem_len = u16::from_be_bytes([input[7], input[8]]);
@@ -458,8 +1025,7 @@ impl<'a> WireDecode<'a> for LoadBegin {
 
 impl WireEncode for LoadChunk {
     fn encoded_len(&self) -> Option<usize> {
-        // 4 (offset) + 2 (len) + 1 (is_last) + payload
-        Some(7 + self.len as usize)
+        Some(6 + self.len as usize)
     }
 
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
@@ -467,289 +1033,115 @@ impl WireEncode for LoadChunk {
         if len > LOAD_CHUNK_MAX {
             return Err(CodecError::Invalid("chunk length exceeds LOAD_CHUNK_MAX"));
         }
-        let total = 7 + len;
+        let total = 6 + len;
         if out.len() < total {
             return Err(CodecError::Truncated);
         }
         out[..4].copy_from_slice(&self.offset.to_be_bytes());
         out[4..6].copy_from_slice(&self.len.to_be_bytes());
-        out[6] = if self.is_last { 1 } else { 0 };
-        out[7..total].copy_from_slice(&self.bytes[..len]);
+        out[6..total].copy_from_slice(&self.bytes[..len]);
         Ok(total)
     }
 }
 
 impl<'a> WireDecode<'a> for LoadChunk {
     fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
-        if input.len() < 7 {
+        if input.len() < 6 {
             return Err(CodecError::Truncated);
         }
         let offset = u32::from_be_bytes([input[0], input[1], input[2], input[3]]);
         let len = u16::from_be_bytes([input[4], input[5]]);
-        let is_last = input[6] != 0;
         let len_usize = len as usize;
         if len_usize > LOAD_CHUNK_MAX {
             return Err(CodecError::Invalid("chunk length exceeds LOAD_CHUNK_MAX"));
         }
-        if input.len() < 7 + len_usize {
+        if input.len() < 6 + len_usize {
             return Err(CodecError::Truncated);
         }
         let mut bytes = [0u8; LOAD_CHUNK_MAX];
-        bytes[..len_usize].copy_from_slice(&input[7..7 + len_usize]);
-        Ok(LoadChunk {
-            offset,
-            len,
-            is_last,
-            bytes,
+        bytes[..len_usize].copy_from_slice(&input[6..6 + len_usize]);
+        Ok(LoadChunk { offset, len, bytes })
+    }
+}
+
+impl WireEncode for SlotRequest {
+    fn encoded_len(&self) -> Option<usize> {
+        Some(1)
+    }
+
+    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
+        if out.is_empty() {
+            return Err(CodecError::Truncated);
+        }
+        out[0] = slot_id(self.slot) as u8;
+        Ok(1)
+    }
+}
+
+impl<'a> WireDecode<'a> for SlotRequest {
+    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
+        if input.is_empty() {
+            return Err(CodecError::Truncated);
+        }
+        Ok(SlotRequest {
+            slot: decode_slot(input[0])?,
         })
     }
 }
 
-impl WireEncode for Activate {
-    fn encoded_len(&self) -> Option<usize> {
-        Some(1)
-    }
-
-    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
-        if out.is_empty() {
-            return Err(CodecError::Truncated);
-        }
-        out[0] = self.slot;
-        Ok(1)
-    }
-}
-
-impl<'a> WireDecode<'a> for Activate {
-    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
-        if input.is_empty() {
-            return Err(CodecError::Truncated);
-        }
-        Ok(Activate { slot: input[0] })
-    }
-}
-
-impl WireEncode for Revert {
-    fn encoded_len(&self) -> Option<usize> {
-        Some(1)
-    }
-
-    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
-        if out.is_empty() {
-            return Err(CodecError::Truncated);
-        }
-        out[0] = self.slot;
-        Ok(1)
-    }
-}
-
-impl<'a> WireDecode<'a> for Revert {
-    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
-        if input.is_empty() {
-            return Err(CodecError::Truncated);
-        }
-        Ok(Revert { slot: input[0] })
-    }
-}
-
-impl WireEncode for StatsReq {
-    fn encoded_len(&self) -> Option<usize> {
-        Some(1)
-    }
-
-    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
-        if out.is_empty() {
-            return Err(CodecError::Truncated);
-        }
-        out[0] = self.slot;
-        Ok(1)
-    }
-}
-
-impl<'a> WireDecode<'a> for StatsReq {
-    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
-        if input.is_empty() {
-            return Err(CodecError::Truncated);
-        }
-        Ok(StatsReq { slot: input[0] })
-    }
-}
-
-const fn ensure_chunk_bounds(total: usize, written: usize, len: usize) -> usize {
-    if len > LOAD_CHUNK_MAX {
-        panic!("chunk length exceeds LOAD_CHUNK_MAX");
-    }
-    let next = written + len;
-    if next > total {
-        panic!("chunk sequence exceeds TOTAL");
-    }
-    next
-}
-
-const fn ensure_remaining(total: usize, written: usize) {
-    if written >= total {
-        panic!("chunk stream already complete");
-    }
-}
-
-const fn ensure_complete(total: usize, written: usize) {
-    if written != total {
-        panic!("chunk stream not complete");
-    }
-}
-
-/// Type-level cursor that tracks progress through the chunk stream.
-pub trait ChunkCursor<const TOTAL: usize>: Sized {
-    const WRITTEN: usize;
-    type Append<const LEN: usize>: ChunkCursor<TOTAL>;
-}
-
-pub struct CursorNil;
-
-impl<const TOTAL: usize> ChunkCursor<TOTAL> for CursorNil {
-    const WRITTEN: usize = 0;
-    type Append<const LEN: usize> = CursorCons<LEN, Self, TOTAL>;
-}
-
-pub struct CursorCons<const LEN: usize, Tail, const TOTAL: usize>
-where
-    Tail: ChunkCursor<TOTAL>,
-{
-    _tail: PhantomData<Tail>,
-}
-
-impl<const TOTAL: usize, const LEN: usize, Tail> ChunkCursor<TOTAL> for CursorCons<LEN, Tail, TOTAL>
-where
-    Tail: ChunkCursor<TOTAL>,
-{
-    const WRITTEN: usize = ensure_chunk_bounds(TOTAL, Tail::WRITTEN, LEN);
-    type Append<const NEXT: usize> = CursorCons<NEXT, Self, TOTAL>;
-}
-
-impl<const LEN: usize, Tail, const TOTAL: usize> Default for CursorCons<LEN, Tail, TOTAL>
-where
-    Tail: ChunkCursor<TOTAL>,
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<const LEN: usize, Tail, const TOTAL: usize> CursorCons<LEN, Tail, TOTAL>
-where
-    Tail: ChunkCursor<TOTAL>,
-{
-    pub const fn new() -> Self {
-        Self { _tail: PhantomData }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Cold;
+pub(crate) struct Cold;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct AwaitBegin;
-pub struct Streaming<const TOTAL: usize, Cursor>
-where
-    Cursor: ChunkCursor<TOTAL>,
-{
-    _cursor: PhantomData<Cursor>,
-}
+pub(crate) struct AwaitBegin;
 
-impl<const TOTAL: usize, Cursor> Default for Streaming<TOTAL, Cursor>
-where
-    Cursor: ChunkCursor<TOTAL>,
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<const TOTAL: usize, Cursor> Streaming<TOTAL, Cursor>
-where
-    Cursor: ChunkCursor<TOTAL>,
-{
-    pub const fn new() -> Self {
-        Self {
-            _cursor: PhantomData,
-        }
-    }
-}
-
-impl<const TOTAL: usize, Cursor> Clone for Streaming<TOTAL, Cursor>
-where
-    Cursor: ChunkCursor<TOTAL>,
-{
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<const TOTAL: usize, Cursor> Copy for Streaming<TOTAL, Cursor> where Cursor: ChunkCursor<TOTAL> {}
-
-impl<const TOTAL: usize, Cursor> fmt::Debug for Streaming<TOTAL, Cursor>
-where
-    Cursor: ChunkCursor<TOTAL>,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Streaming")
-            .field("total", &TOTAL)
-            .field("written", &Cursor::WRITTEN)
-            .finish()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Staged;
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Active;
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct RollbackPending;
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Quiescent;
-
-pub trait ManagerState {}
+pub(crate) trait ManagerState {}
 impl ManagerState for Cold {}
 impl ManagerState for AwaitBegin {}
-impl<const TOTAL: usize, Cursor> ManagerState for Streaming<TOTAL, Cursor> where
-    Cursor: ChunkCursor<TOTAL>
-{
-}
-impl ManagerState for Staged {}
-impl ManagerState for Active {}
-impl ManagerState for RollbackPending {}
-impl ManagerState for Quiescent {}
 
 /// Per-slot state.
+#[derive(Clone)]
 struct SlotState {
     loader: ImageLoader,
     inventory: SlotInventory,
     pending: PendingVersion,
     version_counter: u32,
-    policy_cursor: usize,
-    last_policy: PolicySnapshot,
+    active_epoch: u32,
+    pending_epoch: Option<u32>,
+    last_policy_stats: PolicyStats,
+    digest_state: PolicyDigestState,
+    policy_mode: PolicyMode,
+    #[cfg(test)]
+    promotion_gate: PromotionGateState,
 }
 
 impl SlotState {
-    fn new(initial_cursor: usize) -> Self {
+    fn new() -> Self {
         Self {
             loader: ImageLoader::new(),
             inventory: SlotInventory::new(),
             pending: PendingVersion::default(),
             version_counter: 0,
-            policy_cursor: initial_cursor,
-            last_policy: PolicySnapshot::default(),
+            active_epoch: 0,
+            pending_epoch: None,
+            last_policy_stats: PolicyStats::default(),
+            digest_state: PolicyDigestState::default(),
+            policy_mode: PolicyMode::Shadow,
+            #[cfg(test)]
+            promotion_gate: PromotionGateState::default(),
         }
     }
 }
 
 /// Typestate-driven management session that stages, activates, and rolls back
 /// EPF policy images.
-pub struct Manager<State, const SLOTS: usize>
+#[derive(Clone)]
+pub(crate) struct Manager<State, const SLOTS: usize>
 where
     State: ManagerState,
 {
-    slot_states: [SlotState; SLOT_COUNT],
+    slot_states: [SlotState; SLOTS],
     _state: PhantomData<State>,
     timestamp: u32,
-    policy: [PolicySnapshot; SLOTS],
 }
 
 impl<const SLOTS: usize> Default for Manager<Cold, SLOTS> {
@@ -761,107 +1153,18 @@ impl<const SLOTS: usize> Default for Manager<Cold, SLOTS> {
 impl<const SLOTS: usize> Manager<Cold, SLOTS> {
     /// Construct a management session manager in the initial `Cold` state.
     ///
-    /// The manager snapshots the current tap cursor so subsequent policy
+    /// The manager records the current tap cursor so subsequent policy
     /// metrics can be correlated with the tap stream.
-    pub fn new() -> Self {
-        let initial_cursor = observe::head().unwrap_or(0);
+    pub(crate) fn new() -> Self {
         Self {
-            slot_states: [
-                SlotState::new(initial_cursor),
-                SlotState::new(initial_cursor),
-                SlotState::new(initial_cursor),
-                SlotState::new(initial_cursor),
-                SlotState::new(initial_cursor),
-            ],
+            slot_states: core::array::from_fn(|_| SlotState::new()),
             _state: PhantomData,
             timestamp: 0,
-            policy: [empty_policy_snapshot(); SLOTS],
         }
     }
 
     /// Transition into `AwaitBegin`, enabling the load handshake.
-    pub fn into_await_begin(self) -> Manager<AwaitBegin, SLOTS> {
-        let ts = self.timestamp;
-        self.transition(AwaitBegin, ts)
-    }
-}
-
-impl<const SLOTS: usize> Manager<AwaitBegin, SLOTS> {
-    /// Accept a `LoadBegin` header and start streaming bytecode chunks.
-    pub fn into_streaming<const TOTAL: usize>(
-        self,
-        _slot: Slot,
-        _header: Header,
-    ) -> Manager<Streaming<TOTAL, CursorNil>, SLOTS> {
-        let ts = self.timestamp.saturating_add(1);
-        self.transition(Streaming::<TOTAL, CursorNil>::new(), ts)
-    }
-}
-
-impl<const SLOTS: usize, const TOTAL: usize, Cursor> Manager<Streaming<TOTAL, Cursor>, SLOTS>
-where
-    Cursor: ChunkCursor<TOTAL>,
-{
-    /// Append a chunk to the in-flight bytecode image.
-    pub fn append_chunk<const LEN: usize>(
-        self,
-        _chunk: &[u8; LEN],
-    ) -> Manager<Streaming<TOTAL, <Cursor as ChunkCursor<TOTAL>>::Append<LEN>>, SLOTS> {
-        ensure_remaining(TOTAL, Cursor::WRITTEN);
-        let ts = self.timestamp.saturating_add(1);
-        self.transition(
-            Streaming::<TOTAL, <Cursor as ChunkCursor<TOTAL>>::Append<LEN>>::new(),
-            ts,
-        )
-    }
-
-    /// Finalise staging once all chunks were streamed.
-    pub fn finish(self) -> Manager<Staged, SLOTS> {
-        ensure_complete(TOTAL, Cursor::WRITTEN);
-        let ts = self.timestamp;
-        self.transition(Staged, ts)
-    }
-}
-
-impl<const SLOTS: usize> Manager<Staged, SLOTS> {
-    /// Activate the staged image, moving into `Active`.
-    pub fn into_active(self) -> Manager<Active, SLOTS> {
-        let ts = self.timestamp;
-        self.transition(Active, ts)
-    }
-
-    /// Prepare to roll back the active image.
-    pub fn into_rollback_pending(self) -> Manager<RollbackPending, SLOTS> {
-        let ts = self.timestamp;
-        self.transition(RollbackPending, ts)
-    }
-}
-
-impl<const SLOTS: usize> Manager<Active, SLOTS> {
-    /// Begin the rollback procedure from the `Active` state.
-    pub fn begin_rollback(self) -> Manager<RollbackPending, SLOTS> {
-        let ts = self.timestamp;
-        self.transition(RollbackPending, ts)
-    }
-}
-
-impl<const SLOTS: usize> Manager<RollbackPending, SLOTS> {
-    /// Complete a rollback successfully, returning to `Active`.
-    pub fn rollback_success(self) -> Manager<Active, SLOTS> {
-        let ts = self.timestamp;
-        self.transition(Active, ts)
-    }
-
-    /// Abort the rollback, transitioning to `Quiescent`.
-    pub fn rollback_abort(self) -> Manager<Quiescent, SLOTS> {
-        let ts = self.timestamp;
-        self.transition(Quiescent, ts)
-    }
-}
-
-impl<const SLOTS: usize> Manager<Quiescent, SLOTS> {
-    /// Reset the automaton and prepare for the next load cycle.
-    pub fn reset(self) -> Manager<AwaitBegin, SLOTS> {
+    pub(crate) fn into_await_begin(self) -> Manager<AwaitBegin, SLOTS> {
         let ts = self.timestamp;
         self.transition(AwaitBegin, ts)
     }
@@ -872,26 +1175,16 @@ where
     State: ManagerState,
 {
     fn transition<Next: ManagerState>(self, _state: Next, timestamp: u32) -> Manager<Next, SLOTS> {
-        let Manager {
-            slot_states,
-            policy,
-            ..
-        } = self;
+        let Manager { slot_states, .. } = self;
         Manager {
             slot_states,
             _state: PhantomData,
             timestamp,
-            policy,
         }
     }
 
     fn slot_state(&mut self, slot: Slot) -> &mut SlotState {
         &mut self.slot_states[slot_index(slot)]
-    }
-
-    fn slot_state_from_u8(&mut self, raw: u8) -> Result<(Slot, &mut SlotState), MgmtError> {
-        let slot = slot_from_u8(raw).ok_or(MgmtError::InvalidSlot(raw))?;
-        Ok((slot, self.slot_state(slot)))
     }
 
     fn next_ts(&mut self) -> u32 {
@@ -900,7 +1193,7 @@ where
         current
     }
 
-    pub fn load_begin(&mut self, slot: Slot, header: Header) -> Result<u32, MgmtError> {
+    pub(crate) fn load_begin(&mut self, slot: Slot, header: Header) -> Result<u32, MgmtError> {
         let state = self.slot_state(slot);
         state.loader.begin(header)?;
         let version = state.version_counter.saturating_add(1);
@@ -908,56 +1201,82 @@ where
         Ok(version)
     }
 
-    pub fn load_begin_raw(&mut self, slot: u8, header: Header) -> Result<u32, MgmtError> {
-        let (_slot, state) = self.slot_state_from_u8(slot)?;
-        state.loader.begin(header)?;
-        let version = state.version_counter.saturating_add(1);
-        state.pending.begin(version);
-        Ok(version)
-    }
-
-    pub fn load_chunk(&mut self, slot: Slot, offset: u32, chunk: &[u8]) -> Result<(), MgmtError> {
+    pub(crate) fn load_chunk(
+        &mut self,
+        slot: Slot,
+        offset: u32,
+        chunk: &[u8],
+    ) -> Result<(), MgmtError> {
         let state = self.slot_state(slot);
         state.loader.write(offset, chunk)?;
         Ok(())
     }
 
-    pub fn load_chunk_raw(&mut self, slot: u8, offset: u32, chunk: &[u8]) -> Result<(), MgmtError> {
-        let (_, state) = self.slot_state_from_u8(slot)?;
-        state.loader.write(offset, chunk)?;
-        Ok(())
-    }
-
-    pub fn load_commit(&mut self, slot: Slot, storage: &mut SlotStorage) -> Result<u32, MgmtError> {
+    pub(crate) fn load_commit(
+        &mut self,
+        slot: Slot,
+        storage: &mut SlotStorage,
+    ) -> Result<u32, MgmtError> {
         let state = self.slot_state(slot);
         let version = state.pending.take()?;
-        let verified = state.loader.commit()?;
+        let verified = state.loader.commit_for_slot(slot)?;
         let code = verified.code;
         storage.staging_mut()[..code.len()].copy_from_slice(code);
 
         let mut header = verified.header;
         header.code_len = code.len() as u16;
         let meta = ImageMeta::new(version, header);
+        state.digest_state.standby_digest = Some(meta.header.hash);
         state.inventory.stage(meta);
         state.version_counter = version;
         Ok(version)
     }
 
-    pub fn load_commit_raw(
-        &mut self,
-        slot: u8,
-        storage: &mut SlotStorage,
-    ) -> Result<u32, MgmtError> {
-        let (slot, _) = self.slot_state_from_u8(slot)?;
-        self.load_commit(slot, storage)
+    pub(crate) fn schedule_activate(&mut self, slot: Slot) -> Result<TransitionReport, MgmtError> {
+        let state = self.slot_state(slot);
+        let staged = state.inventory.staged().ok_or(MgmtError::NoStagedImage)?;
+        // Activation is boundary-driven on purpose: applying at arbitrary points
+        // would violate the offer->route->decode lease consistency contract.
+        state.pending_epoch = Some(staged.version);
+        Ok(TransitionReport {
+            version: staged.version,
+            policy_stats: state.last_policy_stats,
+        })
     }
 
-    pub fn activate<'arena>(
+    pub(crate) fn on_decision_boundary<'arena>(
+        &mut self,
+        slot: Slot,
+        storage: &'arena mut SlotStorage,
+        host_slots: &mut HostSlots<'arena>,
+    ) -> Result<Option<TransitionReport>, MgmtError> {
+        let pending_epoch = {
+            let state = self.slot_state(slot);
+            state.pending_epoch
+        };
+        let Some(pending_epoch) = pending_epoch else {
+            return Ok(None);
+        };
+        let staged_version = {
+            let state = self.slot_state(slot);
+            state.inventory.staged().map(|meta| meta.version)
+        };
+        if staged_version != Some(pending_epoch) {
+            let state = self.slot_state(slot);
+            state.pending_epoch = None;
+            return Ok(None);
+        }
+        let report = self.activate_committed(slot, storage, host_slots)?;
+        Ok(Some(report))
+    }
+
+    fn activate_committed<'arena>(
         &mut self,
         slot: Slot,
         storage: &'arena mut SlotStorage,
         host_slots: &mut HostSlots<'arena>,
     ) -> Result<TransitionReport, MgmtError> {
+        let ts = self.next_ts();
         let state = self.slot_state(slot);
         let previous_active = state.inventory.current_active();
         let staged = state.inventory.take_stage()?;
@@ -975,6 +1294,13 @@ where
 
         let active_meta = staged.meta();
         state.inventory.install_active(active_meta, previous_active);
+        state.active_epoch = active_meta.version;
+        state.pending_epoch = None;
+        if let Some(previous_active_meta) = previous_active {
+            state.digest_state.last_good_digest = Some(previous_active_meta.header.hash);
+        }
+        state.digest_state.active_digest = Some(active_meta.header.hash);
+        state.digest_state.standby_digest = None;
 
         let (active_buf, scratch) = storage.active_and_scratch_mut();
         let code_slice = &active_buf[..active_meta.code_len()];
@@ -987,28 +1313,40 @@ where
         if let Err(err) = host_slots.install(slot, machine) {
             return Err(err.into());
         }
+        host_slots.set_policy_mode(slot, state.policy_mode);
 
-        let ts = self.next_ts();
-        push(PolicyCommit::new(ts, slot_id(slot), active_meta.version));
-        let policy = self.harvest_policy(slot);
+        push(PolicyCommit::with_digest(
+            ts,
+            slot_id(slot),
+            active_meta.version,
+            active_meta.header.hash,
+        ));
+        let policy_stats = PolicyStats {
+            commits: 1,
+            last_commit: Some(active_meta.version),
+            ..PolicyStats::default()
+        };
+        state.last_policy_stats = policy_stats;
         Ok(TransitionReport {
             version: active_meta.version,
-            policy,
+            policy_stats,
         })
     }
 
-    pub fn revert<'arena>(
+    pub(crate) fn revert<'arena>(
         &mut self,
         slot: Slot,
         storage: &'arena mut SlotStorage,
         host_slots: &mut HostSlots<'arena>,
     ) -> Result<TransitionReport, MgmtError> {
+        let ts = self.next_ts();
         let state = self.slot_state(slot);
         let active_meta = state
             .inventory
             .current_active()
             .ok_or(MgmtError::NoActiveImage)?;
 
+        state.digest_state.standby_digest = Some(active_meta.header.hash);
         storage.copy_active_to_staging(active_meta.code_len());
         state.inventory.stage(active_meta);
 
@@ -1022,6 +1360,8 @@ where
             let entry = state.inventory.active_mut()?;
             entry.revert()?
         };
+        state.active_epoch = new_active.version;
+        state.pending_epoch = None;
 
         storage.copy_backup_to_active(new_active.code_len());
         let (active_buf, scratch) = storage.active_and_scratch_mut();
@@ -1033,17 +1373,29 @@ where
             new_active.header.fuel_max,
         )?;
         host_slots.install(slot, machine)?;
+        host_slots.set_policy_mode(slot, state.policy_mode);
+        state.digest_state.active_digest = Some(new_active.header.hash);
+        state.digest_state.last_good_digest = Some(new_active.header.hash);
 
-        let ts = self.next_ts();
-        push(PolicyRollback::new(ts, slot_id(slot), new_active.version));
-        let policy = self.harvest_policy(slot);
+        push(PolicyRollback::with_digest(
+            ts,
+            slot_id(slot),
+            new_active.version,
+            new_active.header.hash,
+        ));
+        let policy_stats = PolicyStats {
+            rollbacks: 1,
+            last_rollback: Some(new_active.version),
+            ..PolicyStats::default()
+        };
+        state.last_policy_stats = policy_stats;
         Ok(TransitionReport {
             version: new_active.version,
-            policy,
+            policy_stats,
         })
     }
 
-    pub fn stats(&self, slot: Slot) -> Result<StatsResp, MgmtError> {
+    pub(crate) fn stats(&self, slot: Slot) -> Result<StatsResp, MgmtError> {
         let state = &self.slot_states[slot_index(slot)];
         Ok(StatsResp {
             traps: 0,
@@ -1057,52 +1409,68 @@ where
         })
     }
 
-    pub fn staged_version(&self, slot: Slot) -> Option<u32> {
+    pub(crate) fn staged_version(&self, slot: Slot) -> Option<u32> {
         self.slot_states[slot_index(slot)]
             .inventory
             .staged()
             .map(|meta| meta.version)
     }
 
-    pub fn drain_policy_snapshot(&mut self, slot: Slot) -> Result<PolicySnapshot, MgmtError> {
-        Ok(self.harvest_policy(slot))
+    #[cfg(test)]
+    pub(crate) fn policy_mode(&self, slot: Slot) -> Result<PolicyMode, MgmtError> {
+        Ok(self.slot_states[slot_index(slot)].policy_mode)
     }
 
-    pub fn policy_snapshot(&self, slot: Slot) -> Result<PolicySnapshot, MgmtError> {
-        Ok(self.slot_states[slot_index(slot)].last_policy)
+    #[cfg(test)]
+    pub(crate) fn set_policy_mode<'arena>(
+        &mut self,
+        slot: Slot,
+        mode: PolicyMode,
+        host_slots: &HostSlots<'arena>,
+    ) -> Result<(), MgmtError> {
+        let state = self.slot_state(slot);
+        state.policy_mode = mode;
+        host_slots.set_policy_mode(slot, mode);
+        Ok(())
     }
 
-    fn harvest_policy(&mut self, slot: Slot) -> PolicySnapshot {
-        let state = &mut self.slot_states[slot_index(slot)];
-        let mut snapshot = PolicySnapshot::default();
-        observe::for_each_since(&mut state.policy_cursor, |event| {
-            if let Some(policy) = PolicyEvent::from_tap(event) {
-                snapshot.record(policy);
-            }
-        });
-        state.last_policy = snapshot;
-        snapshot
+    #[cfg(test)]
+    pub(crate) fn set_policy_mode_staged(
+        &mut self,
+        slot: Slot,
+        mode: PolicyMode,
+    ) -> Result<(), MgmtError> {
+        let state = self.slot_state(slot);
+        state.policy_mode = mode;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn observe_promotion_window(
+        &mut self,
+        slot: Slot,
+        window: PromotionGateWindow,
+        thresholds: PromotionGateThresholds,
+    ) -> Result<bool, MgmtError> {
+        let state = self.slot_state(slot);
+        Ok(state.promotion_gate.observe(window, thresholds))
     }
 }
 
-#[inline]
-pub(crate) fn slot_from_u8(raw: u8) -> Option<Slot> {
-    match raw {
-        0 => Some(Slot::Forward),
-        1 => Some(Slot::EndpointRx),
-        2 => Some(Slot::EndpointTx),
-        3 => Some(Slot::Rendezvous),
-        4 => Some(Slot::Route),
-        _ => None,
-    }
-}
+pub(crate) const ALL_SLOTS: [Slot; SLOT_COUNT] = [
+    Slot::Forward,
+    Slot::EndpointRx,
+    Slot::EndpointTx,
+    Slot::Rendezvous,
+    Slot::Route,
+];
 
 /// Maximum number of rendezvous links tracked by a management seed.
 const MGMT_MAX_LINKS: usize = 8;
 
 /// Fixed-capacity set of rendezvous identifiers referenced by the management seed.
 #[derive(Clone, Copy)]
-pub struct MgmtLinks {
+pub(crate) struct MgmtLinks {
     ids: [RendezvousId; MGMT_MAX_LINKS],
     len: usize,
 }
@@ -1115,7 +1483,7 @@ impl Default for MgmtLinks {
 
 impl MgmtLinks {
     /// Construct an empty link set.
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             ids: [RendezvousId::new(0); MGMT_MAX_LINKS],
             len: 0,
@@ -1124,13 +1492,13 @@ impl MgmtLinks {
 
     /// Returns true when the set already contains `id`.
     #[inline]
-    pub fn contains(&self, id: RendezvousId) -> bool {
+    pub(crate) fn contains(&self, id: RendezvousId) -> bool {
         (0..self.len).any(|idx| self.ids[idx] == id)
     }
 
     /// Append a rendezvous identifier if capacity allows and it is not present yet.
     #[inline]
-    pub fn push(&mut self, id: RendezvousId) {
+    pub(crate) fn push(&mut self, id: RendezvousId) {
         if self.len >= MGMT_MAX_LINKS || self.contains(id) {
             return;
         }
@@ -1140,28 +1508,22 @@ impl MgmtLinks {
 
     /// Iterate over the tracked rendezvous identifiers.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = RendezvousId> + '_ {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = RendezvousId> + '_ {
         self.ids[..self.len].iter().copied()
-    }
-
-    /// Returns true when no rendezvous links are recorded.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
     }
 }
 
 // ======== LeaseGraph integration ============================================
 
 /// Lease specification for management session rendezvous.
-pub struct MgmtLeaseSpec<T, U, C, E>(PhantomData<(T, U, C, E)>);
+pub(crate) struct MgmtLeaseSpec<T, U, C, E>(PhantomData<(T, U, C, E)>);
 
 impl<T, U, C, E> LeaseSpec for MgmtLeaseSpec<T, U, C, E>
 where
     T: crate::transport::Transport,
     U: crate::runtime::consts::LabelUniverse,
     C: crate::runtime::config::Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     type NodeId = RendezvousId;
     type Facet = LeaseBundleFacet<T, U, C, E>;
@@ -1174,20 +1536,22 @@ where
     T: crate::transport::Transport,
     U: crate::runtime::consts::LabelUniverse,
     C: crate::runtime::config::Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
-    const FACET_NEEDS: LeaseFacetNeeds = MGMT_FACET_NEEDS;
+    #[inline(always)]
+    fn facet_needs() -> LeaseFacetNeeds {
+        MGMT_FACET_NEEDS
+    }
 }
 
 /// Seed passed to the management automaton.
-pub struct MgmtSeed<State>
+pub(crate) struct MgmtSeed<State>
 where
     State: ManagerState,
 {
-    pub load_slot: Slot,
-    pub command: Command,
-    pub manager: Manager<State, SLOT_COUNT>,
-    pub links: MgmtLinks,
+    pub(crate) request: RequestAction,
+    pub(crate) manager: Manager<State, SLOT_COUNT>,
+    pub(crate) links: MgmtLinks,
 }
 
 impl<State> MgmtSeed<State>
@@ -1195,18 +1559,27 @@ where
     State: ManagerState,
 {
     #[inline]
-    pub fn links(&self) -> &MgmtLinks {
-        &self.links
-    }
-
-    #[inline]
-    pub fn links_mut(&mut self) -> &mut MgmtLinks {
+    pub(crate) fn links_mut(&mut self) -> &mut MgmtLinks {
         &mut self.links
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LoadMode {
+    Stage,
+    Activate,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RequestAction {
+    Load { slot: Slot, mode: LoadMode },
+    Activate { slot: Slot },
+    Revert { slot: Slot },
+    Stats { slot: Slot },
+}
+
 /// Control automaton that applies management operations through LeaseGraph.
-pub struct MgmtAutomaton<State>
+pub(crate) struct MgmtAutomaton<State>
 where
     State: ManagerState,
 {
@@ -1226,7 +1599,7 @@ impl<State> MgmtAutomaton<State>
 where
     State: ManagerState,
 {
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             _marker: PhantomData,
         }
@@ -1239,7 +1612,7 @@ where
     T: crate::transport::Transport,
     U: crate::runtime::consts::LabelUniverse,
     C: crate::runtime::config::Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     type Spec = SlotSpec;
     type Seed = MgmtSeed<State>;
@@ -1265,40 +1638,63 @@ where
     where
         'lease_cfg: 'lease,
     {
-        if let Err(err) = root_lease.with_rendezvous(|rv| {
-            let facet = rv.slot_facet();
-            facet.load_commit(rv, seed.load_slot, &mut seed.manager)
-        }) {
-            return ControlStep::Abort(err);
-        }
+        let reply = match seed.request {
+            RequestAction::Load { slot, mode } => {
+                if let Err(err) = root_lease.with_rendezvous(|rv| {
+                    let facet = rv.slot_facet();
+                    facet.load_commit(rv, slot, &mut seed.manager)
+                }) {
+                    return ControlStep::Abort(err);
+                }
 
-        if let Some(result) = {
-            let mut handle = graph.root_handle_mut();
-            handle
-                .context()
-                .slots_mut()
-                .map(|slots| slots.track_stage(seed.load_slot))
-        } && result.is_err()
-        {
-            return ControlStep::Abort(MgmtError::InvalidTransition);
-        }
+                if let Some(result) = {
+                    let mut handle = graph.root_handle_mut();
+                    handle
+                        .context()
+                        .slots_mut()
+                        .map(|slots| slots.track_stage(slot))
+                } && result.is_err()
+                {
+                    return ControlStep::Abort(MgmtError::InvalidTransition);
+                }
 
-        let reply = match seed.command {
-            Command::Activate { slot } => match root_lease.with_rendezvous(|rv| {
+                match mode {
+                    LoadMode::Stage => {
+                        let staged_version = match seed.manager.staged_version(slot) {
+                            Some(version) => version,
+                            None => return ControlStep::Abort(MgmtError::NoStagedImage),
+                        };
+                        Reply::Loaded(LoadReport { staged_version })
+                    }
+                    LoadMode::Activate => match root_lease.with_rendezvous(|rv| {
+                        let facet = rv.slot_facet();
+                        let scheduled = facet.schedule_activate(rv, slot, &mut seed.manager)?;
+                        let committed =
+                            facet.on_decision_boundary_for_slot(rv, slot, &mut seed.manager)?;
+                        Ok(committed.unwrap_or(scheduled))
+                    }) {
+                        Ok(report) => Reply::ActivationScheduled(report),
+                        Err(err) => return ControlStep::Abort(err),
+                    },
+                }
+            }
+            RequestAction::Activate { slot } => match root_lease.with_rendezvous(|rv| {
                 let facet = rv.slot_facet();
-                facet.activate(rv, slot, &mut seed.manager)
+                let scheduled = facet.schedule_activate(rv, slot, &mut seed.manager)?;
+                let committed = facet.on_decision_boundary_for_slot(rv, slot, &mut seed.manager)?;
+                Ok(committed.unwrap_or(scheduled))
             }) {
-                Ok(report) => Reply::Activated(report),
+                Ok(report) => Reply::ActivationScheduled(report),
                 Err(err) => return ControlStep::Abort(err),
             },
-            Command::Revert { slot } => match root_lease.with_rendezvous(|rv| {
+            RequestAction::Revert { slot } => match root_lease.with_rendezvous(|rv| {
                 let facet = rv.slot_facet();
                 facet.revert(rv, slot, &mut seed.manager)
             }) {
                 Ok(report) => Reply::Reverted(report),
                 Err(err) => return ControlStep::Abort(err),
             },
-            Command::Stats { slot } => match seed.manager.stats(slot) {
+            RequestAction::Stats { slot } => match seed.manager.stats(slot) {
                 Ok(stats) => Reply::Stats {
                     stats,
                     staged_version: seed.manager.staged_version(slot),
@@ -1317,6 +1713,17 @@ fn slot_id(slot: Slot) -> u32 {
         Slot::EndpointTx => 2,
         Slot::Rendezvous => 3,
         Slot::Route => 4,
+    }
+}
+
+fn decode_slot(slot: u8) -> Result<Slot, CodecError> {
+    match slot {
+        0 => Ok(Slot::Forward),
+        1 => Ok(Slot::EndpointRx),
+        2 => Ok(Slot::EndpointTx),
+        3 => Ok(Slot::Rendezvous),
+        4 => Ok(Slot::Route),
+        _ => Err(CodecError::Invalid("unknown management slot")),
     }
 }
 
@@ -1377,7 +1784,7 @@ impl ActiveEntry {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 struct SlotInventory {
     staged: Option<StageEntry>,
     active: Option<ActiveEntry>,
@@ -1420,7 +1827,7 @@ impl SlotInventory {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 struct PendingVersion(Option<u32>);
 
 impl PendingVersion {
@@ -1437,12 +1844,30 @@ impl PendingVersion {
 mod tests {
     use super::*;
     use crate::{
-        epf::{host::HostSlots, verifier::compute_hash},
-        rendezvous::SlotStorage,
+        epf::{host::HostSlots, ops, verifier::compute_hash},
+        rendezvous::slots::SlotStorage,
     };
 
+    fn stage_image(
+        manager: &mut Manager<AwaitBegin, { SLOT_COUNT }>,
+        slot: Slot,
+        storage: &mut SlotStorage,
+        code: &[u8],
+    ) -> u32 {
+        let header = Header {
+            code_len: code.len() as u16,
+            fuel_max: 16,
+            mem_len: 64,
+            flags: 0,
+            hash: compute_hash(code),
+        };
+        manager.load_begin(slot, header).unwrap();
+        manager.load_chunk(slot, 0, code).unwrap();
+        manager.load_commit(slot, storage).unwrap()
+    }
+
     #[test]
-    fn activate_flow_updates_version() {
+    fn policy_switch_commits_only_on_decision_boundary() {
         let mut manager = Manager::<Cold, { SLOT_COUNT }>::new().into_await_begin();
         let slot = Slot::Rendezvous;
         let code = [0x01u8, 0x02, 0x03, 0x04];
@@ -1462,10 +1887,16 @@ mod tests {
         manager.load_commit(slot, &mut storage).unwrap();
 
         let mut host_slots = HostSlots::new();
+        let scheduled = manager.schedule_activate(slot).unwrap();
+        assert_eq!(scheduled.version, 1);
+        assert_eq!(host_slots.active_digest(slot), 0);
+
         let report = manager
-            .activate(slot, &mut storage, &mut host_slots)
-            .unwrap();
+            .on_decision_boundary(slot, &mut storage, &mut host_slots)
+            .unwrap()
+            .expect("decision boundary should commit scheduled activation");
         assert_eq!(report.version, 1);
+        assert_ne!(host_slots.active_digest(slot), 0);
     }
 
     #[test]
@@ -1491,5 +1922,292 @@ mod tests {
                 got: 1
             }
         ));
+    }
+
+    #[test]
+    fn load_commit_rejects_get_input_for_forward_slot() {
+        let mut manager = Manager::<Cold, { SLOT_COUNT }>::new().into_await_begin();
+        let slot = Slot::Forward;
+        let code = [
+            crate::epf::ops::instr::GET_INPUT,
+            0x00,
+            0x00,
+            crate::epf::ops::instr::HALT,
+        ];
+        let header = Header {
+            code_len: code.len() as u16,
+            fuel_max: 8,
+            mem_len: 32,
+            flags: 0,
+            hash: compute_hash(&code),
+        };
+
+        manager.load_begin(slot, header).unwrap();
+        manager.load_chunk(slot, 0, &code).unwrap();
+
+        let mut storage = SlotStorage::new();
+        let err = manager.load_commit(slot, &mut storage).unwrap_err();
+        assert!(matches!(err, MgmtError::LoaderNotFinalised));
+    }
+
+    #[test]
+    fn set_policy_mode_updates_live_host_slots_immediately() {
+        let mut manager = Manager::<Cold, { SLOT_COUNT }>::new().into_await_begin();
+        let slot = Slot::Route;
+        let host_slots = HostSlots::new();
+
+        assert_eq!(manager.policy_mode(slot).unwrap(), PolicyMode::Shadow);
+        assert_eq!(host_slots.policy_mode(slot), PolicyMode::Enforce);
+
+        manager
+            .set_policy_mode(slot, PolicyMode::Enforce, &host_slots)
+            .unwrap();
+        assert_eq!(manager.policy_mode(slot).unwrap(), PolicyMode::Enforce);
+        assert_eq!(host_slots.policy_mode(slot), PolicyMode::Enforce);
+
+        manager
+            .set_policy_mode(slot, PolicyMode::Shadow, &host_slots)
+            .unwrap();
+        assert_eq!(manager.policy_mode(slot).unwrap(), PolicyMode::Shadow);
+        assert_eq!(host_slots.policy_mode(slot), PolicyMode::Shadow);
+    }
+
+    #[test]
+    fn set_policy_mode_staged_does_not_touch_live_host_slots() {
+        let mut manager = Manager::<Cold, { SLOT_COUNT }>::new().into_await_begin();
+        let slot = Slot::Route;
+        let host_slots = HostSlots::new();
+
+        manager
+            .set_policy_mode(slot, PolicyMode::Shadow, &host_slots)
+            .unwrap();
+        assert_eq!(host_slots.policy_mode(slot), PolicyMode::Shadow);
+
+        manager
+            .set_policy_mode_staged(slot, PolicyMode::Enforce)
+            .unwrap();
+        assert_eq!(manager.policy_mode(slot).unwrap(), PolicyMode::Enforce);
+        assert_eq!(host_slots.policy_mode(slot), PolicyMode::Shadow);
+    }
+
+    #[test]
+    fn promotion_gate_requires_consecutive_windows_and_resets_on_failure() {
+        let mut gate = PromotionGateState::default();
+        let thresholds = PromotionGateThresholds {
+            min_samples: 3,
+            max_divergence_ppm: 10,
+            max_reject_delta_ppm: 10,
+            max_p99_eval_us: 100,
+            max_latency_increase_ppm: 10,
+            max_fail_closed_ppm: 10,
+            required_consecutive_windows: 2,
+        };
+        let pass = PromotionGateWindow {
+            sample_count: 3,
+            divergence_ppm: 5,
+            reject_delta_ppm: 5,
+            p99_eval_us: 50,
+            latency_increase_ppm: 5,
+            fail_closed_ppm: 5,
+        };
+        let fail = PromotionGateWindow {
+            sample_count: 3,
+            divergence_ppm: 11,
+            reject_delta_ppm: 5,
+            p99_eval_us: 50,
+            latency_increase_ppm: 5,
+            fail_closed_ppm: 5,
+        };
+
+        assert!(!gate.observe(pass, thresholds));
+        assert_eq!(gate.consecutive_windows, 1);
+        assert!(gate.observe(pass, thresholds));
+        assert_eq!(gate.consecutive_windows, 2);
+
+        assert!(!gate.observe(fail, thresholds));
+        assert_eq!(gate.consecutive_windows, 0);
+        assert!(!gate.observe(pass, thresholds));
+        assert_eq!(gate.consecutive_windows, 1);
+    }
+
+    #[test]
+    fn manager_observe_promotion_window_tracks_slot_gate_state() {
+        let mut manager = Manager::<Cold, { SLOT_COUNT }>::new().into_await_begin();
+        let thresholds = PromotionGateThresholds {
+            min_samples: 2,
+            max_divergence_ppm: 10,
+            max_reject_delta_ppm: 10,
+            max_p99_eval_us: 100,
+            max_latency_increase_ppm: 10,
+            max_fail_closed_ppm: 10,
+            required_consecutive_windows: 2,
+        };
+        let pass = PromotionGateWindow {
+            sample_count: 2,
+            divergence_ppm: 0,
+            reject_delta_ppm: 0,
+            p99_eval_us: 10,
+            latency_increase_ppm: 0,
+            fail_closed_ppm: 0,
+        };
+        let fail = PromotionGateWindow {
+            sample_count: 2,
+            divergence_ppm: 20,
+            reject_delta_ppm: 0,
+            p99_eval_us: 10,
+            latency_increase_ppm: 0,
+            fail_closed_ppm: 0,
+        };
+
+        assert!(
+            !manager
+                .observe_promotion_window(Slot::Route, pass, thresholds)
+                .unwrap()
+        );
+        assert!(
+            manager
+                .observe_promotion_window(Slot::Route, pass, thresholds)
+                .unwrap()
+        );
+        assert!(
+            !manager
+                .observe_promotion_window(Slot::Forward, fail, thresholds)
+                .unwrap()
+        );
+        assert!(
+            manager
+                .observe_promotion_window(Slot::Route, pass, thresholds)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn schedule_activate_overwrites_pending_epoch() {
+        let mut manager = Manager::<Cold, { SLOT_COUNT }>::new().into_await_begin();
+        let slot = Slot::Route;
+        let mut storage = SlotStorage::new();
+
+        let v1 = stage_image(&mut manager, slot, &mut storage, &[ops::instr::HALT]);
+        let scheduled_v1 = manager.schedule_activate(slot).unwrap();
+        assert_eq!(scheduled_v1.version, v1);
+
+        let v2 = stage_image(
+            &mut manager,
+            slot,
+            &mut storage,
+            &[ops::instr::ACT_ABORT, 0x01, 0x00],
+        );
+        let scheduled_v2 = manager.schedule_activate(slot).unwrap();
+        assert_eq!(scheduled_v2.version, v2);
+        assert_eq!(
+            manager.slot_states[slot_index(slot)].pending_epoch,
+            Some(v2),
+            "latest schedule must overwrite pending epoch"
+        );
+    }
+
+    #[test]
+    fn revert_clears_pending_epoch() {
+        let mut manager = Manager::<Cold, { SLOT_COUNT }>::new().into_await_begin();
+        let slot = Slot::Route;
+        let mut storage = SlotStorage::new();
+
+        stage_image(&mut manager, slot, &mut storage, &[ops::instr::HALT]);
+        manager.schedule_activate(slot).unwrap();
+        {
+            let mut host_slots = HostSlots::new();
+            let report = manager
+                .on_decision_boundary(slot, &mut storage, &mut host_slots)
+                .unwrap()
+                .expect("v1 activation");
+            let _ = report;
+        }
+
+        stage_image(
+            &mut manager,
+            slot,
+            &mut storage,
+            &[ops::instr::ACT_ABORT, 0x02, 0x00],
+        );
+        manager.schedule_activate(slot).unwrap();
+        {
+            let mut host_slots = HostSlots::new();
+            let report = manager
+                .on_decision_boundary(slot, &mut storage, &mut host_slots)
+                .unwrap()
+                .expect("v2 activation");
+            let _ = report;
+        }
+
+        let v3 = stage_image(
+            &mut manager,
+            slot,
+            &mut storage,
+            &[ops::instr::ACT_ABORT, 0x03, 0x00],
+        );
+        manager.schedule_activate(slot).unwrap();
+        assert_eq!(
+            manager.slot_states[slot_index(slot)].pending_epoch,
+            Some(v3)
+        );
+
+        let mut host_slots = HostSlots::new();
+        manager.revert(slot, &mut storage, &mut host_slots).unwrap();
+        assert_eq!(manager.slot_states[slot_index(slot)].pending_epoch, None);
+    }
+
+    #[test]
+    fn schedule_then_revert_does_not_activate_stale_pending() {
+        let mut manager = Manager::<Cold, { SLOT_COUNT }>::new().into_await_begin();
+        let slot = Slot::Route;
+        let mut storage = SlotStorage::new();
+
+        stage_image(&mut manager, slot, &mut storage, &[ops::instr::HALT]);
+        manager.schedule_activate(slot).unwrap();
+        {
+            let mut host_slots = HostSlots::new();
+            let report = manager
+                .on_decision_boundary(slot, &mut storage, &mut host_slots)
+                .unwrap()
+                .expect("v1 activation");
+            let _ = report;
+        }
+
+        stage_image(
+            &mut manager,
+            slot,
+            &mut storage,
+            &[ops::instr::ACT_ABORT, 0x02, 0x00],
+        );
+        manager.schedule_activate(slot).unwrap();
+        {
+            let mut host_slots = HostSlots::new();
+            let report = manager
+                .on_decision_boundary(slot, &mut storage, &mut host_slots)
+                .unwrap()
+                .expect("v2 activation");
+            let _ = report;
+        }
+
+        stage_image(
+            &mut manager,
+            slot,
+            &mut storage,
+            &[ops::instr::ACT_ABORT, 0x03, 0x00],
+        );
+        manager.schedule_activate(slot).unwrap();
+
+        {
+            let mut host_slots = HostSlots::new();
+            manager.revert(slot, &mut storage, &mut host_slots).unwrap();
+        }
+        let mut host_slots = HostSlots::new();
+        let boundary = manager
+            .on_decision_boundary(slot, &mut storage, &mut host_slots)
+            .unwrap();
+        assert!(
+            boundary.is_none(),
+            "stale pending must not activate after revert"
+        );
     }
 }

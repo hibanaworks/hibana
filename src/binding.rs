@@ -1,8 +1,8 @@
 //! Transport binding layer for hibana choreography.
 //!
 //! This module provides a protocol-agnostic binding API that connects hibana's
-//! flow-centric choreography to underlying transport mechanisms (QUIC streams,
-//! Raft RPCs, etc.) without exposing transport details to application code.
+//! flow-centric choreography to underlying transport mechanisms (stream/datagram
+//! transports, RPCs, etc.) without exposing transport details to application code.
 //!
 //! # Architecture
 //!
@@ -13,20 +13,20 @@
 //! └─────────────────────────────────────────────────────────────────┘
 //!                              ↓
 //! ┌─────────────────────────────────────────────────────────────────┐
-//! │ BindingSlot (protocol-specific binder, e.g., QuicBinder)        │
+//! │ BindingSlot (protocol-specific binder)                           │
 //! │   - Receives SendMetadata from choreography                     │
 //! │   - Derives a deterministic action from direction + is_control  │
 //! │   - Executes wire operations                                    │
 //! └─────────────────────────────────────────────────────────────────┘
 //!                              ↓
 //! ┌─────────────────────────────────────────────────────────────────┐
-//! │ Wire (QUIC STREAM/DATAGRAM, Raft RPC, etc.)                     │
+//! │ Wire (stream/datagram frames, RPC payloads, etc.)               │
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 //!
 //! # Design Philosophy
 //!
-//! Protocol binders (e.g., `hibana_quic::QuicBinder`) use choreography metadata
+//! Protocol binders use choreography metadata
 //! to **deterministically derive** transport actions without manual configuration:
 //!
 //! | LocalDirection | is_control | Typical Action |
@@ -36,7 +36,7 @@
 //! | Recv           | -          | Read           |
 //! | Local          | true       | None (skip)    |
 //!
-//! This mapping does not consult transport state or heuristics; exceptions can be
+//! This mapping does not consult transport state or inference; exceptions can be
 //! handled via protocol-specific override APIs.
 //!
 //! # Key Components
@@ -47,12 +47,7 @@
 //! - [`ChannelStore`]: Label/instance → Channel mappings (no_alloc by default)
 //! - [`NoBinding`]: Zero-cost default when binding is not needed
 
-#[cfg(feature = "std")]
-use std::collections::HashMap;
-#[cfg(feature = "std")]
-use std::sync::RwLock;
-
-use crate::transport::context::TransportContextProvider;
+use crate::{eff::EffIndex, transport::context::PolicySignalsProvider};
 
 // =============================================================================
 // Channel: Opaque handle to a logical channel
@@ -61,18 +56,18 @@ use crate::transport::context::TransportContextProvider;
 /// Direction of a logical channel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ChannelDirection {
-    /// Bidirectional channel (e.g., QUIC bidi stream)
+    /// Bidirectional channel (e.g., stream transport bidi channel)
     Bidirectional,
-    /// Send-only channel (e.g., QUIC uni stream, outbound)
+    /// Send-only channel (e.g., outbound unidirectional channel)
     SendOnly,
-    /// Receive-only channel (e.g., QUIC uni stream, inbound)
+    /// Receive-only channel (e.g., inbound unidirectional channel)
     RecvOnly,
 }
 
 /// Opaque handle to a logical channel.
 ///
 /// The actual representation is transport-specific:
-/// - QUIC: wraps a StreamId (u64)
+/// - Stream transport: wraps a stream identifier (u64)
 /// - Raft: might wrap an RPC call ID
 /// - Other: custom channel identifier
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -110,17 +105,10 @@ impl ChannelKey {
 // ChannelStore: label/instance → channel mapping
 // =============================================================================
 
-/// Error reported by a channel store.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ChannelStoreError {
-    /// The store has no capacity to register a new entry.
-    Full,
-}
-
 /// Storage abstraction for logical channels.
 pub trait ChannelStore {
     /// Register a channel for a given key.
-    fn register(&mut self, key: ChannelKey, channel: Channel) -> Result<(), ChannelStoreError>;
+    fn register(&mut self, key: ChannelKey, channel: Channel) -> Result<(), TransportOpsError>;
 
     /// Look up a channel by key.
     fn get(&self, key: ChannelKey) -> Option<Channel>;
@@ -129,7 +117,7 @@ pub trait ChannelStore {
     fn get_key(&self, channel: Channel) -> Option<ChannelKey>;
 
     /// Get or allocate the next instance for a label.
-    fn next_instance(&mut self, label: u8) -> Result<u16, ChannelStoreError>;
+    fn next_instance(&mut self, label: u8) -> Result<u16, TransportOpsError>;
 
     /// Get the most recently allocated instance for a label, if any.
     fn current_instance(&self, label: u8) -> Option<u16>;
@@ -139,225 +127,6 @@ pub trait ChannelStore {
 
     /// Clear all registrations.
     fn clear(&mut self);
-}
-
-/// Fixed-capacity, allocator-free channel store.
-///
-/// This implementation is intended for no_alloc environments. Capacity is
-/// fixed at compile time. When full, registration returns `ChannelStoreError::Full`.
-#[derive(Clone, Copy, Debug)]
-pub struct ArrayChannelStore<const N: usize> {
-    entries: [Option<(ChannelKey, Channel)>; N],
-    counters: [Option<(u8, u16)>; N],
-}
-
-impl<const N: usize> ArrayChannelStore<N> {
-    /// Create a new empty store.
-    pub const fn new() -> Self {
-        Self {
-            entries: [None; N],
-            counters: [None; N],
-        }
-    }
-
-    fn find_entry_index(&self, key: ChannelKey) -> Option<usize> {
-        let mut i = 0;
-        while i < N {
-            if let Some((k, _)) = self.entries[i] {
-                if k == key {
-                    return Some(i);
-                }
-            }
-            i += 1;
-        }
-        None
-    }
-
-    fn find_reverse_index(&self, channel: Channel) -> Option<usize> {
-        let mut i = 0;
-        while i < N {
-            if let Some((_, ch)) = self.entries[i] {
-                if ch == channel {
-                    return Some(i);
-                }
-            }
-            i += 1;
-        }
-        None
-    }
-
-    fn reserve_slot(&mut self) -> Result<usize, ChannelStoreError> {
-        let mut i = 0;
-        while i < N {
-            if self.entries[i].is_none() {
-                return Ok(i);
-            }
-            i += 1;
-        }
-        Err(ChannelStoreError::Full)
-    }
-
-    fn find_counter_index(&self, label: u8) -> Option<usize> {
-        let mut i = 0;
-        while i < N {
-            if let Some((l, _)) = self.counters[i] {
-                if l == label {
-                    return Some(i);
-                }
-            }
-            i += 1;
-        }
-        None
-    }
-
-    fn reserve_counter_slot(&mut self) -> Result<usize, ChannelStoreError> {
-        let mut i = 0;
-        while i < N {
-            if self.counters[i].is_none() {
-                return Ok(i);
-            }
-            i += 1;
-        }
-        Err(ChannelStoreError::Full)
-    }
-}
-
-impl<const N: usize> Default for ArrayChannelStore<N> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<const N: usize> ChannelStore for ArrayChannelStore<N> {
-    fn register(&mut self, key: ChannelKey, channel: Channel) -> Result<(), ChannelStoreError> {
-        if let Some(idx) = self.find_entry_index(key) {
-            self.entries[idx] = Some((key, channel));
-            return Ok(());
-        }
-
-        let idx = self.reserve_slot()?;
-        self.entries[idx] = Some((key, channel));
-        Ok(())
-    }
-
-    fn get(&self, key: ChannelKey) -> Option<Channel> {
-        self.find_entry_index(key)
-            .and_then(|idx| self.entries[idx].map(|(_, ch)| ch))
-    }
-
-    fn get_key(&self, channel: Channel) -> Option<ChannelKey> {
-        self.find_reverse_index(channel)
-            .and_then(|idx| self.entries[idx].map(|(k, _)| k))
-    }
-
-    fn next_instance(&mut self, label: u8) -> Result<u16, ChannelStoreError> {
-        if let Some(idx) = self.find_counter_index(label) {
-            if let Some((_, next)) = &mut self.counters[idx] {
-                let current = *next;
-                *next = next.wrapping_add(1);
-                return Ok(current);
-            }
-        }
-
-        let idx = self.reserve_counter_slot()?;
-        self.counters[idx] = Some((label, 1));
-        Ok(0)
-    }
-
-    fn current_instance(&self, label: u8) -> Option<u16> {
-        self.find_counter_index(label).and_then(|idx| {
-            if let Some((_, n)) = self.counters[idx] {
-                n.checked_sub(1)
-            } else {
-                None
-            }
-        })
-    }
-
-    fn unregister(&mut self, channel: Channel) {
-        if let Some(idx) = self.find_reverse_index(channel) {
-            self.entries[idx] = None;
-        }
-    }
-
-    fn clear(&mut self) {
-        let mut i = 0;
-        while i < N {
-            self.entries[i] = None;
-            self.counters[i] = None;
-            i += 1;
-        }
-    }
-}
-
-/// HashMap-backed store for std environments.
-#[cfg(feature = "std")]
-#[derive(Debug, Default)]
-pub struct StdChannelStore {
-    forward: RwLock<HashMap<ChannelKey, Channel>>,
-    reverse: RwLock<HashMap<Channel, ChannelKey>>,
-    next_instance: RwLock<HashMap<u8, u16>>,
-}
-
-#[cfg(feature = "std")]
-impl StdChannelStore {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-#[cfg(feature = "std")]
-impl ChannelStore for StdChannelStore {
-    fn register(&mut self, key: ChannelKey, channel: Channel) -> Result<(), ChannelStoreError> {
-        {
-            let mut fwd = self.forward.write().unwrap();
-            fwd.insert(key, channel);
-        }
-        {
-            let mut rev = self.reverse.write().unwrap();
-            rev.insert(channel, key);
-        }
-        Ok(())
-    }
-
-    fn get(&self, key: ChannelKey) -> Option<Channel> {
-        let fwd = self.forward.read().unwrap();
-        fwd.get(&key).copied()
-    }
-
-    fn get_key(&self, channel: Channel) -> Option<ChannelKey> {
-        let rev = self.reverse.read().unwrap();
-        rev.get(&channel).copied()
-    }
-
-    fn next_instance(&mut self, label: u8) -> Result<u16, ChannelStoreError> {
-        let mut next = self.next_instance.write().unwrap();
-        let instance = *next.get(&label).unwrap_or(&0);
-        next.insert(label, instance + 1);
-        Ok(instance)
-    }
-
-    fn current_instance(&self, label: u8) -> Option<u16> {
-        let next = self.next_instance.read().unwrap();
-        next.get(&label).copied().and_then(|n| n.checked_sub(1))
-    }
-
-    fn unregister(&mut self, channel: Channel) {
-        let key = {
-            let mut rev = self.reverse.write().unwrap();
-            rev.remove(&channel)
-        };
-        if let Some(key) = key {
-            let mut fwd = self.forward.write().unwrap();
-            fwd.remove(&key);
-        }
-    }
-
-    fn clear(&mut self) {
-        self.forward.write().unwrap().clear();
-        self.reverse.write().unwrap().clear();
-        self.next_instance.write().unwrap().clear();
-    }
 }
 
 // =============================================================================
@@ -406,14 +175,6 @@ impl core::fmt::Display for TransportOpsError {
 #[cfg(feature = "std")]
 impl std::error::Error for TransportOpsError {}
 
-impl From<ChannelStoreError> for TransportOpsError {
-    fn from(err: ChannelStoreError) -> Self {
-        match err {
-            ChannelStoreError::Full => TransportOpsError::ChannelStoreFull,
-        }
-    }
-}
-
 // =============================================================================
 // SendMetadata: Choreography metadata for deterministic action mapping
 // =============================================================================
@@ -444,7 +205,7 @@ pub enum SendDisposition {
     /// Core should NOT call `transport.send()`.
     ///
     /// Use when the binder has already transmitted the payload via its own
-    /// mechanism (e.g., H3 framing, QPACK encoding).
+    /// mechanism (e.g., protocol framing/encoding).
     Handled,
 }
 
@@ -452,7 +213,7 @@ pub enum SendDisposition {
 ///
 /// This struct contains all the information needed for a protocol binder
 /// to determine the default transport action without requiring
-/// manual configuration or transport-state heuristics.
+/// manual configuration or transport-state inference.
 ///
 /// # Default Action Rules
 ///
@@ -467,15 +228,12 @@ pub enum SendDisposition {
 ///
 /// # Lane Semantics
 ///
-/// The `lane` field is a **logical lane** (u8) defined by the choreography.
-/// Binders translate this to physical lanes via `map_lane()`. This separation
-/// enables:
-/// - Multiple sessions on the same transport with different lane offsets
-/// - H3 control (lane 0/1) vs request/response (lane 2) separation
+/// The `lane` field is the rendezvous lane used by the choreography. Binders
+/// must treat it as the canonical lane identity rather than remapping it.
 #[derive(Clone, Copy, Debug)]
 pub struct SendMetadata {
     /// Effect index (stable identifier for the choreography step)
-    pub eff_index: u16,
+    pub eff_index: EffIndex,
     /// Message label
     pub label: u8,
     /// Target peer role
@@ -486,6 +244,23 @@ pub struct SendMetadata {
     pub direction: LocalDirection,
     /// Whether this is a control message
     pub is_control: bool,
+}
+
+impl SendMetadata {
+    #[inline]
+    pub const fn is_send(&self) -> bool {
+        matches!(self.direction, LocalDirection::Send)
+    }
+
+    #[inline]
+    pub const fn is_recv(&self) -> bool {
+        matches!(self.direction, LocalDirection::Recv)
+    }
+
+    #[inline]
+    pub const fn is_local(&self) -> bool {
+        matches!(self.direction, LocalDirection::Local)
+    }
 }
 
 // =============================================================================
@@ -513,10 +288,10 @@ pub struct IncomingClassification {
 // BindingSlot: Protocol-agnostic binding trait
 // =============================================================================
 
-/// Slot trait for transport binding on CursorEndpoint.
+/// Slot trait for transport binding on an attached endpoint.
 ///
-/// Protocol implementations (e.g., `hibana_quic::QuicBinder`) implement this
-/// trait to connect hibana's flow operations to their wire format.
+/// Transport/runtime adapters implement this trait to connect hibana's flow
+/// operations to their ingress/egress substrate.
 ///
 /// When `B = NoBinding` (the default), all methods inline to no-ops at
 /// compile time, providing zero runtime overhead.
@@ -532,14 +307,14 @@ pub struct IncomingClassification {
 /// The receive flow uses a lane-aware two-step approach:
 ///
 /// 1. **Classification** (`poll_incoming_for_lane`): Called by `offer()` to
-///    determine which route arm to select. Only returns classifications for
-///    the specified logical lane.
+///    gather demux evidence for the selected logical lane. Only returns
+///    classifications for that lane.
 ///
 /// 2. **Reading** (`on_recv`): Called after arm selection to read the actual
 ///    data. The channel comes from the classification.
 ///
-/// Additionally, implementations may provide a `TransportContextProvider` for
-/// resolver functions to query protocol-specific state without global registries.
+/// Additionally, implementations may provide a slot-scoped
+/// `PolicySignalsProvider` for policy evaluation and resolver context.
 ///
 /// # Safety
 ///
@@ -593,21 +368,22 @@ pub unsafe trait BindingSlot {
 
     /// Poll for incoming data classification on a specific logical lane.
     ///
-    /// Called by `offer()` to determine which route arm to select. Only returns
-    /// classifications for data destined to the specified `logical_lane`.
+    /// Called by `offer()` to gather demux evidence for the selected scope/lane.
+    /// Only returns classifications for data destined to the specified `logical_lane`.
     /// Returns `None` if no data is available for that lane.
     ///
     /// # Lane-Aware Polling
     ///
     /// Different lanes serve different purposes:
-    /// - Lane 0: QUIC handshake / transport-control + Client H3 control
-    /// - Lane 1: Server H3 control (SETTINGS, GOAWAY)
-    /// - Lane 2: Application data (HQ stream, H3 request/response)
+    /// - Lane 0: transport-level control traffic
+    /// - Lane 1: transport early-data traffic
+    /// - Lane 2+: appkit / application-owned traffic
     ///
     /// Binders with multiple internal streams/channels must demux here.
     ///
-    /// **IMPORTANT**: The label in the returned classification is used to select
-    /// the route arm. The `logical_lane` parameter filters which data to consider.
+    /// **IMPORTANT**: The label in the returned classification is for demux and
+    /// decode channel selection only. Route arm authority remains
+    /// `RouteDecisionToken(Ack|Resolver|Poll)`.
     fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IncomingClassification>;
 
     /// Read data from the specified channel into the buffer.
@@ -616,51 +392,19 @@ pub unsafe trait BindingSlot {
     /// route arm has been determined.
     fn on_recv(&mut self, channel: Channel, buf: &mut [u8]) -> Result<usize, TransportOpsError>;
 
-    /// Returns a transport context provider for resolver state access.
+    /// Returns a policy signals provider for slot-scoped policy input.
     ///
-    /// Protocol binders that wish to expose transport-layer state to resolvers
-    /// should implement this method. Resolvers can then query state directly
-    /// without relying on global registries.
-    ///
-    /// Default implementation returns `None`, indicating no context is available.
-    #[inline]
-    fn transport_context(&self) -> Option<&dyn TransportContextProvider> {
-        None
-    }
-
-    /// Maps a logical lane (program-defined) to a physical lane (Rendezvous resource).
-    ///
-    /// This method enables the separation of "virtual" (logical) and "physical" lane
-    /// addresses, similar to virtual vs physical memory addressing. The program defines
-    /// logical lanes (e.g., "I use my lane 0"), while the binder knows the physical
-    /// placement (e.g., "your lane 0 maps to physical lane 104").
-    ///
-    /// # Lane Separation
-    ///
-    /// - **Logical lane** (`u8`): Used in choreography/SendMetadata. Values: 0, 1, 2, ...
-    /// - **Physical lane** (`Lane`/`LaneId`/`u32`): Used by tap/RouteTable/LoopTable.
-    ///
-    /// # Default Implementation
-    ///
-    /// Returns identity mapping: logical lane N → physical lane N.
-    ///
-    /// # Protocol-Specific Implementations
-    ///
-    /// - **H3**: `base_stream_id + logical_lane` for multiplexing multiple sessions
-    /// - **Splice**: `target_lane + logical_lane` for session relocation
-    #[inline]
-    fn map_lane(&self, logical_lane: u8) -> crate::rendezvous::Lane {
-        crate::rendezvous::Lane::new(logical_lane as u32)
-    }
+    /// Returning `None` indicates all-zero input and empty attributes.
+    fn policy_signals_provider(&self) -> Option<&dyn PolicySignalsProvider>;
 }
 
 // =============================================================================
 // NoBinding: Zero-cost default binding
 // =============================================================================
 
-/// No-op binding slot for CursorEndpoint.
+/// No-op binding slot for attached endpoints.
 ///
-/// This is the default binding type for `CursorEndpoint`. All methods
+/// This is the default binding type for `Endpoint`. All methods
 /// compile to nothing, providing zero runtime overhead when transport
 /// binding is not needed.
 ///
@@ -692,50 +436,34 @@ unsafe impl BindingSlot for NoBinding {
     fn on_recv(&mut self, _channel: Channel, _buf: &mut [u8]) -> Result<usize, TransportOpsError> {
         Ok(0)
     }
+
+    #[inline(always)]
+    fn policy_signals_provider(&self) -> Option<&dyn PolicySignalsProvider> {
+        None
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::epf::vm::Slot;
+    use crate::transport::context::PolicySignals;
 
     #[test]
-    fn array_channel_store_basics() {
-        let mut store: ArrayChannelStore<4> = ArrayChannelStore::new();
-        let key = ChannelKey::new(1, 0);
-        let channel = Channel::new(42);
-
-        store.register(key, channel).unwrap();
-        assert_eq!(store.get(key), Some(channel));
-        assert_eq!(store.get_key(channel), Some(key));
-
-        store.unregister(channel);
-        assert_eq!(store.get(key), None);
-        assert_eq!(store.get_key(channel), None);
-    }
-
-    #[test]
-    fn array_store_next_instance_increments() {
-        let mut store: ArrayChannelStore<4> = ArrayChannelStore::new();
-        assert_eq!(store.next_instance(1).unwrap(), 0);
-        assert_eq!(store.next_instance(1).unwrap(), 1);
-        assert_eq!(store.next_instance(1).unwrap(), 2);
-        assert_eq!(store.next_instance(2).unwrap(), 0); // Different label
-        assert_eq!(store.current_instance(1), Some(2));
-    }
-
-    #[cfg(feature = "std")]
-    #[test]
-    fn std_channel_store_basics() {
-        let mut store = StdChannelStore::new();
-        let key = ChannelKey::new(1, 0);
-        let channel = Channel::new(7);
-
-        store.register(key, channel).unwrap();
-        assert_eq!(store.get(key), Some(channel));
-        assert_eq!(store.get_key(channel), Some(key));
-        assert_eq!(store.next_instance(1).unwrap(), 0);
-        assert_eq!(store.current_instance(1), Some(0));
-        store.unregister(channel);
-        assert_eq!(store.get(key), None);
+    fn no_binding_policy_signals_are_zero_for_all_slots() {
+        let binding = NoBinding;
+        for slot in [
+            Slot::Forward,
+            Slot::EndpointRx,
+            Slot::EndpointTx,
+            Slot::Rendezvous,
+            Slot::Route,
+        ] {
+            let signals = binding
+                .policy_signals_provider()
+                .map(|provider| provider.signals(slot))
+                .unwrap_or(PolicySignals::ZERO);
+            assert_eq!(signals, PolicySignals::ZERO);
+        }
     }
 }

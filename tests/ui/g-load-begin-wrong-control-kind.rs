@@ -1,16 +1,18 @@
-use hibana::control::cap::{
-    resource_kinds::LoadBeginKind,
-    GenericCapToken,
-};
 use hibana::g;
-use hibana::runtime::consts::LABEL_MGMT_LOAD_BEGIN;
+use hibana::g::advanced::CanonicalControl;
+use hibana::substrate::cap::{GenericCapToken, advanced::LoadBeginKind};
 
-type BadMsg = g::Msg<
-    { LABEL_MGMT_LOAD_BEGIN },
-    GenericCapToken<LoadBeginKind>,
-    g::CanonicalControl<LoadBeginKind>,
->;
+const LABEL_MGMT_LOAD_BEGIN: u8 = 40;
 
 fn main() {
-    let _ = g::send::<g::Role<0>, g::Role<1>, BadMsg>();
+    let _ = g::send::<
+        g::Role<0>,
+        g::Role<1>,
+        g::Msg<
+            { LABEL_MGMT_LOAD_BEGIN },
+            GenericCapToken<LoadBeginKind>,
+            CanonicalControl<LoadBeginKind>,
+        >,
+        0,
+    >();
 }

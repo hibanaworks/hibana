@@ -1,12 +1,8 @@
 //! Handle pipeline hub.
 
 /// Handle bag types.
-pub mod bag;
+pub(crate) mod bag;
 /// Frame handle types.
-pub mod frame;
+pub(crate) mod frame;
 /// Handle specs.
-pub mod spec;
-
-pub use bag::*;
-pub use frame::*;
-pub use spec::*;
+pub(crate) mod spec;

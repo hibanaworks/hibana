@@ -1,17 +1,9 @@
-use hibana::g::{self, SendStep, StepCons, StepNil};
-
-type Controller = g::Role<0>;
-type Target = g::Role<1>;
-
-type ArmSteps = StepCons<SendStep<Controller, Target, g::Msg<5, ()>>, StepNil>;
-
-const ARM_ONE: g::Program<ArmSteps> = g::send::<Controller, Target, g::Msg<5, ()>>();
-const ARM_TWO: g::Program<ArmSteps> = g::send::<Controller, Target, g::Msg<5, ()>>();
-
+use hibana::g::{self};
 // Duplicate labels inside a typed `route` must be rejected during const evaluation.
 const _: () = {
-    let builder = g::route_chain::<0, ArmSteps>(ARM_ONE).and(ARM_TWO);
-    let _ = g::route(builder);
+    let arm_one = g::send::<g::Role<0>, g::Role<0>, g::Msg<5, ()>, 0>();
+    let arm_two = g::send::<g::Role<0>, g::Role<0>, g::Msg<5, ()>, 0>();
+    let _ = g::route(arm_one, arm_two);
 };
 
 fn main() {}

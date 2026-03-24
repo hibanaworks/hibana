@@ -8,13 +8,14 @@
 //! The lifecycle maps directly to control::Txn's typestate transitions.
 
 use crate::control::automaton::txn::{Closed, InAcked, InBegin, Tap, Txn};
+#[cfg(test)]
 use crate::control::cluster::error::SpliceError;
 use crate::control::types::{
-    AtMostOnceCommit, Gen, IncreasingGen, LaneId, NoCrossLaneAliasing, One,
+    AtMostOnceCommit, Generation, IncreasingGen, Lane, NoCrossLaneAliasing, One,
 };
 
 /// Invariant marker for distributed splice transactions.
-pub struct DistributedSpliceInv;
+pub(crate) struct DistributedSpliceInv;
 
 impl NoCrossLaneAliasing for DistributedSpliceInv {}
 impl AtMostOnceCommit for DistributedSpliceInv {}
@@ -24,48 +25,48 @@ impl AtMostOnceCommit for DistributedSpliceInv {}
 /// This message is sent from source RV to destination RV to initiate a splice.
 /// This is the canonical type used by both control::automaton::distributed and ra.rs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SpliceIntent {
+pub(crate) struct SpliceIntent {
     /// Source Rendezvous ID
-    pub src_rv: crate::control::types::RendezvousId,
+    pub(crate) src_rv: crate::control::types::RendezvousId,
 
     /// Destination Rendezvous ID
-    pub dst_rv: crate::control::types::RendezvousId,
+    pub(crate) dst_rv: crate::control::types::RendezvousId,
 
     /// Session ID (for tracking)
-    pub sid: u32,
+    pub(crate) sid: u32,
 
     /// Old generation (before splice)
-    pub old_gen: Gen,
+    pub(crate) old_gen: Generation,
 
     /// New generation (after splice)
-    pub new_gen: Gen,
+    pub(crate) new_gen: Generation,
 
     /// Sequence number for TX fence (optional, 0 if not used)
-    pub seq_tx: u32,
+    pub(crate) seq_tx: u32,
 
     /// Sequence number for RX fence (optional, 0 if not used)
-    pub seq_rx: u32,
+    pub(crate) seq_rx: u32,
 
     /// Source lane ID
-    pub src_lane: LaneId,
+    pub(crate) src_lane: Lane,
 
     /// Destination lane ID
-    pub dst_lane: LaneId,
+    pub(crate) dst_lane: Lane,
 }
 
 impl SpliceIntent {
     /// Create a new splice intent.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(crate) fn new(
         src_rv: crate::control::types::RendezvousId,
         dst_rv: crate::control::types::RendezvousId,
         sid: u32,
-        old_gen: Gen,
-        new_gen: Gen,
+        old_gen: Generation,
+        new_gen: Generation,
         seq_tx: u32,
         seq_rx: u32,
-        src_lane: LaneId,
-        dst_lane: LaneId,
+        src_lane: Lane,
+        dst_lane: Lane,
     ) -> Self {
         Self {
             src_rv,
@@ -86,38 +87,38 @@ impl SpliceIntent {
 /// This message is sent from destination RV back to source RV after validation.
 /// Compatible with ra.rs SpliceAck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SpliceAck {
+pub(crate) struct SpliceAck {
     /// Source Rendezvous ID
-    pub src_rv: crate::control::types::RendezvousId,
+    pub(crate) src_rv: crate::control::types::RendezvousId,
 
     /// Destination Rendezvous ID
-    pub dst_rv: crate::control::types::RendezvousId,
+    pub(crate) dst_rv: crate::control::types::RendezvousId,
 
     /// Session ID
-    pub sid: u32,
+    pub(crate) sid: u32,
 
     /// New generation
-    pub new_gen: Gen,
+    pub(crate) new_gen: Generation,
 
     /// New lane
-    pub new_lane: LaneId,
+    pub(crate) new_lane: Lane,
 
     /// Sequence number for TX
-    pub seq_tx: u32,
+    pub(crate) seq_tx: u32,
 
     /// Sequence number for RX
-    pub seq_rx: u32,
+    pub(crate) seq_rx: u32,
 }
 
 impl SpliceAck {
     /// Create a new acknowledgment.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(crate) fn new(
         src_rv: crate::control::types::RendezvousId,
         dst_rv: crate::control::types::RendezvousId,
         sid: u32,
-        new_gen: Gen,
-        new_lane: LaneId,
+        new_gen: Generation,
+        new_lane: Lane,
         seq_tx: u32,
         seq_rx: u32,
     ) -> Self {
@@ -133,7 +134,8 @@ impl SpliceAck {
     }
 
     /// Create acknowledgment from intent.
-    pub fn from_intent(intent: &SpliceIntent) -> Self {
+    #[cfg(test)]
+    pub(crate) fn from_intent(intent: &SpliceIntent) -> Self {
         Self {
             src_rv: intent.src_rv,
             dst_rv: intent.dst_rv,
@@ -149,7 +151,7 @@ impl SpliceAck {
 /// Distributed splice coordinator.
 ///
 /// This coordinates the distributed splice lifecycle using control::Txn.
-pub struct DistributedSplice;
+pub(crate) struct DistributedSplice;
 
 impl DistributedSplice {
     /// Begin a distributed splice intent.
@@ -157,16 +159,16 @@ impl DistributedSplice {
     /// Returns a transaction in InBegin state and the SpliceIntent message
     /// to send to the destination RV.
     #[allow(clippy::too_many_arguments)]
-    pub fn begin(
+    pub(crate) fn begin(
         src_rv: crate::control::types::RendezvousId,
         dst_rv: crate::control::types::RendezvousId,
         sid: u32,
-        old_gen: Gen,
-        new_gen: Gen,
+        old_gen: Generation,
+        new_gen: Generation,
         seq_tx: u32,
         seq_rx: u32,
-        src_lane: LaneId,
-        dst_lane: LaneId,
+        src_lane: Lane,
+        dst_lane: Lane,
         tap: &mut impl Tap,
     ) -> (InBegin<DistributedSpliceInv, One>, SpliceIntent) {
         // Create transaction
@@ -184,14 +186,11 @@ impl DistributedSplice {
         (in_begin, intent)
     }
 
-    /// Process a splice intent at the destination RV.
-    ///
-    /// Validates the intent and generates an acknowledgment.
-    pub fn process_intent(
+    #[cfg(test)]
+    pub(crate) fn process_intent(
         intent: &SpliceIntent,
         _tap: &mut impl Tap,
     ) -> Result<SpliceAck, SpliceError> {
-        // Validate generation ordering
         if intent.new_gen.raw() <= intent.old_gen.raw() {
             return Err(SpliceError::GenerationMismatch);
         }
@@ -202,7 +201,7 @@ impl DistributedSplice {
     /// Acknowledge a splice intent.
     ///
     /// Transitions the transaction from InBegin to InAcked state.
-    pub fn acknowledge(
+    pub(crate) fn acknowledge(
         in_begin: InBegin<DistributedSpliceInv, One>,
         tap: &mut impl Tap,
     ) -> InAcked<DistributedSpliceInv, One> {
@@ -213,7 +212,7 @@ impl DistributedSplice {
     /// Commit the splice.
     ///
     /// Transitions the transaction to Closed state and bumps generation.
-    pub fn commit(
+    pub(crate) fn commit(
         in_acked: InAcked<DistributedSpliceInv, One>,
         tap: &mut impl Tap,
     ) -> Closed<DistributedSpliceInv> {
@@ -221,14 +220,11 @@ impl DistributedSplice {
         in_acked.commit(tap)
     }
 
-    /// Abort the splice.
-    ///
-    /// Transitions the transaction to Closed state without bumping generation.
-    pub fn abort(
+    #[cfg(test)]
+    pub(crate) fn abort(
         in_acked: InAcked<DistributedSpliceInv, One>,
         tap: &mut impl Tap,
     ) -> Closed<DistributedSpliceInv> {
-        // Abort (emits Abort effect, no generation bump)
         in_acked.abort(tap)
     }
 }
@@ -247,30 +243,30 @@ mod tests {
             RendezvousId::new(1), // src_rv
             RendezvousId::new(2), // dst_rv
             42,                   // sid
-            Gen::new(10),         // old_gen
-            Gen::new(11),         // new_gen
+            Generation::new(10),  // old_gen
+            Generation::new(11),  // new_gen
             0,                    // seq_tx
             0,                    // seq_rx
-            LaneId::new(1),       // src_lane
-            LaneId::new(2),       // dst_lane
+            Lane::new(1),         // src_lane
+            Lane::new(2),         // dst_lane
             &mut tap,
         );
 
         assert_eq!(intent.sid, 42);
-        assert_eq!(intent.src_lane, LaneId::new(1));
-        assert_eq!(intent.dst_lane, LaneId::new(2));
-        assert_eq!(intent.old_gen, Gen::new(10));
-        assert_eq!(intent.new_gen, Gen::new(11));
+        assert_eq!(intent.src_lane, Lane::new(1));
+        assert_eq!(intent.dst_lane, Lane::new(2));
+        assert_eq!(intent.old_gen, Generation::new(10));
+        assert_eq!(intent.new_gen, Generation::new(11));
 
         let ack = DistributedSplice::process_intent(&intent, &mut tap).unwrap();
-        assert_eq!(ack.new_gen, Gen::new(11));
+        assert_eq!(ack.new_gen, Generation::new(11));
 
         let in_acked = DistributedSplice::acknowledge(in_begin, &mut tap);
 
         let closed = DistributedSplice::commit(in_acked, &mut tap);
 
         // Verify generation was bumped
-        assert_eq!(closed.generation(), Gen::new(11));
+        assert_eq!(closed.generation(), Generation::new(11));
     }
 
     #[test]
@@ -281,13 +277,13 @@ mod tests {
         let (_in_begin, intent) = DistributedSplice::begin(
             RendezvousId::new(1),
             RendezvousId::new(2),
-            42,           // sid
-            Gen::new(10), // old_gen
-            Gen::new(10), // new_gen (same as old_gen - invalid!)
-            0,            // seq_tx
-            0,            // seq_rx
-            LaneId::new(1),
-            LaneId::new(2),
+            42,                  // sid
+            Generation::new(10), // old_gen
+            Generation::new(10), // new_gen (same as old_gen - invalid!)
+            0,                   // seq_tx
+            0,                   // seq_rx
+            Lane::new(1),
+            Lane::new(2),
             &mut tap,
         );
 
@@ -304,13 +300,13 @@ mod tests {
         let (in_begin, _intent) = DistributedSplice::begin(
             RendezvousId::new(1),
             RendezvousId::new(2),
-            42,           // sid
-            Gen::new(10), // old_gen
-            Gen::new(11), // new_gen
-            0,            // seq_tx
-            0,            // seq_rx
-            LaneId::new(1),
-            LaneId::new(2),
+            42,                  // sid
+            Generation::new(10), // old_gen
+            Generation::new(11), // new_gen
+            0,                   // seq_tx
+            0,                   // seq_rx
+            Lane::new(1),
+            Lane::new(2),
             &mut tap,
         );
 
@@ -321,6 +317,6 @@ mod tests {
         let closed = DistributedSplice::abort(in_acked, &mut tap);
 
         // Verify generation was NOT bumped (stays at old_gen)
-        assert_eq!(closed.generation(), Gen::new(10));
+        assert_eq!(closed.generation(), Generation::new(10));
     }
 }

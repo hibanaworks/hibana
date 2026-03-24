@@ -4,15 +4,13 @@
 //! that they can be referenced inside `const` contexts without requiring
 //! allocation or dynamic discovery.
 
-/// Maximum number of distinct labels supported by the default universe.
-/// Labels 0-38: Application layer protocols (QUIC frames, hq-interop, custom apps)
-/// Labels 39-47: Management session (load, command, observe, reply)
+/// Inclusive upper bound for labels supported by the default universe (`0..=127`).
+/// Labels 0-38: Application protocol payloads
+/// Labels 30-47: Management session (reply, load, observe, request)
 /// Labels 48-63: Control labels (loop, splice, reroute, policy, checkpoint, etc.)
-/// Labels 64-127: Extended application layer (hq-interop, HTTP/3, custom protocols)
-pub const LABEL_MAX: u8 = 128;
-
-/// Reserved label used for typed crash notifications (recv-only observability event).
-pub const LABEL_CRASH: u8 = 59;
+/// Labels 64-74: Internal management route heads
+/// Labels 75-127: Extended application protocol payloads
+pub const LABEL_MAX: u8 = 127;
 
 /// Reserved label used for typed cancellation notifications.
 pub const LABEL_CANCEL: u8 = 60;
@@ -27,22 +25,46 @@ pub const LABEL_COMMIT: u8 = 62;
 pub const LABEL_ROLLBACK: u8 = 63;
 
 /// Management session label assignments (below control-plane range 48-63).
-/// - Core management: 40-44, 47 (load, command, reply)
-/// - Streaming observe: 39, 45-46 (stream_end, subscribe, event)
-pub const LABEL_MGMT_LOAD_BEGIN: u8 = 40; // For CapToken<LoadBeginKind>
-pub const LABEL_MGMT_LOAD_BEGIN_DATA: u8 = 41; // For LoadBeginData
-pub const LABEL_MGMT_LOAD_CHUNK: u8 = 42;
-pub const LABEL_MGMT_LOAD_COMMIT: u8 = 43; // For CapToken<LoadCommitKind>
-pub const LABEL_MGMT_COMMAND: u8 = 44;
-pub const LABEL_MGMT_REPLY: u8 = 47;
+/// - Replies: 30-34
+/// - Requests: 35-37, 40-45
+/// - Streaming observe: 38-39
+pub const LABEL_MGMT_REPLY_ERROR: u8 = 30;
+pub const LABEL_MGMT_REPLY_LOADED: u8 = 31;
+pub const LABEL_MGMT_REPLY_ACTIVATED: u8 = 32;
+pub const LABEL_MGMT_REPLY_REVERTED: u8 = 33;
+pub const LABEL_MGMT_REPLY_STATS: u8 = 34;
+pub const LABEL_MGMT_ACTIVATE: u8 = 35;
+pub const LABEL_MGMT_REVERT: u8 = 36;
+pub const LABEL_MGMT_STATS: u8 = 37;
 /// Streaming observe labels.
-pub const LABEL_OBSERVE_SUBSCRIBE: u8 = 45;
-pub const LABEL_OBSERVE_EVENT: u8 = 46;
 pub const LABEL_OBSERVE_BATCH: u8 = 38; // Batch of TapEvents (up to 50)
-pub const LABEL_OBSERVE_STREAM_END: u8 = 39; // Below core range, reserved for EOS
+pub const LABEL_OBSERVE_STREAM_END: u8 = 39; // Reserved for EOS
+pub const LABEL_MGMT_LOAD_BEGIN: u8 = 40; // For GenericCapToken<LoadBeginKind>
+pub const LABEL_MGMT_LOAD_CHUNK: u8 = 42;
+pub const LABEL_MGMT_LOAD_COMMIT: u8 = 43; // For GenericCapToken<LoadCommitKind>
+pub const LABEL_MGMT_STAGE: u8 = 44;
+pub const LABEL_OBSERVE_SUBSCRIBE: u8 = 45;
+pub const LABEL_MGMT_LOAD_AND_ACTIVATE: u8 = 46;
+pub const LABEL_MGMT_ROUTE_LOAD: u8 = 64;
+pub const LABEL_MGMT_ROUTE_ACTIVATE: u8 = 65;
+pub const LABEL_MGMT_ROUTE_REVERT: u8 = 66;
+pub const LABEL_MGMT_ROUTE_STATS: u8 = 67;
+pub const LABEL_MGMT_ROUTE_LOAD_FAMILY: u8 = 68;
+pub const LABEL_MGMT_ROUTE_LOAD_AND_ACTIVATE: u8 = 69;
+pub const LABEL_MGMT_ROUTE_REPLY_ERROR: u8 = 70;
+pub const LABEL_MGMT_ROUTE_REPLY_LOADED: u8 = 71;
+pub const LABEL_MGMT_ROUTE_REPLY_ACTIVATED: u8 = 72;
+pub const LABEL_MGMT_ROUTE_REPLY_REVERTED: u8 = 73;
+pub const LABEL_MGMT_ROUTE_REPLY_STATS: u8 = 74;
+pub const LABEL_MGMT_ROUTE_COMMAND_FAMILY: u8 = 75;
+pub const LABEL_MGMT_ROUTE_COMMAND_TAIL: u8 = 76;
+pub const LABEL_MGMT_LOAD_FINAL_CHUNK: u8 = 77;
+pub const LABEL_MGMT_ROUTE_REPLY_SUCCESS_FAMILY: u8 = 78;
+pub const LABEL_MGMT_ROUTE_REPLY_SUCCESS_TAIL: u8 = 79;
+pub const LABEL_MGMT_ROUTE_REPLY_SUCCESS_FINAL: u8 = 80;
 
-// Control message label range (for route.case with CapToken<ResourceKind>)
-// These labels carry CapToken<ResourceKind> payloads for control-plane operations
+// Control message label range (for route.case with GenericCapToken<ResourceKind>)
+// These labels carry GenericCapToken<ResourceKind> payloads for control-plane operations
 // expressed via route.case arms instead of bespoke combinators.
 pub const LABEL_CONTROL_START: u8 = 48;
 pub const LABEL_LOOP_CONTINUE: u8 = 48;
@@ -60,7 +82,7 @@ pub const LABEL_CONTROL_END: u8 = 58;
 /// Maximum number of logical lanes per rendezvous.
 ///
 /// Lanes are represented as `u8` throughout the crate (see
-/// [`crate::rendezvous::Lane`]), so this bound never exceeds `u8::MAX`. Configuration
+/// [`crate::control::types::Lane`]), so this bound never exceeds `u8::MAX`. Configuration
 /// surfaces such as [`crate::runtime::config::Config::with_lane_range`] refer to this
 /// constant when validating caller-provided ranges.
 pub const LANES_MAX: u8 = 16;
@@ -83,6 +105,3 @@ pub struct DefaultLabelUniverse;
 impl LabelUniverse for DefaultLabelUniverse {
     const MAX_LABEL: u8 = LABEL_MAX;
 }
-
-/// The canonical universe exported by the crate.
-pub const DEFAULT_LABEL_UNIVERSE: DefaultLabelUniverse = DefaultLabelUniverse;

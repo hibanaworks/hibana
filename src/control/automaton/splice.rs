@@ -23,53 +23,55 @@ use crate::{
     control::automaton::distributed::{SpliceAck, SpliceIntent},
     control::cluster::error::SpliceError,
     control::{
-        cap::CapsMask,
-        cluster::{EffectExecutor, SpliceOperands, effects::CpEffect},
-        lease::{
-            ControlAutomaton, ControlStep, FullSpec, RendezvousLease, SpliceSpec,
-            bundle::{LeaseBundleError, LeaseBundleFacet},
-            graph::LeaseSpec,
-            planner::{FacetCapsSplice, LeaseFacetNeeds, LeaseSpecFacetNeeds},
+        cap::mint::CapsMask,
+        cluster::{
+            core::{EffectRunner, SpliceOperands},
+            effects::CpEffect,
         },
-        types::{LaneId as CpLaneId, RendezvousId, SessionId as CpSessionId},
+        lease::{
+            bundle::{LeaseBundleError, LeaseBundleFacet},
+            core::{ControlAutomaton, ControlStep, FullSpec, RendezvousLease, SpliceSpec},
+            graph::LeaseSpec,
+            planner::{LeaseFacetNeeds, LeaseSpecFacetNeeds, facets_caps_splice},
+        },
+        types::{Generation, Lane, RendezvousId, SessionId},
     },
-    rendezvous::{Generation, Lane, SessionId},
     runtime::{config::Clock, consts::LabelUniverse},
     transport::Transport,
 };
 
 #[derive(Debug, Default)]
-pub struct SpliceGraphContext {
-    pub last_intent: Option<SpliceIntent>,
+pub(crate) struct SpliceGraphContext {
+    pub(crate) last_intent: Option<SpliceIntent>,
 }
 
 impl SpliceGraphContext {
-    pub fn new(last_intent: Option<SpliceIntent>) -> Self {
+    pub(crate) fn new(last_intent: Option<SpliceIntent>) -> Self {
         Self { last_intent }
     }
 
     #[inline]
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.last_intent = None;
     }
 }
 
 /// Maximum node capacity for [`SpliceLeaseSpec`].
-pub const SPLICE_LEASE_MAX_NODES: usize = 3;
+pub(crate) const SPLICE_LEASE_MAX_NODES: usize = 3;
 /// Maximum child capacity for [`SpliceLeaseSpec`].
-pub const SPLICE_LEASE_MAX_CHILDREN: usize = 2;
+pub(crate) const SPLICE_LEASE_MAX_CHILDREN: usize = 2;
 
-const SPLICE_FACET_NEEDS: LeaseFacetNeeds = FacetCapsSplice::NEEDS;
+const SPLICE_FACET_NEEDS: LeaseFacetNeeds = facets_caps_splice();
 
 /// LeaseGraph specification for splice orchestration.
-pub struct SpliceLeaseSpec<T, U, C, E>(PhantomData<(T, U, C, E)>);
+pub(crate) struct SpliceLeaseSpec<T, U, C, E>(PhantomData<(T, U, C, E)>);
 
 impl<T, U, C, E> LeaseSpec for SpliceLeaseSpec<T, U, C, E>
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     type NodeId = RendezvousId;
     type Facet = LeaseBundleFacet<T, U, C, E>;
@@ -82,35 +84,38 @@ where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
-    const FACET_NEEDS: LeaseFacetNeeds = SPLICE_FACET_NEEDS;
+    #[inline(always)]
+    fn facet_needs() -> LeaseFacetNeeds {
+        SPLICE_FACET_NEEDS
+    }
 }
 
 /// Seed used for splice operand preparation.
 #[derive(Clone, Copy, Debug)]
-pub struct SplicePrepareSeed {
-    pub sid: CpSessionId,
-    pub src_lane: CpLaneId,
-    pub dst_rv: RendezvousId,
-    pub dst_lane: CpLaneId,
-    pub fences: Option<(u32, u32)>,
+pub(crate) struct SplicePrepareSeed {
+    pub(crate) sid: SessionId,
+    pub(crate) src_lane: Lane,
+    pub(crate) dst_rv: RendezvousId,
+    pub(crate) dst_lane: Lane,
+    pub(crate) fences: Option<(u32, u32)>,
 }
 
 /// Automaton that prepares splice operands through a lease graph.
-pub struct SplicePrepareAutomaton;
+pub(crate) struct SplicePrepareAutomaton;
 
 impl<T, U, C, E> ControlAutomaton<T, U, C, E> for SplicePrepareAutomaton
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     type Spec = FullSpec;
     type Seed = SplicePrepareSeed;
     type Output = SpliceOperands;
-    type Error = crate::control::CpError;
+    type Error = crate::control::cluster::error::CpError;
     type GraphSpec = SpliceLeaseSpec<T, U, C, E>;
 
     fn run<'lease, 'lease_cfg>(
@@ -120,7 +125,9 @@ where
     where
         'lease_cfg: 'lease,
     {
-        ControlStep::Abort(crate::control::CpError::Splice(SpliceError::InvalidState))
+        ControlStep::Abort(crate::control::cluster::error::CpError::Splice(
+            SpliceError::InvalidState,
+        ))
     }
 
     fn run_with_graph<'lease, 'lease_cfg, 'graph>(
@@ -135,7 +142,7 @@ where
         'lease_cfg: 'lease,
     {
         match root_lease.with_rendezvous(|rv| {
-            EffectExecutor::prepare_splice_operands(
+            EffectRunner::prepare_splice_operands(
                 rv,
                 seed.sid,
                 seed.src_lane,
@@ -168,7 +175,8 @@ where
 ///
 /// ```ignore
 /// let intent = SpliceIntent::new(src_rv, dst_rv, sid, old_gen, new_gen, ...);
-/// let result = core.drive::<SpliceBeginAutomaton>(src_rv, intent)?;
+/// let mut lease = core.lease::<SpliceSpec>(src_rv)?;
+/// let result = SpliceBeginAutomaton::run(&mut lease, intent);
 /// match result {
 ///     ControlStep::Complete(intent_msg) => {
 ///         // Send intent_msg to destination
@@ -178,14 +186,14 @@ where
 ///     }
 /// }
 /// ```
-pub struct SpliceBeginAutomaton;
+pub(crate) struct SpliceBeginAutomaton;
 
 impl<T, U, C, E> ControlAutomaton<T, U, C, E> for SpliceBeginAutomaton
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     type Spec = SpliceSpec;
     type Seed = SpliceIntent;
@@ -292,7 +300,8 @@ where
 ///
 /// ```ignore
 /// // After receiving SpliceAck from destination
-/// let result = core.drive::<SpliceCommitAutomaton>(src_rv, ack)?;
+/// let mut lease = core.lease::<SpliceSpec>(src_rv)?;
+/// let result = SpliceCommitAutomaton::run(&mut lease, ack);
 /// match result {
 ///     ControlStep::Complete(ack) => {
 ///         // Splice committed successfully
@@ -302,14 +311,14 @@ where
 ///     }
 /// }
 /// ```
-pub struct SpliceCommitAutomaton;
+pub(crate) struct SpliceCommitAutomaton;
 
 impl<T, U, C, E> ControlAutomaton<T, U, C, E> for SpliceCommitAutomaton
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
-    E: crate::control::cap::EpochTable,
+    E: crate::control::cap::mint::EpochTable,
 {
     type Spec = SpliceSpec;
     type Seed = SpliceAck;
@@ -412,7 +421,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::control::{LaneId, RendezvousId, types::Gen};
+    use crate::control::types::{Generation, Lane, RendezvousId};
 
     #[test]
     fn test_splice_intent_validation() {
@@ -420,12 +429,12 @@ mod tests {
             RendezvousId::new(1),
             RendezvousId::new(2),
             42,
-            Gen::new(1),
-            Gen::new(2),
+            Generation::new(1),
+            Generation::new(2),
             0,
             0,
-            LaneId::new(0),
-            LaneId::new(1),
+            Lane::new(0),
+            Lane::new(1),
         );
 
         // Validate generation ordering (should pass)
@@ -438,12 +447,12 @@ mod tests {
             RendezvousId::new(1),
             RendezvousId::new(2),
             42,
-            Gen::new(1),
-            Gen::new(2),
+            Generation::new(1),
+            Generation::new(2),
             100,
             200,
-            LaneId::new(0),
-            LaneId::new(1),
+            Lane::new(0),
+            Lane::new(1),
         );
 
         let ack = SpliceAck::from_intent(&intent);
@@ -457,6 +466,6 @@ mod tests {
         assert_eq!(ack.seq_rx, intent.seq_rx);
     }
 
-    // Note: Full integration tests with ControlCore::drive require a complete
-    // rendezvous setup and are in the integration test suite.
+    // Note: Full integration tests require a complete rendezvous setup and live
+    // in the integration test suite.
 }

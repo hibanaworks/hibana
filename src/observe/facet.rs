@@ -1,167 +1,68 @@
-use core::convert::TryFrom;
+use crate::control::lease::planner::{LeaseFacetNeeds, LeaseGraphBudget, policy_requirements};
+use crate::eff::EffKind;
+use crate::global::const_dsl::{EffList, PolicyMode};
 
-use crate::control::cap::MintConfigMarker;
-use crate::control::lease::planner::{LeaseFacetNeeds, LeaseGraphBudget, plan_requirements};
-use crate::eff::{EffIndex, EffKind};
-use crate::global::const_dsl::{EffList, HandlePlan, StaticPlanKind};
-use crate::global::role_program::RoleProgram;
-
-use std::fmt::Write as _;
 use std::vec::Vec;
 
-/// Per-atom breakdown of facet requirements derived from control plans.
+/// Per-atom breakdown of facet requirements derived from policy markers.
 #[derive(Clone, Debug)]
-pub struct AtomFacetDetail {
-    pub eff_index: EffIndex,
-    pub from: u8,
-    pub to: u8,
-    pub label: u8,
-    pub is_control: bool,
-    pub resource_tag: Option<u8>,
-    pub plan: HandlePlan,
-    pub needs: LeaseFacetNeeds,
-    pub delegation_children: usize,
-    pub splice_children: usize,
+struct AtomFacetDetail {
+    label: u8,
+    resource_tag: Option<u8>,
+    needs: LeaseFacetNeeds,
+    delegation_children: usize,
+    splice_children: usize,
 }
 
 impl AtomFacetDetail {
     /// Returns true when this atom contributes any facet demand.
     #[inline]
-    pub fn requires_facets(&self) -> bool {
+    fn requires_facets(&self) -> bool {
         !self.needs.is_empty() || self.delegation_children > 0 || self.splice_children > 0
     }
 }
 
 /// Aggregated facet report for a role-local projection.
 #[derive(Clone, Debug)]
-pub struct ProgramFacetReport {
-    pub budget: LeaseGraphBudget,
+struct ProgramFacetReport {
+    budget: LeaseGraphBudget,
     atoms: Vec<AtomFacetDetail>,
 }
 
 impl ProgramFacetReport {
-    /// Render a compact summary showing only atoms that request facets.
-    pub fn render(&self) -> String {
-        self.render_filtered(false)
-    }
-
-    /// Render a full summary including atoms with no facet needs.
-    pub fn render_with_all_atoms(&self) -> String {
-        self.render_filtered(true)
-    }
-
     /// Borrow the collected atom details.
     #[inline]
-    pub fn atoms(&self) -> &[AtomFacetDetail] {
+    fn atoms(&self) -> &[AtomFacetDetail] {
         &self.atoms
-    }
-
-    fn render_filtered(&self, include_all: bool) -> String {
-        let mut output = String::new();
-        writeln!(
-            output,
-            "LeaseGraph budget: facets={} delegation_children={} splice_children={}",
-            self.budget.facets(),
-            self.budget.delegation_children,
-            self.budget.splice_children,
-        )
-        .unwrap();
-
-        let filtered: Vec<&AtomFacetDetail> = if include_all {
-            self.atoms.iter().collect()
-        } else {
-            self.atoms
-                .iter()
-                .filter(|atom| atom.requires_facets())
-                .collect()
-        };
-
-        if filtered.is_empty() {
-            writeln!(output, "No atoms require additional facets.").unwrap();
-            return output;
-        }
-
-        writeln!(
-            output,
-            " idx  from->to  lbl ctl tag  plan                         needs             deleg splice"
-        )
-        .unwrap();
-        writeln!(
-            output,
-            "---- -------- ---- --- ---- ---------------------------- ---------------- ----- ------"
-        )
-        .unwrap();
-
-        for atom in filtered {
-            let tag_field = match atom.resource_tag {
-                Some(tag) => format!("0x{tag:02X}"),
-                None => "-".to_string(),
-            };
-            let plan_field = match atom.plan {
-                HandlePlan::None => "-".to_string(),
-                HandlePlan::Static { kind } => match kind {
-                    StaticPlanKind::SpliceLocal { dst_lane } => {
-                        format!("splice_local(dst={dst_lane})")
-                    }
-                    StaticPlanKind::RerouteLocal { dst_lane, shard } => {
-                        format!("reroute_local(dst={dst_lane},shard={shard})")
-                    }
-                },
-                HandlePlan::Dynamic { policy_id, .. } => format!("dynamic(policy={policy_id})"),
-            };
-            writeln!(
-                output,
-                "{:>4} {:>3}->{:<3} {:>3}  {:<3} {:<4} {:<28} {:<16} {:>5} {:>6}",
-                atom.eff_index,
-                atom.from,
-                atom.to,
-                atom.label,
-                if atom.is_control { "yes" } else { "no" },
-                tag_field,
-                plan_field,
-                atom.needs.to_string(),
-                atom.delegation_children,
-                atom.splice_children
-            )
-            .unwrap();
-        }
-
-        output
     }
 }
 
 /// Produce a facet report directly from an `EffList`.
-pub fn list_report(list: &EffList) -> ProgramFacetReport {
+fn list_report(list: &EffList) -> ProgramFacetReport {
     let mut atoms = Vec::new();
     let budget = LeaseGraphBudget::from_eff_list(list);
-    let control_plans = list.control_plans();
-    let mut plan_idx = 0usize;
-    let plan_len = control_plans.len();
+    let policies = list.policies();
+    let mut policy_idx = 0usize;
+    let policy_len = policies.len();
 
     let mut idx = 0usize;
     while idx < list.len() {
         let node = list.node_at(idx);
         if matches!(node.kind, EffKind::Atom) {
-            let plan = if plan_idx < plan_len && control_plans[plan_idx].offset == idx {
-                let value = control_plans[plan_idx].plan;
-                plan_idx += 1;
+            let policy = if policy_idx < policy_len && policies[policy_idx].offset == idx {
+                let value = policies[policy_idx].policy;
+                policy_idx += 1;
                 value
             } else {
-                HandlePlan::None
+                PolicyMode::Static
             };
 
             let atom = node.atom_data();
-            let requirements = plan_requirements(atom.resource, atom.label, plan);
+            let requirements = policy_requirements(atom.resource, atom.label, policy);
 
-            let eff_index = u16::try_from(idx).expect("EffStruct index exceeds EffIndex range");
             atoms.push(AtomFacetDetail {
-                eff_index,
-                from: atom.from,
-                to: atom.to,
                 label: atom.label,
-                is_control: atom.is_control,
                 resource_tag: atom.resource,
-                plan,
                 needs: requirements.facets,
                 delegation_children: requirements.delegation_children,
                 splice_children: requirements.splice_children,
@@ -173,12 +74,73 @@ pub fn list_report(list: &EffList) -> ProgramFacetReport {
     ProgramFacetReport { budget, atoms }
 }
 
-/// Produce a facet report for a projected role program.
-pub fn program_report<'prog, const ROLE: u8, LocalSteps, Mint>(
-    program: &RoleProgram<'prog, ROLE, LocalSteps, Mint>,
-) -> ProgramFacetReport
-where
-    Mint: MintConfigMarker,
-{
-    list_report(program.eff_list())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::control::cap::mint::ResourceKind;
+    use crate::control::cap::resource_kinds::{LoadBeginKind, LoadCommitKind};
+    use crate::control::lease::planner::LeaseFacetNeeds;
+    use crate::runtime::consts::{LABEL_MGMT_LOAD_BEGIN, LABEL_MGMT_LOAD_COMMIT};
+
+    #[test]
+    fn management_roles_report_expected_facet_atoms() {
+        let (controller_list, cluster_list) = crate::runtime::mgmt::management_eff_lists();
+        let controller = list_report(controller_list);
+        let cluster = list_report(cluster_list);
+
+        assert_requires_slots_only(&controller);
+        assert_requires_slots_only(&cluster);
+
+        let expected = &[
+            (LABEL_MGMT_LOAD_BEGIN, Some(LoadBeginKind::TAG)),
+            (LABEL_MGMT_LOAD_COMMIT, Some(LoadCommitKind::TAG)),
+        ];
+
+        assert_eq!(collect_atom_keys(&controller), expected);
+        assert_eq!(collect_atom_keys(&cluster), expected);
+    }
+
+    fn assert_requires_slots_only(report: &ProgramFacetReport) {
+        assert!(report.budget.requires_slots(), "slots facet required");
+        assert!(
+            !report.budget.requires_caps()
+                && !report.budget.requires_splice()
+                && !report.budget.requires_delegation(),
+            "only slots facet should be requested"
+        );
+        for atom in report.atoms().iter().filter(|a| a.requires_facets()) {
+            assert!(
+                atom.needs.requires_slots(),
+                "atom {} must require slots",
+                atom.label
+            );
+            assert_eq!(
+                atom.needs,
+                LeaseFacetNeeds::new().with_slots(),
+                "atom {} should not request other facets",
+                atom.label
+            );
+            assert_eq!(
+                (atom.delegation_children, atom.splice_children),
+                (0, 0),
+                "atom {} must not request additional LeaseGraph capacity",
+                atom.label
+            );
+        }
+    }
+
+    fn collect_atom_keys(report: &ProgramFacetReport) -> Vec<(u8, Option<u8>)> {
+        let mut keys = Vec::new();
+        for key in report
+            .atoms()
+            .iter()
+            .filter(|atom| atom.requires_facets())
+            .map(|atom| (atom.label, atom.resource_tag))
+        {
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        keys
+    }
 }

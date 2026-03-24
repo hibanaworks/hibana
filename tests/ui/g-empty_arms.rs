@@ -1,16 +1,12 @@
-use hibana::g::{self, SendStep, StepCons, StepNil};
-
-type Controller = g::Role<0>;
-type Target = g::Role<1>;
-
-type ArmSteps = StepCons<SendStep<Controller, Target, g::Msg<3, ()>>, StepNil>;
+use hibana::g::{self};
+use hibana::g::advanced::steps::StepNil;
 
 // Attempting to materialise a route with a single arm must fail because
-// `RouteChainBuilder::finish` enforces at least two branches.
+// binary `route(left, right)` requires both arms to satisfy the route-arm
+// shape contract.
 const _: () = {
-    let arm = g::send::<Controller, Target, g::Msg<3, ()>>();
-    let builder = g::route_chain::<0, ArmSteps>(arm);
-    let _ = g::route(builder);
+    let arm = g::send::<g::Role<0>, g::Role<0>, g::Msg<3, ()>, 0>();
+    let _ = g::route(arm, StepNil::PROGRAM);
 };
 
 fn main() {}

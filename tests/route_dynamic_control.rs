@@ -1,443 +1,476 @@
 #![cfg(feature = "std")]
-#![allow(dead_code)]
-
 mod common;
-mod support;
+#[path = "support/runtime.rs"]
+mod runtime_support;
 
 use common::TestTransport;
 use hibana::{
-    NoBinding,
-    control::{
-        cap::{
-            CapError, CapShot, CapsMask, ControlResourceKind, GenericCapToken, ResourceKind,
-            RouteDecisionHandle, SessionScopedKind,
-            resource_kinds::{LoopBreakKind, LoopContinueKind, RouteDecisionKind},
+    g::advanced::steps::{
+        LoopBreakSteps, LoopContinueSteps, LoopDecisionSteps, ProjectRole, SendStep, SeqSteps,
+        StepConcat, StepCons, StepNil,
+    },
+    g::advanced::{CanonicalControl, RoleProgram, project},
+    g::{self, Msg, Role},
+    substrate::{
+        SessionCluster, SessionId,
+        binding::{
+            BindingSlot, Channel, IncomingClassification, NoBinding, SendDisposition, SendMetadata,
+            TransportOpsError,
         },
-        cluster::{DynamicResolution, ResolverContext},
+        policy::{
+            ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider, core,
+            epf::Slot,
+        },
+        runtime::{Config, DefaultLabelUniverse},
     },
-    endpoint::ControlOutcome,
-    SendError,
-    g::MessageSpec,
-    g::{
-        self, CanonicalControl, LoopBreakSteps, LoopContinueSteps, Msg, Role,
-        steps::{ProjectRole, SendStep, StepConcat, StepCons, StepNil},
+    substrate::{
+        cap::{
+            GenericCapToken, ResourceKind,
+            advanced::{LoopBreakKind, LoopContinueKind, RouteDecisionKind},
+        },
+        policy::{DynamicResolution, ResolverContext, ResolverError},
     },
-    global::const_dsl::{ControlScopeKind, DynamicMeta, HandlePlan, ScopeId},
-    observe::{self, ScopeTrace, TapEvent, TapRing, local::LocalActionFailure, normalise},
-    rendezvous::{Rendezvous, SessionId},
-    runtime::{SessionCluster, config::Config, consts::DefaultLabelUniverse},
 };
-use std::{
-    collections::BTreeMap,
-    sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering},
+use runtime_support::{leak_clock, leak_slab, leak_tap_storage};
+
+const LABEL_LOOP_CONTINUE: u8 = 48;
+const LABEL_LOOP_BREAK: u8 = 49;
+const LABEL_ROUTE_DECISION: u8 = 57;
+
+hibana::impl_control_resource!(
+    RouteRightKind,
+    handle: RouteDecision,
+    name: "RouteRightDecision",
+    label: 11,
+);
+
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicU32, Ordering},
+    mpsc,
 };
-use support::{leak_clock, leak_slab, leak_tap_storage};
 
-type Cluster = SessionCluster<
-    'static,
-    TestTransport,
-    DefaultLabelUniverse,
-    hibana::runtime::config::CounterClock,
-    4,
->;
+fn run_with_large_stack_async<F, Fut, R>(f: F) -> R
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = R>,
+    R: Send + 'static,
+{
+    fn env_stack_size() -> usize {
+        const DEFAULT: usize = 32 * 1024 * 1024;
+        fn parse_var(key: &str) -> Option<usize> {
+            std::env::var(key).ok()?.parse().ok()
+        }
+        parse_var("HIBANA_TEST_STACK")
+            .or_else(|| parse_var("RUST_MIN_STACK"))
+            .map(|size| size.max(DEFAULT))
+            .unwrap_or(DEFAULT)
+    }
 
-type Controller = Role<0>;
-type Worker = Role<1>;
+    let (tx, rx) = mpsc::channel();
+    std::thread::Builder::new()
+        .stack_size(env_stack_size())
+        .spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build tokio runtime");
+            let result = rt.block_on(f());
+            let _ = tx.send(result);
+        })
+        .expect("spawn large-stack thread")
+        .join()
+        .expect("join large-stack thread");
 
-type RouteLeft = Msg<
-    { hibana::runtime::consts::LABEL_ROUTE_DECISION },
-    GenericCapToken<RouteDecisionKind>,
-    g::CanonicalControl<RouteDecisionKind>,
->;
-type RouteRight = Msg<11, GenericCapToken<RouteRightKind>, g::CanonicalControl<RouteRightKind>>;
-
-// Self-send steps for CanonicalControl
-type LeftSteps = StepCons<SendStep<Controller, Controller, RouteLeft>, StepNil>;
-type RightSteps = StepCons<SendStep<Controller, Controller, RouteRight>, StepNil>;
-type RouteSteps = <LeftSteps as g::steps::StepConcat<RightSteps>>::Output;
+    rx.recv().expect("receive result from large-stack thread")
+}
 
 const ROUTE_POLICY_ID: u16 = 9;
-const ROUTE_META: DynamicMeta = DynamicMeta::new();
 static ROUTE_ALLOW: AtomicBool = AtomicBool::new(false);
+const POLICY_INPUT_ID: ContextId = ContextId::new(0x9001);
 
-const LEFT_ARM: g::Program<LeftSteps> = g::with_control_plan(
-    g::send::<Controller, Controller, RouteLeft, 0>(),
-    HandlePlan::dynamic(ROUTE_POLICY_ID, ROUTE_META),
-);
-const RIGHT_ARM: g::Program<RightSteps> = g::with_control_plan(
-    g::send::<Controller, Controller, RouteRight, 0>(),
-    HandlePlan::dynamic(ROUTE_POLICY_ID, ROUTE_META),
-);
+#[derive(Clone)]
+struct PolicyInputBinding {
+    policy_input0: Arc<AtomicU32>,
+}
+
+impl PolicyInputBinding {
+    fn new(policy_input0: Arc<AtomicU32>) -> Self {
+        Self { policy_input0 }
+    }
+}
+
+impl PolicySignalsProvider for PolicyInputBinding {
+    fn signals(&self, slot: Slot) -> PolicySignals {
+        let policy_input0 = self.policy_input0.load(Ordering::Relaxed);
+        let input = if matches!(slot, Slot::Route) {
+            [policy_input0, 0, 0, 0]
+        } else {
+            [0; 4]
+        };
+        let mut attrs = PolicyAttrs::new();
+        let _ = attrs.insert(POLICY_INPUT_ID, ContextValue::from_u32(policy_input0));
+        PolicySignals { input, attrs }
+    }
+}
+
+// SAFETY: Test binding performs no I/O and all operations complete immediately.
+unsafe impl BindingSlot for PolicyInputBinding {
+    fn on_send_with_meta(
+        &mut self,
+        _meta: SendMetadata,
+        _payload: &[u8],
+    ) -> Result<SendDisposition, TransportOpsError> {
+        Ok(SendDisposition::BypassTransport)
+    }
+
+    fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IncomingClassification> {
+        None
+    }
+
+    fn on_recv(&mut self, _channel: Channel, _buf: &mut [u8]) -> Result<usize, TransportOpsError> {
+        Ok(0)
+    }
+
+    fn policy_signals_provider(&self) -> Option<&dyn PolicySignalsProvider> {
+        Some(self)
+    }
+}
+
+const LEFT_ARM: g::Program<
+    StepCons<
+        SendStep<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_ROUTE_DECISION },
+                GenericCapToken<RouteDecisionKind>,
+                CanonicalControl<RouteDecisionKind>,
+            >,
+        >,
+        StepNil,
+    >,
+> = g::send::<
+    Role<0>,
+    Role<0>,
+    Msg<
+        { LABEL_ROUTE_DECISION },
+        GenericCapToken<RouteDecisionKind>,
+        CanonicalControl<RouteDecisionKind>,
+    >,
+    0,
+>()
+.policy::<ROUTE_POLICY_ID>();
+const RIGHT_ARM: g::Program<
+    StepCons<
+        SendStep<
+            Role<0>,
+            Role<0>,
+            Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+        >,
+        StepNil,
+    >,
+> = g::send::<
+    Role<0>,
+    Role<0>,
+    Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+    0,
+>()
+.policy::<ROUTE_POLICY_ID>();
 // Route is local to Controller (0 → 0) since all arms are self-sends
-const PROGRAM: g::Program<RouteSteps> =
-    g::route::<0, _>(g::route_chain::<0, LeftSteps>(LEFT_ARM).and::<RightSteps>(RIGHT_ARM));
+const PROGRAM: g::Program<
+    <StepCons<
+        SendStep<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_ROUTE_DECISION },
+                GenericCapToken<RouteDecisionKind>,
+                CanonicalControl<RouteDecisionKind>,
+            >,
+        >,
+        StepNil,
+    > as StepConcat<
+        StepCons<
+            SendStep<
+                Role<0>,
+                Role<0>,
+                Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+            >,
+            StepNil,
+        >,
+    >>::Output,
+> = g::route(LEFT_ARM, RIGHT_ARM);
 
-static CONTROLLER_PROGRAM: g::RoleProgram<
+static CONTROLLER_PROGRAM: RoleProgram<
     'static,
     0,
-    <RouteSteps as ProjectRole<Controller>>::Output,
-> = g::project::<0, RouteSteps, _>(&PROGRAM);
-
-static WORKER_PROGRAM: g::RoleProgram<'static, 1, <RouteSteps as ProjectRole<Worker>>::Output> =
-    g::project::<1, RouteSteps, _>(&PROGRAM);
-
-type NestedLeftSteps = <LeftSteps as StepConcat<RouteSteps>>::Output;
-type NestedRouteSteps = <NestedLeftSteps as StepConcat<RightSteps>>::Output;
-
-const NESTED_LEFT_ARM: g::Program<NestedLeftSteps> = LEFT_ARM.then(PROGRAM);
-const NESTED_RIGHT_ARM: g::Program<RightSteps> = RIGHT_ARM;
-// Route is local to Controller (0 → 0) since all arms are self-sends
-const NESTED_PROGRAM: g::Program<NestedRouteSteps> = g::route::<0, _>(
-    g::route_chain::<0, NestedLeftSteps>(NESTED_LEFT_ARM).and::<RightSteps>(NESTED_RIGHT_ARM),
-);
-
-static NESTED_CONTROLLER_PROGRAM: g::RoleProgram<
-    'static,
-    0,
-    <NestedRouteSteps as ProjectRole<Controller>>::Output,
-> = g::project::<0, NestedRouteSteps, _>(&NESTED_PROGRAM);
-
-static NESTED_WORKER_PROGRAM: g::RoleProgram<
+    <<StepCons<
+        SendStep<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_ROUTE_DECISION },
+                GenericCapToken<RouteDecisionKind>,
+                CanonicalControl<RouteDecisionKind>,
+            >,
+        >,
+        StepNil,
+    > as StepConcat<
+        StepCons<
+            SendStep<
+                Role<0>,
+                Role<0>,
+                Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+            >,
+            StepNil,
+        >,
+    >>::Output as ProjectRole<Role<0>>>::Output,
+> = project(&PROGRAM);
+static WORKER_PROGRAM: RoleProgram<
     'static,
     1,
-    <NestedRouteSteps as ProjectRole<Worker>>::Output,
-> = g::project::<1, NestedRouteSteps, _>(&NESTED_PROGRAM);
-
-type LoopContinueMsg = Msg<
-    { hibana::runtime::consts::LABEL_LOOP_CONTINUE },
-    GenericCapToken<LoopContinueKind>,
-    CanonicalControl<LoopContinueKind>,
->;
-type LoopBreakMsg = Msg<
-    { hibana::runtime::consts::LABEL_LOOP_BREAK },
-    GenericCapToken<LoopBreakKind>,
-    CanonicalControl<LoopBreakKind>,
->;
-
-// Self-send for CanonicalControl: Controller → Controller (no Target param)
-type LoopContSteps = LoopContinueSteps<Controller, LoopContinueMsg, StepNil>;
-type LoopBrkSteps = LoopBreakSteps<Controller, LoopBreakMsg, StepNil>;
-type LoopDecision = <LoopContSteps as StepConcat<LoopBrkSteps>>::Output;
+    <<StepCons<
+        SendStep<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_ROUTE_DECISION },
+                GenericCapToken<RouteDecisionKind>,
+                CanonicalControl<RouteDecisionKind>,
+            >,
+        >,
+        StepNil,
+    > as StepConcat<
+        StepCons<
+            SendStep<
+                Role<0>,
+                Role<0>,
+                Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+            >,
+            StepNil,
+        >,
+    >>::Output as ProjectRole<Role<1>>>::Output,
+> = project(&PROGRAM);
 
 const LOOP_POLICY_ID: u16 = 10;
-const LOOP_META: DynamicMeta = DynamicMeta::new();
-static LOOP_CONTINUE_DECISION: AtomicBool = AtomicBool::new(true);
-static OUTER_LOOP_CONT_TRACE: AtomicU32 = AtomicU32::new(0);
-static OUTER_LOOP_BREAK_TRACE: AtomicU32 = AtomicU32::new(0);
-static INNER_LOOP_TRACE: AtomicU32 = AtomicU32::new(0);
-static OUTER_LOOP_DECISION: AtomicBool = AtomicBool::new(true);
-static INNER_LOOP_DECISION: AtomicBool = AtomicBool::new(true);
 
-static NESTED_OUTER_SCOPE_TRACE: AtomicU32 = AtomicU32::new(0);
-static NESTED_INNER_SCOPE_TRACE: AtomicU32 = AtomicU32::new(0);
-
-fn store_scope_trace(slot: &AtomicU32, trace: ScopeTrace) {
-    slot.store(trace.pack(), Ordering::Relaxed);
-}
-
-fn expect_scope_trace(slot: &AtomicU32) -> ScopeTrace {
-    ScopeTrace::decode(slot.load(Ordering::Relaxed)).expect("scope trace initialised")
-}
-
-fn scope_trace_for_role<const ROLE: u8, Steps>(
-    program: &g::RoleProgram<'static, ROLE, Steps>,
-    scope_id: ScopeId,
-) -> ScopeTrace {
-    program
-        .scope_regions()
-        .find(|region| region.scope_id == scope_id)
-        .map(|region| ScopeTrace::new(region.range, region.nest))
-        .expect("scope region available")
-}
-static NESTED_OUTER_ARM_SELECTION: AtomicU8 = AtomicU8::new(0);
-static NESTED_INNER_ARM_SELECTION: AtomicU8 = AtomicU8::new(0);
-
-struct TapSnapshot<'a> {
-    storage: &'a [TapEvent],
-    start: usize,
-    end: usize,
-}
-
-impl<'a> TapSnapshot<'a> {
-    fn endpoint_events(&self) -> Vec<normalise::EndpointEvent> {
-        normalise::endpoint_trace(self.storage, self.start, self.end)
-    }
-
-    fn policy_records(&self) -> (Vec<normalise::PolicyLaneRecord>, Vec<LocalActionFailure>) {
-        normalise::policy_lane_trace(self.storage, self.start, self.end)
-    }
-
-    fn end(&self) -> usize {
-        self.end
-    }
-}
-
-fn tap_head(cluster: &Cluster, rv_id: hibana::control::types::RendezvousId) -> usize {
-    cluster
-        .get_local(&rv_id)
-        .expect("rendezvous ref")
-        .tap()
-        .head()
-}
-
-fn tap_snapshot<'a>(
-    cluster: &'a Cluster,
-    rv_id: hibana::control::types::RendezvousId,
-    start: usize,
-) -> TapSnapshot<'a> {
-    let tap = cluster.get_local(&rv_id).expect("rendezvous ref").tap();
-    TapSnapshot {
-        storage: tap.as_slice(),
-        start,
-        end: tap.head(),
-    }
-}
-
-struct GlobalTapGuard {
-    ptr: *const TapRing<'static>,
-    previous: Option<&'static TapRing<'static>>,
-}
-
-impl GlobalTapGuard {
-    fn new(cluster: &Cluster, rv_id: hibana::control::types::RendezvousId) -> Self {
-        let tap = cluster.get_local(&rv_id).expect("rendezvous ref").tap();
-        let tap_static = unsafe { tap.assume_static() };
-        let previous = observe::install_ring(tap_static);
-        let ptr = tap_static as *const TapRing<'static>;
-        Self { ptr, previous }
-    }
-}
-
-impl Drop for GlobalTapGuard {
-    fn drop(&mut self) {
-        let _ = observe::uninstall_ring(self.ptr);
-        if let Some(prev) = self.previous {
-            let _ = observe::install_ring(prev);
-        }
-    }
-}
-
-fn correlate_scope_traces<'a>(
-    endpoint: &'a [normalise::EndpointEvent],
-    policy: &'a [normalise::PolicyLaneRecord],
-    atlas: &[hibana::global::typestate::ScopeRegion],
-) -> BTreeMap<ScopeTrace, normalise::ScopeAnnotatedCorrelatedTraces> {
-    normalise::correlate_scope_traces_with_atlas(endpoint, policy, &[], atlas)
-}
-
-fn assert_control_events_present(
-    traces: &[normalise::EndpointEvent],
-    scope: ScopeTrace,
-    expected_min: usize,
-) {
-    let control_count = traces
-        .iter()
-        .filter(|event| matches!(event, normalise::EndpointEvent::Control { scope: Some(trace), .. } if *trace == scope))
-        .count();
-    assert!(
-        control_count >= expected_min,
-        "expected at least {expected_min} control events for scope {:?}, found {control_count}",
-        scope
-    );
-}
-
-fn unique_dynamic_traces<const ROLE: u8, Steps>(
-    program: &g::RoleProgram<'static, ROLE, Steps>,
-) -> Vec<ScopeTrace> {
-    let mut traces = Vec::new();
-    for info in program.control_plans() {
-        if info.plan.is_dynamic() {
-            if let Some(trace) = info.scope_trace {
-                if !traces.contains(&trace) {
-                    traces.push(trace);
-                }
-            }
-        }
-    }
-    traces
+fn transport_queue_is_empty(transport: &TestTransport) -> bool {
+    transport
+        .state
+        .lock()
+        .expect("state lock")
+        .queues
+        .values()
+        .all(|queue| queue.is_empty())
 }
 
 // Self-send for CanonicalControl: Controller → Controller
-const LOOP_CONTINUE_ARM: g::Program<LoopContSteps> = g::with_control_plan(
-    g::send::<Controller, Controller, LoopContinueMsg, 0>(),
-    HandlePlan::dynamic(LOOP_POLICY_ID, LOOP_META),
+const LOOP_CONTINUE_ARM: g::Program<
+    LoopContinueSteps<
+        Role<0>,
+        Msg<
+            { LABEL_LOOP_CONTINUE },
+            GenericCapToken<LoopContinueKind>,
+            CanonicalControl<LoopContinueKind>,
+        >,
+        StepNil,
+    >,
+> = g::seq(
+    g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { LABEL_LOOP_CONTINUE },
+            GenericCapToken<LoopContinueKind>,
+            CanonicalControl<LoopContinueKind>,
+        >,
+        0,
+    >()
+    .policy::<LOOP_POLICY_ID>(),
+    StepNil::PROGRAM,
 );
-const LOOP_BREAK_ARM: g::Program<LoopBrkSteps> = g::with_control_plan(
-    g::send::<Controller, Controller, LoopBreakMsg, 0>(),
-    HandlePlan::dynamic(LOOP_POLICY_ID, LOOP_META),
-);
+const LOOP_BREAK_ARM: g::Program<
+    LoopBreakSteps<
+        Role<0>,
+        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
+        StepNil,
+    >,
+> = g::send::<
+    Role<0>,
+    Role<0>,
+    Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
+    0,
+>()
+.policy::<LOOP_POLICY_ID>();
 // Route is local to Controller (0 → 0)
-const LOOP_PROGRAM: g::Program<LoopDecision> = g::route::<0, _>(
-    g::route_chain::<0, LoopContSteps>(LOOP_CONTINUE_ARM).and::<LoopBrkSteps>(LOOP_BREAK_ARM),
-);
+const LOOP_PROGRAM: g::Program<
+    LoopDecisionSteps<
+        Role<0>,
+        Msg<
+            { LABEL_LOOP_CONTINUE },
+            GenericCapToken<LoopContinueKind>,
+            CanonicalControl<LoopContinueKind>,
+        >,
+        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
+    >,
+> = g::route(LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
 
-static LOOP_CONTROLLER_PROGRAM: g::RoleProgram<
+static LOOP_CONTROLLER_PROGRAM: RoleProgram<
     'static,
     0,
-    <LoopDecision as ProjectRole<Controller>>::Output,
-> = g::project::<0, LoopDecision, _>(&LOOP_PROGRAM);
+    <LoopDecisionSteps<
+        Role<0>,
+        Msg<
+            { LABEL_LOOP_CONTINUE },
+            GenericCapToken<LoopContinueKind>,
+            CanonicalControl<LoopContinueKind>,
+        >,
+        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
+    > as ProjectRole<Role<0>>>::Output,
+> = project(&LOOP_PROGRAM);
 
-static LOOP_WORKER_PROGRAM: g::RoleProgram<
-    'static,
-    1,
-    <LoopDecision as ProjectRole<Worker>>::Output,
-> = g::project::<1, LoopDecision, _>(&LOOP_PROGRAM);
-
-type NestedLoopContinueSteps = <LoopContSteps as StepConcat<LoopDecision>>::Output;
-type NestedLoopSteps = <NestedLoopContinueSteps as StepConcat<LoopBrkSteps>>::Output;
-
-const OUTER_LOOP_CONTINUE_ARM: g::Program<NestedLoopContinueSteps> =
-    LOOP_CONTINUE_ARM.then(LOOP_PROGRAM);
-const OUTER_LOOP_BREAK_ARM: g::Program<LoopBrkSteps> = LOOP_BREAK_ARM;
+const OUTER_LOOP_CONTINUE_ARM: g::Program<
+    SeqSteps<
+        LoopContinueSteps<
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            StepNil,
+        >,
+        LoopDecisionSteps<
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+        >,
+    >,
+> = g::seq(LOOP_CONTINUE_ARM, LOOP_PROGRAM);
 // Route is local to Controller (0 → 0)
-const NESTED_LOOP_PROGRAM: g::Program<NestedLoopSteps> = g::route::<0, _>(
-    g::route_chain::<0, NestedLoopContinueSteps>(OUTER_LOOP_CONTINUE_ARM)
-        .and::<LoopBrkSteps>(OUTER_LOOP_BREAK_ARM),
-);
+const NESTED_LOOP_PROGRAM: g::Program<
+    <SeqSteps<
+        LoopContinueSteps<
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            StepNil,
+        >,
+        LoopDecisionSteps<
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+        >,
+    > as StepConcat<
+        LoopBreakSteps<
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+            StepNil,
+        >,
+    >>::Output,
+> = g::route(OUTER_LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
 
-static NESTED_LOOP_CONTROLLER_PROGRAM: g::RoleProgram<
+static NESTED_LOOP_CONTROLLER_PROGRAM: RoleProgram<
     'static,
     0,
-    <NestedLoopSteps as ProjectRole<Controller>>::Output,
-> = g::project::<0, NestedLoopSteps, _>(&NESTED_LOOP_PROGRAM);
-
-static NESTED_LOOP_WORKER_PROGRAM: g::RoleProgram<
-    'static,
-    1,
-    <NestedLoopSteps as ProjectRole<Worker>>::Output,
-> = g::project::<1, NestedLoopSteps, _>(&NESTED_LOOP_PROGRAM);
+    <<SeqSteps<
+        LoopContinueSteps<
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            StepNil,
+        >,
+        LoopDecisionSteps<
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+        >,
+    > as StepConcat<
+        LoopBreakSteps<
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+            StepNil,
+        >,
+    >>::Output as ProjectRole<Role<0>>>::Output,
+> = project(&NESTED_LOOP_PROGRAM);
 
 fn route_resolver(
-    _cluster: &Cluster,
-    _meta: &DynamicMeta,
+    _cluster: &SessionCluster<
+        'static,
+        TestTransport,
+        DefaultLabelUniverse,
+        hibana::substrate::runtime::CounterClock,
+        4,
+    >,
     ctx: ResolverContext,
-) -> Result<DynamicResolution, ()> {
-    if ctx.tag != RouteDecisionKind::TAG {
-        return Err(());
+) -> Result<DynamicResolution, ResolverError> {
+    if ctx.attr(core::TAG).map(|value| value.as_u8()) != Some(RouteDecisionKind::TAG) {
+        return Err(ResolverError::Reject);
     }
     if ROUTE_ALLOW.load(Ordering::Relaxed) {
         Ok(DynamicResolution::RouteArm { arm: 0 })
     } else {
-        Err(())
+        Err(ResolverError::Reject)
     }
 }
 
-fn loop_resolver(
-    _cluster: &Cluster,
-    _meta: &DynamicMeta,
-    _ctx: ResolverContext,
-) -> Result<DynamicResolution, ()> {
-    let decision = LOOP_CONTINUE_DECISION.load(Ordering::Relaxed);
-    Ok(DynamicResolution::Loop { decision })
-}
-
-fn nested_route_resolver(
-    _cluster: &Cluster,
-    _meta: &DynamicMeta,
+fn route_policy_input_resolver(
+    _cluster: &SessionCluster<
+        'static,
+        TestTransport,
+        DefaultLabelUniverse,
+        hibana::substrate::runtime::CounterClock,
+        4,
+    >,
     ctx: ResolverContext,
-) -> Result<DynamicResolution, ()> {
-    let trace = ctx.scope_trace.unwrap_or_default();
-    let outer = expect_scope_trace(&NESTED_OUTER_SCOPE_TRACE);
-    if trace == outer {
-        let arm = NESTED_OUTER_ARM_SELECTION.load(Ordering::Relaxed);
-        Ok(DynamicResolution::RouteArm { arm })
-    } else if trace == expect_scope_trace(&NESTED_INNER_SCOPE_TRACE) {
-        let arm = NESTED_INNER_ARM_SELECTION.load(Ordering::Relaxed);
-        Ok(DynamicResolution::RouteArm { arm })
-    } else {
-        Err(())
+) -> Result<DynamicResolution, ResolverError> {
+    if ctx.attr(core::TAG).map(|value| value.as_u8()) != Some(RouteDecisionKind::TAG) {
+        return Err(ResolverError::Reject);
     }
-}
-
-fn nested_loop_resolver(
-    _cluster: &Cluster,
-    _meta: &DynamicMeta,
-    ctx: ResolverContext,
-) -> Result<DynamicResolution, ()> {
-    let trace = ctx.scope_trace.unwrap_or_default();
-    let outer_cont = expect_scope_trace(&OUTER_LOOP_CONT_TRACE);
-    let outer_break = expect_scope_trace(&OUTER_LOOP_BREAK_TRACE);
-    let inner = expect_scope_trace(&INNER_LOOP_TRACE);
-    if trace == outer_cont || trace == outer_break {
-        Ok(DynamicResolution::Loop {
-            decision: OUTER_LOOP_DECISION.load(Ordering::Relaxed),
-        })
-    } else if trace == inner {
-        Ok(DynamicResolution::Loop {
-            decision: INNER_LOOP_DECISION.load(Ordering::Relaxed),
-        })
-    } else {
-        Err(())
-    }
-}
-
-fn register_nested_route_resolvers(cluster: &Cluster, rv_id: hibana::control::types::RendezvousId) {
-    let plans: Vec<_> = NESTED_CONTROLLER_PROGRAM.control_plans().collect();
-    let mut outer_trace: Option<ScopeTrace> = None;
-    let mut inner_trace: Option<ScopeTrace> = None;
-    for info in &plans {
-        if info.plan.is_dynamic() {
-            let trace = info.scope_trace.expect("route scope trace baked into plan");
-            if outer_trace.is_none() {
-                outer_trace = Some(trace);
-            } else if Some(trace) != outer_trace && inner_trace.is_none() {
-                inner_trace = Some(trace);
-            }
-            cluster
-                .register_control_plan_resolver(rv_id, info, nested_route_resolver)
-                .expect("register nested route resolver");
-        }
-    }
-    assert!(
-        outer_trace.is_some() && inner_trace.is_some(),
-        "nested route traces must be discovered"
-    );
-    store_scope_trace(
-        &NESTED_OUTER_SCOPE_TRACE,
-        outer_trace.expect("outer route trace"),
-    );
-    store_scope_trace(
-        &NESTED_INNER_SCOPE_TRACE,
-        inner_trace.expect("inner route trace"),
-    );
-}
-
-fn register_nested_loop_resolvers(cluster: &Cluster, rv_id: hibana::control::types::RendezvousId) {
-    let plans: Vec<_> = NESTED_LOOP_CONTROLLER_PROGRAM.control_plans().collect();
-    let mut outer_cont_trace: Option<ScopeTrace> = None;
-    let mut outer_break_trace: Option<ScopeTrace> = None;
-    let mut inner_trace: Option<ScopeTrace> = None;
-    for info in &plans {
-        if info.plan.is_dynamic() {
-            let trace = info.scope_trace.expect("loop scope trace baked into plan");
-            if outer_cont_trace.is_none() {
-                outer_cont_trace = Some(trace);
-            } else if Some(trace) != outer_cont_trace && inner_trace.is_none() {
-                inner_trace = Some(trace);
-            } else if Some(trace) != outer_cont_trace
-                && Some(trace) != inner_trace
-                && outer_break_trace.is_none()
-            {
-                outer_break_trace = Some(trace);
-            }
-            cluster
-                .register_control_plan_resolver(rv_id, info, nested_loop_resolver)
-                .expect("register nested loop resolver");
-        }
-    }
-    assert!(
-        outer_cont_trace.is_some() && outer_break_trace.is_some() && inner_trace.is_some(),
-        "nested loop traces must be discovered"
-    );
-    store_scope_trace(
-        &OUTER_LOOP_CONT_TRACE,
-        outer_cont_trace.expect("outer continue trace"),
-    );
-    store_scope_trace(
-        &OUTER_LOOP_BREAK_TRACE,
-        outer_break_trace.expect("outer break trace"),
-    );
-    store_scope_trace(&INNER_LOOP_TRACE, inner_trace.expect("inner trace"));
+    let arm = ctx
+        .attr(POLICY_INPUT_ID)
+        .map(|v| (v.as_u32() & 1) as u8)
+        .unwrap_or(0);
+    Ok(DynamicResolution::RouteArm { arm })
 }
 
 /// Test route dynamic resolver with flow().send(()) pattern.
@@ -445,97 +478,59 @@ fn register_nested_loop_resolvers(cluster: &Cluster, rv_id: hibana::control::typ
 /// CanonicalControl uses self-send (Controller → Controller) and advances
 /// via flow().send(()) which skips wire transmission for self-send.
 #[test]
-fn route_dynamic_resolver_skip_and_retry() {
-    support::run_with_large_stack_async(|| async {
+fn route_dynamic_self_send_send_path_skips_revalidation() {
+    run_with_large_stack_async(|| async {
         let tap_buf = leak_tap_storage();
         let slab = leak_slab(2048);
         let config = Config::new(tap_buf, slab);
         let transport = TestTransport::default();
 
-        let rendezvous: Rendezvous<
-            '_,
-            '_,
+        let cluster: &mut SessionCluster<
+            'static,
             TestTransport,
             DefaultLabelUniverse,
-            hibana::runtime::config::CounterClock,
-        > = Rendezvous::from_config(config, transport.clone());
-
-        let cluster: &mut Cluster = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+            hibana::substrate::runtime::CounterClock,
+            4,
+        > = Box::leak(Box::new(SessionCluster::new(leak_clock())));
 
         let rv_id = cluster
-            .add_rendezvous(rendezvous)
+            .add_rendezvous_from_config(config, transport.clone())
             .expect("register rendezvous");
-        let _tap_guard = GlobalTapGuard::new(&*cluster, rv_id);
-        let tap_cursor = tap_head(&*cluster, rv_id);
-
-        let left_plan = CONTROLLER_PROGRAM
-            .control_plans()
-            .find(|info| info.label == RouteLeft::LABEL)
-            .expect("route plan present");
-        let left_scope = left_plan.scope_id;
-        assert!(!left_scope.is_none(), "route plan must capture scope id");
-        assert_eq!(
-            left_plan.plan.scope(),
-            left_scope,
-            "control plan scope should round-trip"
-        );
-        let left_trace = left_plan
-            .scope_trace
-            .expect("route plan must expose scope trace");
-        assert_eq!(
-            left_trace,
-            scope_trace_for_role(&CONTROLLER_PROGRAM, left_scope),
-            "route plan trace must match typestate atlas"
-        );
-
         cluster
-            .register_control_plan_resolver(rv_id, &left_plan, route_resolver)
+            .set_resolver(
+                rv_id,
+                &CONTROLLER_PROGRAM,
+                hibana::substrate::policy::PolicyId::new(ROUTE_POLICY_ID),
+                route_resolver,
+            )
             .expect("register route resolver");
 
-        let right_plan = CONTROLLER_PROGRAM
-            .control_plans()
-            .find(|info| info.label == RouteRight::LABEL)
-            .expect("route plan present");
-        let right_scope = right_plan.scope_id;
-        assert!(!right_scope.is_none(), "route plan must capture scope id");
-        assert_eq!(
-            right_plan.plan.scope(),
-            right_scope,
-            "control plan scope should round-trip"
-        );
-        let right_trace = right_plan
-            .scope_trace
-            .expect("route plan must expose scope trace");
-        assert_eq!(
-            right_trace,
-            scope_trace_for_role(&CONTROLLER_PROGRAM, right_scope),
-            "route plan trace must match typestate atlas"
-        );
-
-        cluster
-            .register_control_plan_resolver(rv_id, &right_plan, route_resolver)
-            .expect("register route resolver");
-
-        // First attempt: resolver rejects (ROUTE_ALLOW = false)
+        // First attempt: resolver rejects, but self-send send-path must not
+        // re-evaluate dynamic route policy after arm selection.
         let sid = SessionId::new(7);
 
         let worker_endpoint = cluster
-            .attach_cursor::<1, _, _, _>(rv_id, sid, &WORKER_PROGRAM, NoBinding)
+            .enter(rv_id, sid, &WORKER_PROGRAM, NoBinding)
             .expect("worker endpoint");
 
         ROUTE_ALLOW.store(false, Ordering::Relaxed);
         let controller_cursor = cluster
-            .attach_cursor::<0, _, _, _>(rv_id, sid, &CONTROLLER_PROGRAM, NoBinding)
+            .enter(rv_id, sid, &CONTROLLER_PROGRAM, NoBinding)
             .expect("controller endpoint");
 
-        // With self-send CanonicalControl, flow() returns SendError::PolicyAbort when resolver rejects
-        match controller_cursor.flow::<RouteLeft>() {
-            Ok(_) => panic!("route should have aborted on disallowed arm"),
-            Err(SendError::PolicyAbort { reason }) => {
-                assert_eq!(reason, ROUTE_POLICY_ID);
-            }
-            Err(other) => panic!("unexpected send error: {other:?}"),
-        }
+        let first_flow = controller_cursor
+            .flow::<Msg<
+                { LABEL_ROUTE_DECISION },
+                GenericCapToken<RouteDecisionKind>,
+                CanonicalControl<RouteDecisionKind>,
+            >>()
+            .expect("self-send route flow should be available");
+        let (controller_cursor, first_outcome) = first_flow
+            .send(())
+            .await
+            .expect("self-send route should not re-evaluate disallowed resolver");
+        assert!(first_outcome.is_canonical());
+        drop(controller_cursor);
 
         drop(worker_endpoint);
 
@@ -545,54 +540,106 @@ fn route_dynamic_resolver_skip_and_retry() {
         let sid2 = SessionId::new(8);
 
         let worker_endpoint = cluster
-            .attach_cursor::<1, _, _, _>(rv_id, sid2, &WORKER_PROGRAM, NoBinding)
+            .enter(rv_id, sid2, &WORKER_PROGRAM, NoBinding)
             .expect("worker endpoint (retry)");
 
         let controller_cursor = cluster
-            .attach_cursor::<0, _, _, _>(rv_id, sid2, &CONTROLLER_PROGRAM, NoBinding)
+            .enter(rv_id, sid2, &CONTROLLER_PROGRAM, NoBinding)
             .expect("controller endpoint (retry)");
 
         // Use flow().send(()) pattern for self-send CanonicalControl
         let send_flow = controller_cursor
-            .flow::<RouteLeft>()
+            .flow::<Msg<
+                { LABEL_ROUTE_DECISION },
+                GenericCapToken<RouteDecisionKind>,
+                CanonicalControl<RouteDecisionKind>,
+            >>()
             .expect("route should proceed when allowed");
 
-        let meta = send_flow.meta();
-        assert_eq!(meta.resource, Some(RouteDecisionKind::TAG));
-        assert_eq!(meta.eff_index, left_plan.eff_index);
-
-        let (controller_endpoint, outcome) = send_flow
-            .send(())
-            .await
-            .expect("send route decision");
-        assert!(matches!(outcome, ControlOutcome::Canonical(_)));
+        let (controller_endpoint, outcome) = send_flow.send(()).await.expect("send route decision");
+        assert!(outcome.is_canonical());
 
         // Worker doesn't receive anything for self-send control - the route decision
         // is purely local to the Controller. Worker endpoint is already at end state.
         drop(worker_endpoint);
         drop(controller_endpoint);
 
-        let tap_snapshot = tap_snapshot(&*cluster, rv_id, tap_cursor);
-        let endpoint_events = tap_snapshot.endpoint_events();
-        let (policy_records, failures) = tap_snapshot.policy_records();
-        assert!(
-            failures.is_empty(),
-            "route tap normalisation reported lane failures: {failures:?}"
-        );
-        let atlas: Vec<_> = CONTROLLER_PROGRAM.scope_regions().collect();
-        let correlations = correlate_scope_traces(&endpoint_events, &policy_records, &atlas);
-        let route_trace = CONTROLLER_PROGRAM
-            .control_plans()
-            .find(|info| info.label == RouteLeft::LABEL)
-            .and_then(|info| info.scope_trace)
-            .expect("route scope trace available");
-        // With flow().send(()), control events are still recorded for observability
-        if let Some(entry) = correlations.get(&route_trace) {
-            // Control events may or may not be present depending on tap configuration
-            let _ = entry;
-        }
+        assert!(transport_queue_is_empty(&transport));
+    });
+}
 
-        assert!(transport.queue_is_empty());
+#[test]
+fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
+    run_with_large_stack_async(|| async {
+        let tap_buf = leak_tap_storage();
+        let slab = leak_slab(2048);
+        let config = Config::new(tap_buf, slab);
+        let transport = TestTransport::default();
+        let policy_input0 = Arc::new(AtomicU32::new(0));
+
+        let cluster: &mut SessionCluster<
+            'static,
+            TestTransport,
+            DefaultLabelUniverse,
+            hibana::substrate::runtime::CounterClock,
+            4,
+        > = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+        let rv_id = cluster
+            .add_rendezvous_from_config(config, transport.clone())
+            .expect("register rendezvous");
+
+        cluster
+            .set_resolver(
+                rv_id,
+                &CONTROLLER_PROGRAM,
+                hibana::substrate::policy::PolicyId::new(ROUTE_POLICY_ID),
+                route_policy_input_resolver,
+            )
+            .expect("register route resolver");
+
+        let sid = SessionId::new(9);
+        let worker = cluster
+            .enter(rv_id, sid, &WORKER_PROGRAM, NoBinding)
+            .expect("worker endpoint");
+        let controller = cluster
+            .enter(
+                rv_id,
+                sid,
+                &CONTROLLER_PROGRAM,
+                PolicyInputBinding::new(policy_input0.clone()),
+            )
+            .expect("controller endpoint");
+
+        let send_flow = controller
+            .flow::<Msg<
+                { LABEL_ROUTE_DECISION },
+                GenericCapToken<RouteDecisionKind>,
+                CanonicalControl<RouteDecisionKind>,
+            >>()
+            .expect("route should select left arm");
+
+        policy_input0.store(1, Ordering::Relaxed);
+
+        let (controller, outcome) = send_flow.send(()).await.expect("send route decision");
+        let handle = outcome
+            .into_canonical()
+            .expect("expected canonical control token")
+            .as_generic()
+            .decode_handle()
+            .expect("decode canonical route decision handle");
+
+        assert_eq!(
+            handle.arm, 0,
+            "token arm must remain equal to offer-selected arm"
+        );
+        assert!(
+            !handle.scope.is_none(),
+            "canonical route decision handle must carry a materialized scope"
+        );
+
+        drop(worker);
+        drop(controller);
+        assert!(transport_queue_is_empty(&transport));
     });
 }
 
@@ -607,25 +654,6 @@ fn route_dynamic_resolver_skip_and_retry() {
 fn loop_dynamic_resolver_policy_abort_and_success() {
     // Verify the loop program compiles with self-send semantics
     let _controller_program = &LOOP_CONTROLLER_PROGRAM;
-
-    // Verify control plans are still accessible
-    let plans: Vec<_> = LOOP_CONTROLLER_PROGRAM.control_plans().collect();
-    assert!(
-        plans.len() >= 2,
-        "loop continue/break plans should be present, got {}",
-        plans.len()
-    );
-
-    // Verify we can find both continue and break plans
-    let continue_plan = plans
-        .iter()
-        .find(|p| p.label == hibana::runtime::consts::LABEL_LOOP_CONTINUE);
-    let break_plan = plans
-        .iter()
-        .find(|p| p.label == hibana::runtime::consts::LABEL_LOOP_BREAK);
-
-    assert!(continue_plan.is_some(), "continue plan should exist");
-    assert!(break_plan.is_some(), "break plan should exist");
 }
 
 /// Test nested routes with flow().send(()) pattern.
@@ -633,210 +661,26 @@ fn loop_dynamic_resolver_policy_abort_and_success() {
 /// With self-send CanonicalControl (Controller → Controller), all route decisions
 /// are local to the Controller role. Worker doesn't participate in route control.
 #[test]
-fn nested_route_dynamic_send_and_offer() {
-    support::run_with_large_stack_async(|| async {
-        let tap_buf = leak_tap_storage();
-        let slab = leak_slab(4096);
-        let config = Config::new(tap_buf, slab);
-        let transport = TestTransport::default();
-
-        let rendezvous: Rendezvous<
-            '_,
-            '_,
-            TestTransport,
-            DefaultLabelUniverse,
-            hibana::runtime::config::CounterClock,
-        > = Rendezvous::from_config(config, transport.clone());
-
-        let cluster: &mut Cluster = Box::leak(Box::new(SessionCluster::new(leak_clock())));
-
-        let rv_id = cluster
-            .add_rendezvous(rendezvous)
-            .expect("register rendezvous");
-        let _tap_guard = GlobalTapGuard::new(&*cluster, rv_id);
-        let mut tap_cursor = tap_head(&*cluster, rv_id);
-
-        register_nested_route_resolvers(cluster, rv_id);
-        let route_atlas: Vec<_> = NESTED_CONTROLLER_PROGRAM.scope_regions().collect();
-        let route_traces = unique_dynamic_traces(&NESTED_CONTROLLER_PROGRAM);
-        let outer_trace = route_traces
-            .get(0)
-            .copied()
-            .expect("outer route trace available");
-        let inner_trace = route_traces
-            .get(1)
-            .copied()
-            .expect("inner route trace available");
-
-        for (idx, inner_arm) in [0u8, 1u8].into_iter().enumerate() {
-            NESTED_OUTER_ARM_SELECTION.store(0, Ordering::Relaxed);
-            NESTED_INNER_ARM_SELECTION.store(inner_arm, Ordering::Relaxed);
-
-            let sid = SessionId::new((30 + idx as u16).into());
-            let worker = cluster
-                .attach_cursor::<1, _, _, _>(rv_id, sid, &NESTED_WORKER_PROGRAM, NoBinding)
-                .expect("worker endpoint");
-            let controller = cluster
-                .attach_cursor::<0, _, _, _>(rv_id, sid, &NESTED_CONTROLLER_PROGRAM, NoBinding)
-                .expect("controller endpoint");
-
-            #[cfg(feature = "test-utils")]
-            assert_eq!(
-                controller.phase_cursor().label(),
-                Some(RouteLeft::LABEL),
-                "expected outer route label"
-            );
-            // Self-send control is a local action, not a send
-            #[cfg(feature = "test-utils")]
-            assert!(
-                controller.phase_cursor().is_local_action(),
-                "controller cursor should be at local action for self-send control"
-            );
-
-            // Outer route: use flow().send(()) for self-send CanonicalControl
-            let (controller, outcome) = controller
-                .flow::<RouteLeft>()
-                .expect("outer route flow")
-                .send(())
-                .await
-                .expect("send outer route decision");
-            assert!(matches!(outcome, ControlOutcome::Canonical(_)));
-
-            // Inner route: use flow().send(()) for self-send CanonicalControl
-            let controller = if inner_arm == 0 {
-                let (controller, outcome) = controller
-                    .flow::<RouteLeft>()
-                    .expect("inner left flow")
-                    .send(())
-                    .await
-                    .expect("send inner left route decision");
-                assert!(matches!(outcome, ControlOutcome::Canonical(_)));
-                controller
-            } else {
-                let (controller, outcome) = controller
-                    .flow::<RouteRight>()
-                    .expect("inner right flow")
-                    .send(())
-                    .await
-                    .expect("send inner right route decision");
-                assert!(matches!(outcome, ControlOutcome::Canonical(_)));
-                controller
-            };
-
-            // Worker doesn't participate in self-send control - no offer/decode needed
-            drop(worker);
-            drop(controller);
-
-            let snapshot = tap_snapshot(&*cluster, rv_id, tap_cursor);
-            tap_cursor = snapshot.end();
-            let endpoint_events = snapshot.endpoint_events();
-            let (policy_records, failures) = snapshot.policy_records();
-            assert!(
-                failures.is_empty(),
-                "nested route tap normalisation reported lane failures: {failures:?}"
-            );
-            let correlations =
-                correlate_scope_traces(&endpoint_events, &policy_records, &route_atlas);
-
-            // With flow().send(()), control events may be recorded for observability
-            if let Some(outer_entry) = correlations.get(&outer_trace) {
-                let _ = outer_entry;
-            }
-            if let Some(inner_entry) = correlations.get(&inner_trace) {
-                let _ = inner_entry;
-            }
-        }
-
-        assert!(transport.queue_is_empty());
-    });
-}
-
-#[test]
 fn nested_loop_dynamic_send_and_offer() {
     let tap_buf = leak_tap_storage();
     let slab = leak_slab(4096);
     let config = Config::new(tap_buf, slab);
     let transport = TestTransport::default();
 
-    let rendezvous: Rendezvous<
-        '_,
-        '_,
+    let cluster: &mut SessionCluster<
+        'static,
         TestTransport,
         DefaultLabelUniverse,
-        hibana::runtime::config::CounterClock,
-    > = Rendezvous::from_config(config, transport.clone());
-
-    let cluster: &mut Cluster = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+        hibana::substrate::runtime::CounterClock,
+        4,
+    > = Box::leak(Box::new(SessionCluster::new(leak_clock())));
 
     let _rv_id = cluster
-        .add_rendezvous(rendezvous)
+        .add_rendezvous_from_config(config, transport.clone())
         .expect("register rendezvous");
 
     // With self-send loops, verify the type definitions compile correctly
     let _controller_program = &NESTED_LOOP_CONTROLLER_PROGRAM;
 
-    // Verify control plans are still accessible
-    let plans: Vec<_> = NESTED_LOOP_CONTROLLER_PROGRAM.control_plans().collect();
-    assert!(
-        plans.len() >= 2,
-        "nested loop continue/break plans should be present, got {}",
-        plans.len()
-    );
-
-    assert!(transport.queue_is_empty());
-}
-
-#[derive(Clone, Copy, Debug)]
-struct RouteRightKind;
-
-impl ResourceKind for RouteRightKind {
-    type Handle = RouteDecisionHandle;
-    const TAG: u8 = RouteDecisionKind::TAG;
-    const NAME: &'static str = "RouteRightDecision";
-
-    fn encode_handle(handle: &Self::Handle) -> [u8; hibana::control::cap::CAP_HANDLE_LEN] {
-        handle.encode()
-    }
-
-    fn decode_handle(
-        data: [u8; hibana::control::cap::CAP_HANDLE_LEN],
-    ) -> Result<Self::Handle, CapError> {
-        RouteDecisionHandle::decode(data)
-    }
-
-    fn zeroize(handle: &mut Self::Handle) {
-        handle.arm = 0;
-        handle.scope = ScopeId::generic(0);
-    }
-
-    fn caps_mask(_handle: &Self::Handle) -> CapsMask {
-        CapsMask::empty()
-    }
-}
-
-impl SessionScopedKind for RouteRightKind {
-    fn handle_for_session(
-        _sid: hibana::control::types::SessionId,
-        _lane: hibana::rendezvous::Lane,
-    ) -> Self::Handle {
-        RouteDecisionHandle::default()
-    }
-}
-
-impl ControlResourceKind for RouteRightKind {
-    const LABEL: u8 = 11;
-    const SCOPE: ControlScopeKind = ControlScopeKind::Route;
-    const TAP_ID: u16 = <RouteDecisionKind as ControlResourceKind>::TAP_ID;
-    const SHOT: CapShot = CapShot::One;
-    const HANDLING: hibana::g::ControlHandling = hibana::g::ControlHandling::Canonical;
-}
-
-impl hibana::control::cap::ControlMint for RouteRightKind {
-    fn mint_handle(
-        _sid: hibana::rendezvous::SessionId,
-        _lane: hibana::rendezvous::Lane,
-        scope: hibana::global::const_dsl::ScopeId,
-    ) -> Self::Handle {
-        RouteDecisionHandle::new(scope, 0)
-    }
+    assert!(transport_queue_is_empty(&transport));
 }

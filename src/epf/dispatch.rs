@@ -1,13 +1,10 @@
-use crate::{
-    control::{CpEffect, cap::CapsMask},
-    epf::vm::Slot,
-};
+use crate::{control::cap::mint::CapsMask, control::cluster::effects::CpEffect, epf::vm::Slot};
 
 use super::ops;
 
 /// Rendezvous control operations surfaced by the VM.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RaOp {
+pub(crate) enum RaOp {
     /// Begin a splice operation.
     SpliceBegin { arg: u32 },
     /// Commit a splice operation.
@@ -23,7 +20,7 @@ pub enum RaOp {
 impl RaOp {
     /// Control-plane effect produced by this call.
     #[inline]
-    pub const fn effect(self) -> CpEffect {
+    pub(crate) const fn effect(self) -> CpEffect {
         match self {
             RaOp::SpliceBegin { .. } => CpEffect::SpliceBegin,
             RaOp::SpliceCommit { .. } => CpEffect::SpliceCommit,
@@ -33,28 +30,16 @@ impl RaOp {
         }
     }
 
-    /// Optional operand carried by the decoded call.
-    #[inline]
-    pub const fn operand(self) -> Option<u32> {
-        match self {
-            RaOp::SpliceBegin { arg } | RaOp::SpliceCommit { arg } | RaOp::SpliceAbort { arg } => {
-                Some(arg)
-            }
-            RaOp::Rollback { generation } => Some(generation),
-            RaOp::Checkpoint => None,
-        }
-    }
-
     /// Capability required to execute this call.
     #[inline]
-    pub const fn required_effect(self) -> CpEffect {
+    pub(crate) const fn required_effect(self) -> CpEffect {
         self.effect()
     }
 }
 
 /// Errors surfaced by the dispatch layer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SyscallError {
+pub(crate) enum SyscallError {
     /// Attempted to invoke an unknown effect opcode.
     UnknownEffectOpcode(u8),
     /// Capability check failed for the given slot.
@@ -62,7 +47,7 @@ pub enum SyscallError {
 }
 
 /// Map the byte-sized effect opcode used in bytecode to a concrete [`RaOp`].
-pub fn decode_effect_call(op: u8, arg: u32) -> Result<RaOp, SyscallError> {
+pub(crate) fn decode_effect_call(op: u8, arg: u32) -> Result<RaOp, SyscallError> {
     let ra = match op {
         ops::effect::SPLICE_BEGIN => RaOp::SpliceBegin { arg },
         ops::effect::SPLICE_COMMIT => RaOp::SpliceCommit { arg },
@@ -75,7 +60,7 @@ pub fn decode_effect_call(op: u8, arg: u32) -> Result<RaOp, SyscallError> {
 }
 
 /// Validate that the requested control-plane effect is permitted for the given slot.
-pub fn ensure_allowed(slot: Slot, caps: CapsMask, op: RaOp) -> Result<RaOp, SyscallError> {
+pub(crate) fn ensure_allowed(slot: Slot, caps: CapsMask, op: RaOp) -> Result<RaOp, SyscallError> {
     // Current policy: only the rendezvous slot may request control-plane effects.
     // Other slots are limited to Proceed/Abort/Tap annotations.
     if !matches!(slot, Slot::Rendezvous) {
@@ -96,7 +81,7 @@ pub fn ensure_allowed(slot: Slot, caps: CapsMask, op: RaOp) -> Result<RaOp, Sysc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::control::CpEffect;
+    use crate::control::cluster::effects::CpEffect;
 
     #[test]
     fn capability_bits_roundtrip() {
@@ -112,10 +97,10 @@ mod tests {
     fn raop_reports_cp_effect() {
         let begin = RaOp::SpliceBegin { arg: 7 };
         assert_eq!(begin.effect(), CpEffect::SpliceBegin);
-        assert_eq!(begin.operand(), Some(7));
+        assert!(matches!(begin, RaOp::SpliceBegin { arg: 7 }));
         let checkpoint = RaOp::Checkpoint;
         assert_eq!(checkpoint.effect(), CpEffect::Checkpoint);
-        assert_eq!(checkpoint.operand(), None);
+        assert!(matches!(checkpoint, RaOp::Checkpoint));
     }
 
     #[test]

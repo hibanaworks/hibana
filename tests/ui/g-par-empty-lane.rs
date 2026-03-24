@@ -1,9 +1,9 @@
 use hibana::g;
+use hibana::g::advanced::steps::StepNil;
 
-// Parallel lanes must contain at least one step. Attempting to lift an empty
-// program into `par_chain` should fail at compile time.
+// Parallel lanes must contain at least one step.
 const _: () = {
-    let _ = g::par(g::par_chain(g::Program::empty()));
+    let _ = g::par(StepNil::PROGRAM, StepNil::PROGRAM);
 };
 
 fn main() {}

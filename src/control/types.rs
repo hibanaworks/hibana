@@ -4,66 +4,36 @@
 //! - No cross-lane aliasing
 //! - At-most-once commit
 //! - Strictly increasing generation
-//! - One-shot vs multi-shot discipline
+//! - Single-use shot discipline
 
 /// Marker trait: guarantees no cross-lane aliasing.
 ///
 /// Types implementing this trait ensure that multiple lanes cannot alias the same resource.
-/// This is enforced by the `UniqueId` newtype in `assoc.rs`.
-pub trait NoCrossLaneAliasing {}
+pub(crate) trait NoCrossLaneAliasing {}
 
 /// Marker trait: guarantees at-most-once commit.
 ///
 /// Types implementing this trait ensure that a transaction can be committed at most once.
-pub trait AtMostOnceCommit {}
-
-/// Marker trait: guarantees strictly increasing generation.
-///
-/// Types implementing this trait ensure that generation numbers are monotonically increasing.
-pub trait StrictlyIncreasingGen {}
+pub(crate) trait AtMostOnceCommit {}
 
 /// Type marker for strictly increasing generation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct IncreasingGen;
-
-impl StrictlyIncreasingGen for IncreasingGen {}
-
-/// Marker trait: one-shot discipline.
-///
-/// One-shot sessions/capabilities can be used exactly once.
-pub trait OneShot: Sealed {}
-
-/// Marker trait: multi-shot discipline.
-///
-/// Multi-shot sessions/capabilities can be used multiple times.
-pub trait MultiShot: Sealed {}
-
-/// Sealed trait to prevent external implementation of shot disciplines.
-mod sealed {
-    pub trait Sealed {}
-}
-use sealed::Sealed;
+pub(crate) struct IncreasingGen;
 
 /// One-shot type marker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct One;
 
-impl Sealed for One {}
-impl OneShot for One {}
-
 /// Multi-shot type marker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Many;
 
-impl Sealed for Many {}
-impl MultiShot for Many {}
-
 /// Lane identifier (newtype for type safety).
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct LaneId(pub u32);
+pub struct Lane(pub u32);
 
-impl LaneId {
+impl Lane {
     /// Create a new lane identifier.
     pub const fn new(id: u32) -> Self {
         Self(id)
@@ -87,9 +57,9 @@ impl LaneId {
 /// Generation number (newtype for type safety).
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct Gen(pub u16);
+pub struct Generation(pub u16);
 
-impl Gen {
+impl Generation {
     /// Initial generation.
     pub const ZERO: Self = Self(0);
 
@@ -106,8 +76,8 @@ impl Gen {
     /// Convert to wire format (u16).
     ///
     /// # Note
-    /// Gen is already u16, so this is an identity operation.
-    /// Provided for consistency with LaneId::as_wire().
+    /// Generation is already u16, so this is an identity operation.
+    /// Provided for consistency with Lane::as_wire().
     pub const fn as_wire(self) -> u16 {
         self.0
     }
@@ -152,82 +122,19 @@ impl RendezvousId {
     }
 }
 
-/// Universe identifier (newtype for type safety).
-///
-/// A universe is a collection of rendezvous instances that share a common namespace.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct UniverseId(pub u32);
-
-impl UniverseId {
-    /// Create a new universe identifier.
-    pub const fn new(id: u32) -> Self {
-        Self(id)
-    }
-
-    /// Get the raw universe identifier.
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
-}
-
-/// Domain identifier (newtype for trust boundaries).
-///
-/// A domain represents a trust boundary (e.g., same process, same node, same data center).
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct DomainId(pub u16);
-
-impl DomainId {
-    /// Same process (highest trust).
-    pub const SAME_PROCESS: Self = Self(0);
-
-    /// Same node (trusted).
-    pub const SAME_NODE: Self = Self(1);
-
-    /// Same data center (partially trusted).
-    pub const SAME_DC: Self = Self(2);
-
-    /// Remote (untrusted).
-    pub const REMOTE: Self = Self(0xFFFF);
-
-    /// Create a new domain identifier.
-    pub const fn new(id: u16) -> Self {
-        Self(id)
-    }
-
-    /// Get the raw domain identifier.
-    pub const fn raw(self) -> u16 {
-        self.0
-    }
-
-    /// Returns true if this domain requires MAC authentication.
-    pub const fn requires_mac(self) -> bool {
-        self.0 >= Self::SAME_DC.0
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_gen_bump() {
-        let generation = Gen::ZERO;
-        assert_eq!(generation.bump(), Gen::new(1));
-        assert_eq!(generation.bump().bump(), Gen::new(2));
+        let generation = Generation::ZERO;
+        assert_eq!(generation.bump(), Generation::new(1));
+        assert_eq!(generation.bump().bump(), Generation::new(2));
 
         // Saturating behavior
-        let max_gen = Gen::new(u16::MAX);
+        let max_gen = Generation::new(u16::MAX);
         assert_eq!(max_gen.bump(), max_gen);
-    }
-
-    #[test]
-    fn test_domain_mac_requirement() {
-        assert!(!DomainId::SAME_PROCESS.requires_mac());
-        assert!(!DomainId::SAME_NODE.requires_mac());
-        assert!(DomainId::SAME_DC.requires_mac());
-        assert!(DomainId::REMOTE.requires_mac());
     }
 }
 

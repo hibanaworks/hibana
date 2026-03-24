@@ -1,16 +1,12 @@
-use hibana::g::{self, SendStep, StepCons, StepNil};
-use hibana::runtime::consts::LABEL_CHECKPOINT;
+use hibana::g::advanced::steps::{SendStep, StepCons, StepNil};
+use hibana::g::{self};
 
-type Controller = g::Role<0>;
-type Target = g::Role<1>;
+const LABEL_CHECKPOINT: u8 = 61;
 
-type Steps = StepCons<
-    SendStep<Controller, Target, g::Msg<LABEL_CHECKPOINT, ()>>,
-    StepNil,
->;
-
-const BAD: g::Program<Steps> =
-    g::send::<Controller, Target, g::Msg<LABEL_CHECKPOINT, ()>>();
+const BAD: g::Program<
+    StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<LABEL_CHECKPOINT, ()>, 0>, StepNil>,
+> =
+    g::send::<g::Role<0>, g::Role<1>, g::Msg<LABEL_CHECKPOINT, ()>, 0>();
 
 fn main() {
     let _ = BAD;

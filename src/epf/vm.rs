@@ -26,6 +26,7 @@
 //! | `0x31` | `ACT_ABORT imm16`               | `reason:le u16`          | Emit [`VmAction::Abort { reason }`]. |
 //! | `0x32` | `ACT_ANNOT key, rs`             | `key:le u16, val:u8`     | Store annotation in [`VmCtx`] (non-terminal), value from `rs`. |
 //! | `0x33` | `ACT_ROUTE rs`                  | `rs:u8`                  | Return route arm from `rs` and terminate. |
+//! | `0x34` | `ACT_DEFER rs`                  | `rs:u8`                  | Return defer retry hint from `rs` and terminate. |
 //! | `0x40` | `GET_LATENCY rd`                | `dest:u8`                | Load the current transport latency (µs, saturated to `u32`) into `rd`. |
 //! | `0x41` | `GET_QUEUE rd`                  | `dest:u8`                | Load the current queue depth (frames) into `rd`. |
 //! | `0x43` | `GET_CONGESTION rd`             | `dest:u8`                | Load the observed congestion mark count into `rd`. |
@@ -36,6 +37,7 @@
 //! | `0x48` | `GET_EVENT_ID rd`               | `dest:u8`                | Load the triggering event's id (u16) into `rd`. |
 //! | `0x49` | `GET_EVENT_ARG0 rd`             | `dest:u8`                | Load the triggering event's arg0 into `rd`. |
 //! | `0x4A` | `GET_EVENT_ARG1 rd`             | `dest:u8`                | Load the triggering event's arg1 into `rd`. |
+//! | `0x4B` | `GET_INPUT rd, imm8`            | `dest:u8, idx:u8`        | Load `policy_input[idx]` into `rd` (`idx: 0..=3`). |
 //! | `0x50` | `SHR rd, rs, imm8`              | `dest:u8, src:u8, shift:u8` | Shift right: `rd = rs >> imm8` (masked to 0-31). |
 //! | `0x51` | `AND rd, rs, rt`                | `dest:u8, src1:u8, src2:u8` | Bitwise AND: `rd = rs & rt`. |
 //!
@@ -46,12 +48,10 @@
 //! bytecode, but the interpreter defends against malformed images.
 
 use crate::{
-    control::cap::{CAP_HANDLE_LEN, CapsMask, HandleView, ResourceKind, VmHandleError},
-    observe::{
-        AssociationSnapshot, TapEvent,
-        scope::{ScopeTrace, tap_scope},
-    },
-    rendezvous::{Lane, SessionId},
+    control::cap::mint::CapsMask,
+    control::types::{Lane, SessionId},
+    observe::core::TapEvent,
+    observe::scope::{ScopeTrace, tap_scope},
     transport::TransportSnapshot,
 };
 
@@ -74,7 +74,7 @@ pub enum Slot {
 
 /// Trap reasons emitted by the interpreter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Trap {
+pub(crate) enum Trap {
     FuelExhausted,
     IllegalOpcode(u8),
     OutOfBounds,
@@ -84,7 +84,7 @@ pub enum Trap {
 
 /// Host-facing action emitted by the VM.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VmAction {
+pub(crate) enum VmAction {
     Proceed,
     Abort {
         reason: u16,
@@ -101,54 +101,49 @@ pub enum VmAction {
     Route {
         arm: u8,
     },
+    /// Request route re-evaluation from the Route slot.
+    Defer {
+        retry_hint: u8,
+    },
 }
 
 /// Maximum annotations that can be stored per VM invocation.
-pub const ANNOT_CAP: usize = 4;
+pub(crate) const ANNOT_CAP: usize = 4;
 
 /// A single annotation entry (key-value pair).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Annotation {
+pub(crate) struct Annotation {
     pub key: u16,
     pub val: u32,
 }
 
-#[derive(Debug)]
-struct HandleData {
-    tag: u8,
-    bytes: [u8; CAP_HANDLE_LEN],
-    caps: CapsMask,
-}
-
 /// Execution context punctured into the interpreter.
 #[derive(Debug)]
-pub struct VmCtx<'a> {
-    pub slot: Slot,
-    pub event: &'a TapEvent,
-    pub assoc: Option<&'a AssociationSnapshot>,
-    pub caps: CapsMask,
-    pub session: Option<SessionId>,
-    pub lane: Option<Lane>,
-    pub scope: Option<ScopeTrace>,
-    handle: Option<HandleData>,
+pub(crate) struct VmCtx<'a> {
+    slot: Slot,
+    event: &'a TapEvent,
+    caps: CapsMask,
+    session: Option<SessionId>,
+    lane: Option<Lane>,
+    scope: Option<ScopeTrace>,
     transport: TransportSnapshot,
+    policy_input: [u32; 4],
     annotations: [Annotation; ANNOT_CAP],
     annot_len: u8,
     annot_cnt: u8,
 }
 
 impl<'a> VmCtx<'a> {
-    pub fn new(slot: Slot, event: &'a TapEvent, caps: CapsMask) -> Self {
+    pub(crate) fn new(slot: Slot, event: &'a TapEvent, caps: CapsMask) -> Self {
         Self {
             slot,
             event,
-            assoc: None,
             caps,
             session: None,
             lane: None,
             scope: tap_scope(event),
-            handle: None,
             transport: TransportSnapshot::default(),
+            policy_input: [0; 4],
             annotations: [Annotation::default(); ANNOT_CAP],
             annot_len: 0,
             annot_cnt: 0,
@@ -157,80 +152,43 @@ impl<'a> VmCtx<'a> {
 
     /// Attach the session identifier for this invocation.
     #[inline]
-    pub fn set_session(&mut self, session: SessionId) {
+    pub(crate) fn set_session(&mut self, session: SessionId) {
         self.session = Some(session);
     }
 
     /// Attach the lane identifier for this invocation.
     #[inline]
-    pub fn set_lane(&mut self, lane: Lane) {
+    pub(crate) fn set_lane(&mut self, lane: Lane) {
         self.lane = Some(lane);
-    }
-
-    /// Attach the scope trace extracted from the triggering tap event.
-    #[inline]
-    pub fn set_scope(&mut self, scope: Option<ScopeTrace>) {
-        self.scope = scope;
-    }
-
-    /// Attach a capability handle view for this invocation.
-    #[inline]
-    pub fn set_handle(&mut self, tag: u8, payload: [u8; CAP_HANDLE_LEN], caps: CapsMask) {
-        self.handle = Some(HandleData {
-            tag,
-            bytes: payload,
-            caps,
-        });
     }
 
     /// Attach transport metrics snapshot for this invocation.
     #[inline]
-    pub fn set_transport_snapshot(&mut self, snapshot: TransportSnapshot) {
+    pub(crate) fn set_transport_snapshot(&mut self, snapshot: TransportSnapshot) {
         self.transport = snapshot;
+    }
+
+    /// Attach policy input arguments for this invocation.
+    #[inline]
+    pub(crate) fn set_policy_input(&mut self, input: [u32; 4]) {
+        self.policy_input = input;
     }
 
     /// Retrieve the currently attached transport metrics snapshot.
     #[inline]
-    pub fn transport_snapshot(&self) -> TransportSnapshot {
+    pub(crate) fn transport_snapshot(&self) -> TransportSnapshot {
         self.transport
     }
 
-    /// Execute `f` with a typed handle view.
+    /// Validate that the VM is authorised to emit the given [`crate::control::cluster::effects::CpEffect`] and return it.
     #[inline]
-    pub fn with_handle<K, R>(
-        &self,
-        f: impl FnOnce(HandleView<'_, K>) -> R,
-    ) -> Result<R, VmHandleError>
-    where
-        K: ResourceKind,
-    {
-        let data = self.handle.as_ref().ok_or(VmHandleError::NotAvailable)?;
-        if data.tag != K::TAG {
-            return Err(VmHandleError::TagMismatch {
-                expected: K::TAG,
-                actual: data.tag,
-            });
-        }
-        let view =
-            HandleView::decode(&data.bytes, data.caps).map_err(|_| VmHandleError::DecodeFailed)?;
-        Ok(f(view))
-    }
-
-    /// Validate that the VM is authorised to emit the given [`crate::control::CpEffect`] and return it.
-    #[inline]
-    pub fn ensure_effect(&self, call: RaOp) -> Result<RaOp, SyscallError> {
+    pub(crate) fn ensure_effect(&self, call: RaOp) -> Result<RaOp, SyscallError> {
         dispatch::ensure_allowed(self.slot, self.caps, call)
-    }
-
-    /// Returns `true` when the current capability set allows the specified effect.
-    #[inline]
-    pub fn effect_allowed(&self, call: RaOp) -> bool {
-        self.ensure_effect(call).is_ok()
     }
 
     /// Scope trace associated with the triggering tap, when present.
     #[inline]
-    pub fn scope_trace(&self) -> Option<ScopeTrace> {
+    pub(crate) fn scope_trace(&self) -> Option<ScopeTrace> {
         self.scope
     }
 
@@ -248,37 +206,40 @@ impl<'a> VmCtx<'a> {
     }
 
     /// Returns the stored annotations (up to [`ANNOT_CAP`]).
+    #[cfg(test)]
     #[inline]
-    pub fn annotations(&self) -> &[Annotation] {
+    pub(crate) fn annotations(&self) -> &[Annotation] {
         &self.annotations[..self.annot_len as usize]
     }
 
     /// Total number of `ACT_ANNOT` calls during this execution (may exceed buffer size).
+    #[cfg(test)]
     #[inline]
-    pub fn annot_count(&self) -> u8 {
+    pub(crate) fn annot_count(&self) -> u8 {
         self.annot_cnt
     }
 
     /// Returns `true` if some annotations were dropped due to buffer saturation.
+    #[cfg(test)]
     #[inline]
-    pub fn annot_dropped(&self) -> bool {
+    pub(crate) fn annot_dropped(&self) -> bool {
         self.annot_cnt as usize > ANNOT_CAP
     }
 }
 
 /// Opaque VM instance (bytecode + scratch buffers).
-pub struct Vm<'code> {
+pub(crate) struct Vm<'code> {
     pub(crate) code: &'code [u8],
     pub(crate) fuel: u16,
     pub(crate) mem: &'code mut [u8],
 }
 
 impl<'code> Vm<'code> {
-    pub fn new(code: &'code [u8], mem: &'code mut [u8], fuel: u16) -> Self {
+    pub(crate) fn new(code: &'code [u8], mem: &'code mut [u8], fuel: u16) -> Self {
         Self { code, fuel, mem }
     }
 
-    pub fn execute<'a>(&mut self, ctx: &mut VmCtx<'a>) -> VmAction {
+    pub(crate) fn execute<'a>(&mut self, ctx: &mut VmCtx<'a>) -> VmAction {
         let mut regs = [0u32; REG_COUNT];
         let mut pc = 0usize;
         let mut fuel = self.fuel;
@@ -533,6 +494,27 @@ impl<'code> Vm<'code> {
                     };
                     regs[dest] = ctx.event.arg1;
                 }
+                ops::instr::GET_INPUT => {
+                    let dest = match read_reg(code, &mut pc) {
+                        Some(idx) => idx,
+                        None => {
+                            self.fuel = fuel;
+                            return VmAction::Trap(Trap::VerifyFailed);
+                        }
+                    };
+                    let idx = match read_u8(code, &mut pc) {
+                        Some(val) => val,
+                        None => {
+                            self.fuel = fuel;
+                            return VmAction::Trap(Trap::VerifyFailed);
+                        }
+                    };
+                    if idx > 3 {
+                        self.fuel = fuel;
+                        return VmAction::Trap(Trap::VerifyFailed);
+                    }
+                    regs[dest] = ctx.policy_input[idx as usize];
+                }
                 ops::instr::SHR => {
                     let dest = match read_reg(code, &mut pc) {
                         Some(idx) => idx,
@@ -720,6 +702,18 @@ impl<'code> Vm<'code> {
                     self.fuel = fuel;
                     return VmAction::Route { arm };
                 }
+                ops::instr::ACT_DEFER => {
+                    let reg = match read_reg(code, &mut pc) {
+                        Some(idx) => idx,
+                        None => {
+                            self.fuel = fuel;
+                            return VmAction::Trap(Trap::VerifyFailed);
+                        }
+                    };
+                    let retry_hint = (regs[reg] & 0xFF) as u8;
+                    self.fuel = fuel;
+                    return VmAction::Defer { retry_hint };
+                }
                 ops::instr::TAP_OUT => {
                     let id = match read_u16(code, &mut pc) {
                         Some(val) => val,
@@ -797,9 +791,8 @@ mod tests {
     use super::ops;
     use super::*;
     use crate::{
-        control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind, LoopDecisionHandle},
-        global::const_dsl::ScopeId,
-        observe::{RawEvent, TapEvent, scope::ScopeTrace},
+        observe::core::TapEvent,
+        observe::{events::RawEvent, scope::ScopeTrace},
         transport::TransportSnapshot,
     };
 
@@ -852,46 +845,6 @@ mod tests {
     }
 
     #[test]
-    fn vm_ctx_with_handle_provides_view() {
-        let mut ctx = make_ctx(Slot::Rendezvous, CapsMask::allow_all());
-        let handle = LoopDecisionHandle::new(5, 3, ScopeId::loop_scope(2));
-        let payload = LoopContinueKind::encode_handle(&handle);
-        let expected_mask = LoopContinueKind::caps_mask(&handle);
-        ctx.set_handle(LoopContinueKind::TAG, payload, expected_mask);
-        let decoded = ctx
-            .with_handle::<LoopContinueKind, _>(|view| {
-                assert_eq!(view.bytes(), &payload);
-                assert_eq!(view.grant_mask().bits(), expected_mask.bits());
-                *view.handle()
-            })
-            .expect("handle view");
-
-        assert_eq!(decoded, handle);
-    }
-
-    #[test]
-    fn vm_ctx_with_handle_tag_mismatch_errors() {
-        let mut ctx = make_ctx(Slot::Rendezvous, CapsMask::allow_all());
-        let handle = LoopDecisionHandle::new(1, 0, ScopeId::route(1));
-        let payload = LoopContinueKind::encode_handle(&handle);
-        let mask = LoopContinueKind::caps_mask(&handle);
-        ctx.set_handle(LoopContinueKind::TAG, payload, mask);
-        let err = ctx
-            .with_handle::<LoopBreakKind, _>(|_| ())
-            .expect_err("expected tag mismatch");
-        assert!(matches!(err, VmHandleError::TagMismatch { .. }));
-    }
-
-    #[test]
-    fn vm_ctx_with_handle_not_available() {
-        let ctx = make_ctx(Slot::Rendezvous, CapsMask::allow_all());
-        let err = ctx
-            .with_handle::<LoopContinueKind, _>(|_| ())
-            .expect_err("handle missing");
-        assert_eq!(err, VmHandleError::NotAvailable);
-    }
-
-    #[test]
     fn act_route_returns_arm() {
         let code = [
             ops::instr::LOAD_IMM,
@@ -908,6 +861,25 @@ mod tests {
         let mut ctx = make_ctx(Slot::Route, CapsMask::allow_all());
         let action = vm.execute(&mut ctx);
         assert_eq!(action, VmAction::Route { arm: 2 });
+    }
+
+    #[test]
+    fn act_defer_returns_retry_hint() {
+        let code = [
+            ops::instr::LOAD_IMM,
+            0x00,
+            0x07,
+            0x00,
+            0x00,
+            0x00, // r0 = 7
+            ops::instr::ACT_DEFER,
+            0x00, // return defer retry hint from r0
+        ];
+        let mut mem = [0u8; 8];
+        let mut vm = Vm::new(&code, &mut mem, 8);
+        let mut ctx = make_ctx(Slot::Route, CapsMask::allow_all());
+        let action = vm.execute(&mut ctx);
+        assert_eq!(action, VmAction::Defer { retry_hint: 7 });
     }
 
     #[test]
@@ -953,7 +925,14 @@ mod tests {
     #[test]
     fn scope_loaders_surface_range_and_nest() {
         let scope = ScopeTrace::new(5, 9);
-        let event = crate::observe::EndpointSend::with_scope(0, 0, 0, scope.pack());
+        let event = TapEvent {
+            ts: 0,
+            id: crate::observe::ids::ENDPOINT_SEND,
+            causal_key: 0,
+            arg0: 0,
+            arg1: 0,
+            arg2: scope.pack(),
+        };
         let code = [
             ops::instr::GET_SCOPE_RANGE,
             0x00,
@@ -990,7 +969,14 @@ mod tests {
 
     #[test]
     fn scope_loaders_return_zero_without_metadata() {
-        let event = crate::observe::EndpointSend::new(0, 0, 0);
+        let event = TapEvent {
+            ts: 0,
+            id: crate::observe::ids::ENDPOINT_SEND,
+            causal_key: 0,
+            arg0: 0,
+            arg1: 0,
+            arg2: 0,
+        };
         let code = [
             ops::instr::GET_SCOPE_RANGE,
             0x00,
@@ -1122,26 +1108,86 @@ mod tests {
         assert!(!ctx.annot_dropped());
         let annots = ctx.annotations();
         assert_eq!(annots.len(), 2);
-        assert_eq!(annots[0], Annotation { key: 0x1234, val: 42 });
-        assert_eq!(annots[1], Annotation { key: 0x5678, val: 99 });
+        assert_eq!(
+            annots[0],
+            Annotation {
+                key: 0x1234,
+                val: 42
+            }
+        );
+        assert_eq!(
+            annots[1],
+            Annotation {
+                key: 0x5678,
+                val: 99
+            }
+        );
     }
 
     #[test]
     fn annot_saturation_detectable() {
         // 6 annotations: 4 stored, 2 dropped (count=6)
         let code = [
-            ops::instr::LOAD_IMM, 0x00, 0x01, 0x00, 0x00, 0x00, // r0 = 1
-            ops::instr::ACT_ANNOT, 0x01, 0x00, 0x00, // key=1
-            ops::instr::LOAD_IMM, 0x00, 0x02, 0x00, 0x00, 0x00, // r0 = 2
-            ops::instr::ACT_ANNOT, 0x02, 0x00, 0x00, // key=2
-            ops::instr::LOAD_IMM, 0x00, 0x03, 0x00, 0x00, 0x00, // r0 = 3
-            ops::instr::ACT_ANNOT, 0x03, 0x00, 0x00, // key=3
-            ops::instr::LOAD_IMM, 0x00, 0x04, 0x00, 0x00, 0x00, // r0 = 4
-            ops::instr::ACT_ANNOT, 0x04, 0x00, 0x00, // key=4
-            ops::instr::LOAD_IMM, 0x00, 0x05, 0x00, 0x00, 0x00, // r0 = 5
-            ops::instr::ACT_ANNOT, 0x05, 0x00, 0x00, // key=5 (dropped)
-            ops::instr::LOAD_IMM, 0x00, 0x06, 0x00, 0x00, 0x00, // r0 = 6
-            ops::instr::ACT_ANNOT, 0x06, 0x00, 0x00, // key=6 (dropped)
+            ops::instr::LOAD_IMM,
+            0x00,
+            0x01,
+            0x00,
+            0x00,
+            0x00, // r0 = 1
+            ops::instr::ACT_ANNOT,
+            0x01,
+            0x00,
+            0x00, // key=1
+            ops::instr::LOAD_IMM,
+            0x00,
+            0x02,
+            0x00,
+            0x00,
+            0x00, // r0 = 2
+            ops::instr::ACT_ANNOT,
+            0x02,
+            0x00,
+            0x00, // key=2
+            ops::instr::LOAD_IMM,
+            0x00,
+            0x03,
+            0x00,
+            0x00,
+            0x00, // r0 = 3
+            ops::instr::ACT_ANNOT,
+            0x03,
+            0x00,
+            0x00, // key=3
+            ops::instr::LOAD_IMM,
+            0x00,
+            0x04,
+            0x00,
+            0x00,
+            0x00, // r0 = 4
+            ops::instr::ACT_ANNOT,
+            0x04,
+            0x00,
+            0x00, // key=4
+            ops::instr::LOAD_IMM,
+            0x00,
+            0x05,
+            0x00,
+            0x00,
+            0x00, // r0 = 5
+            ops::instr::ACT_ANNOT,
+            0x05,
+            0x00,
+            0x00, // key=5 (dropped)
+            ops::instr::LOAD_IMM,
+            0x00,
+            0x06,
+            0x00,
+            0x00,
+            0x00, // r0 = 6
+            ops::instr::ACT_ANNOT,
+            0x06,
+            0x00,
+            0x00, // key=6 (dropped)
             ops::instr::HALT,
         ];
         let mut mem = [0u8; 4];
@@ -1158,13 +1204,15 @@ mod tests {
     }
 
     // =========================================================================
-    // Tests for new opcodes: GET_EVENT_ARG0, GET_EVENT_ARG1, SHR, AND, AND_IMM, JUMP_EQ_IMM
+    // Tests for new opcodes: GET_EVENT_ARG0, GET_EVENT_ARG1, GET_INPUT, SHR, AND, AND_IMM, JUMP_EQ_IMM
     // =========================================================================
 
     #[test]
     fn get_event_arg0_loads_arg0() {
         // Create event with known arg0 value
-        let event = crate::observe::RawEvent::new(0, 0x1234, 0xDEADBEEF, 0xCAFEBABE);
+        let event = crate::observe::events::RawEvent::new(0, 0x1234)
+            .with_arg0(0xDEADBEEF)
+            .with_arg1(0xCAFEBABE);
         // Use TAP_OUT to verify the loaded value (STORE_MEM only stores 1 byte)
         let code = [
             ops::instr::GET_EVENT_ARG0,
@@ -1192,7 +1240,9 @@ mod tests {
     #[test]
     fn get_event_arg1_loads_arg1() {
         // Create event with known arg1 value
-        let event = crate::observe::RawEvent::new(0, 0x1234, 0xDEADBEEF, 0xCAFEBABE);
+        let event = crate::observe::events::RawEvent::new(0, 0x1234)
+            .with_arg0(0xDEADBEEF)
+            .with_arg1(0xCAFEBABE);
         // Use TAP_OUT to verify the loaded value
         let code = [
             ops::instr::GET_EVENT_ARG1,
@@ -1215,6 +1265,54 @@ mod tests {
                 arg1: 0
             }
         );
+    }
+
+    #[test]
+    fn get_input_loads_input_arg() {
+        let event = crate::observe::events::RawEvent::new(0, 0x1234)
+            .with_arg0(0xDEADBEEF)
+            .with_arg1(0xCAFEBABE);
+        let code = [
+            ops::instr::GET_INPUT,
+            0x00, // r0
+            0x02, // input arg index 2
+            ops::instr::TAP_OUT,
+            0x99,
+            0x00, // id = 0x0099
+            0x00, // rs = r0
+            0x01, // rt = r1 (0)
+        ];
+        let mut mem = [0u8; 4];
+        let mut vm = Vm::new(&code, &mut mem, 8);
+        let mut ctx = VmCtx::new(Slot::EndpointTx, &event, CapsMask::allow_all());
+        ctx.set_policy_input([11, 22, 33, 44]);
+        let action = vm.execute(&mut ctx);
+        assert_eq!(
+            action,
+            VmAction::Tap {
+                id: 0x0099,
+                arg0: 33,
+                arg1: 0
+            }
+        );
+    }
+
+    #[test]
+    fn get_input_with_invalid_index_traps_verify_failed() {
+        let event = crate::observe::events::RawEvent::new(0, 0x1234)
+            .with_arg0(0xDEADBEEF)
+            .with_arg1(0xCAFEBABE);
+        let code = [
+            ops::instr::GET_INPUT,
+            0x00, // r0
+            0x04, // invalid index
+            ops::instr::HALT,
+        ];
+        let mut mem = [0u8; 4];
+        let mut vm = Vm::new(&code, &mut mem, 8);
+        let mut ctx = VmCtx::new(Slot::EndpointTx, &event, CapsMask::allow_all());
+        let action = vm.execute(&mut ctx);
+        assert_eq!(action, VmAction::Trap(Trap::VerifyFailed));
     }
 
     #[test]

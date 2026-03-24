@@ -1,28 +1,12 @@
-//! Control-plane facade built on top of the SessionCluster kernel.
+//! Internal control-plane kernel behind [`crate::substrate::SessionCluster`].
 //!
-//! Applications interact with the strongly typed [`SessionCluster`] defined
-//! here. It exposes rendezvous registration, effect evaluation, and endpoint
-//! execution. Internally it delegates CpEffect handling to the kernel in
-//! `control::cluster`, but no compatibility layer is kept – this is the canonical
-//! public API.
+//! `hibana` exposes only two public faces: the app surface at the crate root
+//! and the substrate surface at [`crate::substrate`]. This module houses the
+//! kernel types that power the substrate facade; it is not a third public face.
 
 /// Runtime configuration types.
-pub mod config;
+pub(crate) mod config;
 /// Runtime constants and label universe helpers.
-pub mod consts;
+pub(crate) mod consts;
 /// Management protocol surface.
-pub mod mgmt;
-
-use crate::control::cluster::SessionCluster as KernelCluster;
-
-/// Typed control-plane cluster that owns Rendezvous instances.
-///
-/// SessionCluster takes ownership of Rendezvous, ensuring proper RAII:
-/// - Drop order: SessionCluster → Rendezvous → LaneLease
-/// - No self-referential lifetime issues
-/// - Type-level proof of affine resource management
-///
-/// `MAX_RV` bounds the number of rendezvous instances (local + remote).
-pub type SessionCluster<'cfg, T, U, C, const MAX_RV: usize> = KernelCluster<'cfg, T, U, C, MAX_RV>;
-
-pub use crate::control::cluster::SpliceOperands;
+pub(crate) mod mgmt;

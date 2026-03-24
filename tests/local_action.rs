@@ -1,27 +1,31 @@
 mod common;
-mod support;
+#[path = "support/runtime.rs"]
+mod runtime_support;
 
 use common::TestTransport;
 use hibana::{
-    NoBinding,
-    endpoint::ControlOutcome,
-    g::{
-        self, Msg, Role,
-        steps::{ProjectRole, SendStep, StepCons, StepNil},
+    g::advanced::steps::{ProjectRole, SendStep, StepCons, StepNil},
+    g::advanced::{RoleProgram, project},
+    g::{self, Msg, Role},
+    substrate::{
+        SessionCluster, SessionId,
+        binding::NoBinding,
+        runtime::Config,
+        wire::{CodecError, WireEncode},
     },
-    rendezvous::{Rendezvous, SessionId},
-    runtime::{SessionCluster, config::Config},
-    transport::wire::{WireEncode, CodecError},
 };
-use support::{leak_clock, leak_slab, leak_tap_storage};
+use runtime_support::{leak_clock, leak_slab, leak_tap_storage};
 
-type Actor = Role<0>;
 #[derive(Clone, Copy)]
 struct InstallPayload {
     data: [u8; 4],
 }
 
 impl WireEncode for InstallPayload {
+    fn encoded_len(&self) -> Option<usize> {
+        Some(4)
+    }
+
     fn encode_into(&self, buf: &mut [u8]) -> Result<usize, CodecError> {
         if buf.len() < 4 {
             return Err(CodecError::Truncated);
@@ -31,15 +35,27 @@ impl WireEncode for InstallPayload {
     }
 }
 
-type InstallKeys = Msg<7, InstallPayload>;
-type LocalSteps = StepCons<SendStep<Actor, Actor, InstallKeys, 0>, StepNil>;
+const PROGRAM: g::Program<
+    StepCons<SendStep<Role<0>, Role<0>, Msg<7, InstallPayload>, 0>, StepNil>,
+> = g::send::<Role<0>, Role<0>, Msg<7, InstallPayload>, 0>();
 
-const PROGRAM: g::Program<LocalSteps> = g::send::<Actor, Actor, InstallKeys, 0>();
+static ACTOR_PROGRAM: RoleProgram<
+    'static,
+    0,
+    <StepCons<SendStep<Role<0>, Role<0>, Msg<7, InstallPayload>, 0>, StepNil> as ProjectRole<
+        Role<0>,
+    >>::Output,
+> = project(&PROGRAM);
 
-type ActorLocal = <LocalSteps as ProjectRole<Actor>>::Output;
-
-static ACTOR_PROGRAM: g::RoleProgram<'static, 0, ActorLocal> =
-    g::project::<0, LocalSteps, _>(&PROGRAM);
+fn transport_queue_is_empty(transport: &TestTransport) -> bool {
+    transport
+        .state
+        .lock()
+        .expect("state lock")
+        .queues
+        .values()
+        .all(|queue| queue.is_empty())
+}
 
 #[tokio::test]
 async fn local_action_flow_executes() {
@@ -47,32 +63,22 @@ async fn local_action_flow_executes() {
     let slab = leak_slab(1024);
     let config = Config::new(tap_buf, slab);
     let transport = TestTransport::default();
-    let rendezvous: Rendezvous<
-        '_,
-        '_,
-        TestTransport,
-        hibana::runtime::consts::DefaultLabelUniverse,
-        hibana::runtime::config::CounterClock,
-    > = Rendezvous::from_config(config, transport.clone());
     let cluster: &mut SessionCluster<
         'static,
         TestTransport,
-        hibana::runtime::consts::DefaultLabelUniverse,
-        hibana::runtime::config::CounterClock,
+        hibana::substrate::runtime::DefaultLabelUniverse,
+        hibana::substrate::runtime::CounterClock,
         4,
     > = Box::leak(Box::new(SessionCluster::new(leak_clock())));
     let rv_id = cluster
-        .add_rendezvous(rendezvous)
+        .add_rendezvous_from_config(config, transport.clone())
         .expect("register rendezvous");
 
     let sid = SessionId::new(42);
 
     let endpoint = cluster
-        .attach_cursor::<0, _, _, _>(rv_id, sid, &ACTOR_PROGRAM, NoBinding)
+        .enter::<0, _, _, _>(rv_id, sid, &ACTOR_PROGRAM, NoBinding)
         .expect("attach actor endpoint");
-
-    #[cfg(feature = "test-utils")]
-    assert!(endpoint.phase_cursor().is_local_action());
 
     // Local action via flow().send() - unified API
     let payload = InstallPayload {
@@ -80,19 +86,16 @@ async fn local_action_flow_executes() {
     };
 
     let (endpoint, outcome) = endpoint
-        .flow::<InstallKeys>()
+        .flow::<Msg<7, InstallPayload>>()
         .expect("flow for local action")
         .send(&payload)
         .await
         .expect("local action succeeded");
 
     // For non-control messages, outcome is None
-    assert!(matches!(outcome, ControlOutcome::None));
-    #[cfg(feature = "test-utils")]
-    endpoint.phase_cursor().assert_terminal();
-
+    assert!(outcome.is_none());
     // Self-send should NOT transmit over wire
-    assert!(transport.queue_is_empty());
+    assert!(transport_queue_is_empty(&transport));
 
     drop(endpoint);
 }
