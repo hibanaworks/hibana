@@ -11,12 +11,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Public API allowlist
-        run: ./.github/scripts/check_hibana_public_api.sh
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Policy surface hygiene gate
         run: ./.github/scripts/check_policy_surface_hygiene.sh
-      - name: Boundary contracts gate
-        run: ./.github/scripts/check_boundary_contracts.sh
+      - name: Management boundary gate
+        run: ./.github/scripts/check_mgmt_boundary.sh
+      - name: Plane boundary gate
+        run: ./.github/scripts/check_plane_boundaries.sh
+      - name: Resolver context surface gate
+        run: ./.github/scripts/check_resolver_context_surface.sh
+      - name: Surface hygiene gate
+        run: ./.github/scripts/check_surface_hygiene.sh
       - name: Direct projection binary gate
         run: ./.github/scripts/check_direct_projection_binary.sh
       - name: no_std build gate
@@ -29,3 +35,11 @@ jobs:
         run: cargo test -p hibana --test ui --features std
       - name: Policy replay gate
         run: cargo test -p hibana --test policy_replay --features std
+
+  semantic-surface:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Semantic public API gate
+        run: ./.github/scripts/check_hibana_public_api.sh

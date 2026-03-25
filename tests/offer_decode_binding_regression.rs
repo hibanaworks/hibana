@@ -3,7 +3,7 @@ mod common;
 #[path = "support/runtime.rs"]
 mod runtime_support;
 
-use common::TestTransport;
+use common::{TestTransport, TestTransportMetrics, TestTx, TestTransportError, TestRx, RecvFuture};
 use hibana::g::advanced::steps::{ProjectRole, SendStep, SeqSteps, StepConcat, StepCons, StepNil};
 use hibana::g::advanced::{CanonicalControl, MessageSpec, RoleProgram, project};
 use hibana::g::{self, Msg, Role};
@@ -13,11 +13,9 @@ use hibana::substrate::{
     policy::{DynamicResolution, PolicySignalsProvider, ResolverContext, ResolverError},
 };
 use hibana::substrate::{
-    SessionCluster, SessionId,
-    binding::{
-        BindingSlot, Channel, IncomingClassification, SendDisposition, SendMetadata,
-        TransportOpsError,
-    },
+    SessionCluster, SessionId, Transport,
+    binding::{BindingSlot, Channel, IncomingClassification, TransportOpsError},
+    transport::Outgoing,
     runtime::{Config, CounterClock, DefaultLabelUniverse},
 };
 use runtime_support::{leak_clock, leak_slab, leak_tap_storage};
@@ -31,6 +29,7 @@ hibana::impl_control_resource!(
 );
 
 use std::collections::{BTreeMap, VecDeque};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 const ROUTE_POLICY_ID: u16 = 900;
@@ -247,37 +246,7 @@ impl FlowBinding {
     }
 }
 
-// SAFETY: Test binding performs no network I/O and all methods return immediately.
-unsafe impl BindingSlot for FlowBinding {
-    fn on_send_with_meta(
-        &mut self,
-        meta: SendMetadata,
-        payload: &[u8],
-    ) -> Result<SendDisposition, TransportOpsError> {
-        if meta.is_send() && meta.label == <Msg<71, u32> as MessageSpec>::LABEL {
-            let mut shared = self.shared.lock().expect("flow binding lock");
-            let channel = Channel::new(shared.next_channel);
-            shared.next_channel += 1;
-            shared.payloads.insert(channel.raw(), payload.to_vec());
-            let classification = IncomingClassification {
-                label: meta.label,
-                instance: 0,
-                has_fin: false,
-                channel,
-            };
-            shared
-                .incoming
-                .entry(meta.peer)
-                .or_default()
-                .push_back(PendingInbound {
-                    lane: meta.lane,
-                    classification,
-                });
-            return Ok(SendDisposition::Handled);
-        }
-        Ok(SendDisposition::BypassTransport)
-    }
-
+impl BindingSlot for FlowBinding {
     fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IncomingClassification> {
         let mut shared = self.shared.lock().expect("flow binding lock");
         let queue = shared.incoming.entry(self.role).or_default();
@@ -313,25 +282,123 @@ unsafe impl BindingSlot for FlowBinding {
     }
 }
 
-fn register_route_resolvers_for_program<const ROLE: u8, Steps>(
-    cluster: &SessionCluster<'static, TestTransport, DefaultLabelUniverse, CounterClock, 4>,
+#[derive(Clone)]
+struct FlowTransport {
+    inner: TestTransport,
+    shared: Arc<Mutex<FlowBindingShared>>,
+}
+
+impl FlowTransport {
+    fn new(shared: Arc<Mutex<FlowBindingShared>>) -> Self {
+        Self {
+            inner: TestTransport::default(),
+            shared,
+        }
+    }
+}
+
+impl Transport for FlowTransport {
+    type Error = TestTransportError;
+    type Tx<'a>
+        = TestTx
+    where
+        Self: 'a;
+    type Rx<'a>
+        = TestRx
+    where
+        Self: 'a;
+    type Send<'a>
+        = Pin<Box<dyn std::future::Future<Output = Result<(), Self::Error>> + 'a>>
+    where
+        Self: 'a;
+    type Recv<'a>
+        = RecvFuture<'a>
+    where
+        Self: 'a;
+    type Metrics = TestTransportMetrics;
+
+    fn open<'a>(&'a self, local_role: u8, session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        self.inner.open(local_role, session_id)
+    }
+
+    fn send<'a, 'f>(
+        &'a self,
+        tx: &'a mut Self::Tx<'a>,
+        outgoing: Outgoing<'f>,
+    ) -> Self::Send<'a>
+    where
+        'a: 'f,
+    {
+        if outgoing.meta.direction == hibana::substrate::transport::LocalDirection::Send
+            && outgoing.meta.label == <Msg<71, u32> as MessageSpec>::LABEL
+        {
+            let mut shared = self.shared.lock().expect("flow binding lock");
+            let channel = Channel::new(shared.next_channel);
+            shared.next_channel += 1;
+            shared
+                .payloads
+                .insert(channel.raw(), outgoing.payload.as_bytes().to_vec());
+            let classification = IncomingClassification {
+                label: outgoing.meta.label,
+                instance: 0,
+                has_fin: false,
+                channel,
+            };
+            shared
+                .incoming
+                .entry(outgoing.meta.peer)
+                .or_default()
+                .push_back(PendingInbound {
+                    lane: outgoing.meta.lane,
+                    classification,
+                });
+            return Box::pin(std::future::ready(Ok(())));
+        }
+        self.inner.send(tx, outgoing)
+    }
+
+    fn recv<'a>(&'a self, rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
+        self.inner.recv(rx)
+    }
+
+    fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
+        self.inner.requeue(rx)
+    }
+
+    fn drain_events(&self, emit: &mut dyn FnMut(hibana::substrate::transport::TransportEvent)) {
+        self.inner.drain_events(emit)
+    }
+
+    fn recv_label_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<u8> {
+        self.inner.recv_label_hint(rx)
+    }
+
+    fn metrics(&self) -> Self::Metrics {
+        self.inner.metrics()
+    }
+
+    fn apply_pacing_update(&self, interval_us: u32, burst_bytes: u16) {
+        self.inner.apply_pacing_update(interval_us, burst_bytes)
+    }
+}
+
+fn register_route_resolvers_for_program<const ROLE: u8, Steps, T>(
+    cluster: &SessionCluster<'static, T, DefaultLabelUniverse, CounterClock, 4>,
     rv_id: RendezvousId,
     program: &RoleProgram<'static, ROLE, Steps>,
-) {
+) where
+    T: Transport + 'static,
+{
     cluster
-        .set_resolver(
+        .set_resolver::<ROUTE_POLICY_ID, ROLE, _, _>(
             rv_id,
             program,
-            hibana::substrate::policy::PolicyId::new(ROUTE_POLICY_ID),
-            always_left_route_resolver,
+            hibana::substrate::policy::ResolverRef::from_fn(always_left_route_resolver),
         )
         .expect("register route resolver");
 }
 
-fn always_left_route_resolver(
-    _cluster: &SessionCluster<'static, TestTransport, DefaultLabelUniverse, CounterClock, 4>,
-    _ctx: ResolverContext,
-) -> Result<DynamicResolution, ResolverError> {
+fn always_left_route_resolver(_ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
     Ok(DynamicResolution::RouteArm { arm: 0 })
 }
 
@@ -340,11 +407,12 @@ async fn offer_decode_binding_consumes_classification_once() {
     let tap_buf = leak_tap_storage();
     let slab = leak_slab(2048);
     let config = Config::new(tap_buf, slab);
-    let transport = TestTransport::default();
+    let shared = Arc::new(Mutex::new(FlowBindingShared::default()));
+    let transport = FlowTransport::new(Arc::clone(&shared));
 
     let cluster: &mut SessionCluster<
         'static,
-        TestTransport,
+        FlowTransport,
         DefaultLabelUniverse,
         CounterClock,
         4,
@@ -357,7 +425,6 @@ async fn offer_decode_binding_consumes_classification_once() {
     register_route_resolvers_for_program(&*cluster, rv_id, &WORKER_PROGRAM);
 
     let sid = SessionId::new(901);
-    let shared = Arc::new(Mutex::new(FlowBindingShared::default()));
     let controller_binding = FlowBinding::new(0, Arc::clone(&shared));
     let worker_binding = FlowBinding::new(1, Arc::clone(&shared));
 
@@ -416,11 +483,12 @@ async fn dynamic_route_passive_ignores_non_authoritative_binding_classification(
     let tap_buf = leak_tap_storage();
     let slab = leak_slab(2048);
     let config = Config::new(tap_buf, slab);
-    let transport = TestTransport::default();
+    let shared = Arc::new(Mutex::new(FlowBindingShared::default()));
+    let transport = FlowTransport::new(Arc::clone(&shared));
 
     let cluster: &mut SessionCluster<
         'static,
-        TestTransport,
+        FlowTransport,
         DefaultLabelUniverse,
         CounterClock,
         4,
@@ -433,7 +501,6 @@ async fn dynamic_route_passive_ignores_non_authoritative_binding_classification(
     register_route_resolvers_for_program(&*cluster, rv_id, &WORKER_PROGRAM);
 
     let sid = SessionId::new(902);
-    let shared = Arc::new(Mutex::new(FlowBindingShared::default()));
     let controller_binding = FlowBinding::new(0, Arc::clone(&shared));
     let worker_binding = FlowBinding::new(1, Arc::clone(&shared));
 

@@ -147,13 +147,13 @@ impl Transport for TestTransport {
     fn send<'a, 'f>(
         &'a self,
         _tx: &'a mut Self::Tx<'a>,
-        payload: Payload<'f>,
-        dest_role: u8,
+        outgoing: hibana::substrate::transport::Outgoing<'f>,
     ) -> Self::Send<'a>
     where
         'a: 'f,
     {
-        let payload_vec = payload.as_bytes().to_vec();
+        let payload_vec = outgoing.payload.as_bytes().to_vec();
+        let dest_role = outgoing.meta.peer;
         let state = self.state.clone();
         Box::pin(async move {
             let mut guard = state.lock().expect("state lock");

@@ -310,7 +310,7 @@ Protocol implementors use the protocol-neutral SPI:
 - `hibana::substrate::runtime::{Clock, Config, CounterClock, DefaultLabelUniverse, LabelUniverse}`
 - `hibana::substrate::binding::{BindingSlot, NoBinding}`
 - `hibana::substrate::binding::NoBinding`
-- `hibana::substrate::policy::{ContextId, ContextValue, DynamicResolution, PolicyAttrs, PolicyId, PolicySignals, ResolverContext, ResolverError}`
+- `hibana::substrate::policy::{ContextId, ContextValue, DynamicResolution, PolicyAttrs, PolicySignals, ResolverContext, ResolverError, ResolverRef}`
 - `hibana::substrate::policy::PolicySignalsProvider`
 - `hibana::substrate::cap::{CapShot, ControlResourceKind, GenericCapToken, Many, One, ResourceKind}`
 - `hibana::substrate::cap::advanced`
@@ -421,16 +421,15 @@ impl hibana::substrate::Transport for MyTransport {
     fn send<'a, 'f>(
         &'a self,
         tx: &'a mut Self::Tx<'a>,
-        payload: hibana::substrate::wire::Payload<'f>,
-        dest_role: u8,
+        outgoing: hibana::substrate::transport::Outgoing<'f>,
     ) -> Self::Send<'a>
     where
         'a: 'f,
     {
         let tx_handle = tx;
-        let payload_view = payload;
-        let dest_role_value = dest_role;
-        let _state = (tx_handle, payload_view, dest_role_value);
+        let payload_view = outgoing.payload;
+        let send_meta = outgoing.meta;
+        let _state = (tx_handle, payload_view, send_meta);
         core::future::ready(Ok(()))
     }
 
@@ -486,7 +485,41 @@ Transport rules:
 ## Bootstrap `SessionCluster` and Enter Typed Endpoints
 
 `hibana::substrate::SessionCluster::new(clock)` is the canonical starting point.
-Add rendezvous once, register resolvers if needed, then `enter()`.
+The borrowed / `no_alloc`-oriented path is the canonical substrate path: keep the
+clock, config storage, projected program, and resolver state borrowed; add
+rendezvous once; then `enter()`.
+
+```rust
+let mut tap_buf = [Default::default(); 2048];
+let mut slab = [0u8; 64 * 1024];
+let clock = hibana::substrate::runtime::CounterClock::new();
+let config = hibana::substrate::runtime::Config::new(&mut tap_buf, &mut slab);
+
+let cluster: hibana::substrate::SessionCluster<
+    '_,
+    MyTransport,
+    hibana::substrate::runtime::DefaultLabelUniverse,
+    hibana::substrate::runtime::CounterClock,
+    4,
+> = hibana::substrate::SessionCluster::new(&clock);
+
+let transport = MyTransport;
+let rv_id = cluster.add_rendezvous_from_config(config, transport)?;
+
+let endpoint = cluster.enter(
+    rv_id,
+    hibana::substrate::SessionId::new(1),
+    &CLIENT,
+    hibana::substrate::binding::NoBinding,
+)?;
+```
+
+The same borrowed `RoleProgram` can be passed to `set_resolver()` and `enter()`,
+and the same borrowed resolver state can stay outside the cluster through
+`ResolverRef::from_state()`.
+
+If integration code really wants leaked std demo storage, that remains possible,
+but it is not the canonical path:
 
 ```rust
 let tap_buf = Box::leak(Box::new([Default::default(); 2048]));
@@ -501,21 +534,7 @@ let cluster: hibana::substrate::SessionCluster<
     hibana::substrate::runtime::CounterClock,
     4,
 > = hibana::substrate::SessionCluster::new(clock);
-
-let transport = MyTransport;
-let rv_id = cluster.add_rendezvous_from_config(config, transport)?;
-
-let endpoint = cluster.enter(
-    rv_id,
-    hibana::substrate::SessionId::new(1),
-    &CLIENT,
-    hibana::substrate::binding::NoBinding,
-)?;
 ```
-
-The same borrowed `RoleProgram` can be passed to `set_resolver()` and `enter()`.
-The API does not require `'static`; the example uses `'static` only because the
-program and clock are stored in leaked demo storage.
 
 `SessionCluster::new(clock)` is always paired with a rendezvous config. The
 runtime config owner is `hibana::substrate::runtime::Config`, and the public
@@ -559,20 +578,7 @@ impl hibana::substrate::policy::PolicySignalsProvider for MyBinding {
     }
 }
 
-unsafe impl hibana::substrate::binding::BindingSlot for MyBinding {
-    fn on_send_with_meta(
-        &mut self,
-        meta: hibana::substrate::binding::SendMetadata,
-        payload: &[u8],
-    ) -> Result<
-        hibana::substrate::binding::SendDisposition,
-        hibana::substrate::binding::TransportOpsError,
-    > {
-        let send_state = (meta, payload.len());
-        let _state = send_state;
-        Ok(hibana::substrate::binding::SendDisposition::BypassTransport)
-    }
-
+impl hibana::substrate::binding::BindingSlot for MyBinding {
     fn poll_incoming_for_lane(
         &mut self,
         logical_lane: u8,
@@ -608,7 +614,6 @@ unsafe impl hibana::substrate::binding::BindingSlot for MyBinding {
 
 Binding rules:
 
-- `on_send_with_meta()` must not block on network I/O
 - `poll_incoming_for_lane()` is lane-local demux only
 - `on_recv()` reads from the already selected channel
 - `policy_signals_provider()` is the only public input source for slot-scoped signals
@@ -617,16 +622,20 @@ Supporting binding owners:
 
 - `Channel`, `ChannelDirection`, and `ChannelKey` identify stream/channel endpoints
 - `ChannelStore` is the storage contract when the binding owns multiple channels
-- `SendMetadata` describes the lane, direction, and control metadata of an outgoing payload
-- `SendDisposition` decides whether the binding or transport performs the actual send
 - `TransportOpsError` is the canonical binding-side I/O error
+
+Transport-owned send owners:
+
+- `hibana::substrate::transport::LocalDirection` describes send direction from the local role
+- `hibana::substrate::transport::SendMeta` describes the lane, direction, and control metadata of an outgoing payload
+- `hibana::substrate::transport::Outgoing<'f>` is the canonical transport-owned send object
 
 ## Policy Plane
 
 Dynamic policy remains explicit:
 
 - annotate the choreography with `Program::policy::<POLICY_ID>()`
-- register a resolver with `set_resolver(rv_id, program, policy_id, resolver)`
+- register a resolver with `set_resolver::<POLICY_ID, ROLE, _, _>(rv_id, program, resolver)`
 - use `ResolverContext::input(index)` and `ResolverContext::attr(id)`
 - return `Result<DynamicResolution, ResolverError>`
 
@@ -658,20 +667,19 @@ const POLICY_ID: u16 = 7;
 const CUSTOM_INPUT0: hibana::substrate::policy::ContextId =
     hibana::substrate::policy::ContextId::new(0x9001);
 
-fn route_resolver<'cfg, T, U, C, const MAX_RV: usize>(
-    cluster: &hibana::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
+struct RoutePolicy {
+    preferred_arm: u8,
+}
+
+fn route_resolver(
+    policy: &RoutePolicy,
     ctx: hibana::substrate::policy::ResolverContext,
 ) -> Result<hibana::substrate::policy::DynamicResolution, hibana::substrate::policy::ResolverError>
-where
-    T: hibana::substrate::Transport,
-    U: hibana::substrate::runtime::LabelUniverse + 'cfg,
-    C: hibana::substrate::runtime::Clock + 'cfg,
 {
-    let cluster_state = cluster;
-    let _state = cluster_state;
-
     if ctx.input(0) != 0 {
-        return Ok(hibana::substrate::policy::DynamicResolution::RouteArm { arm: 1 });
+        return Ok(hibana::substrate::policy::DynamicResolution::RouteArm {
+            arm: policy.preferred_arm,
+        });
     }
 
     if ctx
@@ -687,18 +695,20 @@ where
         });
     }
 
-    Ok(hibana::substrate::policy::DynamicResolution::Defer {
-        retry_hint: 1,
-    })
+    Ok(hibana::substrate::policy::DynamicResolution::Defer { retry_hint: 1 })
 }
 
-cluster.set_resolver(
+let route_policy = RoutePolicy { preferred_arm: 1 };
+
+cluster.set_resolver::<POLICY_ID, 0, _, _>(
     rv_id,
     &CLIENT,
-    hibana::substrate::policy::PolicyId::new(POLICY_ID),
-    route_resolver,
+    hibana::substrate::policy::ResolverRef::from_state(&route_policy, route_resolver),
 )?;
 ```
+
+`ResolverRef::from_fn()` remains available as sugar for stateless callbacks, but
+the canonical public path is the borrowed-state form above.
 
 Core metadata arrives through `hibana::substrate::policy::core::*`:
 
@@ -1034,11 +1044,11 @@ let _state = (controller, cluster_endpoint, reply);
 
 Push-quality validation means more than "the examples compile". At minimum, the
 surface gates, protocol-neutrality, typed projection, and policy replay checks
-should stay green.
+should stay green. CI is intentionally split between stable verification and a
+nightly rustdoc-JSON semantic surface lane.
 
 ```bash
-# Public surface and boundary hygiene
-bash ./.github/scripts/check_hibana_public_api.sh
+# Stable hygiene and boundary gates
 bash ./.github/scripts/check_policy_surface_hygiene.sh
 bash ./.github/scripts/check_surface_hygiene.sh
 bash ./.github/scripts/check_boundary_contracts.sh
@@ -1058,6 +1068,9 @@ cargo test -p hibana --test ui --features std
 cargo test -p hibana --test policy_replay --features std
 cargo test -p hibana --test public_surface_guards --features std
 cargo test -p hibana --test substrate_surface --features std
+
+# Nightly semantic public surface gate
+bash ./.github/scripts/check_hibana_public_api.sh
 ```
 
 Before pushing, verify these invariants in addition to green commands:

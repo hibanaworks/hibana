@@ -1600,7 +1600,7 @@ fn substrate_binding_and_epf_surface_use_canonical_names() {
         "BindingSlot as Binding",
         "IncomingClassification as Incoming",
         "NoBinding as NullBinding",
-        "SendMetadata as SendMeta",
+        "Outgoing as SendEnvelope",
         "pub mod advanced {\n        pub use crate::binding::ArrayChannelStore;",
         "pub use crate::control::cap::resource_kinds;",
         "pub use crate::epf::Slot;",
@@ -1620,7 +1620,7 @@ fn substrate_binding_and_epf_surface_use_canonical_names() {
     );
     assert!(
         substrate_src.contains("pub use crate::eff::EffIndex;"),
-        "substrate surface must expose the canonical effect index owner used by ResolverContext and SendMetadata"
+        "substrate surface must expose the canonical effect index owner used by ResolverContext and transport::SendMeta"
     );
     for forbidden in [
         "pub fn len(&self) -> usize {",
@@ -1732,8 +1732,8 @@ fn resolver_context_surface_stays_accessor_only() {
         "substrate resolver surface must expose a semantic ResolverError owner"
     );
     assert!(
-        substrate_src.contains("DynamicResolution, PolicyId, ResolverContext, ResolverError"),
-        "substrate policy surface must re-export ResolverError next to the resolver callback contracts"
+        substrate_src.contains("DynamicResolution, ResolverContext, ResolverError, ResolverRef"),
+        "substrate policy surface must re-export ResolverRef next to the resolver callback contracts"
     );
     assert!(
         !substrate_src.contains("Result<crate::control::cluster::core::DynamicResolution, ()>"),
@@ -2396,6 +2396,7 @@ fn control_type_source_names_stay_canonical() {
 fn eff_index_and_binding_metadata_keep_canonical_owner_types() {
     let eff_src = include_str!("../src/eff.rs");
     let binding_src = include_str!("../src/binding.rs");
+    let transport_src = include_str!("../src/transport.rs");
 
     for forbidden in [
         "pub type EffIndex = u16;",
@@ -2405,7 +2406,9 @@ fn eff_index_and_binding_metadata_keep_canonical_owner_types() {
         "pub type EffSlice = &'static [EffStruct];",
     ] {
         assert!(
-            !eff_src.contains(forbidden) && !binding_src.contains(forbidden),
+            !eff_src.contains(forbidden)
+                && !binding_src.contains(forbidden)
+                && !transport_src.contains(forbidden),
             "effect index must not regress to a raw integer alias or binding metadata field: {forbidden}"
         );
     }
@@ -2416,7 +2419,9 @@ fn eff_index_and_binding_metadata_keep_canonical_owner_types() {
         "pub struct EffSlice(&'static [EffStruct]);",
     ] {
         assert!(
-            eff_src.contains(required) || binding_src.contains(required),
+            eff_src.contains(required)
+                || binding_src.contains(required)
+                || transport_src.contains(required),
             "canonical effect index ownership must remain explicit: {required}"
         );
     }
@@ -3617,9 +3622,14 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
     }
 
     for required in [
+        "sudo apt-get update",
+        "sudo apt-get install -y ripgrep",
         "./.github/scripts/check_hibana_public_api.sh",
         "./.github/scripts/check_policy_surface_hygiene.sh",
-        "./.github/scripts/check_boundary_contracts.sh",
+        "./.github/scripts/check_mgmt_boundary.sh",
+        "./.github/scripts/check_plane_boundaries.sh",
+        "./.github/scripts/check_resolver_context_surface.sh",
+        "./.github/scripts/check_surface_hygiene.sh",
         "./.github/scripts/check_direct_projection_binary.sh",
         "./.github/scripts/check_no_std_build.sh",
         "cargo check --all-targets -p hibana",
@@ -3635,6 +3645,11 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
     assert!(
         !quality_workflow.contains("./.github/scripts/check_policy_legacy_paths.sh"),
         "quality-gates workflow must not keep the stale policy-legacy gate name"
+    );
+    assert!(
+        !quality_workflow.contains("name: Boundary contracts gate")
+            && !quality_workflow.contains("run: ./.github/scripts/check_boundary_contracts.sh"),
+        "quality-gates workflow must expose boundary failures as per-check steps instead of a single wrapper step"
     );
 
     for required in [

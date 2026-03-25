@@ -2208,8 +2208,7 @@ mod epf_tests {
         fn send<'a, 'f>(
             &'a self,
             _tx: &'a mut Self::Tx<'a>,
-            _payload: Payload<'f>,
-            _dest_role: u8,
+            _outgoing: crate::transport::Outgoing<'f>,
         ) -> Self::Send<'a>
         where
             'a: 'f,

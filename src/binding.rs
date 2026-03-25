@@ -14,9 +14,9 @@
 //!                              ↓
 //! ┌─────────────────────────────────────────────────────────────────┐
 //! │ BindingSlot (protocol-specific binder)                           │
-//! │   - Receives SendMetadata from choreography                     │
-//! │   - Derives a deterministic action from direction + is_control  │
-//! │   - Executes wire operations                                    │
+//! │   - Demuxes incoming carrier data per logical lane              │
+//! │   - Exposes channel reads after route materialization           │
+//! │   - Supplies slot-scoped policy signals                         │
 //! └─────────────────────────────────────────────────────────────────┘
 //!                              ↓
 //! ┌─────────────────────────────────────────────────────────────────┐
@@ -26,28 +26,17 @@
 //!
 //! # Design Philosophy
 //!
-//! Protocol binders use choreography metadata
-//! to **deterministically derive** transport actions without manual configuration:
-//!
-//! | LocalDirection | is_control | Typical Action |
-//! |----------------|------------|----------------|
-//! | Send           | false      | Write          |
-//! | Send           | true       | WriteFinish    |
-//! | Recv           | -          | Read           |
-//! | Local          | true       | None (skip)    |
-//!
-//! This mapping does not consult transport state or inference; exceptions can be
-//! handled via protocol-specific override APIs.
+//! The transport seam owns wire send authority. Bindings are limited to ingress
+//! demux, channel reads, and policy-signal observation.
 //!
 //! # Key Components
 //!
-//! - [`SendMetadata`]: Choreography metadata for send operations
 //! - [`IncomingClassification`]: Classification for incoming data
 //! - [`BindingSlot`]: Trait for protocol-specific binders
 //! - [`ChannelStore`]: Label/instance → Channel mappings (no_alloc by default)
 //! - [`NoBinding`]: Zero-cost default when binding is not needed
 
-use crate::{eff::EffIndex, transport::context::PolicySignalsProvider};
+use crate::transport::context::PolicySignalsProvider;
 
 // =============================================================================
 // Channel: Opaque handle to a logical channel
@@ -176,94 +165,6 @@ impl core::fmt::Display for TransportOpsError {
 impl std::error::Error for TransportOpsError {}
 
 // =============================================================================
-// SendMetadata: Choreography metadata for deterministic action mapping
-// =============================================================================
-
-/// Direction of a send operation from the local role's perspective.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LocalDirection {
-    /// Sending to a peer
-    Send,
-    /// Receiving from a peer
-    Recv,
-    /// Local operation (self-send, e.g., CanonicalControl)
-    Local,
-}
-
-/// Disposition returned by `BindingSlot::on_send_with_meta()`.
-///
-/// Indicates whether the binder has handled wire transmission or expects
-/// core to call `transport.send()`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SendDisposition {
-    /// Core should call `transport.send()` with the payload.
-    ///
-    /// Use when the binder only performs side effects (state updates, channel
-    /// registration) but does not transmit the payload itself.
-    BypassTransport,
-
-    /// Core should NOT call `transport.send()`.
-    ///
-    /// Use when the binder has already transmitted the payload via its own
-    /// mechanism (e.g., protocol framing/encoding).
-    Handled,
-}
-
-/// Metadata for a send operation, derived from choreography.
-///
-/// This struct contains all the information needed for a protocol binder
-/// to determine the default transport action without requiring
-/// manual configuration or transport-state inference.
-///
-/// # Default Action Rules
-///
-/// Protocol binders use these fields to deterministically map actions:
-///
-/// | direction | is_control | Typical Action |
-/// |-----------|------------|----------------|
-/// | Send      | false      | Write          |
-/// | Send      | true       | WriteFinish    |
-/// | Recv      | -          | Read           |
-/// | Local     | true       | None (skip)    |
-///
-/// # Lane Semantics
-///
-/// The `lane` field is the rendezvous lane used by the choreography. Binders
-/// must treat it as the canonical lane identity rather than remapping it.
-#[derive(Clone, Copy, Debug)]
-pub struct SendMetadata {
-    /// Effect index (stable identifier for the choreography step)
-    pub eff_index: EffIndex,
-    /// Message label
-    pub label: u8,
-    /// Target peer role
-    pub peer: u8,
-    /// Logical lane for this message (program-defined, 0-indexed)
-    pub lane: u8,
-    /// Direction from local perspective
-    pub direction: LocalDirection,
-    /// Whether this is a control message
-    pub is_control: bool,
-}
-
-impl SendMetadata {
-    #[inline]
-    pub const fn is_send(&self) -> bool {
-        matches!(self.direction, LocalDirection::Send)
-    }
-
-    #[inline]
-    pub const fn is_recv(&self) -> bool {
-        matches!(self.direction, LocalDirection::Recv)
-    }
-
-    #[inline]
-    pub const fn is_local(&self) -> bool {
-        matches!(self.direction, LocalDirection::Local)
-    }
-}
-
-// =============================================================================
 // IncomingClassification: Result of classifying incoming data
 // =============================================================================
 
@@ -296,12 +197,6 @@ pub struct IncomingClassification {
 /// When `B = NoBinding` (the default), all methods inline to no-ops at
 /// compile time, providing zero runtime overhead.
 ///
-/// # Send Flow
-///
-/// `on_send_with_meta()` receives choreography metadata and payload, allowing
-/// the binder to deterministically select the default transport action. The
-/// return value (`SendDisposition`) tells core whether to call `transport.send()`.
-///
 /// # Receive Flow
 ///
 /// The receive flow uses a lane-aware two-step approach:
@@ -316,56 +211,7 @@ pub struct IncomingClassification {
 /// Additionally, implementations may provide a slot-scoped
 /// `PolicySignalsProvider` for policy evaluation and resolver context.
 ///
-/// # Safety
-///
-/// Implementors **must** guarantee that `on_send_with_meta()` does not block on
-/// network I/O. This is a core invariant that enables `g::par` to execute correctly
-/// with single-cursor sequential execution. Violating this contract breaks hibana's
-/// AMPST progress guarantees.
-///
-/// Specifically, `on_send_with_meta()` must:
-/// - Only perform synchronous buffer enqueue operations
-/// - Return `Err` for backpressure (never block/busy-wait)
-/// - Complete in bounded time without awaiting external events
-pub unsafe trait BindingSlot {
-    /// Called when a send operation occurs with choreography metadata.
-    ///
-    /// # Non-Blocking Send Contract (Core Specification)
-    ///
-    /// **This method MUST NOT await network I/O.** Implementations may only:
-    /// - Perform synchronous buffer enqueue (fixed-size buffer, etc.)
-    /// - Return `Err` for backpressure (NOT block)
-    ///
-    /// This contract enables `g::par` to work correctly with single-cursor
-    /// sequential execution. The Transport layer handles actual network I/O
-    /// asynchronously. Binders that violate this contract are outside the
-    /// hibana model and not supported for interop.
-    ///
-    /// # Return Value (SendDisposition)
-    ///
-    /// - `BypassTransport`: Core will call `transport.send()` with the payload.
-    /// - `Handled`: Core will NOT call `transport.send()` (binder did wire I/O).
-    ///
-    /// **Note**: If `meta.direction == Local`, core will skip `transport.send()`
-    /// regardless of the disposition (Local messages never go to wire).
-    ///
-    /// # Action Mapping
-    ///
-    /// Protocol binders use `meta.direction`, `meta.is_control`, and `meta.lane`
-    /// to map to the default transport action:
-    ///
-    /// | direction | is_control | Typical Action |
-    /// |-----------|------------|----------------|
-    /// | Send      | false      | Write          |
-    /// | Send      | true       | WriteFinish    |
-    /// | Recv      | -          | Read (no-op)   |
-    /// | Local     | true       | None (skip)    |
-    fn on_send_with_meta(
-        &mut self,
-        meta: SendMetadata,
-        payload: &[u8],
-    ) -> Result<SendDisposition, TransportOpsError>;
-
+pub trait BindingSlot {
     /// Poll for incoming data classification on a specific logical lane.
     ///
     /// Called by `offer()` to gather demux evidence for the selected scope/lane.
@@ -413,19 +259,7 @@ pub unsafe trait BindingSlot {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoBinding;
 
-// SAFETY: NoBinding performs no I/O operations. All methods are no-ops that
-// complete immediately, trivially satisfying the non-blocking send contract.
-unsafe impl BindingSlot for NoBinding {
-    #[inline(always)]
-    fn on_send_with_meta(
-        &mut self,
-        _meta: SendMetadata,
-        _payload: &[u8],
-    ) -> Result<SendDisposition, TransportOpsError> {
-        // NoBinding always returns BypassTransport: let core handle transport.send()
-        Ok(SendDisposition::BypassTransport)
-    }
-
+impl BindingSlot for NoBinding {
     #[inline(always)]
     fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IncomingClassification> {
         // NoBinding relies on transport.recv() directly; no internal buffering

@@ -13,7 +13,7 @@ use hibana::substrate::{
     SessionCluster, SessionId,
     binding::NoBinding,
     cap::advanced::{EpochTbl, MintConfig},
-    policy::{DynamicResolution, PolicyId, ResolverContext, ResolverError},
+    policy::{DynamicResolution, ResolverContext, ResolverError, ResolverRef},
     runtime::{Config, CounterClock, DefaultLabelUniverse},
 };
 
@@ -210,16 +210,7 @@ fn contains_ascii_word(haystack: &str, needle: &str) -> bool {
         })
 }
 
-fn defer_resolver(
-    _cluster: &SessionCluster<
-        'static,
-        common::TestTransport,
-        DefaultLabelUniverse,
-        CounterClock,
-        1,
-    >,
-    _ctx: ResolverContext,
-) -> Result<DynamicResolution, ResolverError> {
+fn defer_resolver(_ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
     Ok(DynamicResolution::Defer { retry_hint: 1 })
 }
 
@@ -265,7 +256,7 @@ fn substrate_facade_exposes_enter_and_policy_resolver_registration() {
         .expect("add rendezvous");
 
     cluster
-        .set_resolver(rv_id, &CLIENT_PROGRAM, PolicyId::new(7), defer_resolver)
+        .set_resolver::<7, 0, _, _>(rv_id, &CLIENT_PROGRAM, ResolverRef::from_fn(defer_resolver))
         .expect("install resolver");
 
     let endpoint = cluster
@@ -352,7 +343,7 @@ fn substrate_facade_sets_resolver_before_enter() {
         .expect("add rendezvous");
 
     cluster
-        .set_resolver(rv_id, &CLIENT_PROGRAM, PolicyId::new(7), defer_resolver)
+        .set_resolver::<7, 0, _, _>(rv_id, &CLIENT_PROGRAM, ResolverRef::from_fn(defer_resolver))
         .expect("install resolver");
 }
 
@@ -397,9 +388,14 @@ fn quality_workflow_runs_canonical_validation_suite() {
     let workflow = quality_workflow_rs();
 
     for required in [
+        "sudo apt-get update",
+        "sudo apt-get install -y ripgrep",
         "./.github/scripts/check_hibana_public_api.sh",
         "./.github/scripts/check_policy_surface_hygiene.sh",
-        "./.github/scripts/check_boundary_contracts.sh",
+        "./.github/scripts/check_mgmt_boundary.sh",
+        "./.github/scripts/check_plane_boundaries.sh",
+        "./.github/scripts/check_resolver_context_surface.sh",
+        "./.github/scripts/check_surface_hygiene.sh",
         "./.github/scripts/check_direct_projection_binary.sh",
         "cargo check --all-targets -p hibana",
         "cargo test -p hibana --features std",
@@ -414,6 +410,11 @@ fn quality_workflow_runs_canonical_validation_suite() {
     assert!(
         !workflow.contains("./.github/scripts/check_policy_legacy_paths.sh"),
         "quality-gates workflow must not keep the stale policy-legacy gate name"
+    );
+    assert!(
+        !workflow.contains("name: Boundary contracts gate")
+            && !workflow.contains("run: ./.github/scripts/check_boundary_contracts.sh"),
+        "quality-gates workflow must split boundary checks into UI-visible substeps instead of a single wrapper step"
     );
 }
 
@@ -953,7 +954,7 @@ fn substrate_policy_root_stays_minimal() {
         "substrate::SessionCluster::set_resolver must not use function-pointer transmute"
     );
     assert!(
-        !substrate_rs.contains("DynamicResolution, DynamicResolverFn, PolicyId, ResolverContext"),
+        !substrate_rs.contains("DynamicResolverFn"),
         "substrate::policy root must not re-export DynamicResolverFn"
     );
     assert!(
@@ -978,7 +979,6 @@ fn substrate_policy_root_stays_minimal() {
         "crate::control::cap::mint::MintConfig",
         "crate::control::cap::mint::MintConfigMarker",
         "crate::control::cluster::error::AttachError",
-        "crate::control::cluster::core::PolicyId",
         "crate::control::cluster::core::ResolverContext",
         "crate::control::cluster::core::DynamicResolution",
         "crate::control::cluster::core::ResolverError",
@@ -1212,10 +1212,10 @@ fn substrate_mgmt_and_binding_roots_stay_minimal() {
         "runtime management owners must not keep the deleted duplicate resolver wrapper"
     );
     for required in [
-        "        pub fn enter_controller<'lease, 'cfg, T, U, C, B, const MAX_RV: usize>(",
-        "        pub fn enter_cluster<'lease, 'cfg, T, U, C, B, const MAX_RV: usize>(",
-        "        pub fn enter_stream_controller<'lease, 'cfg, T, U, C, B, const MAX_RV: usize>(",
-        "        pub fn enter_stream_cluster<'lease, 'cfg, T, U, C, B, const MAX_RV: usize>(",
+        "        pub fn enter_controller<'cfg, T, U, C, B, const MAX_RV: usize>(",
+        "        pub fn enter_cluster<'cfg, T, U, C, B, const MAX_RV: usize>(",
+        "        pub fn enter_stream_controller<'cfg, T, U, C, B, const MAX_RV: usize>(",
+        "        pub fn enter_stream_cluster<'cfg, T, U, C, B, const MAX_RV: usize>(",
         "        pub async fn drive_cluster<'lease, 'cfg, T, U, C, Mint, B, const MAX_RV: usize>(",
         "        pub async fn drive_stream_cluster<'lease, T, U, C, Mint, F, B, const MAX_RV: usize>(",
         "        pub async fn drive_stream_controller<'lease, T, U, C, Mint, F, B, const MAX_RV: usize>(",
@@ -1330,7 +1330,7 @@ fn substrate_mgmt_and_binding_roots_stay_minimal() {
     );
     assert!(
         substrate_rs.contains(
-            "pub use crate::binding::{\n        BindingSlot, Channel, ChannelDirection, ChannelKey, ChannelStore, IncomingClassification,\n        NoBinding, SendDisposition, SendMetadata, TransportOpsError,\n    };"
+            "pub use crate::binding::{\n        BindingSlot, Channel, ChannelDirection, ChannelKey, ChannelStore, IncomingClassification,\n        NoBinding, TransportOpsError,\n    };"
         ),
         "substrate::binding root must stay on the minimal channel/binding surface"
     );
@@ -1382,7 +1382,7 @@ fn substrate_mgmt_and_binding_roots_stay_minimal() {
         "BindingSlot as Binding",
         "IncomingClassification as Incoming",
         "NoBinding as NullBinding",
-        "SendMetadata as SendMeta",
+        "Outgoing as SendEnvelope",
     ] {
         assert!(
             !binding_body.contains(forbidden),

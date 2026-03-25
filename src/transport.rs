@@ -18,7 +18,10 @@
 
 use core::future::Future;
 
-use crate::transport::wire::{CodecError, Payload, WireDecode, WireEncode};
+use crate::{
+    eff::EffIndex,
+    transport::wire::{CodecError, Payload, WireDecode, WireEncode},
+};
 
 /// Congestion control algorithm observed by a transport.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -218,6 +221,58 @@ impl TransportMetrics for () {
     fn snapshot(&self) -> TransportSnapshot {
         TransportSnapshot::new(None, None)
     }
+}
+
+/// Direction of a send operation from the local role's perspective.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocalDirection {
+    /// Sending to a peer over the transport.
+    Send,
+    /// Metadata describes the receive-side mirror of a transport action.
+    Recv,
+    /// Local-only self-send that must not hit the wire.
+    Local,
+}
+
+/// Transport-owned metadata for an outgoing payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SendMeta {
+    /// Effect index (stable identifier for the choreography step).
+    pub eff_index: EffIndex,
+    /// Message label.
+    pub label: u8,
+    /// Target peer role.
+    pub peer: u8,
+    /// Logical lane for this message.
+    pub lane: u8,
+    /// Direction from the local role's perspective.
+    pub direction: LocalDirection,
+    /// Whether this is a control message.
+    pub is_control: bool,
+}
+
+impl SendMeta {
+    #[inline]
+    pub const fn is_send(&self) -> bool {
+        matches!(self.direction, LocalDirection::Send)
+    }
+
+    #[inline]
+    pub const fn is_recv(&self) -> bool {
+        matches!(self.direction, LocalDirection::Recv)
+    }
+
+    #[inline]
+    pub const fn is_local(&self) -> bool {
+        matches!(self.direction, LocalDirection::Local)
+    }
+}
+
+/// Transport-owned outgoing frame.
+#[derive(Debug)]
+pub struct Outgoing<'f> {
+    pub meta: SendMeta,
+    pub payload: Payload<'f>,
 }
 
 /// Semantic classification for transport-level telemetry events.
@@ -470,12 +525,7 @@ pub trait Transport {
     /// (for example, pre-auth, handshake, or application-data) based on
     /// internal cryptographic
     /// state, not application-layer metadata.
-    fn send<'a, 'f>(
-        &'a self,
-        tx: &'a mut Self::Tx<'a>,
-        payload: Payload<'f>,
-        dest_role: u8,
-    ) -> Self::Send<'a>
+    fn send<'a, 'f>(&'a self, tx: &'a mut Self::Tx<'a>, outgoing: Outgoing<'f>) -> Self::Send<'a>
     where
         'a: 'f;
 
@@ -483,7 +533,7 @@ pub trait Transport {
     ///
     /// The future must resolve to a [`Payload`] view borrowed from the
     /// transport-managed receive slab. Borrowing ties the lifetime `'a` to the
-    /// mutable borrow of `rx`, allowing higher layers (see [`crate::endpoint`])
+    /// mutable borrow of `rx`, allowing higher layers such as [`crate::Endpoint`]
     /// to enforce that the view is released before the next receive.
     /// Implementations should store the current waker whenever the future parks
     /// so that hardware interrupts or other I/O notifications can wake the task
@@ -628,8 +678,7 @@ mod tests {
         fn send<'a, 'f>(
             &'a self,
             _tx: &'a mut Self::Tx<'a>,
-            _payload: Payload<'f>,
-            _dest_role: u8,
+            _outgoing: Outgoing<'f>,
         ) -> Self::Send<'a>
         where
             'a: 'f,

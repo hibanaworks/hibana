@@ -13,7 +13,7 @@
 //! # Pipeline Flow
 //!
 //! ## Send Path
-//! ```ignore
+//! ```text
 //! CapFlow::into_token::<K>()
 //!   → CapFlowToken<K>
 //!   → CapFlowToken::into_frame()

@@ -10,7 +10,7 @@ pub use crate::transport::Transport;
 #[repr(transparent)]
 pub struct SessionCluster<'cfg, T, U, C, const MAX_RV: usize>
 where
-    T: crate::transport::Transport,
+    T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
@@ -19,7 +19,7 @@ where
 
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionCluster<'cfg, T, U, C, MAX_RV>
 where
-    T: crate::transport::Transport,
+    T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
@@ -40,8 +40,8 @@ where
     }
 
     #[inline]
-    pub fn enter<'lease, 'prog, const ROLE: u8, Steps, Mint, B>(
-        &'lease self,
+    pub fn enter<'prog, const ROLE: u8, Steps, Mint, B>(
+        &'cfg self,
         rv: RendezvousId,
         sid: SessionId,
         program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, Steps, Mint>,
@@ -61,8 +61,6 @@ where
         AttachError,
     >
     where
-        'cfg: 'lease,
-        'lease: 'cfg,
         B: crate::substrate::binding::BindingSlot,
         Mint: crate::substrate::cap::advanced::MintConfigMarker,
     {
@@ -70,23 +68,16 @@ where
     }
 
     #[inline]
-    pub fn set_resolver<'prog, const ROLE: u8, Steps, Mint>(
+    pub fn set_resolver<'prog, const POLICY: u16, const ROLE: u8, Steps, Mint>(
         &self,
         rv: RendezvousId,
         program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, Steps, Mint>,
-        policy: crate::substrate::policy::PolicyId,
-        resolver: fn(
-            &SessionCluster<'cfg, T, U, C, MAX_RV>,
-            crate::substrate::policy::ResolverContext,
-        ) -> Result<
-            crate::substrate::policy::DynamicResolution,
-            crate::substrate::policy::ResolverError,
-        >,
+        resolver: crate::substrate::policy::ResolverRef<'cfg>,
     ) -> Result<(), CpError>
     where
         Mint: crate::substrate::cap::advanced::MintConfigMarker,
     {
-        self.inner.set_resolver(rv, program, policy, resolver)
+        self.inner.set_resolver::<POLICY, ROLE, Steps, Mint>(rv, program, resolver)
     }
 
     #[inline]
@@ -96,13 +87,6 @@ where
         &self.inner
     }
 
-    #[inline]
-    pub(crate) fn from_kernel_ref<'a>(
-        inner: &'a crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>,
-    ) -> &'a Self {
-        // SAFETY: `SessionCluster` is `repr(transparent)` over the kernel cluster.
-        unsafe { &*core::ptr::from_ref(inner).cast::<Self>() }
-    }
 }
 
 pub mod runtime {
@@ -123,8 +107,8 @@ pub mod mgmt {
 
         pub use crate::runtime::mgmt::{LoadRequest, Request, SlotRequest};
 
-        pub fn enter_controller<'lease, 'cfg, T, U, C, B, const MAX_RV: usize>(
-            cluster: &'lease crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
+        pub fn enter_controller<'cfg, T, U, C, B, const MAX_RV: usize>(
+            cluster: &'cfg crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
             rv_id: crate::substrate::RendezvousId,
             sid: crate::substrate::SessionId,
             binding: B,
@@ -143,8 +127,6 @@ pub mod mgmt {
             crate::substrate::AttachError,
         >
         where
-            'cfg: 'lease,
-            'lease: 'cfg,
             T: crate::substrate::Transport + 'cfg,
             U: crate::substrate::runtime::LabelUniverse + 'cfg,
             C: crate::substrate::runtime::Clock + 'cfg,
@@ -153,8 +135,8 @@ pub mod mgmt {
             crate::runtime::mgmt::enter_controller(cluster.as_kernel(), rv_id, sid, binding)
         }
 
-        pub fn enter_cluster<'lease, 'cfg, T, U, C, B, const MAX_RV: usize>(
-            cluster: &'lease crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
+        pub fn enter_cluster<'cfg, T, U, C, B, const MAX_RV: usize>(
+            cluster: &'cfg crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
             rv_id: crate::substrate::RendezvousId,
             sid: crate::substrate::SessionId,
             binding: B,
@@ -173,8 +155,6 @@ pub mod mgmt {
             crate::substrate::AttachError,
         >
         where
-            'cfg: 'lease,
-            'lease: 'cfg,
             T: crate::substrate::Transport + 'cfg,
             U: crate::substrate::runtime::LabelUniverse + 'cfg,
             C: crate::substrate::runtime::Clock + 'cfg,
@@ -183,8 +163,8 @@ pub mod mgmt {
             crate::runtime::mgmt::enter_cluster(cluster.as_kernel(), rv_id, sid, binding)
         }
 
-        pub fn enter_stream_controller<'lease, 'cfg, T, U, C, B, const MAX_RV: usize>(
-            cluster: &'lease crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
+        pub fn enter_stream_controller<'cfg, T, U, C, B, const MAX_RV: usize>(
+            cluster: &'cfg crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
             rv_id: crate::substrate::RendezvousId,
             sid: crate::substrate::SessionId,
             binding: B,
@@ -203,8 +183,6 @@ pub mod mgmt {
             crate::substrate::AttachError,
         >
         where
-            'cfg: 'lease,
-            'lease: 'cfg,
             T: crate::substrate::Transport + 'cfg,
             U: crate::substrate::runtime::LabelUniverse + 'cfg,
             C: crate::substrate::runtime::Clock + 'cfg,
@@ -213,8 +191,8 @@ pub mod mgmt {
             crate::runtime::mgmt::enter_stream_controller(cluster.as_kernel(), rv_id, sid, binding)
         }
 
-        pub fn enter_stream_cluster<'lease, 'cfg, T, U, C, B, const MAX_RV: usize>(
-            cluster: &'lease crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
+        pub fn enter_stream_cluster<'cfg, T, U, C, B, const MAX_RV: usize>(
+            cluster: &'cfg crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
             rv_id: crate::substrate::RendezvousId,
             sid: crate::substrate::SessionId,
             binding: B,
@@ -233,8 +211,6 @@ pub mod mgmt {
             crate::substrate::AttachError,
         >
         where
-            'cfg: 'lease,
-            'lease: 'cfg,
             T: crate::substrate::Transport + 'cfg,
             U: crate::substrate::runtime::LabelUniverse + 'cfg,
             C: crate::substrate::runtime::Clock + 'cfg,
@@ -409,13 +385,13 @@ pub mod mgmt {
 pub mod binding {
     pub use crate::binding::{
         BindingSlot, Channel, ChannelDirection, ChannelKey, ChannelStore, IncomingClassification,
-        NoBinding, SendDisposition, SendMetadata, TransportOpsError,
+        NoBinding, TransportOpsError,
     };
 }
 
 pub mod policy {
     pub use crate::control::cluster::core::{
-        DynamicResolution, PolicyId, ResolverContext, ResolverError,
+        DynamicResolution, ResolverContext, ResolverError, ResolverRef,
     };
     pub use crate::transport::context::{
         ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider,
@@ -463,7 +439,7 @@ pub mod wire {
 
 pub mod transport {
     pub use crate::transport::{
-        TransportAlgorithm, TransportError, TransportEvent, TransportEventKind, TransportMetrics,
-        TransportSnapshot,
+        LocalDirection, Outgoing, SendMeta, TransportAlgorithm, TransportError, TransportEvent,
+        TransportEventKind, TransportMetrics, TransportSnapshot,
     };
 }

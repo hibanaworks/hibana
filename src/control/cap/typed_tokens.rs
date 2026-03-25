@@ -79,7 +79,7 @@ impl<K: ResourceKind> CapFlowToken<K> {
     /// Convert this flow token into a `ControlFrame` for the typed pipeline.
     ///
     /// This is the primary integration point for the ControlFrame DSL:
-    /// ```ignore
+    /// ```text
     /// CapFlow::into_token::<K>()
     ///   → CapFlowToken<K>
     ///   → into_frame()

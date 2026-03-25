@@ -41,7 +41,6 @@ const LOOP_POLICY_ID: u16 = 99;
 static LOOP_DECISION_INDEX: AtomicUsize = AtomicUsize::new(0);
 
 fn loop_lane_resolver(
-    _cluster: &SessionCluster<'static, TestTransport, DefaultLabelUniverse, CounterClock, 4>,
     _ctx: ResolverContext,
 ) -> Result<DynamicResolution, ResolverError> {
     let idx = LOOP_DECISION_INDEX.fetch_add(1, Ordering::Relaxed);
@@ -54,11 +53,10 @@ fn register_loop_lane_resolvers(
     rv_id: RendezvousId,
 ) {
     cluster
-        .set_resolver(
+        .set_resolver::<LOOP_POLICY_ID, 0, _, _>(
             rv_id,
             &CONTROLLER_PROGRAM,
-            hibana::substrate::policy::PolicyId::new(LOOP_POLICY_ID),
-            loop_lane_resolver,
+            hibana::substrate::policy::ResolverRef::from_fn(loop_lane_resolver),
         )
         .expect("register loop resolver");
 }

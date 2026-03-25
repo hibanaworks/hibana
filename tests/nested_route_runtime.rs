@@ -34,7 +34,6 @@ const OUTER_ROUTE_POLICY_ID: u16 = 310;
 const INNER_ROUTE_POLICY_ID: u16 = 311;
 
 fn nested_route_resolver(
-    _cluster: &SessionCluster<'static, TestTransport, DefaultLabelUniverse, CounterClock, 4>,
     ctx: ResolverContext,
 ) -> Result<DynamicResolution, ResolverError> {
     let tag = ctx.attr(core::TAG).map(|value| value.as_u8());
@@ -49,19 +48,17 @@ fn register_route_resolvers(
     rv_id: RendezvousId,
 ) {
     cluster
-        .set_resolver(
+        .set_resolver::<OUTER_ROUTE_POLICY_ID, 0, _, _>(
             rv_id,
             &CONTROLLER_PROGRAM,
-            hibana::substrate::policy::PolicyId::new(OUTER_ROUTE_POLICY_ID),
-            nested_route_resolver,
+            hibana::substrate::policy::ResolverRef::from_fn(nested_route_resolver),
         )
         .expect("register outer route resolver");
     cluster
-        .set_resolver(
+        .set_resolver::<INNER_ROUTE_POLICY_ID, 0, _, _>(
             rv_id,
             &CONTROLLER_PROGRAM,
-            hibana::substrate::policy::PolicyId::new(INNER_ROUTE_POLICY_ID),
-            nested_route_resolver,
+            hibana::substrate::policy::ResolverRef::from_fn(nested_route_resolver),
         )
         .expect("register inner route resolver");
 }

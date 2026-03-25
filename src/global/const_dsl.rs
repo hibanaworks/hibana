@@ -275,15 +275,25 @@ impl PolicyMode {
     ///
     /// // Register resolver before use
     /// let controller = hibana::g::advanced::project(&MY_ROUTE);
+    /// struct RouteState {
+    ///     preferred_arm: u8,
+    /// }
     ///
-    /// cluster.set_resolver(
+    /// fn resolve_route(
+    ///     state: &RouteState,
+    ///     _ctx: hibana::substrate::policy::ResolverContext,
+    /// ) -> Result<hibana::substrate::policy::DynamicResolution, hibana::substrate::policy::ResolverError> {
+    ///     Ok(hibana::substrate::policy::DynamicResolution::RouteArm {
+    ///         arm: state.preferred_arm,
+    ///     })
+    /// }
+    ///
+    /// let route_state = RouteState { preferred_arm: 0 };
+    ///
+    /// cluster.set_resolver::<MY_POLICY_ID, 0, _, _>(
     ///     rv_id,
     ///     &controller,
-    ///     hibana::substrate::policy::PolicyId::new(MY_POLICY_ID),
-    ///     |_cluster, ctx| {
-    ///         // Return selected arm index
-    ///         Ok(hibana::substrate::policy::DynamicResolution::RouteArm { arm: 0 })
-    ///     },
+    ///     hibana::substrate::policy::ResolverRef::from_state(&route_state, resolve_route),
     /// )?;
     /// ```
     ///

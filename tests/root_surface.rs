@@ -193,36 +193,15 @@ fn public_api_gate_tracks_g_and_substrate_surfaces() {
     let script = public_api_script_rs();
 
     for required in [
-        "src/lib.rs",
-        ".github/allowlists/lib-public-api.txt",
-        "src/g.rs",
-        ".github/allowlists/g-public-api.txt",
-        "extract_g_surface_api",
-        "check_g_surface",
-        "src/endpoint.rs",
-        ".github/allowlists/endpoint-public-api.txt",
-        "src/substrate.rs",
-        ".github/allowlists/substrate-public-api.txt",
-        "src/transport/context.rs",
-        "src/transport.rs",
-        "src/binding.rs",
-        "src/transport/wire.rs",
-        "src/control/cap/mint.rs",
-        "src/control/cluster/core.rs",
-        "src/runtime/mgmt.rs",
-        "src/runtime/config.rs",
-        "check_absent_multiline",
-        "pub ((const|async|unsafe)[[:space:]]+)*fn",
-        "pub (const|static) ",
-        "multi-argument management code-session helper",
-        "bool/stringly public function argument",
-        "g surface",
-        "endpoint surface",
-        "substrate surface",
+        "target/doc/hibana.json",
+        "cargo +nightly rustdoc --lib --features std -- -Z unstable-options --output-format json",
+        "HIBANA_RUSTDOC_JSON",
+        "cargo +nightly test --test semantic_surface --features std",
+        "semantic public API check passed",
     ] {
         assert!(
             script.contains(required),
-            "crate-local public API gate must track current surface owner/allowlist pairs: {required}"
+            "crate-local public API gate must run the nightly rustdoc semantic verifier: {required}"
         );
     }
 }

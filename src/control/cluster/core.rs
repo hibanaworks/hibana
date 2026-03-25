@@ -3,6 +3,8 @@
 //! This module implements SessionCluster, which coordinates multiple Rendezvous
 //! instances for local distributed session management.
 
+use core::marker::PhantomData;
+
 use crate::control::automaton::{
     delegation::{DelegateMintAutomaton, DelegateMintSeed, DelegationLeaseSpec},
     distributed::{DistributedSplice, DistributedSpliceInv, SpliceAck, SpliceIntent},
@@ -41,23 +43,6 @@ use crate::endpoint::affine::LaneGuard;
 
 const MAX_CACHED_SPLICES: usize = 64;
 const HANDLE_RESOLVER_SLOTS: usize = 128;
-
-/// Typed policy identifier for dynamic resolver registration.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[repr(transparent)]
-pub struct PolicyId(u16);
-
-impl PolicyId {
-    #[inline]
-    pub const fn new(raw: u16) -> Self {
-        Self(raw)
-    }
-
-    #[inline]
-    pub const fn as_u16(self) -> u16 {
-        self.0
-    }
-}
 
 fn splice_operands_from_handle(handle: SpliceHandle) -> SpliceOperands {
     SpliceOperands::new(
@@ -409,6 +394,8 @@ pub enum ResolverError {
     Reject,
 }
 
+type ResolverResult = Result<DynamicResolution, ResolverError>;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResolverContext {
     rv_id: RendezvousId,
@@ -522,6 +509,61 @@ impl ResolverContext {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct ResolverRef<'cfg> {
+    state: *const (),
+    callback: usize,
+    dispatch: unsafe fn(*const (), usize, ResolverContext) -> ResolverResult,
+    _marker: PhantomData<&'cfg ()>,
+}
+
+impl<'cfg> ResolverRef<'cfg> {
+    #[inline]
+    pub fn from_state<S: 'cfg>(
+        state: &'cfg S,
+        resolver: fn(&S, ResolverContext) -> ResolverResult,
+    ) -> Self {
+        Self {
+            state: core::ptr::from_ref(state).cast(),
+            callback: resolver as usize,
+            dispatch: dispatch_state::<S>,
+            _marker: PhantomData,
+        }
+    }
+
+    #[inline]
+    pub fn from_fn(resolver: fn(ResolverContext) -> ResolverResult) -> Self {
+        Self {
+            state: core::ptr::null(),
+            callback: resolver as usize,
+            dispatch: dispatch_fn,
+            _marker: PhantomData,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn resolve(self, ctx: ResolverContext) -> ResolverResult {
+        unsafe { (self.dispatch)(self.state, self.callback, ctx) }
+    }
+}
+
+unsafe fn dispatch_state<S>(
+    state: *const (),
+    callback: usize,
+    ctx: ResolverContext,
+) -> ResolverResult {
+    let state = unsafe { &*state.cast::<S>() };
+    let resolver =
+        unsafe { core::mem::transmute::<usize, fn(&S, ResolverContext) -> ResolverResult>(callback) };
+    resolver(state, ctx)
+}
+
+unsafe fn dispatch_fn(_state: *const (), callback: usize, ctx: ResolverContext) -> ResolverResult {
+    let resolver =
+        unsafe { core::mem::transmute::<usize, fn(ResolverContext) -> ResolverResult>(callback) };
+    resolver(ctx)
+}
+
 #[inline]
 const fn encode_transport_algorithm(algorithm: TransportAlgorithm) -> ContextValue {
     match algorithm {
@@ -544,16 +586,8 @@ impl DynamicResolverKey {
     }
 }
 
-struct DynamicResolverEntry<'cfg, T, U, C, const MAX_RV: usize>
-where
-    T: crate::transport::Transport + 'cfg,
-    U: crate::runtime::consts::LabelUniverse,
-    C: crate::runtime::config::Clock,
-{
-    resolver: fn(
-        &crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
-        ResolverContext,
-    ) -> Result<DynamicResolution, ResolverError>,
+struct DynamicResolverEntry<'cfg> {
+    resolver: ResolverRef<'cfg>,
     policy: PolicyMode,
     scope_trace: Option<ScopeTrace>,
 }
@@ -846,25 +880,11 @@ where
     }
 }
 
-struct ResolverCore<'cfg, T, U, C, const MAX_RV: usize>
-where
-    T: crate::transport::Transport,
-    U: crate::runtime::consts::LabelUniverse,
-    C: crate::runtime::config::Clock,
-{
-    table: ArrayMap<
-        DynamicResolverKey,
-        DynamicResolverEntry<'cfg, T, U, C, MAX_RV>,
-        HANDLE_RESOLVER_SLOTS,
-    >,
+struct ResolverCore<'cfg> {
+    table: ArrayMap<DynamicResolverKey, DynamicResolverEntry<'cfg>, HANDLE_RESOLVER_SLOTS>,
 }
 
-impl<'cfg, T, U, C, const MAX_RV: usize> ResolverCore<'cfg, T, U, C, MAX_RV>
-where
-    T: crate::transport::Transport,
-    U: crate::runtime::consts::LabelUniverse,
-    C: crate::runtime::config::Clock,
-{
+impl<'cfg> ResolverCore<'cfg> {
     #[cfg(feature = "std")]
     unsafe fn init_empty(dst: *mut Self) {
         unsafe {
@@ -888,9 +908,9 @@ where
 /// - TAP event monitoring for lane lifecycle
 pub(crate) struct SessionCluster<'cfg, T, U, C, const MAX_RV: usize>
 where
-    T: crate::transport::Transport,
-    U: crate::runtime::consts::LabelUniverse,
-    C: crate::runtime::config::Clock,
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
 {
     /// Control-plane state guarded by interior mutability.
     #[cfg(feature = "std")]
@@ -903,16 +923,16 @@ where
     >,
     /// Dynamic resolver table separated from core control state.
     #[cfg(feature = "std")]
-    resolvers: core::cell::UnsafeCell<std::boxed::Box<ResolverCore<'cfg, T, U, C, MAX_RV>>>,
+    resolvers: core::cell::UnsafeCell<std::boxed::Box<ResolverCore<'cfg>>>,
     #[cfg(not(feature = "std"))]
-    resolvers: core::cell::UnsafeCell<ResolverCore<'cfg, T, U, C, MAX_RV>>,
+    resolvers: core::cell::UnsafeCell<ResolverCore<'cfg>>,
     /// Clock for timestamping tap events.
     clock: &'cfg C,
 }
 
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionCluster<'cfg, T, U, C, MAX_RV>
 where
-    T: crate::transport::Transport,
+    T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
@@ -923,8 +943,7 @@ where
             let mut control = std::boxed::Box::<
                 ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
             >::new_uninit();
-            let mut resolvers =
-                std::boxed::Box::<ResolverCore<'cfg, T, U, C, MAX_RV>>::new_uninit();
+            let mut resolvers = std::boxed::Box::<ResolverCore<'cfg>>::new_uninit();
             ControlCore::init_empty(control.as_mut_ptr());
             ResolverCore::init_empty(resolvers.as_mut_ptr());
             return Self {
@@ -991,26 +1010,26 @@ where
 
     #[cfg(feature = "std")]
     #[inline]
-    fn resolvers_ptr(&self) -> *mut ResolverCore<'cfg, T, U, C, MAX_RV> {
-        unsafe { (&mut *self.resolvers.get()).as_mut() as *mut ResolverCore<'cfg, T, U, C, MAX_RV> }
+    fn resolvers_ptr(&self) -> *mut ResolverCore<'cfg> {
+        unsafe { (&mut *self.resolvers.get()).as_mut() as *mut ResolverCore<'cfg> }
     }
 
     #[cfg(not(feature = "std"))]
     #[inline]
-    fn resolvers_ptr(&self) -> *mut ResolverCore<'cfg, T, U, C, MAX_RV> {
+    fn resolvers_ptr(&self) -> *mut ResolverCore<'cfg> {
         self.resolvers.get()
     }
 
     #[cfg(feature = "std")]
     #[inline]
-    fn resolvers_ref_ptr(&self) -> *const ResolverCore<'cfg, T, U, C, MAX_RV> {
-        unsafe { (&*self.resolvers.get()).as_ref() as *const ResolverCore<'cfg, T, U, C, MAX_RV> }
+    fn resolvers_ref_ptr(&self) -> *const ResolverCore<'cfg> {
+        unsafe { (&*self.resolvers.get()).as_ref() as *const ResolverCore<'cfg> }
     }
 
     #[cfg(not(feature = "std"))]
     #[inline]
-    fn resolvers_ref_ptr(&self) -> *const ResolverCore<'cfg, T, U, C, MAX_RV> {
-        self.resolvers.get() as *const ResolverCore<'cfg, T, U, C, MAX_RV>
+    fn resolvers_ref_ptr(&self) -> *const ResolverCore<'cfg> {
+        self.resolvers.get() as *const ResolverCore<'cfg>
     }
 
     /// Internal helper to access mutable control core (NOT PUBLIC).
@@ -1026,7 +1045,7 @@ where
     /// Internal helper to access mutable resolver state.
     fn with_resolvers_mut<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&mut ResolverCore<'cfg, T, U, C, MAX_RV>) -> R,
+        F: FnOnce(&mut ResolverCore<'cfg>) -> R,
     {
         unsafe { f(&mut *self.resolvers_ptr()) }
     }
@@ -1399,30 +1418,25 @@ where
     fn dynamic_resolver(
         &self,
         key: DynamicResolverKey,
-    ) -> Option<&DynamicResolverEntry<'cfg, T, U, C, MAX_RV>> {
+    ) -> Option<&DynamicResolverEntry<'cfg>> {
         unsafe { (*self.resolvers_ref_ptr()).table.get(&key) }
     }
 
-    pub(crate) fn set_resolver<'prog, const ROLE: u8, LocalSteps, Mint>(
+    pub(crate) fn set_resolver<'prog, const POLICY: u16, const ROLE: u8, LocalSteps, Mint>(
         &self,
         rv_id: RendezvousId,
         program: &crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
-        policy_id: PolicyId,
-        resolver: fn(
-            &crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
-            ResolverContext,
-        ) -> Result<DynamicResolution, ResolverError>,
+        resolver: ResolverRef<'cfg>,
     ) -> Result<(), CpError>
     where
         Mint: MintConfigMarker,
     {
-        let raw_policy_id = policy_id.as_u16();
         let eff_list = program.eff_list();
         for marker in eff_list.policies() {
             let Some(dynamic_policy_id) = marker.policy.dynamic_policy_id() else {
                 continue;
             };
-            if dynamic_policy_id != raw_policy_id {
+            if dynamic_policy_id != POLICY {
                 continue;
             }
             let offset = marker.offset;
@@ -1463,10 +1477,7 @@ where
         policy: PolicyMode,
         tag: u8,
         scope_trace: Option<ScopeTrace>,
-        resolver: fn(
-            &crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
-            ResolverContext,
-        ) -> Result<DynamicResolution, ResolverError>,
+        resolver: ResolverRef<'cfg>,
     ) -> Result<(), CpError> {
         let key = DynamicResolverKey::new(rv_id, eff_index, tag);
         let policy = match policy {
@@ -1530,9 +1541,10 @@ where
             attrs,
         );
 
-        let resolution =
-            (entry.resolver)(crate::substrate::SessionCluster::from_kernel_ref(self), ctx)
-                .map_err(|_| CpError::PolicyAbort { reason: policy_id })?;
+        let resolution = entry
+            .resolver
+            .resolve(ctx)
+            .map_err(|_| CpError::PolicyAbort { reason: policy_id })?;
 
         // The resource tag determines the expected resolution type
         match (tag, resolution) {
@@ -2327,7 +2339,7 @@ where
 
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionCluster<'cfg, T, U, C, MAX_RV>
 where
-    T: crate::transport::Transport,
+    T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
@@ -2542,8 +2554,8 @@ where
     }
 
     #[inline]
-    pub(crate) fn enter<'lease, 'prog, const ROLE: u8, LocalSteps, Mint, B>(
-        &'lease self,
+    pub(crate) fn enter<'prog, const ROLE: u8, LocalSteps, Mint, B>(
+        &'cfg self,
         rv_id: RendezvousId,
         sid: SessionId,
         program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
@@ -2563,8 +2575,6 @@ where
         AttachError,
     >
     where
-        'cfg: 'lease,
-        'lease: 'cfg,
         B: crate::binding::BindingSlot,
         Mint: crate::control::cap::mint::MintConfigMarker,
     {
@@ -2726,9 +2736,9 @@ where
 
 impl<'cfg, T, U, C, const MAX_RV: usize> Drop for SessionCluster<'cfg, T, U, C, MAX_RV>
 where
-    T: crate::transport::Transport,
-    U: crate::runtime::consts::LabelUniverse,
-    C: crate::runtime::config::Clock,
+    T: crate::transport::Transport + 'cfg,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
 {
     fn drop(&mut self) {
         // SAFETY: `core` is owned by `self` and we're in `drop`, so no aliases exist.
@@ -2783,8 +2793,7 @@ mod tests {
         fn send<'a, 'f>(
             &'a self,
             _tx: &'a mut Self::Tx<'a>,
-            _payload: Payload<'f>,
-            _dest_role: u8,
+            _outgoing: crate::transport::Outgoing<'f>,
         ) -> Self::Send<'a>
         where
             'a: 'f,
@@ -3026,13 +3035,6 @@ mod tests {
         use crate::runtime::{config::Config, consts::RING_EVENTS};
 
         fn defer_resolution(
-            _cluster: &crate::substrate::SessionCluster<
-                '_,
-                DummyTransport,
-                DefaultLabelUniverse,
-                CounterClock,
-                4,
-            >,
             _ctx: ResolverContext,
         ) -> Result<DynamicResolution, ResolverError> {
             Ok(DynamicResolution::Defer { retry_hint: 2 })
@@ -3058,7 +3060,7 @@ mod tests {
                     .insert(
                         DynamicResolverKey::new(rv_id, eff_index, SpliceIntentKind::TAG),
                         DynamicResolverEntry {
-                            resolver: defer_resolution,
+                            resolver: ResolverRef::from_fn(defer_resolution),
                             policy,
                             scope_trace: None,
                         },
@@ -3070,7 +3072,7 @@ mod tests {
                     .insert(
                         DynamicResolverKey::new(rv_id, eff_index, RerouteKind::TAG),
                         DynamicResolverEntry {
-                            resolver: defer_resolution,
+                            resolver: ResolverRef::from_fn(defer_resolution),
                             policy,
                             scope_trace: None,
                         },

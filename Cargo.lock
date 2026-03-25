@@ -151,6 +151,7 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "proptest",
+ "serde_json",
  "static_assertions",
  "tokio",
  "trybuild",

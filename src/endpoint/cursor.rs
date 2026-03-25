@@ -403,9 +403,7 @@ mod route_policy_tests {
 #[cfg(test)]
 mod offer_regression_tests {
     use super::*;
-    use crate::binding::{
-        Channel, IncomingClassification, SendDisposition, SendMetadata, TransportOpsError,
-    };
+    use crate::binding::{Channel, IncomingClassification, TransportOpsError};
     use crate::control::cap::mint::{
         CapError, CapShot, CapsMask, ControlResourceKind, GenericCapToken, ResourceKind,
         SessionScopedKind,
@@ -502,16 +500,7 @@ mod offer_regression_tests {
         }
     }
 
-    // SAFETY: Test binding performs no I/O and returns immediately.
-    unsafe impl BindingSlot for LaneAwareTestBinding {
-        fn on_send_with_meta(
-            &mut self,
-            _meta: SendMetadata,
-            _payload: &[u8],
-        ) -> Result<SendDisposition, TransportOpsError> {
-            Ok(SendDisposition::BypassTransport)
-        }
-
+    impl BindingSlot for LaneAwareTestBinding {
         fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IncomingClassification> {
             let lane_idx = logical_lane as usize;
             if lane_idx >= MAX_LANES {
@@ -536,16 +525,7 @@ mod offer_regression_tests {
         }
     }
 
-    // SAFETY: Test binding performs no I/O and returns immediately.
-    unsafe impl BindingSlot for TestBinding {
-        fn on_send_with_meta(
-            &mut self,
-            _meta: SendMetadata,
-            _payload: &[u8],
-        ) -> Result<SendDisposition, TransportOpsError> {
-            Ok(SendDisposition::BypassTransport)
-        }
-
+    impl BindingSlot for TestBinding {
         fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IncomingClassification> {
             self.polls.set(self.polls.get().saturating_add(1));
             self.incoming.pop_front()
@@ -625,8 +605,7 @@ mod offer_regression_tests {
         fn send<'a, 'f>(
             &'a self,
             _tx: &'a mut Self::Tx<'a>,
-            _payload: Payload<'f>,
-            _dest_role: u8,
+            _outgoing: crate::transport::Outgoing<'f>,
         ) -> Self::Send<'a>
         where
             'a: 'f,
@@ -719,16 +698,7 @@ mod offer_regression_tests {
         }
     }
 
-    // SAFETY: Deferred test binding performs no blocking I/O.
-    unsafe impl BindingSlot for DeferredIngressBinding {
-        fn on_send_with_meta(
-            &mut self,
-            _meta: SendMetadata,
-            _payload: &[u8],
-        ) -> Result<SendDisposition, TransportOpsError> {
-            Ok(SendDisposition::BypassTransport)
-        }
-
+    impl BindingSlot for DeferredIngressBinding {
         fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IncomingClassification> {
             self.polls.set(self.polls.get().saturating_add(1));
             if self.state.available.load(Ordering::SeqCst) == 0 {
@@ -833,8 +803,7 @@ mod offer_regression_tests {
         fn send<'a, 'f>(
             &'a self,
             _tx: &'a mut Self::Tx<'a>,
-            _payload: Payload<'f>,
-            _dest_role: u8,
+            _outgoing: crate::transport::Outgoing<'f>,
         ) -> Self::Send<'a>
         where
             'a: 'f,
@@ -888,8 +857,7 @@ mod offer_regression_tests {
         fn send<'a, 'f>(
             &'a self,
             _tx: &'a mut Self::Tx<'a>,
-            _payload: Payload<'f>,
-            _dest_role: u8,
+            _outgoing: crate::transport::Outgoing<'f>,
         ) -> Self::Send<'a>
         where
             'a: 'f,
@@ -14597,38 +14565,26 @@ where
             let transport = port.transport();
             let tx_ptr = port.tx_ptr();
 
-            // Invoke binding hook before transport send
-            // Build SendMetadata from SendMeta for the new API
-            let direction = if meta.peer == ROLE {
-                // Self-send (CanonicalControl)
-                crate::binding::LocalDirection::Local
-            } else {
-                // Cross-role send
-                crate::binding::LocalDirection::Send
+            let outgoing = crate::transport::Outgoing {
+                meta: crate::transport::SendMeta {
+                    eff_index: meta.eff_index,
+                    label: meta.label,
+                    peer: meta.peer,
+                    lane: meta.lane,
+                    direction: if meta.peer == ROLE {
+                        crate::transport::LocalDirection::Local
+                    } else {
+                        crate::transport::LocalDirection::Send
+                    },
+                    is_control: meta.is_control,
+                },
+                payload: payload_view,
             };
-            let binding_meta = crate::binding::SendMetadata {
-                eff_index: meta.eff_index,
-                label: meta.label,
-                peer: meta.peer,
-                lane: meta.lane,
-                direction,
-                is_control: meta.is_control,
-            };
-            let disposition = self
-                .binding
-                .on_send_with_meta(binding_meta, payload_view.as_bytes())
-                .map_err(|_| SendError::Binding)?;
 
-            // Skip wire transmission if:
-            // 1. Self-send (CanonicalControl) - Local messages never go to wire
-            // 2. Binder returned Handled - Binder already did wire I/O
-            let should_bypass = direction == crate::binding::LocalDirection::Local
-                || disposition == crate::binding::SendDisposition::Handled;
-
-            if !should_bypass {
+            if !outgoing.meta.is_local() {
                 unsafe {
                     transport
-                        .send(&mut *tx_ptr, payload_view, meta.peer)
+                        .send(&mut *tx_ptr, outgoing)
                         .await
                         .map_err(|err| SendError::Transport(err.into()))?;
                 }

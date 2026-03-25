@@ -609,8 +609,8 @@ pub(super) fn management_eff_lists() -> (
     (CONTROLLER_PROGRAM.eff_list(), CLUSTER_PROGRAM.eff_list())
 }
 
-pub(crate) fn enter_controller<'lease, 'cfg, T, U, C, B, const MAX_RV: usize>(
-    cluster: &'lease crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>,
+pub(crate) fn enter_controller<'cfg, T, U, C, B, const MAX_RV: usize>(
+    cluster: &'cfg crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>,
     rv_id: crate::control::types::RendezvousId,
     sid: crate::control::types::SessionId,
     binding: B,
@@ -629,8 +629,6 @@ pub(crate) fn enter_controller<'lease, 'cfg, T, U, C, B, const MAX_RV: usize>(
     crate::control::cluster::error::AttachError,
 >
 where
-    'cfg: 'lease,
-    'lease: 'cfg,
     T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
@@ -639,8 +637,8 @@ where
     cluster.enter(rv_id, sid, &CONTROLLER_PROGRAM, binding)
 }
 
-pub(crate) fn enter_cluster<'lease, 'cfg, T, U, C, B, const MAX_RV: usize>(
-    cluster: &'lease crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>,
+pub(crate) fn enter_cluster<'cfg, T, U, C, B, const MAX_RV: usize>(
+    cluster: &'cfg crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>,
     rv_id: crate::control::types::RendezvousId,
     sid: crate::control::types::SessionId,
     binding: B,
@@ -659,8 +657,6 @@ pub(crate) fn enter_cluster<'lease, 'cfg, T, U, C, B, const MAX_RV: usize>(
     crate::control::cluster::error::AttachError,
 >
 where
-    'cfg: 'lease,
-    'lease: 'cfg,
     T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
@@ -1085,8 +1081,8 @@ pub(crate) async fn drive_cluster<'lease, 'cfg, T, U, C, Mint, B, const MAX_RV: 
 >
 where
     T: crate::transport::Transport + 'cfg,
-    U: crate::runtime::consts::LabelUniverse,
-    C: crate::runtime::config::Clock,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
     Mint: MintConfigMarker,
     Mint::Policy: AllowsCanonical,
     B: crate::binding::BindingSlot,
@@ -1198,8 +1194,8 @@ async fn drive_load_branch<'lease, 'cfg, T, U, C, Mint, B, const MAX_RV: usize>(
 >
 where
     T: crate::transport::Transport + 'cfg,
-    U: crate::runtime::consts::LabelUniverse,
-    C: crate::runtime::config::Clock,
+    U: crate::runtime::consts::LabelUniverse + 'cfg,
+    C: crate::runtime::config::Clock + 'cfg,
     Mint: MintConfigMarker,
     Mint::Policy: AllowsCanonical,
     B: crate::binding::BindingSlot,
@@ -1649,8 +1645,8 @@ where
     }
 }
 
-pub(crate) fn enter_stream_controller<'lease, 'cfg, T, U, C, B, const MAX_RV: usize>(
-    cluster: &'lease crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>,
+pub(crate) fn enter_stream_controller<'cfg, T, U, C, B, const MAX_RV: usize>(
+    cluster: &'cfg crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>,
     rv_id: crate::control::types::RendezvousId,
     sid: crate::control::types::SessionId,
     binding: B,
@@ -1669,8 +1665,6 @@ pub(crate) fn enter_stream_controller<'lease, 'cfg, T, U, C, B, const MAX_RV: us
     crate::control::cluster::error::AttachError,
 >
 where
-    'cfg: 'lease,
-    'lease: 'cfg,
     T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
@@ -1679,8 +1673,8 @@ where
     cluster.enter(rv_id, sid, &STREAM_CONTROLLER_PROGRAM, binding)
 }
 
-pub(crate) fn enter_stream_cluster<'lease, 'cfg, T, U, C, B, const MAX_RV: usize>(
-    cluster: &'lease crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>,
+pub(crate) fn enter_stream_cluster<'cfg, T, U, C, B, const MAX_RV: usize>(
+    cluster: &'cfg crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>,
     rv_id: crate::control::types::RendezvousId,
     sid: crate::control::types::SessionId,
     binding: B,
@@ -1699,8 +1693,6 @@ pub(crate) fn enter_stream_cluster<'lease, 'cfg, T, U, C, B, const MAX_RV: usize
     crate::control::cluster::error::AttachError,
 >
 where
-    'cfg: 'lease,
-    'lease: 'cfg,
     T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,

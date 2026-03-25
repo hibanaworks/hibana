@@ -395,10 +395,9 @@ impl<K: ResourceKind> ControlPayload for GenericCapToken<K> {}
 /// Resource classification for capabilities.
 ///
 /// Each `ResourceKind` supplies a handle type that is encoded into the resource
-/// payload section of the capability header. The first [`CAP_FIXED_HEADER_LEN`]
-/// bytes store the session/lane metadata, while the remaining
-/// [`CAP_HANDLE_LEN`] bytes are entirely owned by the resource kind for
-/// encoding operands.
+/// payload section of the capability header. The first 10 bytes store the
+/// session/lane metadata, while the remaining [`CAP_HANDLE_LEN`] bytes are
+/// entirely owned by the resource kind for encoding operands.
 pub trait ResourceKind {
     /// Handle associated with this capability.
     type Handle: super::ControlHandle;
@@ -751,10 +750,10 @@ impl CapShot {
     }
 }
 
-/// Bitmask describing which [`CpEffect`] variants a capability may invoke.
+/// Bitmask describing which control-plane effect variants a capability may invoke.
 ///
-/// Each bit corresponds directly to the discriminant of [`CpEffect`], allowing
-/// the control plane and EPF VM to perform constant-time authorisation checks
+/// Each bit corresponds directly to a `CpEffect` discriminant, allowing the
+/// control plane and EPF VM to perform constant-time authorisation checks
 /// without auxiliary translation layers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CapsMask {

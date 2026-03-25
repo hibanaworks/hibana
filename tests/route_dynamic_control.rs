@@ -13,10 +13,7 @@ use hibana::{
     g::{self, Msg, Role},
     substrate::{
         SessionCluster, SessionId,
-        binding::{
-            BindingSlot, Channel, IncomingClassification, NoBinding, SendDisposition, SendMetadata,
-            TransportOpsError,
-        },
+        binding::{BindingSlot, Channel, IncomingClassification, NoBinding, TransportOpsError},
         policy::{
             ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider, core,
             epf::Slot,
@@ -114,16 +111,7 @@ impl PolicySignalsProvider for PolicyInputBinding {
     }
 }
 
-// SAFETY: Test binding performs no I/O and all operations complete immediately.
-unsafe impl BindingSlot for PolicyInputBinding {
-    fn on_send_with_meta(
-        &mut self,
-        _meta: SendMetadata,
-        _payload: &[u8],
-    ) -> Result<SendDisposition, TransportOpsError> {
-        Ok(SendDisposition::BypassTransport)
-    }
-
+impl BindingSlot for PolicyInputBinding {
     fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IncomingClassification> {
         None
     }
@@ -434,13 +422,6 @@ static NESTED_LOOP_CONTROLLER_PROGRAM: RoleProgram<
 > = project(&NESTED_LOOP_PROGRAM);
 
 fn route_resolver(
-    _cluster: &SessionCluster<
-        'static,
-        TestTransport,
-        DefaultLabelUniverse,
-        hibana::substrate::runtime::CounterClock,
-        4,
-    >,
     ctx: ResolverContext,
 ) -> Result<DynamicResolution, ResolverError> {
     if ctx.attr(core::TAG).map(|value| value.as_u8()) != Some(RouteDecisionKind::TAG) {
@@ -454,13 +435,6 @@ fn route_resolver(
 }
 
 fn route_policy_input_resolver(
-    _cluster: &SessionCluster<
-        'static,
-        TestTransport,
-        DefaultLabelUniverse,
-        hibana::substrate::runtime::CounterClock,
-        4,
-    >,
     ctx: ResolverContext,
 ) -> Result<DynamicResolution, ResolverError> {
     if ctx.attr(core::TAG).map(|value| value.as_u8()) != Some(RouteDecisionKind::TAG) {
@@ -497,11 +471,10 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
             .add_rendezvous_from_config(config, transport.clone())
             .expect("register rendezvous");
         cluster
-            .set_resolver(
+            .set_resolver::<ROUTE_POLICY_ID, 0, _, _>(
                 rv_id,
                 &CONTROLLER_PROGRAM,
-                hibana::substrate::policy::PolicyId::new(ROUTE_POLICY_ID),
-                route_resolver,
+                hibana::substrate::policy::ResolverRef::from_fn(route_resolver),
             )
             .expect("register route resolver");
 
@@ -589,11 +562,10 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
             .expect("register rendezvous");
 
         cluster
-            .set_resolver(
+            .set_resolver::<ROUTE_POLICY_ID, 0, _, _>(
                 rv_id,
                 &CONTROLLER_PROGRAM,
-                hibana::substrate::policy::PolicyId::new(ROUTE_POLICY_ID),
-                route_policy_input_resolver,
+                hibana::substrate::policy::ResolverRef::from_fn(route_policy_input_resolver),
             )
             .expect("register route resolver");
 
