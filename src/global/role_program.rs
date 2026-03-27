@@ -1,33 +1,34 @@
 //! Role-local program representation derived from const `EffList`.
 //!
-//! `RoleProgram` materialises the subset of a global effect list that is
-//! relevant to a particular role. It keeps the original `EffList` reference so
-//! control-plane metadata (scope/control markers) remain accessible, while also
-//! providing a compact slice of `LocalStep` entries for IDE inspection and
-//! lightweight runtime checks.
+//! `RoleProgram` is the typed entry point for a role-local projection.
+//! Crate-private lowering facts stay behind this module and the compiled layer,
+//! while the original `EffList` reference remains available for metadata
+//! inspection.
 
 use super::{
+    compiled::{ProgramFacts, RoleMachine},
     program::Program,
     steps::ProjectRole,
-    typestate::{PhaseCursor, RoleTypestate},
 };
+#[cfg(test)]
+use super::typestate::RoleTypestate;
 use crate::control::cap::mint::{CapShot, MintConfig, MintConfigMarker};
 use crate::{
-    eff::{self, EffIndex, EffKind},
-    global::const_dsl::{EffList, ScopeEvent, ScopeId, ScopeKind, ScopeMarker},
+    eff::{self, EffIndex},
+    global::const_dsl::{EffList, ScopeId},
     global::{KnownRole, Role},
 };
 
-const MAX_STEPS: usize = eff::meta::MAX_EFF_NODES;
+pub(super) const MAX_STEPS: usize = eff::meta::MAX_EFF_NODES;
 /// Maximum number of parallel phases in a program.
-const MAX_PHASES: usize = 32;
+pub(super) const MAX_PHASES: usize = 32;
 /// Maximum number of concurrent lanes (matches RoleLaneSet::LANE_COUNT).
 pub(crate) const MAX_LANES: usize = 8;
 
 /// Steps for a single lane within a phase.
 ///
-/// References a contiguous slice of `LocalStep` entries within the RoleProgram's
-/// `local_steps` array. Empty lanes have `len == 0`.
+/// References a contiguous slice of `LocalStep` entries within the projected
+/// role-local step array. Empty lanes have `len == 0`.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct LaneSteps {
     /// Start offset into the RoleProgram's `local_steps` array.
@@ -278,6 +279,21 @@ pub(crate) struct ProjectedRoleLayout {
 
 impl ProjectedRoleLayout {
     #[inline(always)]
+    pub(super) const fn new(
+        local_steps: [LocalStep; MAX_STEPS],
+        local_len: usize,
+        phases: [Phase; MAX_PHASES],
+        phase_len: usize,
+    ) -> Self {
+        Self {
+            local_steps,
+            local_len,
+            phases,
+            phase_len,
+        }
+    }
+
+    #[inline(always)]
     pub(crate) const fn len(&self) -> usize {
         self.local_len
     }
@@ -298,13 +314,20 @@ impl ProjectedRoleLayout {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy)]
 pub(crate) struct ProjectedRoleData<const ROLE: u8> {
     layout: ProjectedRoleLayout,
     typestate: RoleTypestate<ROLE>,
 }
 
+#[cfg(test)]
 impl<const ROLE: u8> ProjectedRoleData<ROLE> {
+    #[inline(always)]
+    pub(super) const fn new(layout: ProjectedRoleLayout, typestate: RoleTypestate<ROLE>) -> Self {
+        Self { layout, typestate }
+    }
+
     #[inline(always)]
     pub(crate) const fn len(&self) -> usize {
         self.layout.len()
@@ -337,7 +360,6 @@ where
     Mint: MintConfigMarker,
 {
     eff_list: &'prog EffList,
-    lease_budget: crate::control::lease::planner::LeaseGraphBudget,
     mint: Mint,
     _local_steps: core::marker::PhantomData<LocalSteps>,
 }
@@ -347,424 +369,16 @@ where
     Mint: MintConfigMarker,
 {
     const fn new(eff_list: &'prog EffList, mint: Mint) -> Self {
-        let budget = crate::control::lease::planner::LeaseGraphBudget::from_eff_list(eff_list);
-        budget.validate();
-
         Self {
             eff_list,
-            lease_budget: budget,
             mint,
             _local_steps: core::marker::PhantomData,
         }
     }
 
-    fn layout(&self) -> ProjectedRoleLayout {
-        let (steps, len) = Self::build_local_steps(self.eff_list, self.eff_list.as_slice());
-        let (phases, phase_len) = Self::build_phases(&steps, len, self.eff_list);
-        ProjectedRoleLayout {
-            local_steps: steps,
-            local_len: len,
-            phases,
-            phase_len,
-        }
-    }
-
-    pub(crate) fn projection(&self) -> ProjectedRoleData<ROLE> {
-        ProjectedRoleData {
-            layout: self.layout(),
-            typestate: super::typestate::RoleTypestate::<ROLE>::from_program(self.eff_list),
-        }
-    }
-
-    const fn build_local_steps(
-        program: &EffList,
-        slice: &[eff::EffStruct],
-    ) -> ([LocalStep; MAX_STEPS], usize) {
-        let mut steps = [LocalStep::EMPTY; MAX_STEPS];
-        let mut len = 0usize;
-        let mut idx = 0usize;
-
-        while idx < slice.len() {
-            let node = slice[idx];
-            if matches!(node.kind, EffKind::Atom) {
-                let atom = node.atom_data();
-                let eff_index = EffIndex::from_usize(idx);
-                let shot = if atom.is_control {
-                    match program.control_spec_at(idx) {
-                        Some(spec) => Some(spec.shot),
-                        None => None,
-                    }
-                } else {
-                    None
-                };
-                if atom.from == ROLE && atom.to == ROLE {
-                    steps[len] = LocalStep::local(
-                        eff_index,
-                        ROLE,
-                        atom.label,
-                        atom.resource,
-                        atom.is_control,
-                        shot,
-                        atom.lane,
-                    );
-                    len += 1;
-                } else if atom.from == ROLE {
-                    steps[len] = LocalStep::send(
-                        eff_index,
-                        atom.to,
-                        atom.label,
-                        atom.resource,
-                        atom.is_control,
-                        shot,
-                        atom.lane,
-                    );
-                    len += 1;
-                } else if atom.to == ROLE {
-                    steps[len] = LocalStep::recv(
-                        eff_index,
-                        atom.from,
-                        atom.label,
-                        atom.resource,
-                        atom.is_control,
-                        shot,
-                        atom.lane,
-                    );
-                    len += 1;
-                }
-            }
-            idx += 1;
-        }
-
-        (steps, len)
-    }
-
-    /// Build phases from steps based on lane assignment and g::par scope boundaries.
-    ///
-    /// Detects `ScopeKind::Parallel` boundaries from the EffList's scope markers
-    /// to create proper fork-join phases:
-    ///
-    /// ```text
-    /// g::seq(A, g::par(B, C), D) produces:
-    ///   Phase 0: Lane 0 = [A]
-    ///   Phase 1: Lane 0 = [B], Lane 1 = [C]  (parallel)
-    ///   Phase 2: Lane 0 = [D]
-    /// ```
-    ///
-    /// For non-parallel programs (most common case), there is a single phase with
-    /// all steps on their respective lanes.
-    const fn build_phases(
-        steps: &[LocalStep; MAX_STEPS],
-        len: usize,
-        eff_list: &EffList,
-    ) -> ([Phase; MAX_PHASES], usize) {
-        let phases = [Phase::EMPTY; MAX_PHASES];
-
-        if len == 0 {
-            return (phases, 0);
-        }
-
-        // Check if there are any Parallel scope markers
-        let scope_markers = eff_list.scope_markers();
-        let has_parallel = Self::has_parallel_scope(scope_markers);
-        let route_guards = Self::build_route_guards_for_steps(steps, len, scope_markers);
-
-        if !has_parallel {
-            return Self::build_single_phase(steps, len, &route_guards);
-        }
-
-        // Complex case: detect parallel scope boundaries and create multiple phases
-        Self::build_phases_with_parallel(steps, len, scope_markers, &route_guards)
-    }
-
-    /// Check if any scope marker indicates a Parallel scope.
-    const fn has_parallel_scope(markers: &[ScopeMarker]) -> bool {
-        let mut i = 0;
-        while i < markers.len() {
-            if matches!(markers[i].scope_kind, ScopeKind::Parallel) {
-                return true;
-            }
-            i += 1;
-        }
-        false
-    }
-
-    /// Compute outermost route guards for each local step.
-    const fn build_route_guards_for_steps(
-        steps: &[LocalStep; MAX_STEPS],
-        len: usize,
-        scope_markers: &[ScopeMarker],
-    ) -> [PhaseRouteGuard; MAX_STEPS] {
-        let mut guards = [PhaseRouteGuard::EMPTY; MAX_STEPS];
-        let mut route_enter_count = [0u8; ScopeId::ORDINAL_CAPACITY as usize];
-        let mut marker_idx = 0usize;
-        let mut route_depth = 0usize;
-        let mut outer_scope = ScopeId::none();
-        let mut outer_arm = 0u8;
-        let mut step_idx = 0usize;
-        while step_idx < len {
-            let eff_index = steps[step_idx].eff_index.as_usize();
-            while marker_idx < scope_markers.len() && scope_markers[marker_idx].offset <= eff_index
-            {
-                let marker = scope_markers[marker_idx];
-                if matches!(marker.scope_kind, ScopeKind::Route) {
-                    match marker.event {
-                        ScopeEvent::Enter => {
-                            let ordinal = marker.scope_id.local_ordinal() as usize;
-                            let arm = if ordinal < route_enter_count.len() {
-                                let arm = route_enter_count[ordinal];
-                                if arm < 2 {
-                                    route_enter_count[ordinal] = arm + 1;
-                                }
-                                arm
-                            } else {
-                                0
-                            };
-                            if route_depth == 0 {
-                                outer_scope = marker.scope_id;
-                                outer_arm = arm;
-                            }
-                            route_depth = route_depth.saturating_add(1);
-                        }
-                        ScopeEvent::Exit => {
-                            if route_depth > 0 {
-                                route_depth -= 1;
-                                if route_depth == 0 {
-                                    outer_scope = ScopeId::none();
-                                    outer_arm = 0;
-                                }
-                            }
-                        }
-                    }
-                }
-                marker_idx += 1;
-            }
-            if !outer_scope.is_none() {
-                guards[step_idx] = PhaseRouteGuard {
-                    scope: outer_scope,
-                    arm: outer_arm,
-                };
-            }
-            step_idx += 1;
-        }
-        guards
-    }
-
-    /// Build a single phase with all steps grouped by lane.
-    const fn build_single_phase(
-        steps: &[LocalStep; MAX_STEPS],
-        len: usize,
-        route_guards: &[PhaseRouteGuard; MAX_STEPS],
-    ) -> ([Phase; MAX_PHASES], usize) {
-        let mut phases = [Phase::EMPTY; MAX_PHASES];
-        let mut lane_lens = [0usize; MAX_LANES];
-        let mut lane_first = [usize::MAX; MAX_LANES];
-
-        // Count steps per lane and find first occurrence
-        let mut i = 0;
-        while i < len {
-            let lane = steps[i].lane as usize;
-            if lane < MAX_LANES {
-                if lane_first[lane] == usize::MAX {
-                    lane_first[lane] = i;
-                }
-                lane_lens[lane] += 1;
-            }
-            i += 1;
-        }
-
-        let mut phase = Phase::EMPTY;
-        let mut lane_mask = 0u8;
-        let mut min_start = usize::MAX;
-        let mut lane_idx = 0;
-        while lane_idx < MAX_LANES {
-            if lane_lens[lane_idx] > 0 {
-                let start = lane_first[lane_idx];
-                phase.lanes[lane_idx] = LaneSteps {
-                    start,
-                    len: lane_lens[lane_idx],
-                };
-                lane_mask |= 1u8 << (lane_idx as u32);
-                if start < min_start {
-                    min_start = start;
-                }
-            }
-            lane_idx += 1;
-        }
-        phase.lane_mask = lane_mask;
-        phase.min_start = if lane_mask == 0 { 0 } else { min_start };
-        phase.route_guard = Self::route_guard_for_range(route_guards, 0, len);
-
-        phases[0] = phase;
-        (phases, 1)
-    }
-
-    /// Build phases with parallel scope boundary detection.
-    ///
-    /// Scans steps and scope markers to identify:
-    /// 1. Sequential sections (before/after parallel)
-    /// 2. Parallel sections (inside g::par)
-    ///
-    /// Each parallel scope exit creates a fork-join barrier.
-    const fn build_phases_with_parallel(
-        steps: &[LocalStep; MAX_STEPS],
-        len: usize,
-        scope_markers: &[ScopeMarker],
-        route_guards: &[PhaseRouteGuard; MAX_STEPS],
-    ) -> ([Phase; MAX_PHASES], usize) {
-        let mut phases = [Phase::EMPTY; MAX_PHASES];
-        let mut phase_count = 0usize;
-
-        // Track parallel scope boundaries by eff_index offset
-        // Parallel Enter at offset X means steps with eff_index >= X are in parallel
-        // Parallel Exit at offset Y means steps with eff_index >= Y are sequential again
-        let mut parallel_ranges = [(0usize, 0usize); MAX_PHASES]; // (enter_offset, exit_offset)
-        let mut parallel_count = 0usize;
-
-        // Extract parallel scope ranges from markers
-        let mut marker_idx = 0;
-        while marker_idx < scope_markers.len() {
-            let marker = scope_markers[marker_idx];
-            if matches!(marker.scope_kind, ScopeKind::Parallel)
-                && matches!(marker.event, ScopeEvent::Enter)
-            {
-                let enter_offset = marker.offset;
-                // Find matching exit
-                let mut exit_offset = len; // default to end
-                let mut inner_idx = marker_idx + 1;
-                while inner_idx < scope_markers.len() {
-                    let inner = scope_markers[inner_idx];
-                    if inner.scope_id.raw() == marker.scope_id.raw()
-                        && matches!(inner.event, ScopeEvent::Exit)
-                    {
-                        exit_offset = inner.offset;
-                        break;
-                    }
-                    inner_idx += 1;
-                }
-                if parallel_count < MAX_PHASES {
-                    parallel_ranges[parallel_count] = (enter_offset, exit_offset);
-                    parallel_count += 1;
-                }
-            }
-            marker_idx += 1;
-        }
-
-        if parallel_count == 0 {
-            return Self::build_single_phase(steps, len, route_guards);
-        }
-
-        let mut current_step = 0usize;
-
-        let mut range_idx = 0;
-        while range_idx < parallel_count {
-            let (enter_eff, exit_eff) = parallel_ranges[range_idx];
-
-            let seq_start = current_step;
-            let mut seq_end = current_step;
-            while seq_end < len && steps[seq_end].eff_index.as_usize() < enter_eff {
-                seq_end += 1;
-            }
-
-            if seq_end > seq_start && phase_count < MAX_PHASES {
-                phases[phase_count] =
-                    Self::build_phase_for_range(steps, seq_start, seq_end, route_guards);
-                phase_count += 1;
-            }
-
-            let par_start = seq_end;
-            let mut par_end = par_start;
-            while par_end < len && steps[par_end].eff_index.as_usize() < exit_eff {
-                par_end += 1;
-            }
-
-            if par_end > par_start && phase_count < MAX_PHASES {
-                phases[phase_count] =
-                    Self::build_phase_for_range(steps, par_start, par_end, route_guards);
-                phase_count += 1;
-            }
-
-            current_step = par_end;
-            range_idx += 1;
-        }
-
-        if current_step < len && phase_count < MAX_PHASES {
-            phases[phase_count] =
-                Self::build_phase_for_range(steps, current_step, len, route_guards);
-            phase_count += 1;
-        }
-
-        if phase_count == 0 {
-            return Self::build_single_phase(steps, len, route_guards);
-        }
-
-        (phases, phase_count)
-    }
-
-    /// Build a phase for a specific step range.
-    const fn build_phase_for_range(
-        steps: &[LocalStep; MAX_STEPS],
-        start: usize,
-        end: usize,
-        route_guards: &[PhaseRouteGuard; MAX_STEPS],
-    ) -> Phase {
-        let mut phase = Phase::EMPTY;
-        let mut lane_lens = [0usize; MAX_LANES];
-        let mut lane_first = [usize::MAX; MAX_LANES];
-
-        let mut i = start;
-        while i < end {
-            let lane = steps[i].lane as usize;
-            if lane < MAX_LANES {
-                if lane_first[lane] == usize::MAX {
-                    lane_first[lane] = i;
-                }
-                lane_lens[lane] += 1;
-            }
-            i += 1;
-        }
-
-        let mut lane_mask = 0u8;
-        let mut min_start = usize::MAX;
-        let mut lane_idx = 0;
-        while lane_idx < MAX_LANES {
-            if lane_lens[lane_idx] > 0 {
-                let start = lane_first[lane_idx];
-                phase.lanes[lane_idx] = LaneSteps {
-                    start,
-                    len: lane_lens[lane_idx],
-                };
-                lane_mask |= 1u8 << (lane_idx as u32);
-                if start < min_start {
-                    min_start = start;
-                }
-            }
-            lane_idx += 1;
-        }
-        phase.lane_mask = lane_mask;
-        phase.min_start = if lane_mask == 0 { 0 } else { min_start };
-        phase.route_guard = Self::route_guard_for_range(route_guards, start, end);
-
-        phase
-    }
-
-    const fn route_guard_for_range(
-        route_guards: &[PhaseRouteGuard; MAX_STEPS],
-        start: usize,
-        end: usize,
-    ) -> PhaseRouteGuard {
-        if start >= end || start >= MAX_STEPS {
-            return PhaseRouteGuard::EMPTY;
-        }
-        let guard = route_guards[start];
-        let mut idx = start + 1;
-        while idx < end && idx < MAX_STEPS {
-            let candidate = route_guards[idx];
-            if !guard.matches(candidate) {
-                return PhaseRouteGuard::EMPTY;
-            }
-            idx += 1;
-        }
-        guard
+    #[inline(always)]
+    pub(crate) const fn machine(&self) -> RoleMachine<ROLE> {
+        RoleMachine::<ROLE>::from_eff_list(self.eff_list)
     }
 
     /// Borrow the underlying global effect list.
@@ -776,38 +390,7 @@ where
     /// Static LeaseGraph capacity requirements inferred from policy markers.
     #[inline(always)]
     pub(crate) const fn lease_budget(&self) -> crate::control::lease::planner::LeaseGraphBudget {
-        self.lease_budget
-    }
-
-    /// Returns an array indicating which lanes are active in this program.
-    ///
-    /// A lane is considered active if it has at least one step in any phase.
-    /// This is used by `SessionCluster::enter()` to acquire all necessary lane resources.
-    ///
-    /// # Returns
-    ///
-    /// An array of booleans where `result[i]` is `true` if lane `i` is active.
-    pub(crate) fn active_lanes(&self) -> [bool; MAX_LANES] {
-        let layout = self.layout();
-        let mut active = [false; MAX_LANES];
-        for phase_idx in 0..layout.phase_count() {
-            let phase = &layout.phases[phase_idx];
-            for lane_idx in 0..MAX_LANES {
-                if phase.lanes[lane_idx].is_active() {
-                    active[lane_idx] = true;
-                }
-            }
-        }
-        active
-    }
-
-    /// Create a PhaseCursor positioned at the initial node.
-    ///
-    /// PhaseCursor is the unified cursor type for typestate navigation,
-    /// supporting both linear and phase-driven multi-lane execution.
-    #[inline(always)]
-    pub(crate) fn phase_cursor(&'prog self) -> PhaseCursor<ROLE> {
-        PhaseCursor::new(self)
+        ProgramFacts::from_eff_list(self.eff_list).lease_budget()
     }
 
     /// Mint configuration baked into the RoleProgram.
@@ -827,7 +410,8 @@ where
     Mint: MintConfigMarker,
 {
     let eff = program.eff_list();
-    let _ = super::typestate::RoleTypestate::<ROLE>::from_program(eff);
+    let _ = ProgramFacts::from_eff_list(eff);
+    RoleMachine::<ROLE>::validate(eff);
     RoleProgram::new(eff, Mint::INSTANCE)
 }
 
@@ -1006,14 +590,14 @@ mod tests {
 
     #[test]
     fn projection_extracts_role_view() {
-        let role_zero = ROLE_ZERO.projection();
+        let role_zero = ROLE_ZERO.machine().into_projection();
         assert_eq!(role_zero.len(), 2);
         assert!(role_zero.steps()[0].is_send());
         assert!(role_zero.steps()[1].is_recv());
         assert_eq!(role_zero.steps()[0].peer(), 1);
         assert_eq!(role_zero.steps()[1].peer(), 1);
 
-        let role_one = ROLE_ONE.projection();
+        let role_one = ROLE_ONE.machine().into_projection();
         assert_eq!(role_one.len(), 2);
         assert!(role_one.steps()[0].is_recv());
         assert!(role_one.steps()[1].is_send());
@@ -1055,7 +639,7 @@ mod tests {
     #[test]
     fn control_step_carries_shot_metadata() {
         // CancelMsg is a self-send (Client→Client), which projects to LocalAction
-        let cancel_role = CANCEL_ROLE.projection();
+        let cancel_role = CANCEL_ROLE.machine().into_projection();
         assert_eq!(cancel_role.len(), 1);
         let step = cancel_role.steps()[0];
         assert!(step.is_local_action());
@@ -1065,7 +649,7 @@ mod tests {
 
     #[test]
     fn local_action_projects_as_local_step() {
-        let local_role = LOCAL_ROLE.projection();
+        let local_role = LOCAL_ROLE.machine().into_projection();
         assert_eq!(local_role.len(), 1);
         let step = local_role.steps()[0];
         assert!(step.is_local_action());
@@ -1080,7 +664,7 @@ mod tests {
 
     #[test]
     fn chained_projection_preserves_typed_local_steps() {
-        let chain_role = CHAIN_ROLE.projection();
+        let chain_role = CHAIN_ROLE.machine().into_projection();
         assert_eq!(chain_role.len(), 3);
         assert!(chain_role.steps()[0].is_local_action());
         assert!(chain_role.steps()[1].is_send());
@@ -1108,8 +692,8 @@ mod tests {
             MintConfig,
         > = project(&PARALLEL_PROGRAM);
 
-        let client_projection = client.projection();
-        let server_projection = server.projection();
+        let client_projection = client.machine().into_projection();
+        let server_projection = server.machine().into_projection();
 
         assert_eq!(client_projection.phase_count(), 1);
         assert_eq!(server_projection.phase_count(), 1);

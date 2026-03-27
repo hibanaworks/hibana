@@ -421,9 +421,7 @@ static NESTED_LOOP_CONTROLLER_PROGRAM: RoleProgram<
     >>::Output as ProjectRole<Role<0>>>::Output,
 > = project(&NESTED_LOOP_PROGRAM);
 
-fn route_resolver(
-    ctx: ResolverContext,
-) -> Result<DynamicResolution, ResolverError> {
+fn route_resolver(ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
     if ctx.attr(core::TAG).map(|value| value.as_u8()) != Some(RouteDecisionKind::TAG) {
         return Err(ResolverError::Reject);
     }
@@ -434,9 +432,7 @@ fn route_resolver(
     }
 }
 
-fn route_policy_input_resolver(
-    ctx: ResolverContext,
-) -> Result<DynamicResolution, ResolverError> {
+fn route_policy_input_resolver(ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
     if ctx.attr(core::TAG).map(|value| value.as_u8()) != Some(RouteDecisionKind::TAG) {
         return Err(ResolverError::Reject);
     }

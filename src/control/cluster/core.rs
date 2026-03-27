@@ -61,7 +61,10 @@ use super::error::{AttachError, CpError, DelegationError, SpliceError};
 use crate::control::automaton::txn::{InAcked, InBegin, NoopTap};
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 use crate::eff::EffIndex;
-use crate::global::const_dsl::{PolicyMode, ScopeId};
+use crate::global::{
+    compiled::ProgramFacts,
+    const_dsl::{PolicyMode, ScopeId},
+};
 use crate::observe::scope::ScopeTrace;
 use crate::rendezvous::core::{LaneLease, Rendezvous};
 use crate::rendezvous::error::RendezvousError;
@@ -553,8 +556,9 @@ unsafe fn dispatch_state<S>(
     ctx: ResolverContext,
 ) -> ResolverResult {
     let state = unsafe { &*state.cast::<S>() };
-    let resolver =
-        unsafe { core::mem::transmute::<usize, fn(&S, ResolverContext) -> ResolverResult>(callback) };
+    let resolver = unsafe {
+        core::mem::transmute::<usize, fn(&S, ResolverContext) -> ResolverResult>(callback)
+    };
     resolver(state, ctx)
 }
 
@@ -1415,10 +1419,7 @@ where
         })
     }
 
-    fn dynamic_resolver(
-        &self,
-        key: DynamicResolverKey,
-    ) -> Option<&DynamicResolverEntry<'cfg>> {
+    fn dynamic_resolver(&self, key: DynamicResolverKey) -> Option<&DynamicResolverEntry<'cfg>> {
         unsafe { (*self.resolvers_ref_ptr()).table.get(&key) }
     }
 
@@ -1431,36 +1432,16 @@ where
     where
         Mint: MintConfigMarker,
     {
-        let eff_list = program.eff_list();
-        for marker in eff_list.policies() {
-            let Some(dynamic_policy_id) = marker.policy.dynamic_policy_id() else {
-                continue;
-            };
-            if dynamic_policy_id != POLICY {
-                continue;
-            }
-            let offset = marker.offset;
-            let eff_index = EffIndex::from_usize(offset);
-            let node = eff_list
-                .as_slice()
-                .get(offset)
-                .unwrap_or_else(|| panic!("policy marker offset {} out of bounds", offset));
-            debug_assert!(
-                matches!(node.kind, crate::eff::EffKind::Atom),
-                "policy marker offset must reference an atom"
-            );
-            let atom = node.atom_data();
-            let tag = atom
-                .resource
-                .ok_or(CpError::UnsupportedEffect(atom.label))?;
-            let scope_id = eff_list
-                .scope_id_for_offset(offset)
-                .unwrap_or_else(ScopeId::none);
+        let facts = ProgramFacts::from_eff_list(program.eff_list());
+        for site in facts.dynamic_policy_sites_for(POLICY) {
+            let tag = site
+                .resource_tag()
+                .ok_or(CpError::UnsupportedEffect(site.label()))?;
             self.register_dynamic_policy_resolver(
                 rv_id,
-                eff_index,
-                atom.label,
-                marker.policy.with_scope(scope_id),
+                site.eff_index(),
+                site.label(),
+                site.policy(),
                 tag,
                 None,
                 resolver,
@@ -2164,7 +2145,7 @@ where
 
     /// Initialize session effects from global protocol projection.
     ///
-    /// This method wires the EffectEnvelope (produced by interpret_eff_list) into
+    /// This method wires the precompiled EffectEnvelope (owned by ProgramFacts) into
     /// the Rendezvous control-plane state. The envelope contains:
     /// - Control-plane effects (CpEffect) to pre-configure
     /// - Tap events to emit during execution
@@ -2177,21 +2158,18 @@ where
     ///
     /// * `rv_id` - The Rendezvous to initialize
     /// * `sid` - Session ID for this projection
-    /// * `program` - Const effect program defining the session
+    /// * `facts` - Crate-private lowering facts for the projected program
     ///
     /// # Errors
     ///
     /// Returns `CpError::RendezvousMismatch` if the Rendezvous ID is not registered.
-    pub(crate) fn init_session_effects<'prog, const ROLE: u8, LocalSteps, Mint>(
+    pub(crate) fn init_session_effects(
         &self,
         rv_id: RendezvousId,
         sid: SessionId,
         lane: Lane,
-        program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
-    ) -> Result<(), CpError>
-    where
-        Mint: crate::control::cap::mint::MintConfigMarker,
-    {
+        facts: &ProgramFacts,
+    ) -> Result<(), CpError> {
         let core = unsafe { &*self.control_ref_ptr() };
 
         if !core.locals.is_registered(&rv_id) {
@@ -2214,7 +2192,7 @@ where
             return Ok(());
         }
 
-        let envelope = crate::control::cluster::effects::interpret_eff_list(program.eff_list());
+        let envelope = facts.effect_envelope();
         rv.reset_policy(lane);
         let mut control_marker_count = 0u32;
         for marker in envelope.controls() {
@@ -2479,9 +2457,11 @@ where
     {
         use crate::global::role_program::MAX_LANES;
 
-        let mut active_lanes = program.active_lanes();
-        let cursor = program.phase_cursor();
+        let machine = program.machine();
+        let mut active_lanes = machine.active_lanes();
+        let cursor = crate::global::typestate::PhaseCursor::from_machine(machine);
         let mint = program.mint_config();
+        let facts = ProgramFacts::from_eff_list(program.eff_list());
 
         // Ensure at least lane 0 is active (every endpoint needs at least one lane)
         active_lanes[0] = true;
@@ -2503,7 +2483,7 @@ where
         for logical_idx in 0..MAX_LANES {
             if active_lanes[logical_idx] {
                 let physical_lane = Lane::new(logical_idx as u32);
-                self.init_session_effects(rv_id, sid, physical_lane, program)?;
+                self.init_session_effects(rv_id, sid, physical_lane, &facts)?;
                 let lease = self.lease_port(rv_id, sid, physical_lane, ROLE)?;
                 let (port, guard, brand) =
                     lease.into_port_guard().map_err(AttachError::Rendezvous)?;
@@ -3034,9 +3014,7 @@ mod tests {
         use crate::observe::core::TapEvent;
         use crate::runtime::{config::Config, consts::RING_EVENTS};
 
-        fn defer_resolution(
-            _ctx: ResolverContext,
-        ) -> Result<DynamicResolution, ResolverError> {
+        fn defer_resolution(_ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
             Ok(DynamicResolution::Defer { retry_hint: 2 })
         }
 

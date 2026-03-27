@@ -112,6 +112,13 @@ fn repo_surface_hygiene_gate_rs() -> String {
         .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
 }
 
+fn repo_lowering_hygiene_gate_rs() -> String {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".github/scripts/check_lowering_hygiene.sh");
+    fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+}
+
 fn direct_projection_binary_check_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join(".github/scripts/check_direct_projection_binary.sh");
@@ -395,6 +402,7 @@ fn quality_workflow_runs_canonical_validation_suite() {
         "./.github/scripts/check_mgmt_boundary.sh",
         "./.github/scripts/check_plane_boundaries.sh",
         "./.github/scripts/check_resolver_context_surface.sh",
+        "./.github/scripts/check_lowering_hygiene.sh",
         "./.github/scripts/check_surface_hygiene.sh",
         "./.github/scripts/check_direct_projection_binary.sh",
         "cargo check --all-targets -p hibana",
@@ -497,12 +505,14 @@ fn repo_boundary_gates_track_current_mgmt_update_owners() {
     let boundary_gate = repo_boundary_gate_rs();
     let mgmt_gate = repo_mgmt_boundary_gate_rs();
     let plane_gate = repo_plane_boundary_gate_rs();
+    let lowering_gate = repo_lowering_hygiene_gate_rs();
     let hygiene_gate = repo_surface_hygiene_gate_rs();
 
     assert!(
         boundary_gate.contains("check_mgmt_boundary.sh")
             && boundary_gate.contains("check_plane_boundaries.sh")
             && boundary_gate.contains("check_resolver_context_surface.sh")
+            && boundary_gate.contains("check_lowering_hygiene.sh")
             && boundary_gate.contains("check_surface_hygiene.sh"),
         "hibana boundary gate must aggregate the canonical local boundary owners"
     );
@@ -530,6 +540,13 @@ fn repo_boundary_gates_track_current_mgmt_update_owners() {
     assert!(
         !plane_gate.contains("boundary gate stale owner path:"),
         "plane boundary gate must stay semantic instead of depending on hard-coded owner-file existence"
+    );
+    assert!(
+        lowering_gate.contains("interpret_eff_list\\\\(")
+            && lowering_gate.contains("\\\\.policies\\\\(")
+            && lowering_gate.contains("LABEL_LOOP_CONTINUE")
+            && lowering_gate.contains("macro_rules!"),
+        "lowering hygiene gate must guard lowering shims, policy rescans, loop-label meaning checks, and new macro_rules owners"
     );
     assert!(
         hygiene_gate.contains("pure synonym type alias"),

@@ -81,7 +81,10 @@ fn assert_snapshot(path: &Path, actual: &[String], label: &str) {
         .map(normalize_ws)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
-    let actual_lines = actual.iter().map(|line| normalize_ws(line)).collect::<Vec<_>>();
+    let actual_lines = actual
+        .iter()
+        .map(|line| normalize_ws(line))
+        .collect::<Vec<_>>();
 
     if expected_lines != actual_lines {
         panic!(
@@ -315,7 +318,9 @@ fn render_function(name: &str, item: &Value) -> String {
 }
 
 fn render_input(input: &Value) -> String {
-    let pair = input.as_array().expect("function inputs must be name/type pairs");
+    let pair = input
+        .as_array()
+        .expect("function inputs must be name/type pairs");
     let name = pair[0]
         .as_str()
         .expect("input name must be a string in rustdoc JSON");
@@ -374,7 +379,9 @@ fn render_generic_param(param: &Value) -> String {
     let name = param["name"]
         .as_str()
         .expect("generic param name must be present");
-    let kind = param["kind"].as_object().expect("generic param kind must exist");
+    let kind = param["kind"]
+        .as_object()
+        .expect("generic param kind must exist");
     if kind.contains_key("lifetime") {
         return name.to_owned();
     }
@@ -648,7 +655,10 @@ fn render_use_group(group: &[&Value], mode: SurfaceMode<'_>) -> String {
         .collect::<Vec<_>>();
     entries.sort_by_key(|entry| entry.0);
 
-    let names = entries.iter().map(|entry| entry.1.as_str()).collect::<Vec<_>>();
+    let names = entries
+        .iter()
+        .map(|entry| entry.1.as_str())
+        .collect::<Vec<_>>();
     let prefix = use_prefix(group[0]).unwrap_or_default();
 
     if prefix == "crate::epf::verifier" && names == ["Header"] {
@@ -807,7 +817,9 @@ fn assert_no_forbidden_public_args(index: &JsonMap) {
             let arg_name = pair[0].as_str().unwrap_or("<arg>");
             let ty = &pair[1];
             if let Some(kind) = forbidden_public_arg_kind(ty) {
-                violations.push(format!("{filename}:{name}({arg_name}) uses forbidden {kind}"));
+                violations.push(format!(
+                    "{filename}:{name}({arg_name}) uses forbidden {kind}"
+                ));
             }
         }
     }

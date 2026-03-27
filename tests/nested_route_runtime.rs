@@ -33,9 +33,7 @@ hibana::impl_control_resource!(
 const OUTER_ROUTE_POLICY_ID: u16 = 310;
 const INNER_ROUTE_POLICY_ID: u16 = 311;
 
-fn nested_route_resolver(
-    ctx: ResolverContext,
-) -> Result<DynamicResolution, ResolverError> {
+fn nested_route_resolver(ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
     let tag = ctx.attr(core::TAG).map(|value| value.as_u8());
     if tag != Some(RouteDecisionKind::TAG) && tag != Some(RouteRightKind::TAG) {
         return Err(ResolverError::Reject);

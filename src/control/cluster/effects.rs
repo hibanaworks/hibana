@@ -4,7 +4,6 @@
 //! are projected into this enum. Composite operations are expressed through effect composition.
 
 use crate::eff::EffIndex;
-use crate::global::const_dsl::EffList;
 use crate::global::const_dsl::{ControlMarker, ControlScopeKind, PolicyMode, ScopeMarker};
 
 /// Control-plane effect primitive.
@@ -266,7 +265,7 @@ impl EffectEnvelope {
     }
 
     /// Push a control-plane effect.
-    fn push_cp_effect(&mut self, effect: CpEffect) {
+    pub(crate) const fn push_cp_effect(&mut self, effect: CpEffect) {
         if self.cp_effects_len >= Self::MAX_CP_EFFECTS {
             panic!("EffectEnvelope: MAX_CP_EFFECTS exceeded");
         }
@@ -275,7 +274,7 @@ impl EffectEnvelope {
     }
 
     /// Push a tap event ID.
-    fn push_tap_event(&mut self, event_id: u16) {
+    pub(crate) const fn push_tap_event(&mut self, event_id: u16) {
         if self.tap_events_len >= Self::MAX_TAP_EVENTS {
             panic!("EffectEnvelope: MAX_TAP_EVENTS exceeded");
         }
@@ -284,7 +283,7 @@ impl EffectEnvelope {
     }
 
     /// Push a resource descriptor.
-    fn push_resource(
+    pub(crate) const fn push_resource(
         &mut self,
         eff_index: EffIndex,
         label: u8,
@@ -305,6 +304,24 @@ impl EffectEnvelope {
             policy,
         });
         self.resources_len += 1;
+    }
+
+    /// Push a control marker mirrored from the program.
+    pub(crate) const fn push_control_marker(&mut self, marker: ControlMarker) {
+        if self.controls_len >= Self::MAX_CONTROLS {
+            panic!("EffectEnvelope: MAX_CONTROLS exceeded");
+        }
+        self.controls[self.controls_len] = core::mem::MaybeUninit::new(marker);
+        self.controls_len += 1;
+    }
+
+    /// Push a scope marker mirrored from the program.
+    pub(crate) const fn push_scope_marker(&mut self, marker: ScopeMarker) {
+        if self.scopes_len >= Self::MAX_SCOPES {
+            panic!("EffectEnvelope: MAX_SCOPES exceeded");
+        }
+        self.scopes[self.scopes_len] = core::mem::MaybeUninit::new(marker);
+        self.scopes_len += 1;
     }
 
     /// Iterate over control-plane effects.
@@ -329,111 +346,11 @@ impl EffectEnvelope {
     }
 }
 
-fn emit_atom(
-    envelope: &mut EffectEnvelope,
-    atom: crate::eff::EffAtom,
-    offset: usize,
-    policy: PolicyMode,
-    spec: Option<crate::global::ControlLabelSpec>,
-) {
-    use crate::eff::EffDirection;
-
-    if atom.is_control {
-        if let Some(resource_kind_tag) = atom.resource {
-            if let Some(effect) = CpEffect::from_resource_tag(resource_kind_tag) {
-                envelope.push_cp_effect(effect);
-                envelope.push_tap_event(effect.to_tap_event_id());
-            } else {
-                let tap_id = 0x0300 + atom.label as u16;
-                envelope.push_tap_event(tap_id);
-            }
-
-            if let Some(rule) = spec {
-                envelope.push_resource(
-                    EffIndex::from_usize(offset),
-                    atom.label,
-                    rule.scope_kind,
-                    resource_kind_tag,
-                    rule.shot,
-                    policy,
-                );
-            } else {
-                envelope.push_resource(
-                    EffIndex::from_usize(offset),
-                    atom.label,
-                    ControlScopeKind::None,
-                    resource_kind_tag,
-                    crate::control::cap::mint::CapShot::One,
-                    policy,
-                );
-            }
-        } else {
-            let tap_id = 0x0300 + atom.label as u16;
-            envelope.push_tap_event(tap_id);
-        }
-    } else {
-        if !policy.is_static() {
-            // Dynamic policies are permitted on non-control atoms (e.g., route decisions).
-            if !matches!(policy, PolicyMode::Dynamic { .. }) {
-                panic!("static policy attached to non-control atom");
-            }
-        }
-        match atom.direction {
-            EffDirection::Send => {
-                let tap_id = 0x0200 + atom.label as u16;
-                envelope.push_tap_event(tap_id);
-            }
-            EffDirection::Recv => {
-                let tap_id = 0x0210 + atom.label as u16;
-                envelope.push_tap_event(tap_id);
-            }
-        }
-    }
-}
-
-/// Interpret a const `EffList`, producing the effect envelope consumed by the control plane.
-pub(crate) fn interpret_eff_list(program: &EffList) -> EffectEnvelope {
-    let mut projected = EffectEnvelope::empty();
-
-    for (offset, node) in program.as_slice().iter().enumerate() {
-        if node.kind == crate::eff::EffKind::Atom {
-            let policy = program
-                .policy_with_scope(offset)
-                .map(|(policy, _scope)| policy)
-                .unwrap_or(PolicyMode::Static);
-            let atom = node.atom_data();
-            let control_spec = program.control_spec_at(offset);
-            emit_atom(&mut projected, atom, offset, policy, control_spec);
-        }
-    }
-
-    for marker in program.control_markers() {
-        if projected.controls_len >= EffectEnvelope::MAX_CONTROLS {
-            panic!("EffectEnvelope: MAX_CONTROLS exceeded");
-        }
-        projected.controls[projected.controls_len] = core::mem::MaybeUninit::new(*marker);
-        projected.controls_len += 1;
-
-        if marker.tap_id != 0 {
-            projected.push_tap_event(marker.tap_id);
-        }
-    }
-
-    for marker in program.scope_markers() {
-        if projected.scopes_len >= EffectEnvelope::MAX_SCOPES {
-            panic!("EffectEnvelope: MAX_SCOPES exceeded");
-        }
-        projected.scopes[projected.scopes_len] = core::mem::MaybeUninit::new(*marker);
-        projected.scopes_len += 1;
-    }
-
-    projected
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::global::CanonicalControl;
+    use crate::global::compiled::ProgramFacts;
     use crate::global::const_dsl::EffList;
 
     #[test]
@@ -466,7 +383,8 @@ mod tests {
     #[test]
     fn test_interpreter_pure() {
         let program = EffList::new();
-        let projected = interpret_eff_list(&program);
+        let facts = ProgramFacts::from_eff_list(&program);
+        let projected = *facts.effect_envelope();
         assert!(projected.is_empty());
     }
 
@@ -486,7 +404,8 @@ mod tests {
             >,
             0,
         >();
-        let projected = interpret_eff_list(&program.into_eff());
+        let facts = ProgramFacts::from_eff_list(&program.into_eff());
+        let projected = *facts.effect_envelope();
         assert_eq!(projected.cp_effects().count(), 1);
         assert!(projected.tap_events().count() >= 1);
     }

@@ -3,7 +3,7 @@ mod common;
 #[path = "support/runtime.rs"]
 mod runtime_support;
 
-use common::{TestTransport, TestTransportMetrics, TestTx, TestTransportError, TestRx, RecvFuture};
+use common::{RecvFuture, TestRx, TestTransport, TestTransportError, TestTransportMetrics, TestTx};
 use hibana::g::advanced::steps::{ProjectRole, SendStep, SeqSteps, StepConcat, StepCons, StepNil};
 use hibana::g::advanced::{CanonicalControl, MessageSpec, RoleProgram, project};
 use hibana::g::{self, Msg, Role};
@@ -15,8 +15,8 @@ use hibana::substrate::{
 use hibana::substrate::{
     SessionCluster, SessionId, Transport,
     binding::{BindingSlot, Channel, IncomingClassification, TransportOpsError},
-    transport::Outgoing,
     runtime::{Config, CounterClock, DefaultLabelUniverse},
+    transport::Outgoing,
 };
 use runtime_support::{leak_clock, leak_slab, leak_tap_storage};
 
@@ -321,11 +321,7 @@ impl Transport for FlowTransport {
         self.inner.open(local_role, session_id)
     }
 
-    fn send<'a, 'f>(
-        &'a self,
-        tx: &'a mut Self::Tx<'a>,
-        outgoing: Outgoing<'f>,
-    ) -> Self::Send<'a>
+    fn send<'a, 'f>(&'a self, tx: &'a mut Self::Tx<'a>, outgoing: Outgoing<'f>) -> Self::Send<'a>
     where
         'a: 'f,
     {

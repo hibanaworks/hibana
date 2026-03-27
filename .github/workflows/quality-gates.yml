@@ -21,6 +21,8 @@ jobs:
         run: ./.github/scripts/check_plane_boundaries.sh
       - name: Resolver context surface gate
         run: ./.github/scripts/check_resolver_context_surface.sh
+      - name: Lowering hygiene gate
+        run: ./.github/scripts/check_lowering_hygiene.sh
       - name: Surface hygiene gate
         run: ./.github/scripts/check_surface_hygiene.sh
       - name: Direct projection binary gate

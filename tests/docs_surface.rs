@@ -23,8 +23,7 @@ fn contains_tokenish(haystack: &str, needle: &str) -> bool {
 fn public_docs_use_canonical_surface_paths() {
     let readme = read("README.md");
     let lib_rs = read("src/lib.rs");
-    let api_sketch = read("../api-sketch.md");
-    let agents = read("../AGENTS.md");
+    let cargo_toml = read("Cargo.toml");
 
     for source in [&readme, &lib_rs] {
         for forbidden in [
@@ -105,110 +104,6 @@ fn public_docs_use_canonical_surface_paths() {
         );
     }
 
-    for forbidden in [
-        "Program<_>",
-        "Result<_, ()>",
-        "type WrongLocal =",
-        "pub struct SessionCluster<'cfg, T, U, C, const MAX_RV: usize> { /* ... */ }",
-        "pub fn enter_controller<...>(...)",
-        "pub fn enter_stream_controller<...>(...)",
-        "pub fn enter_stream_cluster<...>(...)",
-        "pub async fn drive_stream_cluster<...>(...)",
-        "pub async fn drive_stream_controller<...>(...)",
-        "Client<'_, AppSteps>",
-        "Server<'_, AppSteps>",
-        "Result<hibana::Endpoint<'_,",
-        "hibana::substrate::{One, Many}",
-        "hibana::substrate::{Many, One}",
-    ] {
-        assert!(
-            !api_sketch.contains(forbidden),
-            "api-sketch must not keep owner-hiding shorthand or underscore escapes: {forbidden}"
-        );
-    }
-    for forbidden in
-        ["// set_resolver / enter_controller / enter_cluster / enter_stream_* / drive_cluster /"]
-    {
-        assert!(
-            !api_sketch.contains(forbidden),
-            "api-sketch must not keep the deleted duplicate mgmt::session resolver entry: {forbidden}"
-        );
-    }
-    for required in [
-        "pub use crate::control::cluster::core::{",
-        "ResolverError,",
-        "CONGESTION_MARKS,",
-        "TRANSPORT_ALGORITHM,",
-        "canonical public owner: hibana::substrate::policy::epf::{Header, Slot}",
-        "pub mod advanced {",
-        "AllowsCanonical,",
-        "MintConfig,",
-        "RouteDecisionKind,",
-        "ControlScopeKind, ScopeId",
-        "pub mod wire {",
-        "CodecError, Payload, WireDecode, WireEncode",
-        "pub mod transport {",
-        "TransportAlgorithm,",
-        "TransportEventKind,",
-        "TransportSnapshot,",
-        "pub struct SessionCluster<'cfg, T, U, C, const MAX_RV: usize>",
-        "T: hibana::substrate::Transport + 'cfg,",
-        "U: hibana::substrate::runtime::LabelUniverse + 'cfg,",
-        "C: hibana::substrate::runtime::Clock + 'cfg;",
-        "pub fn new(clock: &'cfg C) -> Self;",
-        "pub fn enter_controller<'cfg, T, U, C, B, const MAX_RV: usize>(",
-        "pub fn add_rendezvous_from_config(",
-        "pub use crate::runtime::mgmt::{LoadRequest, Request, SlotRequest};",
-        "pub fn enter_cluster<'cfg, T, U, C, B, const MAX_RV: usize>(",
-        "pub fn enter_stream_controller<'cfg, T, U, C, B, const MAX_RV: usize>(",
-        "pub fn enter_stream_cluster<'cfg, T, U, C, B, const MAX_RV: usize>(",
-        "rv_id: hibana::substrate::RendezvousId,",
-        "sid: hibana::substrate::SessionId,",
-        "hibana::substrate::AttachError,",
-        "Result<hibana::substrate::mgmt::Reply, hibana::substrate::mgmt::MgmtError>",
-        "T: hibana::substrate::Transport + 'cfg,",
-        "U: hibana::substrate::runtime::LabelUniverse + 'cfg,",
-        "C: hibana::substrate::runtime::Clock + 'cfg;",
-        "impl<'request> Request<'request> {",
-        "pub async fn drive_controller<'lease, T, U, C, Mint, B, const MAX_RV: usize>(",
-        "pub async fn drive_cluster<'lease, 'cfg, T, U, C, Mint, B, const MAX_RV: usize>(",
-        "pub async fn drive_stream_cluster<'lease, T, U, C, Mint, F, B, const MAX_RV: usize>(",
-        "pub async fn drive_stream_controller<",
-        "Mint::Policy: hibana::substrate::cap::advanced::AllowsCanonical,",
-        "F: FnMut() -> bool,",
-        "F: FnMut(hibana::substrate::mgmt::session::tap::TapEvent) -> bool,",
-        "B: hibana::substrate::binding::BindingSlot;",
-        "subscribe: hibana::substrate::mgmt::SubscribeReq,",
-        "hibana::Endpoint",
-        "hibana::g::advanced::RoleProgram",
-        "hibana::substrate::policy::{DynamicResolution, ResolverContext, ResolverError, ResolverRef}",
-        "hibana::substrate::runtime::{Config, Clock, LabelUniverse}",
-        "canonical public owner: hibana::substrate::cap::{One, Many}",
-        "pub async fn client<'entry, AppSteps>(",
-        "entry: Client<'entry, AppSteps>,",
-        "pub async fn server<'entry, AppSteps>(",
-        "entry: Server<'entry, AppSteps>,",
-        "UdpTransport,",
-        "hibana::substrate::runtime::DefaultLabelUniverse,",
-        "hibana::substrate::runtime::CounterClock,",
-        "hibana::substrate::cap::advanced::EpochTbl,",
-        "hibana::substrate::cap::advanced::MintConfig,",
-        "hibana::Endpoint<\n            'cfg,\n            ROLE,",
-        "pub async fn shutdown(&self);",
-        "hibana-quic::app::h3::{Client, Server}",
-        "hibana-quic::app::raw::{Client, Server}",
-        "pub server_addr: core::net::SocketAddr,",
-        "pub server_name: rustls::pki_types::ServerName<'static>,",
-        "pub tls: rustls::ClientConfig,",
-        "pub tls: rustls::ServerConfig,",
-        "pub app: &'a hibana::g::Program<AppSteps>,",
-    ] {
-        assert!(
-            api_sketch.contains(required),
-            "api-sketch must document the live substrate owner instead of omitting it: {required}"
-        );
-    }
-
     for required in [
         "## App Surface",
         "App authors should stay on `g` and `Endpoint`.",
@@ -273,6 +168,7 @@ fn public_docs_use_canonical_surface_paths() {
         "bash ./.github/scripts/check_hibana_public_api.sh",
         "bash ./.github/scripts/check_policy_surface_hygiene.sh",
         "bash ./.github/scripts/check_surface_hygiene.sh",
+        "bash ./.github/scripts/check_lowering_hygiene.sh",
         "bash ./.github/scripts/check_boundary_contracts.sh",
         "bash ./.github/scripts/check_direct_projection_binary.sh",
         "bash ./.github/scripts/check_no_std_build.sh",
@@ -304,104 +200,6 @@ fn public_docs_use_canonical_surface_paths() {
         );
     }
 
-    for source in [&api_sketch, &agents] {
-        for forbidden in [
-            "resolver fallback",
-            "ALPN fallback",
-            "`attach_cursor`",
-            "attach_cursor()",
-            "pub use crate::runtime::AttachError;",
-            "RoleProgram<..., StepNil>",
-            "RV_ID, SESSION_ID, LANE, TAG, LATENCY_US, QUEUE_DEPTH, ...",
-        ] {
-            assert!(
-                !source.contains(forbidden),
-                "design docs must not keep stale rescue/lower-layer vocabulary: {forbidden}"
-            );
-        }
-    }
-
-    for forbidden in [
-        "TRYBUILD=overwrite cargo test -p hibana --test ui --features std",
-        "Program<_>",
-        "hibana-quic/.github/scripts/check_no_testcase_surface.sh",
-        "hibana-quic/.github/scripts/check_stack_surface_hygiene.sh",
-        "hibana-quic/.github/scripts/check_localside_transport_boundary.sh",
-    ] {
-        assert!(
-            !agents.contains(forbidden),
-            "AGENTS must not keep stale fail-open validation, underscore escapes, or redundant quic sub-gate paths: {forbidden}"
-        );
-    }
-
-    for required in [
-        "cargo test -p hibana --test ui --features std",
-        "bash ./.github/scripts/check_hibana_public_api.sh",
-        "bash ./.github/scripts/check_policy_surface_hygiene.sh",
-        "bash ./.github/scripts/check_boundary_contracts.sh",
-        "bash ./hibana/.github/scripts/check_direct_projection_binary.sh",
-        "bash ./hibana/.github/scripts/check_no_std_build.sh",
-        "add_rendezvous_from_config(config, transport)",
-        "Result<DynamicResolution, ResolverError>",
-        "Request::drive_controller",
-        "drive_cluster(cluster, rv_id, sid, endpoint)",
-        "Result<hibana::substrate::mgmt::Reply, hibana::substrate::mgmt::MgmtError>",
-        "FnMut() -> bool",
-        "FnMut(hibana::substrate::mgmt::session::tap::TapEvent) -> bool",
-        "hibana::substrate::mgmt::SubscribeReq",
-        "hibana::substrate::binding::BindingSlot",
-        "enter_stream_controller",
-        "enter_stream_cluster",
-        "hibana::substrate::cap::advanced",
-        "hibana::substrate::wire",
-        "hibana::substrate::transport",
-        "SessionCluster::new(clock)",
-        "hibana::substrate::policy::epf::{Header, Slot}",
-        "hibana-quic::app::h3::{Client, Server}",
-        "hibana-quic::app::raw::{Client, Server}",
-        "socket`, `server_addr`, `server_name`, `tls`, `app`",
-        "`Server` は `socket`, `tls`, `app`",
-        "std::net::UdpSocket",
-        "core::net::SocketAddr",
-        "rustls::pki_types::ServerName<'static>",
-        "rustls::ClientConfig",
-        "rustls::ServerConfig",
-        "ConnectionHandle` の public operation は `shutdown()` だけ",
-        "Client<'entry, AppSteps>",
-        "Server<'entry, AppSteps>",
-        "hibana::substrate::runtime::DefaultLabelUniverse",
-        "hibana::substrate::runtime::CounterClock",
-        "hibana::substrate::cap::advanced::EpochTbl",
-        "hibana::substrate::cap::advanced::MintConfig",
-        "UdpTransport",
-        "bash ./hibana-quic/.github/scripts/check_public_api.sh",
-        "bash ./hibana-quic/.github/scripts/check_boundary_contracts.sh",
-        "cargo test -p hibana-quic --test surface_invariants --manifest-path hibana-quic/Cargo.toml",
-        "bash ./hibana-quic/.github/scripts/run_neqo_non_v2_regression.sh",
-        "hibana-quic/.github/scripts/check_public_api.sh",
-        "hibana-quic/.github/scripts/check_boundary_contracts.sh",
-        "hibana-quic/.github/scripts/run_neqo_non_v2_regression.sh",
-    ] {
-        assert!(
-            agents.contains(required),
-            "AGENTS must document the canonical validation/gate owners: {required}"
-        );
-    }
-
-    assert_eq!(
-        agents
-            .matches("add_rendezvous_from_config(config, transport)")
-            .count(),
-        1,
-        "AGENTS must keep a single canonical rendezvous bootstrap path"
-    );
-
-    assert!(
-        api_sketch.contains("pub use crate::control::cluster::error::{AttachError, CpError};"),
-        "api-sketch must document AttachError and CpError under the cluster error owner"
-    );
-
-    let cargo_toml = read("Cargo.toml");
     for forbidden in [
         "[[example]]",
         "name = \"tcp_tokio\"",

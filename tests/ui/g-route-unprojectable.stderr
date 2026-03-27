@@ -7,20 +7,30 @@ error[E0080]: evaluation panicked: Route unprojectable for this role: arms not m
 note: inside `project::<1, SeqSteps<StepCons<SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<100>, GenericCapToken<RouteArm100Kind>, CanonicalControl<RouteArm100Kind>>>, StepNil>, SeqSteps<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, StepNil>, StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, SeqSteps<StepCons<SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<101>, GenericCapToken<RouteArm101Kind>, CanonicalControl<RouteArm101Kind>>>, StepNil>, SeqSteps<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, StepNil>, SeqSteps<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, StepNil>, StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<77>, ()>>, StepNil>>>>>>>, MintConfig>`
    --> src/global/role_program.rs
     |
-    |     let _ = super::typestate::RoleTypestate::<ROLE>::from_program(eff);
-    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::typestate::RoleTypestate::<1>::from_program`
-   --> src/global/typestate.rs
+    |     RoleMachine::<ROLE>::validate(eff);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::compiled::machine::RoleMachine::<1>::validate`
+   --> src/global/compiled/machine.rs
+    |
+    |         let _ = Self::from_eff_list(eff_list);
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::compiled::machine::RoleMachine::<1>::from_eff_list`
+   --> src/global/compiled/machine.rs
+    |
+    |         let typestate = RoleTypestate::<ROLE>::from_program(eff_list);
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::typestate::builder::RoleTypestate::<1>::from_program`
+   --> src/global/typestate/builder.rs
     |
     |         Self::build(program, program.as_slice())
     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::typestate::RoleTypestate::<1>::build`
+note: inside `hibana::global::typestate::builder::RoleTypestate::<1>::build`
    --> $RUST/core/src/panic.rs
     |
     |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
     |
-   ::: src/global/typestate.rs
+   ::: src/global/typestate/builder.rs
     |
     | / ...   panic!(
     | | ...       "Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dy...

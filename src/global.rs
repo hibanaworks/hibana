@@ -7,8 +7,11 @@ use core::marker::PhantomData;
 
 use self::program::Program;
 use self::steps::{SendStep, SeqSteps, StepConcat, StepCons, StepNil};
+use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
 use crate::control::cap::mint::{ControlPayload, ControlResourceKind, ResourceKind};
 
+/// Crate-private lowering owners for unified compilation.
+pub(crate) mod compiled;
 /// Const-evaluated DSL and effect list plumbing.
 pub(crate) mod const_dsl;
 /// Program combinators and route builders.
@@ -270,33 +273,7 @@ trait RequireFalse {}
 
 impl RequireFalse for steps::False {}
 
-macro_rules! impl_label_eq {
-    () => {};
-    ($head:literal $(,$tail:literal)*) => {
-        impl LabelEq<LabelMarker<$head>> for LabelMarker<$head> {
-            type Output = steps::True;
-        }
-        $(
-            impl LabelEq<LabelMarker<$tail>> for LabelMarker<$head> {
-                type Output = steps::False;
-            }
-
-            impl LabelEq<LabelMarker<$head>> for LabelMarker<$tail> {
-                type Output = steps::False;
-            }
-        )*
-        impl_label_eq!($($tail),*);
-    };
-}
-
-impl_label_eq!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-    26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
-    50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
-    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97,
-    98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116,
-    117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127
-);
+mod label_eq;
 
 #[diagnostic::do_not_recommend]
 impl<RouteController, const LABEL: u8, Payload, Control, const LANE: u8, Tail> RouteArmHead
@@ -432,6 +409,41 @@ impl ControlLabelSpec {
             panic!("control handling mismatch");
         }
         Self::new(L::VALUE, K::TAG, K::SCOPE, K::TAP_ID, K::SHOT, handling)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LoopControlMeaning {
+    Continue,
+    Break,
+}
+
+impl LoopControlMeaning {
+    pub(crate) const fn from_control_spec(spec: Option<ControlLabelSpec>) -> Option<Self> {
+        match spec {
+            Some(spec) => {
+                if !matches!(spec.scope_kind, const_dsl::ControlScopeKind::Loop) {
+                    return None;
+                }
+                Self::from_resource_tag(Some(spec.resource_tag))
+            }
+            None => None,
+        }
+    }
+
+    pub(crate) const fn from_resource_tag(resource_tag: Option<u8>) -> Option<Self> {
+        match resource_tag {
+            Some(LoopContinueKind::TAG) => Some(Self::Continue),
+            Some(LoopBreakKind::TAG) => Some(Self::Break),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn arm(self) -> u8 {
+        match self {
+            Self::Continue => 0,
+            Self::Break => 1,
+        }
     }
 }
 

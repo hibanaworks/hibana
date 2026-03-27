@@ -40,9 +40,7 @@ const LABEL_LOOP_BREAK: u8 = 49;
 const LOOP_POLICY_ID: u16 = 99;
 static LOOP_DECISION_INDEX: AtomicUsize = AtomicUsize::new(0);
 
-fn loop_lane_resolver(
-    _ctx: ResolverContext,
-) -> Result<DynamicResolution, ResolverError> {
+fn loop_lane_resolver(_ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
     let idx = LOOP_DECISION_INDEX.fetch_add(1, Ordering::Relaxed);
     let decision = idx == 0;
     Ok(DynamicResolution::Loop { decision })

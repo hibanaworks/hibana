@@ -473,8 +473,8 @@ fn eff_list_does_not_re_expose_policy_marker_slices() {
         "EffList::policies must not remain public"
     );
     assert!(
-        src.contains("pub(crate) const fn policies(&self) -> &[PolicyMarker]"),
-        "EffList::policies should stay crate-private for internal policy metadata"
+        !src.contains("fn policies(&self) -> &[PolicyMarker]"),
+        "EffList::policies should stay deleted so compiled lowering remains the sole policy owner"
     );
     assert!(
         !src.contains("pub const fn policy_at(&self, offset: usize) -> Option<PolicyMode>"),
@@ -487,12 +487,14 @@ fn eff_list_does_not_re_expose_policy_marker_slices() {
     assert!(
         !src.contains(
             "pub fn policy_with_scope(&self, offset: usize) -> Option<(PolicyMode, ScopeId)>"
+        ) && !src.contains(
+            "pub const fn policy_with_scope(&self, offset: usize) -> Option<(PolicyMode, ScopeId)>"
         ),
         "EffList::policy_with_scope must not remain public"
     );
     assert!(
         src.contains(
-            "pub(crate) fn policy_with_scope(&self, offset: usize) -> Option<(PolicyMode, ScopeId)>"
+            "pub(crate) const fn policy_with_scope(&self, offset: usize) -> Option<(PolicyMode, ScopeId)>"
         ),
         "EffList::policy_with_scope should stay crate-private"
     );
@@ -546,6 +548,7 @@ fn eff_list_does_not_reintroduce_derived_lookup_tables() {
 fn role_program_does_not_own_policy_marker_metadata_iterators() {
     let role_program_src = include_str!("../src/global/role_program.rs");
     let cluster_core_src = include_str!("../src/control/cluster/core.rs");
+    let compiled_facts_src = include_str!("../src/global/compiled/facts.rs");
 
     for forbidden in [
         "pub(crate) struct PolicyInfo",
@@ -559,8 +562,16 @@ fn role_program_does_not_own_policy_marker_metadata_iterators() {
         );
     }
     assert!(
-        cluster_core_src.contains("for marker in eff_list.policies() {"),
-        "cluster owner must read raw policy markers directly from EffList"
+        cluster_core_src.contains("ProgramFacts::from_eff_list(program.eff_list())"),
+        "cluster owner must consume compiled lowering facts instead of rescanning policy markers"
+    );
+    assert!(
+        !cluster_core_src.contains(".policies()") && !compiled_facts_src.contains(".policies()"),
+        "policy marker scans must not bypass the compiled lowering owner"
+    );
+    assert!(
+        compiled_facts_src.contains("eff_list.policy_with_scope("),
+        "compiled lowering owner must reconstruct dynamic policy metadata through policy_with_scope"
     );
 }
 
@@ -579,7 +590,10 @@ fn role_program_projection_metadata_stays_internal() {
         "pub struct ProjectedRoleLayout {",
         "pub struct ProjectedRoleData<const ROLE: u8> {",
         "pub fn layout(&self) -> ProjectedRoleLayout {",
+        "fn layout(&self) -> ProjectedRoleLayout {",
         "pub fn projection(&self) -> ProjectedRoleData<ROLE> {",
+        "pub(crate) fn projection(&self) -> ProjectedRoleData<ROLE> {",
+        "pub(crate) fn active_lanes(&self) -> [bool; MAX_LANES] {",
         "pub struct LocalStepMeta {",
         "pub struct LocalMetaTable<'a> {",
         "pub const fn phase(&self, index: usize) -> &Phase {",
@@ -615,10 +629,11 @@ fn role_program_projection_metadata_stays_internal() {
         "pub(crate) struct LocalStep {",
         "pub(crate) struct ProjectedRoleLayout {",
         "pub(crate) struct ProjectedRoleData<const ROLE: u8> {",
-        "fn layout(&self) -> ProjectedRoleLayout {",
-        "pub(crate) fn projection(&self) -> ProjectedRoleData<ROLE> {",
-        "pub(crate) fn active_lanes(&self) -> [bool; MAX_LANES] {",
-        "let _ = super::typestate::RoleTypestate::<ROLE>::from_program(eff);",
+        "pub(crate) const fn machine(&self) -> RoleMachine<ROLE> {",
+        "RoleMachine::<ROLE>::from_eff_list(self.eff_list)",
+        "ProgramFacts::from_eff_list(self.eff_list).lease_budget()",
+        "let _ = ProgramFacts::from_eff_list(eff);",
+        "RoleMachine::<ROLE>::validate(eff);",
     ] {
         assert!(
             role_program_src.contains(required),
@@ -628,9 +643,9 @@ fn role_program_projection_metadata_stays_internal() {
 
     assert!(
         role_program_ws.contains(
-            "pub struct RoleProgram<'prog, const ROLE: u8, LocalSteps, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, mint: Mint, _local_steps: core::marker::PhantomData<LocalSteps>, }"
+            "pub struct RoleProgram<'prog, const ROLE: u8, LocalSteps, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, mint: Mint, _local_steps: core::marker::PhantomData<LocalSteps>, }"
         ),
-        "RoleProgram must stay thin and store only eff list, lease budget, mint, and typed witness"
+        "RoleProgram must stay thin and store only eff list, mint, and typed witness"
     );
     assert!(
         !role_program_ws.contains("LocalSteps = steps::StepNil"),
@@ -726,7 +741,7 @@ fn route_and_parallel_bounds_use_semantic_witnesses() {
         "pub trait NonEmptyParallelArm {",
         "trait LabelEq<Other> {",
         "trait RequireFalse {}",
-        "impl_label_eq!(",
+        "mod label_eq;",
         "`g::route(left, right)` arms must begin with a controller self-send",
         "`g::route(left, right)` arms must start with the same controller self-send",
         "`g::route(left, right)` arms must use distinct labels",
@@ -780,7 +795,6 @@ fn route_and_parallel_bounds_use_semantic_witnesses() {
 #[test]
 fn docs_do_not_keep_project_turbofish_shims() {
     let readme_src = include_str!("../README.md");
-    let api_sketch_src = include_str!("../../api-sketch.md");
     let app_path = readme_src
         .split("## Substrate Surface (protocol implementors only)")
         .next()
@@ -789,10 +803,6 @@ fn docs_do_not_keep_project_turbofish_shims() {
     assert!(
         !readme_src.contains("project::<"),
         "README must not keep project::<...> turbofish shims"
-    );
-    assert!(
-        !api_sketch_src.contains("project::<"),
-        "api-sketch must not keep project::<...> turbofish shims"
     );
     assert!(
         !app_path.contains("g::advanced"),
@@ -807,6 +817,48 @@ fn docs_do_not_keep_project_turbofish_shims() {
             && readme_src.contains("Protocol implementors use the protocol-neutral SPI:"),
         "README must label projection examples as protocol-implementor SPI only"
     );
+}
+
+#[test]
+fn hibana_tests_do_not_depend_on_workspace_files() {
+    fn collect_rs_files(root: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(root)
+            .unwrap_or_else(|err| panic!("read_dir {} failed: {}", root.display(), err))
+        {
+            let entry = entry
+                .unwrap_or_else(|err| panic!("read_dir entry {} failed: {}", root.display(), err));
+            let path = entry.path();
+            if path.is_dir() {
+                collect_rs_files(&path, files);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    collect_rs_files(&root, &mut files);
+    let forbidden = [
+        ["..", "/..", "/api-sketch.md"].concat(),
+        ["..", "/api-sketch.md"].concat(),
+        ["..", "/AGENTS.md"].concat(),
+        ["..", "/..", "/.github/workflows/macos-udp-tokio.yml"].concat(),
+        ["include_str!(\"", "..", "/..", "/"].concat(),
+        ["include_bytes!(\"", "..", "/..", "/"].concat(),
+    ];
+
+    for path in files {
+        let body = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err));
+        for forbidden in &forbidden {
+            assert!(
+                !body.contains(forbidden.as_str()),
+                "hibana tests must not depend on workspace files outside the repo root: {} contains `{forbidden}`",
+                path.display()
+            );
+        }
+    }
 }
 
 #[test]
@@ -1795,12 +1847,8 @@ fn private_owners_do_not_keep_internal_helpers_public() {
     let const_dsl_src = include_str!("../src/global/const_dsl.rs");
 
     assert!(
-        !effects_src.contains("pub fn interpret_eff_list("),
-        "private cluster effects owner must not expose interpret_eff_list publicly"
-    );
-    assert!(
-        effects_src.contains("pub(crate) fn interpret_eff_list("),
-        "interpret_eff_list should stay crate-private"
+        !effects_src.contains("interpret_eff_list("),
+        "cluster effects owner must not keep the legacy interpret_eff_list shim outside lowering owners"
     );
     for forbidden in [
         "pub struct CapEntry {",
@@ -2465,6 +2513,7 @@ fn state_index_keeps_canonical_newtype_owner() {
         "pub struct LoopMetadata<const ROLE: u8> {",
         "pub struct PhaseCursor<const ROLE: u8> {",
         "pub fn phase_cursor(&'prog self) -> PhaseCursor<ROLE> {",
+        "pub(crate) fn phase_cursor(&'prog self) -> PhaseCursor<ROLE> {",
     ] {
         assert!(
             !typestate_src.contains(forbidden) && !role_program_src.contains(forbidden),
@@ -2479,7 +2528,6 @@ fn state_index_keeps_canonical_newtype_owner() {
         "pub(crate) enum LoopRole {",
         "pub(crate) struct LoopMetadata<const ROLE: u8> {",
         "pub(crate) struct PhaseCursor<const ROLE: u8> {",
-        "pub(crate) fn phase_cursor(&'prog self) -> PhaseCursor<ROLE> {",
     ] {
         assert!(
             typestate_src.contains(required) || role_program_src.contains(required),
@@ -3608,6 +3656,7 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
         "bash ./.github/scripts/check_hibana_public_api.sh",
         "bash ./.github/scripts/check_policy_surface_hygiene.sh",
         "bash ./.github/scripts/check_surface_hygiene.sh",
+        "bash ./.github/scripts/check_lowering_hygiene.sh",
         "bash ./.github/scripts/check_boundary_contracts.sh",
         "bash ./.github/scripts/check_direct_projection_binary.sh",
         "cargo check --all-targets -p hibana",
@@ -3629,6 +3678,7 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
         "./.github/scripts/check_mgmt_boundary.sh",
         "./.github/scripts/check_plane_boundaries.sh",
         "./.github/scripts/check_resolver_context_surface.sh",
+        "./.github/scripts/check_lowering_hygiene.sh",
         "./.github/scripts/check_surface_hygiene.sh",
         "./.github/scripts/check_direct_projection_binary.sh",
         "./.github/scripts/check_no_std_build.sh",
@@ -3656,6 +3706,7 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
         "check_mgmt_boundary.sh",
         "check_plane_boundaries.sh",
         "check_resolver_context_surface.sh",
+        "check_lowering_hygiene.sh",
         "check_surface_hygiene.sh",
     ] {
         assert!(
@@ -3674,44 +3725,6 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
         assert!(
             direct_projection_gate.contains(required),
             "direct projection binary gate must keep the canonical typed-projection regression owner: {required}"
-        );
-    }
-}
-
-#[test]
-fn workspace_quality_workflow_keeps_canonical_hibana_flow() {
-    let workspace_workflow = include_str!("../../.github/workflows/macos-udp-tokio.yml");
-
-    for required in [
-        "./.github/scripts/check_hibana_public_api.sh",
-        "./.github/scripts/check_policy_surface_hygiene.sh",
-        "./.github/scripts/check_boundary_contracts.sh",
-        "./hibana/.github/scripts/check_no_std_build.sh",
-        "./hibana/.github/scripts/check_direct_projection_binary.sh",
-        "cargo check --all-targets -p hibana --manifest-path hibana/Cargo.toml",
-        "cargo test -p hibana --features std --manifest-path hibana/Cargo.toml",
-        "cargo test -p hibana --test ui --features std --manifest-path hibana/Cargo.toml",
-        "cargo test -p hibana --test policy_replay --features std --manifest-path hibana/Cargo.toml",
-    ] {
-        assert!(
-            workspace_workflow.contains(required),
-            "workspace workflow must run the canonical hibana verification flow: {required}"
-        );
-    }
-    assert!(
-        !workspace_workflow.contains("./.github/scripts/check_policy_legacy_paths.sh"),
-        "workspace workflow must not keep the stale policy-legacy gate name"
-    );
-
-    for forbidden in [
-        "cargo test --test docs_surface --features std --manifest-path hibana/Cargo.toml",
-        "cargo test --test root_surface --features std --manifest-path hibana/Cargo.toml",
-        "cargo test --test public_surface_guards --features std --manifest-path hibana/Cargo.toml",
-        "cargo test --test substrate_surface --features std --manifest-path hibana/Cargo.toml",
-    ] {
-        assert!(
-            !workspace_workflow.contains(forbidden),
-            "workspace workflow must not bypass the canonical hibana std test with cherry-picked stale test entries: {forbidden}"
         );
     }
 }

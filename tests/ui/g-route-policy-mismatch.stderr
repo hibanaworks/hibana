@@ -7,20 +7,30 @@ error[E0080]: evaluation panicked: route scope recorded conflicting controller p
 note: inside `project::<0, StepCons<SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<5>, GenericCapToken<ArmWithPolicyKind>, CanonicalControl<ArmWithPolicyKind>>>, StepCons<SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<6>, GenericCapToken<ArmWithoutPolicyKind>, CanonicalControl<ArmWithoutPolicyKind>>>, StepNil>>, MintConfig>`
    --> src/global/role_program.rs
     |
-    |     let _ = super::typestate::RoleTypestate::<ROLE>::from_program(eff);
-    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::typestate::RoleTypestate::<0>::from_program`
-   --> src/global/typestate.rs
+    |     RoleMachine::<ROLE>::validate(eff);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::compiled::machine::RoleMachine::<0>::validate`
+   --> src/global/compiled/machine.rs
+    |
+    |         let _ = Self::from_eff_list(eff_list);
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::compiled::machine::RoleMachine::<0>::from_eff_list`
+   --> src/global/compiled/machine.rs
+    |
+    |         let typestate = RoleTypestate::<ROLE>::from_program(eff_list);
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::typestate::builder::RoleTypestate::<0>::from_program`
+   --> src/global/typestate/builder.rs
     |
     |         Self::build(program, program.as_slice())
     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::typestate::RoleTypestate::<0>::build`
+note: inside `hibana::global::typestate::builder::RoleTypestate::<0>::build`
    --> $RUST/core/src/panic.rs
     |
     |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
     |
-   ::: src/global/typestate.rs
+   ::: src/global/typestate/builder.rs
     |
     | / ...                   panic!(
     | | ...                       "route scope recorded conflicting controller policy annotations"

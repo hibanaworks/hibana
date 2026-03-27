@@ -15,8 +15,8 @@ use crate::global::typestate::{
     PhaseCursor, RecvMeta, SendMeta, StateIndex, state_index_to_usize,
 };
 use crate::global::{
-    CanonicalControl, ControlHandling, ControlPayloadKind, ExternalControl, MessageSpec, NoControl,
-    SendableLabel,
+    CanonicalControl, ControlHandling, ControlPayloadKind, ExternalControl, LoopControlMeaning,
+    MessageSpec, NoControl, SendableLabel,
 };
 use crate::runtime::config::Clock;
 use crate::{
@@ -133,19 +133,96 @@ fn checked_state_index(idx: usize) -> Option<StateIndex> {
     u16::try_from(idx).ok().map(StateIndex::new)
 }
 
+#[inline]
+fn controller_arm_loop_meaning<const ROLE: u8>(
+    cursor: &PhaseCursor<ROLE>,
+    scope_id: ScopeId,
+    arm: u8,
+) -> Option<LoopControlMeaning> {
+    let (entry, _label) = cursor.controller_arm_entry_by_arm(scope_id, arm)?;
+    let target_cursor = cursor.with_index(state_index_to_usize(entry));
+    target_cursor
+        .try_local_meta()
+        .and_then(|meta| LoopControlMeaning::from_resource_tag(meta.resource))
+        .or_else(|| {
+            target_cursor
+                .try_send_meta()
+                .and_then(|meta| LoopControlMeaning::from_resource_tag(meta.resource))
+        })
+        .or_else(|| {
+            target_cursor
+                .try_recv_meta()
+                .and_then(|meta| LoopControlMeaning::from_resource_tag(meta.resource))
+        })
+}
+
+#[inline]
+fn controller_arm_wire_label<const ROLE: u8>(
+    cursor: &PhaseCursor<ROLE>,
+    scope_id: ScopeId,
+    arm: u8,
+) -> Option<u8> {
+    controller_arm_loop_meaning(cursor, scope_id, arm).map(wire_label_for_loop_control)
+}
+
 /// Classify a label for dynamic policy evaluation dispatch.
 ///
 /// This function maps raw label constants to their semantic classification,
 /// providing a single point of truth for label-based dispatch logic.
 #[inline]
-const fn classify_dynamic_label(label: u8) -> DynamicLabelClass {
+const fn loop_control_meaning_from_wire_label(label: u8) -> Option<LoopControlMeaning> {
     match label {
-        LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK => DynamicLabelClass::Loop,
-        LABEL_SPLICE_INTENT | LABEL_SPLICE_ACK | LABEL_REROUTE => {
-            DynamicLabelClass::SpliceOrReroute
-        }
-        _ => DynamicLabelClass::Route,
+        LABEL_LOOP_CONTINUE => Some(LoopControlMeaning::Continue),
+        LABEL_LOOP_BREAK => Some(LoopControlMeaning::Break),
+        _ => None,
     }
+}
+
+#[inline]
+const fn wire_label_for_loop_control(meaning: LoopControlMeaning) -> u8 {
+    match meaning {
+        LoopControlMeaning::Continue => LABEL_LOOP_CONTINUE,
+        LoopControlMeaning::Break => LABEL_LOOP_BREAK,
+    }
+}
+
+#[inline]
+const fn is_wire_loop_control_label(label: u8) -> bool {
+    loop_control_meaning_from_wire_label(label).is_some()
+}
+
+#[inline]
+const fn loop_control_label_mask() -> u128 {
+    ScopeLabelMeta::label_bit(LABEL_LOOP_CONTINUE) | ScopeLabelMeta::label_bit(LABEL_LOOP_BREAK)
+}
+
+#[inline]
+const fn loop_control_meaning_from_disposition(
+    disposition: LoopDisposition,
+) -> LoopControlMeaning {
+    match disposition {
+        LoopDisposition::Continue => LoopControlMeaning::Continue,
+        LoopDisposition::Break => LoopControlMeaning::Break,
+    }
+}
+
+#[inline]
+const fn classify_dynamic_label(label: u8) -> DynamicLabelClass {
+    if is_wire_loop_control_label(label) {
+        DynamicLabelClass::Loop
+    } else {
+        match label {
+            LABEL_SPLICE_INTENT | LABEL_SPLICE_ACK | LABEL_REROUTE => {
+                DynamicLabelClass::SpliceOrReroute
+            }
+            _ => DynamicLabelClass::Route,
+        }
+    }
+}
+
+#[inline]
+const fn is_loop_control_resource(resource: Option<u8>) -> bool {
+    LoopControlMeaning::from_resource_tag(resource).is_some()
 }
 
 #[inline]
@@ -681,7 +758,10 @@ mod offer_regression_tests {
             recv_payloads: &[&[u8]],
         ) -> Self {
             {
-                let mut queue = state.incoming.lock().expect("deferred ingress incoming lock");
+                let mut queue = state
+                    .incoming
+                    .lock()
+                    .expect("deferred ingress incoming lock");
                 queue.extend(incoming.iter().copied());
             }
             {
@@ -761,16 +841,16 @@ mod offer_regression_tests {
     impl<'a> Future for PendingRecv<'a> {
         type Output = Result<Payload<'a>, TransportError>;
 
-        fn poll(
-            self: core::pin::Pin<&mut Self>,
-            cx: &mut Context<'_>,
-        ) -> Poll<Self::Output> {
+        fn poll(self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
             self.state.polls.fetch_add(1, Ordering::SeqCst);
             if self.state.ready.load(Ordering::SeqCst) {
                 Poll::Ready(Ok(Payload::new(&[])))
             } else {
-                *self.state.waker.lock().expect("pending transport waker lock") =
-                    Some(cx.waker().clone());
+                *self
+                    .state
+                    .waker
+                    .lock()
+                    .expect("pending transport waker lock") = Some(cx.waker().clone());
                 Poll::Pending
             }
         }
@@ -1388,7 +1468,7 @@ mod offer_regression_tests {
             ScopeLabelMeta::label_bit(expected.label),
             ScopeLabelMeta::label_bit(LABEL_LOOP_CONTINUE)
                 | ScopeLabelMeta::label_bit(LABEL_LOOP_BREAK),
-            |label| matches!(label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK),
+            is_wire_loop_control_label,
         );
         assert_eq!(picked, Some(expected));
         assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(deferred));
@@ -2097,11 +2177,10 @@ mod offer_regression_tests {
                         .materialization_meta
                         .arm_has_first_recv_dispatch(arm)
                     {
-                        !worker
-                            .selection_arm_dispatch_materializes_without_ready_evidence(
-                                worker_selection,
-                                arm,
-                            )
+                        !worker.selection_arm_dispatch_materializes_without_ready_evidence(
+                            worker_selection,
+                            arm,
+                        )
                     } else {
                         false
                     }
@@ -2229,11 +2308,8 @@ mod offer_regression_tests {
                         let scope_end = target_cursor.jump_target().unwrap_or(0);
                         let scope_end_cursor = worker.cursor.with_index(scope_end);
                         if region.linger {
-                            let synthetic_label = match arm {
-                                0 => LABEL_LOOP_CONTINUE,
-                                1 => LABEL_LOOP_BREAK,
-                                _ => return None,
-                            };
+                            let synthetic_label =
+                                controller_arm_wire_label(&worker.cursor, scope, arm)?;
                             return Some((
                                 scope_end,
                                 RecvMeta {
@@ -2277,11 +2353,8 @@ mod offer_regression_tests {
                         return None;
                     }
                     if region.linger {
-                        let synthetic_label = match arm {
-                            0 => LABEL_LOOP_CONTINUE,
-                            1 => LABEL_LOOP_BREAK,
-                            _ => return None,
-                        };
+                        let synthetic_label =
+                            controller_arm_wire_label(&worker.cursor, scope, arm)?;
                         return Some((
                             target_cursor.index(),
                             RecvMeta {
@@ -2662,7 +2735,7 @@ mod offer_regression_tests {
         let nested_program = g::route(HINT_ROUTE_PROGRAM, ENTRY_ROUTE_PROGRAM);
         let worker_program: RoleProgram<'_, 1, _, crate::control::cap::mint::MintConfig> =
             project(&nested_program);
-        let program_cursor = worker_program.phase_cursor();
+        let program_cursor = PhaseCursor::from_machine(worker_program.machine());
         let nested_scope = program_cursor
             .seek_label(ENTRY_ARM0_SIGNAL_LABEL)
             .expect("nested route recv label must exist")
@@ -6922,10 +6995,7 @@ mod offer_regression_tests {
             ),
         );
         let middle = g::route(
-            g::seq(
-                g::send::<Role<0>, Role<0>, StaticRouteLeftMsg, 0>(),
-                inner,
-            ),
+            g::seq(g::send::<Role<0>, Role<0>, StaticRouteLeftMsg, 0>(), inner),
             g::seq(
                 g::send::<Role<0>, Role<0>, StaticRouteRightMsg, 0>(),
                 g::send::<Role<0>, Role<1>, MiddleRightMsg, 0>(),
@@ -6977,12 +7047,18 @@ mod offer_regression_tests {
             .expect("middle left arm should enter inner route");
 
         assert_eq!(
-            worker.cursor.first_recv_target(outer_scope, 0x51).map(|(arm, _)| arm),
+            worker
+                .cursor
+                .first_recv_target(outer_scope, 0x51)
+                .map(|(arm, _)| arm),
             Some(1),
             "outer scope must resolve the leaf reply through first-recv dispatch"
         );
         assert_eq!(
-            worker.cursor.first_recv_target(middle_scope, 0x51).map(|(arm, _)| arm),
+            worker
+                .cursor
+                .first_recv_target(middle_scope, 0x51)
+                .map(|(arm, _)| arm),
             Some(0),
             "middle scope must resolve the leaf reply through first-recv dispatch"
         );
@@ -7003,7 +7079,8 @@ mod offer_regression_tests {
     }
 
     #[test]
-    fn deep_right_nested_static_passive_binding_dispatch_materializes_poll_on_all_ancestor_scopes() {
+    fn deep_right_nested_static_passive_binding_dispatch_materializes_poll_on_all_ancestor_scopes()
+    {
         type OuterLeftMsg = Msg<0x50, u8>;
         type MiddleLeftMsg = Msg<0x51, u8>;
         type ThirdLeftMsg = Msg<0x52, u8>;
@@ -7042,10 +7119,7 @@ mod offer_regression_tests {
                 g::send::<Role<0>, Role<0>, StaticRouteLeftMsg, 0>(),
                 g::send::<Role<0>, Role<1>, MiddleLeftMsg, 0>(),
             ),
-            g::seq(
-                g::send::<Role<0>, Role<0>, StaticRouteRightMsg, 0>(),
-                third,
-            ),
+            g::seq(g::send::<Role<0>, Role<0>, StaticRouteRightMsg, 0>(), third),
         );
         let program = g::route(
             g::seq(
@@ -7098,7 +7172,10 @@ mod offer_regression_tests {
 
         for scope in [outer_scope, middle_scope, third_scope] {
             assert_eq!(
-                worker.cursor.first_recv_target(scope, 0x55).map(|(arm, _)| arm),
+                worker
+                    .cursor
+                    .first_recv_target(scope, 0x55)
+                    .map(|(arm, _)| arm),
                 Some(1),
                 "ancestor scope must resolve the deep final reply through first-recv dispatch"
             );
@@ -7165,10 +7242,7 @@ mod offer_regression_tests {
                 g::send::<Role<0>, Role<0>, StaticRouteLeftMsg, 0>(),
                 g::send::<Role<0>, Role<1>, MiddleLeftMsg, 0>(),
             ),
-            g::seq(
-                g::send::<Role<0>, Role<0>, StaticRouteRightMsg, 0>(),
-                third,
-            ),
+            g::seq(g::send::<Role<0>, Role<0>, StaticRouteRightMsg, 0>(), third),
         );
         let program = g::route(
             g::seq(
@@ -7284,7 +7358,11 @@ mod offer_regression_tests {
             Poll::Ready(Err(err)) => panic!("worker deep final offer failed: {err:?}"),
             Poll::Pending => panic!("worker deep final offer unexpectedly pending"),
         };
-        assert_eq!(branch.label(), 0x55, "worker must materialize the deep final reply");
+        assert_eq!(
+            branch.label(),
+            0x55,
+            "worker must materialize the deep final reply"
+        );
         let mut decode = pin!(branch.decode::<FinalRightMsg>());
         match decode.as_mut().poll(&mut cx) {
             Poll::Ready(Ok((_worker, reply))) => assert_eq!(reply, payload),
@@ -7333,10 +7411,7 @@ mod offer_regression_tests {
                 g::send::<Role<0>, Role<0>, StaticRouteLeftMsg, 0>(),
                 g::send::<Role<0>, Role<1>, MiddleLeftMsg, 0>(),
             ),
-            g::seq(
-                g::send::<Role<0>, Role<0>, StaticRouteRightMsg, 0>(),
-                third,
-            ),
+            g::seq(g::send::<Role<0>, Role<0>, StaticRouteRightMsg, 0>(), third),
         );
         let program = g::route(
             g::seq(
@@ -8028,6 +8103,72 @@ mod offer_regression_tests {
     }
 
     #[test]
+    fn loop_meaning_is_metadata_authority_and_wire_helpers_only_translate() {
+        type LoopContinueMsg = Msg<
+            { crate::runtime::consts::LABEL_LOOP_CONTINUE },
+            GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
+            CanonicalControl<crate::control::cap::resource_kinds::LoopContinueKind>,
+        >;
+        type LoopBreakMsg = Msg<
+            { crate::runtime::consts::LABEL_LOOP_BREAK },
+            GenericCapToken<crate::control::cap::resource_kinds::LoopBreakKind>,
+            CanonicalControl<crate::control::cap::resource_kinds::LoopBreakKind>,
+        >;
+
+        let loop_program = g::route(
+            g::send::<Role<0>, Role<0>, LoopContinueMsg, 0>(),
+            g::send::<Role<0>, Role<0>, LoopBreakMsg, 0>(),
+        );
+        let controller_program: RoleProgram<'_, 0, _, crate::control::cap::mint::MintConfig> =
+            project(&loop_program);
+
+        let mut tap_storage = [TapEvent::default(); RING_EVENTS];
+        let mut slab = [0u8; 2048];
+        let config = Config::new(&mut tap_storage, &mut slab);
+        let clock = CounterClock::new();
+        let cluster: ManuallyDrop<
+            SessionCluster<'_, HintOnlyTransport, DefaultLabelUniverse, CounterClock, 4>,
+        > = ManuallyDrop::new(SessionCluster::new(&clock));
+        let transport = HintOnlyTransport::new(HINT_NONE);
+        let cluster_ref = &*cluster;
+        let rv_id = cluster_ref
+            .add_rendezvous_from_config(config, transport)
+            .expect("register rendezvous");
+        let sid = SessionId::new(1005);
+        let controller = cluster_ref
+            .attach_endpoint::<0, _, _, _>(rv_id, sid, &controller_program, NoBinding)
+            .expect("attach controller endpoint");
+        let scope = controller.cursor.node_scope_id();
+        assert!(!scope.is_none(), "controller must start at loop route scope");
+
+        let continue_meaning = controller_arm_loop_meaning(&controller.cursor, scope, 0)
+            .expect("continue arm meaning");
+        let break_meaning = controller_arm_loop_meaning(&controller.cursor, scope, 1)
+            .expect("break arm meaning");
+        let continue_label = controller_arm_wire_label(&controller.cursor, scope, 0)
+            .expect("continue arm wire label");
+        let break_label = controller_arm_wire_label(&controller.cursor, scope, 1)
+            .expect("break arm wire label");
+
+        assert_eq!(continue_meaning, LoopControlMeaning::Continue);
+        assert_eq!(break_meaning, LoopControlMeaning::Break);
+        assert_eq!(continue_label, wire_label_for_loop_control(continue_meaning));
+        assert_eq!(break_label, wire_label_for_loop_control(break_meaning));
+        assert_eq!(
+            loop_control_meaning_from_wire_label(continue_label),
+            Some(continue_meaning)
+        );
+        assert_eq!(
+            loop_control_meaning_from_wire_label(break_label),
+            Some(break_meaning)
+        );
+        assert_eq!(classify_dynamic_label(continue_label), DynamicLabelClass::Loop);
+        assert_eq!(classify_dynamic_label(break_label), DynamicLabelClass::Loop);
+
+        drop(controller);
+    }
+
+    #[test]
     fn loop_continue_then_nested_custom_route_right_send_stays_well_scoped() {
         type LoopContinueMsg = Msg<
             { crate::runtime::consts::LABEL_LOOP_CONTINUE },
@@ -8044,11 +8185,8 @@ mod offer_regression_tests {
             GenericCapToken<RouteDecisionKind>,
             CanonicalControl<RouteDecisionKind>,
         >;
-        type StaticRouteRightMsg = Msg<
-            99,
-            GenericCapToken<RouteHintRightKind>,
-            CanonicalControl<RouteHintRightKind>,
-        >;
+        type StaticRouteRightMsg =
+            Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>;
 
         let inner_left = g::seq(
             g::send::<Role<0>, Role<0>, StaticRouteLeftMsg, 0>(),
@@ -8090,7 +8228,8 @@ mod offer_regression_tests {
             .expect("open loop continue send");
         let waker = noop_waker_ref();
         let mut cx = Context::from_waker(waker);
-        let mut continue_send = pin!(controller.send_with_meta::<LoopContinueMsg>(&continue_meta, None));
+        let mut continue_send =
+            pin!(controller.send_with_meta::<LoopContinueMsg>(&continue_meta, None));
         let controller = match continue_send.as_mut().poll(&mut cx) {
             Poll::Ready(Ok((endpoint, _))) => endpoint,
             Poll::Ready(Err(err)) => panic!("loop continue send failed: {err:?}"),
@@ -8100,7 +8239,9 @@ mod offer_regression_tests {
         let (controller, route_right_meta) = controller
             .prepare_flow::<StaticRouteRightMsg>()
             .expect("open nested route-right send after continue");
-        let offer_lane = controller.port_for_lane(route_right_meta.lane as usize).lane();
+        let offer_lane = controller
+            .port_for_lane(route_right_meta.lane as usize)
+            .lane();
         let policy = controller
             .control
             .cluster()
@@ -8116,7 +8257,10 @@ mod offer_regression_tests {
             .cursor
             .route_scope_controller_policy(route_right_meta.scope);
 
-        assert!(!route_right_meta.scope.is_none(), "nested route-right send must stay scoped");
+        assert!(
+            !route_right_meta.scope.is_none(),
+            "nested route-right send must stay scoped"
+        );
         assert_eq!(
             route_right_meta.route_arm,
             Some(1),
@@ -8160,11 +8304,8 @@ mod offer_regression_tests {
             GenericCapToken<RouteDecisionKind>,
             CanonicalControl<RouteDecisionKind>,
         >;
-        type StaticRouteRightMsg = Msg<
-            99,
-            GenericCapToken<RouteHintRightKind>,
-            CanonicalControl<RouteHintRightKind>,
-        >;
+        type StaticRouteRightMsg =
+            Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>;
         const RIGHT_REPLY_LABEL: u8 = 0x51;
 
         let inner_left = g::seq(
@@ -8222,7 +8363,8 @@ mod offer_regression_tests {
             .expect("open loop continue");
         let waker = noop_waker_ref();
         let mut cx = Context::from_waker(waker);
-        let mut continue_send = pin!(controller.send_with_meta::<LoopContinueMsg>(&continue_meta, None));
+        let mut continue_send =
+            pin!(controller.send_with_meta::<LoopContinueMsg>(&continue_meta, None));
         let controller = match continue_send.as_mut().poll(&mut cx) {
             Poll::Ready(Ok((endpoint, _))) => endpoint,
             Poll::Ready(Err(err)) => panic!("loop continue send failed: {err:?}"),
@@ -8248,17 +8390,13 @@ mod offer_regression_tests {
             Poll::Ready(Ok(branch)) => branch,
             Poll::Ready(Err(err)) => panic!(
                 "passive nested offer failed: {err:?}; outer_scope={outer_scope:?} ack={:?} ready_mask=0b{:02b} poll_ready_mask=0b{:02b}",
-                outer_ack,
-                outer_ready_mask,
-                outer_poll_ready_mask,
+                outer_ack, outer_ready_mask, outer_poll_ready_mask,
             ),
             Poll::Pending => match offer.as_mut().poll(&mut cx) {
                 Poll::Ready(Ok(branch)) => branch,
                 Poll::Ready(Err(err)) => panic!(
                     "passive nested offer failed after retry: {err:?}; outer_scope={outer_scope:?} ack={:?} ready_mask=0b{:02b} poll_ready_mask=0b{:02b}",
-                    outer_ack,
-                    outer_ready_mask,
-                    outer_poll_ready_mask,
+                    outer_ack, outer_ready_mask, outer_poll_ready_mask,
                 ),
                 Poll::Pending => panic!("passive nested offer remained pending"),
             },
@@ -8272,7 +8410,7 @@ mod offer_regression_tests {
 
     #[test]
     fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_server_offer_valid()
-    {
+     {
         type LoopContinueMsg = Msg<
             { crate::runtime::consts::LABEL_LOOP_CONTINUE },
             GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
@@ -8294,21 +8432,15 @@ mod offer_regression_tests {
             GenericCapToken<CheckpointKind>,
             CanonicalControl<CheckpointKind>,
         >;
-        type SessionCancelControlMsg = Msg<
-            { CancelKind::LABEL },
-            GenericCapToken<CancelKind>,
-            CanonicalControl<CancelKind>,
-        >;
+        type SessionCancelControlMsg =
+            Msg<{ CancelKind::LABEL }, GenericCapToken<CancelKind>, CanonicalControl<CancelKind>>;
         type StaticRouteLeftMsg = Msg<
             { LABEL_ROUTE_DECISION },
             GenericCapToken<RouteDecisionKind>,
             CanonicalControl<RouteDecisionKind>,
         >;
-        type StaticRouteRightMsg = Msg<
-            99,
-            GenericCapToken<RouteHintRightKind>,
-            CanonicalControl<RouteHintRightKind>,
-        >;
+        type StaticRouteRightMsg =
+            Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>;
 
         let snapshot_reply_decision = g::route(
             g::seq(
@@ -8445,7 +8577,11 @@ mod offer_regression_tests {
             Poll::Ready(Err(err)) => panic!("server request offer failed: {err:?}"),
             Poll::Pending => panic!("server request offer unexpectedly pending"),
         };
-        assert_eq!(branch.label(), 0x10, "server must first observe the request");
+        assert_eq!(
+            branch.label(),
+            0x10,
+            "server must first observe the request"
+        );
         let mut server_decode = pin!(branch.decode::<SessionRequestWireMsg>());
         let (server, _request) = match server_decode.as_mut().poll(&mut cx) {
             Poll::Ready(Ok(result)) => result,
@@ -8629,7 +8765,11 @@ mod offer_regression_tests {
             Poll::Ready(Err(err)) => panic!("server commit request offer failed: {err:?}"),
             Poll::Pending => panic!("server commit request offer unexpectedly pending"),
         };
-        assert_eq!(branch.label(), 0x10, "server must observe the second request");
+        assert_eq!(
+            branch.label(),
+            0x10,
+            "server must observe the second request"
+        );
         let mut server_decode = pin!(branch.decode::<SessionRequestWireMsg>());
         let (server, _request) = match server_decode.as_mut().poll(&mut cx) {
             Poll::Ready(Ok(result)) => result,
@@ -8655,8 +8795,9 @@ mod offer_regression_tests {
         let (server, outer_commit_route_right_meta) = server
             .prepare_flow::<StaticRouteRightMsg>()
             .expect("open outer commit reply route-right");
-        let mut reply_route_right =
-            pin!(server.send_with_meta::<StaticRouteRightMsg>(&outer_commit_route_right_meta, None));
+        let mut reply_route_right = pin!(
+            server.send_with_meta::<StaticRouteRightMsg>(&outer_commit_route_right_meta, None)
+        );
         let (server, _) = match reply_route_right.as_mut().poll(&mut cx) {
             Poll::Ready(Ok(result)) => result,
             Poll::Ready(Err(err)) => panic!("outer commit reply route-right send failed: {err:?}"),
@@ -8757,7 +8898,9 @@ mod offer_regression_tests {
         );
         let (_client, _) = match checkpoint_send.as_mut().poll(&mut cx) {
             Poll::Ready(Ok(result)) => result,
-            Poll::Ready(Err(err)) => panic!("client post-commit checkpoint control failed: {err:?}"),
+            Poll::Ready(Err(err)) => {
+                panic!("client post-commit checkpoint control failed: {err:?}")
+            }
             Poll::Pending => panic!("client post-commit checkpoint unexpectedly pending"),
         };
 
@@ -8799,11 +8942,8 @@ mod offer_regression_tests {
             GenericCapToken<RouteDecisionKind>,
             CanonicalControl<RouteDecisionKind>,
         >;
-        type StaticRouteRightMsg = Msg<
-            99,
-            GenericCapToken<RouteHintRightKind>,
-            CanonicalControl<RouteHintRightKind>,
-        >;
+        type StaticRouteRightMsg =
+            Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>;
 
         let reply_decision = g::route(
             g::seq(
@@ -8915,7 +9055,11 @@ mod offer_regression_tests {
             Poll::Ready(Err(err)) => panic!("server admin request offer failed: {err:?}"),
             Poll::Pending => panic!("server admin request offer unexpectedly pending"),
         };
-        assert_eq!(branch.label(), 0x10, "server must first observe the admin request");
+        assert_eq!(
+            branch.label(),
+            0x10,
+            "server must first observe the admin request"
+        );
         let mut server_decode = pin!(branch.decode::<SessionRequestWireMsg>());
         let (server, _) = match server_decode.as_mut().poll(&mut cx) {
             Poll::Ready(Ok(result)) => result,
@@ -8951,7 +9095,11 @@ mod offer_regression_tests {
             Poll::Ready(Err(err)) => panic!("client admin reply offer failed: {err:?}"),
             Poll::Pending => panic!("client admin reply offer unexpectedly pending"),
         };
-        assert_eq!(admin_branch.label(), 0x50, "client must materialize the admin reply");
+        assert_eq!(
+            admin_branch.label(),
+            0x50,
+            "client must materialize the admin reply"
+        );
         let admin_reply_scope = admin_branch.branch_meta.scope_id;
         let mut admin_decode = pin!(admin_branch.decode::<AdminReplyMsg>());
         let (client, _) = match admin_decode.as_mut().poll(&mut cx) {
@@ -8994,7 +9142,11 @@ mod offer_regression_tests {
             Poll::Ready(Err(err)) => panic!("server snapshot request offer failed: {err:?}"),
             Poll::Pending => panic!("server snapshot request offer unexpectedly pending"),
         };
-        assert_eq!(branch.label(), 0x10, "server must observe the snapshot request");
+        assert_eq!(
+            branch.label(),
+            0x10,
+            "server must observe the snapshot request"
+        );
         let mut server_decode = pin!(branch.decode::<SessionRequestWireMsg>());
         let (server, _) = match server_decode.as_mut().poll(&mut cx) {
             Poll::Ready(Ok(result)) => result,
@@ -9049,8 +9201,12 @@ mod offer_regression_tests {
         let mut client_offer = pin!(client.offer());
         let snapshot_branch = match client_offer.as_mut().poll(&mut cx) {
             Poll::Ready(Ok(branch)) => branch,
-            Poll::Ready(Err(err)) => panic!("client snapshot reply offer failed after admin path: {err:?}"),
-            Poll::Pending => panic!("client snapshot reply offer unexpectedly pending after admin path"),
+            Poll::Ready(Err(err)) => {
+                panic!("client snapshot reply offer failed after admin path: {err:?}")
+            }
+            Poll::Pending => {
+                panic!("client snapshot reply offer unexpectedly pending after admin path")
+            }
         };
         assert_eq!(
             snapshot_branch.label(),
@@ -9060,8 +9216,12 @@ mod offer_regression_tests {
         let mut snapshot_decode = pin!(snapshot_branch.decode::<SnapshotCandidatesReplyMsg>());
         let (client, _) = match snapshot_decode.as_mut().poll(&mut cx) {
             Poll::Ready(Ok(result)) => result,
-            Poll::Ready(Err(err)) => panic!("client snapshot reply decode failed after admin path: {err:?}"),
-            Poll::Pending => panic!("client snapshot reply decode unexpectedly pending after admin path"),
+            Poll::Ready(Err(err)) => {
+                panic!("client snapshot reply decode failed after admin path: {err:?}")
+            }
+            Poll::Pending => {
+                panic!("client snapshot reply decode unexpectedly pending after admin path")
+            }
         };
         let mut checkpoint_send = pin!(
             client
@@ -9071,8 +9231,12 @@ mod offer_regression_tests {
         );
         let (_client, _) = match checkpoint_send.as_mut().poll(&mut cx) {
             Poll::Ready(Ok(result)) => result,
-            Poll::Ready(Err(err)) => panic!("client snapshot checkpoint send failed after admin path: {err:?}"),
-            Poll::Pending => panic!("client snapshot checkpoint unexpectedly pending after admin path"),
+            Poll::Ready(Err(err)) => {
+                panic!("client snapshot checkpoint send failed after admin path: {err:?}")
+            }
+            Poll::Pending => {
+                panic!("client snapshot checkpoint unexpectedly pending after admin path")
+            }
         };
 
         drop(server);
@@ -9100,21 +9264,15 @@ mod offer_regression_tests {
             GenericCapToken<CheckpointKind>,
             CanonicalControl<CheckpointKind>,
         >;
-        type SessionCancelControlMsg = Msg<
-            { CancelKind::LABEL },
-            GenericCapToken<CancelKind>,
-            CanonicalControl<CancelKind>,
-        >;
+        type SessionCancelControlMsg =
+            Msg<{ CancelKind::LABEL }, GenericCapToken<CancelKind>, CanonicalControl<CancelKind>>;
         type StaticRouteLeftMsg = Msg<
             { LABEL_ROUTE_DECISION },
             GenericCapToken<RouteDecisionKind>,
             CanonicalControl<RouteDecisionKind>,
         >;
-        type StaticRouteRightMsg = Msg<
-            99,
-            GenericCapToken<RouteHintRightKind>,
-            CanonicalControl<RouteHintRightKind>,
-        >;
+        type StaticRouteRightMsg =
+            Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>;
 
         let snapshot_reply_decision = g::route(
             g::seq(
@@ -9473,6 +9631,7 @@ mod offer_regression_tests {
         };
     }
 
+    #[test]
     fn static_passive_offer_with_known_arm_waits_on_transport_without_busy_restart() {
         let mut tap_storage = [TapEvent::default(); RING_EVENTS];
         let mut slab = [0u8; 2048];
@@ -9502,7 +9661,10 @@ mod offer_regression_tests {
         let mut offer = pin!(worker.offer());
         match offer.as_mut().poll(&mut cx) {
             Poll::Ready(Ok(branch)) => {
-                panic!("offer must not materialize before transport ingress: {}", branch.label())
+                panic!(
+                    "offer must not materialize before transport ingress: {}",
+                    branch.label()
+                )
             }
             Poll::Ready(Err(err)) => panic!("offer must wait for transport ingress: {err:?}"),
             Poll::Pending => {}
@@ -9625,7 +9787,7 @@ mod offer_regression_tests {
         assert!(!scope.is_none(), "worker must start at route scope");
 
         let foreign_label = (1u8..=u8::MAX).find(|label| {
-            !matches!(*label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK)
+            !is_wire_loop_control_label(*label)
                 && worker.cursor.first_recv_target(scope, *label).is_none()
                 && worker.cursor.find_arm_for_recv_label(*label).is_some()
         });
@@ -11503,19 +11665,19 @@ fn choose_offer_priority(
 }
 
 #[inline]
-    async fn yield_once() {
-        let mut yielded = false;
-        poll_fn(|cx| {
-            if yielded {
-                Poll::Ready(())
+async fn yield_once() {
+    let mut yielded = false;
+    poll_fn(|cx| {
+        if yielded {
+            Poll::Ready(())
         } else {
             yielded = true;
             cx.waker().wake_by_ref();
             Poll::Pending
         }
-        })
-        .await
-    }
+    })
+    .await
+}
 
 #[inline]
 fn current_entry_is_candidate(
@@ -12303,7 +12465,7 @@ where
             return Err(decode_phase_invariant());
         }
 
-        if matches!(label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK) {
+        if is_loop_control_resource(meta.resource) {
             if let Some(LoopMetadata {
                 scope: scope_id,
                 controller,
@@ -13496,7 +13658,11 @@ where
         if !meta.policy().is_dynamic() {
             return Ok(());
         }
-        let dynamic_kind = classify_dynamic_label(target_label);
+        let dynamic_kind = if is_loop_control_resource(meta.resource) {
+            DynamicLabelClass::Loop
+        } else {
+            classify_dynamic_label(target_label)
+        };
         if matches!(dynamic_kind, DynamicLabelClass::SpliceOrReroute) {
             return Ok(());
         }
@@ -13733,11 +13899,8 @@ where
                 } else {
                     LoopDisposition::Break
                 };
-                let expected_label = match disposition {
-                    LoopDisposition::Continue => LABEL_LOOP_CONTINUE,
-                    LoopDisposition::Break => LABEL_LOOP_BREAK,
-                };
-                if expected_label != meta.label {
+                let expected_meaning = loop_control_meaning_from_disposition(disposition);
+                if loop_control_meaning_from_wire_label(meta.label) != Some(expected_meaning) {
                     return Err(SendError::PolicyAbort { reason: policy_id });
                 }
                 Ok(())
@@ -13842,6 +14005,22 @@ where
         })
     }
 
+    #[inline]
+    fn synthetic_cached_recv_meta_for_arm(
+        &self,
+        cursor_index: usize,
+        scope_id: ScopeId,
+        route_arm: u8,
+        next: usize,
+        lane: u8,
+    ) -> CachedRecvMeta {
+        let Some(label) = controller_arm_wire_label(&self.cursor, scope_id, route_arm) else {
+            return CachedRecvMeta::EMPTY;
+        };
+        Self::synthetic_cached_recv_meta(cursor_index, scope_id, route_arm, label, next, lane)
+            .unwrap_or(CachedRecvMeta::EMPTY)
+    }
+
     fn compute_passive_arm_recv_meta(
         &self,
         materialization_meta: ScopeArmMaterializationMeta,
@@ -13875,20 +14054,9 @@ where
             };
             let scope_end_cursor = self.cursor.with_index(scope_end);
             if region.linger {
-                let synthetic_label = match target_arm {
-                    0 => LABEL_LOOP_CONTINUE,
-                    1 => LABEL_LOOP_BREAK,
-                    _ => return CachedRecvMeta::EMPTY,
-                };
-                return Self::synthetic_cached_recv_meta(
-                    scope_end,
-                    scope_id,
-                    target_arm,
-                    synthetic_label,
-                    scope_end,
-                    offer_lane,
-                )
-                .unwrap_or(CachedRecvMeta::EMPTY);
+                return self.synthetic_cached_recv_meta_for_arm(
+                    scope_end, scope_id, target_arm, scope_end, offer_lane,
+                );
             }
             if let Some(recv_meta) = scope_end_cursor.try_recv_meta() {
                 return Self::cached_recv_meta_from_recv(scope_end, recv_meta, None)
@@ -13903,20 +14071,13 @@ where
             return CachedRecvMeta::EMPTY;
         }
         if region.linger {
-            let synthetic_label = match target_arm {
-                0 => LABEL_LOOP_CONTINUE,
-                1 => LABEL_LOOP_BREAK,
-                _ => return CachedRecvMeta::EMPTY,
-            };
-            return Self::synthetic_cached_recv_meta(
+            return self.synthetic_cached_recv_meta_for_arm(
                 target_cursor.index(),
                 scope_id,
                 target_arm,
-                synthetic_label,
                 target_cursor.index(),
                 offer_lane,
-            )
-            .unwrap_or(CachedRecvMeta::EMPTY);
+            );
         }
         if let Some(target_idx) =
             self.preview_passive_materialization_index_for_selected_arm(scope_id, target_arm)
@@ -13927,8 +14088,10 @@ where
                     .unwrap_or(CachedRecvMeta::EMPTY);
             }
             if let Some(send_meta) = target_cursor.try_send_meta() {
-                return Self::cached_recv_meta_from_send(target_idx, scope_id, target_arm, send_meta)
-                    .unwrap_or(CachedRecvMeta::EMPTY);
+                return Self::cached_recv_meta_from_send(
+                    target_idx, scope_id, target_arm, send_meta,
+                )
+                .unwrap_or(CachedRecvMeta::EMPTY);
             }
         }
         CachedRecvMeta::EMPTY
@@ -13951,7 +14114,9 @@ where
     fn selection_arm_has_recv(&self, selection: OfferScopeSelection, arm: u8) -> bool {
         selection.materialization_meta.recv_entry(arm).is_some()
             || selection.materialization_meta.controller_arm_is_recv(arm)
-            || selection.materialization_meta.arm_has_first_recv_dispatch(arm)
+            || selection
+                .materialization_meta
+                .arm_has_first_recv_dispatch(arm)
             || selection
                 .passive_recv_meta
                 .get(arm as usize)
@@ -13984,10 +14149,12 @@ where
                 .passive_arm_entry(arm)
                 .is_some()
         {
-            if selection.materialization_meta.arm_has_first_recv_dispatch(arm) {
-                return !self.selection_arm_dispatch_materializes_without_ready_evidence(
-                    selection, arm,
-                );
+            if selection
+                .materialization_meta
+                .arm_has_first_recv_dispatch(arm)
+            {
+                return !self
+                    .selection_arm_dispatch_materializes_without_ready_evidence(selection, arm);
             }
             return false;
         }
@@ -14007,9 +14174,7 @@ where
                 {
                     return false;
                 }
-                if !is_route_controller
-                    && matches!(passive_meta.label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK)
-                {
+                if !is_route_controller && is_loop_control_resource(passive_meta.resource) {
                     return false;
                 }
             }
@@ -14062,8 +14227,7 @@ where
             && passive_meta.is_control
             && passive_meta.label == label
             && (passive_meta.peer == ROLE
-                || (!is_route_controller
-                    && matches!(label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK)))
+                || (!is_route_controller && is_loop_control_resource(passive_meta.resource)))
     }
 
     /// Materialize recv metadata from a precomputed first-recv dispatch table.
@@ -15337,11 +15501,11 @@ where
         // branches can decide whether to wait for one additional ingress turn.
         let passive_linger_loop_label = !is_route_controller
             && self.is_linger_route(scope_id)
-            && matches!(meta.label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK);
+            && is_loop_control_resource(meta.resource);
         let branch_kind = if self.cursor.is_recv() {
             if passive_linger_loop_label
                 || (!is_route_controller
-                    && matches!(meta.label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK)
+                    && is_loop_control_resource(meta.resource)
                     && self.selection_non_wire_loop_control_recv(
                         selection,
                         is_route_controller,
@@ -16556,6 +16720,13 @@ where
     }
 
     #[inline]
+    fn loop_control_label_evidence_only(label_meta: ScopeLabelMeta, label: u8, arm: u8) -> bool {
+        label_meta.loop_meta().loop_label_scope()
+            && is_wire_loop_control_label(label)
+            && label_meta.loop_meta().arm_has_recv(arm)
+    }
+
+    #[inline]
     fn mark_scope_ready_arm_from_label(
         &mut self,
         scope_id: ScopeId,
@@ -16564,12 +16735,9 @@ where
     ) {
         let exact_static_passive_arm =
             self.static_passive_dispatch_arm_from_exact_label(scope_id, label, label_meta);
-        let arm =
-            Self::scope_evidence_label_to_arm(label_meta, label).or(exact_static_passive_arm);
+        let arm = Self::scope_evidence_label_to_arm(label_meta, label).or(exact_static_passive_arm);
         if let Some(arm) = arm {
-            if matches!(label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK)
-                && label_meta.loop_meta().arm_has_recv(arm)
-            {
+            if Self::loop_control_label_evidence_only(label_meta, label, arm) {
                 // Loop-control labels can carry decision evidence without proving
                 // recv readiness for recv-required arms.
                 return;
@@ -16594,12 +16762,10 @@ where
     ) {
         let exact_static_passive_arm =
             self.static_passive_dispatch_arm_from_exact_label(scope_id, label, label_meta);
-        let arm =
-            Self::binding_scope_evidence_label_to_arm(label_meta, label).or(exact_static_passive_arm);
+        let arm = Self::binding_scope_evidence_label_to_arm(label_meta, label)
+            .or(exact_static_passive_arm);
         if let Some(arm) = arm {
-            if matches!(label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK)
-                && label_meta.loop_meta().arm_has_recv(arm)
-            {
+            if Self::loop_control_label_evidence_only(label_meta, label, arm) {
                 return;
             }
             if self.static_passive_scope_evidence_materializes_poll(scope_id) {
@@ -16666,7 +16832,8 @@ where
     }
 
     fn mark_static_passive_descendant_path_ready(&mut self, scope_id: ScopeId, label: u8) {
-        let Some(arm) = self.static_passive_descendant_dispatch_arm_from_exact_label(scope_id, label)
+        let Some(arm) =
+            self.static_passive_descendant_dispatch_arm_from_exact_label(scope_id, label)
         else {
             return;
         };
@@ -17010,14 +17177,14 @@ where
         scope_id: ScopeId,
         loop_meta: ScopeLoopMeta,
         label: u8,
+        resource: Option<u8>,
         arm: u8,
     ) -> bool {
         cursor
             .first_recv_target(scope_id, label)
             .map(|(target_arm, _)| target_arm == arm)
             .unwrap_or(false)
-            || (loop_meta.loop_label_scope()
-                && matches!(label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK))
+            || (loop_meta.loop_label_scope() && is_loop_control_resource(resource))
     }
 
     fn scope_label_to_arm(label_meta: ScopeLabelMeta, label: u8) -> Option<u8> {
@@ -17102,7 +17269,7 @@ where
                     return false;
                 }
                 if !self.cursor.is_route_controller(scope_id)
-                    && matches!(recv_meta.label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK)
+                    && is_loop_control_resource(recv_meta.resource)
                 {
                     return false;
                 }
@@ -17454,8 +17621,7 @@ where
         }
         // Passive observers model controller self-send loop control as cross-role
         // control recv nodes; treat these labels as non-wire arm selectors.
-        !self.cursor.is_route_controller(scope_id)
-            && matches!(label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK)
+        !self.cursor.is_route_controller(scope_id) && is_loop_control_resource(recv_meta.resource)
     }
 
     fn take_binding_for_lane(
@@ -17510,6 +17676,21 @@ where
         classification
     }
 
+    #[inline]
+    fn take_binding_mask_ignoring_loop_control(
+        &mut self,
+        lane_idx: usize,
+        label_mask: u128,
+        drop_label_mask: u128,
+    ) -> Option<crate::binding::IncomingClassification> {
+        self.take_matching_mask_binding_for_lane(
+            lane_idx,
+            label_mask,
+            drop_label_mask,
+            is_wire_loop_control_label,
+        )
+    }
+
     fn take_binding_for_selected_arm(
         &mut self,
         lane_idx: usize,
@@ -17518,8 +17699,7 @@ where
         binding_classification: &mut Option<crate::binding::IncomingClassification>,
     ) -> (Option<crate::binding::Channel>, Option<u16>, bool) {
         let label_mask = label_meta.binding_demux_label_mask_for_arm(selected_arm);
-        let drop_label_mask = ScopeLabelMeta::label_bit(LABEL_LOOP_CONTINUE)
-            | ScopeLabelMeta::label_bit(LABEL_LOOP_BREAK);
+        let drop_label_mask = loop_control_label_mask();
         let mut channel = None;
         let mut instance = None;
         let mut has_fin = false;
@@ -17536,11 +17716,10 @@ where
         }
 
         if (channel.is_none() || instance.is_none())
-            && let Some(classification) = self.take_matching_mask_binding_for_lane(
+            && let Some(classification) = self.take_binding_mask_ignoring_loop_control(
                 lane_idx,
                 label_mask,
                 drop_label_mask,
-                |label| matches!(label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK),
             )
         {
             if channel.is_none() {
@@ -17617,7 +17796,11 @@ where
                 self.poll_binding_any_for_offer(offer_lane_idx, offer_lane_mask)
         {
             if self
-                .static_passive_dispatch_arm_from_exact_label(scope_id, classification.label, label_meta)
+                .static_passive_dispatch_arm_from_exact_label(
+                    scope_id,
+                    classification.label,
+                    label_meta,
+                )
                 .is_some()
             {
                 return Some((lane_idx, classification));
@@ -17633,8 +17816,7 @@ where
         offer_lane_mask: u8,
         label_mask: u128,
     ) -> Option<(usize, crate::binding::IncomingClassification)> {
-        let drop_label_mask = ScopeLabelMeta::label_bit(LABEL_LOOP_CONTINUE)
-            | ScopeLabelMeta::label_bit(LABEL_LOOP_BREAK);
+        let drop_label_mask = loop_control_label_mask();
         let matching_buffered_lane_mask =
             self.binding_inbox.buffered_lane_mask_for_labels(label_mask) & offer_lane_mask;
         if let Some(classification) = self.poll_buffered_binding_mask_for_offer(
@@ -17680,14 +17862,13 @@ where
         while let Some(lane_slot) =
             Self::take_preferred_lane_in_mask(offer_lane_idx, &mut remaining_lane_mask)
         {
-            if let Some(classification) = self.take_matching_mask_binding_for_lane(
+            if let Some(classification) = self.take_binding_mask_ignoring_loop_control(
                 lane_slot,
                 label_mask,
                 drop_label_mask,
-                |label| matches!(label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK),
             ) {
-                return Some((lane_slot, classification));
-            }
+            return Some((lane_slot, classification));
+        }
         }
         None
     }
@@ -17708,11 +17889,10 @@ where
         else {
             return None;
         };
-        if let Some(classification) = self.take_matching_mask_binding_for_lane(
+        if let Some(classification) = self.take_binding_mask_ignoring_loop_control(
             lane_slot,
             label_mask,
             drop_label_mask,
-            |label| matches!(label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK),
         ) {
             // Classification is demux evidence only.
             return Some((lane_slot, classification));
@@ -17833,14 +18013,19 @@ where
     }
 
     fn is_loop_control_scope(cursor: &PhaseCursor<ROLE>, scope_id: ScopeId) -> bool {
-        let Some((_, label0)) = cursor.controller_arm_entry_by_arm(scope_id, 0) else {
-            return false;
-        };
-        let Some((_, label1)) = cursor.controller_arm_entry_by_arm(scope_id, 1) else {
-            return false;
-        };
-        (label0 == LABEL_LOOP_CONTINUE && label1 == LABEL_LOOP_BREAK)
-            || (label0 == LABEL_LOOP_BREAK && label1 == LABEL_LOOP_CONTINUE)
+        matches!(
+            (
+                controller_arm_loop_meaning(cursor, scope_id, 0),
+                controller_arm_loop_meaning(cursor, scope_id, 1)
+            ),
+            (
+                Some(LoopControlMeaning::Continue),
+                Some(LoopControlMeaning::Break)
+            ) | (
+                Some(LoopControlMeaning::Break),
+                Some(LoopControlMeaning::Continue)
+            )
+        )
     }
 
     fn parallel_scope_root(cursor: &PhaseCursor<ROLE>, mut scope_id: ScopeId) -> Option<ScopeId> {
@@ -17933,6 +18118,7 @@ where
                     scope_id,
                     loop_meta,
                     recv_meta.label,
+                    recv_meta.resource,
                     arm,
                 ) {
                     meta.flags |= ScopeLabelMeta::FLAG_CURRENT_RECV_BINDING_EXCLUDED;
@@ -17960,8 +18146,12 @@ where
             }
         }
         if loop_meta.loop_label_scope() {
-            meta.record_arm_label(0, LABEL_LOOP_CONTINUE);
-            meta.record_arm_label(1, LABEL_LOOP_BREAK);
+            if let Some(label) = controller_arm_wire_label(cursor, scope_id, 0) {
+                meta.record_arm_label(0, label);
+            }
+            if let Some(label) = controller_arm_wire_label(cursor, scope_id, 1) {
+                meta.record_arm_label(1, label);
+            }
         }
         let mut dispatch_idx = 0usize;
         while let Some((label, arm, _)) =

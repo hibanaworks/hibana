@@ -216,19 +216,14 @@ impl LeaseGraphBudget {
     /// Analyse the policy markers embedded in an effect list.
     pub(crate) const fn from_eff_list(list: &EffList) -> Self {
         let mut budget = Self::new();
-        let policies = list.policies();
-        let mut policy_idx = 0;
         let mut idx = 0;
         while idx < list.len() {
             let node = list.node_at(idx);
             if matches!(node.kind, EffKind::Atom) {
                 let atom = node.atom_data();
-                let policy = if policy_idx < policies.len() && policies[policy_idx].offset == idx {
-                    let policy_value = policies[policy_idx].policy;
-                    policy_idx += 1;
-                    policy_value
-                } else {
-                    PolicyMode::Static
+                let policy = match list.policy_with_scope(idx) {
+                    Some((policy, _scope)) => policy,
+                    None => PolicyMode::Static,
                 };
                 budget = budget.include_atom(atom.label, atom.resource, policy);
             }

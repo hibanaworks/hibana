@@ -77,7 +77,8 @@ where
     where
         Mint: crate::substrate::cap::advanced::MintConfigMarker,
     {
-        self.inner.set_resolver::<POLICY, ROLE, Steps, Mint>(rv, program, resolver)
+        self.inner
+            .set_resolver::<POLICY, ROLE, Steps, Mint>(rv, program, resolver)
     }
 
     #[inline]
@@ -86,7 +87,6 @@ where
     ) -> &crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV> {
         &self.inner
     }
-
 }
 
 pub mod runtime {

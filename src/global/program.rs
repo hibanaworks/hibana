@@ -8,8 +8,10 @@ use core::marker::PhantomData;
 
 use crate::global::const_dsl::{EffList, PolicyMode, ScopeId};
 use crate::global::steps::{BuildEffList, PolicyEligible, SeqSteps, StepConcat, StepNil};
-use crate::global::{DistinctRouteLabels, NonEmptyParallelArm, RouteArmHead, SameRouteController};
-use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
+use crate::global::{
+    DistinctRouteLabels, LoopControlMeaning, NonEmptyParallelArm, RouteArmHead,
+    SameRouteController,
+};
 
 /// Value + type-level representation of a global protocol fragment.
 pub struct Program<Steps> {
@@ -76,9 +78,8 @@ impl<Steps> Program<Steps> {
             }
             let loop_scope = ScopeId::loop_scope(add_scope_budget(scope_budget, next.scope_budget));
             let scoped_next = rebased.with_scope(loop_scope);
-            let last_atom = eff.last_atom();
             let prev_is_loop_ctrl =
-                last_atom.label == LABEL_LOOP_CONTINUE || last_atom.label == LABEL_LOOP_BREAK;
+                LoopControlMeaning::from_control_spec(eff.control_spec_at(eff.len() - 1)).is_some();
             eff = if prev_is_loop_ctrl {
                 eff.with_scope(loop_scope).extend_list(scoped_next)
             } else {
@@ -154,9 +155,6 @@ where
     let right_arm = right.into_eff();
     let controller = <<LeftSteps as RouteArmHead>::Controller as crate::global::RoleMarker>::INDEX;
 
-    let left_label = left_arm.first_atom().label;
-    let right_label = right_arm.first_atom().label;
-
     let scope = ScopeId::route(0);
     let left_budget = left.scope_budget();
     let right_offset = add_scope_budget(1, left_budget);
@@ -167,7 +165,10 @@ where
         .rebase_scopes(right_offset)
         .with_scope(scope)
         .with_scope_controller_role(scope, controller);
-    let is_loop = is_binary_loop_route(left_label, right_label);
+    let is_loop = is_binary_loop_route(
+        LoopControlMeaning::from_control_spec(left_arm.control_spec_at(0)),
+        LoopControlMeaning::from_control_spec(right_arm.control_spec_at(0)),
+    );
     let eff = left_eff.extend_list(right_eff);
     let eff = if is_loop {
         eff.with_scope_linger(scope, true)
@@ -203,7 +204,12 @@ where
 // Helpers
 // -----------------------------------------------------------------------------
 
-const fn is_binary_loop_route(left_label: u8, right_label: u8) -> bool {
-    (left_label == LABEL_LOOP_CONTINUE && right_label == LABEL_LOOP_BREAK)
-        || (left_label == LABEL_LOOP_BREAK && right_label == LABEL_LOOP_CONTINUE)
+const fn is_binary_loop_route(
+    left: Option<LoopControlMeaning>,
+    right: Option<LoopControlMeaning>,
+) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left.arm() != right.arm(),
+        _ => false,
+    }
 }

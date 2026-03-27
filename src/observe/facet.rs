@@ -41,20 +41,14 @@ impl ProgramFacetReport {
 fn list_report(list: &EffList) -> ProgramFacetReport {
     let mut atoms = Vec::new();
     let budget = LeaseGraphBudget::from_eff_list(list);
-    let policies = list.policies();
-    let mut policy_idx = 0usize;
-    let policy_len = policies.len();
 
     let mut idx = 0usize;
     while idx < list.len() {
         let node = list.node_at(idx);
         if matches!(node.kind, EffKind::Atom) {
-            let policy = if policy_idx < policy_len && policies[policy_idx].offset == idx {
-                let value = policies[policy_idx].policy;
-                policy_idx += 1;
-                value
-            } else {
-                PolicyMode::Static
+            let policy = match list.policy_with_scope(idx) {
+                Some((policy, _scope)) => policy,
+                None => PolicyMode::Static,
             };
 
             let atom = node.atom_data();

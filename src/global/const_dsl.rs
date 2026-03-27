@@ -992,12 +992,17 @@ impl EffList {
         self
     }
 
-    pub(crate) fn policy_with_scope(&self, offset: usize) -> Option<(PolicyMode, ScopeId)> {
-        let policy = self.policy_at(offset)?;
-        let scope = self
-            .scope_id_for_offset(offset)
-            .unwrap_or_else(ScopeId::none);
-        Some((policy.with_scope(scope), scope))
+    pub(crate) const fn policy_with_scope(&self, offset: usize) -> Option<(PolicyMode, ScopeId)> {
+        match self.policy_at(offset) {
+            Some(policy) => {
+                let scope = match self.scope_id_for_offset(offset) {
+                    Some(scope) => scope,
+                    None => ScopeId::none(),
+                };
+                Some((policy.with_scope(scope), scope))
+            }
+            None => None,
+        }
     }
 
     pub(crate) const fn push_control_spec(mut self, offset: usize, spec: ControlLabelSpec) -> Self {
@@ -1045,9 +1050,6 @@ impl EffList {
         }
     }
 
-    pub(crate) const fn policies(&self) -> &[PolicyMarker] {
-        unsafe { core::slice::from_raw_parts(self.policy_markers.as_ptr(), self.policy_marker_len) }
-    }
 }
 
 impl core::ops::Deref for EffList {
