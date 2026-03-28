@@ -207,7 +207,7 @@ because guarantees were deleted.
 - projection stays typed through `RoleProgram<'prog, ROLE, LocalSteps, Mint>`
 - `g::route` rejects duplicate labels and controller mismatches before runtime
 - `g::par` rejects empty fragments and role/lane overlap before runtime
-- missing local steps, wrong labels, and wrong payloads are compile-fail gates
+- localside runtime is fail-closed for label and payload mismatches
 - dynamic route is explicit and fail-closed; it does not silently appear at runtime
 
 ## Localside Shape
@@ -262,6 +262,10 @@ demux/readiness evidence, not a fourth authority source. When exact static
 passive ingress is normalized into `Poll`-equivalent evidence, it is still the
 same `Poll`-class wire fact, not a new authority category.
 
+Loop meaning is metadata-authoritative. Wire labels remain representation only,
+and any encode/decode or dynamic-label classification needed for loop control
+stays an internal endpoint seam rather than a public authority source.
+
 ### Lane and Binding Discipline
 
 - lane `0` is control
@@ -302,7 +306,7 @@ Protocol implementors use the protocol-neutral SPI:
 - the canonical public EPF owners are
   `hibana::substrate::policy::epf::{Header, Slot}`
 
-- `hibana::g::advanced::{project, RoleProgram, EffList, CanonicalControl, ExternalControl, MessageSpec, ControlMessage, ControlMessageKind}`
+- `hibana::g::advanced::{project, RoleProgram, CanonicalControl, ExternalControl, MessageSpec, ControlMessage, ControlMessageKind}`
 - `hibana::g::advanced::compose::seq`
 - `hibana::substrate::SessionCluster`
 - `hibana::substrate::{AttachError, CpError, EffIndex, Lane, RendezvousId, SessionId}`
@@ -374,8 +378,6 @@ The protocol-implementor compile-time owners are:
 - `ExternalControl<K>` for control tokens carried on the wire
 - `MessageSpec` for label/payload/control typing
 - `ControlMessage` and `ControlMessageKind` for control-message-only contracts
-- `EffList` for the synthesized lower-layer effect list
-
 Handling rules are fixed by the implementation:
 
 - `CanonicalControl<K>` is compile-time restricted to self-send
@@ -785,16 +787,81 @@ let splice_intent = g::send::<
 >();
 ```
 
-Custom control kinds are declared under the canonical owner macro:
+Custom control kinds are ordinary trait impls:
 
 ```rust
-hibana::impl_control_resource!(
-    RouteLeftKind,
-    handle: RouteDecision,
-    name: "RouteLeftDecision",
-    label: 70,
-    arm: 0,
-);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RouteLeftKind;
+
+impl hibana::substrate::cap::ResourceKind for RouteLeftKind {
+    type Handle = hibana::substrate::cap::advanced::RouteDecisionHandle;
+    const TAG: u8 =
+        <hibana::substrate::cap::advanced::RouteDecisionKind as hibana::substrate::cap::ResourceKind>::TAG;
+    const NAME: &'static str = "RouteLeftDecision";
+    const AUTO_MINT_EXTERNAL: bool = false;
+
+    fn encode_handle(
+        handle: &Self::Handle,
+    ) -> [u8; hibana::substrate::cap::advanced::CAP_HANDLE_LEN] {
+        handle.encode()
+    }
+
+    fn decode_handle(
+        data: [u8; hibana::substrate::cap::advanced::CAP_HANDLE_LEN],
+    ) -> Result<Self::Handle, hibana::substrate::cap::advanced::CapError> {
+        hibana::substrate::cap::advanced::RouteDecisionHandle::decode(data)
+    }
+
+    fn zeroize(handle: &mut Self::Handle) {
+        *handle = hibana::substrate::cap::advanced::RouteDecisionHandle::default();
+    }
+
+    fn caps_mask(
+        _handle: &Self::Handle,
+    ) -> hibana::substrate::cap::advanced::CapsMask {
+        hibana::substrate::cap::advanced::CapsMask::empty()
+    }
+
+    fn scope_id(
+        handle: &Self::Handle,
+    ) -> Option<hibana::substrate::cap::advanced::ScopeId> {
+        Some(handle.scope)
+    }
+}
+
+impl hibana::substrate::cap::advanced::SessionScopedKind for RouteLeftKind {
+    fn handle_for_session(
+        _sid: hibana::substrate::SessionId,
+        _lane: hibana::substrate::Lane,
+    ) -> Self::Handle {
+        hibana::substrate::cap::advanced::RouteDecisionHandle::default()
+    }
+
+    fn shot() -> hibana::substrate::cap::CapShot {
+        hibana::substrate::cap::CapShot::One
+    }
+}
+
+impl hibana::substrate::cap::advanced::ControlMint for RouteLeftKind {
+    fn mint_handle(
+        _sid: hibana::substrate::SessionId,
+        _lane: hibana::substrate::Lane,
+        scope: hibana::substrate::cap::advanced::ScopeId,
+    ) -> Self::Handle {
+        hibana::substrate::cap::advanced::RouteDecisionHandle { scope, arm: 0 }
+    }
+}
+
+impl hibana::substrate::cap::ControlResourceKind for RouteLeftKind {
+    const LABEL: u8 = 70;
+    const SCOPE: hibana::substrate::cap::advanced::ControlScopeKind =
+        hibana::substrate::cap::advanced::ControlScopeKind::Route;
+    const TAP_ID: u16 =
+        <hibana::substrate::cap::advanced::RouteDecisionKind as hibana::substrate::cap::ControlResourceKind>::TAP_ID;
+    const SHOT: hibana::substrate::cap::CapShot = hibana::substrate::cap::CapShot::One;
+    const HANDLING: hibana::substrate::cap::advanced::ControlHandling =
+        hibana::substrate::cap::advanced::ControlHandling::Canonical;
+}
 ```
 
 After declaring a custom control kind, use it through
@@ -1069,6 +1136,7 @@ cargo test -p hibana --test ui --features std
 cargo test -p hibana --test policy_replay --features std
 cargo test -p hibana --test public_surface_guards --features std
 cargo test -p hibana --test substrate_surface --features std
+cargo test -p hibana --test docs_surface --features std
 
 # Nightly semantic public surface gate
 bash ./.github/scripts/check_hibana_public_api.sh

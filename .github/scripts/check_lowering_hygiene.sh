@@ -41,37 +41,84 @@ check_absent \
   "direct EffList policy-marker scan" \
   src
 
-check_absent_outside \
-  "(matches!\\([^\\n]*LABEL_LOOP_CONTINUE[^\\n]*LABEL_LOOP_BREAK|LoopDisposition::Continue[[:space:]]*=>[[:space:]]*LABEL_LOOP_CONTINUE|LoopDisposition::Break[[:space:]]*=>[[:space:]]*LABEL_LOOP_BREAK|0[[:space:]]*=>[[:space:]]*LABEL_LOOP_CONTINUE|1[[:space:]]*=>[[:space:]]*LABEL_LOOP_BREAK|==[[:space:]]*Some\\(LABEL_LOOP_CONTINUE\\)|==[[:space:]]*Some\\(LABEL_LOOP_BREAK\\)|==[[:space:]]*LABEL_LOOP_CONTINUE|==[[:space:]]*LABEL_LOOP_BREAK)" \
-  "label-based loop meaning check outside semantic helper owners" \
-  "src/endpoint/cursor.rs" \
-  "src/global/const_dsl.rs" \
-  "src/global/typestate.rs"
+check_absent \
+  "pub[[:space:]]+use[[:space:]].*EffList" \
+  "EffList leaked through a public export" \
+  src
 
 check_absent \
-  "fn[[:space:]]+wire_label_for_controller_arm\\(" \
-  "endpoint wire-label wrapper reintroduced" \
-  src/endpoint/cursor.rs
+  "pub[[:space:]]+const[[:space:]]+fn[[:space:]]+eff_list\\(" \
+  "RoleProgram public eff_list accessor reintroduced" \
+  src/global/role_program.rs
 
 check_absent \
-  "fn[[:space:]]+controller_arm_loop_control\\(" \
-  "endpoint loop-control wrapper reintroduced" \
-  src/endpoint/cursor.rs
+  "fn[[:space:]]+machine\\(" \
+  "RoleProgram machine owner reintroduced" \
+  src/global/role_program.rs
+
+check_absent \
+  "fn[[:space:]]+lease_budget\\(" \
+  "RoleProgram lease budget accessor reintroduced" \
+  src/global/role_program.rs
+
+check_absent \
+  "PhaseCursor::from_machine" \
+  "PhaseCursor::from_machine reintroduced" \
+  src
+
+check_absent \
+  "ProgramStamp::from_eff_list" \
+  "separate ProgramStamp raw-scan helper reintroduced" \
+  src
 
 check_absent_outside \
-  "(enum[[:space:]]+DynamicLabelClass|fn[[:space:]]+(controller_arm_loop_meaning|controller_arm_wire_label|loop_control_meaning_from_wire_label|wire_label_for_loop_control|classify_dynamic_label)\\()" \
-  "endpoint wire-semantic adapter defined outside canonical seam owner" \
-  "src/endpoint/cursor.rs"
+  "from_eff_list\\(" \
+  "raw EffList lowering helper used outside ProjectionSeal" \
+  "src/global/compiled/seal.rs"
 
 check_absent_outside \
-  "(controller_arm_loop_meaning|controller_arm_wire_label|loop_control_meaning_from_wire_label|wire_label_for_loop_control|classify_dynamic_label)\\(" \
-  "endpoint wire-semantic adapter used outside canonical seam owner" \
-  "src/endpoint/cursor.rs"
+  "CompiledProgram::compile\\(" \
+  "direct CompiledProgram::compile call used outside compiled owners or test-only fixtures" \
+  "src/global/compiled/program.rs" \
+  "src/control/cluster/effects.rs" \
+  "src/runtime/mgmt/kernel.rs"
+
+check_absent_outside \
+  "CompiledRole::compile\\(" \
+  "direct CompiledRole::compile call used outside compiled owners or test-only fixtures" \
+  "src/global/compiled/role.rs" \
+  "src/global/role_program.rs" \
+  "src/endpoint/kernel/core.rs"
+
+check_absent \
+  "(enum[[:space:]]+DynamicLabelClass|fn[[:space:]]+(controller_arm_loop_meaning|controller_arm_wire_label|loop_control_meaning_from_wire_label|wire_label_for_loop_control|classify_dynamic_label)\\()|\\b(controller_arm_loop_meaning|controller_arm_wire_label|loop_control_meaning_from_wire_label|wire_label_for_loop_control|classify_dynamic_label)\\(" \
+  "deprecated endpoint raw-label semantic helpers reintroduced" \
+  src
+
+check_absent \
+  "macro_rules![[:space:]]+impl_control_resource" \
+  "public impl_control_resource macro reintroduced" \
+  src
+
+if [[ -e "src/global/compiled/facts.rs" || -e "src/global/compiled/machine.rs" ]]; then
+  echo "lowering hygiene violation: legacy compiled owners still present on disk" >&2
+  FAILED=1
+fi
+
+if [[ ! -d "src/endpoint/kernel" ]]; then
+  echo "lowering hygiene violation: src/endpoint/kernel split owner missing" >&2
+  FAILED=1
+fi
+
+if [[ -e "src/endpoint/cursor.rs" ]]; then
+  echo "lowering hygiene violation: legacy endpoint/cursor.rs owner still present" >&2
+  FAILED=1
+fi
 
 while IFS= read -r hit; do
   [[ -z "${hit}" ]] && continue
   case "${hit}" in
-    *"src/control/cap/resource_kinds.rs:"*"macro_rules! impl_control_resource"*) ;;
+    *"src/control/cap/resource_kinds.rs:"*"macro_rules! define_control_resource_kind"*) ;;
     *"src/control/cap/resource_kinds.rs:"*"macro_rules! decode_mask"*) ;;
     *"src/control/cluster/core.rs:"*"macro_rules! mask_for"*) ;;
     *"src/global/steps.rs:"*"macro_rules! impl_role_eq"*) ;;

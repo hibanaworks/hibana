@@ -12,11 +12,13 @@ mod facts;
 pub use self::facts::StateIndex;
 #[allow(unused_imports)]
 pub(crate) use self::{
-    builder::{ARM_SHARED, MAX_FIRST_RECV_DISPATCH, RoleTypestate, ScopeRegion},
+    builder::{
+        ARM_SHARED, MAX_FIRST_RECV_DISPATCH, RoleTypestate, RoleTypestateValue, ScopeRegion,
+    },
     cursor::{LoopMetadata, LoopRole, PhaseCursor},
     facts::{
-        JumpError, JumpReason, LocalAction, LocalMeta, LocalNode, PassiveArmNavigation, RecvMeta,
-        SendMeta, MAX_STATES, as_eff_index, as_state_index, state_index_to_usize, try_local_meta,
+        JumpError, JumpReason, LocalAction, LocalMeta, LocalNode, MAX_STATES, PassiveArmNavigation,
+        RecvMeta, SendMeta, as_eff_index, as_state_index, state_index_to_usize, try_local_meta,
         try_recv_meta, try_send_meta,
     },
 };
@@ -41,8 +43,8 @@ pub(crate) const fn state_index_to_usize(
 pub(crate) const fn node(&self, index: usize) -> LocalNode {
 pub(crate) fn first_recv_target(
 pub(crate) enum LoopRole {
-pub(crate) struct LoopMetadata<const ROLE: u8> {
-pub(crate) struct PhaseCursor<const ROLE: u8> {
+pub(crate) struct LoopMetadata {
+pub(crate) struct PhaseCursor {
 pub(crate) fn typestate_node(&self, index: usize) -> LocalNode {
 pub(crate) fn scope_region(&self) -> Option<ScopeRegion> {
 pub(crate) fn scope_region_by_id(&self, scope_id: ScopeId) -> Option<ScopeRegion> {
@@ -170,7 +172,8 @@ mod tests {
 
     #[test]
     fn state_cursor_rewinds_on_loop_continue() {
-        let decision = PhaseCursor::from_machine(CONTROLLER_PROGRAM.machine());
+        let compiled = CONTROLLER_PROGRAM.compile_role();
+        let decision = PhaseCursor::new(&compiled);
         let continue_branch = decision
             .seek_label(LABEL_LOOP_CONTINUE)
             .expect("continue branch available");
@@ -188,7 +191,8 @@ mod tests {
 
     #[test]
     fn state_cursor_loop_branch_successors() {
-        let decision = PhaseCursor::from_machine(CONTROLLER_PROGRAM.machine());
+        let controller_compiled = CONTROLLER_PROGRAM.compile_role();
+        let decision = PhaseCursor::new(&controller_compiled);
         assert_eq!(decision.scope_kind(), Some(ScopeKind::Route));
         let cont_cursor = decision
             .seek_label(LABEL_LOOP_CONTINUE)
@@ -214,12 +218,12 @@ mod tests {
         // LoopContinue/LoopBreak self-sends. With self-send CanonicalControl,
         // Target's projection contains only the actual cross-role messages,
         // plus PassiveObserverBranch Jump nodes for empty arms (Break arm in this case).
-        let target_cursor = PhaseCursor::from_machine(TARGET_PROGRAM.machine());
+        let target_compiled = TARGET_PROGRAM.compile_role();
+        let target_cursor = PhaseCursor::new(&target_compiled);
         // Target sees label 7 (the loop body recv) directly
         assert_eq!(target_cursor.label(), Some(7));
 
-        let target_projection = TARGET_PROGRAM.machine().into_projection();
-        let ts = target_projection.typestate();
+        let ts = target_compiled.typestate();
         let after_body = target_cursor.advance();
         // After advancing past the Recv, we encounter PassiveObserverBranch Jump nodes.
         // - Jump for arm 0 (Continue): loops back to loop_start
@@ -349,7 +353,8 @@ mod tests {
             >>::Output as ProjectRole<Role<0>>>::Output,
         > = project(&ROUTE);
 
-        let cursor = PhaseCursor::from_machine(CONTROLLER.machine());
+        let compiled = CONTROLLER.compile_role();
+        let cursor = PhaseCursor::new(&compiled);
         assert_eq!(cursor.scope_kind(), Some(ScopeKind::Route));
         let scope_id = cursor.scope_id().expect("route scope id present");
         let (policy, eff_index, _) = cursor
@@ -362,7 +367,8 @@ mod tests {
 
     #[test]
     fn local_action_produces_metadata() {
-        let cursor = PhaseCursor::<0>::from_machine(LOCAL_ROLE.machine());
+        let compiled = LOCAL_ROLE.compile_role();
+        let cursor = PhaseCursor::new(&compiled);
         assert!(cursor.is_local_action());
         assert_eq!(cursor.label(), Some(<Msg<9, ()> as MessageSpec>::LABEL));
         let cursor = cursor.advance();

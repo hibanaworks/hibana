@@ -1,10 +1,12 @@
+#[cfg(test)]
 use crate::control::lease::planner::{LeaseFacetNeeds, LeaseGraphBudget, policy_requirements};
-use crate::eff::EffKind;
-use crate::global::const_dsl::{EffList, PolicyMode};
-
+#[cfg(test)]
+use crate::global::compiled::CompiledProgram;
+#[cfg(test)]
 use std::vec::Vec;
 
 /// Per-atom breakdown of facet requirements derived from policy markers.
+#[cfg(test)]
 #[derive(Clone, Debug)]
 struct AtomFacetDetail {
     label: u8,
@@ -14,6 +16,7 @@ struct AtomFacetDetail {
     splice_children: usize,
 }
 
+#[cfg(test)]
 impl AtomFacetDetail {
     /// Returns true when this atom contributes any facet demand.
     #[inline]
@@ -23,12 +26,14 @@ impl AtomFacetDetail {
 }
 
 /// Aggregated facet report for a role-local projection.
+#[cfg(test)]
 #[derive(Clone, Debug)]
 struct ProgramFacetReport {
     budget: LeaseGraphBudget,
     atoms: Vec<AtomFacetDetail>,
 }
 
+#[cfg(test)]
 impl ProgramFacetReport {
     /// Borrow the collected atom details.
     #[inline]
@@ -37,32 +42,30 @@ impl ProgramFacetReport {
     }
 }
 
-/// Produce a facet report directly from an `EffList`.
-fn list_report(list: &EffList) -> ProgramFacetReport {
+/// Produce a facet report from compiled program facts.
+#[cfg(test)]
+fn compiled_report(compiled: &CompiledProgram) -> ProgramFacetReport {
     let mut atoms = Vec::new();
-    let budget = LeaseGraphBudget::from_eff_list(list);
+    let mut budget = LeaseGraphBudget::new();
 
-    let mut idx = 0usize;
-    while idx < list.len() {
-        let node = list.node_at(idx);
-        if matches!(node.kind, EffKind::Atom) {
-            let policy = match list.policy_with_scope(idx) {
-                Some((policy, _scope)) => policy,
-                None => PolicyMode::Static,
-            };
-
-            let atom = node.atom_data();
-            let requirements = policy_requirements(atom.resource, atom.label, policy);
-
-            atoms.push(AtomFacetDetail {
-                label: atom.label,
-                resource_tag: atom.resource,
-                needs: requirements.facets,
-                delegation_children: requirements.delegation_children,
-                splice_children: requirements.splice_children,
-            });
-        }
-        idx += 1;
+    for descriptor in compiled.effect_envelope().resources() {
+        budget = budget.include_atom(
+            descriptor.label(),
+            Some(descriptor.tag()),
+            descriptor.policy(),
+        );
+        let requirements = policy_requirements(
+            Some(descriptor.tag()),
+            descriptor.label(),
+            descriptor.policy(),
+        );
+        atoms.push(AtomFacetDetail {
+            label: descriptor.label(),
+            resource_tag: Some(descriptor.tag()),
+            needs: requirements.facets,
+            delegation_children: requirements.delegation_children,
+            splice_children: requirements.splice_children,
+        });
     }
 
     ProgramFacetReport { budget, atoms }
@@ -78,9 +81,10 @@ mod tests {
 
     #[test]
     fn management_roles_report_expected_facet_atoms() {
-        let (controller_list, cluster_list) = crate::runtime::mgmt::management_eff_lists();
-        let controller = list_report(controller_list);
-        let cluster = list_report(cluster_list);
+        let (controller_program, cluster_program) =
+            crate::runtime::mgmt::management_compiled_programs();
+        let controller = compiled_report(&controller_program);
+        let cluster = compiled_report(&cluster_program);
 
         assert_requires_slots_only(&controller);
         assert_requires_slots_only(&cluster);

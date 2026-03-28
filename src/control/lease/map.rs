@@ -142,6 +142,56 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
         }
     }
 
+    /// Return the first initialized slot index matching `pred`.
+    pub(crate) fn position(&self, mut pred: impl FnMut(&K, &V) -> bool) -> Option<usize> {
+        for i in 0..self.len {
+            // SAFETY: entries[0..len] are initialized
+            let (k, v) = unsafe { self.entries[i].assume_init_ref() };
+            if pred(k, v) {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// Borrow the entry stored at `idx`.
+    pub(crate) fn get_at(&self, idx: usize) -> Option<(&K, &V)> {
+        if idx >= self.len {
+            return None;
+        }
+        // SAFETY: entries[idx] is initialized (idx < len)
+        let (k, v) = unsafe { self.entries[idx].assume_init_ref() };
+        Some((k, v))
+    }
+
+    /// Mutably borrow the entry stored at `idx`.
+    pub(crate) fn get_mut_at(&mut self, idx: usize) -> Option<(&K, &mut V)> {
+        if idx >= self.len {
+            return None;
+        }
+        // SAFETY: entries[idx] is initialized (idx < len)
+        let (k, v) = unsafe { self.entries[idx].assume_init_mut() };
+        Some((&*k, v))
+    }
+
+    /// Replace the initialized slot at `idx` in place.
+    pub(crate) fn replace_at_with(
+        &mut self,
+        idx: usize,
+        init: impl FnOnce(&mut MaybeUninit<(K, V)>),
+    ) -> Result<(), ()> {
+        if idx >= self.len {
+            return Err(());
+        }
+
+        // SAFETY: entries[idx] is initialized (idx < len)
+        unsafe {
+            self.entries[idx].assume_init_drop();
+        }
+        init(&mut self.entries[idx]);
+        Ok(())
+    }
+
     /// Remove a key-value pair.
     ///
     /// Returns the value if the key was present, or `None` otherwise.

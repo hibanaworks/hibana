@@ -1,3 +1,6 @@
+#[path = "../support/control_kinds.rs"]
+mod control_kinds;
+
 use hibana::substrate::cap::{
     GenericCapToken,
 };
@@ -5,27 +8,8 @@ use hibana::g::{self, Msg, Role};
 use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
 use hibana::g::advanced::steps::{ProjectRole, SendStep, StepConcat, StepCons, StepNil};
 
-hibana::impl_control_resource!(
-    ArmWithPolicyKind,
-    handle: Unit,
-    tag: 0x95,
-    name: "RouteArmWithPolicy",
-    label: 5,
-    scope: Route,
-    tap_id: 0x0400,
-    handling: Canonical,
-);
-
-hibana::impl_control_resource!(
-    ArmWithoutPolicyKind,
-    handle: Unit,
-    tag: 0x96,
-    name: "RouteArmWithoutPolicy",
-    label: 6,
-    scope: Route,
-    tap_id: 0x0400,
-    handling: Canonical,
-);
+type ArmWithPolicyKind = control_kinds::UnitControl<0x95, 5, 7, 0x0400>;
+type ArmWithoutPolicyKind = control_kinds::UnitControl<0x96, 6, 7, 0x0400>;
 
 const ARM_WITH_POLICY: g::Program<
     StepCons<

@@ -229,7 +229,7 @@ INTERNAL_SOURCE_TEST_OWNER_HIDING_ALIASES="$(
     src/global/const_dsl.rs \
     src/global/typestate.rs \
     src/global/role_program.rs \
-    src/endpoint/cursor.rs \
+    src/endpoint/kernel/core.rs \
     src/control/cluster/effects.rs || true
 )"
 if [[ -n "${INTERNAL_SOURCE_TEST_OWNER_HIDING_ALIASES}" ]]; then
@@ -439,7 +439,7 @@ check_absent "^type[[:space:]]+(LoopContinueMsg|LoopBreakMsg)[[:space:]]*=" \
   src/global/const_dsl.rs
 check_absent "^type[[:space:]]+ControlResource<" \
   "endpoint control-resource shorthand alias shim" \
-  src/endpoint/cursor.rs \
+  src/endpoint/kernel/core.rs \
   src/endpoint/flow.rs
 check_absent "mem::transmute::<Guard<'_>, Guard<'static>>|mem::transmute::<Guard<'static>, Guard<'rv>>|core::mem::transmute::<_, Port<'cfg, T, crate::control::cap::mint::EpochTbl>>" \
   "rendezvous brand or port transmute shim" \
@@ -479,15 +479,15 @@ check_absent "WireFirst" \
   src
 check_absent "(hint|classification).*(RouteArm|PolicyVerdict::RouteArm)" \
   "hint/classification RouteArm promotion" \
-  src/endpoint/cursor.rs \
+  src/endpoint/kernel/core.rs \
   src/global \
   src/control
 check_absent "\\bpoll_arm_from_ready_hint\\b" \
   "hint-derived Poll helper" \
-  src/endpoint/cursor.rs
+  src/endpoint/kernel/core.rs
 check_absent "rebuild_pending_offers|build_frontier_snapshot|select_offer_entry|lag correction|passive takeover" \
   "offer-kernel rescue shim" \
-  src/endpoint/cursor.rs
+  src/endpoint/kernel/core.rs
 check_absent "duplicate route label" \
   "route duplicate-label const panic residue" \
   src/global/program.rs
@@ -554,7 +554,7 @@ POLL_READY_BLOCK="$(
       print
       if ($0 ~ /^    }$/) { exit }
     }
-  ' src/endpoint/cursor.rs
+  ' src/endpoint/kernel/core.rs
 )"
 if [[ -z "${POLL_READY_BLOCK}" ]]; then
   echo "poll_arm_from_ready_mask block not found" >&2
@@ -571,7 +571,7 @@ ROUTE_SOURCE_BLOCK="$(
       if ($0 ~ /^}/) { exit }
       print
     }
-  ' src/endpoint/cursor.rs
+  ' src/endpoint/kernel/core.rs
 )"
 if [[ -z "${ROUTE_SOURCE_BLOCK}" ]]; then
   echo "RouteDecisionSource enum block not found" >&2
@@ -613,7 +613,7 @@ OFFER_BLOCK="$(
       print
       if ($0 ~ /^    }$/) { exit }
     }
-  ' src/endpoint/cursor.rs
+  ' src/endpoint/kernel/core.rs
 )"
 if [[ -z "${OFFER_BLOCK}" ]]; then
   echo "offer block not found" >&2
@@ -630,7 +630,7 @@ SELECT_SCOPE_BLOCK="$(
       print
       if ($0 ~ /^    }$/) { exit }
     }
-  ' src/endpoint/cursor.rs
+  ' src/endpoint/kernel/core.rs
 )"
 if [[ -z "${SELECT_SCOPE_BLOCK}" ]]; then
   echo "select_scope block not found" >&2
@@ -647,7 +647,7 @@ RESOLVE_TOKEN_BLOCK="$(
       print
       if ($0 ~ /^    }$/) { exit }
     }
-  ' src/endpoint/cursor.rs
+  ' src/endpoint/kernel/core.rs
 )"
 if [[ -z "${RESOLVE_TOKEN_BLOCK}" ]]; then
   echo "resolve_token block not found" >&2
@@ -678,7 +678,7 @@ MATERIALIZE_BRANCH_BLOCK="$(
       print
       if ($0 ~ /^    }$/) { exit }
     }
-  ' src/endpoint/cursor.rs
+  ' src/endpoint/kernel/core.rs
 )"
 if [[ -z "${MATERIALIZE_BRANCH_BLOCK}" ]]; then
   echo "materialize_branch block not found" >&2

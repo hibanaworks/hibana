@@ -3,7 +3,7 @@
 //! This module implements SessionCluster, which coordinates multiple Rendezvous
 //! instances for local distributed session management.
 
-use core::marker::PhantomData;
+use core::{marker::PhantomData, mem::MaybeUninit, ptr::NonNull};
 
 use crate::control::automaton::{
     delegation::{DelegateMintAutomaton, DelegateMintSeed, DelegationLeaseSpec},
@@ -24,7 +24,7 @@ use crate::control::cap::resource_kinds::{
     SpliceIntentKind,
 };
 use crate::control::cap::typed_tokens::CapFrameToken;
-use crate::control::cluster::effects::CpEffect;
+use crate::control::cluster::effects::{CpEffect, EffectEnvelope};
 use crate::control::handle::{bag::HandleBag, spec};
 use crate::control::lease::{
     bundle::{LeaseBundleContext, LeaseGraphBundleExt},
@@ -43,6 +43,8 @@ use crate::endpoint::affine::LaneGuard;
 
 const MAX_CACHED_SPLICES: usize = 64;
 const HANDLE_RESOLVER_SLOTS: usize = 128;
+const MAX_COMPILED_PROGRAMS: usize = 64;
+const MAX_COMPILED_ROLES: usize = 128;
 
 fn splice_operands_from_handle(handle: SpliceHandle) -> SpliceOperands {
     SpliceOperands::new(
@@ -62,7 +64,7 @@ use crate::control::automaton::txn::{InAcked, InBegin, NoopTap};
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 use crate::eff::EffIndex;
 use crate::global::{
-    compiled::ProgramFacts,
+    compiled::{CompiledProgram, CompiledRole, LoweringSummary, ProgramStamp},
     const_dsl::{PolicyMode, ScopeId},
 };
 use crate::observe::scope::ScopeTrace;
@@ -596,6 +598,74 @@ struct DynamicResolverEntry<'cfg> {
     scope_trace: Option<ScopeTrace>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ProgramCacheHandle(u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RoleCacheHandle(u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CompiledCacheLease {
+    program: ProgramCacheHandle,
+    role: RoleCacheHandle,
+}
+
+struct ProgramCacheEntry {
+    stamp: ProgramStamp,
+    pins: u32,
+    compiled: CompiledProgram,
+    lowering: LoweringSummary,
+}
+
+struct RoleCacheEntry {
+    program: ProgramCacheHandle,
+    role: u8,
+    pins: u32,
+    compiled: CompiledRole,
+}
+
+enum ReadOnlyCompiledProgram {
+    Cached(ProgramCacheHandle),
+    Transient(CompiledProgram),
+}
+
+impl ProgramCacheEntry {
+    unsafe fn init_from_projection_input(
+        dst: *mut Self,
+        eff_list: &crate::global::const_dsl::EffList,
+        pins: u32,
+    ) {
+        unsafe {
+            LoweringSummary::init_scan(core::ptr::addr_of_mut!((*dst).lowering), eff_list);
+        }
+        let lowering = unsafe { &*core::ptr::addr_of!((*dst).lowering) };
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).stamp).write(lowering.stamp());
+            core::ptr::addr_of_mut!((*dst).pins).write(pins);
+            CompiledProgram::init_from_summary(core::ptr::addr_of_mut!((*dst).compiled), lowering);
+        }
+    }
+}
+
+impl RoleCacheEntry {
+    unsafe fn init_from_summary<const ROLE: u8>(
+        dst: *mut Self,
+        program: ProgramCacheHandle,
+        pins: u32,
+        lowering: &LoweringSummary,
+    ) {
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).program).write(program);
+            core::ptr::addr_of_mut!((*dst).role).write(ROLE);
+            core::ptr::addr_of_mut!((*dst).pins).write(pins);
+            CompiledRole::init_from_summary::<ROLE>(
+                core::ptr::addr_of_mut!((*dst).compiled),
+                lowering,
+            );
+        }
+    }
+}
+
 /// Validate that the resource tag represents a supported dynamic control operation.
 /// The operation type (route, reroute, splice) is determined solely by the tag.
 const fn is_dynamic_control_tag(tag: u8) -> bool {
@@ -861,6 +931,15 @@ where
 
     /// Cached management manager state per rendezvous.
     mgmt_managers: ArrayMap<RendezvousId, Manager<AwaitBegin, { SLOT_COUNT }>, MAX_RV>,
+
+    /// Shared compiled-program cache keyed by stable entry id.
+    compiled_programs: ArrayMap<ProgramCacheHandle, ProgramCacheEntry, MAX_COMPILED_PROGRAMS>,
+
+    /// Shared compiled-role cache keyed by stable entry id.
+    compiled_roles: ArrayMap<RoleCacheHandle, RoleCacheEntry, MAX_COMPILED_ROLES>,
+
+    next_compiled_program_id: u32,
+    next_compiled_role_id: u32,
 }
 
 impl<'cfg, T, U, C, E, const MAX_RV: usize> ControlCore<'cfg, T, U, C, E, MAX_RV>
@@ -880,6 +959,10 @@ where
             ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).cached_operands));
             core::ptr::addr_of_mut!((*dst).active_leases).write(core::cell::Cell::new(0));
             ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).mgmt_managers));
+            ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).compiled_programs));
+            ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).compiled_roles));
+            core::ptr::addr_of_mut!((*dst).next_compiled_program_id).write(1);
+            core::ptr::addr_of_mut!((*dst).next_compiled_role_id).write(1);
         }
     }
 }
@@ -965,6 +1048,10 @@ where
                 cached_operands: ArrayMap::new(),
                 active_leases: core::cell::Cell::new(0),
                 mgmt_managers: ArrayMap::new(),
+                compiled_programs: ArrayMap::new(),
+                compiled_roles: ArrayMap::new(),
+                next_compiled_program_id: 1,
+                next_compiled_role_id: 1,
             }),
             resolvers: core::cell::UnsafeCell::new(ResolverCore {
                 table: ArrayMap::new(),
@@ -1052,6 +1139,314 @@ where
         F: FnOnce(&mut ResolverCore<'cfg>) -> R,
     {
         unsafe { f(&mut *self.resolvers_ptr()) }
+    }
+
+    fn next_program_cache_handle(
+        core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
+    ) -> ProgramCacheHandle {
+        let handle = ProgramCacheHandle(core.next_compiled_program_id);
+        core.next_compiled_program_id = core.next_compiled_program_id.wrapping_add(1).max(1);
+        handle
+    }
+
+    fn next_role_cache_handle(
+        core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
+    ) -> RoleCacheHandle {
+        let handle = RoleCacheHandle(core.next_compiled_role_id);
+        core.next_compiled_role_id = core.next_compiled_role_id.wrapping_add(1).max(1);
+        handle
+    }
+
+    fn compiled_program<'prog, const ROLE: u8, LocalSteps, Mint>(
+        &self,
+        program: &crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
+        pin: bool,
+    ) -> Result<(ProgramCacheHandle, &CompiledProgram), CpError>
+    where
+        Mint: MintConfigMarker,
+    {
+        let stamp = program.stamp();
+        let lowering_input = program.lowering_input();
+        let program_handle =
+            self.with_control_mut(|core| -> Result<ProgramCacheHandle, CpError> {
+                if let Some(idx) = core.compiled_programs.position(|_, entry| {
+                    entry.stamp == stamp && entry.lowering.equivalent_eff_list(lowering_input)
+                }) {
+                    let (handle, entry) = core
+                        .compiled_programs
+                        .get_mut_at(idx)
+                        .ok_or(CpError::ResourceExhausted)?;
+                    if pin {
+                        entry.pins = entry.pins.saturating_add(1);
+                    }
+                    return Ok(*handle);
+                }
+
+                let handle = Self::next_program_cache_handle(core);
+
+                if !core.compiled_programs.is_full() {
+                    core.compiled_programs
+                        .push_with(|slot| {
+                            let slot_ptr = slot.as_mut_ptr();
+                            unsafe {
+                                core::ptr::addr_of_mut!((*slot_ptr).0).write(handle);
+                                ProgramCacheEntry::init_from_projection_input(
+                                    core::ptr::addr_of_mut!((*slot_ptr).1),
+                                    lowering_input,
+                                    u32::from(pin),
+                                );
+                            }
+                        })
+                        .map_err(|_| CpError::ResourceExhausted)?;
+                    return Ok(handle);
+                }
+
+                let evict_idx = core
+                    .compiled_programs
+                    .position(|_, cached| cached.pins == 0)
+                    .ok_or(CpError::ResourceExhausted)?;
+                core.compiled_programs
+                    .replace_at_with(evict_idx, |slot| {
+                        let slot_ptr = slot.as_mut_ptr();
+                        unsafe {
+                            core::ptr::addr_of_mut!((*slot_ptr).0).write(handle);
+                            ProgramCacheEntry::init_from_projection_input(
+                                core::ptr::addr_of_mut!((*slot_ptr).1),
+                                lowering_input,
+                                u32::from(pin),
+                            );
+                        }
+                    })
+                    .map_err(|_| CpError::ResourceExhausted)?;
+                Ok(handle)
+            })?;
+        unsafe {
+            (*self.control_ref_ptr())
+                .compiled_programs
+                .get(&program_handle)
+        }
+        .map(|entry| (program_handle, &entry.compiled))
+        .ok_or(CpError::ResourceExhausted)
+    }
+
+    fn with_compiled_program<'prog, const ROLE: u8, LocalSteps, Mint, F, R>(
+        &self,
+        program: &crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
+        f: F,
+    ) -> Result<R, CpError>
+    where
+        Mint: MintConfigMarker,
+        F: FnOnce(&CompiledProgram) -> Result<R, CpError>,
+    {
+        let stamp = program.stamp();
+        let lowering_input = program.lowering_input();
+        let access = self.with_control_mut(|core| -> Result<ReadOnlyCompiledProgram, CpError> {
+            if let Some(idx) = core.compiled_programs.position(|_, entry| {
+                entry.stamp == stamp && entry.lowering.equivalent_eff_list(lowering_input)
+            }) {
+                let (handle, _) = core
+                    .compiled_programs
+                    .get_at(idx)
+                    .ok_or(CpError::ResourceExhausted)?;
+                return Ok(ReadOnlyCompiledProgram::Cached(*handle));
+            }
+
+            if !core.compiled_programs.is_full() {
+                let handle = Self::next_program_cache_handle(core);
+                core.compiled_programs
+                    .push_with(|slot| {
+                        let slot_ptr = slot.as_mut_ptr();
+                        unsafe {
+                            core::ptr::addr_of_mut!((*slot_ptr).0).write(handle);
+                            ProgramCacheEntry::init_from_projection_input(
+                                core::ptr::addr_of_mut!((*slot_ptr).1),
+                                lowering_input,
+                                0,
+                            );
+                        }
+                    })
+                    .map_err(|_| CpError::ResourceExhausted)?;
+                return Ok(ReadOnlyCompiledProgram::Cached(handle));
+            }
+
+            if let Some(evict_idx) = core
+                .compiled_programs
+                .position(|_, cached| cached.pins == 0)
+            {
+                let handle = Self::next_program_cache_handle(core);
+                core.compiled_programs
+                    .replace_at_with(evict_idx, |slot| {
+                        let slot_ptr = slot.as_mut_ptr();
+                        unsafe {
+                            core::ptr::addr_of_mut!((*slot_ptr).0).write(handle);
+                            ProgramCacheEntry::init_from_projection_input(
+                                core::ptr::addr_of_mut!((*slot_ptr).1),
+                                lowering_input,
+                                0,
+                            );
+                        }
+                    })
+                    .map_err(|_| CpError::ResourceExhausted)?;
+                return Ok(ReadOnlyCompiledProgram::Cached(handle));
+            }
+
+            let lowering = LoweringSummary::scan(lowering_input);
+            let mut compiled = MaybeUninit::<CompiledProgram>::uninit();
+            unsafe {
+                CompiledProgram::init_from_summary(compiled.as_mut_ptr(), &lowering);
+                Ok(ReadOnlyCompiledProgram::Transient(compiled.assume_init()))
+            }
+        })?;
+
+        match access {
+            ReadOnlyCompiledProgram::Cached(handle) => {
+                unsafe { (*self.control_ref_ptr()).compiled_programs.get(&handle) }
+                    .map(|entry| f(&entry.compiled))
+                    .ok_or(CpError::ResourceExhausted)?
+            }
+            ReadOnlyCompiledProgram::Transient(compiled) => f(&compiled),
+        }
+    }
+
+    fn compiled_role<const ROLE: u8>(
+        &self,
+        program: ProgramCacheHandle,
+        pin: bool,
+    ) -> Result<(RoleCacheHandle, &CompiledRole), CpError> {
+        let role_handle = self.with_control_mut(|core| -> Result<RoleCacheHandle, CpError> {
+            let _ = core
+                .compiled_programs
+                .get(&program)
+                .ok_or(CpError::ResourceExhausted)?;
+
+            if let Some(idx) = core
+                .compiled_roles
+                .position(|_, entry| entry.program == program && entry.role == ROLE)
+            {
+                let (handle, entry) = core
+                    .compiled_roles
+                    .get_mut_at(idx)
+                    .ok_or(CpError::ResourceExhausted)?;
+                if pin {
+                    entry.pins = entry.pins.saturating_add(1);
+                }
+                return Ok(*handle);
+            }
+
+            let handle = Self::next_role_cache_handle(core);
+            let lowering_ptr = core::ptr::from_ref(
+                &core
+                    .compiled_programs
+                    .get(&program)
+                    .ok_or(CpError::ResourceExhausted)?
+                    .lowering,
+            );
+
+            if !core.compiled_roles.is_full() {
+                core.compiled_roles
+                    .push_with(|slot| {
+                        let slot_ptr = slot.as_mut_ptr();
+                        unsafe {
+                            core::ptr::addr_of_mut!((*slot_ptr).0).write(handle);
+                            RoleCacheEntry::init_from_summary::<ROLE>(
+                                core::ptr::addr_of_mut!((*slot_ptr).1),
+                                program,
+                                u32::from(pin),
+                                &*lowering_ptr,
+                            );
+                        }
+                    })
+                    .map_err(|_| CpError::ResourceExhausted)?;
+                return Ok(handle);
+            }
+
+            let evict_idx = core
+                .compiled_roles
+                .position(|_, cached| cached.pins == 0)
+                .ok_or(CpError::ResourceExhausted)?;
+            core.compiled_roles
+                .replace_at_with(evict_idx, |slot| {
+                    let slot_ptr = slot.as_mut_ptr();
+                    unsafe {
+                        core::ptr::addr_of_mut!((*slot_ptr).0).write(handle);
+                        RoleCacheEntry::init_from_summary::<ROLE>(
+                            core::ptr::addr_of_mut!((*slot_ptr).1),
+                            program,
+                            u32::from(pin),
+                            &*lowering_ptr,
+                        );
+                    }
+                })
+                .map_err(|_| CpError::ResourceExhausted)?;
+            Ok(handle)
+        })?;
+        unsafe { (*self.control_ref_ptr()).compiled_roles.get(&role_handle) }
+            .map(|entry| (role_handle, &entry.compiled))
+            .ok_or(CpError::ResourceExhausted)
+    }
+
+    fn with_pinned_compiled_program<F, R>(
+        &self,
+        handle: ProgramCacheHandle,
+        f: F,
+    ) -> Result<R, CpError>
+    where
+        F: FnOnce(&CompiledProgram) -> Result<R, CpError>,
+    {
+        unsafe { (*self.control_ref_ptr()).compiled_programs.get(&handle) }
+            .map(|entry| f(&entry.compiled))
+            .ok_or(CpError::ResourceExhausted)?
+    }
+
+    fn with_pinned_compiled_role<F, R>(&self, handle: RoleCacheHandle, f: F) -> Result<R, CpError>
+    where
+        F: FnOnce(&CompiledRole) -> Result<R, CpError>,
+    {
+        unsafe { (*self.control_ref_ptr()).compiled_roles.get(&handle) }
+            .map(|entry| f(&entry.compiled))
+            .ok_or(CpError::ResourceExhausted)?
+    }
+
+    fn acquire_compiled_cache<'prog, const ROLE: u8, LocalSteps, Mint>(
+        &self,
+        program: &crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
+    ) -> Result<CompiledCacheLease, CpError>
+    where
+        Mint: MintConfigMarker,
+    {
+        let (program_handle, _) = self.compiled_program(program, true)?;
+        match self.compiled_role::<ROLE>(program_handle, true) {
+            Ok((role_handle, _)) => Ok(CompiledCacheLease {
+                program: program_handle,
+                role: role_handle,
+            }),
+            Err(err) => {
+                self.release_compiled_program_pin(program_handle);
+                Err(err)
+            }
+        }
+    }
+
+    fn release_compiled_program_pin(&self, handle: ProgramCacheHandle) {
+        self.with_control_mut(|core| {
+            if let Some(entry) = core.compiled_programs.get_mut(&handle) {
+                debug_assert!(entry.pins > 0);
+                entry.pins = entry.pins.saturating_sub(1);
+            }
+        });
+    }
+
+    pub(crate) fn release_compiled_cache_lease(&self, lease: CompiledCacheLease) {
+        self.with_control_mut(|core| {
+            if let Some(entry) = core.compiled_roles.get_mut(&lease.role) {
+                debug_assert!(entry.pins > 0);
+                entry.pins = entry.pins.saturating_sub(1);
+            }
+            if let Some(entry) = core.compiled_programs.get_mut(&lease.program) {
+                debug_assert!(entry.pins > 0);
+                entry.pins = entry.pins.saturating_sub(1);
+            }
+        });
     }
 
     /// Add a local Rendezvous instance to the cluster (takes ownership).
@@ -1432,22 +1827,23 @@ where
     where
         Mint: MintConfigMarker,
     {
-        let facts = ProgramFacts::from_eff_list(program.eff_list());
-        for site in facts.dynamic_policy_sites_for(POLICY) {
-            let tag = site
-                .resource_tag()
-                .ok_or(CpError::UnsupportedEffect(site.label()))?;
-            self.register_dynamic_policy_resolver(
-                rv_id,
-                site.eff_index(),
-                site.label(),
-                site.policy(),
-                tag,
-                None,
-                resolver,
-            )?;
-        }
-        Ok(())
+        self.with_compiled_program(program, |compiled| {
+            for site in compiled.dynamic_policy_sites_for(POLICY) {
+                let tag = site
+                    .resource_tag()
+                    .ok_or(CpError::UnsupportedEffect(site.label()))?;
+                self.register_dynamic_policy_resolver(
+                    rv_id,
+                    site.eff_index(),
+                    site.label(),
+                    site.policy(),
+                    tag,
+                    None,
+                    resolver,
+                )?;
+            }
+            Ok(())
+        })
     }
 
     pub(crate) fn register_dynamic_policy_resolver(
@@ -2145,7 +2541,7 @@ where
 
     /// Initialize session effects from global protocol projection.
     ///
-    /// This method wires the precompiled EffectEnvelope (owned by ProgramFacts) into
+    /// This method wires the precompiled EffectEnvelope (owned by CompiledProgram) into
     /// the Rendezvous control-plane state. The envelope contains:
     /// - Control-plane effects (CpEffect) to pre-configure
     /// - Tap events to emit during execution
@@ -2158,7 +2554,7 @@ where
     ///
     /// * `rv_id` - The Rendezvous to initialize
     /// * `sid` - Session ID for this projection
-    /// * `facts` - Crate-private lowering facts for the projected program
+    /// * `effect_envelope` - Crate-private effect facts for the projected program
     ///
     /// # Errors
     ///
@@ -2168,7 +2564,7 @@ where
         rv_id: RendezvousId,
         sid: SessionId,
         lane: Lane,
-        facts: &ProgramFacts,
+        effect_envelope: &EffectEnvelope,
     ) -> Result<(), CpError> {
         let core = unsafe { &*self.control_ref_ptr() };
 
@@ -2192,10 +2588,9 @@ where
             return Ok(());
         }
 
-        let envelope = facts.effect_envelope();
         rv.reset_policy(lane);
         let mut control_marker_count = 0u32;
-        for marker in envelope.controls() {
+        for marker in effect_envelope.controls() {
             rv.initialise_control_marker(lane, marker);
             control_marker_count = control_marker_count.saturating_add(1);
         }
@@ -2204,7 +2599,7 @@ where
         let cp_lane = crate::control::types::Lane::new(lane.raw());
 
         let mut applied_effects = 0u32;
-        for effect in envelope.cp_effects() {
+        for effect in effect_envelope.cp_effects() {
             if let Some(command) = initializer_command(*effect, cp_sid, cp_lane) {
                 rv.run_effect(command)?;
                 applied_effects = applied_effects.saturating_add(1);
@@ -2213,7 +2608,7 @@ where
 
         let mut resource_events = 0u32;
         let mut caps_mask_acc = CapsMask::empty();
-        for descriptor in envelope.resources() {
+        for descriptor in effect_envelope.resources() {
             resource_events = resource_events.saturating_add(1);
             rv.register_policy(
                 lane,
@@ -2436,7 +2831,7 @@ where
         program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
         binding: B,
     ) -> Result<
-        crate::endpoint::cursor::CursorEndpoint<
+        crate::endpoint::kernel::CursorEndpoint<
             'cfg,
             ROLE,
             T,
@@ -2457,80 +2852,101 @@ where
     {
         use crate::global::role_program::MAX_LANES;
 
-        let machine = program.machine();
-        let mut active_lanes = machine.active_lanes();
-        let cursor = crate::global::typestate::PhaseCursor::from_machine(machine);
+        let compiled_cache_lease = self.acquire_compiled_cache(program)?;
+        let control_semantics = self
+            .with_pinned_compiled_program(compiled_cache_lease.program, |compiled| {
+                Ok(*compiled.control_semantics())
+            })?;
+        let (role_ptr, mut active_lanes) = self
+            .with_pinned_compiled_role(compiled_cache_lease.role, |compiled| {
+                Ok((NonNull::from(compiled), *compiled.active_lanes()))
+            })?;
+        let cursor = crate::global::typestate::PhaseCursor::from_pinned_role_ptr(role_ptr);
         let mint = program.mint_config();
-        let facts = ProgramFacts::from_eff_list(program.eff_list());
+        let endpoint = (|| {
+            // Ensure at least lane 0 is active (every endpoint needs at least one lane)
+            active_lanes[0] = true;
 
-        // Ensure at least lane 0 is active (every endpoint needs at least one lane)
-        active_lanes[0] = true;
+            // Find primary lane (first active lane, always 0 due to above)
+            let primary_lane_index = active_lanes.iter().position(|&active| active).unwrap_or(0);
 
-        // Find primary lane (first active lane, always 0 due to above)
-        let primary_lane_index = active_lanes.iter().position(|&active| active).unwrap_or(0);
+            // Acquire ports and guards for all active lanes directly on the
+            // choreography-defined rendezvous lanes.
+            let mut ports: [Option<
+                crate::rendezvous::port::Port<'cfg, T, crate::control::cap::mint::EpochTbl>,
+            >; MAX_LANES] = [None, None, None, None, None, None, None, None];
+            let mut guards: [Option<LaneGuard<'cfg, T, U, C>>; MAX_LANES] =
+                [None, None, None, None, None, None, None, None];
 
-        // Acquire ports and guards for all active lanes directly on the
-        // choreography-defined rendezvous lanes.
-        let mut ports: [Option<
-            crate::rendezvous::port::Port<'cfg, T, crate::control::cap::mint::EpochTbl>,
-        >; MAX_LANES] = [None, None, None, None, None, None, None, None];
-        let mut guards: [Option<LaneGuard<'cfg, T, U, C>>; MAX_LANES] =
-            [None, None, None, None, None, None, None, None];
+            let mut primary_brand: Option<crate::control::brand::Guard<'cfg>> = None;
+            let mut primary_lane: Option<Lane> = None;
 
-        let mut primary_brand: Option<crate::control::brand::Guard<'cfg>> = None;
-        let mut primary_lane: Option<Lane> = None;
+            for logical_idx in 0..MAX_LANES {
+                if active_lanes[logical_idx] {
+                    let physical_lane = Lane::new(logical_idx as u32);
+                    self.with_pinned_compiled_program(compiled_cache_lease.program, |compiled| {
+                        self.init_session_effects(
+                            rv_id,
+                            sid,
+                            physical_lane,
+                            compiled.effect_envelope(),
+                        )
+                    })?;
+                    let lease = self.lease_port(rv_id, sid, physical_lane, ROLE)?;
+                    let (port, guard, brand) =
+                        lease.into_port_guard().map_err(AttachError::Rendezvous)?;
+                    ports[logical_idx] = Some(port);
+                    guards[logical_idx] = Some(guard);
 
-        for logical_idx in 0..MAX_LANES {
-            if active_lanes[logical_idx] {
-                let physical_lane = Lane::new(logical_idx as u32);
-                self.init_session_effects(rv_id, sid, physical_lane, &facts)?;
-                let lease = self.lease_port(rv_id, sid, physical_lane, ROLE)?;
-                let (port, guard, brand) =
-                    lease.into_port_guard().map_err(AttachError::Rendezvous)?;
-                ports[logical_idx] = Some(port);
-                guards[logical_idx] = Some(guard);
-
-                // Store primary lane's rendezvous brand for Owner creation
-                if logical_idx == primary_lane_index {
-                    primary_brand = Some(brand);
-                    primary_lane = Some(physical_lane);
+                    // Store primary lane's rendezvous brand for Owner creation
+                    if logical_idx == primary_lane_index {
+                        primary_brand = Some(brand);
+                        primary_lane = Some(physical_lane);
+                    }
                 }
             }
+
+            let brand = primary_brand.expect("primary lane brand must be acquired");
+            let primary_wire_lane = primary_lane.expect("primary lane must be acquired");
+
+            let owner = crate::control::cap::mint::Owner::new(brand);
+            let epoch = crate::control::cap::mint::EndpointEpoch::new();
+
+            // SessionControlCtx uses the primary endpoint lane for control operations
+            let liveness_policy = self.with_control_mut(|core| {
+                core.locals
+                    .get_mut(&rv_id)
+                    .map(|rv| rv.liveness_policy())
+                    .unwrap_or_default()
+            });
+            let control = crate::endpoint::control::SessionControlCtx::new(
+                rv_id,
+                primary_wire_lane,
+                Some(self),
+                liveness_policy,
+                None,
+            );
+
+            Ok(crate::endpoint::kernel::CursorEndpoint::from_parts(
+                ports,
+                guards,
+                primary_lane_index,
+                sid,
+                owner,
+                epoch,
+                cursor,
+                control_semantics,
+                compiled_cache_lease,
+                control,
+                mint,
+                binding,
+            ))
+        })();
+
+        if endpoint.is_err() {
+            self.release_compiled_cache_lease(compiled_cache_lease);
         }
-
-        let brand = primary_brand.expect("primary lane brand must be acquired");
-        let primary_wire_lane = primary_lane.expect("primary lane must be acquired");
-
-        let owner = crate::control::cap::mint::Owner::new(brand);
-        let epoch = crate::control::cap::mint::EndpointEpoch::new();
-
-        // SessionControlCtx uses the primary endpoint lane for control operations
-        let liveness_policy = self.with_control_mut(|core| {
-            core.locals
-                .get_mut(&rv_id)
-                .map(|rv| rv.liveness_policy())
-                .unwrap_or_default()
-        });
-        let control = crate::endpoint::control::SessionControlCtx::new(
-            rv_id,
-            primary_wire_lane,
-            Some(self),
-            liveness_policy,
-            None,
-        );
-
-        Ok(crate::endpoint::cursor::CursorEndpoint::from_parts(
-            ports,
-            guards,
-            primary_lane_index,
-            sid,
-            owner,
-            epoch,
-            cursor,
-            control,
-            mint,
-            binding,
-        ))
+        endpoint
     }
 
     #[inline]
@@ -2734,10 +3150,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binding::NoBinding;
     use crate::control::cap::mint::ResourceKind;
+    use crate::control::cap::mint::{GenericCapToken, MintConfig};
     use crate::control::types::{Generation, Lane, SessionId};
+    use crate::g::{self, Msg, Role};
+    use crate::global::CanonicalControl;
+    use crate::global::role_program;
     use crate::runtime::config::CounterClock;
-    use crate::runtime::consts::DefaultLabelUniverse;
+    use crate::runtime::consts::{DefaultLabelUniverse, LABEL_ROUTE_DECISION};
     use crate::transport::{Transport, TransportError, wire::Payload};
     use core::future::{Ready, ready};
     use std::boxed::Box;
@@ -2822,6 +3243,26 @@ mod tests {
     // Helper to create a leaked clock for tests
     fn leak_clock() -> &'static CounterClock {
         Box::leak(Box::new(CounterClock::new()))
+    }
+
+    fn cache_lengths<const MAX_RV: usize>(cluster: &TestCluster<'_, MAX_RV>) -> (usize, usize) {
+        cluster.with_control_mut(|core| (core.compiled_programs.len(), core.compiled_roles.len()))
+    }
+
+    fn cache_pin_totals<const MAX_RV: usize>(cluster: &TestCluster<'_, MAX_RV>) -> (u32, u32) {
+        let mut program_pins = 0u32;
+        let mut role_pins = 0u32;
+        cluster.with_control_mut(|core| {
+            core.compiled_programs
+                .for_each(|_, entry| program_pins = program_pins.saturating_add(entry.pins));
+            core.compiled_roles
+                .for_each(|_, entry| role_pins = role_pins.saturating_add(entry.pins));
+        });
+        (program_pins, role_pins)
+    }
+
+    fn route_resolver(_ctx: ResolverContext) -> ResolverResult {
+        Ok(DynamicResolution::RouteArm { arm: 0 })
     }
 
     #[test]
@@ -3165,6 +3606,404 @@ mod tests {
         assert!(
             !impl_body.contains("fn metrics("),
             "ResolverContext must not expose metrics getter"
+        );
+    }
+
+    #[test]
+    fn set_resolver_and_enter_reuse_the_same_compiled_cache_entries() {
+        use crate::control::cap::resource_kinds::RouteDecisionKind;
+        use crate::observe::core::TapEvent;
+        use crate::runtime::{config::Config, consts::RING_EVENTS};
+
+        const POLICY_ID: u16 = 9901;
+
+        let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+        let mut tap = [TapEvent::default(); RING_EVENTS];
+        let mut slab = [0u8; 256];
+        let config = Config::new(&mut tap, &mut slab);
+        let rendezvous = Rendezvous::from_config(config, DummyTransport);
+        let rv_id = rendezvous.id();
+        cluster
+            .add_rendezvous(rendezvous)
+            .expect("register rendezvous");
+
+        let program = g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_ROUTE_DECISION },
+                GenericCapToken<RouteDecisionKind>,
+                CanonicalControl<RouteDecisionKind>,
+            >,
+            0,
+        >()
+        .policy::<POLICY_ID>();
+        let projected: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
+            role_program::project(&program);
+
+        crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
+        assert_eq!(cache_lengths(cluster), (0, 0));
+
+        cluster
+            .set_resolver::<POLICY_ID, 0, _, _>(
+                rv_id,
+                &projected,
+                ResolverRef::from_fn(route_resolver),
+            )
+            .expect("register resolver");
+        assert_eq!(cache_lengths(cluster), (1, 0));
+        assert_eq!(
+            crate::global::compiled::LoweringSummary::runtime_scan_count(),
+            1,
+            "set_resolver must scan the borrowed RoleProgram once"
+        );
+
+        let endpoint = cluster
+            .enter::<0, _, _, _>(rv_id, SessionId::new(44), &projected, NoBinding)
+            .expect("enter endpoint");
+        assert_eq!(cache_lengths(cluster), (1, 1));
+        assert_eq!(cache_pin_totals(cluster), (1, 1));
+        assert_eq!(
+            crate::global::compiled::LoweringSummary::runtime_scan_count(),
+            1,
+            "enter must reuse the cached program lowering summary"
+        );
+        drop(endpoint);
+        assert_eq!(cache_pin_totals(cluster), (0, 0));
+
+        let endpoint = cluster
+            .enter::<0, _, _, _>(rv_id, SessionId::new(45), &projected, NoBinding)
+            .expect("re-enter endpoint");
+        assert_eq!(cache_lengths(cluster), (1, 1));
+        assert_eq!(cache_pin_totals(cluster), (1, 1));
+        assert_eq!(
+            crate::global::compiled::LoweringSummary::runtime_scan_count(),
+            1,
+            "re-enter must keep reusing the same borrowed-program cache entry"
+        );
+        drop(endpoint);
+        assert_eq!(cache_pin_totals(cluster), (0, 0));
+    }
+
+    #[test]
+    fn compiled_cache_is_shared_across_rendezvous_for_same_program_stamp() {
+        use crate::control::cap::resource_kinds::RouteDecisionKind;
+        use crate::observe::core::TapEvent;
+        use crate::runtime::{config::Config, consts::RING_EVENTS};
+
+        let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+
+        let mut tap_a = [TapEvent::default(); RING_EVENTS];
+        let mut slab_a = [0u8; 256];
+        let rv_a = cluster
+            .add_rendezvous(Rendezvous::from_config(
+                Config::new(&mut tap_a, &mut slab_a),
+                DummyTransport,
+            ))
+            .expect("register first rendezvous");
+
+        let mut tap_b = [TapEvent::default(); RING_EVENTS];
+        let mut slab_b = [0u8; 256];
+        let rv_b = cluster
+            .add_rendezvous(Rendezvous::from_config(
+                Config::new(&mut tap_b, &mut slab_b),
+                DummyTransport,
+            ))
+            .expect("register second rendezvous");
+
+        let program = g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_ROUTE_DECISION },
+                GenericCapToken<RouteDecisionKind>,
+                CanonicalControl<RouteDecisionKind>,
+            >,
+            0,
+        >();
+        let projected: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
+            role_program::project(&program);
+
+        crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
+        let endpoint = cluster
+            .enter::<0, _, _, _>(rv_a, SessionId::new(71), &projected, NoBinding)
+            .expect("enter first rendezvous");
+        assert_eq!(cache_lengths(cluster), (1, 1));
+        assert_eq!(cache_pin_totals(cluster), (1, 1));
+        assert_eq!(
+            crate::global::compiled::LoweringSummary::runtime_scan_count(),
+            1
+        );
+        drop(endpoint);
+        assert_eq!(cache_pin_totals(cluster), (0, 0));
+
+        let endpoint = cluster
+            .enter::<0, _, _, _>(rv_b, SessionId::new(72), &projected, NoBinding)
+            .expect("enter second rendezvous");
+        assert_eq!(cache_lengths(cluster), (1, 1));
+        assert_eq!(cache_pin_totals(cluster), (1, 1));
+        assert_eq!(
+            crate::global::compiled::LoweringSummary::runtime_scan_count(),
+            1,
+            "the second rendezvous must reuse the shared compiled cache entry"
+        );
+        drop(endpoint);
+        assert_eq!(cache_pin_totals(cluster), (0, 0));
+    }
+
+    #[test]
+    fn compiled_cache_is_shared_across_transient_borrows_with_same_program_stamp() {
+        use crate::control::cap::resource_kinds::RouteDecisionKind;
+        use crate::observe::core::TapEvent;
+        use crate::runtime::{config::Config, consts::RING_EVENTS};
+
+        let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+
+        let mut tap = [TapEvent::default(); RING_EVENTS];
+        let mut slab = [0u8; 256];
+        let rv_id = cluster
+            .add_rendezvous(Rendezvous::from_config(
+                Config::new(&mut tap, &mut slab),
+                DummyTransport,
+            ))
+            .expect("register rendezvous");
+
+        let program_a = g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_ROUTE_DECISION },
+                GenericCapToken<RouteDecisionKind>,
+                CanonicalControl<RouteDecisionKind>,
+            >,
+            0,
+        >();
+        let program_b = g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_ROUTE_DECISION },
+                GenericCapToken<RouteDecisionKind>,
+                CanonicalControl<RouteDecisionKind>,
+            >,
+            0,
+        >();
+        let projected_a: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
+            role_program::project(&program_a);
+        let projected_b: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
+            role_program::project(&program_b);
+
+        assert_eq!(projected_a.stamp(), projected_b.stamp());
+        assert_ne!(projected_a.borrow_id(), projected_b.borrow_id());
+
+        crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
+        let endpoint = cluster
+            .enter::<0, _, _, _>(rv_id, SessionId::new(81), &projected_a, NoBinding)
+            .expect("enter first borrowed program");
+        assert_eq!(cache_lengths(cluster), (1, 1));
+        assert_eq!(cache_pin_totals(cluster), (1, 1));
+        assert_eq!(
+            crate::global::compiled::LoweringSummary::runtime_scan_count(),
+            1
+        );
+        drop(endpoint);
+        assert_eq!(cache_pin_totals(cluster), (0, 0));
+
+        let endpoint = cluster
+            .enter::<0, _, _, _>(rv_id, SessionId::new(82), &projected_b, NoBinding)
+            .expect("enter second borrowed program");
+        assert_eq!(cache_lengths(cluster), (1, 1));
+        assert_eq!(cache_pin_totals(cluster), (1, 1));
+        assert_eq!(
+            crate::global::compiled::LoweringSummary::runtime_scan_count(),
+            1,
+            "equivalent borrowed RoleProgram values must share the same cache entry"
+        );
+        drop(endpoint);
+        assert_eq!(cache_pin_totals(cluster), (0, 0));
+    }
+
+    #[test]
+    fn compiled_program_cache_evicts_only_unpinned_entries() {
+        let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+
+        let filler_program = g::send::<Role<0>, Role<1>, Msg<11, u32>, 0>();
+        let filler_projected: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
+            role_program::project(&filler_program);
+        let filler_lowering =
+            crate::global::compiled::LoweringSummary::scan_const(filler_projected.lowering_input());
+        let filler_compiled = CompiledProgram::from_summary(&filler_lowering);
+
+        cluster.with_control_mut(|core| {
+            for idx in 0..MAX_COMPILED_PROGRAMS {
+                let pins = if idx == 0 { 0 } else { 1 };
+                let entry = ProgramCacheEntry {
+                    stamp: filler_lowering.stamp(),
+                    pins,
+                    compiled: filler_compiled.clone(),
+                    lowering: filler_lowering.clone(),
+                };
+                core.compiled_programs
+                    .push_with(|slot| {
+                        slot.write((ProgramCacheHandle(idx as u32 + 1), entry));
+                    })
+                    .expect("prefill program cache");
+            }
+            core.next_compiled_program_id = MAX_COMPILED_PROGRAMS as u32 + 2;
+        });
+
+        let target_program = g::send::<Role<0>, Role<1>, Msg<12, u64>, 0>();
+        let target_projected: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
+            role_program::project(&target_program);
+
+        let (handle, _) = cluster
+            .compiled_program(&target_projected, false)
+            .expect("evict the lone unpinned entry");
+        assert!(handle.0 > MAX_COMPILED_PROGRAMS as u32);
+        assert_eq!(cache_lengths(cluster), (MAX_COMPILED_PROGRAMS, 0));
+
+        let target_present = cluster.with_control_mut(|core| {
+            core.compiled_programs.position(|_, entry| {
+                entry
+                    .lowering
+                    .equivalent_eff_list(target_projected.lowering_input())
+            })
+        });
+        assert!(
+            target_present.is_some(),
+            "a new compiled program must replace an unpinned slot"
+        );
+    }
+
+    #[test]
+    fn compiled_program_cache_reports_resource_exhausted_when_all_entries_are_pinned() {
+        let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+
+        let filler_program = g::send::<Role<0>, Role<1>, Msg<21, u32>, 0>();
+        let filler_projected: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
+            role_program::project(&filler_program);
+        let filler_lowering =
+            crate::global::compiled::LoweringSummary::scan_const(filler_projected.lowering_input());
+        let filler_compiled = CompiledProgram::from_summary(&filler_lowering);
+
+        cluster.with_control_mut(|core| {
+            for idx in 0..MAX_COMPILED_PROGRAMS {
+                let entry = ProgramCacheEntry {
+                    stamp: filler_lowering.stamp(),
+                    pins: 1,
+                    compiled: filler_compiled.clone(),
+                    lowering: filler_lowering.clone(),
+                };
+                core.compiled_programs
+                    .push_with(|slot| {
+                        slot.write((ProgramCacheHandle(idx as u32 + 1), entry));
+                    })
+                    .expect("prefill pinned program cache");
+            }
+            core.next_compiled_program_id = MAX_COMPILED_PROGRAMS as u32 + 2;
+        });
+
+        let target_program = g::send::<Role<0>, Role<1>, Msg<22, u64>, 0>();
+        let target_projected: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
+            role_program::project(&target_program);
+
+        assert!(
+            matches!(
+                cluster.compiled_program(&target_projected, false),
+                Err(CpError::ResourceExhausted)
+            ),
+            "all-pinned cache must reject new compiled programs"
+        );
+    }
+
+    #[test]
+    fn set_resolver_falls_back_to_transient_lowering_when_program_cache_is_all_pinned() {
+        use crate::control::cap::resource_kinds::RouteDecisionKind;
+        use crate::observe::core::TapEvent;
+        use crate::runtime::{config::Config, consts::RING_EVENTS};
+
+        const POLICY_ID: u16 = 9902;
+
+        let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+        let mut tap = [TapEvent::default(); RING_EVENTS];
+        let mut slab = [0u8; 256];
+        let rendezvous = Rendezvous::from_config(Config::new(&mut tap, &mut slab), DummyTransport);
+        let rv_id = rendezvous.id();
+        cluster
+            .add_rendezvous(rendezvous)
+            .expect("register rendezvous");
+
+        let filler_program = g::send::<Role<0>, Role<1>, Msg<31, u32>, 0>();
+        let filler_projected: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
+            role_program::project(&filler_program);
+        let filler_lowering =
+            crate::global::compiled::LoweringSummary::scan_const(filler_projected.lowering_input());
+        let filler_compiled = CompiledProgram::from_summary(&filler_lowering);
+
+        cluster.with_control_mut(|core| {
+            for idx in 0..MAX_COMPILED_PROGRAMS {
+                let entry = ProgramCacheEntry {
+                    stamp: filler_lowering.stamp(),
+                    pins: 1,
+                    compiled: filler_compiled.clone(),
+                    lowering: filler_lowering.clone(),
+                };
+                core.compiled_programs
+                    .push_with(|slot| {
+                        slot.write((ProgramCacheHandle(idx as u32 + 1), entry));
+                    })
+                    .expect("prefill pinned program cache");
+            }
+            core.next_compiled_program_id = MAX_COMPILED_PROGRAMS as u32 + 2;
+        });
+
+        let program = g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_ROUTE_DECISION },
+                GenericCapToken<RouteDecisionKind>,
+                CanonicalControl<RouteDecisionKind>,
+            >,
+            0,
+        >()
+        .policy::<POLICY_ID>();
+        let projected: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
+            role_program::project(&program);
+
+        crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
+        cluster
+            .set_resolver::<POLICY_ID, 0, _, _>(
+                rv_id,
+                &projected,
+                ResolverRef::from_fn(route_resolver),
+            )
+            .expect("register resolver without a free cache slot");
+
+        assert_eq!(
+            cache_lengths(cluster),
+            (MAX_COMPILED_PROGRAMS, 0),
+            "transient resolver setup must not require a resident cache slot"
+        );
+        assert_eq!(
+            crate::global::compiled::LoweringSummary::runtime_scan_count(),
+            1,
+            "transient resolver setup should lower the borrowed RoleProgram exactly once"
+        );
+
+        let compiled = CompiledProgram::from_summary(
+            &crate::global::compiled::LoweringSummary::scan_const(projected.lowering_input()),
+        );
+        let site = compiled
+            .dynamic_policy_sites_for(POLICY_ID)
+            .next()
+            .expect("dynamic policy site");
+        let tag = site.resource_tag().expect("route decision tag");
+        assert!(
+            cluster
+                .dynamic_resolver(DynamicResolverKey::new(rv_id, site.eff_index(), tag))
+                .is_some(),
+            "resolver registration must still succeed when the cache is saturated"
         );
     }
 }

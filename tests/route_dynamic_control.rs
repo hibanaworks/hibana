@@ -1,5 +1,7 @@
 #![cfg(feature = "std")]
 mod common;
+#[path = "support/route_control_kinds.rs"]
+mod route_control_kinds;
 #[path = "support/runtime.rs"]
 mod runtime_support;
 
@@ -34,52 +36,22 @@ const LABEL_LOOP_CONTINUE: u8 = 48;
 const LABEL_LOOP_BREAK: u8 = 49;
 const LABEL_ROUTE_DECISION: u8 = 57;
 
-hibana::impl_control_resource!(
-    RouteRightKind,
-    handle: RouteDecision,
-    name: "RouteRightDecision",
-    label: 11,
-);
+type RouteRightKind = route_control_kinds::RouteControl<11, 0>;
 
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU32, Ordering},
-    mpsc,
 };
 
-fn run_with_large_stack_async<F, Fut, R>(f: F) -> R
+fn block_on_async<F>(future: F) -> F::Output
 where
-    F: FnOnce() -> Fut + Send + 'static,
-    Fut: std::future::Future<Output = R>,
-    R: Send + 'static,
+    F: std::future::Future,
 {
-    fn env_stack_size() -> usize {
-        const DEFAULT: usize = 32 * 1024 * 1024;
-        fn parse_var(key: &str) -> Option<usize> {
-            std::env::var(key).ok()?.parse().ok()
-        }
-        parse_var("HIBANA_TEST_STACK")
-            .or_else(|| parse_var("RUST_MIN_STACK"))
-            .map(|size| size.max(DEFAULT))
-            .unwrap_or(DEFAULT)
-    }
-
-    let (tx, rx) = mpsc::channel();
-    std::thread::Builder::new()
-        .stack_size(env_stack_size())
-        .spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("build tokio runtime");
-            let result = rt.block_on(f());
-            let _ = tx.send(result);
-        })
-        .expect("spawn large-stack thread")
-        .join()
-        .expect("join large-stack thread");
-
-    rx.recv().expect("receive result from large-stack thread")
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build tokio runtime");
+    rt.block_on(future)
 }
 
 const ROUTE_POLICY_ID: u16 = 9;
@@ -449,7 +421,7 @@ fn route_policy_input_resolver(ctx: ResolverContext) -> Result<DynamicResolution
 /// via flow().send(()) which skips wire transmission for self-send.
 #[test]
 fn route_dynamic_self_send_send_path_skips_revalidation() {
-    run_with_large_stack_async(|| async {
+    block_on_async(async {
         let tap_buf = leak_tap_storage();
         let slab = leak_slab(2048);
         let config = Config::new(tap_buf, slab);
@@ -539,7 +511,7 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
 
 #[test]
 fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
-    run_with_large_stack_async(|| async {
+    block_on_async(async {
         let tap_buf = leak_tap_storage();
         let slab = leak_slab(2048);
         let config = Config::new(tap_buf, slab);

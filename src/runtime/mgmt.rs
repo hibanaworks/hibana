@@ -41,11 +41,11 @@ const MGMT_FACET_NEEDS: LeaseFacetNeeds = facets_slots();
 const LOAD_CHUNK_MAX: usize = 1024;
 
 #[cfg(test)]
-pub(crate) fn management_eff_lists() -> (
-    &'static crate::global::const_dsl::EffList,
-    &'static crate::global::const_dsl::EffList,
+pub(crate) fn management_compiled_programs() -> (
+    crate::global::compiled::CompiledProgram,
+    crate::global::compiled::CompiledProgram,
 ) {
-    kernel::management_eff_lists()
+    kernel::management_compiled_programs()
 }
 
 pub(crate) fn enter_controller<'cfg, T, U, C, B, const MAX_RV: usize>(

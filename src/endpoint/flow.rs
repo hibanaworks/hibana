@@ -9,7 +9,7 @@ use crate::{
     endpoint::{
         Endpoint, SendResult,
         control::ControlOutcome,
-        cursor::{CanonicalTokenProvider, CursorEndpoint},
+        kernel::{CanonicalTokenProvider, CursorEndpoint},
     },
     global::typestate::SendMeta,
     global::{ControlHandling, ControlPayloadKind, MessageSpec, SendableLabel},

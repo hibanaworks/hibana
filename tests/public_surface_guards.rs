@@ -15,6 +15,57 @@ fn compact_ws(input: &str) -> String {
     out
 }
 
+fn endpoint_kernel_source() -> String {
+    [
+        include_str!("../src/endpoint.rs"),
+        include_str!("../src/endpoint/kernel/mod.rs"),
+        include_str!("../src/endpoint/kernel/authority.rs"),
+        include_str!("../src/endpoint/kernel/control.rs"),
+        include_str!("../src/endpoint/kernel/core.rs"),
+        include_str!("../src/endpoint/kernel/decode.rs"),
+        include_str!("../src/endpoint/kernel/frontier.rs"),
+        include_str!("../src/endpoint/kernel/inbox.rs"),
+        include_str!("../src/endpoint/kernel/lane_port.rs"),
+        include_str!("../src/endpoint/kernel/observe.rs"),
+        include_str!("../src/endpoint/kernel/offer.rs"),
+        include_str!("../src/endpoint/kernel/recv.rs"),
+        include_str!("../src/endpoint/kernel/send.rs"),
+    ]
+    .join("\n")
+}
+
+fn strip_cfg_test_modules(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let mut cursor = 0usize;
+    while let Some(rel_idx) = src[cursor..].find("#[cfg(test)]\nmod ") {
+        let start = cursor + rel_idx;
+        out.push_str(&src[cursor..start]);
+        let mod_start = start + "#[cfg(test)]\n".len();
+        let open_brace = src[mod_start..]
+            .find('{')
+            .map(|idx| mod_start + idx)
+            .expect("cfg(test) module opening brace");
+        let mut depth = 0usize;
+        let mut end = None;
+        for (offset, ch) in src[open_brace..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(open_brace + offset + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        cursor = end.expect("cfg(test) module closing brace");
+    }
+    out.push_str(&src[cursor..]);
+    out
+}
+
 fn substrate_public_api_allowlist() -> &'static str {
     include_str!("../.github/allowlists/substrate-public-api.txt")
 }
@@ -285,7 +336,7 @@ fn wire_encode_trait_does_not_keep_optional_length_fallback() {
 
 #[test]
 fn offer_kernel_stays_three_stage_and_fail_closed() {
-    let cursor_src = include_str!("../src/endpoint/cursor.rs");
+    let cursor_src = include_str!("../src/endpoint/kernel/core.rs");
     let offer_body = impl_body(
         cursor_src,
         "pub async fn offer(self) -> RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>",
@@ -402,7 +453,7 @@ fn impl_body<'a>(src: &'a str, anchor: &str) -> &'a str {
 
 #[test]
 fn route_branch_does_not_expose_scope_coordinate_getters() {
-    let src = include_str!("../src/endpoint/cursor.rs");
+    let src = include_str!("../src/endpoint/kernel/core.rs");
     let impl_body = compact_ws(impl_body(
         src,
         "impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>",
@@ -503,6 +554,7 @@ fn eff_list_does_not_re_expose_policy_marker_slices() {
 #[test]
 fn eff_list_does_not_reintroduce_derived_lookup_tables() {
     let src = include_str!("../src/global/const_dsl.rs");
+    let compiled_driver_src = include_str!("../src/global/compiled/driver.rs");
     let compact = compact_ws(src);
 
     assert!(
@@ -533,7 +585,6 @@ fn eff_list_does_not_reintroduce_derived_lookup_tables() {
     }
 
     for required in [
-        "pub(crate) const fn first_dynamic_policy_in_range(",
         "pub(crate) const fn scope_id_for_offset(&self, offset: usize) -> Option<ScopeId> {",
         "pub const fn scope_has_linger(&self, scope: ScopeId) -> bool {",
     ] {
@@ -542,13 +593,22 @@ fn eff_list_does_not_reintroduce_derived_lookup_tables() {
             "EffList should keep direct lookup helpers while deriving them on demand: {required}"
         );
     }
+    assert!(
+        !src.contains("pub(crate) const fn first_dynamic_policy_in_range("),
+        "EffList must not own dynamic policy scans once lowering view is the single authority"
+    );
+    assert!(
+        compiled_driver_src.contains("pub(crate) const fn first_dynamic_policy_in_range("),
+        "LoweringView must remain the sole owner of dynamic policy scans"
+    );
 }
 
 #[test]
 fn role_program_does_not_own_policy_marker_metadata_iterators() {
     let role_program_src = include_str!("../src/global/role_program.rs");
     let cluster_core_src = include_str!("../src/control/cluster/core.rs");
-    let compiled_facts_src = include_str!("../src/global/compiled/facts.rs");
+    let compiled_program_src = include_str!("../src/global/compiled/program.rs");
+    let compiled_driver_src = include_str!("../src/global/compiled/driver.rs");
 
     for forbidden in [
         "pub(crate) struct PolicyInfo",
@@ -562,17 +622,112 @@ fn role_program_does_not_own_policy_marker_metadata_iterators() {
         );
     }
     assert!(
-        cluster_core_src.contains("ProgramFacts::from_eff_list(program.eff_list())"),
-        "cluster owner must consume compiled lowering facts instead of rescanning policy markers"
+        cluster_core_src.contains("self.with_compiled_program(program, |compiled|")
+            && cluster_core_src.contains(".dynamic_policy_sites_for(POLICY)"),
+        "cluster owner must consume cached compiled-program facts instead of rescanning policy markers"
     );
     assert!(
-        !cluster_core_src.contains(".policies()") && !compiled_facts_src.contains(".policies()"),
+        !cluster_core_src.contains(".policies()") && !compiled_program_src.contains(".policies()"),
         "policy marker scans must not bypass the compiled lowering owner"
     );
     assert!(
-        compiled_facts_src.contains("eff_list.policy_with_scope("),
-        "compiled lowering owner must reconstruct dynamic policy metadata through policy_with_scope"
+        compiled_driver_src.contains("eff_list.policy_with_scope(")
+            && !compiled_program_src.contains("eff_list.policy_with_scope("),
+        "the unified lowering driver must own policy_with_scope reconstruction instead of CompiledProgram"
     );
+}
+
+#[test]
+fn projection_seal_stamps_without_materializing_runtime_compiled_owners() {
+    let seal_src = include_str!("../src/global/compiled/seal.rs");
+
+    assert!(
+        seal_src.contains("LoweringSummary::scan_const(program.eff_list())"),
+        "ProjectionSeal must validate through the unified lowering driver"
+    );
+    for required in [
+        "summary.validate_projection_program();",
+        "let typestate = RoleTypestate::<ROLE>::from_summary(&summary);",
+        "typestate.validate_compiled_layout();",
+    ] {
+        assert!(
+            seal_src.contains(required),
+            "ProjectionSeal must revalidate projection capacities without materializing runtime owners: {required}"
+        );
+    }
+    for forbidden in [
+        "CompiledProgram::compile(",
+        "CompiledRole::compile(",
+        "CompiledProgram::from_summary(",
+        "CompiledRole::from_summary(",
+        "CompiledProgram::validate_summary(",
+        "CompiledRole::validate_summary(",
+    ] {
+        assert!(
+            !seal_src.contains(forbidden),
+            "ProjectionSeal must not materialize runtime compiled owners during projection: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn runtime_compiled_cache_materializes_lowering_owners_in_place() {
+    let cluster_core_src = include_str!("../src/control/cluster/core.rs");
+    let cluster_core_src = cluster_core_src
+        .split("\nmod tests {")
+        .next()
+        .expect("cluster core runtime section");
+    let cluster_core_ws = compact_ws(&cluster_core_src);
+
+    for required in [
+        "ProgramCacheEntry::init_from_projection_input(",
+        "CompiledProgram::init_from_summary(",
+        "RoleCacheEntry::init_from_summary::<ROLE>(",
+        "CompiledRole::init_from_summary::<ROLE>(",
+        "LoweringSummary::init_scan(",
+    ] {
+        assert!(
+            cluster_core_src.contains(required),
+            "runtime cache materialization must build compiled owners directly in their resident slots: {required}"
+        );
+    }
+
+    for forbidden in [
+        "let compiled = CompiledProgram::from_summary(",
+        "let compiled = CompiledRole::from_summary::<ROLE>(",
+        "let entry = ProgramCacheEntry {",
+        "let entry = RoleCacheEntry {",
+    ] {
+        assert!(
+            !cluster_core_src.contains(forbidden),
+            "runtime cache materialization must avoid by-value compiled owner temporaries: {forbidden}"
+        );
+    }
+
+    assert!(
+        cluster_core_ws.contains("let mut compiled = MaybeUninit::<CompiledProgram>::uninit();"),
+        "read-only transient compiled-program access may use a local MaybeUninit owner when residency is impossible"
+    );
+}
+
+#[test]
+fn large_owner_types_do_not_regress_to_copy_semantics() {
+    let effects_ws = compact_ws(include_str!("../src/control/cluster/effects.rs"));
+    let role_program_ws = compact_ws(include_str!("../src/global/role_program.rs"));
+    let typestate_ws = compact_ws(include_str!("../src/global/typestate/builder.rs"));
+
+    for forbidden in [
+        "#[derive(Debug, Clone, Copy)] pub(crate) struct EffectEnvelope {",
+        "#[derive(Clone, Copy, Debug)] pub(crate) struct ProjectedRoleLayout {",
+        "#[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct RoleTypestate<const ROLE: u8> {",
+    ] {
+        assert!(
+            !effects_ws.contains(forbidden)
+                && !role_program_ws.contains(forbidden)
+                && !typestate_ws.contains(forbidden),
+            "large lowering/runtime owner types must not regain Copy semantics: {forbidden}"
+        );
+    }
 }
 
 #[test]
@@ -628,24 +783,27 @@ fn role_program_projection_metadata_stays_internal() {
         "pub(crate) enum LocalDirection {",
         "pub(crate) struct LocalStep {",
         "pub(crate) struct ProjectedRoleLayout {",
-        "pub(crate) struct ProjectedRoleData<const ROLE: u8> {",
-        "pub(crate) const fn machine(&self) -> RoleMachine<ROLE> {",
-        "RoleMachine::<ROLE>::from_eff_list(self.eff_list)",
-        "ProgramFacts::from_eff_list(self.eff_list).lease_budget()",
-        "let _ = ProgramFacts::from_eff_list(eff);",
-        "RoleMachine::<ROLE>::validate(eff);",
+        "pub(crate) const fn stamp(&self) -> ProgramStamp {",
+        "pub(crate) fn borrow_id(&self) -> usize {",
+        "pub(crate) const fn lowering_input(&self) -> &'prog EffList {",
     ] {
         assert!(
             role_program_src.contains(required),
             "RoleProgram projection-inspection helpers should stay crate-private: {required}"
         );
     }
+    assert!(
+        role_program_src.contains("#[cfg(test)]\n    #[inline(always)]\n    pub(crate) const fn eff_list_ref(&self) -> &'prog EffList {")
+            && role_program_src
+                .contains("#[cfg(test)]\n    #[inline(always)]\n    pub(crate) fn compile_role(&self) -> CompiledRole {"),
+        "raw EffList and direct role compile helpers must stay test-only if they exist at all"
+    );
 
     assert!(
         role_program_ws.contains(
-            "pub struct RoleProgram<'prog, const ROLE: u8, LocalSteps, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, mint: Mint, _local_steps: core::marker::PhantomData<LocalSteps>, }"
+            "pub struct RoleProgram<'prog, const ROLE: u8, LocalSteps, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, mint: Mint, stamp: ProgramStamp, _local_steps: core::marker::PhantomData<LocalSteps>, }"
         ),
-        "RoleProgram must stay thin and store only eff list, mint, and typed witness"
+        "RoleProgram must stay thin and store only eff list, mint, stamp, and typed witness"
     );
     assert!(
         !role_program_ws.contains("LocalSteps = steps::StepNil"),
@@ -928,7 +1086,7 @@ fn regression_fixtures_do_not_hide_canonical_owners_behind_synonyms() {
         ),
         ("ui-pass/g-par-many.rs", "type R0 = g::Role<0>;"),
         ("ui-pass/g-par-many.rs", "type LaneA = StepCons<"),
-        ("ui-pass/g-efflist-deref.rs", "type Steps = StepCons<"),
+        ("ui/g-efflist-deref.rs", "type Steps = StepCons<"),
         ("ui/g-empty_arms.rs", "type ArmSteps = StepCons<"),
         ("ui/g-par-role-conflict.rs", "type LaneA = StepCons<"),
         (
@@ -1189,7 +1347,7 @@ fn internal_source_test_modules_do_not_hide_canonical_owners_behind_synonyms() {
             "type ControllerLoopLocal = <LoopSteps<",
         ),
         ("global/role_program.rs", "type Client = Role<0>;"),
-        ("endpoint/cursor.rs", "type HintController = Role<0>;"),
+        ("endpoint/kernel/core.rs", "type HintController = Role<0>;"),
         (
             "control/cluster/effects.rs",
             "type Actor = crate::g::Role<0>;",
@@ -1212,10 +1370,10 @@ fn route_projection_regression_fixtures_keep_canonical_inputs_live() {
     let par_empty_lane = include_str!("ui/g-par-empty-lane.rs");
 
     assert!(
-        route_policy_mismatch.contains("hibana::impl_control_resource!(")
-            && route_policy_mismatch.contains("ArmWithPolicyKind,")
-            && route_policy_mismatch.contains("ArmWithoutPolicyKind,"),
-        "g-route-policy-mismatch must define route-control fixtures through the canonical impl_control_resource! owner"
+        route_policy_mismatch.contains("control_kinds::UnitControl<")
+            && route_policy_mismatch.contains("type ArmWithPolicyKind =")
+            && route_policy_mismatch.contains("type ArmWithoutPolicyKind ="),
+        "g-route-policy-mismatch must define route-control fixtures through the shared explicit trait-impl helper"
     );
     assert!(
         route_policy_mismatch.contains("const CONTROLLER: RoleProgram<")
@@ -1227,16 +1385,14 @@ fn route_projection_regression_fixtures_keep_canonical_inputs_live() {
             "Msg<5, GenericCapToken<ArmWithPolicyKind>, CanonicalControl<ArmWithPolicyKind>>"
         ) && route_policy_mismatch.contains(
             "Msg<6, GenericCapToken<ArmWithoutPolicyKind>, CanonicalControl<ArmWithoutPolicyKind>>"
-        ) && !route_policy_mismatch.contains("struct ArmKind<const LABEL: u8>;")
-            && !route_policy_mismatch
-                .contains("impl<const LABEL: u8> ResourceKind for ArmKind<LABEL>"),
-        "g-route-policy-mismatch must use concrete canonical control kinds instead of test-local manual ResourceKind boilerplate"
+        ),
+        "g-route-policy-mismatch must keep concrete control-kind aliases wired into canonical control messages"
     );
     assert!(
-        route_unprojectable.contains("hibana::impl_control_resource!(")
-            && route_unprojectable.contains("RouteArm100Kind,")
-            && route_unprojectable.contains("RouteArm101Kind,"),
-        "g-route-unprojectable must define route-control fixtures through the canonical impl_control_resource! owner"
+        route_unprojectable.contains("control_kinds::RouteControl<")
+            && route_unprojectable.contains("type RouteArm100Kind =")
+            && route_unprojectable.contains("type RouteArm101Kind ="),
+        "g-route-unprojectable must define route-control fixtures through the shared explicit trait-impl helper"
     );
     assert!(
         route_unprojectable.contains("static PASSIVE_PROGRAM: RoleProgram<")
@@ -1248,13 +1404,11 @@ fn route_projection_regression_fixtures_keep_canonical_inputs_live() {
             "Msg<100, GenericCapToken<RouteArm100Kind>, CanonicalControl<RouteArm100Kind>>"
         ) && route_unprojectable.contains(
             "Msg<101, GenericCapToken<RouteArm101Kind>, CanonicalControl<RouteArm101Kind>>"
-        ) && !route_unprojectable.contains("struct RouteArmKind<const LABEL: u8>;")
-            && !route_unprojectable
-                .contains("impl<const LABEL: u8> ResourceKind for RouteArmKind<LABEL>"),
-        "g-route-unprojectable must use concrete canonical control kinds instead of test-local manual ResourceKind boilerplate"
+        ),
+        "g-route-unprojectable must keep concrete control-kind aliases wired into canonical control messages"
     );
     assert!(
-        route_unprojectable.contains("let _ = PASSIVE_PROGRAM.eff_list();"),
+        route_unprojectable.contains("let _ = &PASSIVE_PROGRAM;"),
         "g-route-unprojectable must keep a direct use-site for the projected program so compile-fail coverage cannot silently evaporate"
     );
     assert!(
@@ -1278,7 +1432,7 @@ fn route_projection_regression_fixtures_keep_canonical_inputs_live() {
 }
 
 #[test]
-fn route_control_fixtures_use_canonical_macro_owner() {
+fn route_control_fixtures_use_shared_explicit_impl_helper() {
     for (path, src, required) in [
         (
             "route_dynamic_control.rs",
@@ -1327,8 +1481,8 @@ fn route_control_fixtures_use_canonical_macro_owner() {
         ),
     ] {
         assert!(
-            src.contains("hibana::impl_control_resource!(") && src.contains(required),
-            "{path} must define route-control tokens through the canonical impl_control_resource! owner"
+            src.contains("control_kinds::RouteControl<") && src.contains(required),
+            "{path} must define route-control tokens through the shared explicit trait-impl helper"
         );
         for forbidden in [
             "struct RouteRightKind;",
@@ -1887,7 +2041,6 @@ fn private_owners_do_not_keep_internal_helpers_public() {
     for required in [
         "pub(crate) struct EffectEnvelope {",
         "pub(crate) struct ResourceDescriptor {",
-        "pub(crate) const fn empty() -> Self {",
         "pub(crate) fn cp_effects(&self) -> impl Iterator<Item = &CpEffect> {",
         "pub(crate) fn resources(&self) -> impl Iterator<Item = &ResourceDescriptor> {",
         "pub(crate) fn controls(&self) -> impl Iterator<Item = &ControlMarker> {",
@@ -2461,11 +2614,20 @@ fn eff_index_and_binding_metadata_keep_canonical_owner_types() {
         );
     }
 
-    for required in [
-        "pub struct EffIndex(u16);",
-        "pub eff_index: EffIndex,",
+    for forbidden in [
         "pub struct EffSlice(&'static [EffStruct]);",
+        "Seq =",
+        "Par =",
+        "Alt =",
+        "Recv,",
     ] {
+        assert!(
+            !eff_src.contains(forbidden),
+            "flat raw effect metadata must not regrow ghost model residues: {forbidden}"
+        );
+    }
+
+    for required in ["pub struct EffIndex(u16);", "pub eff_index: EffIndex,"] {
         assert!(
             eff_src.contains(required)
                 || binding_src.contains(required)
@@ -2510,8 +2672,8 @@ fn state_index_keeps_canonical_newtype_owner() {
         "pub struct JumpError {",
         "pub enum PassiveArmNavigation {",
         "pub enum LoopRole {",
-        "pub struct LoopMetadata<const ROLE: u8> {",
-        "pub struct PhaseCursor<const ROLE: u8> {",
+        "pub struct LoopMetadata {",
+        "pub struct PhaseCursor {",
         "pub fn phase_cursor(&'prog self) -> PhaseCursor<ROLE> {",
         "pub(crate) fn phase_cursor(&'prog self) -> PhaseCursor<ROLE> {",
     ] {
@@ -2526,8 +2688,8 @@ fn state_index_keeps_canonical_newtype_owner() {
         "pub(crate) struct JumpError {",
         "pub(crate) enum PassiveArmNavigation {",
         "pub(crate) enum LoopRole {",
-        "pub(crate) struct LoopMetadata<const ROLE: u8> {",
-        "pub(crate) struct PhaseCursor<const ROLE: u8> {",
+        "pub(crate) struct LoopMetadata {",
+        "pub(crate) struct PhaseCursor {",
     ] {
         assert!(
             typestate_src.contains(required) || role_program_src.contains(required),
@@ -2546,7 +2708,8 @@ fn endpoint_transport_and_mgmt_lower_layers_stay_non_public() {
     let endpoint_src = include_str!("../src/endpoint.rs");
     let affine_src = include_str!("../src/endpoint/affine.rs");
     let control_src = include_str!("../src/endpoint/control.rs");
-    let cursor_src = include_str!("../src/endpoint/cursor.rs");
+    let cursor_src = include_str!("../src/endpoint/kernel/core.rs");
+    let kernel_mod_src = include_str!("../src/endpoint/kernel/mod.rs");
     let flow_src = include_str!("../src/endpoint/flow.rs");
     let observe_core_src = include_str!("../src/observe/core.rs");
     let observe_events_src = include_str!("../src/observe/events.rs");
@@ -2580,6 +2743,7 @@ fn endpoint_transport_and_mgmt_lower_layers_stay_non_public() {
                 && !affine_src.contains(forbidden)
                 && !control_src.contains(forbidden)
                 && !cursor_src.contains(forbidden)
+                && !kernel_mod_src.contains(forbidden)
                 && !observe_core_src.contains(forbidden),
             "internal lower-layer owner must not stay public: {forbidden}"
         );
@@ -2608,6 +2772,7 @@ fn endpoint_transport_and_mgmt_lower_layers_stay_non_public() {
                 || affine_src.contains(required)
                 || control_src.contains(required)
                 || cursor_src.contains(required)
+                || kernel_mod_src.contains(required)
                 || observe_core_src.contains(required),
             "internal lower-layer owner should stay crate-private: {required}"
         );
@@ -2694,7 +2859,7 @@ fn endpoint_transport_and_mgmt_lower_layers_stay_non_public() {
 #[test]
 fn core_sources_do_not_keep_env_debug_escape_hatches() {
     let lib_src = include_str!("../src/lib.rs");
-    let cursor_src = include_str!("../src/endpoint/cursor.rs");
+    let cursor_src = endpoint_kernel_source();
 
     for forbidden in [
         "HIBANA_DECODE_DEBUG",
@@ -2795,7 +2960,7 @@ fn cluster_hub_stays_explicit_and_dead_ffi_stays_deleted() {
 #[test]
 fn hidden_attach_path_uses_canonical_attach_endpoint_name() {
     let cluster_core_src = include_str!("../src/control/cluster/core.rs");
-    let cursor_src = include_str!("../src/endpoint/cursor.rs");
+    let cursor_src = endpoint_kernel_source();
     let endpoint_src = include_str!("../src/endpoint.rs");
 
     assert!(
@@ -2816,6 +2981,104 @@ fn hidden_attach_path_uses_canonical_attach_endpoint_name() {
         !cursor_src.contains(".attach_cursor::<"),
         "cursor tests must not keep using the stale attach_cursor helper name"
     );
+}
+
+#[test]
+fn endpoint_kernel_split_and_lane_port_unsafe_boundary_hold() {
+    let endpoint_src = include_str!("../src/endpoint.rs");
+    let kernel_mod_src = include_str!("../src/endpoint/kernel/mod.rs");
+    let kernel_core_src = include_str!("../src/endpoint/kernel/core.rs");
+    let lane_port_src = include_str!("../src/endpoint/kernel/lane_port.rs");
+    let authority_src = include_str!("../src/endpoint/kernel/authority.rs");
+    let control_src = include_str!("../src/endpoint/kernel/control.rs");
+    let decode_src = include_str!("../src/endpoint/kernel/decode.rs");
+    let frontier_src = include_str!("../src/endpoint/kernel/frontier.rs");
+    let inbox_src = include_str!("../src/endpoint/kernel/inbox.rs");
+    let observe_src = include_str!("../src/endpoint/kernel/observe.rs");
+    let offer_src = include_str!("../src/endpoint/kernel/offer.rs");
+    let recv_src = include_str!("../src/endpoint/kernel/recv.rs");
+    let send_src = include_str!("../src/endpoint/kernel/send.rs");
+
+    assert!(
+        endpoint_src.contains("pub(crate) mod kernel;"),
+        "endpoint root must route internal kernel ownership through endpoint::kernel"
+    );
+    assert!(
+        kernel_mod_src.contains("mod core;")
+            && kernel_mod_src.contains("mod send;")
+            && kernel_mod_src.contains("mod recv;")
+            && kernel_mod_src.contains("mod offer;")
+            && kernel_mod_src.contains("mod decode;")
+            && kernel_mod_src.contains("mod authority;")
+            && kernel_mod_src.contains("mod frontier;")
+            && kernel_mod_src.contains("mod inbox;")
+            && kernel_mod_src.contains("mod control;")
+            && kernel_mod_src.contains("mod observe;")
+            && kernel_mod_src.contains("mod lane_port;"),
+        "endpoint kernel must keep the split module boundary explicit"
+    );
+    assert!(
+        std::fs::metadata(format!(
+            "{}/src/endpoint/cursor.rs",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .is_err(),
+        "legacy endpoint/cursor.rs owner must stay deleted"
+    );
+
+    let non_test_core = strip_cfg_test_modules(kernel_core_src);
+    assert!(
+        !non_test_core.contains("unsafe"),
+        "production endpoint kernel core must keep unsafe concentrated out of core.rs"
+    );
+    for (path, src) in [
+        ("authority.rs", authority_src),
+        ("control.rs", control_src),
+        ("decode.rs", decode_src),
+        ("frontier.rs", frontier_src),
+        ("inbox.rs", inbox_src),
+        ("observe.rs", observe_src),
+        ("offer.rs", offer_src),
+        ("recv.rs", recv_src),
+        ("send.rs", send_src),
+    ] {
+        assert!(
+            !src.contains("unsafe"),
+            "endpoint kernel module {path} must not own production unsafe outside lane_port.rs"
+        );
+    }
+    assert!(
+        lane_port_src.contains("unsafe {"),
+        "lane_port.rs must remain the concentrated owner for endpoint transport unsafe"
+    );
+}
+
+#[test]
+fn phase_cursor_uses_stable_compiled_pointer_without_copy_fields() {
+    let cursor_src = include_str!("../src/global/typestate/cursor.rs");
+
+    assert!(
+        cursor_src.contains("pub(crate) struct PhaseCursor {")
+            && cursor_src.contains("compiled: NonNull<CompiledRole>,")
+            && cursor_src.contains("idx: usize,")
+            && cursor_src.contains("phase_index: usize,")
+            && cursor_src.contains("lane_cursors: [usize; MAX_LANES],")
+            && cursor_src.contains("label_lane_mask: [u8; 256],"),
+        "PhaseCursor must remain a thin compiled pointer plus mutable runtime state"
+    );
+    for forbidden in [
+        "typestate: &'a RoleTypestateValue",
+        "phases: &'a [Phase]",
+        "local_steps: &'a [LocalStep]",
+        "eff_index_to_step: &'a [u16;",
+        "step_index_to_state: &'a [StateIndex;",
+        "from_machine(",
+    ] {
+        assert!(
+            !cursor_src.contains(forbidden),
+            "PhaseCursor must not keep copied compiled metadata or machine adapters: {forbidden}"
+        );
+    }
 }
 
 #[test]
@@ -2853,6 +3116,8 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
     let steps_ws = compact_ws(steps_src);
     let global_src_full = include_str!("../src/global.rs");
     let role_program_src = include_str!("../src/global/role_program.rs");
+    let compiled_driver_src = include_str!("../src/global/compiled/driver.rs");
+    let compiled_program_src = include_str!("../src/global/compiled/program.rs");
 
     for required in [
         "pub type LoopContinueSteps<",
@@ -2947,7 +3212,7 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         (runtime_src, "pub(crate) mod mgmt;", "pub mod mgmt;"),
         (endpoint_src, "pub(crate) mod affine;", "pub mod affine;"),
         (endpoint_src, "pub(crate) mod control;", "pub mod control;"),
-        (endpoint_src, "pub(crate) mod cursor;", "pub mod cursor;"),
+        (endpoint_src, "pub(crate) mod kernel;", "pub mod kernel;"),
         (endpoint_src, "pub(crate) mod flow;", "pub mod flow;"),
         (cap_src, "pub(crate) mod mint;", "pub mod mint;"),
         (
@@ -3388,7 +3653,7 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         "pub(crate) struct LeaseFacetNeeds {",
         "pub(crate) struct LeaseGraphBudget {",
         "pub(crate) trait LeaseSpecFacetNeeds {",
-        "pub(crate) const fn lease_budget(&self) -> crate::control::lease::planner::LeaseGraphBudget {",
+        "pub(crate) const fn lease_budget(&self) -> LeaseGraphBudget {",
         "pub(crate) enum PolicyMode {",
         "pub(crate) const fn dynamic(policy_id: u16) -> Self {",
         "pub(crate) enum CapError {",
@@ -3416,6 +3681,8 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
                 || const_dsl_src.contains(required)
                 || global_src_full.contains(required)
                 || role_program_src.contains(required)
+                || compiled_driver_src.contains(required)
+                || compiled_program_src.contains(required)
                 || rendezvous_error_src.contains(required)
                 || rendezvous_port_src.contains(required),
             "lease lower layer must stay crate-private under its canonical owner: {required}"

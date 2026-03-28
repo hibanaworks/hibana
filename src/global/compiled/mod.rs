@@ -1,9 +1,16 @@
 //! Crate-private lowering owners for the unified compiled pipeline.
 //!
-//! This module is intentionally internal. It gives later lowering work a single
-//! ownership layer without expanding the public API.
+//! This module is intentionally internal. It gives lowering a single ownership
+//! layer without expanding the public API.
 
-mod facts;
-mod machine;
+mod driver;
+mod program;
+mod role;
+mod seal;
 
-pub(crate) use self::{facts::ProgramFacts, machine::RoleMachine};
+pub(crate) use self::{
+    driver::{LoweringSummary, LoweringView, ProgramStamp},
+    program::{CompiledProgram, ControlSemanticKind, ControlSemanticsTable},
+    role::CompiledRole,
+    seal::ProjectionSeal,
+};

@@ -6,7 +6,7 @@
 //! slice via standard slice traits.
 
 use crate::control::cap::mint::CapShot;
-use crate::eff::{self, EffSlice, EffStruct};
+use crate::eff::{self, EffStruct};
 use crate::global::{
     ControlHandling, ControlLabelSpec, MessageControlSpec, MessageSpec, RoleMarker, SendableLabel,
 };
@@ -463,17 +463,6 @@ impl EffList {
         }
     }
 
-    /// Populate the accumulator from an existing `EffSlice`.
-    pub const fn from_slice(list: EffSlice) -> Self {
-        let mut acc = Self::new();
-        let mut idx = 0;
-        while idx < list.len() {
-            acc = acc.push(list.at(idx));
-            idx += 1;
-        }
-        acc
-    }
-
     /// Return the current length.
     pub const fn len(&self) -> usize {
         self.len
@@ -487,11 +476,6 @@ impl EffList {
     /// Whether the accumulator is empty.
     pub const fn is_empty(&self) -> bool {
         self.len == 0
-    }
-
-    /// Access an element by index (const-compatible).
-    pub const fn at(&self, idx: usize) -> EffStruct {
-        self.data[idx]
     }
 
     /// Shift every scope identifier by `offset` ordinals.
@@ -540,53 +524,10 @@ impl EffList {
         self
     }
 
-    /// Return the last atom contained in the list (panic if empty or last node not atom).
-    pub const fn last_atom(&self) -> eff::EffAtom {
-        if self.len == 0 {
-            panic!("EffList is empty");
-        }
-        let node = self.data[self.len - 1];
-        if !matches!(node.kind, eff::EffKind::Atom) {
-            panic!("EffList does not end with an atom");
-        }
-        node.atom_data()
-    }
-
-    /// Return the first atom contained in the list (panic if the list is empty or does not start with an atom).
-    pub const fn first_atom(&self) -> eff::EffAtom {
-        if self.len == 0 {
-            panic!("EffList is empty");
-        }
-        let node = self.data[0];
-        if !matches!(node.kind, eff::EffKind::Atom) {
-            panic!("EffList does not start with an atom");
-        }
-        node.atom_data()
-    }
-
     /// Borrow the accumulated effects as a slice.
     #[inline(always)]
     pub const fn as_slice(&self) -> &[EffStruct] {
         unsafe { core::slice::from_raw_parts(self.data.as_ptr(), self.len) }
-    }
-
-    /// Borrow the accumulated effects as a `'static` slice.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that `self` lives for the `'static` lifetime
-    /// (e.g., a `pub static` value).
-    #[inline(always)]
-    pub const fn as_static_slice(&'static self) -> EffSlice {
-        EffSlice::new(unsafe { core::slice::from_raw_parts(self.data.as_ptr(), self.len) })
-    }
-
-    #[inline(always)]
-    pub const fn node_at(&self, offset: usize) -> crate::eff::EffStruct {
-        if offset >= self.len {
-            panic!("EffList::node_at offset out of bounds");
-        }
-        self.data[offset]
     }
 
     /// Append a single node to the accumulator.
@@ -597,15 +538,6 @@ impl EffList {
         self.data[self.len] = node;
         self.len += 1;
         self
-    }
-
-    /// Runtime-only push that mutates the accumulator in place to avoid large copies.
-    pub fn push_mut(&mut self, node: EffStruct) {
-        if self.len >= MAX_CAPACITY {
-            panic!("EffList capacity exceeded");
-        }
-        self.data[self.len] = node;
-        self.len += 1;
     }
 
     /// Extend the accumulator with another `EffList`.
@@ -650,26 +582,6 @@ impl EffList {
             spec_idx += 1;
         }
         self
-    }
-
-    /// Merge multiple accumulators into one.
-    ///
-    /// Linear in total size: each list is rebased and appended.
-    pub const fn merge_lists<const N: usize>(items: [EffList; N]) -> Self {
-        if N == 0 {
-            panic!("const_merge requires at least one EffList");
-        }
-        let mut acc = Self::new();
-        let mut i = 0;
-        while i < N {
-            let list = items[i];
-            if list.len == 0 {
-                panic!("EffList slice must not be empty");
-            }
-            acc = acc.extend_list(list);
-            i += 1;
-        }
-        acc
     }
 
     const fn push_scope_marker_raw(
@@ -885,50 +797,6 @@ impl EffList {
         None
     }
 
-    /// Find the first dynamic policy marker within an offset range [start, end).
-    ///
-    /// Returns (policy, eff_offset, resource_tag) if found.
-    /// Used at scope Enter to set route policy independent of role projection.
-    pub(crate) const fn first_dynamic_policy_in_range(
-        &self,
-        scope_start: usize,
-        scope_end: usize,
-    ) -> Option<(PolicyMode, usize, u8)> {
-        if scope_start >= MAX_CAPACITY || scope_start >= scope_end {
-            return None;
-        }
-        let mut best_offset = MAX_CAPACITY;
-        let mut best_policy = None;
-        let mut idx = 0usize;
-        while idx < self.policy_marker_len {
-            let marker = self.policy_markers[idx];
-            if marker.policy.is_dynamic()
-                && marker.offset >= scope_start
-                && marker.offset < scope_end
-                && marker.offset < best_offset
-            {
-                best_offset = marker.offset;
-                best_policy = Some(marker.policy);
-            }
-            idx += 1;
-        }
-        match best_policy {
-            Some(policy) => {
-                let eff_struct = self.data[best_offset];
-                let tag = if matches!(eff_struct.kind, eff::EffKind::Atom) {
-                    match eff_struct.atom_data().resource {
-                        Some(tag) => tag,
-                        None => 0,
-                    }
-                } else {
-                    0
-                };
-                Some((policy, best_offset, tag))
-            }
-            None => None,
-        }
-    }
-
     pub(crate) const fn scope_id_for_offset(&self, offset: usize) -> Option<ScopeId> {
         if offset >= MAX_CAPACITY {
             return None;
@@ -1049,7 +917,6 @@ impl EffList {
             core::slice::from_raw_parts(self.control_markers.as_ptr(), self.control_marker_len)
         }
     }
-
 }
 
 impl core::ops::Deref for EffList {
@@ -1131,7 +998,6 @@ where
             Some(rule) => Some(rule.resource_tag),
             None => None,
         },
-        direction: eff::EffDirection::Send,
         lane: LANE,
     };
     let mut list = EffList::new().push(EffStruct::atom(atom));
@@ -1244,7 +1110,7 @@ mod tests {
 
     #[test]
     fn policy_scope_stays_internal() {
-        let list: &EffList = SENDER_PROGRAM.eff_list();
+        let list: &EffList = SENDER_PROGRAM.eff_list_ref();
         let mut policies = 0usize;
         let mut offset = 0usize;
         while offset < list.len() {

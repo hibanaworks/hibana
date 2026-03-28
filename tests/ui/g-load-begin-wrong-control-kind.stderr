@@ -8,12 +8,8 @@ error[E0277]: the trait bound `CanonicalControl<LoadBeginKind>: hibana::global::
 15 | |         >,
    | |_________^ unsatisfied trait bound
    |
-help: the trait `RequireSelfSendForCanonical<hibana::global::steps::False>` is not implemented for `CanonicalControl<LoadBeginKind>`
-      but trait `RequireSelfSendForCanonical<hibana::global::steps::True>` is implemented for it
-  --> src/global.rs
-   |
-   | impl<K: ResourceKind> RequireSelfSendForCanonical<steps::True> for CanonicalControl<K> {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: the trait `RequireSelfSendForCanonical<hibana::global::steps::False>` is not implemented for `CanonicalControl<LoadBeginKind>`
+           but trait `RequireSelfSendForCanonical<hibana::global::steps::True>` is implemented for it
    = help: for that trait implementation, expected `hibana::global::steps::True`, found `hibana::global::steps::False`
 note: required by a bound in `hibana::g::send`
   --> src/global.rs

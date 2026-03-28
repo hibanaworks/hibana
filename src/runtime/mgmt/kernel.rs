@@ -11,7 +11,7 @@ use crate::{
         MgmtRouteReplyStatsKind, MgmtRouteReplySuccessFamilyKind, MgmtRouteReplySuccessFinalKind,
         MgmtRouteReplySuccessTailKind, MgmtRouteRevertKind, MgmtRouteStatsKind,
     },
-    endpoint::{RecvError, SendError, cursor::CursorEndpoint},
+    endpoint::{RecvError, SendError, kernel::CursorEndpoint},
     g::{self, Program},
     global::{
         CanonicalControl, ExternalControl,
@@ -602,11 +602,14 @@ const _: () = crate::control::lease::planner::assert_program_covers_facets(
 );
 
 #[cfg(test)]
-pub(super) fn management_eff_lists() -> (
-    &'static crate::global::const_dsl::EffList,
-    &'static crate::global::const_dsl::EffList,
+pub(super) fn management_compiled_programs() -> (
+    crate::global::compiled::CompiledProgram,
+    crate::global::compiled::CompiledProgram,
 ) {
-    (CONTROLLER_PROGRAM.eff_list(), CLUSTER_PROGRAM.eff_list())
+    (
+        crate::global::compiled::CompiledProgram::compile(CONTROLLER_PROGRAM.eff_list_ref()),
+        crate::global::compiled::CompiledProgram::compile(CLUSTER_PROGRAM.eff_list_ref()),
+    )
 }
 
 pub(crate) fn enter_controller<'cfg, T, U, C, B, const MAX_RV: usize>(

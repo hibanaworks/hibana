@@ -1,5 +1,7 @@
 #![cfg(feature = "std")]
 mod common;
+#[path = "support/route_control_kinds.rs"]
+mod route_control_kinds;
 #[path = "support/runtime.rs"]
 mod runtime_support;
 
@@ -21,12 +23,7 @@ use hibana::substrate::{
 use runtime_support::{leak_clock, leak_slab, leak_tap_storage};
 
 const LABEL_ROUTE_DECISION: u8 = 57;
-hibana::impl_control_resource!(
-    RouteRightKind,
-    handle: RouteDecision,
-    name: "RouteRightDecision",
-    label: 70,
-);
+type RouteRightKind = route_control_kinds::RouteControl<70, 0>;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::pin::Pin;

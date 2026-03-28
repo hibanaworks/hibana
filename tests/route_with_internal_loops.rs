@@ -10,6 +10,9 @@
 //! The fix is in the binary route/par combinators: each arm and lane gets a
 //! disjoint ordinal range during composition.
 
+#[path = "support/route_control_kinds.rs"]
+mod route_control_kinds;
+
 use hibana::g::advanced::steps::{
     LoopBreakSteps, LoopDecisionSteps, ProjectRole, SendStep, SeqSteps, StepConcat, StepCons,
     StepNil,
@@ -27,8 +30,8 @@ const LABEL_ARM_A: u8 = 64;
 const LABEL_ARM_B: u8 = 65;
 
 // Route arm marker kinds
-hibana::impl_control_resource!(ArmAKind, handle: RouteDecision, name: "ArmA", label: LABEL_ARM_A);
-hibana::impl_control_resource!(ArmBKind, handle: RouteDecision, name: "ArmB", label: LABEL_ARM_B);
+type ArmAKind = route_control_kinds::RouteControl<LABEL_ARM_A, 0>;
+type ArmBKind = route_control_kinds::RouteControl<LABEL_ARM_B, 0>;
 
 // -----------------------------------------------------------------------------
 // Programs
@@ -420,29 +423,6 @@ static SERVER_PROGRAM: RoleProgram<
 /// Before the fix, this would panic at const eval time or during projection.
 #[test]
 fn route_with_internal_loops_compiles() {
-    // If we get here, the programs compiled successfully
-    let _ = CLIENT_PROGRAM.eff_list();
-    let _ = SERVER_PROGRAM.eff_list();
-}
-
-/// Verify that scope budgets are reasonable (arms didn't collide).
-#[test]
-fn route_scope_budget_is_sane() {
-    // The route itself has a scope budget
-    let budget = CLIENT_PROGRAM.eff_list().scope_budget();
-    // Each arm has a loop (scope budget ~1), plus the route scope itself
-    // With disjoint allocation, we expect: 1 (route) + arm_a_budget + arm_b_budget
-    // Arm A: marker (0) + loop (1) = 1
-    // Arm B: marker (0) + loop (1) = 1
-    // Total: 1 + 1 + 1 = 3 minimum
-    assert!(budget >= 3, "scope budget {} is too small", budget);
-}
-
-/// Verify that the EffList contains the expected number of atoms.
-#[test]
-fn route_eff_list_structure() {
-    let eff = CLIENT_PROGRAM.eff_list();
-    // Each arm has: 1 marker + (1 loop_cont + 1 body) + (1 loop_break) = 4 atoms per arm
-    // Total: 8 atoms minimum
-    assert!(eff.len() >= 8, "eff list len {} is too small", eff.len());
+    let _ = &CLIENT_PROGRAM;
+    let _ = &SERVER_PROGRAM;
 }

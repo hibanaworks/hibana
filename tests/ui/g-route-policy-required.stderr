@@ -49,8 +49,26 @@ note: required by a bound in `route`
    | pub const fn route<LeftSteps, RightSteps>(
    |              ----- required by a bound in this function
 ...
-   |         + DistinctRouteLabels<RightSteps>,
+   |         + DistinctRouteLabels<RightSteps>
    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `route`
+
+error[E0277]: the trait bound `StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<3>, ()>>, StepNil>: hibana::global::RouteArmLoopHead` is not satisfied
+  --> tests/ui/g-route-policy-required.rs:13:14
+   |
+13 | > = g::route(LEFT_ARM, RIGHT_ARM);
+   |     -------- ^^^^^^^^ unsatisfied trait bound
+   |     |
+   |     required by a bound introduced by this call
+   |
+   = help: the trait `hibana::global::RouteArmLoopHead` is not implemented for `StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<3>, ()>>, StepNil>`
+note: required by a bound in `route`
+  --> src/global.rs
+   |
+   | pub const fn route<LeftSteps, RightSteps>(
+   |              ----- required by a bound in this function
+...
+   |         + RouteArmLoopHead,
+   |           ^^^^^^^^^^^^^^^^ required by this bound in `route`
 
 error[E0277]: `g::route(left, right)` arms must begin with a controller self-send
   --> tests/ui/g-route-policy-required.rs:13:24
@@ -67,5 +85,23 @@ note: required by a bound in `route`
    | pub const fn route<LeftSteps, RightSteps>(
    |              ----- required by a bound in this function
 ...
-   |     RightSteps: RouteArmHead,
+   |     RightSteps: RouteArmHead + TailLoopControl + RouteArmLoopHead,
    |                 ^^^^^^^^^^^^ required by this bound in `route`
+
+error[E0277]: the trait bound `StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<4>, ()>>, StepNil>: hibana::global::RouteArmLoopHead` is not satisfied
+  --> tests/ui/g-route-policy-required.rs:13:24
+   |
+13 | > = g::route(LEFT_ARM, RIGHT_ARM);
+   |     --------           ^^^^^^^^^ unsatisfied trait bound
+   |     |
+   |     required by a bound introduced by this call
+   |
+   = help: the trait `hibana::global::RouteArmLoopHead` is not implemented for `StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<4>, ()>>, StepNil>`
+note: required by a bound in `route`
+  --> src/global.rs
+   |
+   | pub const fn route<LeftSteps, RightSteps>(
+   |              ----- required by a bound in this function
+...
+   |     RightSteps: RouteArmHead + TailLoopControl + RouteArmLoopHead,
+   |                                                  ^^^^^^^^^^^^^^^^ required by this bound in `route`

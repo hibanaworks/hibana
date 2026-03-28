@@ -9,8 +9,8 @@ use core::marker::PhantomData;
 use crate::global::const_dsl::{EffList, PolicyMode, ScopeId};
 use crate::global::steps::{BuildEffList, PolicyEligible, SeqSteps, StepConcat, StepNil};
 use crate::global::{
-    DistinctRouteLabels, LoopControlMeaning, NonEmptyParallelArm, RouteArmHead,
-    SameRouteController,
+    DistinctRouteLabels, LoopControlMeaning, NonEmptyParallelArm, RouteArmHead, RouteArmLoopHead,
+    SameRouteController, TailLoopControl,
 };
 
 /// Value + type-level representation of a global protocol fragment.
@@ -18,6 +18,7 @@ pub struct Program<Steps> {
     eff: EffList,
     scope_budget: u16,
     loop_scope_pending: bool,
+    tail_is_loop_control: bool,
     steps: PhantomData<Steps>,
 }
 
@@ -36,24 +37,29 @@ impl Program<StepNil> {
 }
 
 impl<Steps> Program<Steps> {
-    const fn wrap_with_hint(eff: EffList, loop_scope_pending: bool) -> Self {
+    const fn wrap_with_hint(
+        eff: EffList,
+        loop_scope_pending: bool,
+        tail_is_loop_control: bool,
+    ) -> Self {
         Self {
             eff,
             scope_budget: eff.scope_budget(),
             loop_scope_pending,
+            tail_is_loop_control,
             steps: PhantomData,
         }
     }
 
-    const fn wrap(eff: EffList) -> Self {
-        Self::wrap_with_hint(eff, false)
-    }
-
     pub(crate) const fn build() -> Self
     where
-        Steps: BuildEffList,
+        Steps: BuildEffList + TailLoopControl,
     {
-        Self::wrap(Steps::EFF)
+        Self::wrap_with_hint(
+            Steps::EFF,
+            false,
+            <Steps as TailLoopControl>::IS_LOOP_CONTROL,
+        )
     }
 
     pub(crate) const fn eff_list(&self) -> &EffList {
@@ -78,9 +84,7 @@ impl<Steps> Program<Steps> {
             }
             let loop_scope = ScopeId::loop_scope(add_scope_budget(scope_budget, next.scope_budget));
             let scoped_next = rebased.with_scope(loop_scope);
-            let prev_is_loop_ctrl =
-                LoopControlMeaning::from_control_spec(eff.control_spec_at(eff.len() - 1)).is_some();
-            eff = if prev_is_loop_ctrl {
+            eff = if self.tail_is_loop_control {
                 eff.with_scope(loop_scope).extend_list(scoped_next)
             } else {
                 eff.extend_list(scoped_next)
@@ -100,11 +104,17 @@ impl<Steps> Program<Steps> {
     where
         Steps: StepConcat<NextSteps>,
     {
+        let next_tail_is_loop_control = if next.eff.is_empty() {
+            self.tail_is_loop_control
+        } else {
+            next.tail_is_loop_control
+        };
         let (eff, scope_budget) = self.compose_parts(next);
         Program {
             eff,
             scope_budget,
             loop_scope_pending: false,
+            tail_is_loop_control: next_tail_is_loop_control,
             steps: PhantomData,
         }
     }
@@ -114,11 +124,17 @@ pub const fn seq<LeftSteps, RightSteps>(
     left: Program<LeftSteps>,
     right: Program<RightSteps>,
 ) -> Program<SeqSteps<LeftSteps, RightSteps>> {
+    let right_tail_is_loop_control = if right.eff.is_empty() {
+        left.tail_is_loop_control
+    } else {
+        right.tail_is_loop_control
+    };
     let (eff, scope_budget) = left.compose_parts(right);
     Program {
         eff,
         scope_budget,
         loop_scope_pending: false,
+        tail_is_loop_control: right_tail_is_loop_control,
         steps: PhantomData,
     }
 }
@@ -128,7 +144,11 @@ where
     Steps: PolicyEligible,
 {
     pub const fn policy<const POLICY_ID: u16>(self) -> Self {
-        Self::wrap(self.eff.with_policy(PolicyMode::dynamic(POLICY_ID)))
+        Self::wrap_with_hint(
+            self.eff.with_policy(PolicyMode::dynamic(POLICY_ID)),
+            self.loop_scope_pending,
+            self.tail_is_loop_control,
+        )
     }
 }
 
@@ -147,9 +167,10 @@ pub(crate) const fn route_binary<LeftSteps, RightSteps>(
 where
     LeftSteps: StepConcat<RightSteps>
         + RouteArmHead
+        + RouteArmLoopHead
         + SameRouteController<RightSteps>
         + DistinctRouteLabels<RightSteps>,
-    RightSteps: RouteArmHead,
+    RightSteps: RouteArmHead + RouteArmLoopHead + TailLoopControl,
 {
     let left_arm = left.into_eff();
     let right_arm = right.into_eff();
@@ -166,8 +187,8 @@ where
         .with_scope(scope)
         .with_scope_controller_role(scope, controller);
     let is_loop = is_binary_loop_route(
-        LoopControlMeaning::from_control_spec(left_arm.control_spec_at(0)),
-        LoopControlMeaning::from_control_spec(right_arm.control_spec_at(0)),
+        <LeftSteps as RouteArmLoopHead>::LOOP_MEANING,
+        <RightSteps as RouteArmLoopHead>::LOOP_MEANING,
     );
     let eff = left_eff.extend_list(right_eff);
     let eff = if is_loop {
@@ -175,7 +196,12 @@ where
     } else {
         eff
     };
-    Program::wrap_with_hint(eff, is_loop)
+    let loop_scope_pending = eff.scope_has_linger(scope);
+    Program::wrap_with_hint(
+        eff,
+        loop_scope_pending,
+        <RightSteps as TailLoopControl>::IS_LOOP_CONTROL,
+    )
 }
 
 pub(crate) const fn par_binary<LeftSteps, RightSteps>(
@@ -184,7 +210,7 @@ pub(crate) const fn par_binary<LeftSteps, RightSteps>(
 ) -> Program<<LeftSteps as StepConcat<RightSteps>>::Output>
 where
     LeftSteps: StepConcat<RightSteps> + NonEmptyParallelArm,
-    RightSteps: NonEmptyParallelArm,
+    RightSteps: NonEmptyParallelArm + TailLoopControl,
 {
     let left_set = <LeftSteps as NonEmptyParallelArm>::ROLE_LANE_SET;
     let right_set = <RightSteps as NonEmptyParallelArm>::ROLE_LANE_SET;
@@ -197,7 +223,11 @@ where
     let right_offset = add_scope_budget(1, left_budget);
     let left_eff = left.into_eff().rebase_scopes(1);
     let right_eff = right.into_eff().rebase_scopes(right_offset);
-    Program::wrap(left_eff.extend_list(right_eff).with_scope(parallel_scope))
+    Program::wrap_with_hint(
+        left_eff.extend_list(right_eff).with_scope(parallel_scope),
+        false,
+        <RightSteps as TailLoopControl>::IS_LOOP_CONTROL,
+    )
 }
 
 // -----------------------------------------------------------------------------
@@ -211,5 +241,104 @@ const fn is_binary_loop_route(
     match (left, right) {
         (Some(left), Some(right)) => left.arm() != right.arm(),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Program;
+    use crate::g;
+    use crate::g::advanced::CanonicalControl;
+    use crate::g::advanced::steps::{
+        LoopBreakSteps, LoopContinueSteps, LoopDecisionSteps, StepNil,
+    };
+    use crate::global::compiled::LoweringSummary;
+    use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
+    use crate::substrate::cap::GenericCapToken;
+    use crate::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
+
+    const LOOP_CONTINUE_ONLY: Program<
+        LoopContinueSteps<
+            g::Role<0>,
+            g::Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            StepNil,
+        >,
+    > = g::advanced::compose::seq(
+        g::send::<
+            g::Role<0>,
+            g::Role<0>,
+            g::Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            0,
+        >(),
+        StepNil::PROGRAM,
+    );
+
+    const LOOP_BREAK_ONLY: Program<
+        LoopBreakSteps<
+            g::Role<0>,
+            g::Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+            StepNil,
+        >,
+    > = g::send::<
+        g::Role<0>,
+        g::Role<0>,
+        g::Msg<
+            { LABEL_LOOP_BREAK },
+            GenericCapToken<LoopBreakKind>,
+            CanonicalControl<LoopBreakKind>,
+        >,
+        0,
+    >();
+
+    const LOOP_DECISION: Program<
+        LoopDecisionSteps<
+            g::Role<0>,
+            g::Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            g::Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+            StepNil,
+            StepNil,
+        >,
+    > = g::route(LOOP_CONTINUE_ONLY, LOOP_BREAK_ONLY);
+
+    #[test]
+    fn seq_with_empty_suffix_preserves_loop_tail_hint() {
+        let composed = g::advanced::compose::seq(LOOP_CONTINUE_ONLY, StepNil::PROGRAM);
+        assert!(
+            composed.tail_is_loop_control,
+            "empty seq suffix must preserve loop-control tail hints"
+        );
+    }
+
+    #[test]
+    fn empty_seq_suffix_does_not_change_pending_loop_scope_attachment() {
+        let direct = g::seq(LOOP_CONTINUE_ONLY, LOOP_DECISION);
+        let nested = g::seq(
+            g::advanced::compose::seq(LOOP_CONTINUE_ONLY, StepNil::PROGRAM),
+            LOOP_DECISION,
+        );
+        assert!(
+            LoweringSummary::scan_const(direct.eff_list()).equivalent_eff_list(nested.eff_list()),
+            "empty seq suffix must not change the loop-scoped effect list"
+        );
     }
 }

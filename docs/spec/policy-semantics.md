@@ -65,7 +65,7 @@ runtime remains fail-closed.
   - `src/epf/loader.rs`
   - `src/runtime/mgmt.rs` (`load_commit`)
 - Fail-closed application:
-  - `src/endpoint/cursor.rs`
+  - `src/endpoint/kernel/core.rs`
   - `src/transport/forward.rs`
 
 ## Test Mapping

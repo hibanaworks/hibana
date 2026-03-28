@@ -539,6 +539,7 @@ mod tests {
     use super::*;
     use core::ptr::NonNull;
     use std::boxed::Box;
+    use std::vec;
 
     use crate::{
         control::cap::mint::{CapShot, CapsMask, EndpointResource, ResourceKind},
@@ -648,12 +649,20 @@ mod tests {
         }
     }
 
+    fn leak_tap_storage() -> &'static mut [TapEvent; RING_EVENTS] {
+        let storage: Box<[TapEvent]> = vec![TapEvent::default(); RING_EVENTS].into_boxed_slice();
+        let storage: Box<[TapEvent; RING_EVENTS]> = storage.try_into().expect("ring events length");
+        Box::leak(storage)
+    }
+
+    fn leak_slab(size: usize) -> &'static mut [u8] {
+        Box::leak(vec![0u8; size].into_boxed_slice())
+    }
+
     #[test]
     fn populate_local_sets_handles() {
-        use crate::observe::core::TapEvent;
-
-        let tap_storage = Box::leak(Box::new([TapEvent::default(); RING_EVENTS]));
-        let slab = Box::leak(Box::new([0u8; 512]));
+        let tap_storage = leak_tap_storage();
+        let slab = leak_slab(512);
         let config = Config::new(tap_storage, slab);
         let mut rendezvous = Rendezvous::from_config(config, DummyTransport);
 
@@ -674,98 +683,73 @@ mod tests {
 
     #[test]
     fn control_core_builder_returns_context() {
-        use crate::observe::core::TapEvent;
-        use std::thread;
-
         const MAX_RV: usize = 4;
-        const STACK: usize = 32 * 1024 * 1024;
 
-        thread::Builder::new()
-            .name("control_core_bundle".into())
-            .stack_size(STACK)
-            .spawn(|| {
-                let tap_storage = Box::leak(Box::new([TapEvent::default(); RING_EVENTS]));
-                let slab = Box::leak(Box::new([0u8; 512]));
-                let config = Config::new(tap_storage, slab);
-                let rendezvous = Rendezvous::from_config(config, DummyTransport);
-                let rv_id = rendezvous.id();
+        let tap_storage = leak_tap_storage();
+        let slab = leak_slab(512);
+        let config = Config::new(tap_storage, slab);
+        let rendezvous = Rendezvous::from_config(config, DummyTransport);
+        let rv_id = rendezvous.id();
 
-                let core = leak_empty_control_core::<MAX_RV>();
-                core.register_local(rendezvous)
-                    .expect("register rendezvous succeeds");
+        let core = leak_empty_control_core::<MAX_RV>();
+        core.register_local(rendezvous)
+            .expect("register rendezvous succeeds");
 
-                let mut ctx = LeaseBundleContext::from_control_core::<MAX_RV>(core, rv_id)
-                    .expect("context available for local rendezvous");
+        let mut ctx = LeaseBundleContext::from_control_core::<MAX_RV>(core, rv_id)
+            .expect("context available for local rendezvous");
 
-                assert!(ctx.observe().is_some());
-                assert!(ctx.caps_mut().is_some());
-                assert!(ctx.slots_mut().is_some());
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+        assert!(ctx.observe().is_some());
+        assert!(ctx.caps_mut().is_some());
+        assert!(ctx.slots_mut().is_some());
     }
 
     #[test]
     fn lease_graph_bundle_adds_child_with_handles() {
-        use crate::observe::core::TapEvent;
-        use std::thread;
-
         const MAX_RV: usize = 4;
-        const STACK: usize = 32 * 1024 * 1024;
 
-        thread::Builder::new()
-            .name("lease_graph_bundle_child".into())
-            .stack_size(STACK)
-            .spawn(|| {
-                let tap_storage_root = Box::leak(Box::new([TapEvent::default(); RING_EVENTS]));
-                let slab_root = Box::leak(Box::new([0u8; 512]));
-                let config_root = Config::new(tap_storage_root, slab_root);
-                let rendezvous_root = Rendezvous::from_config(config_root, DummyTransport);
-                let root_id = rendezvous_root.id();
+        let tap_storage_root = leak_tap_storage();
+        let slab_root = leak_slab(512);
+        let config_root = Config::new(tap_storage_root, slab_root);
+        let rendezvous_root = Rendezvous::from_config(config_root, DummyTransport);
+        let root_id = rendezvous_root.id();
 
-                let tap_storage_child = Box::leak(Box::new([TapEvent::default(); RING_EVENTS]));
-                let slab_child = Box::leak(Box::new([0u8; 512]));
-                let config_child = Config::new(tap_storage_child, slab_child);
-                let rendezvous_child = Rendezvous::from_config(config_child, DummyTransport);
-                let child_id = rendezvous_child.id();
+        let tap_storage_child = leak_tap_storage();
+        let slab_child = leak_slab(512);
+        let config_child = Config::new(tap_storage_child, slab_child);
+        let rendezvous_child = Rendezvous::from_config(config_child, DummyTransport);
+        let child_id = rendezvous_child.id();
 
-                let core = leak_empty_control_core::<MAX_RV>();
-                core.register_local(rendezvous_root)
-                    .expect("register root rendezvous");
-                core.register_local(rendezvous_child)
-                    .expect("register child rendezvous");
+        let core = leak_empty_control_core::<MAX_RV>();
+        core.register_local(rendezvous_root)
+            .expect("register root rendezvous");
+        core.register_local(rendezvous_child)
+            .expect("register child rendezvous");
 
-                let root_ctx = LeaseBundleContext::from_control_core::<MAX_RV>(core, root_id)
-                    .expect("root context available");
-                let mut graph = LeaseGraph::<TestSpec>::new(
-                    root_id,
-                    LeaseBundleFacet::<
-                        DummyTransport,
-                        DefaultLabelUniverse,
-                        CounterClock,
-                        crate::control::cap::mint::EpochTbl,
-                    >::default(),
-                    root_ctx,
-                );
-                graph
-                    .add_child_with_bundle(core, root_id, child_id)
-                    .expect("child added");
+        let root_ctx = LeaseBundleContext::from_control_core::<MAX_RV>(core, root_id)
+            .expect("root context available");
+        let mut graph = LeaseGraph::<TestSpec>::new(
+            root_id,
+            LeaseBundleFacet::<
+                DummyTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                crate::control::cap::mint::EpochTbl,
+            >::default(),
+            root_ctx,
+        );
+        graph
+            .add_child_with_bundle(core, root_id, child_id)
+            .expect("child added");
 
-                let mut child_handle = graph.handle_mut(child_id).expect("child handle");
-                let ctx = child_handle.context();
-                assert!(ctx.caps_mut().is_some(), "caps bundle seeded in child");
-                assert!(ctx.slots_mut().is_some(), "slot bundle seeded in child");
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+        let mut child_handle = graph.handle_mut(child_id).expect("child handle");
+        let ctx = child_handle.context();
+        assert!(ctx.caps_mut().is_some(), "caps bundle seeded in child");
+        assert!(ctx.slots_mut().is_some(), "slot bundle seeded in child");
     }
 
     #[test]
     fn commit_emits_registered_tap() {
-        let mut storage = [TapEvent::default(); RING_EVENTS];
-        let ring = TapRing::from_storage(&mut storage);
+        let ring = TapRing::from_storage(leak_tap_storage());
         let static_ring = unsafe { ring.assume_static() };
 
         let mut ctx: LeaseBundleContext<
@@ -798,11 +782,10 @@ mod tests {
     #[test]
     fn caps_mint_released_on_rollback() {
         use crate::control::cap::mint::{CAP_HANDLE_LEN, CAP_NONCE_LEN, CapsMask};
-        use crate::observe::core::TapEvent;
         use crate::rendezvous::error::CapError;
 
-        let tap_storage = Box::leak(Box::new([TapEvent::default(); RING_EVENTS]));
-        let slab = Box::leak(Box::new([0u8; 256]));
+        let tap_storage = leak_tap_storage();
+        let slab = leak_slab(256);
         let config = Config::new(tap_storage, slab);
         let mut rendezvous = Rendezvous::from_config(config, DummyTransport);
         let rv_ptr = NonNull::from(&mut rendezvous);
@@ -900,10 +883,8 @@ mod tests {
 
     #[test]
     fn caps_mask_restored_on_rollback() {
-        use crate::observe::core::TapEvent;
-
-        let tap_storage = Box::leak(Box::new([TapEvent::default(); RING_EVENTS]));
-        let slab = Box::leak(Box::new([0u8; 256]));
+        let tap_storage = leak_tap_storage();
+        let slab = leak_slab(256);
         let config = Config::new(tap_storage, slab);
         let mut rendezvous = Rendezvous::from_config(config, DummyTransport);
         let original = rendezvous.caps_mask_for_lane(Lane::new(0));

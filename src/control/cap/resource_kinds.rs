@@ -29,8 +29,7 @@ use crate::{
 /// - `LoopDecision`: `Handle = LoopDecisionHandle` — sid + lane + scope, implements SessionScopedKind
 /// - `PolicyHash`: `Handle = (u32, u16)` — low32 + high16 hash, no SessionScopedKind
 /// - `RouteDecision`: `Handle = RouteDecisionHandle` — arm + scope, implements SessionScopedKind
-#[macro_export]
-macro_rules! impl_control_resource {
+macro_rules! define_control_resource_kind {
     // Unit variant: Handle = ()
     (
         $kind:ident,
@@ -40,7 +39,7 @@ macro_rules! impl_control_resource {
         label: $label:expr,
         handling: $handling:ident $(,)?
     ) => {
-        $crate::impl_control_resource!(
+        define_control_resource_kind!(
             $kind,
             handle: Unit,
             tag: $tag,
@@ -348,7 +347,7 @@ macro_rules! impl_control_resource {
         name: $name:expr,
         label: $label:expr $(,)?
     ) => {
-        $crate::impl_control_resource!(
+        define_control_resource_kind!(
             $kind,
             handle: RouteDecision,
             name: $name,
@@ -674,7 +673,7 @@ impl ControlHandle for RerouteHandle {
     }
 }
 
-impl_control_resource!(
+define_control_resource_kind!(
     LoopContinueKind,
     handle: LoopDecision,
     tag: 0x40,
@@ -683,7 +682,7 @@ impl_control_resource!(
     caps: CapsMask::empty().with(CpEffect::Delegate),
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     LoopBreakKind,
     handle: LoopDecision,
     tag: 0x41,
@@ -692,7 +691,7 @@ impl_control_resource!(
     caps: CapsMask::empty(),
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     CheckpointKind,
     handle: SessionScoped,
     tag: 0x42,
@@ -704,7 +703,7 @@ impl_control_resource!(
     handling: Canonical,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     CommitKind,
     handle: SessionScoped,
     tag: 0x43,
@@ -716,7 +715,7 @@ impl_control_resource!(
     handling: Canonical,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     RollbackKind,
     handle: SessionScoped,
     tag: 0x44,
@@ -728,7 +727,7 @@ impl_control_resource!(
     handling: Canonical,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     CancelKind,
     handle: SessionScoped,
     tag: 0x45,
@@ -740,7 +739,7 @@ impl_control_resource!(
     handling: Canonical,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     CancelAckKind,
     handle: SessionScoped,
     tag: 0x46,
@@ -1040,7 +1039,7 @@ impl ControlMint for RouteDecisionKind {
     }
 }
 
-impl_control_resource!(
+define_control_resource_kind!(
     MgmtRouteLoadKind,
     handle: RouteDecision,
     name: "MgmtRouteLoad",
@@ -1048,7 +1047,7 @@ impl_control_resource!(
     arm: 0,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     MgmtRouteActivateKind,
     handle: RouteDecision,
     name: "MgmtRouteActivate",
@@ -1056,7 +1055,7 @@ impl_control_resource!(
     arm: 0,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     MgmtRouteRevertKind,
     handle: RouteDecision,
     name: "MgmtRouteRevert",
@@ -1064,7 +1063,7 @@ impl_control_resource!(
     arm: 0,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     MgmtRouteStatsKind,
     handle: RouteDecision,
     name: "MgmtRouteStats",
@@ -1072,7 +1071,7 @@ impl_control_resource!(
     arm: 1,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     MgmtRouteLoadFamilyKind,
     handle: RouteDecision,
     name: "MgmtRouteLoadFamily",
@@ -1080,7 +1079,7 @@ impl_control_resource!(
     arm: 0,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     MgmtRouteLoadAndActivateKind,
     handle: RouteDecision,
     name: "MgmtRouteLoadAndActivate",
@@ -1088,7 +1087,7 @@ impl_control_resource!(
     arm: 1,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     MgmtRouteReplyErrorKind,
     handle: RouteDecision,
     name: "MgmtRouteReplyError",
@@ -1096,7 +1095,7 @@ impl_control_resource!(
     arm: 0,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     MgmtRouteReplyLoadedKind,
     handle: RouteDecision,
     name: "MgmtRouteReplyLoaded",
@@ -1104,7 +1103,7 @@ impl_control_resource!(
     arm: 0,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     MgmtRouteReplyActivatedKind,
     handle: RouteDecision,
     name: "MgmtRouteReplyActivated",
@@ -1112,7 +1111,7 @@ impl_control_resource!(
     arm: 0,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     MgmtRouteReplyRevertedKind,
     handle: RouteDecision,
     name: "MgmtRouteReplyReverted",
@@ -1120,7 +1119,7 @@ impl_control_resource!(
     arm: 0,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     MgmtRouteReplyStatsKind,
     handle: RouteDecision,
     name: "MgmtRouteReplyStats",
@@ -1128,7 +1127,7 @@ impl_control_resource!(
     arm: 1,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     MgmtRouteCommandFamilyKind,
     handle: RouteDecision,
     name: "MgmtRouteCommandFamily",
@@ -1136,7 +1135,7 @@ impl_control_resource!(
     arm: 1,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     MgmtRouteCommandTailKind,
     handle: RouteDecision,
     name: "MgmtRouteCommandTail",
@@ -1144,7 +1143,7 @@ impl_control_resource!(
     arm: 1,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     MgmtRouteReplySuccessFamilyKind,
     handle: RouteDecision,
     name: "MgmtRouteReplySuccessFamily",
@@ -1152,7 +1151,7 @@ impl_control_resource!(
     arm: 1,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     MgmtRouteReplySuccessTailKind,
     handle: RouteDecision,
     name: "MgmtRouteReplySuccessTail",
@@ -1160,7 +1159,7 @@ impl_control_resource!(
     arm: 1,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     MgmtRouteReplySuccessFinalKind,
     handle: RouteDecision,
     name: "MgmtRouteReplySuccessFinal",
@@ -1168,7 +1167,7 @@ impl_control_resource!(
     arm: 1,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     PolicyLoadKind,
     handle: PolicyHash,
     tag: 0x4A,
@@ -1180,7 +1179,7 @@ impl_control_resource!(
     handling: Canonical,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     PolicyActivateKind,
     handle: PolicyHash,
     tag: 0x4B,
@@ -1192,7 +1191,7 @@ impl_control_resource!(
     handling: Canonical,
 );
 
-impl_control_resource!(
+define_control_resource_kind!(
     PolicyRevertKind,
     handle: PolicyHash,
     tag: 0x4C,

@@ -11,7 +11,7 @@ if rg -n "^[[:space:]]*pub(\\([^)]*\\))?[[:space:]]+(const[[:space:]]+)?fn[[:spa
   FAILED=1
 fi
 
-if rg -n "^[[:space:]]*pub(\\([^)]*\\))?[[:space:]]+(const[[:space:]]+)?fn[[:space:]]+(scope_id|scope_kind|scope_region)[[:space:]]*\\(" src/endpoint/cursor.rs; then
+if rg -n "^[[:space:]]*pub(\\([^)]*\\))?[[:space:]]+(const[[:space:]]+)?fn[[:space:]]+(scope_id|scope_kind|scope_region)[[:space:]]*\\(" src/endpoint/kernel/core.rs; then
   echo "boundary violation: RouteBranch must not expose scope coordinate helpers" >&2
   FAILED=1
 fi

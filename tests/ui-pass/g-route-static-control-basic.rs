@@ -3,24 +3,16 @@
 //! Static passive routing is allowed when route authority is carried by
 //! explicit RouteDecision control messages.
 
+#[path = "../support/control_kinds.rs"]
+mod control_kinds;
+
 use hibana::substrate::cap::GenericCapToken;
 use hibana::g::{self};
 use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
 use hibana::g::advanced::steps::{ProjectRole, SendStep, SeqSteps, StepConcat, StepCons, StepNil};
 
-hibana::impl_control_resource!(
-    RouteArm100Kind,
-    handle: RouteDecision,
-    name: "RouteArm100",
-    label: 100,
-);
-
-hibana::impl_control_resource!(
-    RouteArm101Kind,
-    handle: RouteDecision,
-    name: "RouteArm101",
-    label: 101,
-);
+type RouteArm100Kind = control_kinds::RouteControl<100, 0>;
+type RouteArm101Kind = control_kinds::RouteControl<101, 0>;
 
 const ARM0: g::Program<
     SeqSteps<
@@ -121,5 +113,5 @@ static PASSIVE_PROGRAM: RoleProgram<
 > = project(&ROUTE);
 
 fn main() {
-    let _ = PASSIVE_PROGRAM.eff_list();
+    let _ = &PASSIVE_PROGRAM;
 }

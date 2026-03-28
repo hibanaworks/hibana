@@ -3,6 +3,8 @@
 //! All control operations (lane open, splice, delegate, cancel, fence, commit, abort)
 //! are projected into this enum. Composite operations are expressed through effect composition.
 
+use core::{mem::MaybeUninit, ptr};
+
 use crate::eff::EffIndex;
 use crate::global::const_dsl::{ControlMarker, ControlScopeKind, PolicyMode, ScopeMarker};
 
@@ -149,7 +151,7 @@ impl CpEffect {
 ///
 /// Note: This is distinct from `control::cluster::CpCommand`, which wraps
 /// individual effect executions with their runtime operands.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct EffectEnvelope {
     /// Sequence of control-plane effects to execute.
     cp_effects: [core::mem::MaybeUninit<CpEffect>; Self::MAX_CP_EFFECTS],
@@ -196,6 +198,12 @@ impl ResourceDescriptor {
     }
 
     #[inline(always)]
+    #[cfg(test)]
+    pub(crate) const fn label(&self) -> u8 {
+        self.label
+    }
+
+    #[inline(always)]
     pub(crate) const fn tag(&self) -> u8 {
         self.tag
     }
@@ -209,52 +217,56 @@ impl ResourceDescriptor {
 impl EffectEnvelope {
     /// Maximum number of control-plane effects per projection.
     /// Conservative upper bound based on typical protocol complexity.
-    const MAX_CP_EFFECTS: usize = 256;
+    pub(crate) const MAX_CP_EFFECTS: usize = 256;
 
     /// Maximum number of tap events per projection.
-    const MAX_TAP_EVENTS: usize = 512;
+    pub(crate) const MAX_TAP_EVENTS: usize = 512;
 
     /// Maximum number of resource handles per projection.
-    const MAX_RESOURCES: usize = 128;
+    pub(crate) const MAX_RESOURCES: usize = 128;
 
     /// Maximum number of scope markers mirrored from the program.
-    const MAX_SCOPES: usize = crate::eff::meta::MAX_EFF_NODES;
+    pub(crate) const MAX_SCOPES: usize = crate::eff::meta::MAX_EFF_NODES;
 
     /// Maximum number of control markers mirrored from the program.
-    const MAX_CONTROLS: usize = crate::eff::meta::MAX_EFF_NODES;
+    pub(crate) const MAX_CONTROLS: usize = crate::eff::meta::MAX_EFF_NODES;
 
     /// Create an empty projection.
-    pub(crate) const fn empty() -> Self {
-        Self {
-            cp_effects: unsafe {
-                core::mem::MaybeUninit::<[core::mem::MaybeUninit<CpEffect>; Self::MAX_CP_EFFECTS]>::uninit()
-                    .assume_init()
-            },
-            cp_effects_len: 0,
-            tap_events: unsafe {
-                core::mem::MaybeUninit::<[core::mem::MaybeUninit<u16>; Self::MAX_TAP_EVENTS]>::uninit()
-                    .assume_init()
-            },
-            tap_events_len: 0,
-            resources: unsafe {
-                core::mem::MaybeUninit::<
-                    [core::mem::MaybeUninit<ResourceDescriptor>; Self::MAX_RESOURCES],
-                >::uninit()
-                .assume_init()
-            },
-            resources_len: 0,
-            scopes: unsafe {
-                core::mem::MaybeUninit::<[core::mem::MaybeUninit<ScopeMarker>; Self::MAX_SCOPES]>::uninit()
-                    .assume_init()
-            },
-            scopes_len: 0,
-            controls: unsafe {
-                core::mem::MaybeUninit::<
-                    [core::mem::MaybeUninit<ControlMarker>; Self::MAX_CONTROLS],
-                >::uninit()
-                .assume_init()
-            },
-            controls_len: 0,
+    pub(crate) unsafe fn init_empty(dst: *mut Self) {
+        unsafe {
+            ptr::addr_of_mut!((*dst).cp_effects).write(
+                MaybeUninit::<[MaybeUninit<CpEffect>; Self::MAX_CP_EFFECTS]>::uninit()
+                    .assume_init(),
+            );
+            ptr::addr_of_mut!((*dst).cp_effects_len).write(0);
+            ptr::addr_of_mut!((*dst).tap_events).write(
+                MaybeUninit::<[MaybeUninit<u16>; Self::MAX_TAP_EVENTS]>::uninit().assume_init(),
+            );
+            ptr::addr_of_mut!((*dst).tap_events_len).write(0);
+            ptr::addr_of_mut!((*dst).resources).write(
+                MaybeUninit::<[MaybeUninit<ResourceDescriptor>; Self::MAX_RESOURCES]>::uninit()
+                    .assume_init(),
+            );
+            ptr::addr_of_mut!((*dst).resources_len).write(0);
+            ptr::addr_of_mut!((*dst).scopes).write(
+                MaybeUninit::<[MaybeUninit<ScopeMarker>; Self::MAX_SCOPES]>::uninit().assume_init(),
+            );
+            ptr::addr_of_mut!((*dst).scopes_len).write(0);
+            ptr::addr_of_mut!((*dst).controls).write(
+                MaybeUninit::<[MaybeUninit<ControlMarker>; Self::MAX_CONTROLS]>::uninit()
+                    .assume_init(),
+            );
+            ptr::addr_of_mut!((*dst).controls_len).write(0);
+        }
+    }
+
+    /// Create an empty projection.
+    #[cfg(test)]
+    fn empty() -> Self {
+        let mut envelope = MaybeUninit::<Self>::uninit();
+        unsafe {
+            Self::init_empty(envelope.as_mut_ptr());
+            envelope.assume_init()
         }
     }
 
@@ -350,7 +362,7 @@ impl EffectEnvelope {
 mod tests {
     use super::*;
     use crate::global::CanonicalControl;
-    use crate::global::compiled::ProgramFacts;
+    use crate::global::compiled::CompiledProgram;
     use crate::global::const_dsl::EffList;
 
     #[test]
@@ -383,8 +395,8 @@ mod tests {
     #[test]
     fn test_interpreter_pure() {
         let program = EffList::new();
-        let facts = ProgramFacts::from_eff_list(&program);
-        let projected = *facts.effect_envelope();
+        let facts = CompiledProgram::compile(&program);
+        let projected = facts.effect_envelope();
         assert!(projected.is_empty());
     }
 
@@ -404,8 +416,8 @@ mod tests {
             >,
             0,
         >();
-        let facts = ProgramFacts::from_eff_list(&program.into_eff());
-        let projected = *facts.effect_envelope();
+        let facts = CompiledProgram::compile(&program.into_eff());
+        let projected = facts.effect_envelope();
         assert_eq!(projected.cp_effects().count(), 1);
         assert!(projected.tap_events().count() >= 1);
     }

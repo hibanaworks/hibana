@@ -31,5 +31,5 @@ note: required by a bound in `par`
   | pub const fn par<LeftSteps, RightSteps>(
   |              --- required by a bound in this function
 ...
-  |     RightSteps: NonEmptyParallelArm,
+  |     RightSteps: NonEmptyParallelArm + TailLoopControl,
   |                 ^^^^^^^^^^^^^^^^^^^ required by this bound in `par`

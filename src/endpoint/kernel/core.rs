@@ -5,9 +5,18 @@
 
 use core::{convert::TryFrom, future::poll_fn, ops::ControlFlow, task::Poll};
 
-use super::flow::CapFlow;
+use super::authority::{
+    DeferReason, DeferSource, RoutePolicyDecision, route_policy_decision_from_action,
+    route_policy_input_arg0, validate_route_decision_scope,
+};
+use super::decode::decode_phase_invariant;
+use super::frontier::FrontierKind;
+use super::lane_port;
 use crate::binding::{BindingSlot, NoBinding};
 use crate::eff::EffIndex;
+use crate::endpoint::flow::CapFlow;
+#[cfg(test)]
+use crate::global::LoopControlMeaning;
 use crate::global::const_dsl::{PolicyMode, ScopeId, ScopeKind};
 use crate::global::role_program::MAX_LANES;
 use crate::global::typestate::{
@@ -15,8 +24,9 @@ use crate::global::typestate::{
     PhaseCursor, RecvMeta, SendMeta, StateIndex, state_index_to_usize,
 };
 use crate::global::{
-    CanonicalControl, ControlHandling, ControlPayloadKind, ExternalControl, LoopControlMeaning,
-    MessageSpec, NoControl, SendableLabel,
+    CanonicalControl, ControlHandling, ControlPayloadKind, ExternalControl, MessageSpec, NoControl,
+    SendableLabel,
+    compiled::{ControlSemanticKind, ControlSemanticsTable},
 };
 use crate::runtime::config::Clock;
 use crate::{
@@ -50,83 +60,18 @@ use crate::{
     observe::scope::ScopeTrace,
     observe::{events, ids, policy_abort, policy_trap},
     rendezvous::{port::Port, tables::LoopDisposition},
-    runtime::consts::{
-        LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE, LABEL_REROUTE, LABEL_SPLICE_ACK,
-        LABEL_SPLICE_INTENT, LabelUniverse,
-    },
+    runtime::consts::LabelUniverse,
     transport::{
         Transport, TransportMetrics,
         trace::TapFrameMeta,
-        wire::{FrameFlags, Payload, WireDecodeOwned, WireEncode},
+        wire::{FrameFlags, WireDecodeOwned, WireEncode},
     },
 };
 
-/// Classification of control labels for dynamic policy evaluation dispatch.
-///
-/// This enum provides a clean abstraction over the raw label constants,
-/// grouping them by their evaluation semantics:
-/// - `Loop`: Labels that require loop-specific evaluation (continue/break decisions)
-/// - `SpliceOrReroute`: Labels validated later in `mint_control_token_with_handle`
-/// - `Route`: Standard route arm evaluation
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DynamicLabelClass {
-    /// Loop control labels (LABEL_LOOP_CONTINUE, LABEL_LOOP_BREAK)
-    Loop,
-    /// Splice and reroute labels (validated in mint_control_token_with_handle)
-    SpliceOrReroute,
-    /// Standard route decision labels
-    Route,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RoutePolicyDecision {
-    RouteArm(u8),
-    DelegateResolver,
-    Abort(u16),
-    Defer { retry_hint: u8, source: DeferSource },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DeferSource {
-    Epf,
-    Resolver,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DeferReason {
-    Unsupported = 1,
-    NoEvidence = 2,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FrontierKind {
-    Route,
-    Loop,
-    Parallel,
-    PassiveObserver,
-}
-
-impl FrontierKind {
-    #[inline]
-    const fn as_audit_tag(self) -> u8 {
-        match self {
-            Self::Route => 1,
-            Self::Loop => 2,
-            Self::Parallel => 3,
-            Self::PassiveObserver => 4,
-        }
-    }
-
-    #[inline]
-    const fn bit(self) -> u8 {
-        match self {
-            Self::Route => 1 << 0,
-            Self::Loop => 1 << 1,
-            Self::Parallel => 1 << 2,
-            Self::PassiveObserver => 1 << 3,
-        }
-    }
-}
+#[cfg(test)]
+use super::authority::resolve_route_decision_handle_with_policy;
+#[cfg(test)]
+use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
 
 #[inline]
 fn checked_state_index(idx: usize) -> Option<StateIndex> {
@@ -134,116 +79,95 @@ fn checked_state_index(idx: usize) -> Option<StateIndex> {
 }
 
 #[inline]
-fn controller_arm_loop_meaning<const ROLE: u8>(
-    cursor: &PhaseCursor<ROLE>,
+fn controller_arm_label(cursor: &PhaseCursor, scope_id: ScopeId, arm: u8) -> Option<u8> {
+    cursor
+        .controller_arm_entry_by_arm(scope_id, arm)
+        .map(|(_, label)| label)
+}
+
+#[inline]
+fn controller_arm_semantic_kind(
+    cursor: &PhaseCursor,
+    semantics: &ControlSemanticsTable,
     scope_id: ScopeId,
     arm: u8,
-) -> Option<LoopControlMeaning> {
+) -> Option<ControlSemanticKind> {
     let (entry, _label) = cursor.controller_arm_entry_by_arm(scope_id, arm)?;
     let target_cursor = cursor.with_index(state_index_to_usize(entry));
     target_cursor
         .try_local_meta()
-        .and_then(|meta| LoopControlMeaning::from_resource_tag(meta.resource))
+        .and_then(|meta| loop_control_semantic_kind_from_resource(semantics, meta.resource))
         .or_else(|| {
             target_cursor
                 .try_send_meta()
-                .and_then(|meta| LoopControlMeaning::from_resource_tag(meta.resource))
+                .and_then(|meta| loop_control_semantic_kind_from_resource(semantics, meta.resource))
         })
         .or_else(|| {
             target_cursor
                 .try_recv_meta()
-                .and_then(|meta| LoopControlMeaning::from_resource_tag(meta.resource))
+                .and_then(|meta| loop_control_semantic_kind_from_resource(semantics, meta.resource))
         })
 }
 
 #[inline]
-fn controller_arm_wire_label<const ROLE: u8>(
-    cursor: &PhaseCursor<ROLE>,
-    scope_id: ScopeId,
-    arm: u8,
-) -> Option<u8> {
-    controller_arm_loop_meaning(cursor, scope_id, arm).map(wire_label_for_loop_control)
-}
-
-/// Classify a label for dynamic policy evaluation dispatch.
-///
-/// This function maps raw label constants to their semantic classification,
-/// providing a single point of truth for label-based dispatch logic.
-#[inline]
-const fn loop_control_meaning_from_wire_label(label: u8) -> Option<LoopControlMeaning> {
-    match label {
-        LABEL_LOOP_CONTINUE => Some(LoopControlMeaning::Continue),
-        LABEL_LOOP_BREAK => Some(LoopControlMeaning::Break),
-        _ => None,
-    }
+const fn loop_control_semantic_kind_from_resource(
+    semantics: &ControlSemanticsTable,
+    resource: Option<u8>,
+) -> Option<ControlSemanticKind> {
+    let kind = semantics.semantic_for_resource_tag(resource);
+    if kind.is_loop() { Some(kind) } else { None }
 }
 
 #[inline]
-const fn wire_label_for_loop_control(meaning: LoopControlMeaning) -> u8 {
-    match meaning {
-        LoopControlMeaning::Continue => LABEL_LOOP_CONTINUE,
-        LoopControlMeaning::Break => LABEL_LOOP_BREAK,
-    }
+const fn is_loop_control_label_or_resource(
+    semantics: &ControlSemanticsTable,
+    label: u8,
+    resource: Option<u8>,
+) -> bool {
+    let kind = semantics.semantic_for(label, resource);
+    kind.is_loop()
 }
 
 #[inline]
-const fn is_wire_loop_control_label(label: u8) -> bool {
-    loop_control_meaning_from_wire_label(label).is_some()
-}
-
-#[inline]
-const fn loop_control_label_mask() -> u128 {
-    ScopeLabelMeta::label_bit(LABEL_LOOP_CONTINUE) | ScopeLabelMeta::label_bit(LABEL_LOOP_BREAK)
-}
-
-#[inline]
-const fn loop_control_meaning_from_disposition(
+fn loop_control_kind_matches_disposition(
+    semantics: &ControlSemanticsTable,
+    label: u8,
+    resource: Option<u8>,
     disposition: LoopDisposition,
-) -> LoopControlMeaning {
+) -> bool {
     match disposition {
-        LoopDisposition::Continue => LoopControlMeaning::Continue,
-        LoopDisposition::Break => LoopControlMeaning::Break,
-    }
-}
-
-#[inline]
-const fn classify_dynamic_label(label: u8) -> DynamicLabelClass {
-    if is_wire_loop_control_label(label) {
-        DynamicLabelClass::Loop
-    } else {
-        match label {
-            LABEL_SPLICE_INTENT | LABEL_SPLICE_ACK | LABEL_REROUTE => {
-                DynamicLabelClass::SpliceOrReroute
-            }
-            _ => DynamicLabelClass::Route,
+        LoopDisposition::Continue => {
+            semantics.semantic_for(label, resource) == ControlSemanticKind::LoopContinue
+        }
+        LoopDisposition::Break => {
+            semantics.semantic_for(label, resource) == ControlSemanticKind::LoopBreak
         }
     }
 }
 
 #[inline]
-const fn is_loop_control_resource(resource: Option<u8>) -> bool {
-    LoopControlMeaning::from_resource_tag(resource).is_some()
-}
-
-#[inline]
-fn route_policy_input_arg0(input: &[u32; 4]) -> u32 {
-    input[0]
-}
-
-#[inline]
-fn route_policy_decision_from_action(action: Action, policy_id: u16) -> RoutePolicyDecision {
-    match action {
-        Action::Route { arm } if arm <= 1 => RoutePolicyDecision::RouteArm(arm),
-        Action::Route { .. } => RoutePolicyDecision::Abort(policy_id),
-        Action::Abort(info) => RoutePolicyDecision::Abort(info.reason),
-        Action::Defer { retry_hint } => RoutePolicyDecision::Defer {
-            retry_hint,
-            source: DeferSource::Epf,
-        },
-        Action::Proceed | Action::Tap { .. } => RoutePolicyDecision::DelegateResolver,
+#[cfg(test)]
+const fn loop_control_meaning_from_semantic(
+    kind: ControlSemanticKind,
+) -> Option<LoopControlMeaning> {
+    match kind {
+        ControlSemanticKind::LoopContinue => Some(LoopControlMeaning::Continue),
+        ControlSemanticKind::LoopBreak => Some(LoopControlMeaning::Break),
+        _ => None,
     }
 }
 
+#[inline]
+const fn is_splice_or_reroute_semantic(kind: ControlSemanticKind) -> bool {
+    matches!(
+        kind,
+        ControlSemanticKind::SpliceIntent
+            | ControlSemanticKind::SpliceAck
+            | ControlSemanticKind::Reroute
+    )
+}
+
+#[cfg(test)]
 #[inline]
 fn stage_transport_payload(scratch: &mut [u8], payload: &[u8]) -> RecvResult<usize> {
     if payload.len() > scratch.len() {
@@ -251,41 +175,6 @@ fn stage_transport_payload(scratch: &mut [u8], payload: &[u8]) -> RecvResult<usi
     }
     scratch[..payload.len()].copy_from_slice(payload);
     Ok(payload.len())
-}
-
-#[inline]
-fn decode_phase_invariant() -> RecvError {
-    RecvError::PhaseInvariant
-}
-
-#[inline]
-fn validate_route_decision_scope(scope: ScopeId, policy_scope: ScopeId) -> SendResult<()> {
-    if scope.is_none() {
-        return Err(SendError::PhaseInvariant);
-    }
-    if !policy_scope.is_none() && scope != policy_scope {
-        return Err(SendError::PhaseInvariant);
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-fn resolve_route_decision_handle_with_policy<F>(
-    scope: ScopeId,
-    policy_scope: ScopeId,
-    policy_decision: RoutePolicyDecision,
-    delegate_resolver: F,
-) -> SendResult<RouteDecisionHandle>
-where
-    F: FnOnce() -> SendResult<RouteDecisionHandle>,
-{
-    validate_route_decision_scope(scope, policy_scope)?;
-    match policy_decision {
-        RoutePolicyDecision::RouteArm(arm) => Ok(RouteDecisionHandle { scope, arm }),
-        RoutePolicyDecision::Abort(reason) => Err(SendError::PolicyAbort { reason }),
-        RoutePolicyDecision::Defer { .. } => delegate_resolver(),
-        RoutePolicyDecision::DelegateResolver => delegate_resolver(),
-    }
 }
 
 #[cfg(test)]
@@ -304,6 +193,7 @@ where
 {
     CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_label_meta(
         &endpoint.cursor,
+        &endpoint.control_semantics(),
         scope_id,
         loop_meta,
     )
@@ -1468,7 +1358,7 @@ mod offer_regression_tests {
             ScopeLabelMeta::label_bit(expected.label),
             ScopeLabelMeta::label_bit(LABEL_LOOP_CONTINUE)
                 | ScopeLabelMeta::label_bit(LABEL_LOOP_BREAK),
-            is_wire_loop_control_label,
+            |label| matches!(label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK),
         );
         assert_eq!(picked, Some(expected));
         assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(deferred));
@@ -2308,8 +2198,7 @@ mod offer_regression_tests {
                         let scope_end = target_cursor.jump_target().unwrap_or(0);
                         let scope_end_cursor = worker.cursor.with_index(scope_end);
                         if region.linger {
-                            let synthetic_label =
-                                controller_arm_wire_label(&worker.cursor, scope, arm)?;
+                            let synthetic_label = controller_arm_label(&worker.cursor, scope, arm)?;
                             return Some((
                                 scope_end,
                                 RecvMeta {
@@ -2353,8 +2242,7 @@ mod offer_regression_tests {
                         return None;
                     }
                     if region.linger {
-                        let synthetic_label =
-                            controller_arm_wire_label(&worker.cursor, scope, arm)?;
+                        let synthetic_label = controller_arm_label(&worker.cursor, scope, arm)?;
                         return Some((
                             target_cursor.index(),
                             RecvMeta {
@@ -2735,7 +2623,8 @@ mod offer_regression_tests {
         let nested_program = g::route(HINT_ROUTE_PROGRAM, ENTRY_ROUTE_PROGRAM);
         let worker_program: RoleProgram<'_, 1, _, crate::control::cap::mint::MintConfig> =
             project(&nested_program);
-        let program_cursor = PhaseCursor::from_machine(worker_program.machine());
+        let compiled = worker_program.compile_role();
+        let program_cursor = PhaseCursor::new(&compiled);
         let nested_scope = program_cursor
             .seek_label(ENTRY_ARM0_SIGNAL_LABEL)
             .expect("nested route recv label must exist")
@@ -8103,7 +7992,7 @@ mod offer_regression_tests {
     }
 
     #[test]
-    fn loop_meaning_is_metadata_authority_and_wire_helpers_only_translate() {
+    fn loop_semantics_are_metadata_authority() {
         type LoopContinueMsg = Msg<
             { crate::runtime::consts::LABEL_LOOP_CONTINUE },
             GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
@@ -8139,31 +8028,48 @@ mod offer_regression_tests {
             .attach_endpoint::<0, _, _, _>(rv_id, sid, &controller_program, NoBinding)
             .expect("attach controller endpoint");
         let scope = controller.cursor.node_scope_id();
-        assert!(!scope.is_none(), "controller must start at loop route scope");
+        assert!(
+            !scope.is_none(),
+            "controller must start at loop route scope"
+        );
 
-        let continue_meaning = controller_arm_loop_meaning(&controller.cursor, scope, 0)
-            .expect("continue arm meaning");
-        let break_meaning = controller_arm_loop_meaning(&controller.cursor, scope, 1)
-            .expect("break arm meaning");
-        let continue_label = controller_arm_wire_label(&controller.cursor, scope, 0)
-            .expect("continue arm wire label");
-        let break_label = controller_arm_wire_label(&controller.cursor, scope, 1)
-            .expect("break arm wire label");
+        let continue_kind = controller_arm_semantic_kind(
+            &controller.cursor,
+            &controller.control_semantics(),
+            scope,
+            0,
+        )
+        .expect("continue arm semantic kind");
+        let break_kind = controller_arm_semantic_kind(
+            &controller.cursor,
+            &controller.control_semantics(),
+            scope,
+            1,
+        )
+        .expect("break arm semantic kind");
+        let continue_label =
+            controller_arm_label(&controller.cursor, scope, 0).expect("continue arm label");
+        let break_label =
+            controller_arm_label(&controller.cursor, scope, 1).expect("break arm label");
 
-        assert_eq!(continue_meaning, LoopControlMeaning::Continue);
-        assert_eq!(break_meaning, LoopControlMeaning::Break);
-        assert_eq!(continue_label, wire_label_for_loop_control(continue_meaning));
-        assert_eq!(break_label, wire_label_for_loop_control(break_meaning));
+        assert_eq!(continue_kind, ControlSemanticKind::LoopContinue);
+        assert_eq!(break_kind, ControlSemanticKind::LoopBreak);
         assert_eq!(
-            loop_control_meaning_from_wire_label(continue_label),
-            Some(continue_meaning)
+            loop_control_meaning_from_semantic(continue_kind),
+            Some(LoopControlMeaning::Continue)
         );
         assert_eq!(
-            loop_control_meaning_from_wire_label(break_label),
-            Some(break_meaning)
+            loop_control_meaning_from_semantic(break_kind),
+            Some(LoopControlMeaning::Break)
         );
-        assert_eq!(classify_dynamic_label(continue_label), DynamicLabelClass::Loop);
-        assert_eq!(classify_dynamic_label(break_label), DynamicLabelClass::Loop);
+        assert_eq!(
+            controller.control_semantic_kind(continue_label, Some(LoopContinueKind::TAG)),
+            ControlSemanticKind::LoopContinue
+        );
+        assert_eq!(
+            controller.control_semantic_kind(break_label, Some(LoopBreakKind::TAG)),
+            ControlSemanticKind::LoopBreak
+        );
 
         drop(controller);
     }
@@ -9787,7 +9693,7 @@ mod offer_regression_tests {
         assert!(!scope.is_none(), "worker must start at route scope");
 
         let foreign_label = (1u8..=u8::MAX).find(|label| {
-            !is_wire_loop_control_label(*label)
+            !worker.is_loop_semantic_label(*label)
                 && worker.cursor.first_recv_target(scope, *label).is_none()
                 && worker.cursor.find_arm_for_recv_label(*label).is_some()
         });
@@ -9864,9 +9770,11 @@ pub struct CursorEndpoint<
     _epoch: EndpointEpoch<'r, E>,
     /// Phase-aware cursor for multi-lane parallel execution.
     #[cfg(feature = "std")]
-    cursor: std::boxed::Box<PhaseCursor<ROLE>>,
+    cursor: std::boxed::Box<PhaseCursor>,
     #[cfg(not(feature = "std"))]
-    cursor: PhaseCursor<ROLE>,
+    cursor: PhaseCursor,
+    control_semantics: ControlSemanticsTable,
+    compiled_cache_lease: crate::control::cluster::core::CompiledCacheLease,
     control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
     /// Lane-local route arm stacks for parallel composition.
     ///
@@ -12465,7 +12373,10 @@ where
             return Err(decode_phase_invariant());
         }
 
-        if is_loop_control_resource(meta.resource) {
+        if endpoint
+            .control_semantic_kind(meta.label, meta.resource)
+            .is_loop()
+        {
             if let Some(LoopMetadata {
                 scope: scope_id,
                 controller,
@@ -12498,20 +12409,25 @@ where
         }
 
         let payload = if let Some(channel) = binding_channel {
-            let port = endpoint.port_mut();
-            let scratch_ptr = port.scratch_ptr();
-            let scratch = unsafe { &mut *scratch_ptr };
-            let n = endpoint
-                .binding
-                .on_recv(channel, scratch)
-                .map_err(|_| decode_phase_invariant())?;
+            let primary_lane = endpoint.primary_lane;
+            let n = {
+                let binding = &mut endpoint.binding;
+                let port = endpoint.ports[primary_lane]
+                    .as_mut()
+                    .ok_or_else(decode_phase_invariant)?;
+                binding
+                    .on_recv(channel, lane_port::scratch_mut(port))
+                    .map_err(|_| decode_phase_invariant())?
+            };
 
-            M::Payload::decode_owned(&scratch[..n]).map_err(RecvError::Codec)?
+            let port = endpoint.ports[primary_lane]
+                .as_ref()
+                .ok_or_else(decode_phase_invariant)?;
+            M::Payload::decode_owned(&lane_port::scratch(port)[..n]).map_err(RecvError::Codec)?
         } else if transport_payload_len != 0 {
             let port = endpoint.port_for_lane(transport_payload_lane as usize);
-            let scratch_ptr = port.scratch_ptr();
-            let scratch = unsafe { &*scratch_ptr };
-            M::Payload::decode_owned(&scratch[..transport_payload_len]).map_err(RecvError::Codec)?
+            M::Payload::decode_owned(&lane_port::scratch(port)[..transport_payload_len])
+                .map_err(RecvError::Codec)?
         } else {
             // Empty payload (e.g., for marker types like HqResponseFin with no data)
             M::Payload::decode_owned(&[]).map_err(RecvError::Codec)?
@@ -12650,7 +12566,9 @@ where
         sid: SessionId,
         owner: Owner<'r, E0>,
         epoch: EndpointEpoch<'r, E>,
-        cursor: PhaseCursor<ROLE>,
+        cursor: PhaseCursor,
+        control_semantics: ControlSemanticsTable,
+        compiled_cache_lease: crate::control::cluster::core::CompiledCacheLease,
         control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
         mint: Mint,
         binding: B,
@@ -12666,6 +12584,8 @@ where
             _owner: owner,
             _epoch: epoch,
             cursor: std::boxed::Box::new(cursor),
+            control_semantics,
+            compiled_cache_lease,
             control,
             lane_route_arms: boxed_repeat_array([RouteArmState::EMPTY; MAX_ROUTE_ARM_STACK]),
             lane_route_arm_lens: boxed_repeat_array(0u8),
@@ -12702,6 +12622,8 @@ where
             _owner: owner,
             _epoch: epoch,
             cursor,
+            control_semantics,
+            compiled_cache_lease,
             control,
             lane_route_arms: [[RouteArmState::EMPTY; MAX_ROUTE_ARM_STACK]; MAX_LANES],
             lane_route_arm_lens: [0; MAX_LANES],
@@ -12733,7 +12655,7 @@ where
     }
 
     #[inline(always)]
-    fn set_cursor(&mut self, cursor: PhaseCursor<ROLE>) {
+    fn set_cursor(&mut self, cursor: PhaseCursor) {
         #[cfg(feature = "std")]
         {
             *self.cursor = cursor;
@@ -12744,6 +12666,11 @@ where
         }
     }
 
+    #[inline(always)]
+    fn control_semantics(&self) -> ControlSemanticsTable {
+        self.control_semantics
+    }
+
     #[inline]
     fn scope_trace(&self, scope: ScopeId) -> Option<ScopeTrace> {
         if scope.is_none() {
@@ -12752,6 +12679,29 @@ where
         self.cursor
             .scope_region_by_id(scope)
             .map(|region| ScopeTrace::new(region.range, region.nest))
+    }
+
+    #[inline]
+    fn control_semantic_kind(&self, label: u8, resource: Option<u8>) -> ControlSemanticKind {
+        self.control_semantics.semantic_for(label, resource)
+    }
+
+    #[inline]
+    fn is_loop_semantic_label(&self, label: u8) -> bool {
+        self.control_semantics.is_loop_label(label)
+    }
+
+    #[inline]
+    fn loop_control_drop_label_mask(&self) -> u128 {
+        let mut mask = 0u128;
+        let mut label = 0u8;
+        while label < u128::BITS as u8 {
+            if self.is_loop_semantic_label(label) {
+                mask |= ScopeLabelMeta::label_bit(label);
+            }
+            label += 1;
+        }
+        mask
     }
 
     /// Set route arm for (lane, scope) — update-in-place if exists, insert if not.
@@ -13658,21 +13608,21 @@ where
         if !meta.policy().is_dynamic() {
             return Ok(());
         }
-        let dynamic_kind = if is_loop_control_resource(meta.resource) {
-            DynamicLabelClass::Loop
-        } else {
-            classify_dynamic_label(target_label)
-        };
-        if matches!(dynamic_kind, DynamicLabelClass::SpliceOrReroute) {
+        let dynamic_kind = self.control_semantic_kind(target_label, meta.resource);
+        if is_splice_or_reroute_semantic(dynamic_kind) {
             return Ok(());
         }
         let route_signals = self.policy_signals_for_slot(Slot::Route);
         match dynamic_kind {
-            DynamicLabelClass::Loop => self.evaluate_loop_policy(meta, route_signals),
-            DynamicLabelClass::Route => {
+            ControlSemanticKind::LoopContinue | ControlSemanticKind::LoopBreak => {
+                self.evaluate_loop_policy(meta, route_signals)
+            }
+            ControlSemanticKind::RouteArm | ControlSemanticKind::Other => {
                 self.evaluate_route_policy(meta, target_label, route_signals)
             }
-            DynamicLabelClass::SpliceOrReroute => Ok(()),
+            ControlSemanticKind::SpliceIntent
+            | ControlSemanticKind::SpliceAck
+            | ControlSemanticKind::Reroute => Ok(()),
         }
     }
 
@@ -13899,8 +13849,12 @@ where
                 } else {
                     LoopDisposition::Break
                 };
-                let expected_meaning = loop_control_meaning_from_disposition(disposition);
-                if loop_control_meaning_from_wire_label(meta.label) != Some(expected_meaning) {
+                if !loop_control_kind_matches_disposition(
+                    &self.control_semantics(),
+                    meta.label,
+                    meta.resource,
+                    disposition,
+                ) {
                     return Err(SendError::PolicyAbort { reason: policy_id });
                 }
                 Ok(())
@@ -14014,7 +13968,7 @@ where
         next: usize,
         lane: u8,
     ) -> CachedRecvMeta {
-        let Some(label) = controller_arm_wire_label(&self.cursor, scope_id, route_arm) else {
+        let Some(label) = controller_arm_label(&self.cursor, scope_id, route_arm) else {
             return CachedRecvMeta::EMPTY;
         };
         Self::synthetic_cached_recv_meta(cursor_index, scope_id, route_arm, label, next, lane)
@@ -14174,7 +14128,11 @@ where
                 {
                     return false;
                 }
-                if !is_route_controller && is_loop_control_resource(passive_meta.resource) {
+                if !is_route_controller
+                    && self
+                        .control_semantic_kind(passive_meta.label, passive_meta.resource)
+                        .is_loop()
+                {
                     return false;
                 }
             }
@@ -14227,7 +14185,10 @@ where
             && passive_meta.is_control
             && passive_meta.label == label
             && (passive_meta.peer == ROLE
-                || (!is_route_controller && is_loop_control_resource(passive_meta.resource)))
+                || (!is_route_controller
+                    && self
+                        .control_semantic_kind(passive_meta.label, passive_meta.resource)
+                        .is_loop()))
     }
 
     /// Materialize recv metadata from a precomputed first-recv dispatch table.
@@ -14688,9 +14649,8 @@ where
         let mut dispatch_frame = None;
         {
             // Use lane-specific port for multi-lane parallel execution
-            let port = self.port_for_lane_mut(meta.lane as usize);
-            let payload_view = unsafe {
-                let scratch = &mut *port.scratch_ptr();
+            let port = self.port_for_lane(meta.lane as usize);
+            let payload_view = lane_port::staged_payload(port, |scratch| {
                 let len = match control_handling {
                     ControlHandling::None => {
                         let data = payload.ok_or(SendError::PhaseInvariant)?;
@@ -14706,9 +14666,6 @@ where
                         CAP_TOKEN_LEN
                     }
                     ControlHandling::External => {
-                        // External control: behavior depends on AUTO_MINT_EXTERNAL.
-                        // - If auto-minted (e.g., splice): use minted token
-                        // - Otherwise (e.g., management): use caller-provided payload
                         if let Some(token) = minted_token {
                             let frame = token.into_frame();
                             let bytes = *frame.bytes();
@@ -14722,12 +14679,8 @@ where
                         }
                     }
                 };
-                let slice = &scratch[..len];
-                Payload::new(slice)
-            };
-
-            let transport = port.transport();
-            let tx_ptr = port.tx_ptr();
+                Ok::<usize, SendError>(len)
+            })?;
 
             let outgoing = crate::transport::Outgoing {
                 meta: crate::transport::SendMeta {
@@ -14746,12 +14699,9 @@ where
             };
 
             if !outgoing.meta.is_local() {
-                unsafe {
-                    transport
-                        .send(&mut *tx_ptr, outgoing)
-                        .await
-                        .map_err(|err| SendError::Transport(err.into()))?;
-                }
+                lane_port::send_outgoing(port, outgoing)
+                    .await
+                    .map_err(SendError::Transport)?;
             }
         }
 
@@ -14958,16 +14908,13 @@ where
             &binding_buf[..n]
         } else {
             'recv_loop: loop {
-                let payload = {
-                    let port = self.port_for_lane_mut(meta.lane as usize);
-                    let transport = port.transport();
-                    let rx_ptr = port.rx_ptr();
-                    unsafe {
-                        transport
-                            .recv(&mut *rx_ptr)
-                            .await
-                            .map_err(|err| RecvError::Transport(err.into()))?
-                    }
+                let transport_payload_len = {
+                    let port = self.port_for_lane(meta.lane as usize);
+                    let payload = lane_port::recv_future(port)
+                        .await
+                        .map_err(RecvError::Transport)?;
+                    lane_port::copy_payload_into_scratch(port, &payload)
+                        .map_err(|_| RecvError::PhaseInvariant)?
                 };
 
                 if let Some(n) =
@@ -14976,19 +14923,20 @@ where
                     break 'recv_loop &binding_buf[..n];
                 }
 
-                if payload.as_bytes().is_empty() {
+                if transport_payload_len == 0 {
                     let binding_active = self.binding.policy_signals_provider().is_some();
                     if !binding_active {
-                        break 'recv_loop payload.as_bytes();
+                        break 'recv_loop &[];
                     }
                     if M::Payload::decode_owned(&[]).is_ok() {
-                        break 'recv_loop payload.as_bytes();
+                        break 'recv_loop &[];
                     }
                     // Empty payload likely signals stream data queued for binding path.
                     continue;
                 }
 
-                break 'recv_loop payload.as_bytes();
+                let port = self.port_for_lane(meta.lane as usize);
+                break 'recv_loop &lane_port::scratch(port)[..transport_payload_len];
             }
         };
 
@@ -15035,7 +14983,7 @@ where
 
     fn record_loop_decision(
         &self,
-        metadata: &LoopMetadata<ROLE>,
+        metadata: &LoopMetadata,
         decision: LoopDecision,
         lane: u8,
     ) -> SendResult<()> {
@@ -15300,7 +15248,7 @@ where
                 carried_transport_payload.take().unwrap_or((0, offer_lane));
             if binding_classification.is_none() && transport_payload_len == 0 {
                 let payload_view = if skip_recv_loop {
-                    crate::transport::wire::Payload::new(&[])
+                    0usize
                 } else {
                     'offer_recv: loop {
                         if !is_route_controller || controller_selected_recv_step {
@@ -15312,27 +15260,24 @@ where
                                 selection.materialization_meta,
                             ) {
                                 binding_classification = Some(classification);
-                                break 'offer_recv crate::transport::wire::Payload::new(&[]);
+                                break 'offer_recv 0usize;
                             }
                             if recvless_loop_control_scope
                                 && let Some((_, classification)) = self_endpoint
                                     .poll_binding_any_for_offer(offer_lane_idx, offer_lane_mask)
                             {
                                 binding_classification = Some(classification);
-                                break 'offer_recv crate::transport::wire::Payload::new(&[]);
+                                break 'offer_recv 0usize;
                             }
                         }
 
-                        let payload = {
+                        let payload_len = {
                             let port = self_endpoint.port_for_lane(offer_lane_idx);
-                            let transport = port.transport();
-                            let rx_ptr = port.rx_ptr();
-                            unsafe {
-                                transport
-                                    .recv(&mut *rx_ptr)
-                                    .await
-                                    .map_err(|err| RecvError::Transport(err.into()))?
-                            }
+                            let payload = lane_port::recv_future(port)
+                                .await
+                                .map_err(RecvError::Transport)?;
+                            lane_port::copy_payload_into_scratch(port, &payload)
+                                .map_err(|_| RecvError::PhaseInvariant)?
                         };
 
                         if !is_route_controller || controller_selected_recv_step {
@@ -15344,26 +15289,22 @@ where
                                 selection.materialization_meta,
                             ) {
                                 binding_classification = Some(classification);
-                                break 'offer_recv crate::transport::wire::Payload::new(&[]);
+                                break 'offer_recv 0usize;
                             }
                             if recvless_loop_control_scope
                                 && let Some((_, classification)) = self_endpoint
                                     .poll_binding_any_for_offer(offer_lane_idx, offer_lane_mask)
                             {
                                 binding_classification = Some(classification);
-                                break 'offer_recv crate::transport::wire::Payload::new(&[]);
+                                break 'offer_recv 0usize;
                             }
                         }
 
-                        break 'offer_recv payload;
+                        break 'offer_recv payload_len;
                     }
                 };
-                if !payload_view.as_bytes().is_empty() {
-                    let payload_bytes = payload_view.as_bytes();
-                    let port = self_endpoint.port_for_lane_mut(offer_lane_idx);
-                    let scratch_ptr = port.scratch_ptr();
-                    let scratch = unsafe { &mut *scratch_ptr };
-                    transport_payload_len = stage_transport_payload(scratch, payload_bytes)?;
+                if payload_view != 0 {
+                    transport_payload_len = payload_view;
                     transport_payload_lane = offer_lane;
                 }
             }
@@ -15501,11 +15442,15 @@ where
         // branches can decide whether to wait for one additional ingress turn.
         let passive_linger_loop_label = !is_route_controller
             && self.is_linger_route(scope_id)
-            && is_loop_control_resource(meta.resource);
+            && self
+                .control_semantic_kind(meta.label, meta.resource)
+                .is_loop();
         let branch_kind = if self.cursor.is_recv() {
             if passive_linger_loop_label
                 || (!is_route_controller
-                    && is_loop_control_resource(meta.resource)
+                    && self
+                        .control_semantic_kind(meta.label, meta.resource)
+                        .is_loop()
                     && self.selection_non_wire_loop_control_recv(
                         selection,
                         is_route_controller,
@@ -15570,11 +15515,7 @@ where
             && (!matches!(branch_kind, BranchKind::WireRecv) || binding_channel.is_some())
         {
             let port = self.port_for_lane(transport_payload_lane as usize);
-            let transport = port.transport();
-            let rx_ptr = port.rx_ptr();
-            unsafe {
-                transport.requeue(&mut *rx_ptr);
-            }
+            lane_port::requeue_recv(port);
             transport_payload_len = 0;
         }
         if self.selection_arm_has_recv(selection, selected_arm) {
@@ -15777,23 +15718,18 @@ where
                     let recv_lane_idx = offer_lane as usize;
                     let recv_lane = recv_lane_idx as u8;
                     let port = self.port_for_lane(recv_lane_idx);
-                    let transport = port.transport();
-                    let rx_ptr = port.rx_ptr();
-                    let mut recv_fut = core::pin::pin!(unsafe { transport.recv(&mut *rx_ptr) });
+                    let mut recv_fut = core::pin::pin!(lane_port::recv_future(port));
                     let payload = poll_fn(|cx| match recv_fut.as_mut().poll(cx) {
                         Poll::Ready(result) => Poll::Ready(Some(result)),
                         Poll::Pending => Poll::Ready(None),
                     })
                     .await;
                     if let Some(payload) = payload {
-                        let payload = payload.map_err(|err| RecvError::Transport(err.into()))?;
+                        let payload = payload.map_err(RecvError::Transport)?;
                         if *transport_payload_len == 0 && !payload.as_bytes().is_empty() {
-                            let payload_bytes = payload.as_bytes();
-                            let port = self.port_for_lane_mut(recv_lane_idx);
-                            let scratch_ptr = port.scratch_ptr();
-                            let scratch = unsafe { &mut *scratch_ptr };
                             *transport_payload_len =
-                                stage_transport_payload(scratch, payload_bytes)?;
+                                lane_port::copy_payload_into_scratch(port, &payload)
+                                    .map_err(|_| RecvError::PhaseInvariant)?;
                             *transport_payload_lane = recv_lane;
                         }
                     }
@@ -16022,11 +15958,7 @@ where
                 }
                 if *transport_payload_len != 0 {
                     let port = self.port_for_lane(*transport_payload_lane as usize);
-                    let transport = port.transport();
-                    let rx_ptr = port.rx_ptr();
-                    unsafe {
-                        transport.requeue(&mut *rx_ptr);
-                    }
+                    lane_port::requeue_recv(port);
                 }
                 if matches!(route_token.source(), RouteDecisionSource::Resolver) {
                     let _ = self.take_scope_ack(scope_id);
@@ -16496,21 +16428,6 @@ where
             .expect("cursor endpoint retains primary port")
     }
 
-    /// Get the primary lane's port mutably.
-    ///
-    /// # Safety invariant
-    /// The primary port is always retained by construction.
-    fn port_mut(&mut self) -> &mut Port<'r, T, E> {
-        debug_assert!(
-            self.ports[self.primary_lane].is_some(),
-            "port_mut: primary lane {} has no port (invariant violation)",
-            self.primary_lane
-        );
-        self.ports[self.primary_lane]
-            .as_mut()
-            .expect("cursor endpoint retains primary port")
-    }
-
     /// Get port for a specific lane.
     ///
     /// # Panics
@@ -16523,21 +16440,6 @@ where
         );
         self.ports[lane_idx]
             .as_ref()
-            .expect("port not acquired for lane")
-    }
-
-    /// Get port for a specific lane mutably.
-    ///
-    /// # Panics
-    /// Panics if the port for `lane_idx` was not acquired.
-    fn port_for_lane_mut(&mut self, lane_idx: usize) -> &mut Port<'r, T, E> {
-        debug_assert!(
-            self.ports[lane_idx].is_some(),
-            "port not acquired for lane {}",
-            lane_idx
-        );
-        self.ports[lane_idx]
-            .as_mut()
             .expect("port not acquired for lane")
     }
 
@@ -16720,9 +16622,14 @@ where
     }
 
     #[inline]
-    fn loop_control_label_evidence_only(label_meta: ScopeLabelMeta, label: u8, arm: u8) -> bool {
+    fn loop_control_label_evidence_only(
+        &self,
+        label_meta: ScopeLabelMeta,
+        label: u8,
+        arm: u8,
+    ) -> bool {
         label_meta.loop_meta().loop_label_scope()
-            && is_wire_loop_control_label(label)
+            && self.is_loop_semantic_label(label)
             && label_meta.loop_meta().arm_has_recv(arm)
     }
 
@@ -16737,7 +16644,7 @@ where
             self.static_passive_dispatch_arm_from_exact_label(scope_id, label, label_meta);
         let arm = Self::scope_evidence_label_to_arm(label_meta, label).or(exact_static_passive_arm);
         if let Some(arm) = arm {
-            if Self::loop_control_label_evidence_only(label_meta, label, arm) {
+            if self.loop_control_label_evidence_only(label_meta, label, arm) {
                 // Loop-control labels can carry decision evidence without proving
                 // recv readiness for recv-required arms.
                 return;
@@ -16765,7 +16672,7 @@ where
         let arm = Self::binding_scope_evidence_label_to_arm(label_meta, label)
             .or(exact_static_passive_arm);
         if let Some(arm) = arm {
-            if Self::loop_control_label_evidence_only(label_meta, label, arm) {
+            if self.loop_control_label_evidence_only(label_meta, label, arm) {
                 return;
             }
             if self.static_passive_scope_evidence_materializes_poll(scope_id) {
@@ -17007,19 +16914,13 @@ where
         transport_payload_lane: &mut u8,
     ) -> RecvResult<()> {
         let lane_idx = offer_lane as usize;
-        let payload = {
-            let port = self.port_for_lane(lane_idx);
-            let transport = port.transport();
-            let rx_ptr = port.rx_ptr();
-            unsafe { transport.recv(&mut *rx_ptr).await }
-                .map_err(|err| RecvError::Transport(err.into()))?
-        };
+        let port = self.port_for_lane(lane_idx);
+        let payload = lane_port::recv_future(port)
+            .await
+            .map_err(RecvError::Transport)?;
         if *transport_payload_len == 0 && !payload.as_bytes().is_empty() {
-            let payload_bytes = payload.as_bytes();
-            let port = self.port_for_lane_mut(lane_idx);
-            let scratch_ptr = port.scratch_ptr();
-            let scratch = unsafe { &mut *scratch_ptr };
-            *transport_payload_len = stage_transport_payload(scratch, payload_bytes)?;
+            *transport_payload_len = lane_port::copy_payload_into_scratch(port, &payload)
+                .map_err(|_| RecvError::PhaseInvariant)?;
             *transport_payload_lane = offer_lane;
         }
         Ok(())
@@ -17166,14 +17067,15 @@ where
     }
 
     #[inline]
-    fn scope_has_controller_arm_entry(cursor: &PhaseCursor<ROLE>, scope_id: ScopeId) -> bool {
+    fn scope_has_controller_arm_entry(cursor: &PhaseCursor, scope_id: ScopeId) -> bool {
         cursor.controller_arm_entry_by_arm(scope_id, 0).is_some()
             || cursor.controller_arm_entry_by_arm(scope_id, 1).is_some()
     }
 
     #[inline]
     fn current_recv_is_scope_local(
-        cursor: &PhaseCursor<ROLE>,
+        cursor: &PhaseCursor,
+        semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
         loop_meta: ScopeLoopMeta,
         label: u8,
@@ -17184,7 +17086,8 @@ where
             .first_recv_target(scope_id, label)
             .map(|(target_arm, _)| target_arm == arm)
             .unwrap_or(false)
-            || (loop_meta.loop_label_scope() && is_loop_control_resource(resource))
+            || (loop_meta.loop_label_scope()
+                && is_loop_control_label_or_resource(semantics, label, resource))
     }
 
     fn scope_label_to_arm(label_meta: ScopeLabelMeta, label: u8) -> Option<u8> {
@@ -17201,7 +17104,7 @@ where
     }
 
     #[inline]
-    fn scope_arm_has_recv(cursor: &PhaseCursor<ROLE>, scope_id: ScopeId, arm: u8) -> bool {
+    fn scope_arm_has_recv(cursor: &PhaseCursor, scope_id: ScopeId, arm: u8) -> bool {
         if cursor.route_scope_arm_recv_index(scope_id, arm).is_some() {
             return true;
         }
@@ -17269,7 +17172,9 @@ where
                     return false;
                 }
                 if !self.cursor.is_route_controller(scope_id)
-                    && is_loop_control_resource(recv_meta.resource)
+                    && self
+                        .control_semantic_kind(recv_meta.label, recv_meta.resource)
+                        .is_loop()
                 {
                     return false;
                 }
@@ -17621,7 +17526,10 @@ where
         }
         // Passive observers model controller self-send loop control as cross-role
         // control recv nodes; treat these labels as non-wire arm selectors.
-        !self.cursor.is_route_controller(scope_id) && is_loop_control_resource(recv_meta.resource)
+        !self.cursor.is_route_controller(scope_id)
+            && self
+                .control_semantic_kind(recv_meta.label, recv_meta.resource)
+                .is_loop()
     }
 
     fn take_binding_for_lane(
@@ -17683,11 +17591,12 @@ where
         label_mask: u128,
         drop_label_mask: u128,
     ) -> Option<crate::binding::IncomingClassification> {
+        let semantics = self.control_semantics();
         self.take_matching_mask_binding_for_lane(
             lane_idx,
             label_mask,
             drop_label_mask,
-            is_wire_loop_control_label,
+            move |label| semantics.is_loop_label(label),
         )
     }
 
@@ -17699,7 +17608,7 @@ where
         binding_classification: &mut Option<crate::binding::IncomingClassification>,
     ) -> (Option<crate::binding::Channel>, Option<u16>, bool) {
         let label_mask = label_meta.binding_demux_label_mask_for_arm(selected_arm);
-        let drop_label_mask = loop_control_label_mask();
+        let drop_label_mask = self.loop_control_drop_label_mask();
         let mut channel = None;
         let mut instance = None;
         let mut has_fin = false;
@@ -17716,11 +17625,8 @@ where
         }
 
         if (channel.is_none() || instance.is_none())
-            && let Some(classification) = self.take_binding_mask_ignoring_loop_control(
-                lane_idx,
-                label_mask,
-                drop_label_mask,
-            )
+            && let Some(classification) =
+                self.take_binding_mask_ignoring_loop_control(lane_idx, label_mask, drop_label_mask)
         {
             if channel.is_none() {
                 channel = Some(classification.channel);
@@ -17816,7 +17722,7 @@ where
         offer_lane_mask: u8,
         label_mask: u128,
     ) -> Option<(usize, crate::binding::IncomingClassification)> {
-        let drop_label_mask = loop_control_label_mask();
+        let drop_label_mask = self.loop_control_drop_label_mask();
         let matching_buffered_lane_mask =
             self.binding_inbox.buffered_lane_mask_for_labels(label_mask) & offer_lane_mask;
         if let Some(classification) = self.poll_buffered_binding_mask_for_offer(
@@ -17862,13 +17768,11 @@ where
         while let Some(lane_slot) =
             Self::take_preferred_lane_in_mask(offer_lane_idx, &mut remaining_lane_mask)
         {
-            if let Some(classification) = self.take_binding_mask_ignoring_loop_control(
-                lane_slot,
-                label_mask,
-                drop_label_mask,
-            ) {
-            return Some((lane_slot, classification));
-        }
+            if let Some(classification) =
+                self.take_binding_mask_ignoring_loop_control(lane_slot, label_mask, drop_label_mask)
+            {
+                return Some((lane_slot, classification));
+            }
         }
         None
     }
@@ -17889,11 +17793,9 @@ where
         else {
             return None;
         };
-        if let Some(classification) = self.take_binding_mask_ignoring_loop_control(
-            lane_slot,
-            label_mask,
-            drop_label_mask,
-        ) {
+        if let Some(classification) =
+            self.take_binding_mask_ignoring_loop_control(lane_slot, label_mask, drop_label_mask)
+        {
             // Classification is demux evidence only.
             return Some((lane_slot, classification));
         }
@@ -18012,23 +17914,27 @@ where
         Ok(None)
     }
 
-    fn is_loop_control_scope(cursor: &PhaseCursor<ROLE>, scope_id: ScopeId) -> bool {
+    fn is_loop_control_scope(
+        cursor: &PhaseCursor,
+        semantics: &ControlSemanticsTable,
+        scope_id: ScopeId,
+    ) -> bool {
         matches!(
             (
-                controller_arm_loop_meaning(cursor, scope_id, 0),
-                controller_arm_loop_meaning(cursor, scope_id, 1)
+                controller_arm_semantic_kind(cursor, semantics, scope_id, 0),
+                controller_arm_semantic_kind(cursor, semantics, scope_id, 1)
             ),
             (
-                Some(LoopControlMeaning::Continue),
-                Some(LoopControlMeaning::Break)
+                Some(ControlSemanticKind::LoopContinue),
+                Some(ControlSemanticKind::LoopBreak)
             ) | (
-                Some(LoopControlMeaning::Break),
-                Some(LoopControlMeaning::Continue)
+                Some(ControlSemanticKind::LoopBreak),
+                Some(ControlSemanticKind::LoopContinue)
             )
         )
     }
 
-    fn parallel_scope_root(cursor: &PhaseCursor<ROLE>, mut scope_id: ScopeId) -> Option<ScopeId> {
+    fn parallel_scope_root(cursor: &PhaseCursor, mut scope_id: ScopeId) -> Option<ScopeId> {
         loop {
             if scope_id.kind() == ScopeKind::Parallel {
                 return Some(scope_id);
@@ -18042,7 +17948,7 @@ where
 
     #[inline]
     fn frontier_kind_for_cursor(
-        cursor: &PhaseCursor<ROLE>,
+        cursor: &PhaseCursor,
         scope_id: ScopeId,
         is_controller: bool,
     ) -> FrontierKind {
@@ -18066,7 +17972,11 @@ where
     }
 
     #[inline]
-    fn scope_loop_meta(cursor: &PhaseCursor<ROLE>, scope_id: ScopeId) -> ScopeLoopMeta {
+    fn scope_loop_meta(
+        cursor: &PhaseCursor,
+        semantics: &ControlSemanticsTable,
+        scope_id: ScopeId,
+    ) -> ScopeLoopMeta {
         let mut flags = 0u8;
         if cursor.typestate_node(cursor.index()).loop_scope().is_some() {
             flags |= ScopeLoopMeta::FLAG_SCOPE_ACTIVE;
@@ -18078,7 +17988,7 @@ where
         {
             flags |= ScopeLoopMeta::FLAG_SCOPE_LINGER;
         }
-        if Self::is_loop_control_scope(cursor, scope_id) {
+        if Self::is_loop_control_scope(cursor, semantics, scope_id) {
             flags |= ScopeLoopMeta::FLAG_CONTROL_SCOPE;
         }
         if cursor.route_scope_arm_recv_index(scope_id, 0).is_some() {
@@ -18092,7 +18002,8 @@ where
 
     #[inline]
     fn scope_label_meta(
-        cursor: &PhaseCursor<ROLE>,
+        cursor: &PhaseCursor,
+        semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
         loop_meta: ScopeLoopMeta,
     ) -> ScopeLabelMeta {
@@ -18115,6 +18026,7 @@ where
                 meta.record_arm_label(arm, recv_meta.label);
                 if !Self::current_recv_is_scope_local(
                     cursor,
+                    semantics,
                     scope_id,
                     loop_meta,
                     recv_meta.label,
@@ -18146,10 +18058,10 @@ where
             }
         }
         if loop_meta.loop_label_scope() {
-            if let Some(label) = controller_arm_wire_label(cursor, scope_id, 0) {
+            if let Some(label) = controller_arm_label(cursor, scope_id, 0) {
                 meta.record_arm_label(0, label);
             }
-            if let Some(label) = controller_arm_wire_label(cursor, scope_id, 1) {
+            if let Some(label) = controller_arm_label(cursor, scope_id, 1) {
                 meta.record_arm_label(1, label);
             }
         }
@@ -18186,8 +18098,8 @@ where
                 return cached;
             }
         }
-        let loop_meta = Self::scope_loop_meta(&self.cursor, scope_id);
-        Self::scope_label_meta(&self.cursor, scope_id, loop_meta)
+        let loop_meta = Self::scope_loop_meta(&self.cursor, &self.control_semantics(), scope_id);
+        Self::scope_label_meta(&self.cursor, &self.control_semantics(), scope_id, loop_meta)
     }
 
     #[inline]
@@ -18221,12 +18133,13 @@ where
 
     #[inline]
     fn frontier_static_facts(
-        cursor: &PhaseCursor<ROLE>,
+        cursor: &PhaseCursor,
+        semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
         is_controller: bool,
         is_dynamic: bool,
     ) -> FrontierStaticFacts {
-        let loop_meta = Self::scope_loop_meta(cursor, scope_id);
+        let loop_meta = Self::scope_loop_meta(cursor, semantics, scope_id);
         let controller_local_ready =
             is_controller && Self::scope_has_controller_arm_entry(cursor, scope_id);
         let cursor_ready = cursor.is_recv()
@@ -18417,6 +18330,7 @@ where
                 .unwrap_or(false);
         let static_facts = Self::frontier_static_facts(
             &current_cursor,
+            &self.control_semantics(),
             scope_id,
             current_is_controller,
             current_is_dynamic,
@@ -21489,10 +21403,19 @@ where
             .route_scope_controller_policy(region.scope_id)
             .map(|(policy, _, _)| policy.is_dynamic())
             .unwrap_or(false);
-        let static_facts =
-            Self::frontier_static_facts(&lane_cursor, region.scope_id, is_controller, is_dynamic);
-        let label_meta =
-            Self::scope_label_meta(&lane_cursor, region.scope_id, static_facts.loop_meta);
+        let static_facts = Self::frontier_static_facts(
+            &lane_cursor,
+            &self.control_semantics(),
+            region.scope_id,
+            is_controller,
+            is_dynamic,
+        );
+        let label_meta = Self::scope_label_meta(
+            &lane_cursor,
+            &self.control_semantics(),
+            region.scope_id,
+            static_facts.loop_meta,
+        );
         let mut flags = 0u8;
         if is_controller {
             flags |= LaneOfferState::FLAG_CONTROLLER;
@@ -21649,6 +21572,9 @@ where
             if let Some(g) = guard.take() {
                 drop(g);
             }
+        }
+        if let Some(cluster) = self.control.cluster() {
+            cluster.release_compiled_cache_lease(self.compiled_cache_lease);
         }
     }
 }

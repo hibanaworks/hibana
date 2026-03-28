@@ -1,7 +1,9 @@
 //! Mutable phase and runtime cursor logic for typestate execution.
 
+use core::ptr::NonNull;
+
 use super::{
-    builder::{RoleTypestate, ScopeRegion},
+    builder::{RoleTypestateValue, ScopeRegion},
     facts::{
         JumpError, JumpReason, LocalAction, LocalMeta, LocalNode, PassiveArmNavigation, RecvMeta,
         SendMeta, StateIndex, as_state_index, state_index_to_usize, try_local_meta, try_recv_meta,
@@ -12,7 +14,7 @@ use crate::{
     eff::EffIndex,
     global::{
         LoopControlMeaning,
-        compiled::RoleMachine,
+        compiled::CompiledRole,
         const_dsl::{PolicyMode, ScopeId, ScopeKind},
         role_program::{LocalStep, MAX_LANES, Phase},
     },
@@ -27,7 +29,7 @@ pub(crate) enum LoopRole {
 
 /// Metadata associated with a loop decision site.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct LoopMetadata<const ROLE: u8> {
+pub(crate) struct LoopMetadata {
     pub scope: ScopeId,
     pub controller: u8,
     pub target: u8,
@@ -61,9 +63,8 @@ const PHASE_CURSOR_NO_STATE: StateIndex = StateIndex::MAX;
 /// choreography is faithfully represented at runtime, with independent lane cursors
 /// and proper barrier semantics.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct PhaseCursor<const ROLE: u8> {
-    // === Core Typestate (delegates to RoleTypestate) ===
-    typestate: RoleTypestate<ROLE>,
+pub(crate) struct PhaseCursor {
+    compiled: NonNull<CompiledRole>,
     /// Primary typestate index used for scope queries.
     idx: usize,
 
@@ -75,51 +76,50 @@ pub(crate) struct PhaseCursor<const ROLE: u8> {
     /// Label → lane bitmask for the current step on each lane.
     /// Updated when lane cursors advance.
     label_lane_mask: [u8; 256],
-
-    phases: [Phase; PHASE_CURSOR_MAX_PHASES],
-    phase_len: usize,
-    local_steps: [LocalStep; PHASE_CURSOR_MAX_STEPS],
-    local_steps_len: usize,
-    eff_index_to_step: [u16; PHASE_CURSOR_MAX_STEPS],
-    step_index_to_state: [StateIndex; PHASE_CURSOR_MAX_STEPS],
 }
 
-impl<const ROLE: u8> PhaseCursor<ROLE> {
+impl PhaseCursor {
+    #[inline(always)]
+    fn compiled(&self) -> &CompiledRole {
+        // SAFETY: CursorEndpoint holds a pinned compiled-cache lease for the
+        // entire endpoint lifetime, and PhaseCursor never mutates the compiled
+        // facts behind this stable slot.
+        unsafe { self.compiled.as_ref() }
+    }
+
+    #[inline(always)]
+    fn typestate(&self) -> &RoleTypestateValue {
+        self.compiled().typestate()
+    }
+
+    #[inline(always)]
+    fn phase_len(&self) -> usize {
+        self.compiled().phase_count().min(PHASE_CURSOR_MAX_PHASES)
+    }
+
+    #[inline(always)]
+    fn local_steps_len(&self) -> usize {
+        self.compiled().step_count().min(PHASE_CURSOR_MAX_STEPS)
+    }
+
     // =========================================================================
     // Construction
     // =========================================================================
 
+    #[cfg(test)]
     #[inline(always)]
-    pub(crate) fn from_machine(machine: RoleMachine<ROLE>) -> Self {
-        let layout = *machine.layout();
-        let mut phases = [Phase::EMPTY; PHASE_CURSOR_MAX_PHASES];
-        let phase_len = layout.phase_count().min(PHASE_CURSOR_MAX_PHASES);
-        for i in 0..phase_len {
-            phases[i] = layout.phases()[i];
-        }
+    pub(crate) fn new(compiled: &CompiledRole) -> Self {
+        Self::from_pinned_role_ptr(NonNull::from(compiled))
+    }
 
-        let mut local_steps = [LocalStep::EMPTY; PHASE_CURSOR_MAX_STEPS];
-        let local_steps_len = layout.len().min(PHASE_CURSOR_MAX_STEPS);
-        for i in 0..local_steps_len {
-            local_steps[i] = layout.steps()[i];
-        }
-
-        let typestate = *machine.typestate();
-        let eff_index_to_step = *machine.eff_index_to_step();
-        let step_index_to_state = *machine.step_index_to_state();
-
+    #[inline(always)]
+    pub(crate) fn from_pinned_role_ptr(compiled: NonNull<CompiledRole>) -> Self {
         let mut cursor = Self {
-            typestate,
+            compiled,
             idx: 0,
             phase_index: 0,
             lane_cursors: [0; MAX_LANES],
             label_lane_mask: [0; 256],
-            phases,
-            phase_len,
-            local_steps,
-            local_steps_len,
-            eff_index_to_step,
-            step_index_to_state,
         };
         cursor.rebuild_label_lane_mask();
         cursor
@@ -130,9 +130,9 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
 
     /// Get the current phase, if any.
     #[inline]
-    pub(crate) fn current_phase(&self) -> Option<&Phase> {
-        if self.phase_index < self.phase_len {
-            Some(&self.phases[self.phase_index])
+    pub(crate) fn current_phase(&self) -> Option<Phase> {
+        if self.phase_index < self.phase_len() {
+            self.compiled().phase(self.phase_index).copied()
         } else {
             None
         }
@@ -181,7 +181,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     /// for the current phase to resolve the lane without scanning.
     ///
     /// Returns `Some((lane_idx, step))` if found, `None` otherwise.
-    pub(crate) fn find_step_for_label(&self, target_label: u8) -> Option<(usize, &LocalStep)> {
+    pub(crate) fn find_step_for_label(&self, target_label: u8) -> Option<(usize, LocalStep)> {
         let lane_mask = self.label_lane_mask[target_label as usize];
         if lane_mask == 0 {
             return None;
@@ -196,9 +196,9 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     }
 
     /// Get the step at the current cursor position for a specific lane.
-    pub(crate) fn step_at_lane(&self, lane_idx: usize) -> Option<&LocalStep> {
+    pub(crate) fn step_at_lane(&self, lane_idx: usize) -> Option<LocalStep> {
         let step_idx = self.step_index_at_lane(lane_idx)?;
-        Some(&self.local_steps[step_idx])
+        self.compiled().step(step_idx).copied()
     }
 
     /// Get the step index at the current cursor position for a specific lane.
@@ -216,7 +216,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
 
         let cursor_pos = self.lane_cursors[lane_idx];
         let step_idx = lane_steps.start + cursor_pos;
-        if cursor_pos >= lane_steps.len || step_idx >= self.local_steps_len {
+        if cursor_pos >= lane_steps.len || step_idx >= self.local_steps_len() {
             return None;
         }
 
@@ -225,7 +225,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
 
     pub(crate) fn index_for_lane_step(&self, lane_idx: usize) -> Option<usize> {
         let step_idx = self.step_index_at_lane(lane_idx)?;
-        let state_idx = self.step_index_to_state[step_idx];
+        let state_idx = self.compiled().state_for_step_index(step_idx)?;
         if state_idx == PHASE_CURSOR_NO_STATE {
             debug_assert!(
                 false,
@@ -260,13 +260,16 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
             debug_assert!(false, "eff_index out of bounds for phase cursor");
             return;
         }
-        let step_idx = self.eff_index_to_step[eff_idx];
+        let step_idx = self
+            .compiled()
+            .step_for_eff_index(eff_idx)
+            .unwrap_or(PHASE_CURSOR_NO_STEP);
         if step_idx == PHASE_CURSOR_NO_STEP {
             debug_assert!(false, "eff_index not found in local steps");
             return;
         }
         let step_idx = step_idx as usize;
-        if step_idx >= self.local_steps_len {
+        if step_idx >= self.local_steps_len() {
             debug_assert!(false, "step index out of bounds for local steps");
             return;
         }
@@ -304,13 +307,16 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
             debug_assert!(false, "eff_index out of bounds for phase cursor");
             return;
         }
-        let step_idx = self.eff_index_to_step[eff_idx];
+        let step_idx = self
+            .compiled()
+            .step_for_eff_index(eff_idx)
+            .unwrap_or(PHASE_CURSOR_NO_STEP);
         if step_idx == PHASE_CURSOR_NO_STEP {
             debug_assert!(false, "eff_index not found in local steps");
             return;
         }
         let step_idx = step_idx as usize;
-        if step_idx >= self.local_steps_len {
+        if step_idx >= self.local_steps_len() {
             debug_assert!(false, "step index out of bounds for local steps");
             return;
         }
@@ -349,11 +355,14 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
             return;
         };
         let step_idx = phase.min_start;
-        if step_idx >= self.local_steps_len {
+        if step_idx >= self.local_steps_len() {
             debug_assert!(false, "phase start out of local steps range");
             return;
         }
-        let state_idx = self.step_index_to_state[step_idx];
+        let state_idx = self
+            .compiled()
+            .state_for_step_index(step_idx)
+            .unwrap_or(PHASE_CURSOR_NO_STATE);
         if state_idx == PHASE_CURSOR_NO_STATE {
             debug_assert!(false, "missing typestate index for phase start step");
             return;
@@ -392,12 +401,12 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     /// Access a typestate node by index.
     #[inline(always)]
     pub(crate) fn typestate_node(&self, index: usize) -> LocalNode {
-        self.typestate.node(index)
+        self.typestate().node(index)
     }
 
     #[inline(always)]
     fn action(&self) -> LocalAction {
-        self.typestate.node(self.idx).action()
+        self.typestate().node(self.idx).action()
     }
 
     /// Returns `true` when the cursor points at a send action.
@@ -434,7 +443,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     #[inline(always)]
     pub(crate) fn jump_target(&self) -> Option<usize> {
         if self.is_jump() {
-            Some(state_index_to_usize(self.typestate.node(self.idx).next()))
+            Some(state_index_to_usize(self.typestate().node(self.idx).next()))
         } else {
             None
         }
@@ -454,7 +463,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     /// Advance typestate index to the successor.
     #[inline(always)]
     pub(crate) fn advance(self) -> Self {
-        let next = state_index_to_usize(self.typestate.node(self.idx).next());
+        let next = state_index_to_usize(self.typestate().node(self.idx).next());
         Self { idx: next, ..self }
     }
 
@@ -552,14 +561,15 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         target_arm: u8,
     ) -> Option<PassiveArmNavigation> {
         // O(1) registry lookup for the PassiveObserverBranch Jump node index
-        let jump_node_idx = self.typestate.passive_arm_jump(scope_id, target_arm);
+        let typestate = self.typestate();
+        let jump_node_idx = typestate.passive_arm_jump(scope_id, target_arm);
 
         if let Some(jump_idx) = jump_node_idx {
             // Primary path: follow PassiveObserverBranch Jump to target
-            let jump_node = self.typestate.node(state_index_to_usize(jump_idx));
+            let jump_node = typestate.node(state_index_to_usize(jump_idx));
             let target = jump_node.next();
             Some(PassiveArmNavigation::WithinArm { entry: target })
-        } else if let Some(entry_idx) = self.typestate.passive_arm_entry(scope_id, target_arm) {
+        } else if let Some(entry_idx) = typestate.passive_arm_entry(scope_id, target_arm) {
             // Secondary path: use passive_arm_entry directly
             // This is needed for nested routes where the inner route may be incorrectly
             // classified as "controller" (due to some nodes having controller_arm_entry set),
@@ -585,24 +595,24 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     pub(crate) fn find_arm_for_send_label(&self, target_label: u8) -> Option<u8> {
         let scope_region = self.scope_region()?;
         let scope_id = scope_region.scope_id;
+        let typestate = self.typestate();
 
         // O(1) per arm: check arm entry node labels
         // 2-arm route constraint means at most 2 iterations
         for arm in 0..2u8 {
             // First try PassiveObserverBranch Jump (for linger routes)
-            let entry_idx =
-                if let Some(jump_node_idx) = self.typestate.passive_arm_jump(scope_id, arm) {
-                    let jump_node = self.typestate.node(state_index_to_usize(jump_node_idx));
-                    Some(state_index_to_usize(jump_node.next()))
-                } else {
-                    // Direct entry path for non-linger routes.
-                    self.typestate
-                        .passive_arm_entry(scope_id, arm)
-                        .map(state_index_to_usize)
-                };
+            let entry_idx = if let Some(jump_node_idx) = typestate.passive_arm_jump(scope_id, arm) {
+                let jump_node = typestate.node(state_index_to_usize(jump_node_idx));
+                Some(state_index_to_usize(jump_node.next()))
+            } else {
+                // Direct entry path for non-linger routes.
+                typestate
+                    .passive_arm_entry(scope_id, arm)
+                    .map(state_index_to_usize)
+            };
 
             if let Some(target_idx) = entry_idx {
-                let entry_node = self.typestate.node(target_idx);
+                let entry_node = typestate.node(target_idx);
 
                 // Check arm entry node's label
                 match entry_node.action() {
@@ -631,10 +641,11 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     pub(crate) fn find_arm_for_recv_label(&self, target_label: u8) -> Option<u8> {
         let scope_region = self.scope_region()?;
         let scope_id = scope_region.scope_id;
+        let typestate = self.typestate();
 
         // FIRST-recv dispatch: O(1) lookup returns (arm, target_idx) directly.
         // The arm is now stored in the dispatch table, eliminating positional inference.
-        if let Some((arm, _target_idx)) = self.typestate.first_recv_target(scope_id, target_label) {
+        if let Some((arm, _target_idx)) = typestate.first_recv_target(scope_id, target_label) {
             if arm == super::super::typestate::ARM_SHARED {
                 return Some(0);
             }
@@ -643,18 +654,17 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
 
         // Bounded O(4) scan of arm entry node labels for τ-eliminated or local-only arms.
         for arm in 0..2u8 {
-            let entry_idx =
-                if let Some(jump_node_idx) = self.typestate.passive_arm_jump(scope_id, arm) {
-                    let jump_node = self.typestate.node(state_index_to_usize(jump_node_idx));
-                    Some(state_index_to_usize(jump_node.next()))
-                } else {
-                    self.typestate
-                        .passive_arm_entry(scope_id, arm)
-                        .map(state_index_to_usize)
-                };
+            let entry_idx = if let Some(jump_node_idx) = typestate.passive_arm_jump(scope_id, arm) {
+                let jump_node = typestate.node(state_index_to_usize(jump_node_idx));
+                Some(state_index_to_usize(jump_node.next()))
+            } else {
+                typestate
+                    .passive_arm_entry(scope_id, arm)
+                    .map(state_index_to_usize)
+            };
 
             if let Some(target_idx) = entry_idx {
-                let entry_node = self.typestate.node(target_idx);
+                let entry_node = typestate.node(target_idx);
                 if let LocalAction::Recv { label, .. } = entry_node.action() {
                     if label == target_label {
                         return Some(arm);
@@ -678,7 +688,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
 
     /// Create a cursor at a specific typestate index.
     pub(crate) fn with_index(&self, idx: usize) -> Self {
-        debug_assert!(idx < self.typestate.len());
+        debug_assert!(idx < self.typestate().len());
         Self { idx, ..*self }
     }
 
@@ -688,18 +698,19 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
 
     /// Get scope region for current node.
     pub(crate) fn scope_region(&self) -> Option<ScopeRegion> {
-        let scope_id = self.typestate.node(self.idx).scope();
+        let typestate = self.typestate();
+        let scope_id = typestate.node(self.idx).scope();
         if scope_id.is_none() {
             None
         } else {
-            self.typestate.scope_region_for(scope_id)
+            typestate.scope_region_for(scope_id)
         }
     }
 
     /// Get scope region by scope ID.
     #[inline(always)]
     pub(crate) fn scope_region_by_id(&self, scope_id: ScopeId) -> Option<ScopeRegion> {
-        self.typestate.scope_region_for(scope_id)
+        self.typestate().scope_region_for(scope_id)
     }
 
     /// FIRST-recv dispatch lookup for passive observers.
@@ -719,7 +730,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         {
             return None;
         }
-        self.typestate.first_recv_target(scope_id, label)
+        self.typestate().first_recv_target(scope_id, label)
     }
 
     #[inline]
@@ -728,7 +739,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         scope_id: ScopeId,
         label: u8,
     ) -> Option<(u8, StateIndex)> {
-        self.typestate.first_recv_target(scope_id, label)
+        self.typestate().first_recv_target(scope_id, label)
     }
 
     /// Check if this role is the controller for the given route scope.
@@ -737,12 +748,12 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     /// binary route construction via `ScopeMarker`). This eliminates runtime
     /// inference based on `controller_arm_entry` presence.
     ///
-    /// Returns `true` if `controller_role == ROLE`, `false` otherwise.
+    /// Returns `true` if `controller_role == self.compiled.role()`, `false` otherwise.
     #[inline]
     pub(crate) fn is_route_controller(&self, scope_id: ScopeId) -> bool {
         self.scope_region_by_id(scope_id)
             .and_then(|region| region.controller_role)
-            .map_or(false, |ctrl| ctrl == ROLE)
+            .map_or(false, |ctrl| ctrl == self.compiled().role())
     }
 
     /// Get scope ID at current position.
@@ -754,7 +765,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     /// Scope ID stored on the current node (no parent traversal).
     #[inline(always)]
     pub(crate) fn node_scope_id(&self) -> ScopeId {
-        self.typestate.node(self.idx).scope()
+        self.typestate().node(self.idx).scope()
     }
 
     /// Get scope kind at current position.
@@ -790,7 +801,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
 
     /// Get parent scope.
     pub(crate) fn scope_parent(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.typestate.scope_parent(scope_id)
+        self.typestate().scope_parent(scope_id)
     }
 
     // =========================================================================
@@ -801,8 +812,9 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     #[cfg(test)]
     #[inline(always)]
     pub(crate) fn seek_label(&self, label: u8) -> Option<Self> {
-        for i in 0..self.typestate.len() {
-            let node = self.typestate.node(i);
+        let typestate = self.typestate();
+        for i in 0..typestate.len() {
+            let node = typestate.node(i);
             let node_label = match node.action() {
                 LocalAction::Send { label: l, .. }
                 | LocalAction::Recv { label: l, .. }
@@ -817,8 +829,9 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     }
 
     fn try_index_for_loop_control(&self, meaning: LoopControlMeaning) -> Option<usize> {
-        for i in 0..self.typestate.len() {
-            let node = self.typestate.node(i);
+        let typestate = self.typestate();
+        for i in 0..typestate.len() {
+            let node = typestate.node(i);
             let resource = match node.action() {
                 LocalAction::Send { resource, .. }
                 | LocalAction::Recv { resource, .. }
@@ -849,13 +862,15 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         scope_id: ScopeId,
         target_arm: u8,
     ) -> Option<usize> {
-        let state = self.typestate.route_recv_state(scope_id, target_arm)?;
+        let state = self.typestate().route_recv_state(scope_id, target_arm)?;
         Some(state_index_to_usize(state))
     }
 
     /// Get arm count for a route scope.
     pub(crate) fn route_scope_arm_count(&self, scope_id: ScopeId) -> Option<u8> {
-        self.typestate.route_arm_count(scope_id).map(|count| count as u8)
+        self.typestate()
+            .route_arm_count(scope_id)
+            .map(|count| count as u8)
     }
 
     /// Get offer lanes list for a route scope.
@@ -864,13 +879,13 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         &self,
         scope_id: ScopeId,
     ) -> Option<([u8; MAX_LANES], usize)> {
-        self.typestate.route_offer_lane_list(scope_id)
+        self.typestate().route_offer_lane_list(scope_id)
     }
 
     /// Get offer entry index for a route scope.
     /// u16::MAX indicates the entry check is disabled (e.g., linger routes).
     pub(crate) fn route_scope_offer_entry(&self, scope_id: ScopeId) -> Option<StateIndex> {
-        self.typestate.route_offer_entry(scope_id)
+        self.typestate().route_offer_entry(scope_id)
     }
 
     #[inline]
@@ -879,20 +894,20 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         scope_id: ScopeId,
         idx: usize,
     ) -> Option<(u8, u8, StateIndex)> {
-        self.typestate.first_recv_dispatch_entry(scope_id, idx)
+        self.compiled().first_recv_dispatch_entry(scope_id, idx)
     }
 
     #[inline]
     pub(crate) fn route_scope_slot(&self, scope_id: ScopeId) -> Option<usize> {
-        self.typestate.route_scope_slot(scope_id)
+        self.typestate().route_scope_slot(scope_id)
     }
 
     pub(crate) fn scope_lane_first_eff(&self, scope_id: ScopeId, lane: u8) -> Option<EffIndex> {
-        self.typestate.scope_lane_first_eff(scope_id, lane)
+        self.typestate().scope_lane_first_eff(scope_id, lane)
     }
 
     pub(crate) fn scope_lane_last_eff(&self, scope_id: ScopeId, lane: u8) -> Option<EffIndex> {
-        self.typestate.scope_lane_last_eff(scope_id, lane)
+        self.typestate().scope_lane_last_eff(scope_id, lane)
     }
 
     pub(crate) fn scope_lane_last_eff_for_arm(
@@ -901,7 +916,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         arm: u8,
         lane: u8,
     ) -> Option<EffIndex> {
-        self.typestate
+        self.typestate()
             .scope_lane_last_eff_for_arm(scope_id, arm, lane)
     }
 
@@ -912,13 +927,14 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         scope_id: ScopeId,
         label: u8,
     ) -> Option<StateIndex> {
-        self.typestate.controller_arm_entry_for_label(scope_id, label)
+        self.typestate()
+            .controller_arm_entry_for_label(scope_id, label)
     }
 
     /// Check if the cursor is at a controller arm entry for the given scope.
     /// Used by flow() to determine if arm repositioning is valid.
     pub(crate) fn is_at_controller_arm_entry(&self, scope_id: ScopeId) -> bool {
-        self.typestate
+        self.typestate()
             .is_at_controller_arm_entry(scope_id, as_state_index(self.idx))
     }
 
@@ -929,12 +945,12 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         scope_id: ScopeId,
         arm: u8,
     ) -> Option<(StateIndex, u8)> {
-        self.typestate.controller_arm_entry_by_arm(scope_id, arm)
+        self.compiled().controller_arm_entry_by_arm(scope_id, arm)
     }
 
     #[inline]
     pub(crate) fn passive_arm_scope_by_arm(&self, scope_id: ScopeId, arm: u8) -> Option<ScopeId> {
-        self.typestate.passive_arm_scope(scope_id, arm)
+        self.typestate().passive_arm_scope(scope_id, arm)
     }
 
     /// Get route controller policy metadata.
@@ -947,7 +963,7 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         &self,
         scope_id: ScopeId,
     ) -> Option<(PolicyMode, EffIndex, u8)> {
-        self.typestate.route_controller(scope_id)
+        self.typestate().route_controller(scope_id)
     }
 
     // =========================================================================
@@ -957,19 +973,19 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     /// Try to get send metadata at the current cursor location.
     /// Returns `None` if the current node is not a Send action.
     pub(crate) fn try_send_meta(&self) -> Option<SendMeta> {
-        try_send_meta(&self.typestate, self.idx)
+        try_send_meta(self.typestate(), self.idx)
     }
 
     /// Try to get receive metadata at the current cursor location.
     /// Returns `None` if the current node is not a Recv action.
     pub(crate) fn try_recv_meta(&self) -> Option<RecvMeta> {
-        try_recv_meta(&self.typestate, self.idx)
+        try_recv_meta(self.typestate(), self.idx)
     }
 
     /// Try to get local action metadata at the current cursor location.
     /// Returns `None` if the current node is not a Local action.
     pub(crate) fn try_local_meta(&self) -> Option<LocalMeta> {
-        try_local_meta(&self.typestate, self.idx)
+        try_local_meta(self.typestate(), self.idx)
     }
 
     // =========================================================================
@@ -977,22 +993,23 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
     // =========================================================================
 
     /// Get loop metadata for current scope.
-    pub(crate) fn loop_metadata_inner(&self) -> Option<LoopMetadata<ROLE>> {
-        let node = self.typestate.node(self.idx);
+    pub(crate) fn loop_metadata_inner(&self) -> Option<LoopMetadata> {
+        let node = self.typestate().node(self.idx);
         let action = node.action();
+        let role = self.compiled().role();
         let (resource, eff_index, controller, target, role_kind) = match action {
             LocalAction::Send {
                 resource,
                 eff_index,
                 peer,
                 ..
-            } => (resource, eff_index, ROLE, peer, LoopRole::Controller),
+            } => (resource, eff_index, role, peer, LoopRole::Controller),
             LocalAction::Recv {
                 resource,
                 eff_index,
                 peer,
                 ..
-            } => (resource, eff_index, peer, ROLE, LoopRole::Target),
+            } => (resource, eff_index, peer, role, LoopRole::Target),
             _ => return None,
         };
         if LoopControlMeaning::from_resource_tag(resource) != Some(LoopControlMeaning::Continue) {
@@ -1002,7 +1019,9 @@ impl<const ROLE: u8> PhaseCursor<ROLE> {
         let continue_index = self
             .successor_for_loop_control(LoopControlMeaning::Continue)
             .index();
-        let break_index = self.successor_for_loop_control(LoopControlMeaning::Break).index();
+        let break_index = self
+            .successor_for_loop_control(LoopControlMeaning::Break)
+            .index();
         Some(LoopMetadata {
             scope,
             controller,

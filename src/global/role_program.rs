@@ -1,17 +1,17 @@
 //! Role-local program representation derived from const `EffList`.
 //!
 //! `RoleProgram` is the typed entry point for a role-local projection.
-//! Crate-private lowering facts stay behind this module and the compiled layer,
-//! while the original `EffList` reference remains available for metadata
-//! inspection.
+//! Crate-private lowering facts stay behind this module and the compiled layer.
 
+use core::ptr;
+
+#[cfg(test)]
+use super::compiled::CompiledRole;
 use super::{
-    compiled::{ProgramFacts, RoleMachine},
+    compiled::{ProgramStamp, ProjectionSeal},
     program::Program,
     steps::ProjectRole,
 };
-#[cfg(test)]
-use super::typestate::RoleTypestate;
 use crate::control::cap::mint::{CapShot, MintConfig, MintConfigMarker};
 use crate::{
     eff::{self, EffIndex},
@@ -269,7 +269,7 @@ impl LocalStep {
 /// metadata such as local-step tables, phase splits, and typestate graphs are
 /// materialized on demand so that stack-local `project(&program)` values remain
 /// small and cheap to move.
-#[derive(Clone, Copy)]
+#[derive(Clone, Debug)]
 pub(crate) struct ProjectedRoleLayout {
     local_steps: [LocalStep; MAX_STEPS],
     local_len: usize,
@@ -279,17 +279,18 @@ pub(crate) struct ProjectedRoleLayout {
 
 impl ProjectedRoleLayout {
     #[inline(always)]
-    pub(super) const fn new(
+    pub(super) unsafe fn init(
+        dst: *mut Self,
         local_steps: [LocalStep; MAX_STEPS],
         local_len: usize,
         phases: [Phase; MAX_PHASES],
         phase_len: usize,
-    ) -> Self {
-        Self {
-            local_steps,
-            local_len,
-            phases,
-            phase_len,
+    ) {
+        unsafe {
+            ptr::addr_of_mut!((*dst).local_steps).write(local_steps);
+            ptr::addr_of_mut!((*dst).local_len).write(local_len);
+            ptr::addr_of_mut!((*dst).phases).write(phases);
+            ptr::addr_of_mut!((*dst).phase_len).write(phase_len);
         }
     }
 
@@ -314,46 +315,6 @@ impl ProjectedRoleLayout {
     }
 }
 
-#[cfg(test)]
-#[derive(Clone, Copy)]
-pub(crate) struct ProjectedRoleData<const ROLE: u8> {
-    layout: ProjectedRoleLayout,
-    typestate: RoleTypestate<ROLE>,
-}
-
-#[cfg(test)]
-impl<const ROLE: u8> ProjectedRoleData<ROLE> {
-    #[inline(always)]
-    pub(super) const fn new(layout: ProjectedRoleLayout, typestate: RoleTypestate<ROLE>) -> Self {
-        Self { layout, typestate }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn len(&self) -> usize {
-        self.layout.len()
-    }
-
-    #[inline(always)]
-    pub(crate) fn steps(&self) -> &[LocalStep] {
-        self.layout.steps()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn phase_count(&self) -> usize {
-        self.layout.phase_count()
-    }
-
-    #[inline(always)]
-    pub(crate) fn phases(&self) -> &[Phase] {
-        self.layout.phases()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn typestate(&self) -> &RoleTypestate<ROLE> {
-        &self.typestate
-    }
-}
-
 #[derive(Clone, Copy)]
 pub struct RoleProgram<'prog, const ROLE: u8, LocalSteps, Mint = MintConfig>
 where
@@ -361,6 +322,7 @@ where
 {
     eff_list: &'prog EffList,
     mint: Mint,
+    stamp: ProgramStamp,
     _local_steps: core::marker::PhantomData<LocalSteps>,
 }
 
@@ -368,29 +330,41 @@ impl<'prog, const ROLE: u8, LocalSteps, Mint> RoleProgram<'prog, ROLE, LocalStep
 where
     Mint: MintConfigMarker,
 {
-    const fn new(eff_list: &'prog EffList, mint: Mint) -> Self {
+    const fn new(eff_list: &'prog EffList, mint: Mint, stamp: ProgramStamp) -> Self {
         Self {
             eff_list,
             mint,
+            stamp,
             _local_steps: core::marker::PhantomData,
         }
     }
 
     #[inline(always)]
-    pub(crate) const fn machine(&self) -> RoleMachine<ROLE> {
-        RoleMachine::<ROLE>::from_eff_list(self.eff_list)
+    pub(crate) const fn stamp(&self) -> ProgramStamp {
+        self.stamp
     }
 
-    /// Borrow the underlying global effect list.
     #[inline(always)]
-    pub const fn eff_list(&self) -> &'prog EffList {
+    #[cfg(test)]
+    pub(crate) fn borrow_id(&self) -> usize {
+        self.eff_list as *const EffList as usize
+    }
+
+    #[inline(always)]
+    pub(crate) const fn lowering_input(&self) -> &'prog EffList {
         self.eff_list
     }
 
-    /// Static LeaseGraph capacity requirements inferred from policy markers.
+    #[cfg(test)]
     #[inline(always)]
-    pub(crate) const fn lease_budget(&self) -> crate::control::lease::planner::LeaseGraphBudget {
-        ProgramFacts::from_eff_list(self.eff_list).lease_budget()
+    pub(crate) const fn eff_list_ref(&self) -> &'prog EffList {
+        self.eff_list
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) fn compile_role(&self) -> CompiledRole {
+        CompiledRole::compile::<ROLE>(self.eff_list)
     }
 
     /// Mint configuration baked into the RoleProgram.
@@ -409,10 +383,8 @@ where
     Steps: ProjectRole<Role<ROLE>>,
     Mint: MintConfigMarker,
 {
-    let eff = program.eff_list();
-    let _ = ProgramFacts::from_eff_list(eff);
-    RoleMachine::<ROLE>::validate(eff);
-    RoleProgram::new(eff, Mint::INSTANCE)
+    let stamp = ProjectionSeal::<ROLE>::validate_and_stamp::<Steps, Mint>(program);
+    RoleProgram::new(program.eff_list(), Mint::INSTANCE, stamp)
 }
 
 #[cfg(test)]
@@ -590,24 +562,26 @@ mod tests {
 
     #[test]
     fn projection_extracts_role_view() {
-        let role_zero = ROLE_ZERO.machine().into_projection();
-        assert_eq!(role_zero.len(), 2);
-        assert!(role_zero.steps()[0].is_send());
-        assert!(role_zero.steps()[1].is_recv());
-        assert_eq!(role_zero.steps()[0].peer(), 1);
-        assert_eq!(role_zero.steps()[1].peer(), 1);
+        let role_zero = ROLE_ZERO.compile_role();
+        let role_zero_layout = role_zero.layout();
+        assert_eq!(role_zero_layout.len(), 2);
+        assert!(role_zero_layout.steps()[0].is_send());
+        assert!(role_zero_layout.steps()[1].is_recv());
+        assert_eq!(role_zero_layout.steps()[0].peer(), 1);
+        assert_eq!(role_zero_layout.steps()[1].peer(), 1);
 
-        let role_one = ROLE_ONE.machine().into_projection();
-        assert_eq!(role_one.len(), 2);
-        assert!(role_one.steps()[0].is_recv());
-        assert!(role_one.steps()[1].is_send());
+        let role_one = ROLE_ONE.compile_role();
+        let role_one_layout = role_one.layout();
+        assert_eq!(role_one_layout.len(), 2);
+        assert!(role_one_layout.steps()[0].is_recv());
+        assert!(role_one_layout.steps()[1].is_send());
 
         assert_eq!(
-            ROLE_ZERO.eff_list().control_markers().len(),
+            ROLE_ZERO.eff_list_ref().control_markers().len(),
             PROTOCOL.eff_list().control_markers().len()
         );
         assert_eq!(
-            ROLE_ONE.eff_list().scope_markers().len(),
+            ROLE_ONE.eff_list_ref().scope_markers().len(),
             PROTOCOL.eff_list().scope_markers().len()
         );
 
@@ -639,9 +613,10 @@ mod tests {
     #[test]
     fn control_step_carries_shot_metadata() {
         // CancelMsg is a self-send (Client→Client), which projects to LocalAction
-        let cancel_role = CANCEL_ROLE.machine().into_projection();
-        assert_eq!(cancel_role.len(), 1);
-        let step = cancel_role.steps()[0];
+        let cancel_role = CANCEL_ROLE.compile_role();
+        let cancel_layout = cancel_role.layout();
+        assert_eq!(cancel_layout.len(), 1);
+        let step = cancel_layout.steps()[0];
         assert!(step.is_local_action());
         assert!(step.is_control);
         assert_eq!(step.shot, Some(CapShot::One));
@@ -649,9 +624,10 @@ mod tests {
 
     #[test]
     fn local_action_projects_as_local_step() {
-        let local_role = LOCAL_ROLE.machine().into_projection();
-        assert_eq!(local_role.len(), 1);
-        let step = local_role.steps()[0];
+        let local_role = LOCAL_ROLE.compile_role();
+        let local_layout = local_role.layout();
+        assert_eq!(local_layout.len(), 1);
+        let step = local_layout.steps()[0];
         assert!(step.is_local_action());
         let ts = local_role.typestate();
         assert_eq!(ts.len(), 2);
@@ -664,13 +640,14 @@ mod tests {
 
     #[test]
     fn chained_projection_preserves_typed_local_steps() {
-        let chain_role = CHAIN_ROLE.machine().into_projection();
-        assert_eq!(chain_role.len(), 3);
-        assert!(chain_role.steps()[0].is_local_action());
-        assert!(chain_role.steps()[1].is_send());
-        assert!(chain_role.steps()[2].is_recv());
-        assert_eq!(chain_role.steps()[1].peer(), 1);
-        assert_eq!(chain_role.steps()[2].peer(), 1);
+        let chain_role = CHAIN_ROLE.compile_role();
+        let chain_layout = chain_role.layout();
+        assert_eq!(chain_layout.len(), 3);
+        assert!(chain_layout.steps()[0].is_local_action());
+        assert!(chain_layout.steps()[1].is_send());
+        assert!(chain_layout.steps()[2].is_recv());
+        assert_eq!(chain_layout.steps()[1].peer(), 1);
+        assert_eq!(chain_layout.steps()[2].peer(), 1);
     }
 
     #[test]
@@ -692,26 +669,28 @@ mod tests {
             MintConfig,
         > = project(&PARALLEL_PROGRAM);
 
-        let client_projection = client.machine().into_projection();
-        let server_projection = server.machine().into_projection();
+        let client_projection = client.compile_role();
+        let server_projection = server.compile_role();
 
-        assert_eq!(client_projection.phase_count(), 1);
-        assert_eq!(server_projection.phase_count(), 1);
+        assert_eq!(client_projection.layout().phase_count(), 1);
+        assert_eq!(server_projection.layout().phase_count(), 1);
 
-        let client_phase = client_projection.phases()[0];
+        let client_phase = client_projection.layout().phases()[0];
         assert!(client_phase.lanes[0].is_active());
         assert!(client_phase.lanes[1].is_active());
 
-        let server_phase = server_projection.phases()[0];
+        let server_phase = server_projection.layout().phases()[0];
         assert!(server_phase.lanes[0].is_active());
         assert!(server_phase.lanes[1].is_active());
 
         let client_lane0 = client_projection
+            .layout()
             .steps()
             .iter()
             .filter(|step| step.lane() == 0)
             .count();
         let client_lane1 = client_projection
+            .layout()
             .steps()
             .iter()
             .filter(|step| step.lane() == 1)
@@ -720,11 +699,13 @@ mod tests {
         assert_eq!(client_lane1, 1);
 
         let server_lane0 = server_projection
+            .layout()
             .steps()
             .iter()
             .filter(|step| step.lane() == 0)
             .count();
         let server_lane1 = server_projection
+            .layout()
             .steps()
             .iter()
             .filter(|step| step.lane() == 1)
@@ -751,7 +732,7 @@ mod tests {
             >>::Output as ProjectRole<Role<0>>>::Output,
             MintConfig,
         > = project(&PARALLEL_ROUTE_PROGRAM);
-        let eff_list = program.eff_list();
+        let eff_list = program.eff_list_ref();
         let scope_markers = eff_list.scope_markers();
 
         assert!(

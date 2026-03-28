@@ -7,8 +7,8 @@ use core::marker::PhantomData;
 
 use self::program::Program;
 use self::steps::{SendStep, SeqSteps, StepConcat, StepCons, StepNil};
-use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
 use crate::control::cap::mint::{ControlPayload, ControlResourceKind, ResourceKind};
+use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
 
 /// Crate-private lowering owners for unified compilation.
 pub(crate) mod compiled;
@@ -27,7 +27,6 @@ pub mod advanced {
     pub use super::role_program::{RoleProgram, project};
     pub use super::{
         CanonicalControl, ControlMessage, ControlMessageKind, ExternalControl, MessageSpec,
-        const_dsl::EffList,
     };
 
     pub mod compose {
@@ -49,6 +48,18 @@ pub mod advanced {
 pub trait RouteArmHead {
     type Controller: RoleMarker;
     type Label: LabelTag;
+}
+
+pub(crate) trait RouteArmLoopHead {
+    const LOOP_MEANING: Option<LoopControlMeaning>;
+}
+
+pub(crate) trait TailLoopControl {
+    const IS_LOOP_CONTROL: bool;
+}
+
+pub(crate) trait FragmentShape {
+    const IS_EMPTY: bool;
 }
 
 #[diagnostic::on_unimplemented(
@@ -295,6 +306,26 @@ where
 }
 
 #[diagnostic::do_not_recommend]
+impl<RouteController, const LABEL: u8, Payload, Control, const LANE: u8, Tail> RouteArmLoopHead
+    for StepCons<
+        SendStep<
+            RouteController,
+            RouteController,
+            Message<LabelMarker<LABEL>, Payload, Control>,
+            LANE,
+        >,
+        Tail,
+    >
+where
+    RouteController: RoleMarker,
+    Message<LabelMarker<LABEL>, Payload, Control>: MessageSpec + MessageControlSpec + SendableLabel,
+{
+    const LOOP_MEANING: Option<LoopControlMeaning> = LoopControlMeaning::from_control_spec(Some(
+        <Message<LabelMarker<LABEL>, Payload, Control> as MessageControlSpec>::CONTROL_SPEC,
+    ));
+}
+
+#[diagnostic::do_not_recommend]
 impl<Left, Right> RouteArmHead for SeqSteps<Left, Right>
 where
     Left: RouteArmHead,
@@ -304,12 +335,28 @@ where
 }
 
 #[diagnostic::do_not_recommend]
+impl<Left, Right> RouteArmLoopHead for SeqSteps<Left, Right>
+where
+    Left: RouteArmLoopHead,
+{
+    const LOOP_MEANING: Option<LoopControlMeaning> = <Left as RouteArmLoopHead>::LOOP_MEANING;
+}
+
+#[diagnostic::do_not_recommend]
 impl<Right> RouteArmHead for SeqSteps<StepNil, Right>
 where
     Right: RouteArmHead,
 {
     type Controller = <Right as RouteArmHead>::Controller;
     type Label = <Right as RouteArmHead>::Label;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Right> RouteArmLoopHead for SeqSteps<StepNil, Right>
+where
+    Right: RouteArmLoopHead,
+{
+    const LOOP_MEANING: Option<LoopControlMeaning> = <Right as RouteArmLoopHead>::LOOP_MEANING;
 }
 
 #[diagnostic::do_not_recommend]
@@ -365,6 +412,60 @@ where
 {
     const ROLE_LANE_SET: steps::RoleLaneSet =
         <SeqSteps<StepNil, Right> as steps::StepRoleSet>::ROLE_LANE_SET;
+}
+
+#[diagnostic::do_not_recommend]
+impl FragmentShape for StepNil {
+    const IS_EMPTY: bool = true;
+}
+
+#[diagnostic::do_not_recommend]
+impl<From, To, Msg, const LANE: u8, Tail> FragmentShape
+    for StepCons<SendStep<From, To, Msg, LANE>, Tail>
+{
+    const IS_EMPTY: bool = false;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Left, Right> FragmentShape for SeqSteps<Left, Right>
+where
+    Left: FragmentShape,
+    Right: FragmentShape,
+{
+    const IS_EMPTY: bool = <Left as FragmentShape>::IS_EMPTY && <Right as FragmentShape>::IS_EMPTY;
+}
+
+#[diagnostic::do_not_recommend]
+impl TailLoopControl for StepNil {
+    const IS_LOOP_CONTROL: bool = false;
+}
+
+#[diagnostic::do_not_recommend]
+impl<From, To, Msg, const LANE: u8, Tail> TailLoopControl
+    for StepCons<SendStep<From, To, Msg, LANE>, Tail>
+where
+    Msg: MessageSpec + MessageControlSpec,
+    Tail: FragmentShape + TailLoopControl,
+{
+    const IS_LOOP_CONTROL: bool = if <Tail as FragmentShape>::IS_EMPTY {
+        LoopControlMeaning::from_control_spec(Some(<Msg as MessageControlSpec>::CONTROL_SPEC))
+            .is_some()
+    } else {
+        <Tail as TailLoopControl>::IS_LOOP_CONTROL
+    };
+}
+
+#[diagnostic::do_not_recommend]
+impl<Left, Right> TailLoopControl for SeqSteps<Left, Right>
+where
+    Left: TailLoopControl,
+    Right: FragmentShape + TailLoopControl,
+{
+    const IS_LOOP_CONTROL: bool = if <Right as FragmentShape>::IS_EMPTY {
+        <Left as TailLoopControl>::IS_LOOP_CONTROL
+    } else {
+        <Right as TailLoopControl>::IS_LOOP_CONTROL
+    };
 }
 
 /// Static control-message metadata used across the DSL and runtime.
@@ -536,6 +637,7 @@ pub const fn seq<LeftSteps, RightSteps>(
 ///
 /// The controller is derived from the first self-send control point in each arm.
 /// Both arms must begin with the same controller self-send.
+#[allow(private_bounds)]
 pub const fn route<LeftSteps, RightSteps>(
     left: Program<LeftSteps>,
     right: Program<RightSteps>,
@@ -544,20 +646,22 @@ where
     LeftSteps: StepConcat<RightSteps>
         + RouteArmHead
         + SameRouteController<RightSteps>
-        + DistinctRouteLabels<RightSteps>,
-    RightSteps: RouteArmHead,
+        + DistinctRouteLabels<RightSteps>
+        + RouteArmLoopHead,
+    RightSteps: RouteArmHead + TailLoopControl + RouteArmLoopHead,
 {
     program::route_binary(left, right)
 }
 
 /// Construct a binary parallel composition.
+#[allow(private_bounds)]
 pub const fn par<LeftSteps, RightSteps>(
     left: Program<LeftSteps>,
     right: Program<RightSteps>,
 ) -> Program<<LeftSteps as StepConcat<RightSteps>>::Output>
 where
     LeftSteps: StepConcat<RightSteps> + NonEmptyParallelArm,
-    RightSteps: NonEmptyParallelArm,
+    RightSteps: NonEmptyParallelArm + TailLoopControl,
 {
     program::par_binary(left, right)
 }

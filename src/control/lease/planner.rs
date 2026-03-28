@@ -12,11 +12,7 @@ use crate::control::cap::resource_kinds::{
     PolicyActivateKind, PolicyAnnotateKind, PolicyLoadKind, PolicyRevertKind, RerouteKind,
     RollbackKind, SpliceAckKind, SpliceIntentKind,
 };
-use crate::{
-    eff::EffKind,
-    global::const_dsl::{EffList, PolicyMode},
-    runtime::consts,
-};
+use crate::{global::const_dsl::PolicyMode, runtime::consts};
 
 pub(crate) const FACET_CAPS: u8 = 1 << 0;
 pub(crate) const FACET_SLOTS: u8 = 1 << 1;
@@ -213,25 +209,6 @@ impl LeaseGraphBudget {
         }
     }
 
-    /// Analyse the policy markers embedded in an effect list.
-    pub(crate) const fn from_eff_list(list: &EffList) -> Self {
-        let mut budget = Self::new();
-        let mut idx = 0;
-        while idx < list.len() {
-            let node = list.node_at(idx);
-            if matches!(node.kind, EffKind::Atom) {
-                let atom = node.atom_data();
-                let policy = match list.policy_with_scope(idx) {
-                    Some((policy, _scope)) => policy,
-                    None => PolicyMode::Static,
-                };
-                budget = budget.include_atom(atom.label, atom.resource, policy);
-            }
-            idx += 1;
-        }
-        budget
-    }
-
     #[inline(always)]
     pub(crate) const fn include_atom(
         mut self,
@@ -392,5 +369,6 @@ pub(crate) const fn assert_program_covers_facets<const ROLE: u8, LocalSteps, Min
 ) where
     Mint: crate::control::cap::mint::MintConfigMarker,
 {
-    assert_budget_covers(program.lease_budget(), needs);
+    let budget = crate::global::compiled::CompiledProgram::budget_for_role_program(program);
+    assert_budget_covers(budget, needs);
 }

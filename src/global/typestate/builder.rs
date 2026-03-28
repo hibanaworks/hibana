@@ -1,16 +1,16 @@
 //! Typestate lowering and builder internals.
 
 use super::facts::{
-    JumpReason, LocalAction, LocalNode, RouteRecvIndex, SCOPE_ORDINAL_INDEX_CAPACITY,
-    SCOPE_ORDINAL_INDEX_EMPTY, StateIndex, MAX_STATES, as_eff_index, as_state_index,
-    state_index_to_usize,
+    JumpReason, LocalAction, LocalNode, MAX_STATES, RouteRecvIndex, SCOPE_ORDINAL_INDEX_CAPACITY,
+    SCOPE_ORDINAL_INDEX_EMPTY, StateIndex, as_eff_index, as_state_index, state_index_to_usize,
 };
 use crate::{
     eff::{self, EffIndex, EffStruct},
     global::{
         LoopControlMeaning,
-        const_dsl::{EffList, PolicyMode, ScopeEvent, ScopeId, ScopeKind},
-        role_program::MAX_LANES,
+        compiled::{LoweringSummary, LoweringView},
+        const_dsl::{PolicyMode, ScopeEvent, ScopeId, ScopeKind},
+        role_program::{MAX_LANES, MAX_PHASES, MAX_STEPS},
     },
 };
 
@@ -661,7 +661,7 @@ impl ScopeRegistry {
         self
     }
 
-    fn lookup_record(&self, scope_id: ScopeId) -> Option<&ScopeRecord> {
+    const fn lookup_record(&self, scope_id: ScopeId) -> Option<&ScopeRecord> {
         if scope_id.is_none() {
             return None;
         }
@@ -675,7 +675,7 @@ impl ScopeRegistry {
             return None;
         }
         let record = &self.records[slot as usize];
-        if !record.present || record.scope_id != canonical {
+        if !record.present || record.scope_id.raw() != canonical.raw() {
             return None;
         }
         Some(record)
@@ -840,9 +840,16 @@ impl ScopeRegistry {
 
     /// Get the controller arm entry (index, label) for a given arm number.
     /// Returns (StateIndex, label) if the arm exists, None otherwise.
-    fn controller_arm_entry_by_arm(&self, scope_id: ScopeId, arm: u8) -> Option<(StateIndex, u8)> {
-        let record = self.lookup_record(scope_id)?;
-        if arm < 2 && record.controller_arm_entry[arm as usize] != StateIndex::MAX {
+    const fn controller_arm_entry_by_arm(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+    ) -> Option<(StateIndex, u8)> {
+        let record = match self.lookup_record(scope_id) {
+            Some(record) => record,
+            None => return None,
+        };
+        if arm < 2 && record.controller_arm_entry[arm as usize].raw() != StateIndex::MAX.raw() {
             Some((
                 record.controller_arm_entry[arm as usize],
                 record.controller_arm_label[arm as usize],
@@ -933,12 +940,15 @@ impl ScopeRegistry {
     }
 
     #[inline]
-    fn first_recv_dispatch_entry(
+    const fn first_recv_dispatch_entry(
         &self,
         scope_id: ScopeId,
         idx: usize,
     ) -> Option<(u8, u8, StateIndex)> {
-        let record = self.lookup_record(scope_id)?;
+        let record = match self.lookup_record(scope_id) {
+            Some(record) => record,
+            None => return None,
+        };
         if idx >= record.first_recv_len as usize {
             return None;
         }
@@ -947,12 +957,14 @@ impl ScopeRegistry {
 }
 
 /// Role-specific typestate graph synthesized from a global effect list.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RoleTypestate<const ROLE: u8> {
     nodes: [LocalNode; MAX_STATES],
     len: usize,
     scope_registry: ScopeRegistry,
 }
+
+pub(crate) type RoleTypestateValue = RoleTypestate<0>;
 
 const MAX_LOOP_TRACKED: usize = eff::meta::MAX_EFF_NODES;
 
@@ -1008,6 +1020,11 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
             len,
             scope_registry,
         }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn into_value(self) -> RoleTypestateValue {
+        RoleTypestate::<0>::new(self.nodes, self.len, self.scope_registry)
     }
 
     /// Number of nodes present in the typestate (including the terminal node).
@@ -1113,7 +1130,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
     }
 
     #[inline]
-    pub(in crate::global::typestate) fn first_recv_dispatch_entry(
+    pub(in crate::global) const fn first_recv_dispatch_entry(
         &self,
         scope_id: ScopeId,
         idx: usize,
@@ -1174,16 +1191,18 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
         scope_id: ScopeId,
         idx: StateIndex,
     ) -> bool {
-        self.scope_registry.is_at_controller_arm_entry(scope_id, idx)
+        self.scope_registry
+            .is_at_controller_arm_entry(scope_id, idx)
     }
 
     #[inline]
-    pub(in crate::global::typestate) fn controller_arm_entry_by_arm(
+    pub(in crate::global) const fn controller_arm_entry_by_arm(
         &self,
         scope_id: ScopeId,
         arm: u8,
     ) -> Option<(StateIndex, u8)> {
-        self.scope_registry.controller_arm_entry_by_arm(scope_id, arm)
+        self.scope_registry
+            .controller_arm_entry_by_arm(scope_id, arm)
     }
 
     #[inline]
@@ -1338,12 +1357,150 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
         }
     }
 
-    /// Synthesize a typestate graph from an arbitrary effect list borrow.
-    pub const fn from_program(program: &EffList) -> Self {
-        Self::build(program, program.as_slice())
+    pub(crate) const fn from_summary(summary: &LoweringSummary) -> Self {
+        let view = summary.view();
+        Self::build(view, view.as_slice())
     }
 
-    const fn build(program: &EffList, slice: &[EffStruct]) -> Self {
+    pub(crate) const fn validate_compiled_layout(&self) {
+        self.validate_phase_capacity();
+        self.validate_controller_arm_table_capacity();
+        self.validate_first_recv_dispatch_capacity();
+    }
+
+    const fn validate_phase_capacity(&self) {
+        if self.compiled_phase_count() > MAX_PHASES {
+            panic!("compiled role phase capacity exceeded");
+        }
+    }
+
+    const fn validate_controller_arm_table_capacity(&self) {
+        if self.compiled_controller_arm_entry_count() > ScopeId::ORDINAL_CAPACITY as usize * 2 {
+            panic!("controller arm table capacity exceeded");
+        }
+    }
+
+    const fn compiled_controller_arm_entry_count(&self) -> usize {
+        let mut count = 0usize;
+        let mut ordinal = 0usize;
+        while ordinal < ScopeId::ORDINAL_CAPACITY as usize {
+            let route_scope = ScopeId::route(ordinal as u16);
+            let mut arm = 0u8;
+            while arm <= 1 {
+                if self.controller_arm_entry_by_arm(route_scope, arm).is_some() {
+                    count += 1;
+                }
+                if arm == 1 {
+                    break;
+                }
+                arm += 1;
+            }
+
+            let loop_scope = ScopeId::loop_scope(ordinal as u16);
+            let mut loop_arm = 0u8;
+            while loop_arm <= 1 {
+                if self
+                    .controller_arm_entry_by_arm(loop_scope, loop_arm)
+                    .is_some()
+                {
+                    count += 1;
+                }
+                if loop_arm == 1 {
+                    break;
+                }
+                loop_arm += 1;
+            }
+
+            ordinal += 1;
+        }
+        count
+    }
+
+    const fn validate_first_recv_dispatch_capacity(&self) {
+        let mut count = 0usize;
+        let mut idx = 0usize;
+        while idx < self.scope_registry.len {
+            let record = self.scope_registry.records[idx];
+            if record.present && matches!(record.kind, ScopeKind::Route) {
+                count += record.first_recv_len as usize;
+                if count > ScopeId::ORDINAL_CAPACITY as usize * MAX_FIRST_RECV_DISPATCH {
+                    panic!("first recv dispatch table capacity exceeded");
+                }
+            }
+            idx += 1;
+        }
+    }
+
+    const fn compiled_phase_count(&self) -> usize {
+        let mut present = [false; MAX_STEPS];
+        let mut local_len = 0usize;
+        let mut node_idx = 0usize;
+        while node_idx < self.len() {
+            match self.node(node_idx).action() {
+                LocalAction::Send { eff_index, .. }
+                | LocalAction::Recv { eff_index, .. }
+                | LocalAction::Local { eff_index, .. } => {
+                    let idx = eff_index.as_usize();
+                    if idx >= MAX_STEPS {
+                        panic!("local step eff_index exceeds MAX_STEPS");
+                    }
+                    if !present[idx] {
+                        present[idx] = true;
+                        local_len += 1;
+                    }
+                }
+                LocalAction::None | LocalAction::Terminate | LocalAction::Jump { .. } => {}
+            }
+            node_idx += 1;
+        }
+
+        if local_len == 0 {
+            return 0;
+        }
+        if !self.has_parallel_phase_scope() {
+            return 1;
+        }
+
+        let mut phase_count = 0usize;
+        let mut current_eff = 0usize;
+        let mut ordinal = 0usize;
+        loop {
+            let Some((enter_eff, exit_eff)) = self.parallel_phase_range_at(ordinal) else {
+                break;
+            };
+            if Self::has_local_step_in_range(&present, current_eff, enter_eff) {
+                phase_count += 1;
+            }
+            if Self::has_local_step_in_range(&present, enter_eff, exit_eff) {
+                phase_count += 1;
+            }
+            current_eff = exit_eff;
+            ordinal += 1;
+        }
+
+        if Self::has_local_step_in_range(&present, current_eff, MAX_STEPS) {
+            phase_count += 1;
+        }
+
+        if phase_count == 0 { 1 } else { phase_count }
+    }
+
+    const fn has_local_step_in_range(
+        present: &[bool; MAX_STEPS],
+        start: usize,
+        end: usize,
+    ) -> bool {
+        let mut idx = start;
+        while idx < end && idx < MAX_STEPS {
+            if present[idx] {
+                return true;
+            }
+            idx += 1;
+        }
+        false
+    }
+
+    const fn build(program: LoweringView<'_>, slice: &[EffStruct]) -> Self {
         let mut loop_entry_ids = [ScopeId::generic(0); MAX_LOOP_TRACKED];
         let mut loop_entry_states = [None::<StateIndex>; MAX_LOOP_TRACKED];
         let mut loop_entry_len = 0usize;

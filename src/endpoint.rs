@@ -7,10 +7,10 @@
 pub(crate) mod affine;
 /// Control-plane helpers for endpoints.
 pub(crate) mod control;
-/// Internal endpoint kernel implementation.
-pub(crate) mod cursor;
 /// Flow-based send API.
 pub(crate) mod flow;
+/// Internal endpoint kernel implementation.
+pub(crate) mod kernel;
 
 /// Public endpoint facade for app-facing localside interaction.
 pub struct Endpoint<
@@ -31,7 +31,7 @@ pub struct Endpoint<
     Mint: crate::control::cap::mint::MintConfigMarker,
     B: crate::binding::BindingSlot,
 {
-    inner: cursor::CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    inner: kernel::CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
 }
 
 /// Public route-branch facade returned by [`Endpoint::offer`].
@@ -53,7 +53,7 @@ pub struct RouteBranch<
     Mint: crate::control::cap::mint::MintConfigMarker,
     B: crate::binding::BindingSlot,
 {
-    inner: cursor::RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    inner: kernel::RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
 }
 
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
@@ -68,7 +68,7 @@ where
 {
     #[inline]
     pub(crate) fn from_cursor(
-        inner: cursor::CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        inner: kernel::CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     ) -> Self {
         Self { inner }
     }
@@ -76,7 +76,7 @@ where
     #[inline]
     pub(crate) fn into_cursor(
         self,
-    ) -> cursor::CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B> {
+    ) -> kernel::CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B> {
         self.inner
     }
 }
@@ -93,7 +93,7 @@ where
 {
     #[inline]
     pub(crate) fn from_cursor(
-        inner: cursor::RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        inner: kernel::RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     ) -> Self {
         Self { inner }
     }

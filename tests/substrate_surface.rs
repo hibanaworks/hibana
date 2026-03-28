@@ -501,6 +501,44 @@ fn runtime_support_avoids_stack_backed_tap_storage() {
 }
 
 #[test]
+fn repo_tests_do_not_depend_on_large_stack_helpers() {
+    let route_dynamic_control_src = read_repo_test("tests/route_dynamic_control.rs");
+    let lease_bundle_src = fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/control/lease/bundle.rs"),
+    )
+    .expect("read src/control/lease/bundle.rs");
+    let rust_min_stack = concat!("RUST_MIN", "_STACK");
+    let hibana_test_stack = concat!("HIBANA_TEST", "_STACK");
+    let large_stack_helper = concat!("run_with_large_", "stack_async");
+    let stack_size_call = concat!("stack_", "size(");
+    let stack_backed_tap_storage = concat!("Box::new([TapEvent::default(); ", "RING_EVENTS])");
+    let stack_local_tap_storage =
+        concat!("let mut storage = [TapEvent::default(); ", "RING_EVENTS];");
+
+    for forbidden in [rust_min_stack, hibana_test_stack, large_stack_helper] {
+        assert!(
+            !route_dynamic_control_src.contains(forbidden),
+            "route_dynamic_control must not depend on large-stack helper residue: {forbidden}"
+        );
+    }
+    assert!(
+        !route_dynamic_control_src.contains(stack_size_call),
+        "route_dynamic_control must run on the default test thread stack"
+    );
+
+    for forbidden in [
+        stack_size_call,
+        stack_backed_tap_storage,
+        stack_local_tap_storage,
+    ] {
+        assert!(
+            !lease_bundle_src.contains(forbidden),
+            "lease::bundle tests must not reintroduce stack-backed large fixture residue: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn repo_boundary_gates_track_current_mgmt_update_owners() {
     let boundary_gate = repo_boundary_gate_rs();
     let mgmt_gate = repo_mgmt_boundary_gate_rs();
@@ -544,9 +582,15 @@ fn repo_boundary_gates_track_current_mgmt_update_owners() {
     assert!(
         lowering_gate.contains("interpret_eff_list\\\\(")
             && lowering_gate.contains("\\\\.policies\\\\(")
-            && lowering_gate.contains("LABEL_LOOP_CONTINUE")
+            && lowering_gate.contains("pub[[:space:]]+use[[:space:]].*EffList")
+            && lowering_gate.contains("PhaseCursor::from_machine")
+            && lowering_gate.contains("CompiledProgram::compile\\\\(")
+            && lowering_gate.contains("CompiledRole::compile\\\\(")
+            && lowering_gate.contains("controller_arm_wire_label")
+            && lowering_gate.contains("src/endpoint/kernel")
+            && lowering_gate.contains("legacy endpoint/cursor.rs owner still present")
             && lowering_gate.contains("macro_rules!"),
-        "lowering hygiene gate must guard lowering shims, policy rescans, loop-label meaning checks, and new macro_rules owners"
+        "lowering hygiene gate must guard lowering shims, direct compiled-owner escape hatches, public EffList leakage, stale phase-cursor owners, deprecated endpoint semantic helpers, and new macro_rules owners"
     );
     assert!(
         hygiene_gate.contains("pure synonym type alias"),
@@ -1169,7 +1213,8 @@ fn substrate_mgmt_and_binding_roots_stay_minimal() {
         "substrate::mgmt::session wrappers must not route through a stale runtime::mgmt::session owner path"
     );
     assert!(
-        !substrate_rs.contains("crate::endpoint::cursor::CursorEndpoint<"),
+        !substrate_rs.contains("crate::endpoint::cursor::CursorEndpoint<")
+            && !substrate_rs.contains("crate::endpoint::kernel::CursorEndpoint<"),
         "substrate::mgmt::session must not leak CursorEndpoint in public signatures"
     );
     assert!(
@@ -1183,7 +1228,7 @@ fn substrate_mgmt_and_binding_roots_stay_minimal() {
     );
     assert!(
         !runtime_mgmt_rs.contains("pub mod session;")
-            && !runtime_mgmt_rs.contains("session::management_eff_lists()"),
+            && !runtime_mgmt_rs.contains("session::management_compiled_programs()"),
         "internal runtime management kernel must not keep the stale session module owner"
     );
     assert!(
@@ -1192,7 +1237,8 @@ fn substrate_mgmt_and_binding_roots_stay_minimal() {
     );
     assert!(
         runtime_mgmt_rs.contains("endpoint: crate::Endpoint<")
-            && !runtime_mgmt_rs.contains("endpoint: crate::endpoint::cursor::CursorEndpoint<"),
+            && !runtime_mgmt_rs.contains("endpoint: crate::endpoint::cursor::CursorEndpoint<")
+            && !runtime_mgmt_rs.contains("endpoint: crate::endpoint::kernel::CursorEndpoint<"),
         "runtime mgmt wrappers must stay on the public Endpoint facade"
     );
     let runtime_mgmt_ws = compact_ws(&runtime_mgmt_rs);

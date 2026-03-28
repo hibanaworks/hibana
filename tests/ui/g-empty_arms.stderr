@@ -13,5 +13,22 @@ note: required by a bound in `route`
   | pub const fn route<LeftSteps, RightSteps>(
   |              ----- required by a bound in this function
 ...
-  |     RightSteps: RouteArmHead,
+  |     RightSteps: RouteArmHead + TailLoopControl + RouteArmLoopHead,
   |                 ^^^^^^^^^^^^ required by this bound in `route`
+
+error[E0277]: the trait bound `StepNil: hibana::global::RouteArmLoopHead` is not satisfied
+ --> tests/ui/g-empty_arms.rs:9:27
+  |
+9 |     let _ = g::route(arm, StepNil::PROGRAM);
+  |             --------      ^^^^^^^^^^^^^^^^ the trait `hibana::global::RouteArmLoopHead` is not implemented for `StepNil`
+  |             |
+  |             required by a bound introduced by this call
+  |
+note: required by a bound in `route`
+ --> src/global.rs
+  |
+  | pub const fn route<LeftSteps, RightSteps>(
+  |              ----- required by a bound in this function
+...
+  |     RightSteps: RouteArmHead + TailLoopControl + RouteArmLoopHead,
+  |                                                  ^^^^^^^^^^^^^^^^ required by this bound in `route`

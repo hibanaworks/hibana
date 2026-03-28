@@ -135,7 +135,6 @@ fn public_docs_use_canonical_surface_paths() {
         "`MessageSpec`",
         "`ControlMessage`",
         "`ControlMessageKind`",
-        "`EffList`",
         "`Config::new(tap_buf, slab)`",
         "`Config::tap_storage()` and `Config::slab()`",
         "`Config::with_lane_range(range)`",

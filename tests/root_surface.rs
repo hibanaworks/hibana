@@ -160,12 +160,7 @@ fn root_visible_surface_stays_minimal() {
         );
     }
 
-    for required in [
-        "RoleProgram",
-        "project",
-        "const_dsl::EffList",
-        "CanonicalControl",
-    ] {
+    for required in ["RoleProgram", "project", "CanonicalControl"] {
         assert!(
             advanced_head.contains(required),
             "g::advanced root must stay on projection + control-message SPI only: {required}"
