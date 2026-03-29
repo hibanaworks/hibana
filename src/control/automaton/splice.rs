@@ -31,7 +31,7 @@ use crate::{
         lease::{
             bundle::{LeaseBundleError, LeaseBundleFacet},
             core::{ControlAutomaton, ControlStep, FullSpec, RendezvousLease, SpliceSpec},
-            graph::LeaseSpec,
+            graph::{InlineLeaseChildStorage, InlineLeaseNodeStorage, LeaseSpec},
             planner::{LeaseFacetNeeds, LeaseSpecFacetNeeds, facets_caps_splice},
         },
         types::{Generation, Lane, RendezvousId, SessionId},
@@ -75,6 +75,8 @@ where
 {
     type NodeId = RendezvousId;
     type Facet = LeaseBundleFacet<T, U, C, E>;
+    type ChildStorage = InlineLeaseChildStorage<RendezvousId, SPLICE_LEASE_MAX_CHILDREN>;
+    type NodeStorage<'graph> = InlineLeaseNodeStorage<'graph, Self, SPLICE_LEASE_MAX_NODES> where Self: 'graph;
     const MAX_NODES: usize = SPLICE_LEASE_MAX_NODES;
     const MAX_CHILDREN: usize = SPLICE_LEASE_MAX_CHILDREN;
 }

@@ -49,12 +49,6 @@
 //! graph.commit();
 //! ```
 
-/// Default upper bound for nodes stored in a LeaseGraph.
-const GRAPH_MAX_NODES: usize = 32;
-
-/// Default upper bound for children per node in a LeaseGraph.
-const GRAPH_MAX_CHILDREN: usize = 8;
-
 /// LeaseFacet is a zero-sized marker that carries behaviour for commit/rollback
 /// while delegating state storage to an explicit context object.
 pub(crate) trait LeaseFacet: Copy + Default {
@@ -68,13 +62,60 @@ pub(crate) trait LeaseFacet: Copy + Default {
     fn on_rollback<'ctx>(&self, context: &mut Self::Context<'ctx>);
 }
 
+/// Fixed-capacity child storage used by a [`LeaseSpec`].
+pub(crate) trait LeaseChildStorage<Id: Copy>: Copy {
+    const CAPACITY: usize;
+
+    fn empty() -> Self;
+
+    fn get(&self, idx: usize) -> Option<Id>;
+
+    fn set(&mut self, idx: usize, id: Id);
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct InlineLeaseChildStorage<Id: Copy, const CAPACITY: usize> {
+    slots: [Option<Id>; CAPACITY],
+}
+
+impl<Id: Copy, const CAPACITY: usize> LeaseChildStorage<Id>
+    for InlineLeaseChildStorage<Id, CAPACITY>
+{
+    const CAPACITY: usize = CAPACITY;
+
+    #[inline]
+    fn empty() -> Self {
+        Self {
+            slots: [None; CAPACITY],
+        }
+    }
+
+    #[inline]
+    fn get(&self, idx: usize) -> Option<Id> {
+        self.slots.get(idx).copied().flatten()
+    }
+
+    #[inline]
+    fn set(&mut self, idx: usize, id: Id) {
+        self.slots[idx] = Some(id);
+    }
+}
+
 /// LeaseSpec defines the node identifier and facet used by a LeaseGraph.
-pub(crate) trait LeaseSpec {
+pub(crate) trait LeaseSpec: Sized {
     /// Node identifier (e.g. RendezvousId)
     type NodeId: Copy + Eq + Ord + core::fmt::Debug;
 
     /// Facet marker associated with each node.
     type Facet: LeaseFacet;
+
+    /// Fixed-capacity child storage for each node in the graph.
+    type ChildStorage: LeaseChildStorage<Self::NodeId>;
+
+    /// Fixed-capacity node storage backing the graph itself.
+    type NodeStorage<'graph>: LeaseNodeStorage<'graph, Self>
+    where
+        Self: 'graph;
 
     /// Maximum number of nodes (including the root) supported by this graph.
     const MAX_NODES: usize;
@@ -100,12 +141,12 @@ enum GraphState {
 }
 
 /// Internal node payload stored inside the flat array.
-struct NodeData<'graph, S: LeaseSpec> {
+pub(crate) struct NodeData<'graph, S: LeaseSpec> {
     id: S::NodeId,
     facet: S::Facet,
     context: <<S as LeaseSpec>::Facet as LeaseFacet>::Context<'graph>,
     /// Array of child node identifiers.
-    children: [Option<S::NodeId>; GRAPH_MAX_CHILDREN],
+    children: S::ChildStorage,
     child_count: usize,
 }
 
@@ -119,18 +160,56 @@ impl<'graph, S: LeaseSpec> NodeData<'graph, S> {
             id,
             facet,
             context,
-            children: [None; GRAPH_MAX_CHILDREN],
+            children: S::ChildStorage::empty(),
             child_count: 0,
         }
     }
 
     fn add_child(&mut self, child_id: S::NodeId) -> Result<(), LeaseGraphError> {
-        if self.child_count >= S::MAX_CHILDREN || self.child_count >= GRAPH_MAX_CHILDREN {
+        if self.child_count >= S::MAX_CHILDREN || self.child_count >= S::ChildStorage::CAPACITY {
             return Err(LeaseGraphError::TooManyChildren);
         }
-        self.children[self.child_count] = Some(child_id);
+        self.children.set(self.child_count, child_id);
         self.child_count += 1;
         Ok(())
+    }
+}
+
+/// Fixed-capacity node storage used by a [`LeaseSpec`].
+pub(crate) trait LeaseNodeStorage<'graph, S: LeaseSpec> {
+    const CAPACITY: usize;
+
+    fn empty() -> Self;
+
+    fn as_slice(&self) -> &[Option<NodeData<'graph, S>>];
+
+    fn as_mut_slice(&mut self) -> &mut [Option<NodeData<'graph, S>>];
+}
+
+pub(crate) struct InlineLeaseNodeStorage<'graph, S: LeaseSpec, const CAPACITY: usize> {
+    slots: [Option<NodeData<'graph, S>>; CAPACITY],
+}
+
+impl<'graph, S: LeaseSpec, const CAPACITY: usize> LeaseNodeStorage<'graph, S>
+    for InlineLeaseNodeStorage<'graph, S, CAPACITY>
+{
+    const CAPACITY: usize = CAPACITY;
+
+    #[inline]
+    fn empty() -> Self {
+        Self {
+            slots: core::array::from_fn(|_| None),
+        }
+    }
+
+    #[inline]
+    fn as_slice(&self) -> &[Option<NodeData<'graph, S>>] {
+        &self.slots
+    }
+
+    #[inline]
+    fn as_mut_slice(&mut self) -> &mut [Option<NodeData<'graph, S>>] {
+        &mut self.slots
     }
 }
 
@@ -156,7 +235,7 @@ impl<'a, 'graph, S: LeaseSpec> Iterator for ChildIter<'a, 'graph, S> {
         while self.index < self.node.child_count {
             let slot = self.index;
             self.index += 1;
-            if let Some(id) = self.node.children[slot] {
+            if let Some(id) = self.node.children.get(slot) {
                 return Some(id);
             }
         }
@@ -220,9 +299,9 @@ pub(crate) enum LeaseGraphError {
 ///
 /// - `commit(&mut self)` / `rollback(&mut self)` move the graph into a terminal
 ///   state; subsequent stateful operations are rejected.
-pub(crate) struct LeaseGraph<'graph, S: LeaseSpec> {
+pub(crate) struct LeaseGraph<'graph, S: LeaseSpec + 'graph> {
     /// Storage backing every node.
-    nodes: [Option<NodeData<'graph, S>>; GRAPH_MAX_NODES],
+    nodes: S::NodeStorage<'graph>,
     /// Number of nodes currently present.
     node_count: usize,
     /// Identifier of the root node.
@@ -231,7 +310,7 @@ pub(crate) struct LeaseGraph<'graph, S: LeaseSpec> {
     state: GraphState,
 }
 
-impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
+impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
     /// Create a new `LeaseGraph` starting with the root node.
     pub(crate) fn new(
         root_id: S::NodeId,
@@ -241,16 +320,16 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
         debug_assert!(S::MAX_NODES > 0, "LeaseGraph requires MAX_NODES > 0");
         debug_assert!(S::MAX_CHILDREN > 0, "LeaseGraph requires MAX_CHILDREN > 0");
         debug_assert!(
-            S::MAX_NODES <= GRAPH_MAX_NODES,
-            "LeaseGraph MAX_NODES exceeds storage capacity"
+            S::MAX_NODES == <S::NodeStorage<'graph> as LeaseNodeStorage<'graph, S>>::CAPACITY,
+            "LeaseGraph node storage must match LeaseSpec capacity"
         );
         debug_assert!(
-            S::MAX_CHILDREN <= GRAPH_MAX_CHILDREN,
-            "LeaseGraph MAX_CHILDREN exceeds storage capacity"
+            S::MAX_CHILDREN == <S::ChildStorage as LeaseChildStorage<S::NodeId>>::CAPACITY,
+            "LeaseGraph child storage must match LeaseSpec capacity"
         );
 
-        let mut nodes: [Option<NodeData<'graph, S>>; GRAPH_MAX_NODES] = Default::default();
-        nodes[0] = Some(NodeData::new(root_id, root_facet, root_context));
+        let mut nodes = S::NodeStorage::empty();
+        nodes.as_mut_slice()[0] = Some(NodeData::new(root_id, root_facet, root_context));
 
         Self {
             nodes,
@@ -267,7 +346,7 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
 
     /// Find the position of a node by identifier.
     fn find_node(&self, id: S::NodeId) -> Option<usize> {
-        self.nodes[..self.node_count]
+        self.nodes.as_slice()[..self.node_count]
             .iter()
             .position(|node| node.as_ref().map(|n| n.id) == Some(id))
     }
@@ -284,7 +363,7 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
         }
 
         let idx = self.find_node(id)?;
-        let node = self.nodes[idx].as_mut()?;
+        let node = self.nodes.as_mut_slice()[idx].as_mut()?;
         Some(FacetHandle {
             facet: node.facet,
             context: &mut node.context,
@@ -296,7 +375,7 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
     #[cfg(test)]
     pub(crate) fn children(&self, id: S::NodeId) -> Option<ChildIter<'_, 'graph, S>> {
         let idx = self.find_node(id)?;
-        let node = self.nodes[idx].as_ref()?;
+        let node = self.nodes.as_slice()[idx].as_ref()?;
         Some(ChildIter::new(node))
     }
 
@@ -341,18 +420,18 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
             .ok_or(LeaseGraphError::NodeNotFound)?;
 
         // Ensure capacity for another node.
-        if self.node_count >= S::MAX_NODES || self.node_count >= GRAPH_MAX_NODES {
+        if self.node_count >= S::MAX_NODES
+            || self.node_count >= <S::NodeStorage<'graph> as LeaseNodeStorage<'graph, S>>::CAPACITY
+        {
             return Err(LeaseGraphError::GraphFull);
         }
 
         // Attach the child to its parent.
-        self.nodes[parent_idx]
-            .as_mut()
-            .unwrap()
-            .add_child(child_id)?;
-
-        // Persist the new child node in storage.
-        self.nodes[self.node_count] = Some(NodeData::new(child_id, child_facet, child_context));
+        {
+            let nodes = self.nodes.as_mut_slice();
+            nodes[parent_idx].as_mut().unwrap().add_child(child_id)?;
+            nodes[self.node_count] = Some(NodeData::new(child_id, child_facet, child_context));
+        }
         self.node_count += 1;
 
         Ok(())
@@ -381,10 +460,19 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
         let mut current = self.root_id;
         for &next_id in &path[1..] {
             let idx = self.find_node(current)?;
-            let node = self.nodes[idx].as_ref()?;
+            let node = self.nodes.as_slice()[idx].as_ref()?;
 
             // Ensure the parent lists `next_id` as a child.
-            if !node.children[..node.child_count].contains(&Some(next_id)) {
+            let mut found = false;
+            let mut child_idx = 0usize;
+            while child_idx < node.child_count {
+                if node.children.get(child_idx) == Some(next_id) {
+                    found = true;
+                    break;
+                }
+                child_idx += 1;
+            }
+            if !found {
                 return None;
             }
             current = next_id;
@@ -392,7 +480,7 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
 
         // Return the facet belonging to the final node.
         let idx = self.find_node(current)?;
-        let node = self.nodes[idx].as_mut()?;
+        let node = self.nodes.as_mut_slice()[idx].as_mut()?;
         Some(FacetHandle {
             facet: node.facet,
             context: &mut node.context,
@@ -419,7 +507,7 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
         };
 
         // SAFETY: during commit/rollback `nodes[idx]` is guaranteed to be `Some`.
-        let mut node = match self.nodes[idx].take() {
+        let mut node = match self.nodes.as_mut_slice()[idx].take() {
             Some(node) => node,
             None => return,
         };
@@ -428,8 +516,12 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
         let children = node.children;
         let child_count = node.child_count;
 
-        for child_id in children[..child_count].iter().filter_map(|id| *id) {
-            self.commit_node_recursive(child_id);
+        let mut child_idx = 0usize;
+        while child_idx < child_count {
+            if let Some(child_id) = children.get(child_idx) {
+                self.commit_node_recursive(child_id);
+            }
+            child_idx += 1;
         }
 
         // Commit the node itself (drop the facet).
@@ -455,7 +547,7 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
             None => return,
         };
 
-        let mut node = match self.nodes[idx].take() {
+        let mut node = match self.nodes.as_mut_slice()[idx].take() {
             Some(node) => node,
             None => return,
         };
@@ -464,8 +556,12 @@ impl<'graph, S: LeaseSpec> LeaseGraph<'graph, S> {
         let children = node.children;
         let child_count = node.child_count;
 
-        for child_id in children[..child_count].iter().filter_map(|id| *id) {
-            self.rollback_node_recursive(child_id);
+        let mut child_idx = 0usize;
+        while child_idx < child_count {
+            if let Some(child_id) = children.get(child_idx) {
+                self.rollback_node_recursive(child_id);
+            }
+            child_idx += 1;
         }
 
         // Roll back the node itself (drop the facet).
@@ -510,6 +606,8 @@ mod tests {
     impl LeaseSpec for TestSpec {
         type NodeId = u8;
         type Facet = TestFacet;
+        type ChildStorage = InlineLeaseChildStorage<u8, 3>;
+        type NodeStorage<'graph> = InlineLeaseNodeStorage<'graph, Self, 4> where Self: 'graph;
         const MAX_NODES: usize = 4;
         const MAX_CHILDREN: usize = 3;
     }

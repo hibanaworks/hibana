@@ -1,4 +1,0 @@
-[env]
-# Keep stack-sensitive compile/test behavior consistent when hibana is used standalone.
-RUST_MIN_STACK = "268435456"
-HIBANA_TEST_STACK = "268435456"

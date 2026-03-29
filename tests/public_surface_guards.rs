@@ -71,6 +71,36 @@ fn substrate_public_api_allowlist() -> &'static str {
 }
 
 #[test]
+fn ambient_stack_tuning_does_not_return() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let cargo_config = manifest_dir.join(".cargo/config.toml");
+    assert!(
+        !cargo_config.exists(),
+        "hibana must not rely on repo-local stack env defaults"
+    );
+
+    let stack_sensitive_ws = compact_ws(&[
+        include_str!("../src/control/lease/graph.rs"),
+        include_str!("../src/control/lease/bundle.rs"),
+        include_str!("../tests/route_dynamic_control.rs"),
+    ]
+    .join("\n"));
+
+    for forbidden in [
+        concat!("RUST_MIN_", "STACK"),
+        concat!("HIBANA_TEST_", "STACK"),
+        concat!("stack_", "size("),
+        concat!("GRAPH_MAX_", "NODES"),
+        concat!("GRAPH_MAX_", "CHILDREN"),
+    ] {
+        assert!(
+            !stack_sensitive_ws.contains(forbidden),
+            "ambient stack tuning and global LeaseGraph caps must not return: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn dead_forward_hub_does_not_return() {
     let transport_src = include_str!("../src/transport.rs");
     let rendezvous_core_src = include_str!("../src/rendezvous/core.rs");
@@ -3645,7 +3675,11 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         "pub(crate) struct LeaseBundleContext<",
         "pub(crate) trait LeaseGraphBundleExt<",
         "pub(crate) trait LeaseFacet: Copy + Default {",
-        "pub(crate) trait LeaseSpec {",
+        "pub(crate) trait LeaseChildStorage<Id: Copy>: Copy {",
+        "pub(crate) struct InlineLeaseChildStorage<Id: Copy, const CAPACITY: usize> {",
+        "pub(crate) trait LeaseSpec: Sized {",
+        "pub(crate) trait LeaseNodeStorage<'graph, S: LeaseSpec> {",
+        "pub(crate) struct InlineLeaseNodeStorage<'graph, S: LeaseSpec, const CAPACITY: usize> {",
         "pub(crate) struct FacetHandle<",
         "pub(crate) enum LeaseGraphError {",
         "pub(crate) struct LeaseGraph<",

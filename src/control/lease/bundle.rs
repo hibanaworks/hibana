@@ -621,6 +621,14 @@ mod tests {
             CounterClock,
             crate::control::cap::mint::EpochTbl,
         >;
+        type ChildStorage = crate::control::lease::graph::InlineLeaseChildStorage<
+            RendezvousId,
+            3,
+        >;
+        type NodeStorage<'graph>
+            = crate::control::lease::graph::InlineLeaseNodeStorage<'graph, Self, 4>
+        where
+            Self: 'graph;
         const MAX_NODES: usize = 4;
         const MAX_CHILDREN: usize = 3;
     }
