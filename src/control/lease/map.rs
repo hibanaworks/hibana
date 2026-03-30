@@ -234,16 +234,6 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
     pub(crate) fn contains_key(&self, key: &K) -> bool {
         self.get(key).is_some()
     }
-
-    /// Iterate over all key/value pairs by reference.
-    #[inline]
-    pub(crate) fn for_each(&self, mut f: impl FnMut(&K, &V)) {
-        for i in 0..self.len {
-            // SAFETY: entries[0..len] are initialised
-            let (k, v) = unsafe { self.entries[i].assume_init_ref() };
-            f(k, v);
-        }
-    }
 }
 
 impl<K, V, const N: usize> Drop for ArrayMap<K, V, N> {

@@ -98,7 +98,7 @@ fn root_visible_surface_stays_minimal() {
         "pub use endpoint::{ControlOutcome, CursorEndpoint};",
         "pub use epf::Slot;",
         "pub use epf::TapEvent;",
-        "pub use runtime::SessionCluster;",
+        "pub use runtime::SessionKit;",
         "pub use runtime::config::{Clock, CounterClock};",
         "pub use runtime::consts::{DEFAULT_LABEL_UNIVERSE, LabelUniverse};",
         "pub mod global;",

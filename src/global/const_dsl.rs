@@ -297,7 +297,7 @@ impl PolicyMode {
     /// )?;
     /// ```
     ///
-    /// [`SessionCluster::set_resolver`]: crate::substrate::SessionCluster::set_resolver
+    /// [`SessionKit::set_resolver`]: crate::substrate::SessionKit::set_resolver
     /// [`CpError::PolicyAbort`]: crate::substrate::CpError::PolicyAbort
     pub(crate) const fn dynamic(policy_id: u16) -> Self {
         Self::Dynamic {

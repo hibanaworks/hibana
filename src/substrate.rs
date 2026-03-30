@@ -6,18 +6,22 @@ pub use crate::control::types::{Lane, RendezvousId, SessionId};
 pub use crate::eff::EffIndex;
 pub use crate::transport::Transport;
 
-/// Protocol-neutral session cluster facade for protocol implementors.
+type KernelSessionCluster<'cfg, T, U, C, const MAX_RV: usize> =
+    crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>;
+
+/// Protocol-neutral session kit facade for protocol implementors.
 #[repr(transparent)]
-pub struct SessionCluster<'cfg, T, U, C, const MAX_RV: usize>
+pub struct SessionKit<'cfg, T, U, C, const MAX_RV: usize = 4>
 where
     T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
-    inner: crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>,
+    inner: KernelSessionCluster<'cfg, T, U, C, MAX_RV>,
+    _cfg: core::marker::PhantomData<crate::endpoint::carrier::SessionCfg<Self>>,
 }
 
-impl<'cfg, T, U, C, const MAX_RV: usize> SessionCluster<'cfg, T, U, C, MAX_RV>
+impl<'cfg, T, U, C, const MAX_RV: usize> SessionKit<'cfg, T, U, C, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
     U: crate::runtime::consts::LabelUniverse + 'cfg,
@@ -27,6 +31,7 @@ where
     pub fn new(clock: &'cfg C) -> Self {
         Self {
             inner: crate::control::cluster::core::SessionCluster::new(clock),
+            _cfg: core::marker::PhantomData,
         }
     }
 
@@ -46,20 +51,7 @@ where
         sid: SessionId,
         program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, Steps, Mint>,
         binding: B,
-    ) -> Result<
-        crate::Endpoint<
-            'cfg,
-            ROLE,
-            T,
-            U,
-            C,
-            crate::substrate::cap::advanced::EpochTbl,
-            MAX_RV,
-            Mint,
-            B,
-        >,
-        AttachError,
-    >
+    ) -> Result<crate::Endpoint<'cfg, ROLE, Self, Mint, B>, AttachError>
     where
         B: crate::substrate::binding::BindingSlot,
         Mint: crate::substrate::cap::advanced::MintConfigMarker,
@@ -80,13 +72,6 @@ where
         self.inner
             .set_resolver::<POLICY, ROLE, Steps, Mint>(rv, program, resolver)
     }
-
-    #[inline]
-    pub(crate) fn as_kernel(
-        &self,
-    ) -> &crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV> {
-        &self.inner
-    }
 }
 
 pub mod runtime {
@@ -96,289 +81,26 @@ pub mod runtime {
 
 pub mod mgmt {
     pub use crate::runtime::mgmt::{
-        LoadBegin, LoadChunk, LoadReport, MgmtError, Reply, StatsResp, SubscribeReq,
-        TransitionReport,
+        LoadBegin, LoadChunk, LoadReport, LoadRequest, MgmtError, ROLE_CLUSTER, ROLE_CONTROLLER,
+        Reply, Request, SlotRequest, StatsResp, SubscribeReq, TransitionReport,
     };
 
-    pub mod session {
-        pub mod tap {
-            pub use crate::observe::core::TapEvent;
-        }
+    pub mod tap {
+        pub use crate::observe::core::TapEvent;
+    }
 
-        pub use crate::runtime::mgmt::{LoadRequest, Request, SlotRequest};
+    pub mod request_reply {
+        pub use crate::runtime::mgmt::RequestReplyPrefixSteps as PrefixSteps;
 
-        pub fn enter_controller<'cfg, T, U, C, B, const MAX_RV: usize>(
-            cluster: &'cfg crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
-            rv_id: crate::substrate::RendezvousId,
-            sid: crate::substrate::SessionId,
-            binding: B,
-        ) -> Result<
-            crate::Endpoint<
-                'cfg,
-                0,
-                T,
-                U,
-                C,
-                crate::substrate::cap::advanced::EpochTbl,
-                MAX_RV,
-                crate::substrate::cap::advanced::MintConfig,
-                B,
-            >,
-            crate::substrate::AttachError,
-        >
-        where
-            T: crate::substrate::Transport + 'cfg,
-            U: crate::substrate::runtime::LabelUniverse + 'cfg,
-            C: crate::substrate::runtime::Clock + 'cfg,
-            B: crate::substrate::binding::BindingSlot,
-        {
-            crate::runtime::mgmt::enter_controller(cluster.as_kernel(), rv_id, sid, binding)
-        }
+        pub const PREFIX: crate::g::Program<PrefixSteps> =
+            crate::runtime::mgmt::REQUEST_REPLY_PREFIX;
+    }
 
-        pub fn enter_cluster<'cfg, T, U, C, B, const MAX_RV: usize>(
-            cluster: &'cfg crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
-            rv_id: crate::substrate::RendezvousId,
-            sid: crate::substrate::SessionId,
-            binding: B,
-        ) -> Result<
-            crate::Endpoint<
-                'cfg,
-                1,
-                T,
-                U,
-                C,
-                crate::substrate::cap::advanced::EpochTbl,
-                MAX_RV,
-                crate::substrate::cap::advanced::MintConfig,
-                B,
-            >,
-            crate::substrate::AttachError,
-        >
-        where
-            T: crate::substrate::Transport + 'cfg,
-            U: crate::substrate::runtime::LabelUniverse + 'cfg,
-            C: crate::substrate::runtime::Clock + 'cfg,
-            B: crate::substrate::binding::BindingSlot,
-        {
-            crate::runtime::mgmt::enter_cluster(cluster.as_kernel(), rv_id, sid, binding)
-        }
+    pub mod observe_stream {
+        pub use crate::runtime::mgmt::ObserveStreamPrefixSteps as PrefixSteps;
 
-        pub fn enter_stream_controller<'cfg, T, U, C, B, const MAX_RV: usize>(
-            cluster: &'cfg crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
-            rv_id: crate::substrate::RendezvousId,
-            sid: crate::substrate::SessionId,
-            binding: B,
-        ) -> Result<
-            crate::Endpoint<
-                'cfg,
-                0,
-                T,
-                U,
-                C,
-                crate::substrate::cap::advanced::EpochTbl,
-                MAX_RV,
-                crate::substrate::cap::advanced::MintConfig,
-                B,
-            >,
-            crate::substrate::AttachError,
-        >
-        where
-            T: crate::substrate::Transport + 'cfg,
-            U: crate::substrate::runtime::LabelUniverse + 'cfg,
-            C: crate::substrate::runtime::Clock + 'cfg,
-            B: crate::substrate::binding::BindingSlot,
-        {
-            crate::runtime::mgmt::enter_stream_controller(cluster.as_kernel(), rv_id, sid, binding)
-        }
-
-        pub fn enter_stream_cluster<'cfg, T, U, C, B, const MAX_RV: usize>(
-            cluster: &'cfg crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
-            rv_id: crate::substrate::RendezvousId,
-            sid: crate::substrate::SessionId,
-            binding: B,
-        ) -> Result<
-            crate::Endpoint<
-                'cfg,
-                1,
-                T,
-                U,
-                C,
-                crate::substrate::cap::advanced::EpochTbl,
-                MAX_RV,
-                crate::substrate::cap::advanced::MintConfig,
-                B,
-            >,
-            crate::substrate::AttachError,
-        >
-        where
-            T: crate::substrate::Transport + 'cfg,
-            U: crate::substrate::runtime::LabelUniverse + 'cfg,
-            C: crate::substrate::runtime::Clock + 'cfg,
-            B: crate::substrate::binding::BindingSlot,
-        {
-            crate::runtime::mgmt::enter_stream_cluster(cluster.as_kernel(), rv_id, sid, binding)
-        }
-
-        impl<'request> Request<'request> {
-            pub async fn drive_controller<'lease, T, U, C, Mint, B, const MAX_RV: usize>(
-                self,
-                endpoint: crate::Endpoint<
-                    'lease,
-                    0,
-                    T,
-                    U,
-                    C,
-                    crate::substrate::cap::advanced::EpochTbl,
-                    MAX_RV,
-                    Mint,
-                    B,
-                >,
-            ) -> Result<
-                (
-                    crate::Endpoint<
-                        'lease,
-                        0,
-                        T,
-                        U,
-                        C,
-                        crate::substrate::cap::advanced::EpochTbl,
-                        MAX_RV,
-                        Mint,
-                        B,
-                    >,
-                    crate::substrate::mgmt::Reply,
-                ),
-                crate::substrate::mgmt::MgmtError,
-            >
-            where
-                T: crate::substrate::Transport + 'lease,
-                U: crate::substrate::runtime::LabelUniverse,
-                C: crate::substrate::runtime::Clock,
-                Mint: crate::substrate::cap::advanced::MintConfigMarker,
-                Mint::Policy: crate::substrate::cap::advanced::AllowsCanonical,
-                B: crate::substrate::binding::BindingSlot,
-            {
-                crate::runtime::mgmt::drive_controller(endpoint, self).await
-            }
-        }
-
-        pub async fn drive_cluster<'lease, 'cfg, T, U, C, Mint, B, const MAX_RV: usize>(
-            cluster: &'lease crate::substrate::SessionCluster<'cfg, T, U, C, MAX_RV>,
-            rv_id: crate::substrate::RendezvousId,
-            sid: crate::substrate::SessionId,
-            endpoint: crate::Endpoint<
-                'lease,
-                1,
-                T,
-                U,
-                C,
-                crate::substrate::cap::advanced::EpochTbl,
-                MAX_RV,
-                Mint,
-                B,
-            >,
-        ) -> Result<
-            crate::Endpoint<
-                'lease,
-                1,
-                T,
-                U,
-                C,
-                crate::substrate::cap::advanced::EpochTbl,
-                MAX_RV,
-                Mint,
-                B,
-            >,
-            crate::substrate::mgmt::MgmtError,
-        >
-        where
-            T: crate::substrate::Transport + 'cfg,
-            U: crate::substrate::runtime::LabelUniverse,
-            C: crate::substrate::runtime::Clock,
-            Mint: crate::substrate::cap::advanced::MintConfigMarker,
-            Mint::Policy: crate::substrate::cap::advanced::AllowsCanonical,
-            B: crate::substrate::binding::BindingSlot,
-        {
-            crate::runtime::mgmt::drive_cluster(cluster.as_kernel(), rv_id, sid, endpoint).await
-        }
-
-        pub async fn drive_stream_cluster<'lease, T, U, C, Mint, F, B, const MAX_RV: usize>(
-            endpoint: crate::Endpoint<
-                'lease,
-                1,
-                T,
-                U,
-                C,
-                crate::substrate::cap::advanced::EpochTbl,
-                MAX_RV,
-                Mint,
-                B,
-            >,
-            should_continue: F,
-        ) -> Result<
-            crate::Endpoint<
-                'lease,
-                1,
-                T,
-                U,
-                C,
-                crate::substrate::cap::advanced::EpochTbl,
-                MAX_RV,
-                Mint,
-                B,
-            >,
-            crate::substrate::mgmt::MgmtError,
-        >
-        where
-            T: crate::substrate::Transport + 'lease,
-            U: crate::substrate::runtime::LabelUniverse,
-            C: crate::substrate::runtime::Clock,
-            Mint: crate::substrate::cap::advanced::MintConfigMarker,
-            Mint::Policy: crate::substrate::cap::advanced::AllowsCanonical,
-            F: FnMut() -> bool,
-            B: crate::substrate::binding::BindingSlot,
-        {
-            crate::runtime::mgmt::drive_stream_cluster(endpoint, should_continue).await
-        }
-
-        pub async fn drive_stream_controller<'lease, T, U, C, Mint, F, B, const MAX_RV: usize>(
-            endpoint: crate::Endpoint<
-                'lease,
-                0,
-                T,
-                U,
-                C,
-                crate::substrate::cap::advanced::EpochTbl,
-                MAX_RV,
-                Mint,
-                B,
-            >,
-            subscribe: crate::substrate::mgmt::SubscribeReq,
-            on_event: F,
-        ) -> Result<
-            crate::Endpoint<
-                'lease,
-                0,
-                T,
-                U,
-                C,
-                crate::substrate::cap::advanced::EpochTbl,
-                MAX_RV,
-                Mint,
-                B,
-            >,
-            crate::substrate::mgmt::MgmtError,
-        >
-        where
-            T: crate::substrate::Transport + 'lease,
-            U: crate::substrate::runtime::LabelUniverse,
-            C: crate::substrate::runtime::Clock,
-            Mint: crate::substrate::cap::advanced::MintConfigMarker,
-            F: FnMut(crate::substrate::mgmt::session::tap::TapEvent) -> bool,
-            B: crate::substrate::binding::BindingSlot,
-        {
-            crate::runtime::mgmt::drive_stream_controller(endpoint, subscribe, on_event).await
-        }
+        pub const PREFIX: crate::g::Program<PrefixSteps> =
+            crate::runtime::mgmt::OBSERVE_STREAM_PREFIX;
     }
 }
 

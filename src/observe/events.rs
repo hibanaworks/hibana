@@ -346,7 +346,9 @@ impl DelegSplice {
 // ────────────── Policy VM (0x0400-0x040F) ──────────────
 
 /// Policy VM slot commit.
+#[cfg(test)]
 pub(crate) struct PolicyCommit;
+#[cfg(test)]
 impl PolicyCommit {
     #[inline(always)]
     pub(crate) const fn with_digest(
@@ -367,7 +369,9 @@ impl PolicyCommit {
 }
 
 /// Policy VM slot rollback.
+#[cfg(test)]
 pub(crate) struct PolicyRollback;
+#[cfg(test)]
 impl PolicyRollback {
     #[inline(always)]
     pub(crate) const fn with_digest(

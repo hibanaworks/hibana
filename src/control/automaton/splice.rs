@@ -32,7 +32,6 @@ use crate::{
             bundle::{LeaseBundleError, LeaseBundleFacet},
             core::{ControlAutomaton, ControlStep, FullSpec, RendezvousLease, SpliceSpec},
             graph::{InlineLeaseChildStorage, InlineLeaseNodeStorage, LeaseSpec},
-            planner::{LeaseFacetNeeds, LeaseSpecFacetNeeds, facets_caps_splice},
         },
         types::{Generation, Lane, RendezvousId, SessionId},
     },
@@ -61,8 +60,6 @@ pub(crate) const SPLICE_LEASE_MAX_NODES: usize = 3;
 /// Maximum child capacity for [`SpliceLeaseSpec`].
 pub(crate) const SPLICE_LEASE_MAX_CHILDREN: usize = 2;
 
-const SPLICE_FACET_NEEDS: LeaseFacetNeeds = facets_caps_splice();
-
 /// LeaseGraph specification for splice orchestration.
 pub(crate) struct SpliceLeaseSpec<T, U, C, E>(PhantomData<(T, U, C, E)>);
 
@@ -76,22 +73,12 @@ where
     type NodeId = RendezvousId;
     type Facet = LeaseBundleFacet<T, U, C, E>;
     type ChildStorage = InlineLeaseChildStorage<RendezvousId, SPLICE_LEASE_MAX_CHILDREN>;
-    type NodeStorage<'graph> = InlineLeaseNodeStorage<'graph, Self, SPLICE_LEASE_MAX_NODES> where Self: 'graph;
+    type NodeStorage<'graph>
+        = InlineLeaseNodeStorage<'graph, Self, SPLICE_LEASE_MAX_NODES>
+    where
+        Self: 'graph;
     const MAX_NODES: usize = SPLICE_LEASE_MAX_NODES;
     const MAX_CHILDREN: usize = SPLICE_LEASE_MAX_CHILDREN;
-}
-
-impl<T, U, C, E> LeaseSpecFacetNeeds for SpliceLeaseSpec<T, U, C, E>
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
-{
-    #[inline(always)]
-    fn facet_needs() -> LeaseFacetNeeds {
-        SPLICE_FACET_NEEDS
-    }
 }
 
 /// Seed used for splice operand preparation.

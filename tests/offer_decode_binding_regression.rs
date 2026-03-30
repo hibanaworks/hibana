@@ -15,7 +15,7 @@ use hibana::substrate::{
     policy::{DynamicResolution, PolicySignalsProvider, ResolverContext, ResolverError},
 };
 use hibana::substrate::{
-    SessionCluster, SessionId, Transport,
+    SessionId, SessionKit, Transport,
     binding::{BindingSlot, Channel, IncomingClassification, TransportOpsError},
     runtime::{Config, CounterClock, DefaultLabelUniverse},
     transport::Outgoing,
@@ -376,7 +376,7 @@ impl Transport for FlowTransport {
 }
 
 fn register_route_resolvers_for_program<const ROLE: u8, Steps, T>(
-    cluster: &SessionCluster<'static, T, DefaultLabelUniverse, CounterClock, 4>,
+    cluster: &SessionKit<'static, T, DefaultLabelUniverse, CounterClock, 4>,
     rv_id: RendezvousId,
     program: &RoleProgram<'static, ROLE, Steps>,
 ) where
@@ -403,13 +403,8 @@ async fn offer_decode_binding_consumes_classification_once() {
     let shared = Arc::new(Mutex::new(FlowBindingShared::default()));
     let transport = FlowTransport::new(Arc::clone(&shared));
 
-    let cluster: &mut SessionCluster<
-        'static,
-        FlowTransport,
-        DefaultLabelUniverse,
-        CounterClock,
-        4,
-    > = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+    let cluster: &mut SessionKit<'static, FlowTransport, DefaultLabelUniverse, CounterClock, 4> =
+        Box::leak(Box::new(SessionKit::new(leak_clock())));
     let rv_id = cluster
         .add_rendezvous_from_config(config, transport.clone())
         .expect("register rv");
@@ -479,13 +474,8 @@ async fn dynamic_route_passive_ignores_non_authoritative_binding_classification(
     let shared = Arc::new(Mutex::new(FlowBindingShared::default()));
     let transport = FlowTransport::new(Arc::clone(&shared));
 
-    let cluster: &mut SessionCluster<
-        'static,
-        FlowTransport,
-        DefaultLabelUniverse,
-        CounterClock,
-        4,
-    > = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+    let cluster: &mut SessionKit<'static, FlowTransport, DefaultLabelUniverse, CounterClock, 4> =
+        Box::leak(Box::new(SessionKit::new(leak_clock())));
     let rv_id = cluster
         .add_rendezvous_from_config(config, transport.clone())
         .expect("register rv");

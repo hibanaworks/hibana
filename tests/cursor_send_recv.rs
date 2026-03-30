@@ -7,7 +7,7 @@ use hibana::{
     g::advanced::steps::{ProjectRole, SendStep, StepCons, StepNil},
     g::advanced::{RoleProgram, project},
     g::{self, Msg, Role},
-    substrate::{SessionCluster, SessionId, binding::NoBinding, runtime::Config},
+    substrate::{SessionId, SessionKit, binding::NoBinding, runtime::Config},
 };
 use runtime_support::{leak_slab, leak_tap_storage};
 
@@ -41,13 +41,13 @@ fn cursor_send_and_recv_roundtrip() {
     let slab = leak_slab(1024);
     let config = Config::new(tap_buf, slab);
     let transport = TestTransport::default();
-    let cluster: &mut SessionCluster<
+    let cluster: &mut SessionKit<
         'static,
         TestTransport,
         hibana::substrate::runtime::DefaultLabelUniverse,
         hibana::substrate::runtime::CounterClock,
         4,
-    > = Box::leak(Box::new(SessionCluster::new(runtime_support::leak_clock())));
+    > = Box::leak(Box::new(SessionKit::new(runtime_support::leak_clock())));
     let rv_id = cluster
         .add_rendezvous_from_config(config, transport.clone())
         .expect("register rendezvous");

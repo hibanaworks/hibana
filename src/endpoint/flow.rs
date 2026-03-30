@@ -5,101 +5,78 @@ use core::marker::PhantomData;
 
 use crate::{
     binding::{BindingSlot, NoBinding},
-    control::cap::mint::{AllowsCanonical, MintConfigMarker},
-    endpoint::{
-        Endpoint, SendResult,
-        control::ControlOutcome,
-        kernel::{CanonicalTokenProvider, CursorEndpoint},
-    },
+    control::cap::mint::{AllowsCanonical, EpochTbl, MintConfigMarker},
+    endpoint::{Endpoint, SendResult, carrier, control::ControlOutcome},
     global::typestate::SendMeta,
     global::{ControlHandling, ControlPayloadKind, MessageSpec, SendableLabel},
-    runtime::{config::Clock, consts::LabelUniverse},
-    transport::Transport,
 };
+
+type EndpointCfg<K, Mint, B> = carrier::EndpointCfg<K, Mint, B>;
+type KernelEndpoint<'r, const ROLE: u8, K, Mint, B> =
+    carrier::KernelCursorEndpoint<'r, ROLE, K, EpochTbl, Mint, B>;
 
 /// Affine flow handle for a pending send transition.
 ///
 /// Created by `Endpoint::flow()` and consumed by `.send(arg).await`.
 /// The type name matches the constructor for clarity: `flow()` → `CapFlow`.
-pub(crate) struct CapFlow<
-    'r,
-    const ROLE: u8,
-    M,
-    T: Transport + 'r,
-    U,
-    C,
-    E,
-    const MAX_RV: usize,
-    Mint,
-    B: BindingSlot = NoBinding,
-> where
+pub(crate) struct CapFlow<'r, const ROLE: u8, M, K, Mint, B: BindingSlot = NoBinding>
+where
     M: MessageSpec + SendableLabel,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
+    K: carrier::SessionKitFamily + 'r,
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
-    endpoint: CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    endpoint: KernelEndpoint<'r, ROLE, K, Mint, B>,
     meta: SendMeta,
-    _msg: PhantomData<M>,
+    _msg: PhantomData<(M, EndpointCfg<K, Mint, B>)>,
 }
 
 /// Public flow facade returned by [`Endpoint::flow`](crate::Endpoint::flow).
-pub struct Flow<
-    'r,
-    const ROLE: u8,
-    M,
-    T: Transport + 'r,
-    U,
-    C,
-    E,
-    const MAX_RV: usize,
-    Mint,
-    B: BindingSlot = NoBinding,
-> where
+struct FlowInner<'r, const ROLE: u8, M, K, Mint, B>
+where
     M: MessageSpec + SendableLabel,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
+    K: carrier::SessionKitFamily + 'r,
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
-    inner: CapFlow<'r, ROLE, M, T, U, C, E, MAX_RV, Mint, B>,
+    inner: CapFlow<'r, ROLE, M, K, Mint, B>,
 }
 
-impl<'r, const ROLE: u8, M, T, U, C, E, const MAX_RV: usize, Mint, B>
-    Flow<'r, ROLE, M, T, U, C, E, MAX_RV, Mint, B>
+#[allow(private_bounds)]
+pub struct Flow<'r, const ROLE: u8, M, K, Mint, B: BindingSlot = NoBinding>
 where
     M: MessageSpec + SendableLabel,
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
+    K: carrier::SessionKitFamily + 'r,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
+{
+    inner: FlowInner<'r, ROLE, M, K, Mint, B>,
+}
+
+#[allow(private_bounds)]
+impl<'r, const ROLE: u8, M, K, Mint, B> Flow<'r, ROLE, M, K, Mint, B>
+where
+    M: MessageSpec + SendableLabel,
+    K: carrier::SessionKitFamily + 'r,
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
     #[inline]
-    pub(crate) fn from_cap_flow(inner: CapFlow<'r, ROLE, M, T, U, C, E, MAX_RV, Mint, B>) -> Self {
-        Self { inner }
+    pub(crate) fn from_cap_flow(inner: CapFlow<'r, ROLE, M, K, Mint, B>) -> Self {
+        Self {
+            inner: FlowInner { inner },
+        }
     }
 }
 
-impl<'r, const ROLE: u8, M, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CapFlow<'r, ROLE, M, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, M, K, Mint, B> CapFlow<'r, ROLE, M, K, Mint, B>
 where
     M: MessageSpec + SendableLabel,
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
+    K: carrier::SessionKitFamily + 'r,
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
-    pub(crate) fn new(
-        endpoint: CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-        meta: SendMeta,
-    ) -> Self {
+    pub(crate) fn new(endpoint: KernelEndpoint<'r, ROLE, K, Mint, B>, meta: SendMeta) -> Self {
         Self {
             endpoint,
             meta,
@@ -107,12 +84,7 @@ where
         }
     }
 
-    fn into_parts(
-        self,
-    ) -> (
-        CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-        SendMeta,
-    ) {
+    fn into_parts(self) -> (KernelEndpoint<'r, ROLE, K, Mint, B>, SendMeta) {
         (self.endpoint, self.meta)
     }
 }
@@ -121,16 +93,26 @@ where
 // Unified send implementation
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-impl<'r, const ROLE: u8, M, T, U, C, E, const MAX_RV: usize, Mint, B>
-    CapFlow<'r, ROLE, M, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, 'cfg, const ROLE: u8, M, T, U, C, const MAX_RV: usize, Mint, B>
+    CapFlow<'r, ROLE, M, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint, B>
 where
     M: MessageSpec + SendableLabel,
     M::Payload: crate::transport::wire::WireEncode,
-    M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
+    M::ControlKind: crate::endpoint::kernel::CanonicalTokenProvider<
+            'r,
+            ROLE,
+            T,
+            U,
+            C,
+            EpochTbl,
+            Mint,
+            MAX_RV,
+            M,
+            B,
+        >,
+    T: crate::substrate::Transport + 'cfg,
+    U: crate::substrate::runtime::LabelUniverse + 'cfg,
+    C: crate::substrate::runtime::Clock + 'cfg,
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
@@ -146,7 +128,7 @@ where
         self,
         arg: A,
     ) -> SendResult<(
-        CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        KernelEndpoint<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint, B>,
         ControlOutcome<'r, <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>,
     )>
     where
@@ -159,16 +141,26 @@ where
     }
 }
 
-impl<'r, const ROLE: u8, M, T, U, C, E, const MAX_RV: usize, Mint, B>
-    Flow<'r, ROLE, M, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, 'cfg, const ROLE: u8, M, T, U, C, const MAX_RV: usize, Mint, B>
+    Flow<'r, ROLE, M, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint, B>
 where
     M: MessageSpec + SendableLabel,
     M::Payload: crate::transport::wire::WireEncode,
-    M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
+    M::ControlKind: crate::endpoint::kernel::CanonicalTokenProvider<
+            'r,
+            ROLE,
+            T,
+            U,
+            C,
+            EpochTbl,
+            Mint,
+            MAX_RV,
+            M,
+            B,
+        >,
+    T: crate::substrate::Transport + 'cfg,
+    U: crate::substrate::runtime::LabelUniverse + 'cfg,
+    C: crate::substrate::runtime::Clock + 'cfg,
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
@@ -177,14 +169,14 @@ where
         self,
         arg: A,
     ) -> SendResult<(
-        Endpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        Endpoint<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint, B>,
         ControlOutcome<'r, <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>,
     )>
     where
         A: FlowSendArg<'a, M, Mint>,
         M::Payload: 'a,
     {
-        let (endpoint, outcome) = self.inner.send(arg).await?;
+        let (endpoint, outcome) = self.inner.inner.send(arg).await?;
         Ok((Endpoint::from_cursor(endpoint), outcome))
     }
 }

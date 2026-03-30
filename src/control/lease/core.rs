@@ -80,30 +80,6 @@ where
         }
     }
 
-    /// Register a local rendezvous with the core.
-    ///
-    /// The rendezvous is stored by value, preserving the strict drop-order:
-    /// ControlCore → Rendezvous → in-flight leases.
-    #[cfg(test)]
-    pub(crate) fn register_local(
-        &mut self,
-        rendezvous: Rendezvous<'cfg, 'cfg, T, U, C, E>,
-    ) -> Result<RendezvousId, RegisterRendezvousError> {
-        let id = rendezvous.id();
-        if self.entries.contains_key(&id) {
-            return Err(RegisterRendezvousError::Duplicate(id));
-        }
-        if self.entries.is_full() {
-            return Err(RegisterRendezvousError::CapacityExceeded);
-        }
-        let entry = RendezvousEntry::new(rendezvous);
-        self.entries.insert(id, entry).map_err(|entry| {
-            let _ = entry;
-            RegisterRendezvousError::CapacityExceeded
-        })?;
-        Ok(id)
-    }
-
     /// Returns true if the rendezvous identifier is present, regardless of activity.
     pub(crate) fn is_registered(&self, id: &RendezvousId) -> bool {
         self.entries.contains_key(id)
@@ -155,18 +131,6 @@ where
         }
         slot.mark_active();
         Ok(RendezvousLease::new(slot))
-    }
-
-    /// Visit all rendezvous that are currently not leased.
-    pub(crate) fn for_each_available<F>(&self, mut f: F)
-    where
-        F: FnMut(RendezvousId, &Rendezvous<'cfg, 'cfg, T, U, C, E>),
-    {
-        self.entries.for_each(|id, entry| {
-            if let Some(rv) = entry.rendezvous_ref() {
-                f(*id, rv);
-            }
-        });
     }
 }
 
@@ -247,14 +211,6 @@ where
     C: Clock,
     E: crate::control::cap::mint::EpochTable,
 {
-    #[cfg(test)]
-    fn new(rendezvous: Rendezvous<'cfg, 'cfg, T, U, C, E>) -> Self {
-        Self {
-            rendezvous,
-            active: false,
-        }
-    }
-
     fn is_active(&self) -> bool {
         self.active
     }
@@ -448,23 +404,11 @@ where
 /// Default spec exposing full mutable access to the rendezvous.
 pub(crate) struct FullSpec;
 
-/// Spec that exposes only slot storage operations.
-pub(crate) struct SlotSpec;
-
 /// Spec that exposes only splice operations.
 pub(crate) struct SpliceSpec;
 
 /// Spec that exposes only delegation operations.
 pub(crate) struct DelegationSpec;
-
-impl<T, U, C, E> RendezvousSpec<T, U, C, E> for SlotSpec
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
-{
-}
 
 impl<T, U, C, E> RendezvousSpec<T, U, C, E> for SpliceSpec
 where
@@ -614,8 +558,7 @@ mod automaton_tests {
     impl LeaseSpec for RvLeaseSpec {
         type NodeId = RendezvousId;
         type Facet = TestFacet;
-        type ChildStorage =
-            crate::control::lease::graph::InlineLeaseChildStorage<RendezvousId, 3>;
+        type ChildStorage = crate::control::lease::graph::InlineLeaseChildStorage<RendezvousId, 3>;
         type NodeStorage<'graph>
             = crate::control::lease::graph::InlineLeaseNodeStorage<'graph, Self, 4>
         where

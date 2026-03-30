@@ -1,11 +1,11 @@
-pub struct Endpoint< 'r, const ROLE: u8, T, U, C, E = crate::control::cap::mint::EpochTbl, const MAX_RV: usize = 4, Mint = crate::control::cap::mint::MintConfig, B = crate::binding::NoBinding, > where T: crate::transport::Transport + 'r, U: crate::runtime::consts::LabelUniverse, C: crate::runtime::config::Clock, E: crate::control::cap::mint::EpochTable, Mint: crate::control::cap::mint::MintConfigMarker, B: crate::binding::BindingSlot, {
-pub struct RouteBranch< 'r, const ROLE: u8, T, U, C, E = crate::control::cap::mint::EpochTbl, const MAX_RV: usize = 4, Mint = crate::control::cap::mint::MintConfig, B = crate::binding::NoBinding, > where T: crate::transport::Transport + 'r, U: crate::runtime::consts::LabelUniverse, C: crate::runtime::config::Clock, E: crate::control::cap::mint::EpochTable, Mint: crate::control::cap::mint::MintConfigMarker, B: crate::binding::BindingSlot, {
-pub fn flow<M>(self) -> SendResult<flow::Flow<'r, ROLE, M, T, U, C, E, MAX_RV, Mint, B>> where M: crate::global::MessageSpec + crate::global::SendableLabel, {
+pub struct Endpoint<'r, const ROLE: u8, K, Mint = crate::control::cap::mint::MintConfig, B = crate::binding::NoBinding> where K: carrier::SessionKitFamily + 'r, Mint: crate::control::cap::mint::MintConfigMarker, B: crate::binding::BindingSlot, {
+pub struct RouteBranch<'r, const ROLE: u8, K, Mint = crate::control::cap::mint::MintConfig, B = crate::binding::NoBinding> where K: carrier::SessionKitFamily + 'r, Mint: crate::control::cap::mint::MintConfigMarker, B: crate::binding::BindingSlot, {
+pub fn flow<M>(self) -> SendResult<flow::Flow<'r, ROLE, M, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint, B>> where M: crate::global::MessageSpec + crate::global::SendableLabel, 'cfg: 'r, {
 pub async fn recv<M>(self) -> RecvResult<(Self, M::Payload)> where M: crate::global::MessageSpec, M::Payload: crate::transport::wire::WireDecodeOwned, {
-pub async fn offer(self) -> RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
+pub async fn offer(self) -> RecvResult<RouteBranch<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint, B>> {
 pub fn label(&self) -> u8 {
-pub fn into_endpoint(self) -> Endpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B> {
-pub async fn decode<M>( self, ) -> RecvResult<(Endpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>, M::Payload)> where M: crate::global::MessageSpec, M::Payload: crate::transport::wire::WireDecodeOwned, {
+pub fn into_endpoint(self) -> Endpoint<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint, B> {
+pub async fn decode<M>(self) -> RecvResult<(Endpoint<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint, B>, M::Payload)> where M: crate::global::MessageSpec, M::Payload: crate::transport::wire::WireDecodeOwned, {
 pub enum SendError {
 pub enum RecvError {
 pub type SendResult<T> = core::result::Result<T, SendError>;

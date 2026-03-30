@@ -12,6 +12,7 @@ pub(crate) mod dispatch;
 /// EPF host interface.
 pub(crate) mod host;
 /// Bytecode image loader.
+#[cfg(test)]
 pub(crate) mod loader;
 /// Opcode definitions.
 pub(crate) mod ops;

@@ -3,8 +3,16 @@
 //! Applications interact with `Endpoint` values that are materialised from
 //! `RoleProgram` projections.
 
+use crate::{
+    binding::{BindingSlot, NoBinding},
+    control::cap::mint::{EpochTbl, MintConfig, MintConfigMarker},
+    transport::{TransportError, wire::CodecError},
+};
+
 /// Affine endpoint helpers.
 pub(crate) mod affine;
+/// Crate-private carrier owners for internal endpoint type packs.
+pub(crate) mod carrier;
 /// Control-plane helpers for endpoints.
 pub(crate) mod control;
 /// Flow-based send API.
@@ -12,109 +20,201 @@ pub(crate) mod flow;
 /// Internal endpoint kernel implementation.
 pub(crate) mod kernel;
 
-/// Public endpoint facade for app-facing localside interaction.
-pub struct Endpoint<
-    'r,
-    const ROLE: u8,
-    T,
-    U,
-    C,
-    E = crate::control::cap::mint::EpochTbl,
-    const MAX_RV: usize = 4,
-    Mint = crate::control::cap::mint::MintConfig,
-    B = crate::binding::NoBinding,
-> where
-    T: crate::transport::Transport + 'r,
-    U: crate::runtime::consts::LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: crate::control::cap::mint::EpochTable,
-    Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot,
+type EndpointCfg<K, Mint, B> = carrier::EndpointCfg<K, Mint, B>;
+type KernelEndpoint<'r, const ROLE: u8, K, Mint, B> =
+    carrier::KernelCursorEndpoint<'r, ROLE, K, EpochTbl, Mint, B>;
+type KernelRouteBranch<'r, const ROLE: u8, K, Mint, B> =
+    carrier::KernelRouteBranch<'r, ROLE, K, EpochTbl, Mint, B>;
+#[cfg(feature = "std")]
+type EndpointStorage<'r, const ROLE: u8, K, Mint, B> =
+    std::boxed::Box<KernelEndpoint<'r, ROLE, K, Mint, B>>;
+#[cfg(not(feature = "std"))]
+type EndpointStorage<'r, const ROLE: u8, K, Mint, B> = KernelEndpoint<'r, ROLE, K, Mint, B>;
+#[cfg(feature = "std")]
+type RouteBranchStorage<'r, const ROLE: u8, K, Mint, B> =
+    std::boxed::Box<KernelRouteBranch<'r, ROLE, K, Mint, B>>;
+#[cfg(not(feature = "std"))]
+type RouteBranchStorage<'r, const ROLE: u8, K, Mint, B> = KernelRouteBranch<'r, ROLE, K, Mint, B>;
+
+struct EndpointInner<'r, const ROLE: u8, K, Mint, B>
+where
+    K: carrier::SessionKitFamily + 'r,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
 {
-    inner: kernel::CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    inner: EndpointStorage<'r, ROLE, K, Mint, B>,
+    _cfg: core::marker::PhantomData<EndpointCfg<K, Mint, B>>,
+}
+
+/// Public endpoint facade for app-facing localside interaction.
+#[allow(private_bounds)]
+pub struct Endpoint<'r, const ROLE: u8, K, Mint = MintConfig, B = NoBinding>
+where
+    K: carrier::SessionKitFamily + 'r,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
+{
+    inner: EndpointInner<'r, ROLE, K, Mint, B>,
+}
+
+struct RouteBranchInner<'r, const ROLE: u8, K, Mint, B>
+where
+    K: carrier::SessionKitFamily + 'r,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
+{
+    inner: RouteBranchStorage<'r, ROLE, K, Mint, B>,
+    _cfg: core::marker::PhantomData<EndpointCfg<K, Mint, B>>,
 }
 
 /// Public route-branch facade returned by [`Endpoint::offer`].
-pub struct RouteBranch<
-    'r,
-    const ROLE: u8,
-    T,
-    U,
-    C,
-    E = crate::control::cap::mint::EpochTbl,
-    const MAX_RV: usize = 4,
-    Mint = crate::control::cap::mint::MintConfig,
-    B = crate::binding::NoBinding,
-> where
-    T: crate::transport::Transport + 'r,
-    U: crate::runtime::consts::LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: crate::control::cap::mint::EpochTable,
-    Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot,
+#[allow(private_bounds)]
+pub struct RouteBranch<'r, const ROLE: u8, K, Mint = MintConfig, B = NoBinding>
+where
+    K: carrier::SessionKitFamily + 'r,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
 {
-    inner: kernel::RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    inner: RouteBranchInner<'r, ROLE, K, Mint, B>,
 }
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    Endpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, const ROLE: u8, K, Mint, B> EndpointInner<'r, ROLE, K, Mint, B>
 where
-    T: crate::transport::Transport + 'r,
-    U: crate::runtime::consts::LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: crate::control::cap::mint::EpochTable,
-    Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot,
+    K: carrier::SessionKitFamily + 'r,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
 {
     #[inline]
-    pub(crate) fn from_cursor(
-        inner: kernel::CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    ) -> Self {
-        Self { inner }
+    fn from_cursor(inner: KernelEndpoint<'r, ROLE, K, Mint, B>) -> Self {
+        #[cfg(feature = "std")]
+        {
+            Self {
+                inner: std::boxed::Box::new(inner),
+                _cfg: core::marker::PhantomData,
+            }
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            Self {
+                inner,
+                _cfg: core::marker::PhantomData,
+            }
+        }
     }
 
     #[inline]
-    pub(crate) fn into_cursor(
+    fn into_cursor(self) -> KernelEndpoint<'r, ROLE, K, Mint, B> {
+        #[cfg(feature = "std")]
+        {
+            *self.inner
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            self.inner
+        }
+    }
+}
+
+impl<'r, const ROLE: u8, K, Mint, B> RouteBranchInner<'r, ROLE, K, Mint, B>
+where
+    K: carrier::SessionKitFamily + 'r,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
+{
+    #[inline]
+    fn from_cursor(inner: KernelRouteBranch<'r, ROLE, K, Mint, B>) -> Self {
+        #[cfg(feature = "std")]
+        {
+            Self {
+                inner: std::boxed::Box::new(inner),
+                _cfg: core::marker::PhantomData,
+            }
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            Self {
+                inner,
+                _cfg: core::marker::PhantomData,
+            }
+        }
+    }
+
+    #[inline]
+    fn into_cursor(self) -> KernelRouteBranch<'r, ROLE, K, Mint, B> {
+        #[cfg(feature = "std")]
+        {
+            *self.inner
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            self.inner
+        }
+    }
+}
+
+#[allow(private_bounds)]
+impl<'r, const ROLE: u8, K, Mint, B> Endpoint<'r, ROLE, K, Mint, B>
+where
+    K: carrier::SessionKitFamily + 'r,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
+{
+    #[inline]
+    pub(crate) fn from_cursor(inner: KernelEndpoint<'r, ROLE, K, Mint, B>) -> Self {
+        Self {
+            inner: EndpointInner::from_cursor(inner),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn into_cursor(self) -> KernelEndpoint<'r, ROLE, K, Mint, B> {
+        self.inner.into_cursor()
+    }
+}
+
+#[allow(private_bounds)]
+impl<'r, const ROLE: u8, K, Mint, B> RouteBranch<'r, ROLE, K, Mint, B>
+where
+    K: carrier::SessionKitFamily + 'r,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
+{
+    #[inline]
+    pub(crate) fn from_cursor(inner: KernelRouteBranch<'r, ROLE, K, Mint, B>) -> Self {
+        Self {
+            inner: RouteBranchInner::from_cursor(inner),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn into_cursor(self) -> KernelRouteBranch<'r, ROLE, K, Mint, B> {
+        self.inner.into_cursor()
+    }
+}
+
+impl<'r, 'cfg, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint, B>
+    Endpoint<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint, B>
+where
+    T: crate::substrate::Transport + 'cfg,
+    U: crate::substrate::runtime::LabelUniverse + 'cfg,
+    C: crate::substrate::runtime::Clock + 'cfg,
+    'cfg: 'r,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
+{
+    #[inline]
+    pub fn flow<M>(
         self,
-    ) -> kernel::CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B> {
-        self.inner
-    }
-}
-
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
-where
-    T: crate::transport::Transport + 'r,
-    U: crate::runtime::consts::LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: crate::control::cap::mint::EpochTable,
-    Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot,
-{
-    #[inline]
-    pub(crate) fn from_cursor(
-        inner: kernel::RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    ) -> Self {
-        Self { inner }
-    }
-}
-
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    Endpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
-where
-    T: crate::transport::Transport + 'r,
-    U: crate::runtime::consts::LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: crate::control::cap::mint::EpochTable,
-    Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot,
-{
-    #[inline]
-    pub fn flow<M>(self) -> SendResult<flow::Flow<'r, ROLE, M, T, U, C, E, MAX_RV, Mint, B>>
+    ) -> SendResult<
+        flow::Flow<'r, ROLE, M, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint, B>,
+    >
     where
         M: crate::global::MessageSpec + crate::global::SendableLabel,
+        'cfg: 'r,
     {
-        self.inner.flow::<M>().map(flow::Flow::from_cap_flow)
+        Ok(flow::Flow::from_cap_flow(
+            self.into_cursor().flow_for_kit::<'cfg, M>()?,
+        ))
     }
 
     #[inline]
@@ -123,51 +223,58 @@ where
         M: crate::global::MessageSpec,
         M::Payload: crate::transport::wire::WireDecodeOwned,
     {
-        let (endpoint, payload) = self.inner.recv::<M>().await?;
+        let (endpoint, payload) = self.into_cursor().recv::<M>().await?;
         Ok((Self::from_cursor(endpoint), payload))
     }
 
     #[inline]
-    pub async fn offer(self) -> RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
-        let branch = self.inner.offer().await?;
+    pub async fn offer(
+        self,
+    ) -> RecvResult<
+        RouteBranch<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint, B>,
+    > {
+        let branch = self.into_cursor().offer().await?;
         Ok(RouteBranch::from_cursor(branch))
     }
 }
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+impl<'r, 'cfg, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint, B>
+    RouteBranch<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint, B>
 where
-    T: crate::transport::Transport + 'r,
-    U: crate::runtime::consts::LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: crate::control::cap::mint::EpochTable,
-    Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot,
+    T: crate::substrate::Transport + 'cfg,
+    U: crate::substrate::runtime::LabelUniverse + 'cfg,
+    C: crate::substrate::runtime::Clock + 'cfg,
+    'cfg: 'r,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
 {
     #[inline]
     pub fn label(&self) -> u8 {
-        self.inner.label()
+        self.inner.inner.label()
     }
 
     #[inline]
-    pub fn into_endpoint(self) -> Endpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B> {
-        Endpoint::from_cursor(self.inner.into_endpoint())
+    pub fn into_endpoint(
+        self,
+    ) -> Endpoint<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint, B> {
+        Endpoint::from_cursor(self.into_cursor().into_endpoint())
     }
 
     #[inline]
     pub async fn decode<M>(
         self,
-    ) -> RecvResult<(Endpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>, M::Payload)>
+    ) -> RecvResult<(
+        Endpoint<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint, B>,
+        M::Payload,
+    )>
     where
         M: crate::global::MessageSpec,
         M::Payload: crate::transport::wire::WireDecodeOwned,
     {
-        let (endpoint, payload) = self.inner.decode::<M>().await?;
+        let (endpoint, payload) = self.into_cursor().decode::<M>().await?;
         Ok((Endpoint::from_cursor(endpoint), payload))
     }
 }
-
-use crate::transport::{TransportError, wire::CodecError};
 
 /// Send error placeholder (will specialise once send/recv API lands).
 /// Errors surfaced when sending frames through a cursor endpoint.

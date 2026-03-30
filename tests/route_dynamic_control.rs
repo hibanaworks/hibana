@@ -14,7 +14,7 @@ use hibana::{
     g::advanced::{CanonicalControl, RoleProgram, project},
     g::{self, Msg, Role},
     substrate::{
-        SessionCluster, SessionId,
+        SessionId, SessionKit,
         binding::{BindingSlot, Channel, IncomingClassification, NoBinding, TransportOpsError},
         policy::{
             ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider, core,
@@ -427,13 +427,13 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
         let config = Config::new(tap_buf, slab);
         let transport = TestTransport::default();
 
-        let cluster: &mut SessionCluster<
+        let cluster: &mut SessionKit<
             'static,
             TestTransport,
             DefaultLabelUniverse,
             hibana::substrate::runtime::CounterClock,
             4,
-        > = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+        > = Box::leak(Box::new(SessionKit::new(leak_clock())));
 
         let rv_id = cluster
             .add_rendezvous_from_config(config, transport.clone())
@@ -518,13 +518,13 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
         let transport = TestTransport::default();
         let policy_input0 = Arc::new(AtomicU32::new(0));
 
-        let cluster: &mut SessionCluster<
+        let cluster: &mut SessionKit<
             'static,
             TestTransport,
             DefaultLabelUniverse,
             hibana::substrate::runtime::CounterClock,
             4,
-        > = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+        > = Box::leak(Box::new(SessionKit::new(leak_clock())));
         let rv_id = cluster
             .add_rendezvous_from_config(config, transport.clone())
             .expect("register rendezvous");
@@ -607,13 +607,13 @@ fn nested_loop_dynamic_send_and_offer() {
     let config = Config::new(tap_buf, slab);
     let transport = TestTransport::default();
 
-    let cluster: &mut SessionCluster<
+    let cluster: &mut SessionKit<
         'static,
         TestTransport,
         DefaultLabelUniverse,
         hibana::substrate::runtime::CounterClock,
         4,
-    > = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+    > = Box::leak(Box::new(SessionKit::new(leak_clock())));
 
     let _rv_id = cluster
         .add_rendezvous_from_config(config, transport.clone())

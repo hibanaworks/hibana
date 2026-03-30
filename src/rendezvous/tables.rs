@@ -153,6 +153,16 @@ impl LoopTable {
         }
     }
 
+    pub(crate) unsafe fn init_empty(dst: *mut Self) {
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).entries).write(UnsafeCell::new(
+                [[LoopEntry::empty(); LOOP_SLOTS]; LANES_MAX as usize],
+            ));
+            core::ptr::addr_of_mut!((*dst).waiters).write(UnsafeCell::new(init_waiters()));
+            core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
+        }
+    }
+
     #[inline]
     fn lane_idx(lane: Lane) -> usize {
         lane.raw() as usize
@@ -336,6 +346,27 @@ impl RouteTable {
             next_free: UnsafeCell::new([0; LANES_MAX as usize]),
             waiters: UnsafeCell::new(init_waiters()),
             _no_send_sync: PhantomData,
+        }
+    }
+
+    pub(crate) unsafe fn init_empty(dst: *mut Self) {
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).slots).write(UnsafeCell::new(
+                [[RouteSlot::empty(); ROUTE_SLOTS]; LANES_MAX as usize],
+            ));
+            core::ptr::addr_of_mut!((*dst).slot_by_ordinal).write(UnsafeCell::new(
+                [[ROUTE_SLOT_INDEX_NONE; ROUTE_SCOPE_ORDINAL_CAPACITY]; LANES_MAX as usize],
+            ));
+            core::ptr::addr_of_mut!((*dst).pending_mask_slots).write(UnsafeCell::new(
+                [RoutePendingMaskSlot::empty(); ROUTE_SLOTS],
+            ));
+            core::ptr::addr_of_mut!((*dst).pending_hint_lane_masks)
+                .write(UnsafeCell::new([0; ROUTE_PENDING_HINT_LABEL_CAPACITY]));
+            core::ptr::addr_of_mut!((*dst).change_epoch).write(UnsafeCell::new(0));
+            core::ptr::addr_of_mut!((*dst).next_free)
+                .write(UnsafeCell::new([0; LANES_MAX as usize]));
+            core::ptr::addr_of_mut!((*dst).waiters).write(UnsafeCell::new(init_waiters()));
+            core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
         }
     }
 

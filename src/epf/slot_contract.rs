@@ -56,12 +56,14 @@ pub(crate) const fn slot_policy_contract(slot: Slot) -> SlotPolicyContract {
 
 /// Whether this slot may use `GET_INPUT`.
 #[inline]
+#[cfg(test)]
 pub(crate) const fn slot_allows_get_input(slot: Slot) -> bool {
     slot_policy_contract(slot).allows_get_input
 }
 
 /// Whether this slot may use memory read/write opcodes (`LOAD_MEM`, `STORE_MEM`).
 #[inline]
+#[cfg(test)]
 pub(crate) const fn slot_allows_mem_ops(slot: Slot) -> bool {
     slot_policy_contract(slot).allows_mem_ops
 }

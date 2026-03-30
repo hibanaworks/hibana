@@ -81,7 +81,7 @@ check_absent_outside \
   "direct CompiledProgram::compile call used outside compiled owners or test-only fixtures" \
   "src/global/compiled/program.rs" \
   "src/control/cluster/effects.rs" \
-  "src/runtime/mgmt/kernel.rs"
+  "src/runtime/mgmt/test_support.rs"
 
 check_absent_outside \
   "CompiledRole::compile\\(" \
@@ -114,6 +114,26 @@ if [[ -e "src/endpoint/cursor.rs" ]]; then
   echo "lowering hygiene violation: legacy endpoint/cursor.rs owner still present" >&2
   FAILED=1
 fi
+
+check_absent \
+  "const[[:space:]]+MAX_LOOP_TRACKED:|pub\\(super\\)[[:space:]]+const[[:space:]]+fn[[:space:]]+build_internal\\(|jump_backpatch_indices|route_recv_nodes|route_passive_arm_start" \
+  "emit.rs reabsorbed monolithic lowering walk state" \
+  src/global/typestate/emit.rs
+
+for required in \
+  'src/global/typestate/emit_walk.rs:pub(super) const fn build_role_typestate<const ROLE: u8>(' \
+  'src/global/typestate/emit_scope.rs:pub(super) const fn alloc_scope_entry(' \
+  'src/global/typestate/emit_scope.rs:pub(super) const fn finalize_scope_registry(' \
+  'src/global/typestate/emit_route.rs:pub(super) const MAX_LOOP_TRACKED: usize =' \
+  'src/global/typestate/emit_route.rs:pub(super) const fn find_loop_entry_state('
+do
+  path="${required%%:*}"
+  pattern="${required#*:}"
+  if ! rg -n -F "${pattern}" "${path}" >/dev/null; then
+    echo "lowering hygiene violation: split typestate owner missing -> ${required}" >&2
+    FAILED=1
+  fi
+done
 
 while IFS= read -r hit; do
   [[ -z "${hit}" ]] && continue

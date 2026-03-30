@@ -344,16 +344,6 @@ if [[ -n "${LEASE_FACET_DEFAULT_HELPERS}" ]]; then
   FAILED=1
 fi
 
-LEASE_SPEC_FACET_DEFAULT_HELPERS="$(
-  rg -n -U "pub\\(crate\\)[[:space:]]+trait[[:space:]]+LeaseSpecFacetNeeds[^}]*fn[[:space:]]+facet_needs\\(\\)[[:space:]]*->[[:space:]]*LeaseFacetNeeds[[:space:]]*\\{[[:space:]]*Self::FACET_NEEDS[[:space:]]*\\}" \
-    src/control/lease/planner.rs || true
-)"
-if [[ -n "${LEASE_SPEC_FACET_DEFAULT_HELPERS}" ]]; then
-  echo "${LEASE_SPEC_FACET_DEFAULT_HELPERS}" >&2
-  echo "boundary deny pattern detected: lease spec facet fallback default shim" >&2
-  FAILED=1
-fi
-
 RESOURCE_KIND_DEFAULT_HELPERS="$(
   rg -n -U "pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*const[[:space:]]+AUTO_MINT_EXTERNAL:[[:space:]]+bool[[:space:]]*=[[:space:]]*false[[:space:]]*;|pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*fn[[:space:]]+caps_mask\\(_handle:[[:space:]]*&Self::Handle\\)[[:space:]]*->[[:space:]]*CapsMask[[:space:]]*\\{[[:space:]]*CapsMask::empty\\(\\)[[:space:]]*\\}|pub[[:space:]]+trait[[:space:]]+ResourceKind[^}]*fn[[:space:]]+scope_id\\(_handle:[[:space:]]*&Self::Handle\\)[[:space:]]*->[[:space:]]*Option<ScopeId>[[:space:]]*\\{[[:space:]]*None[[:space:]]*\\}" \
     src/control/cap/mint.rs || true
@@ -423,17 +413,19 @@ check_absent "#\\[allow\\(clippy::empty_loop\\)\\]|#\\[allow\\(unused_variables\
   src tests
 check_absent "^type[[:space:]]+(Controller|Cluster)[[:space:]]*=[[:space:]]*g::Role<[0-9]+>;" \
   "role synonym alias shim" \
-  src/runtime/mgmt/kernel.rs
+  src/runtime/mgmt/request_reply.rs
 check_absent "route_inferred|par_inferred" \
   "legacy inferred binary builder vocabulary" \
   src/global.rs \
   src/global/program.rs
 check_absent "^type[[:space:]]+(LoadBeginSteps|LoopContinueArmSteps|LoopRouteSteps|LoopSegmentSteps|AfterLoop|AfterCommit|FullProgramSteps|ControllerLocal|ClusterLocal|StreamLoopContinueSteps|StreamLoopBreakSteps|StreamLoopRouteSteps|StreamProgramSteps|StreamControllerLocal|StreamClusterLocal|LoadCommitSteps|LoadBeginTokenStep|LoadBeginMsgStep|LoopChunkStep|LoopBreakStep|CommandStep|StreamSubscribeStep|StreamBatchStep|StreamEndStep|StreamLoopContinueStep|StreamLoopBreakStep)[[:space:]]*=" \
   "runtime mgmt composition alias shim" \
-  src/runtime/mgmt/kernel.rs
+  src/runtime/mgmt/request_reply.rs \
+  src/runtime/mgmt/observe_stream.rs
 check_absent "^type[[:space:]]+(LoadBeginTokenMsg|LoadBeginMsg|LoadChunkMsg|LoadCommitTokenMsg|LoopContinueMsg|LoopBreakMsg|CommandMsg|SubscribeMsg|TapBatchMsg|StreamContinueMsg|StreamBreakMsg|StreamEndMsg)[[:space:]]*=" \
   "runtime mgmt message alias shim" \
-  src/runtime/mgmt/kernel.rs
+  src/runtime/mgmt/request_reply.rs \
+  src/runtime/mgmt/observe_stream.rs
 check_absent "^type[[:space:]]+(LoopContinueMsg|LoopBreakMsg)[[:space:]]*=" \
   "global const-dsl loop message alias shim" \
   src/global/const_dsl.rs
@@ -554,7 +546,7 @@ POLL_READY_BLOCK="$(
       print
       if ($0 ~ /^    }$/) { exit }
     }
-  ' src/endpoint/kernel/core.rs
+  ' src/endpoint/kernel/scope_evidence_logic.rs
 )"
 if [[ -z "${POLL_READY_BLOCK}" ]]; then
   echo "poll_arm_from_ready_mask block not found" >&2
@@ -571,7 +563,7 @@ ROUTE_SOURCE_BLOCK="$(
       if ($0 ~ /^}/) { exit }
       print
     }
-  ' src/endpoint/kernel/core.rs
+  ' src/endpoint/kernel/authority.rs
 )"
 if [[ -z "${ROUTE_SOURCE_BLOCK}" ]]; then
   echo "RouteDecisionSource enum block not found" >&2
@@ -613,7 +605,7 @@ OFFER_BLOCK="$(
       print
       if ($0 ~ /^    }$/) { exit }
     }
-  ' src/endpoint/kernel/core.rs
+  ' src/endpoint/kernel/offer.rs
 )"
 if [[ -z "${OFFER_BLOCK}" ]]; then
   echo "offer block not found" >&2
@@ -687,6 +679,79 @@ elif printf '%s\n' "${MATERIALIZE_BRANCH_BLOCK}" | rg -n "take_scope_ack\\(|peek
   echo "materialize_branch stage authority regression" >&2
   FAILED=1
 fi
+
+check_absent "lane_route_arms:|root_frontier_state:|offer_entry_state:|scope_evidence:" \
+  "core.rs reabsorbed split endpoint state owners" \
+  src/endpoint/kernel/core.rs
+
+check_absent "lane_route_arms\\[[^]]+\\][[:space:]]*=|lane_linger_counts\\[[^]]+\\][[:space:]]*=|lane_offer_state\\[[^]]+\\][[:space:]]*=" \
+  "core.rs reintroduced direct route-state table mutation" \
+  src/endpoint/kernel/core.rs
+
+check_absent "offer_entry_state\\[[^]]+\\][[:space:]]*=|offer_entry_state\\.get_mut\\(|global_active_entries\\.(insert_entry|remove_entry)" \
+  "core.rs reintroduced direct frontier table mutation" \
+  src/endpoint/kernel/core.rs
+
+check_absent "root_frontier_state\\[[^]]+\\][[:space:]]*=|global_frontier_observed(_epoch|_key)?[[:space:]]*=|global_offer_lane_mask[[:space:]]*=|global_offer_lane_entry_slot_masks[[:space:]]*=" \
+  "core.rs reintroduced direct frontier cache mutation" \
+  src/endpoint/kernel/core.rs
+
+for forbidden in \
+  "fn record_scope_ack(" \
+  "fn ingest_scope_evidence_for_offer(" \
+  "fn on_frontier_defer(" \
+  "fn align_cursor_to_selected_scope(" \
+  "fn frontier_observation_key(" \
+  "fn refresh_frontier_observation_cache(" \
+  "fn compose_frontier_observed_entries(" \
+  "fn offer_refresh_mask(" \
+  "fn next_frontier_observation_epoch(" \
+  "fn offer_entry_candidate_from_observation(" \
+  "fn refresh_offer_entry_state(" \
+  "fn sync_lane_offer_state(" \
+  "fn refresh_lane_offer_state("
+do
+  if rg -n -F "${forbidden}" src/endpoint/kernel/core.rs >/dev/null; then
+    echo "core.rs reabsorbed split endpoint logic owners: ${forbidden}" >&2
+    FAILED=1
+  fi
+done
+
+if ! rg -n "mod evidence_store;|mod frontier_state;|mod route_state;" src/endpoint/kernel/mod.rs >/dev/null; then
+  echo "kernel mod split owner deletion" >&2
+  FAILED=1
+fi
+
+for required in \
+  "src/endpoint/kernel/evidence_store.rs:pub\\(super\\) struct ScopeEvidenceStore" \
+  "src/endpoint/kernel/frontier_state.rs:pub\\(super\\) struct FrontierState" \
+  "src/endpoint/kernel/route_state.rs:pub\\(super\\) struct RouteState"
+do
+  path="${required%%:*}"
+  pattern="${required#*:}"
+  if ! rg -n "${pattern}" "${path}" >/dev/null; then
+    echo "split endpoint owner modules missing: ${required}" >&2
+    FAILED=1
+  fi
+done
+
+for required in \
+  'src/endpoint/kernel/core.rs:#[path = "scope_evidence_logic.rs"]' \
+  'src/endpoint/kernel/core.rs:#[path = "frontier_select.rs"]' \
+  'src/endpoint/kernel/core.rs:#[path = "frontier_observation.rs"]' \
+  'src/endpoint/kernel/core.rs:#[path = "offer_refresh.rs"]' \
+  'src/endpoint/kernel/scope_evidence_logic.rs:fn record_scope_ack(' \
+  'src/endpoint/kernel/frontier_select.rs:fn on_frontier_defer(' \
+  'src/endpoint/kernel/frontier_observation.rs:fn frontier_observation_key(' \
+  'src/endpoint/kernel/offer_refresh.rs:fn refresh_offer_entry_state('
+do
+  path="${required%%:*}"
+  pattern="${required#*:}"
+  if ! rg -n -F "${pattern}" "${path}" >/dev/null; then
+    echo "split endpoint logic owner missing: ${required}" >&2
+    FAILED=1
+  fi
+done
 
 HIDDEN_SRC_FILES="$(
   find src -type f | rg '/_[^/]+$' || true

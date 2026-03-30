@@ -113,7 +113,7 @@ mod eff;
 ///
 /// **For application code**, use:
 /// - [`Endpoint`] for localside choreography execution
-/// - [`substrate::SessionCluster`] for Rendezvous coordination
+/// - [`substrate::SessionKit`] for Rendezvous coordination
 ///
 /// This module stays internal; tests reach it through crate-private coverage,
 /// not through a third public face.

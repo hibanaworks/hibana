@@ -81,21 +81,23 @@ mod tests {
 
     #[test]
     fn management_roles_report_expected_facet_atoms() {
-        let (controller_program, cluster_program) =
-            crate::runtime::mgmt::management_compiled_programs();
-        let controller = compiled_report(&controller_program);
-        let cluster = compiled_report(&cluster_program);
+        crate::runtime::mgmt::with_management_compiled_programs_for_test(
+            |controller_program, cluster_program| {
+                let controller = compiled_report(controller_program);
+                let cluster = compiled_report(cluster_program);
 
-        assert_requires_slots_only(&controller);
-        assert_requires_slots_only(&cluster);
+                assert_requires_slots_only(&controller);
+                assert_requires_slots_only(&cluster);
 
-        let expected = &[
-            (LABEL_MGMT_LOAD_BEGIN, Some(LoadBeginKind::TAG)),
-            (LABEL_MGMT_LOAD_COMMIT, Some(LoadCommitKind::TAG)),
-        ];
+                let expected = &[
+                    (LABEL_MGMT_LOAD_BEGIN, Some(LoadBeginKind::TAG)),
+                    (LABEL_MGMT_LOAD_COMMIT, Some(LoadCommitKind::TAG)),
+                ];
 
-        assert_eq!(collect_atom_keys(&controller), expected);
-        assert_eq!(collect_atom_keys(&cluster), expected);
+                assert_eq!(collect_atom_keys(&controller), expected);
+                assert_eq!(collect_atom_keys(&cluster), expected);
+            },
+        );
     }
 
     fn assert_requires_slots_only(report: &ProgramFacetReport) {

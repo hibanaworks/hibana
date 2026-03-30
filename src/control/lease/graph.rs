@@ -607,7 +607,10 @@ mod tests {
         type NodeId = u8;
         type Facet = TestFacet;
         type ChildStorage = InlineLeaseChildStorage<u8, 3>;
-        type NodeStorage<'graph> = InlineLeaseNodeStorage<'graph, Self, 4> where Self: 'graph;
+        type NodeStorage<'graph>
+            = InlineLeaseNodeStorage<'graph, Self, 4>
+        where
+            Self: 'graph;
         const MAX_NODES: usize = 4;
         const MAX_CHILDREN: usize = 3;
     }

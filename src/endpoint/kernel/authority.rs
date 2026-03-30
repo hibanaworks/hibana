@@ -9,6 +9,120 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LoopDecision {
+    Continue,
+    Break,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Arm(u8);
+
+impl Arm {
+    #[inline]
+    pub(super) const fn new(value: u8) -> Option<Self> {
+        if value <= 1 { Some(Self(value)) } else { None }
+    }
+
+    #[inline]
+    pub(super) const fn as_u8(self) -> u8 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ScopeHint(u8);
+
+impl ScopeHint {
+    #[inline]
+    pub(super) const fn new(label: u8) -> Option<Self> {
+        if label == 0 { None } else { Some(Self(label)) }
+    }
+
+    #[inline]
+    pub(super) const fn label(self) -> u8 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RouteDecisionSource {
+    Ack,
+    Resolver,
+    Poll,
+}
+
+impl RouteDecisionSource {
+    #[inline]
+    pub(super) const fn as_tap_seq(self) -> u8 {
+        match self {
+            Self::Ack => 1,
+            Self::Resolver => 2,
+            Self::Poll => 3,
+        }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(super) const fn from_tap_seq(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::Ack),
+            2 => Some(Self::Resolver),
+            3 => Some(Self::Poll),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct RouteDecisionToken {
+    arm: Arm,
+    source: RouteDecisionSource,
+}
+
+impl RouteDecisionToken {
+    #[inline]
+    pub(super) const fn from_ack(arm: Arm) -> Self {
+        Self {
+            arm,
+            source: RouteDecisionSource::Ack,
+        }
+    }
+
+    #[inline]
+    pub(super) const fn from_resolver(arm: Arm) -> Self {
+        Self {
+            arm,
+            source: RouteDecisionSource::Resolver,
+        }
+    }
+
+    #[inline]
+    pub(super) const fn from_poll(arm: Arm) -> Self {
+        Self {
+            arm,
+            source: RouteDecisionSource::Poll,
+        }
+    }
+
+    #[inline]
+    pub(super) const fn arm(self) -> Arm {
+        self.arm
+    }
+
+    #[inline]
+    pub(super) const fn source(self) -> RouteDecisionSource {
+        self.source
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RouteResolveStep {
+    Resolved(Arm),
+    Deferred { retry_hint: u8, source: DeferSource },
+    Abort(u16),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RoutePolicyDecision {
     RouteArm(u8),
     DelegateResolver,

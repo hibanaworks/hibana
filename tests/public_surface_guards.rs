@@ -18,11 +18,17 @@ fn compact_ws(input: &str) -> String {
 fn endpoint_kernel_source() -> String {
     [
         include_str!("../src/endpoint.rs"),
+        include_str!("../src/endpoint/carrier.rs"),
         include_str!("../src/endpoint/kernel/mod.rs"),
         include_str!("../src/endpoint/kernel/authority.rs"),
         include_str!("../src/endpoint/kernel/control.rs"),
         include_str!("../src/endpoint/kernel/core.rs"),
+        include_str!("../src/endpoint/kernel/frontier_observation.rs"),
+        include_str!("../src/endpoint/kernel/frontier_select.rs"),
+        include_str!("../src/endpoint/kernel/offer_refresh.rs"),
+        include_str!("../src/endpoint/kernel/scope_evidence_logic.rs"),
         include_str!("../src/endpoint/kernel/decode.rs"),
+        include_str!("../src/endpoint/kernel/evidence.rs"),
         include_str!("../src/endpoint/kernel/frontier.rs"),
         include_str!("../src/endpoint/kernel/inbox.rs"),
         include_str!("../src/endpoint/kernel/lane_port.rs"),
@@ -70,21 +76,37 @@ fn substrate_public_api_allowlist() -> &'static str {
     include_str!("../.github/allowlists/substrate-public-api.txt")
 }
 
+fn endpoint_public_api_allowlist() -> &'static str {
+    include_str!("../.github/allowlists/endpoint-public-api.txt")
+}
+
 #[test]
 fn ambient_stack_tuning_does_not_return() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let cargo_config = manifest_dir.join(".cargo/config.toml");
+    let crate_cargo_config = manifest_dir.join(".cargo/config.toml");
+    let workspace_cargo_config = manifest_dir
+        .parent()
+        .expect("workspace root")
+        .join(".cargo/config.toml");
     assert!(
-        !cargo_config.exists(),
+        !crate_cargo_config.exists(),
         "hibana must not rely on repo-local stack env defaults"
     );
+    assert!(
+        !workspace_cargo_config.exists(),
+        "hibana must not rely on workspace-level stack env defaults"
+    );
 
-    let stack_sensitive_ws = compact_ws(&[
-        include_str!("../src/control/lease/graph.rs"),
-        include_str!("../src/control/lease/bundle.rs"),
-        include_str!("../tests/route_dynamic_control.rs"),
-    ]
-    .join("\n"));
+    let stack_sensitive_ws = compact_ws(
+        &[
+            include_str!("../src/control/lease/graph.rs"),
+            include_str!("../src/control/lease/bundle.rs"),
+            include_str!("../src/control/cluster/core.rs"),
+            include_str!("../src/rendezvous/core.rs"),
+            include_str!("../tests/route_dynamic_control.rs"),
+        ]
+        .join("\n"),
+    );
 
     for forbidden in [
         concat!("RUST_MIN_", "STACK"),
@@ -92,10 +114,74 @@ fn ambient_stack_tuning_does_not_return() {
         concat!("stack_", "size("),
         concat!("GRAPH_MAX_", "NODES"),
         concat!("GRAPH_MAX_", "CHILDREN"),
+        "Rendezvous::from_config(",
     ] {
         assert!(
             !stack_sensitive_ws.contains(forbidden),
             "ambient stack tuning and global LeaseGraph caps must not return: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn endpoint_internal_carrier_stays_crate_private() {
+    let endpoint_src = include_str!("../src/endpoint.rs");
+    let flow_src = include_str!("../src/endpoint/flow.rs");
+    let carrier_src = include_str!("../src/endpoint/carrier.rs");
+    let runtime_mgmt_src = include_str!("../src/runtime/mgmt.rs");
+    let substrate_src = include_str!("../src/substrate.rs");
+
+    assert!(
+        endpoint_src.contains("pub(crate) mod carrier;"),
+        "endpoint root must keep the crate-private carrier owner module"
+    );
+    for required in [
+        "carrier::EndpointCfg",
+        "carrier::KernelCursorEndpoint",
+        "carrier::KernelRouteBranch",
+    ] {
+        assert!(
+            endpoint_src.contains(required) || flow_src.contains(required),
+            "endpoint facade must route internal cursor aliases through carrier owner: {required}"
+        );
+    }
+    assert!(
+        substrate_src.contains("type KernelSessionCluster<'cfg, T, U, C, const MAX_RV: usize> =")
+            || runtime_mgmt_src
+                .contains("type KernelSessionCluster<'cfg, T, U, C, const MAX_RV: usize> ="),
+        "runtime/substrate lower layer must keep the internal session-cluster owner alias"
+    );
+    assert!(
+        !runtime_mgmt_src.contains("endpoint::carrier::PublicEndpoint")
+            && !substrate_src.contains("endpoint::carrier::PublicEndpoint"),
+        "runtime/substrate root surface must not regrow direct endpoint-carrier aliases"
+    );
+    for forbidden in [
+        "pub struct SessionCfg",
+        "pub struct EndpointCfg",
+        "pub trait SessionCarrier",
+        "pub trait EndpointCarrier",
+    ] {
+        assert!(
+            !carrier_src.contains(forbidden),
+            "carrier owner must stay crate-private: {forbidden}"
+        );
+    }
+
+    let public_api_ws = [
+        endpoint_public_api_allowlist(),
+        substrate_public_api_allowlist(),
+    ]
+    .join("\n");
+    for forbidden in [
+        "SessionCfg",
+        "EndpointCfg",
+        "SessionCarrier",
+        "EndpointCarrier",
+    ] {
+        assert!(
+            !public_api_ws.contains(forbidden),
+            "carrier internals must not leak into the public allowlists: {forbidden}"
         );
     }
 }
@@ -318,9 +404,8 @@ fn core_traits_do_not_keep_default_helper_bodies() {
         "lease facet must require explicit owner-side commit/rollback hooks"
     );
     assert!(
-        lease_planner_ws.contains("pub(crate) trait LeaseSpecFacetNeeds {")
-            && lease_planner_ws.contains("fn facet_needs() -> LeaseFacetNeeds;"),
-        "lease-spec facet contract must require an explicit owner-side facet hook"
+        !lease_planner_ws.contains("trait LeaseSpecFacetNeeds"),
+        "lease planner must not keep the removed LeaseSpecFacetNeeds compatibility seam"
     );
 
     for forbidden in [
@@ -333,7 +418,7 @@ fn core_traits_do_not_keep_default_helper_bodies() {
         "pub trait SendableLabel { const LABEL: u8; fn assert_sendable() { // Future work: enforce crash/no-send invariants here. } }",
         "pub(crate) trait LeaseFacet: Copy + Default { type Context<'ctx>; fn on_commit<'ctx>(&self, _context: &mut Self::Context<'ctx>) {}",
         "pub(crate) trait LeaseFacet: Copy + Default { type Context<'ctx>; fn on_commit<'ctx>(&self, context: &mut Self::Context<'ctx>); fn on_rollback<'ctx>(&self, _context: &mut Self::Context<'ctx>) {} }",
-        "pub(crate) trait LeaseSpecFacetNeeds { fn facet_needs() -> LeaseFacetNeeds { Self::FACET_NEEDS } }",
+        "pub(crate) trait LeaseSpecFacetNeeds {",
     ] {
         assert!(
             !cap_ws.contains(forbidden)
@@ -366,9 +451,11 @@ fn wire_encode_trait_does_not_keep_optional_length_fallback() {
 
 #[test]
 fn offer_kernel_stays_three_stage_and_fail_closed() {
+    let kernel_src = endpoint_kernel_source();
+    let offer_src = include_str!("../src/endpoint/kernel/offer.rs");
     let cursor_src = include_str!("../src/endpoint/kernel/core.rs");
     let offer_body = impl_body(
-        cursor_src,
+        offer_src,
         "pub async fn offer(self) -> RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>",
     );
     let select_scope_body = impl_body(
@@ -400,7 +487,7 @@ fn offer_kernel_stays_three_stage_and_fail_closed() {
         "passive takeover",
     ] {
         assert!(
-            !cursor_src.contains(forbidden),
+            !kernel_src.contains(forbidden),
             "offer kernel must not regrow stale rescue helper: {forbidden}"
         );
     }
@@ -483,7 +570,7 @@ fn impl_body<'a>(src: &'a str, anchor: &str) -> &'a str {
 
 #[test]
 fn route_branch_does_not_expose_scope_coordinate_getters() {
-    let src = include_str!("../src/endpoint/kernel/core.rs");
+    let src = include_str!("../src/endpoint/kernel/decode.rs");
     let impl_body = compact_ws(impl_body(
         src,
         "impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>",
@@ -741,6 +828,58 @@ fn runtime_compiled_cache_materializes_lowering_owners_in_place() {
 }
 
 #[test]
+fn compiled_authority_completion_stays_summary_backed() {
+    let runtime_mgmt_src = include_str!("../src/runtime/mgmt.rs");
+    let runtime_mgmt_request_reply_src = include_str!("../src/runtime/mgmt/request_reply.rs");
+    let runtime_mgmt_test_support_src = include_str!("../src/runtime/mgmt/test_support.rs");
+    let role_program_src = include_str!("../src/global/role_program.rs");
+    let cluster_effects_src = include_str!("../src/control/cluster/effects.rs");
+
+    for forbidden in ["CompiledProgram::compile(", "CompiledRole::compile("] {
+        assert!(
+            !runtime_mgmt_src.contains(forbidden)
+                && !runtime_mgmt_request_reply_src.contains(forbidden)
+                && !runtime_mgmt_test_support_src.contains(forbidden)
+                && !role_program_src.contains(forbidden)
+                && !cluster_effects_src.contains(forbidden),
+            "compiled authority completion must not keep raw EffList compiled-owner constructors in helper paths: {forbidden}"
+        );
+    }
+
+    for required in [
+        "with_management_compiled_programs_for_test",
+        "LoweringSummary::scan_const(CONTROLLER_PROGRAM.lowering_input())",
+        "LoweringSummary::scan_const(CLUSTER_PROGRAM.lowering_input())",
+        "CompiledProgram::init_from_summary(",
+    ] {
+        assert!(
+            runtime_mgmt_request_reply_src.contains(required)
+                || runtime_mgmt_test_support_src.contains(required),
+            "management compiled helper must stay summary-backed: {required}"
+        );
+    }
+    assert!(
+        !runtime_mgmt_request_reply_src.contains(".eff_list_ref()")
+            && !runtime_mgmt_test_support_src.contains(".eff_list_ref()"),
+        "management compiled helper must not materialize compiled owners from raw eff_list_ref()"
+    );
+    assert!(
+        !role_program_src.contains("pub(crate) fn compile_role(&self) -> CompiledRole {"),
+        "RoleProgram must not keep a dead direct compiled-role helper"
+    );
+    for required in [
+        "fn compile_role_boxed<const ROLE: u8, LocalSteps>(",
+        "let summary = LoweringSummary::scan_const(program.lowering_input());",
+        "CompiledRole::init_from_summary::<ROLE>(",
+    ] {
+        assert!(
+            role_program_src.contains(required),
+            "RoleProgram test helpers must stay summary-backed and in-place: {required}"
+        );
+    }
+}
+
+#[test]
 fn large_owner_types_do_not_regress_to_copy_semantics() {
     let effects_ws = compact_ws(include_str!("../src/control/cluster/effects.rs"));
     let role_program_ws = compact_ws(include_str!("../src/global/role_program.rs"));
@@ -823,10 +962,14 @@ fn role_program_projection_metadata_stays_internal() {
         );
     }
     assert!(
-        role_program_src.contains("#[cfg(test)]\n    #[inline(always)]\n    pub(crate) const fn eff_list_ref(&self) -> &'prog EffList {")
-            && role_program_src
-                .contains("#[cfg(test)]\n    #[inline(always)]\n    pub(crate) fn compile_role(&self) -> CompiledRole {"),
-        "raw EffList and direct role compile helpers must stay test-only if they exist at all"
+        role_program_src.contains(
+            "#[cfg(test)]\n    #[inline(always)]\n    pub(crate) const fn eff_list_ref(&self) -> &'prog EffList {"
+        ),
+        "raw EffList inspection helper must stay test-only if it exists at all"
+    );
+    assert!(
+        !role_program_src.contains("pub(crate) fn compile_role(&self) -> CompiledRole {"),
+        "RoleProgram must not keep a dead direct compiled-role convenience helper"
     );
 
     assert!(
@@ -1356,7 +1499,7 @@ fn regression_fixtures_do_not_hide_canonical_owners_behind_synonyms() {
         ),
         (
             "mgmt_epf_integration.rs",
-            "type Cluster = SessionCluster<'static, TestTransport, DefaultLabelUniverse, CounterClock, 4>;",
+            "type Cluster = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 4>;",
         ),
     ] {
         let src = std::fs::read_to_string(format!("{}/tests/{}", env!("CARGO_MANIFEST_DIR"), path))
@@ -1864,7 +2007,7 @@ fn substrate_binding_and_epf_surface_use_canonical_names() {
     ] {
         assert!(
             !substrate_src.contains(forbidden),
-            "SessionCluster must not expose non-canonical collection helpers on the substrate surface: {forbidden}"
+            "SessionKit must not expose non-canonical collection helpers on the substrate surface: {forbidden}"
         );
     }
     assert!(
@@ -2152,7 +2295,6 @@ fn private_owners_do_not_keep_internal_helpers_public() {
         "pub(super) struct PolicyEventSpec",
         "pub(super) fn policy_event_spec(id: u16) -> Option<PolicyEventSpec>",
         "pub(super) fn sid_hint_from_tap(self, event: TapEvent) -> Option<u32>",
-        "pub(crate) struct TapBatch {",
         "pub(crate) enum PolicyEventKind {",
         "pub(crate) fn push(event: TapEvent)",
         "pub(crate) fn emit(ring: &TapRing<'_>, event: TapEvent)",
@@ -2254,17 +2396,8 @@ fn private_owners_do_not_keep_internal_helpers_public() {
         );
     }
     for required in [
-        "pub(crate) enum LoaderError",
-        "pub(crate) struct ImageLoader",
-        "pub(crate) const fn new() -> Self",
-        "pub(crate) fn begin(&mut self, header: Header) -> Result<(), LoaderError>",
-        "pub(crate) fn write(&mut self, offset: u32, chunk: &[u8]) -> Result<(), LoaderError>",
-        "pub(crate) fn commit_for_slot(&mut self, slot: Slot) -> Result<VerifiedImage<'_>, LoaderError>",
-        "pub(crate) enum VerifyError",
         "pub(crate) struct VerifiedImage<'a> {",
         "pub(crate) const MAX_CODE_LEN: usize = 2048;",
-        "pub(crate) fn new(bytes: &'a [u8]) -> Result<Self, VerifyError>",
-        "pub(crate) fn new_for_slot(bytes: &'a [u8], slot: Slot) -> Result<Self, VerifyError>",
         "pub(crate) const fn policy_mode_tag(",
         "pub(crate) const fn verdict_tag(",
         "pub(crate) const fn verdict_arm(",
@@ -2274,20 +2407,46 @@ fn private_owners_do_not_keep_internal_helpers_public() {
         "pub(crate) fn hash_policy_input(",
         "pub(crate) fn hash_transport_snapshot(",
         "pub(crate) fn run_with<",
-        "pub(crate) fn compute_hash(code: &[u8]) -> u32",
     ] {
         assert!(
-            epf_src.contains(required)
-                || loader_src.contains(required)
-                || verifier_src.contains(required),
+            epf_src.contains(required) || verifier_src.contains(required),
             "EPF helper should stay crate-private: {required}"
+        );
+    }
+    assert!(
+        epf_src.contains("#[cfg(test)]\npub(crate) mod loader;"),
+        "EPF loader must stay cfg(test)-scoped after warning-free cleanup"
+    );
+    for required in [
+        "#[cfg(test)]\n#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) enum VerifyError",
+        "#[cfg(test)]\n    pub(crate) fn new(bytes: &'a [u8]) -> Result<Self, VerifyError>",
+        "#[cfg(test)]\n    pub(crate) fn new_for_slot(bytes: &'a [u8], slot: Slot) -> Result<Self, VerifyError>",
+        "#[cfg(test)]\npub(crate) fn compute_hash(code: &[u8]) -> u32",
+        "#[cfg(test)]\n    pub(crate) fn parse(bytes: &[u8]) -> Result<Self, VerifyError>",
+        "#[cfg(test)]\n    pub(crate) fn encode_into(&self, buf: &mut [u8; Self::SIZE])",
+    ] {
+        assert!(
+            loader_src.contains(required) || verifier_src.contains(required),
+            "EPF test-support helper must stay cfg(test)-scoped: {required}"
+        );
+    }
+    for required in [
+        "pub(crate) enum LoaderError",
+        "pub(crate) struct ImageLoader",
+        "pub(crate) const fn new() -> Self",
+        "pub(crate) fn begin(&mut self, header: Header) -> Result<(), LoaderError>",
+        "pub(crate) fn write(&mut self, offset: u32, chunk: &[u8]) -> Result<(), LoaderError>",
+        "pub(crate) fn commit_for_slot(&mut self, slot: Slot) -> Result<VerifiedImage<'_>, LoaderError>",
+    ] {
+        assert!(
+            loader_src.contains(required),
+            "loader internals must stay crate-private under the cfg(test) loader module: {required}"
         );
     }
     for required in [
         "pub struct Header {",
         "pub const MAGIC: [u8; 4]",
         "pub const SIZE: usize",
-        "pub const fn max_mem_len() -> usize",
     ] {
         assert!(
             verifier_src.contains(required),
@@ -2295,12 +2454,13 @@ fn private_owners_do_not_keep_internal_helpers_public() {
         );
     }
     for required in [
-        "pub(crate) fn parse(bytes: &[u8]) -> Result<Self, VerifyError>",
-        "pub(crate) fn encode_into(&self, buf: &mut [u8; Self::SIZE])",
+        "#[cfg(test)]\n    pub const fn max_mem_len() -> usize",
+        "#[cfg(test)]\n    pub(crate) fn parse(bytes: &[u8]) -> Result<Self, VerifyError>",
+        "#[cfg(test)]\n    pub(crate) fn encode_into(&self, buf: &mut [u8; Self::SIZE])",
     ] {
         assert!(
             verifier_src.contains(required),
-            "Header parsing/encoding should stay verifier-internal even though Header itself is public: {required}"
+            "Header parsing/encoding should stay verifier-internal and cfg(test)-scoped: {required}"
         );
     }
 
@@ -2334,8 +2494,6 @@ fn private_owners_do_not_keep_internal_helpers_public() {
         "pub(crate) struct SlotPolicyContract",
         "pub(crate) enum SlotPolicySource",
         "pub(crate) const fn slot_policy_contract(",
-        "pub(crate) const fn slot_allows_get_input(",
-        "pub(crate) const fn slot_allows_mem_ops(",
         "pub(crate) const fn slot_default_input(",
         "pub(crate) const fn facets_caps(",
         "pub(crate) const fn facets_slots(",
@@ -2354,6 +2512,15 @@ fn private_owners_do_not_keep_internal_helpers_public() {
                 || typestate_src.contains(required)
                 || const_dsl_src.contains(required),
             "internal const helper should stay crate-private: {required}"
+        );
+    }
+    for required in [
+        "#[cfg(test)]\npub(crate) const fn slot_allows_get_input(",
+        "#[cfg(test)]\npub(crate) const fn slot_allows_mem_ops(",
+    ] {
+        assert!(
+            slot_contract_src.contains(required),
+            "slot-contract verifier helpers must stay cfg(test)-scoped: {required}"
         );
     }
 
@@ -2732,7 +2899,10 @@ fn state_index_keeps_canonical_newtype_owner() {
 fn endpoint_transport_and_mgmt_lower_layers_stay_non_public() {
     let typestate_src = include_str!("../src/global/typestate.rs");
     let mgmt_src = include_str!("../src/runtime/mgmt.rs");
-    let mgmt_kernel_src = include_str!("../src/runtime/mgmt/kernel.rs");
+    let mgmt_payload_src = include_str!("../src/runtime/mgmt/payload.rs");
+    let mgmt_request_reply_src = include_str!("../src/runtime/mgmt/request_reply.rs");
+    let mgmt_observe_stream_src = include_str!("../src/runtime/mgmt/observe_stream.rs");
+    let mgmt_test_support_src = include_str!("../src/runtime/mgmt/test_support.rs");
     let trace_src = include_str!("../src/transport/trace.rs");
     let wire_src = include_str!("../src/transport/wire.rs");
     let endpoint_src = include_str!("../src/endpoint.rs");
@@ -2740,7 +2910,11 @@ fn endpoint_transport_and_mgmt_lower_layers_stay_non_public() {
     let control_src = include_str!("../src/endpoint/control.rs");
     let cursor_src = include_str!("../src/endpoint/kernel/core.rs");
     let kernel_mod_src = include_str!("../src/endpoint/kernel/mod.rs");
+    let authority_src = include_str!("../src/endpoint/kernel/authority.rs");
+    let offer_src = include_str!("../src/endpoint/kernel/offer.rs");
     let flow_src = include_str!("../src/endpoint/flow.rs");
+    let cluster_core_src = include_str!("../src/control/cluster/core.rs");
+    let rendezvous_core_src = include_str!("../src/rendezvous/core.rs");
     let observe_core_src = include_str!("../src/observe/core.rs");
     let observe_events_src = include_str!("../src/observe/events.rs");
     let observe_events_compact = compact_ws(observe_events_src);
@@ -2767,6 +2941,10 @@ fn endpoint_transport_and_mgmt_lower_layers_stay_non_public() {
     ] {
         assert!(
             !mgmt_src.contains(forbidden)
+                && !mgmt_payload_src.contains(forbidden)
+                && !mgmt_request_reply_src.contains(forbidden)
+                && !mgmt_observe_stream_src.contains(forbidden)
+                && !mgmt_test_support_src.contains(forbidden)
                 && !trace_src.contains(forbidden)
                 && !wire_src.contains(forbidden)
                 && !endpoint_src.contains(forbidden)
@@ -2774,6 +2952,8 @@ fn endpoint_transport_and_mgmt_lower_layers_stay_non_public() {
                 && !control_src.contains(forbidden)
                 && !cursor_src.contains(forbidden)
                 && !kernel_mod_src.contains(forbidden)
+                && !authority_src.contains(forbidden)
+                && !offer_src.contains(forbidden)
                 && !observe_core_src.contains(forbidden),
             "internal lower-layer owner must not stay public: {forbidden}"
         );
@@ -2781,8 +2961,6 @@ fn endpoint_transport_and_mgmt_lower_layers_stay_non_public() {
 
     for required in [
         "pub(crate) fn into_await_begin(self) -> Manager<AwaitBegin, SLOTS> {",
-        "pub(crate) fn stats(&self, slot: Slot) -> Result<StatsResp, MgmtError> {",
-        "pub(crate) fn staged_version(&self, slot: Slot) -> Option<u32> {",
         "pub(crate) struct TapFrameMeta {",
         "pub(crate) struct FrameFlags(u8);",
         "pub(crate) struct LocalFailureReason {",
@@ -2796,6 +2974,10 @@ fn endpoint_transport_and_mgmt_lower_layers_stay_non_public() {
         assert!(
             typestate_src.contains(required)
                 || mgmt_src.contains(required)
+                || mgmt_payload_src.contains(required)
+                || mgmt_request_reply_src.contains(required)
+                || mgmt_observe_stream_src.contains(required)
+                || mgmt_test_support_src.contains(required)
                 || trace_src.contains(required)
                 || wire_src.contains(required)
                 || endpoint_src.contains(required)
@@ -2803,10 +2985,37 @@ fn endpoint_transport_and_mgmt_lower_layers_stay_non_public() {
                 || control_src.contains(required)
                 || cursor_src.contains(required)
                 || kernel_mod_src.contains(required)
+                || authority_src.contains(required)
+                || offer_src.contains(required)
                 || observe_core_src.contains(required),
             "internal lower-layer owner should stay crate-private: {required}"
         );
     }
+
+    for forbidden in [
+        "fn apply_seed",
+        "mgmt_managers",
+        "drive_mgmt(",
+        "fn load_commit_with",
+        "fn schedule_activate_with",
+        "fn on_decision_boundary_for_slot_with",
+        "fn revert_with",
+    ] {
+        assert!(
+            !mgmt_src.contains(forbidden)
+                && !mgmt_request_reply_src.contains(forbidden)
+                && !mgmt_observe_stream_src.contains(forbidden)
+                && !mgmt_test_support_src.contains(forbidden)
+                && !cluster_core_src.contains(forbidden)
+                && !rendezvous_core_src.contains(forbidden),
+            "deleted mgmt lower-layer owner must not return: {forbidden}"
+        );
+    }
+    assert!(
+        !cluster_core_src.contains("fn on_decision_boundary(")
+            && !offer_src.contains("cluster.on_decision_boundary("),
+        "deleted mgmt decision-boundary hook must not return in cluster core or offer kernel"
+    );
 
     assert!(
         typestate_src.contains("pub(crate) fn assert_terminal(&self) {"),
@@ -2842,10 +3051,9 @@ fn endpoint_transport_and_mgmt_lower_layers_stay_non_public() {
         "endpoint cursor owners and their unit tests must not depend on hidden Program::then"
     );
     assert!(
-        mgmt_kernel_src.matches(".then(").count() == 1
-            && mgmt_kernel_src.contains(
-                "STREAM_LOOP_BREAK_PREFIX.then(g::send::<\n    g::Role<1>,\n    g::Role<0>,\n    g::Msg<LABEL_OBSERVE_STREAM_END, ()>,\n    0,\n>())"
-            ),
+        mgmt_observe_stream_src.matches(".then(").count() == 1
+            && mgmt_observe_stream_src.contains("STREAM_LOOP_BREAK_PREFIX.then(g::send::<")
+            && mgmt_observe_stream_src.contains("g::Msg<LABEL_OBSERVE_STREAM_END, ()>"),
         "the only remaining Program::then use must stay the mgmt stream break-arm tail join"
     );
 
@@ -3023,11 +3231,14 @@ fn endpoint_kernel_split_and_lane_port_unsafe_boundary_hold() {
     let control_src = include_str!("../src/endpoint/kernel/control.rs");
     let decode_src = include_str!("../src/endpoint/kernel/decode.rs");
     let frontier_src = include_str!("../src/endpoint/kernel/frontier.rs");
+    let frontier_state_src = include_str!("../src/endpoint/kernel/frontier_state.rs");
     let inbox_src = include_str!("../src/endpoint/kernel/inbox.rs");
     let observe_src = include_str!("../src/endpoint/kernel/observe.rs");
     let offer_src = include_str!("../src/endpoint/kernel/offer.rs");
     let recv_src = include_str!("../src/endpoint/kernel/recv.rs");
+    let route_state_src = include_str!("../src/endpoint/kernel/route_state.rs");
     let send_src = include_str!("../src/endpoint/kernel/send.rs");
+    let evidence_store_src = include_str!("../src/endpoint/kernel/evidence_store.rs");
 
     assert!(
         endpoint_src.contains("pub(crate) mod kernel;"),
@@ -3040,7 +3251,10 @@ fn endpoint_kernel_split_and_lane_port_unsafe_boundary_hold() {
             && kernel_mod_src.contains("mod offer;")
             && kernel_mod_src.contains("mod decode;")
             && kernel_mod_src.contains("mod authority;")
+            && kernel_mod_src.contains("mod evidence;")
+            && kernel_mod_src.contains("mod evidence_store;")
             && kernel_mod_src.contains("mod frontier;")
+            && kernel_mod_src.contains("mod frontier_state;")
             && kernel_mod_src.contains("mod inbox;")
             && kernel_mod_src.contains("mod control;")
             && kernel_mod_src.contains("mod observe;")
@@ -3066,11 +3280,14 @@ fn endpoint_kernel_split_and_lane_port_unsafe_boundary_hold() {
         ("control.rs", control_src),
         ("decode.rs", decode_src),
         ("frontier.rs", frontier_src),
+        ("frontier_state.rs", frontier_state_src),
         ("inbox.rs", inbox_src),
         ("observe.rs", observe_src),
         ("offer.rs", offer_src),
         ("recv.rs", recv_src),
+        ("route_state.rs", route_state_src),
         ("send.rs", send_src),
+        ("evidence_store.rs", evidence_store_src),
     ] {
         assert!(
             !src.contains("unsafe"),
@@ -3081,6 +3298,372 @@ fn endpoint_kernel_split_and_lane_port_unsafe_boundary_hold() {
         lane_port_src.contains("unsafe {"),
         "lane_port.rs must remain the concentrated owner for endpoint transport unsafe"
     );
+}
+
+#[test]
+fn endpoint_kernel_owner_split_stays_explicit() {
+    let kernel_core_src = include_str!("../src/endpoint/kernel/core.rs");
+    let kernel_core_offer_tests_src = include_str!("../src/endpoint/kernel/core_offer_tests.rs");
+    let evidence_src = include_str!("../src/endpoint/kernel/evidence.rs");
+    let evidence_store_src = include_str!("../src/endpoint/kernel/evidence_store.rs");
+    let frontier_observation_src = include_str!("../src/endpoint/kernel/frontier_observation.rs");
+    let frontier_select_src = include_str!("../src/endpoint/kernel/frontier_select.rs");
+    let frontier_src = include_str!("../src/endpoint/kernel/frontier.rs");
+    let frontier_state_src = include_str!("../src/endpoint/kernel/frontier_state.rs");
+    let inbox_src = include_str!("../src/endpoint/kernel/inbox.rs");
+    let offer_src = include_str!("../src/endpoint/kernel/offer.rs");
+    let offer_refresh_src = include_str!("../src/endpoint/kernel/offer_refresh.rs");
+    let route_state_src = include_str!("../src/endpoint/kernel/route_state.rs");
+    let scope_evidence_logic_src = include_str!("../src/endpoint/kernel/scope_evidence_logic.rs");
+    let kernel_core_ws = compact_ws(kernel_core_src);
+
+    for forbidden in [
+        "struct ScopeEvidence {",
+        "struct ScopeLoopMeta {",
+        "struct ScopeLabelMeta {",
+        "struct RouteArmState {",
+        "struct ActiveEntrySet {",
+        "struct ObservedEntrySet {",
+        "struct FrontierSnapshot {",
+        "struct OfferEntryState {",
+        "struct OfferEntryObservedState {",
+        "struct FrontierCandidate {",
+        "struct BindingInbox {",
+        "struct CachedRecvMeta {",
+        "struct ScopeArmMaterializationMeta {",
+        "struct CurrentScopeSelectionMeta {",
+        "struct CurrentFrontierSelectionState {",
+        "struct BranchMeta {",
+        "enum BranchKind {",
+        "lane_route_arms:",
+        "root_frontier_state:",
+        "offer_entry_state:",
+        "scope_evidence:",
+        "scope_evidence_generations:",
+    ] {
+        assert!(
+            !kernel_core_src.contains(forbidden),
+            "core.rs must stay an assembly owner instead of reabsorbing split state owners: {forbidden}"
+        );
+    }
+    for forbidden in [
+        ".global_active_entries.insert_entry(",
+        ".global_active_entries.remove_entry(",
+        ".offer_entry_state.get_mut(",
+        "lane_route_arms[",
+        "lane_linger_counts[",
+    ] {
+        assert!(
+            !kernel_core_ws.contains(forbidden),
+            "core.rs must delegate split state-table mutation to dedicated owners: {forbidden}"
+        );
+    }
+    for forbidden in [
+        "struct TestBinding {",
+        "struct LaneAwareTestBinding {",
+        "struct HintOnlyTransport {",
+        "struct DeferredIngressBinding {",
+    ] {
+        assert!(
+            !kernel_core_src.contains(forbidden),
+            "core.rs must not reabsorb large embedded regression helpers: {forbidden}"
+        );
+    }
+    assert!(
+        kernel_core_src.contains("#[path = \"core_offer_tests.rs\"]"),
+        "core.rs must keep large offer regression helpers in a child test module"
+    );
+    for required in [
+        "#[path = \"scope_evidence_logic.rs\"]",
+        "#[path = \"frontier_select.rs\"]",
+        "#[path = \"frontier_observation.rs\"]",
+        "#[path = \"offer_refresh.rs\"]",
+    ] {
+        assert!(
+            kernel_core_src.contains(required),
+            "core.rs must keep split logic owners as private child modules: {required}"
+        );
+    }
+    for required in [
+        "struct TestBinding {",
+        "struct LaneAwareTestBinding {",
+        "struct HintOnlyTransport {",
+        "struct DeferredIngressBinding {",
+    ] {
+        assert!(
+            kernel_core_offer_tests_src.contains(required),
+            "core_offer_tests.rs must remain the canonical owner for large offer regression helpers: {required}"
+        );
+    }
+
+    for required in [
+        "pub(super) struct ScopeEvidence {",
+        "pub(super) struct ScopeLoopMeta {",
+        "pub(super) struct ScopeLabelMeta {",
+        "pub(super) struct RouteArmState {",
+    ] {
+        assert!(
+            evidence_src.contains(required),
+            "evidence.rs must remain the canonical owner for scope evidence state: {required}"
+        );
+    }
+    for required in [
+        "pub(super) struct ScopeEvidenceStore {",
+        "pub(super) fn generation(",
+        "pub(super) fn record_ack(",
+        "pub(super) fn record_hint(",
+        "pub(super) fn mark_ready_arm(",
+        "pub(super) fn clear(",
+        "pub(super) fn conflicted(",
+    ] {
+        assert!(
+            evidence_store_src.contains(required),
+            "evidence_store.rs must remain the canonical mutable owner for scope evidence lifecycle: {required}"
+        );
+    }
+
+    for required in [
+        "pub(super) struct ActiveEntrySet {",
+        "pub(super) struct ObservedEntrySet {",
+        "pub(super) struct FrontierSnapshot {",
+        "pub(super) struct OfferEntryState {",
+        "pub(super) struct OfferEntryObservedState {",
+        "pub(super) struct FrontierCandidate {",
+        "pub(super) struct RootFrontierState {",
+    ] {
+        assert!(
+            frontier_src.contains(required),
+            "frontier.rs must remain the canonical owner for frontier state: {required}"
+        );
+    }
+    for required in [
+        "pub(super) struct FrontierState {",
+        "fn root_frontier_slot(",
+        "fn next_observation_epoch(",
+        "fn store_frontier_observation(",
+        "fn attach_lane_to_root_frontier(",
+        "fn detach_lane_from_root_frontier(",
+        "fn set_offer_entry_state(",
+        "root_frontier_state:",
+        "offer_entry_state:",
+        "global_active_entries:",
+        "global_frontier_observed:",
+    ] {
+        assert!(
+            frontier_state_src.contains(required),
+            "frontier_state.rs must remain the canonical mutable owner for frontier tables: {required}"
+        );
+    }
+    for required in [
+        "pub(super) struct RouteState {",
+        "fn set_route_arm(",
+        "fn pop_route_arm(",
+        "fn collect_lane_scopes<F>(",
+        "fn clear_lane_offer_state(",
+        "fn set_lane_offer_state(",
+        "lane_route_arms:",
+        "lane_linger_counts:",
+        "lane_offer_state:",
+        "pub(super) fn new() -> Self",
+    ] {
+        assert!(
+            route_state_src.contains(required),
+            "route_state.rs must remain the canonical mutable owner for lane route bookkeeping: {required}"
+        );
+    }
+
+    assert!(
+        inbox_src.contains("pub(super) struct BindingInbox {"),
+        "inbox.rs must remain the canonical owner for binding inbox buffering"
+    );
+    for required in [
+        "pub(super) struct CachedRecvMeta {",
+        "pub(super) struct ScopeArmMaterializationMeta {",
+        "pub(super) struct CurrentScopeSelectionMeta {",
+        "pub(super) struct CurrentFrontierSelectionState {",
+        "pub(crate) struct BranchMeta {",
+        "pub(crate) enum BranchKind {",
+    ] {
+        assert!(
+            offer_src.contains(required),
+            "offer.rs must remain the canonical owner for offer-path orchestration state: {required}"
+        );
+    }
+
+    for forbidden in [
+        "fn record_scope_ack(",
+        "fn ingest_scope_evidence_for_offer(",
+        "fn on_frontier_defer(",
+        "fn align_cursor_to_selected_scope(",
+        "fn frontier_observation_key(",
+        "fn refresh_frontier_observation_cache(",
+        "fn compose_frontier_observed_entries(",
+        "fn refresh_offer_entry_state(",
+        "fn sync_lane_offer_state(",
+        "fn refresh_lane_offer_state(",
+    ] {
+        assert!(
+            !kernel_core_src.contains(forbidden),
+            "core.rs must stay a delegation owner instead of reabsorbing split logic bodies: {forbidden}"
+        );
+    }
+
+    for required in [
+        "fn record_scope_ack(",
+        "fn ingest_scope_evidence_for_offer(",
+        "fn recover_scope_evidence_conflict(",
+    ] {
+        assert!(
+            scope_evidence_logic_src.contains(required),
+            "scope_evidence_logic.rs must remain the canonical owner for scope-evidence ingestion: {required}"
+        );
+    }
+    for required in [
+        "fn on_frontier_defer(",
+        "fn align_cursor_to_selected_scope(",
+    ] {
+        assert!(
+            frontier_select_src.contains(required),
+            "frontier_select.rs must remain the canonical owner for frontier selection logic: {required}"
+        );
+    }
+    for required in [
+        "fn frontier_observation_key(",
+        "fn refresh_frontier_observation_cache(",
+        "fn compose_frontier_observed_entries(",
+        "fn refresh_frontier_observation_caches_for_entry(",
+    ] {
+        assert!(
+            frontier_observation_src.contains(required),
+            "frontier_observation.rs must remain the canonical owner for observation-cache logic: {required}"
+        );
+    }
+    for required in [
+        "fn refresh_offer_entry_state(",
+        "fn sync_lane_offer_state(",
+        "fn refresh_lane_offer_state(",
+        "fn compute_lane_offer_state(",
+    ] {
+        assert!(
+            offer_refresh_src.contains(required),
+            "offer_refresh.rs must remain the canonical owner for offer-refresh bookkeeping: {required}"
+        );
+    }
+}
+
+#[test]
+fn typestate_builder_stays_a_facade_and_emit_owns_lowering_walk() {
+    let builder_src = include_str!("../src/global/typestate/builder.rs");
+    let emit_src = include_str!("../src/global/typestate/emit.rs");
+    let emit_walk_src = include_str!("../src/global/typestate/emit_walk.rs");
+    let emit_scope_src = include_str!("../src/global/typestate/emit_scope.rs");
+    let emit_route_src = include_str!("../src/global/typestate/emit_route.rs");
+    let registry_src = include_str!("../src/global/typestate/registry.rs");
+    let route_facts_src = include_str!("../src/global/typestate/route_facts.rs");
+
+    for forbidden in [
+        "struct ScopeEntry {",
+        "struct ScopeRecord {",
+        "struct ScopeRegistry {",
+        "struct RouteRecvNode {",
+        "struct PrefixAction {",
+        "const MAX_LOOP_TRACKED: usize =",
+        "pub(super) const fn build_internal(",
+    ] {
+        assert!(
+            !builder_src.contains(forbidden),
+            "builder.rs must stay a facade/owner shell instead of reabsorbing lowering details: {forbidden}"
+        );
+    }
+
+    for required in [
+        "pub struct RoleTypestate<const ROLE: u8> {",
+        "pub(crate) type RoleTypestateValue = RoleTypestate<0>;",
+    ] {
+        assert!(
+            builder_src.contains(required),
+            "builder.rs must remain the canonical owner for the typestate value shell: {required}"
+        );
+    }
+
+    for forbidden in [
+        "const MAX_LOOP_TRACKED: usize =",
+        "pub(super) const fn build_internal(",
+        "jump_backpatch_indices",
+        "route_recv_nodes",
+        "route_passive_arm_start",
+    ] {
+        assert!(
+            !emit_src.contains(forbidden),
+            "emit.rs must stay a lowering facade instead of reabsorbing walk internals: {forbidden}"
+        );
+    }
+    for required in [
+        "pub(crate) struct RoleCompileScratch {",
+        "pub(crate) const fn from_summary(summary: &LoweringSummary) -> Self {",
+        "super::emit_walk::build_role_typestate::<ROLE>(view, view.as_slice())",
+    ] {
+        assert!(
+            emit_src.contains(required),
+            "emit.rs must remain the canonical facade for typestate lowering: {required}"
+        );
+    }
+
+    for required in [
+        "pub(super) const fn build_role_typestate<const ROLE: u8>(",
+        "const MAX_LINGER_ARM_TRACK: usize =",
+        "jump_backpatch_indices",
+        "route_recv_nodes",
+        "route_passive_arm_start",
+    ] {
+        assert!(
+            emit_walk_src.contains(required),
+            "emit_walk.rs must remain the canonical owner for lowering walk state: {required}"
+        );
+    }
+
+    for required in [
+        "pub(super) const fn alloc_scope_entry(",
+        "pub(super) const fn finalize_scope_registry(",
+    ] {
+        assert!(
+            emit_scope_src.contains(required),
+            "emit_scope.rs must remain the canonical owner for scope-entry lowering helpers: {required}"
+        );
+    }
+
+    for required in [
+        "pub(super) const MAX_LOOP_TRACKED: usize =",
+        "pub(super) const fn find_loop_entry_state(",
+        "pub(super) const fn store_loop_entry_if_absent(",
+        "pub(super) const fn parallel_phase_eff_range(",
+        "pub(super) const fn phase_route_arm_for_record<const ROLE: u8>(",
+    ] {
+        assert!(
+            emit_route_src.contains(required),
+            "emit_route.rs must remain the canonical owner for route/phase lowering helpers: {required}"
+        );
+    }
+
+    for required in [
+        "pub(crate) struct ScopeEntry {",
+        "pub(super) struct ScopeRegistry {",
+    ] {
+        assert!(
+            registry_src.contains(required),
+            "registry.rs must remain the canonical owner for scope-registry facts: {required}"
+        );
+    }
+
+    for required in [
+        "pub(super) struct RouteRecvNode {",
+        "pub(super) struct PrefixAction {",
+    ] {
+        assert!(
+            route_facts_src.contains(required),
+            "route_facts.rs must remain the canonical owner for route-fact lowering helpers: {required}"
+        );
+    }
 }
 
 #[test]
@@ -3138,7 +3721,9 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
     let observe_src = include_str!("../src/observe.rs");
     let eff_src = include_str!("../src/eff.rs");
     let epf_src = include_str!("../src/epf.rs");
-    let mgmt_kernel_src = include_str!("../src/runtime/mgmt/kernel.rs");
+    let mgmt_request_reply_src = include_str!("../src/runtime/mgmt/request_reply.rs");
+    let mgmt_observe_stream_src = include_str!("../src/runtime/mgmt/observe_stream.rs");
+    let mgmt_test_support_src = include_str!("../src/runtime/mgmt/test_support.rs");
     let transport_context_src = include_str!("../src/transport/context.rs");
     let tables_src = include_str!("../src/rendezvous/tables.rs");
     let typestate_src = include_str!("../src/global/typestate.rs");
@@ -3256,7 +3841,11 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         (eff_src, "pub(crate) mod meta {", "pub mod meta {"),
         (epf_src, "pub(crate) mod dispatch;", "pub mod dispatch;"),
         (epf_src, "pub(crate) mod host;", "pub mod host;"),
-        (epf_src, "pub(crate) mod loader;", "pub mod loader;"),
+        (
+            epf_src,
+            "#[cfg(test)]\npub(crate) mod loader;",
+            "pub mod loader;",
+        ),
         (epf_src, "pub(crate) mod ops;", "pub mod ops;"),
         (
             epf_src,
@@ -3327,13 +3916,11 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         "pub struct SlotStorage {",
         "pub struct SlotArena {",
         "pub struct Rendezvous<",
-        "pub struct SlotBundle<'rv, 'cfg: 'rv> {",
-        "pub struct SlotBundleLease<'rv, 'cfg: 'rv> {",
+        "pub struct SlotBundle<'rv> {",
         "pub struct LaneLease<'cfg, T, U, C, const MAX_RV: usize>",
         "pub struct CapsFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)",
         "pub struct SpliceFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)",
         "pub struct ObserveFacet<'tap, 'cfg> {",
-        "pub struct SlotFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)",
         "pub struct PendingSplice {",
         "pub struct SpliceStateTable {",
         "pub struct DistributedSpliceTable {",
@@ -3360,13 +3947,11 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         "pub(crate) struct SlotStorage {",
         "pub(crate) struct SlotArena {",
         "pub(crate) struct Rendezvous<",
-        "pub(crate) struct SlotBundle<'rv, 'cfg: 'rv> {",
-        "pub(crate) struct SlotBundleLease<'rv, 'cfg: 'rv> {",
+        "pub(crate) struct SlotBundle<'rv> {",
         "pub(crate) struct LaneLease<'cfg, T, U, C, const MAX_RV: usize>",
         "pub(crate) struct CapsFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)",
         "pub(crate) struct SpliceFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)",
         "pub(crate) struct ObserveFacet<'tap, 'cfg> {",
-        "pub(crate) struct SlotFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)",
         "pub(super) struct PendingSplice {",
         "pub(super) struct SpliceStateTable {",
         "pub(super) struct DistributedSpliceTable {",
@@ -3382,6 +3967,7 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
     }
     for forbidden in [
         "pub fn from_config(config: Config<'cfg, U, C>, transport: T) -> Self {",
+        "pub fn with_test_rendezvous_from_config<'cfg, T, U, C, R>(",
         "pub fn initialise_control_marker(&self, lane: Lane, marker: &ControlMarker) {",
         "pub fn is_session_registered(&self, sid: SessionId) -> bool {",
         "pub fn release_lane(&self, lane: Lane) -> Option<SessionId> {",
@@ -3410,12 +3996,11 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         );
     }
     for required in [
-        "pub(crate) fn from_config(config: Config<'cfg, U, C>, transport: T) -> Self {",
+        "pub(crate) fn with_test_rendezvous_from_config<'cfg, T, U, C, R>(",
         "pub(crate) fn initialise_control_marker(&self, lane: Lane, marker: &ControlMarker) {",
         "pub(crate) fn is_session_registered(&self, sid: SessionId) -> bool {",
         "pub(crate) fn release_lane(&self, lane: Lane) -> Option<SessionId> {",
         "pub(crate) fn into_port_guard(",
-        "pub(crate) fn id(&self) -> RendezvousId {",
         "pub(crate) fn tap(&self) -> &TapRing<'cfg> {",
         "pub(crate) fn liveness_policy(&self) -> crate::runtime::config::LivenessPolicy {",
         "pub(crate) fn now32(&self) -> u32 {",
@@ -3574,7 +4159,6 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         "pub struct RendezvousLease<",
         "pub trait RendezvousSpec<",
         "pub struct FullSpec;",
-        "pub struct SlotSpec;",
         "pub struct SpliceSpec;",
         "pub struct DelegationSpec;",
         "pub struct LeaseObserve<",
@@ -3595,7 +4179,6 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         "pub struct ArrayMap<",
         "pub struct LeaseFacetNeeds {",
         "pub struct LeaseGraphBudget {",
-        "pub trait LeaseSpecFacetNeeds {",
         "pub const fn lease_budget(&self) -> crate::control::lease::planner::LeaseGraphBudget {",
         "pub enum PolicyMode {",
         "pub const fn dynamic(policy_id: u16) -> Self {",
@@ -3661,7 +4244,6 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         "pub(crate) struct RendezvousLease<",
         "pub(crate) trait RendezvousSpec<",
         "pub(crate) struct FullSpec;",
-        "pub(crate) struct SlotSpec;",
         "pub(crate) struct SpliceSpec;",
         "pub(crate) struct DelegationSpec;",
         "pub(crate) struct LeaseObserve<",
@@ -3686,7 +4268,6 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         "pub(crate) struct ArrayMap<",
         "pub(crate) struct LeaseFacetNeeds {",
         "pub(crate) struct LeaseGraphBudget {",
-        "pub(crate) trait LeaseSpecFacetNeeds {",
         "pub(crate) const fn lease_budget(&self) -> LeaseGraphBudget {",
         "pub(crate) enum PolicyMode {",
         "pub(crate) const fn dynamic(policy_id: u16) -> Self {",
@@ -3777,8 +4358,8 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         "runtime must not masquerade as the public owner of AttachError"
     );
     assert!(
-        !runtime_src.contains("pub(crate) use crate::control::cluster::core::SessionCluster;"),
-        "runtime must not keep a crate-private SessionCluster alias shell"
+        !runtime_src.contains("pub(crate) use crate::control::cluster::core::SessionKit;"),
+        "runtime must not keep a crate-private SessionKit alias shell"
     );
     for forbidden in [
         "pub(crate) use cursor::CursorEndpoint;",
@@ -3808,6 +4389,42 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         "substrate tap surface must not expose a RawEvent helper bucket"
     );
     assert!(
+        !substrate_src.contains("pub mod session {")
+            && !substrate_src.contains("pub fn enter_controller<'cfg, T, U, C, B, const MAX_RV: usize>(")
+            && !substrate_src.contains("pub fn enter_cluster<'cfg, T, U, C, B, const MAX_RV: usize>(")
+            && !substrate_src.contains("pub async fn drive_cluster<'lease, 'cfg, T, U, C, Mint, B, const MAX_RV: usize>(")
+            && !substrate_src.contains("pub async fn drive_stream_cluster<'lease, T, U, C, Mint, F, B, const MAX_RV: usize>(")
+            && !substrate_src.contains("pub async fn drive_stream_controller<'lease, T, U, C, Mint, F, B, const MAX_RV: usize>(")
+            && !substrate_src.contains("pub async fn drive_controller<'lease, T, U, C, Mint, B, const MAX_RV: usize>("),
+        "substrate mgmt must not regrow the deleted public helper family"
+    );
+    assert!(
+        substrate_src.contains("pub mod request_reply {")
+            && substrate_src.contains("pub mod observe_stream {")
+            && substrate_src.contains("pub const PREFIX: crate::g::Program<PrefixSteps> =")
+            && substrate_src.contains("ROLE_CLUSTER,")
+            && substrate_src.contains("ROLE_CONTROLLER,"),
+        "substrate mgmt must stay on the canonical payload-plus-prefix surface"
+    );
+    let runtime_mgmt_src = include_str!("../src/runtime/mgmt.rs");
+    assert!(
+        !runtime_mgmt_src
+            .contains("pub(crate) fn enter_controller<'cfg, T, U, C, B, const MAX_RV: usize>(")
+            && !runtime_mgmt_src
+                .contains("pub(crate) fn enter_cluster<'cfg, T, U, C, B, const MAX_RV: usize>(")
+            && !runtime_mgmt_src.contains(
+                "pub(crate) fn enter_stream_controller<'cfg, T, U, C, B, const MAX_RV: usize>("
+            )
+            && !runtime_mgmt_src.contains(
+                "pub(crate) fn enter_stream_cluster<'cfg, T, U, C, B, const MAX_RV: usize>("
+            )
+            && !runtime_mgmt_src.contains("pub(crate) async fn drive_controller<")
+            && !runtime_mgmt_src.contains("pub(crate) async fn drive_cluster<")
+            && !runtime_mgmt_src.contains("pub(crate) async fn drive_stream_cluster<")
+            && !runtime_mgmt_src.contains("pub(crate) async fn drive_stream_controller<"),
+        "runtime mgmt root must not regrow the deleted helper-wrapper family"
+    );
+    assert!(
         !substrate_src.contains("pub mod ids {"),
         "substrate tap surface must not expose observe id constants"
     );
@@ -3826,10 +4443,13 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
             "substrate tap surface must not re-export lower-layer observe owners: {forbidden}"
         );
     }
+    assert!(
+        !substrate_src.contains("TapBatch"),
+        "substrate tap surface must stay on TapEvent only and keep batching private"
+    );
     for forbidden in [
         "PolicyEvent,",
         "PolicyEventKind,",
-        "TapBatch,",
         "TapRing,",
         "install_ring,",
         "uninstall_ring,",
@@ -3879,7 +4499,6 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         "type StreamLoopContinueSteps =",
         "type StreamLoopBreakSteps =",
         "type StreamLoopRouteSteps =",
-        "type StreamProgramSteps =",
         "type StreamControllerLocal =",
         "type StreamClusterLocal =",
         "type LoadCommitSteps =",
@@ -3907,13 +4526,15 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         "type StreamEndMsg =",
     ] {
         assert!(
-            !mgmt_kernel_src.contains(forbidden),
-            "runtime management kernel must not hide canonical message/composition/projection owners behind local aliases: {forbidden}"
+            !mgmt_request_reply_src.contains(forbidden)
+                && !mgmt_observe_stream_src.contains(forbidden)
+                && !mgmt_test_support_src.contains(forbidden),
+            "runtime management owners must not hide canonical message/composition/projection owners behind local aliases: {forbidden}"
         );
     }
     for required in [
         "const LOAD_BEGIN: Program<",
-        "const PROGRAM: Program<",
+        "pub const PROGRAM: Program<ProgramSteps> =",
         "LoopDecisionSteps<",
         "LABEL_LOOP_CONTINUE,",
         "LABEL_LOOP_BREAK,",
@@ -3922,15 +4543,25 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         "LABEL_MGMT_ACTIVATE,",
         "LABEL_MGMT_REVERT,",
         "LABEL_MGMT_STATS,",
-        "const STREAM_PROGRAM: Program<",
+    ] {
+        assert!(
+            mgmt_request_reply_src.contains(required),
+            "request-reply management owner must keep preserved composition on direct canonical witnesses: {required}"
+        );
+    }
+    for required in [
+        "pub struct TapBatch {",
+        "pub const PROGRAM: Program<ProgramSteps> =",
+        "const STREAM_SUBSCRIBE: Program<",
+        "const STREAM_LOOP_ROUTE: Program<",
         "LABEL_OBSERVE_SUBSCRIBE,",
         "LABEL_OBSERVE_STREAM_END,",
         "LABEL_OBSERVE_BATCH,",
         "crate::g::advanced::compose::seq(STREAM_SUBSCRIBE, STREAM_LOOP_ROUTE);",
     ] {
         assert!(
-            mgmt_kernel_src.contains(required),
-            "runtime management kernel must keep preserved composition on direct canonical witnesses: {required}"
+            mgmt_observe_stream_src.contains(required),
+            "observe-stream management owner must keep preserved composition on direct canonical witnesses: {required}"
         );
     }
 }
@@ -3959,6 +4590,7 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
         "bash ./.github/scripts/check_surface_hygiene.sh",
         "bash ./.github/scripts/check_lowering_hygiene.sh",
         "bash ./.github/scripts/check_boundary_contracts.sh",
+        "bash ./.github/scripts/check_warning_free.sh",
         "bash ./.github/scripts/check_direct_projection_binary.sh",
         "cargo check --all-targets -p hibana",
         "cargo test -p hibana --features std",
@@ -3981,6 +4613,7 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
         "./.github/scripts/check_resolver_context_surface.sh",
         "./.github/scripts/check_lowering_hygiene.sh",
         "./.github/scripts/check_surface_hygiene.sh",
+        "./.github/scripts/check_warning_free.sh",
         "./.github/scripts/check_direct_projection_binary.sh",
         "./.github/scripts/check_no_std_build.sh",
         "cargo check --all-targets -p hibana",

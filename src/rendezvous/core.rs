@@ -20,7 +20,7 @@ use super::{
         RendezvousError, RollbackError, SpliceError,
     },
     port::Port,
-    slots::{SLOT_COUNT, SlotArena, SlotStorage},
+    slots::SlotArena,
     splice::{DistributedSpliceTable, PendingSplice, SpliceStateTable},
     tables::{
         AckTable, CheckpointTable, FenceTable, GenTable, LoopTable, PolicyTable, RouteTable,
@@ -44,18 +44,15 @@ use crate::{
     },
     eff::EffIndex,
     endpoint::affine::LaneGuard,
-    epf::{host::HostSlots, vm::Slot},
+    epf::host::HostSlots,
     global::const_dsl::{ControlMarker, ControlScopeKind, PolicyMode},
     observe::core::{TapEvent, TapRing, emit},
     observe::{
         events::{DelegBegin, DelegSplice, LaneRelease, RawEvent, RollbackOk},
         ids, policy_abort, policy_trap,
     },
+    runtime::config::{Clock, Config, ConfigParts, CounterClock},
     runtime::consts::{DefaultLabelUniverse, LabelUniverse},
-    runtime::{
-        config::{Clock, Config, ConfigParts, CounterClock},
-        mgmt,
-    },
     transport::{Transport, TransportEventKind, TransportMetrics},
 };
 
@@ -104,182 +101,21 @@ pub(crate) struct Rendezvous<
     _epoch_marker: PhantomData<E>,
 }
 
-/// Affine bundle combining slot storage and host registry access.
-pub(crate) struct SlotBundle<'rv, 'cfg: 'rv> {
+/// Affine bundle exposing slot storage access.
+pub(crate) struct SlotBundle<'rv> {
     arena: &'rv mut SlotArena,
-    host_slots: &'rv mut HostSlots<'cfg>,
 }
 
-impl<'rv, 'cfg: 'rv> SlotBundle<'rv, 'cfg> {
+impl<'rv> SlotBundle<'rv> {
     #[inline]
-    fn new(arena: &'rv mut SlotArena, host_slots: &'rv mut HostSlots<'cfg>) -> Self {
-        Self { arena, host_slots }
+    fn new(arena: &'rv mut SlotArena) -> Self {
+        Self { arena }
     }
 
     /// Borrow the underlying slot arena.
     #[inline]
     pub(crate) fn arena(&mut self) -> &mut SlotArena {
         self.arena
-    }
-
-    /// Borrow mutable storage for the given policy slot.
-    #[inline]
-    pub(crate) fn storage_mut(&mut self, slot: Slot) -> &mut SlotStorage {
-        self.arena.storage_mut(slot)
-    }
-
-    pub(crate) fn load_commit_with<State>(
-        &mut self,
-        slot: Slot,
-        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
-    ) -> Result<(), mgmt::MgmtError>
-    where
-        State: mgmt::ManagerState,
-    {
-        manager
-            .load_commit(slot, self.storage_mut(slot))
-            .map(|_| ())
-    }
-
-    pub(crate) fn schedule_activate_with<State>(
-        &mut self,
-        slot: Slot,
-        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
-    ) -> Result<mgmt::TransitionReport, mgmt::MgmtError>
-    where
-        State: mgmt::ManagerState,
-    {
-        manager.schedule_activate(slot)
-    }
-
-    pub(crate) fn on_decision_boundary_with<State>(
-        &mut self,
-        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
-    ) -> Result<(), mgmt::MgmtError>
-    where
-        State: mgmt::ManagerState,
-    {
-        let mut idx = 0usize;
-        while idx < crate::runtime::mgmt::ALL_SLOTS.len() {
-            let slot = crate::runtime::mgmt::ALL_SLOTS[idx];
-            let _ = self.on_decision_boundary_for_slot_with(slot, manager)?;
-            idx += 1;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn on_decision_boundary_for_slot_with<State>(
-        &mut self,
-        slot: Slot,
-        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
-    ) -> Result<Option<mgmt::TransitionReport>, mgmt::MgmtError>
-    where
-        State: mgmt::ManagerState,
-    {
-        let host_ptr = &mut *self.host_slots as *mut HostSlots<'cfg>;
-        let storage_ptr = self.arena.storage_mut(slot) as *mut SlotStorage;
-        unsafe { manager.on_decision_boundary(slot, &mut *storage_ptr, &mut *host_ptr) }
-    }
-
-    pub(crate) fn revert_with<State>(
-        &mut self,
-        slot: Slot,
-        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
-    ) -> Result<mgmt::TransitionReport, mgmt::MgmtError>
-    where
-        State: mgmt::ManagerState,
-    {
-        let storage_ptr = self.arena.storage_mut(slot) as *mut SlotStorage;
-        let host_ptr = &mut *self.host_slots as *mut HostSlots<'cfg>;
-        unsafe { manager.revert(slot, &mut *storage_ptr, &mut *host_ptr) }
-    }
-}
-
-/// Lease guard that retains exclusive access to rendezvous slot resources.
-pub(crate) struct SlotBundleLease<'rv, 'cfg: 'rv> {
-    bundle: SlotBundle<'rv, 'cfg>,
-}
-
-impl<'rv, 'cfg: 'rv> SlotBundleLease<'rv, 'cfg> {
-    #[inline]
-    fn new(bundle: SlotBundle<'rv, 'cfg>) -> Self {
-        Self { bundle }
-    }
-
-    #[inline]
-    pub(crate) fn load_commit_with<State>(
-        &mut self,
-        slot: Slot,
-        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
-    ) -> Result<(), mgmt::MgmtError>
-    where
-        State: mgmt::ManagerState,
-    {
-        self.bundle.load_commit_with(slot, manager)
-    }
-
-    #[inline]
-    pub(crate) fn schedule_activate_with<State>(
-        &mut self,
-        slot: Slot,
-        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
-    ) -> Result<mgmt::TransitionReport, mgmt::MgmtError>
-    where
-        State: mgmt::ManagerState,
-    {
-        self.bundle.schedule_activate_with(slot, manager)
-    }
-
-    #[inline]
-    pub(crate) fn on_decision_boundary_with<State>(
-        &mut self,
-        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
-    ) -> Result<(), mgmt::MgmtError>
-    where
-        State: mgmt::ManagerState,
-    {
-        self.bundle.on_decision_boundary_with(manager)
-    }
-
-    #[inline]
-    pub(crate) fn on_decision_boundary_for_slot_with<State>(
-        &mut self,
-        slot: Slot,
-        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
-    ) -> Result<Option<mgmt::TransitionReport>, mgmt::MgmtError>
-    where
-        State: mgmt::ManagerState,
-    {
-        self.bundle
-            .on_decision_boundary_for_slot_with(slot, manager)
-    }
-
-    #[inline]
-    pub(crate) fn revert_with<State>(
-        &mut self,
-        slot: Slot,
-        manager: &mut mgmt::Manager<State, { SLOT_COUNT }>,
-    ) -> Result<mgmt::TransitionReport, mgmt::MgmtError>
-    where
-        State: mgmt::ManagerState,
-    {
-        self.bundle.revert_with(slot, manager)
-    }
-}
-
-impl<'rv, 'cfg: 'rv> core::ops::Deref for SlotBundleLease<'rv, 'cfg> {
-    type Target = SlotBundle<'rv, 'cfg>;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.bundle
-    }
-}
-
-impl<'rv, 'cfg: 'rv> core::ops::DerefMut for SlotBundleLease<'rv, 'cfg> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.bundle
     }
 }
 
@@ -354,29 +190,12 @@ where
         unsafe { &*ptr.cast::<Rendezvous<'short, 'cfg, T, U, C, E>>() }
     }
 
-    pub(crate) fn with_slot_bundle_lease<'short, F, R>(&'short mut self, f: F) -> R
-    where
-        'cfg: 'short,
-        F: FnOnce(&mut SlotBundleLease<'short, 'cfg>) -> R,
-    {
-        let mut lease = self.slot_bundle_lease();
-        f(&mut lease)
-    }
-
     #[inline]
-    pub(crate) fn slot_bundle<'short>(&'short mut self) -> SlotBundle<'short, 'cfg>
+    pub(crate) fn slot_bundle<'short>(&'short mut self) -> SlotBundle<'short>
     where
         'cfg: 'short,
     {
-        SlotBundle::new(&mut self.slot_arena, &mut self.host_slots)
-    }
-
-    #[inline]
-    pub(crate) fn slot_bundle_lease<'short>(&'short mut self) -> SlotBundleLease<'short, 'cfg>
-    where
-        'cfg: 'short,
-    {
-        SlotBundleLease::new(self.slot_bundle())
+        SlotBundle::new(&mut self.slot_arena)
     }
 
     pub(crate) fn register_policy(
@@ -1029,8 +848,8 @@ where
             core::ptr::addr_of_mut!((*dst).distributed_splice).write(DistributedSpliceTable::new());
             core::ptr::addr_of_mut!((*dst).cap_nonce).write(AtomicU64::new(0));
             core::ptr::addr_of_mut!((*dst).caps).write(CapTable::new());
-            core::ptr::addr_of_mut!((*dst).loops).write(LoopTable::new());
-            core::ptr::addr_of_mut!((*dst).routes).write(RouteTable::new());
+            LoopTable::init_empty(core::ptr::addr_of_mut!((*dst).loops));
+            RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
             core::ptr::addr_of_mut!((*dst).policies).write(PolicyTable::new());
             core::ptr::addr_of_mut!((*dst).vm_caps).write(VmCapsTable::new());
             core::ptr::addr_of_mut!((*dst).slot_arena).write(SlotArena::new());
@@ -1042,15 +861,28 @@ where
             core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
         }
     }
+}
 
-    #[cfg(test)]
-    pub(crate) fn from_config(config: Config<'cfg, U, C>, transport: T) -> Self {
-        let rv_id = Self::allocate_id();
-        let mut rendezvous = core::mem::MaybeUninit::<Self>::uninit();
-        unsafe {
-            Self::init_from_config(rendezvous.as_mut_ptr(), rv_id, config, transport);
-            rendezvous.assume_init()
-        }
+#[cfg(test)]
+pub(crate) fn with_test_rendezvous_from_config<'cfg, T, U, C, R>(
+    config: Config<'cfg, U, C>,
+    transport: T,
+    f: impl FnOnce(&mut Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>) -> R,
+) -> R
+where
+    T: Transport,
+    U: LabelUniverse,
+    C: Clock,
+{
+    let rv_id =
+        Rendezvous::<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>::allocate_id();
+    let mut rendezvous = std::boxed::Box::<
+        Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>,
+    >::new_uninit();
+    unsafe {
+        Rendezvous::init_from_config(rendezvous.as_mut_ptr(), rv_id, config, transport);
+        let mut rendezvous = rendezvous.assume_init();
+        f(rendezvous.as_mut())
     }
 }
 
@@ -1174,7 +1006,7 @@ where
 /// This allows **nested scopes** where leases are dropped before the Rendezvous itself:
 ///
 /// ```text
-/// let rv = Rendezvous::from_config(...);  // 'rv starts
+/// let mut rv = /* some Rendezvous owner */; // 'rv starts
 /// {
 ///     let lease = rv.lease_port(...);     // 'a: shorter borrow
 /// }                                        // 'a ends, lease dropped
@@ -1193,7 +1025,7 @@ where
 /// # Example
 ///
 /// ```ignore
-/// let mut rv = Rendezvous::from_config(...);
+/// let mut rv = /* some Rendezvous owner */;
 /// {
 ///     let lease = rv.lease_port(sid, lane, role)?;
 ///     let port = lease.port();
@@ -1217,7 +1049,7 @@ where
 ///
 /// This type is internal implementation, hidden from public docs but
 /// accessible to integration tests. Public API users obtain endpoints via
-/// [`SessionCluster::enter`](crate::substrate::SessionCluster::enter).
+/// [`SessionKit::enter`](crate::substrate::SessionKit::enter).
 ///
 /// # Cluster Ownership Model
 ///
@@ -1228,15 +1060,15 @@ where
 ///
 /// # Safety Invariants (documented for POPL/SOSP/OSDI)
 ///
-/// 1. `cluster_ptr` always points to a valid `SessionCluster` during `'lease`
+/// 1. `cluster_ptr` always points to a valid `SessionKit` during `'lease`
 /// 2. Only `LaneLease::Drop` calls back into the cluster to release the lane
-/// 3. SessionCluster guarantees: no duplicate leases for same lane
-/// 4. SessionCluster guarantees: no Rendezvous write access while lease held
+/// 3. SessionKit guarantees: no duplicate leases for same lane
+/// 4. SessionKit guarantees: no Rendezvous write access while lease held
 /// 5. Cluster must not move while lease is alive (enforced by the PhantomData borrow)
 ///
 /// # Observable Properties
 ///
-/// - LANE_ACQUIRE tap event on lease creation (via `SessionCluster::lease_port`)
+/// - LANE_ACQUIRE tap event on lease creation (via `SessionKit::lease_port`)
 /// - LANE_RELEASE tap event on Drop
 /// - Streaming checker verifies acquire/release pairs match (similar to cancel begin/ack)
 pub(crate) struct LaneLease<'cfg, T, U, C, const MAX_RV: usize>
@@ -1264,7 +1096,7 @@ where
     U: LabelUniverse,
     C: Clock,
 {
-    /// Internal constructor (called by `SessionCluster::lease_port`).
+    /// Internal constructor (called by `SessionKit::lease_port`).
     /// The caller must ensure no duplicate leases for the same `(rv_id, lane)` pair.
     pub(crate) fn new(
         guard: LaneGuard<'cfg, T, U, C>,
@@ -1327,12 +1159,6 @@ impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap
 where
     'cfg: 'rv,
 {
-    /// Get the unique identifier for this Rendezvous instance.
-    #[cfg(test)]
-    pub(crate) fn id(&self) -> RendezvousId {
-        self.id
-    }
-
     #[inline]
     pub(crate) fn brand(&self) -> Guard<'rv> {
         Guard::new()
@@ -2240,23 +2066,23 @@ mod epf_tests {
         let mut tap_buf = [TapEvent::default(); RING_EVENTS];
         let mut slab = [0u8; 256];
         let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
+        with_test_rendezvous_from_config(config, DummyTransport, |rendezvous| {
+            let sid = SessionId::new(1);
+            let lane = Lane::new(0);
 
-        let sid = SessionId::new(1);
-        let lane = Lane::new(0);
+            rendezvous.vm_caps.set(lane, CapsMask::empty());
 
-        rendezvous.vm_caps.set(lane, CapsMask::empty());
+            let envelope = CpCommand::checkpoint(SessionId::new(sid.raw()), Lane::new(lane.raw()));
 
-        let envelope = CpCommand::checkpoint(SessionId::new(sid.raw()), Lane::new(lane.raw()));
+            let result = EffectRunner::run_effect(rendezvous, envelope);
 
-        let result = EffectRunner::run_effect(&rendezvous, envelope);
-
-        assert!(matches!(
-            result,
-            Err(CpError::Authorisation {
-                effect: CpEffect::Checkpoint
-            })
-        ));
+            assert!(matches!(
+                result,
+                Err(CpError::Authorisation {
+                    effect: CpEffect::Checkpoint
+                })
+            ));
+        });
     }
 
     #[test]
@@ -2264,16 +2090,16 @@ mod epf_tests {
         let mut tap_buf = [TapEvent::default(); RING_EVENTS];
         let mut slab = [0u8; 256];
         let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
+        with_test_rendezvous_from_config(config, DummyTransport, |rendezvous| {
+            let sid = SessionId::new(2);
+            let lane = Lane::new(1);
 
-        let sid = SessionId::new(2);
-        let lane = Lane::new(1);
+            let envelope = CpCommand::checkpoint(SessionId::new(sid.raw()), Lane::new(lane.raw()));
 
-        let envelope = CpCommand::checkpoint(SessionId::new(sid.raw()), Lane::new(lane.raw()));
+            let result = EffectRunner::run_effect(rendezvous, envelope);
 
-        let result = EffectRunner::run_effect(&rendezvous, envelope);
-
-        assert!(matches!(result, Err(CpError::Checkpoint(_))));
+            assert!(matches!(result, Err(CpError::Checkpoint(_))));
+        });
     }
 }
 
@@ -2289,15 +2115,6 @@ where
     C: Clock,
     E: crate::control::cap::mint::EpochTable,
 {
-    /// Borrow slot storage and host registry as a constrained facet.
-    ///
-    /// This returns a `SlotBundle` that provides access only to slot
-    /// storage operations (staging/active/backup buffers) and host VM
-    /// registry, without exposing other rendezvous state.
-    pub(crate) fn slot_facet(&mut self) -> SlotFacet<T, U, C, E> {
-        SlotFacet::new()
-    }
-
     /// Borrow capability table as a constrained facet.
     pub(crate) fn caps_facet(&mut self) -> CapsFacet<T, U, C, E> {
         CapsFacet::new()
@@ -2466,117 +2283,5 @@ impl<'tap, 'cfg> ObserveFacet<'tap, 'cfg> {
     #[inline]
     pub(crate) fn tap(&self) -> &'tap crate::observe::core::TapRing<'cfg> {
         self.tap
-    }
-}
-
-/// Slot management facet that exposes slot operations for policy bytecode management.
-///
-/// This facet is a zero-sized marker; all state lives in the rendezvous. Methods explicitly
-/// receive the rendezvous handle, keeping the facet trivially copyable and suitable for
-/// `const fn` projection.
-#[derive(Default)]
-pub(crate) struct SlotFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable;
-
-impl<T, U, C, E> Copy for SlotFacet<T, U, C, E>
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
-{
-}
-
-impl<T, U, C, E> Clone for SlotFacet<T, U, C, E>
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
-{
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T, U, C, E> SlotFacet<T, U, C, E>
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
-{
-    #[inline]
-    pub(crate) const fn new() -> Self {
-        Self(PhantomData)
-    }
-
-    /// Load and commit bytecode to a slot.
-    pub(crate) fn load_commit<State>(
-        self,
-        rendezvous: &mut Rendezvous<'_, '_, T, U, C, E>,
-        slot: crate::epf::vm::Slot,
-        manager: &mut crate::runtime::mgmt::Manager<State, { SLOT_COUNT }>,
-    ) -> Result<(), crate::runtime::mgmt::MgmtError>
-    where
-        State: crate::runtime::mgmt::ManagerState,
-    {
-        rendezvous.with_slot_bundle_lease(|lease| lease.load_commit_with(slot, manager))
-    }
-
-    /// Schedule activation for a slot after staging a verified policy image.
-    pub(crate) fn schedule_activate<State>(
-        self,
-        rendezvous: &mut Rendezvous<'_, '_, T, U, C, E>,
-        slot: crate::epf::vm::Slot,
-        manager: &mut crate::runtime::mgmt::Manager<State, { SLOT_COUNT }>,
-    ) -> Result<crate::runtime::mgmt::TransitionReport, crate::runtime::mgmt::MgmtError>
-    where
-        State: crate::runtime::mgmt::ManagerState,
-    {
-        rendezvous.with_slot_bundle_lease(|lease| lease.schedule_activate_with(slot, manager))
-    }
-
-    /// Apply pending policy activations at a decision boundary.
-    pub(crate) fn on_decision_boundary<State>(
-        self,
-        rendezvous: &mut Rendezvous<'_, '_, T, U, C, E>,
-        manager: &mut crate::runtime::mgmt::Manager<State, { SLOT_COUNT }>,
-    ) -> Result<(), crate::runtime::mgmt::MgmtError>
-    where
-        State: crate::runtime::mgmt::ManagerState,
-    {
-        rendezvous.with_slot_bundle_lease(|lease| lease.on_decision_boundary_with(manager))
-    }
-
-    /// Apply pending policy activation for a specific slot at a decision boundary.
-    pub(crate) fn on_decision_boundary_for_slot<State>(
-        self,
-        rendezvous: &mut Rendezvous<'_, '_, T, U, C, E>,
-        slot: crate::epf::vm::Slot,
-        manager: &mut crate::runtime::mgmt::Manager<State, { SLOT_COUNT }>,
-    ) -> Result<Option<crate::runtime::mgmt::TransitionReport>, crate::runtime::mgmt::MgmtError>
-    where
-        State: crate::runtime::mgmt::ManagerState,
-    {
-        rendezvous
-            .with_slot_bundle_lease(|lease| lease.on_decision_boundary_for_slot_with(slot, manager))
-    }
-
-    /// Revert a slot to the previous active policy.
-    pub(crate) fn revert<State>(
-        self,
-        rendezvous: &mut Rendezvous<'_, '_, T, U, C, E>,
-        slot: crate::epf::vm::Slot,
-        manager: &mut crate::runtime::mgmt::Manager<State, { SLOT_COUNT }>,
-    ) -> Result<crate::runtime::mgmt::TransitionReport, crate::runtime::mgmt::MgmtError>
-    where
-        State: crate::runtime::mgmt::ManagerState,
-    {
-        rendezvous.with_slot_bundle_lease(|lease| lease.revert_with(slot, manager))
     }
 }

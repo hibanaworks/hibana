@@ -1,4 +1,4 @@
-//! Internal control-plane kernel behind [`crate::substrate::SessionCluster`].
+//! Internal control-plane kernel behind [`crate::substrate::SessionKit`].
 //!
 //! `hibana` exposes only two public faces: the app surface at the crate root
 //! and the substrate surface at [`crate::substrate`]. This module houses the

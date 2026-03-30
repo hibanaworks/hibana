@@ -357,11 +357,6 @@ const fn base_facets_for_tag(tag: u8) -> LeaseFacetNeeds {
     }
 }
 
-/// Trait implemented by LeaseSpec types that expose the facet needs they require.
-pub(crate) trait LeaseSpecFacetNeeds {
-    fn facet_needs() -> LeaseFacetNeeds;
-}
-
 #[inline(always)]
 pub(crate) const fn assert_program_covers_facets<const ROLE: u8, LocalSteps, Mint>(
     program: &crate::g::advanced::RoleProgram<'static, ROLE, LocalSteps, Mint>,

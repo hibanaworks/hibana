@@ -169,6 +169,7 @@ impl<'ctx, 'cfg> SlotBundleHandle<'ctx, 'cfg> {
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn track_stage(&mut self, slot: Slot) -> Result<(), LeaseBundleError> {
         if self
             .stages
@@ -327,6 +328,7 @@ where
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn slots_mut(&mut self) -> Option<&mut SlotBundleHandle<'ctx, 'cfg>> {
         self.slots.as_mut()
     }
@@ -547,7 +549,7 @@ mod tests {
         control::types::{Lane, RendezvousId, SessionId},
         observe::core::TapRing,
         observe::{self},
-        rendezvous::{capability::CapEntry, core::Rendezvous},
+        rendezvous::capability::CapEntry,
         runtime::{
             config::{Config, CounterClock},
             consts::{DefaultLabelUniverse, RING_EVENTS},
@@ -621,10 +623,7 @@ mod tests {
             CounterClock,
             crate::control::cap::mint::EpochTbl,
         >;
-        type ChildStorage = crate::control::lease::graph::InlineLeaseChildStorage<
-            RendezvousId,
-            3,
-        >;
+        type ChildStorage = crate::control::lease::graph::InlineLeaseChildStorage<RendezvousId, 3>;
         type NodeStorage<'graph>
             = crate::control::lease::graph::InlineLeaseNodeStorage<'graph, Self, 4>
         where
@@ -672,21 +671,25 @@ mod tests {
         let tap_storage = leak_tap_storage();
         let slab = leak_slab(512);
         let config = Config::new(tap_storage, slab);
-        let mut rendezvous = Rendezvous::from_config(config, DummyTransport);
-
-        let mut ctx: LeaseBundleContext<
-            'static,
-            'static,
+        crate::rendezvous::core::with_test_rendezvous_from_config(
+            config,
             DummyTransport,
-            DefaultLabelUniverse,
-            CounterClock,
-            crate::control::cap::mint::EpochTbl,
-        > = LeaseBundleContext::new();
-        ctx.populate_local(&mut rendezvous);
+            |rendezvous| {
+                let mut ctx: LeaseBundleContext<
+                    'static,
+                    'static,
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    crate::control::cap::mint::EpochTbl,
+                > = LeaseBundleContext::new();
+                ctx.populate_local(rendezvous);
 
-        assert!(ctx.observe().is_some(), "observe facet seeded");
-        assert!(ctx.caps_mut().is_some(), "caps bundle seeded");
-        assert!(ctx.slots_mut().is_some(), "slot bundle seeded");
+                assert!(ctx.observe().is_some(), "observe facet seeded");
+                assert!(ctx.caps_mut().is_some(), "caps bundle seeded");
+                assert!(ctx.slots_mut().is_some(), "slot bundle seeded");
+            },
+        );
     }
 
     #[test]
@@ -696,11 +699,9 @@ mod tests {
         let tap_storage = leak_tap_storage();
         let slab = leak_slab(512);
         let config = Config::new(tap_storage, slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-        let rv_id = rendezvous.id();
-
         let core = leak_empty_control_core::<MAX_RV>();
-        core.register_local(rendezvous)
+        let rv_id = core
+            .register_local_from_config(config, DummyTransport)
             .expect("register rendezvous succeeds");
 
         let mut ctx = LeaseBundleContext::from_control_core::<MAX_RV>(core, rv_id)
@@ -718,19 +719,15 @@ mod tests {
         let tap_storage_root = leak_tap_storage();
         let slab_root = leak_slab(512);
         let config_root = Config::new(tap_storage_root, slab_root);
-        let rendezvous_root = Rendezvous::from_config(config_root, DummyTransport);
-        let root_id = rendezvous_root.id();
-
         let tap_storage_child = leak_tap_storage();
         let slab_child = leak_slab(512);
         let config_child = Config::new(tap_storage_child, slab_child);
-        let rendezvous_child = Rendezvous::from_config(config_child, DummyTransport);
-        let child_id = rendezvous_child.id();
-
         let core = leak_empty_control_core::<MAX_RV>();
-        core.register_local(rendezvous_root)
+        let root_id = core
+            .register_local_from_config(config_root, DummyTransport)
             .expect("register root rendezvous");
-        core.register_local(rendezvous_child)
+        let child_id = core
+            .register_local_from_config(config_child, DummyTransport)
             .expect("register child rendezvous");
 
         let root_ctx = LeaseBundleContext::from_control_core::<MAX_RV>(core, root_id)
@@ -795,53 +792,58 @@ mod tests {
         let tap_storage = leak_tap_storage();
         let slab = leak_slab(256);
         let config = Config::new(tap_storage, slab);
-        let mut rendezvous = Rendezvous::from_config(config, DummyTransport);
-        let rv_ptr = NonNull::from(&mut rendezvous);
-        let cap_ptr = NonNull::from(rendezvous.caps());
-        let cap_table = rendezvous.caps();
-        let mut ctx: LeaseBundleContext<
-            'static,
-            'static,
+        crate::rendezvous::core::with_test_rendezvous_from_config(
+            config,
             DummyTransport,
-            DefaultLabelUniverse,
-            CounterClock,
-            crate::control::cap::mint::EpochTbl,
-        > = LeaseBundleContext::new();
-        ctx.set_caps(CapsBundleHandle::new(rv_ptr, cap_ptr));
+            |rendezvous| {
+                let rv_ptr = NonNull::from(&mut *rendezvous);
+                let cap_ptr = NonNull::from(rendezvous.caps());
+                let cap_table = rendezvous.caps();
+                let mut ctx: LeaseBundleContext<
+                    'static,
+                    'static,
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    crate::control::cap::mint::EpochTbl,
+                > = LeaseBundleContext::new();
+                ctx.set_caps(CapsBundleHandle::new(rv_ptr, cap_ptr));
 
-        let sid = SessionId::new(1);
-        let lane = Lane::new(2);
-        let nonce = [0xAB; CAP_NONCE_LEN];
-        let entry = CapEntry {
-            sid,
-            lane: Lane::new(lane.raw()),
-            kind_tag: EndpointResource::TAG,
-            shot: CapShot::Many,
-            role: 7,
-            consumed: false,
-            nonce,
-            caps_mask: CapsMask::allow_all(),
-            handle: [0u8; CAP_HANDLE_LEN],
-        };
-        cap_table.insert_entry(entry).expect("insert succeeds");
+                let sid = SessionId::new(1);
+                let lane = Lane::new(2);
+                let nonce = [0xAB; CAP_NONCE_LEN];
+                let entry = CapEntry {
+                    sid,
+                    lane: Lane::new(lane.raw()),
+                    kind_tag: EndpointResource::TAG,
+                    shot: CapShot::Many,
+                    role: 7,
+                    consumed: false,
+                    nonce,
+                    caps_mask: CapsMask::allow_all(),
+                    handle: [0u8; CAP_HANDLE_LEN],
+                };
+                cap_table.insert_entry(entry).expect("insert succeeds");
 
-        ctx.caps_mut()
-            .expect("caps handle present")
-            .track_mint(nonce)
-            .expect("log mint");
+                ctx.caps_mut()
+                    .expect("caps handle present")
+                    .track_mint(nonce)
+                    .expect("log mint");
 
-        ctx.on_rollback();
+                ctx.on_rollback();
 
-        let claim = cap_table.claim_by_nonce(
-            &nonce,
-            SessionId::new(1),
-            Lane::new(2),
-            EndpointResource::TAG,
-            7,
-            CapShot::Many,
-            CapsMask::allow_all(),
+                let claim = cap_table.claim_by_nonce(
+                    &nonce,
+                    SessionId::new(1),
+                    Lane::new(2),
+                    EndpointResource::TAG,
+                    7,
+                    CapShot::Many,
+                    CapsMask::allow_all(),
+                );
+                assert!(matches!(claim, Err(CapError::UnknownToken)));
+            },
         );
-        assert!(matches!(claim, Err(CapError::UnknownToken)));
     }
 
     #[test]
@@ -894,34 +896,39 @@ mod tests {
         let tap_storage = leak_tap_storage();
         let slab = leak_slab(256);
         let config = Config::new(tap_storage, slab);
-        let mut rendezvous = Rendezvous::from_config(config, DummyTransport);
-        let original = rendezvous.caps_mask_for_lane(Lane::new(0));
-        let rv_ptr = NonNull::from(&mut rendezvous);
-        let cap_ptr = NonNull::from(rendezvous.caps());
-
-        let mut ctx: LeaseBundleContext<
-            'static,
-            'static,
+        crate::rendezvous::core::with_test_rendezvous_from_config(
+            config,
             DummyTransport,
-            DefaultLabelUniverse,
-            CounterClock,
-            crate::control::cap::mint::EpochTbl,
-        > = LeaseBundleContext::new();
-        ctx.set_caps(CapsBundleHandle::new(rv_ptr, cap_ptr));
+            |rendezvous| {
+                let original = rendezvous.caps_mask_for_lane(Lane::new(0));
+                let rv_ptr = NonNull::from(&mut *rendezvous);
+                let cap_ptr = NonNull::from(rendezvous.caps());
 
-        {
-            let caps = ctx.caps_mut().expect("caps handle present");
-            caps.track_mask(Lane::new(0), original).expect("log mask");
-        }
+                let mut ctx: LeaseBundleContext<
+                    'static,
+                    'static,
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    crate::control::cap::mint::EpochTbl,
+                > = LeaseBundleContext::new();
+                ctx.set_caps(CapsBundleHandle::new(rv_ptr, cap_ptr));
 
-        let updated = original.union(CapsMask::empty().with(CpEffect::SpliceBegin));
-        rendezvous.set_caps_mask_for_lane(Lane::new(0), updated);
+                {
+                    let caps = ctx.caps_mut().expect("caps handle present");
+                    caps.track_mask(Lane::new(0), original).expect("log mask");
+                }
 
-        ctx.on_rollback();
+                let updated = original.union(CapsMask::empty().with(CpEffect::SpliceBegin));
+                rendezvous.set_caps_mask_for_lane(Lane::new(0), updated);
 
-        assert_eq!(
-            rendezvous.caps_mask_for_lane(Lane::new(0)).bits(),
-            original.bits()
+                ctx.on_rollback();
+
+                assert_eq!(
+                    rendezvous.caps_mask_for_lane(Lane::new(0)).bits(),
+                    original.bits()
+                );
+            },
         );
     }
 }

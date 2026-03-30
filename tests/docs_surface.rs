@@ -60,11 +60,11 @@ fn public_docs_use_canonical_surface_paths() {
             "`binding::Binding`",
             "Incoming as IncomingClassification",
             "`SendMeta`",
-            "type Cluster = SessionCluster",
+            "type Cluster = SessionKit",
             "VmSlot",
             "VmHeader",
             "endpoint::delegate",
-            "SessionCluster::delegate_claim",
+            "SessionKit::delegate_claim",
             "claim.enter(",
             "CONTROLLER_PROGRAM",
             "examples/tcp_tokio.rs",
@@ -149,16 +149,21 @@ fn public_docs_use_canonical_surface_paths() {
         "`Reply::ActivationScheduled(report)`",
         "`Reply::Reverted(report)`",
         "`Reply::Stats { stats, staged_version }`",
-        "`hibana::substrate::mgmt::session::Request::Load(LoadRequest)`",
-        "`hibana::substrate::mgmt::session::Request::LoadAndActivate(LoadRequest)`",
-        "`hibana::substrate::mgmt::session::Request::Activate(SlotRequest)`",
-        "`hibana::substrate::mgmt::session::Request::Revert(SlotRequest)`",
-        "`hibana::substrate::mgmt::session::Request::Stats(SlotRequest)`",
+        "`hibana::substrate::mgmt::Request::Load(LoadRequest)`",
+        "`hibana::substrate::mgmt::Request::LoadAndActivate(LoadRequest)`",
+        "`hibana::substrate::mgmt::Request::Activate(SlotRequest)`",
+        "`hibana::substrate::mgmt::Request::Revert(SlotRequest)`",
+        "`hibana::substrate::mgmt::Request::Stats(SlotRequest)`",
         "`LoadRequest`",
         "`SlotRequest`",
-        "`enter_cluster`",
-        "`drive_cluster`",
-        ".drive_controller(controller)",
+        "`hibana::substrate::mgmt::request_reply::PREFIX`",
+        "`hibana::substrate::mgmt::observe_stream::PREFIX`",
+        "`hibana::substrate::mgmt::ROLE_CONTROLLER`",
+        "`hibana::substrate::mgmt::ROLE_CLUSTER`",
+        "`hibana::substrate::mgmt::tap::TapEvent`",
+        "`SessionKit::enter(...)`",
+        "`flow().send()`, `recv()`, `offer()`, and `decode()`",
+        "`compose::seq`",
         "Dynamic policy remains explicit:",
         "there is no public VM-run API separate from the resolver/policy surface",
         "`BindingSlot` is demux and transport observation only. It does not decide route arms.",
@@ -169,6 +174,7 @@ fn public_docs_use_canonical_surface_paths() {
         "bash ./.github/scripts/check_surface_hygiene.sh",
         "bash ./.github/scripts/check_lowering_hygiene.sh",
         "bash ./.github/scripts/check_boundary_contracts.sh",
+        "bash ./.github/scripts/check_warning_free.sh",
         "bash ./.github/scripts/check_direct_projection_binary.sh",
         "bash ./.github/scripts/check_no_std_build.sh",
         "cargo check --all-targets -p hibana",
@@ -179,6 +185,25 @@ fn public_docs_use_canonical_surface_paths() {
         assert!(
             readme.contains(required),
             "README must document the canonical app/substrate split and validation flow: {required}"
+        );
+    }
+
+    for forbidden in [
+        "`hibana::substrate::mgmt::session::Request::Load(LoadRequest)`",
+        "`hibana::substrate::mgmt::session::Request::LoadAndActivate(LoadRequest)`",
+        "`hibana::substrate::mgmt::session::Request::Activate(SlotRequest)`",
+        "`hibana::substrate::mgmt::session::Request::Revert(SlotRequest)`",
+        "`hibana::substrate::mgmt::session::Request::Stats(SlotRequest)`",
+        "`hibana::substrate::mgmt::TapBatch`",
+        "`hibana::runtime::mgmt::TapBatch`",
+        "`enter_controller`",
+        "`enter_cluster`",
+        "`drive_cluster`",
+        ".drive_controller(controller)",
+    ] {
+        assert!(
+            !readme.contains(forbidden),
+            "README must not keep the deleted management helper surface: {forbidden}"
         );
     }
 

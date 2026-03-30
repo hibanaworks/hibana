@@ -14,7 +14,7 @@ use hibana::{
         advanced::{CancelKind, CheckpointKind, RollbackKind},
     },
     substrate::{
-        SessionCluster, SessionId,
+        SessionId, SessionKit,
         binding::NoBinding,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
     },
@@ -155,13 +155,8 @@ async fn cancel_local_action_advances_typestate() {
     let slab = leak_slab(2048);
     let config = Config::new(tap_storage, slab);
     let transport = TestTransport::default();
-    let cluster: &mut SessionCluster<
-        'static,
-        TestTransport,
-        DefaultLabelUniverse,
-        CounterClock,
-        4,
-    > = Box::leak(Box::new(SessionCluster::new(runtime_support::leak_clock())));
+    let cluster: &mut SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 4> =
+        Box::leak(Box::new(SessionKit::new(runtime_support::leak_clock())));
     let rv_id = cluster
         .add_rendezvous_from_config(config, transport.clone())
         .expect("register rendezvous");
@@ -202,13 +197,8 @@ async fn checkpoint_rollback_local_actions_advance_typestate() {
     let slab = leak_slab(2048);
     let config = Config::new(tap_storage, slab);
     let transport = TestTransport::default();
-    let cluster: &mut SessionCluster<
-        'static,
-        TestTransport,
-        DefaultLabelUniverse,
-        CounterClock,
-        4,
-    > = Box::leak(Box::new(SessionCluster::new(runtime_support::leak_clock())));
+    let cluster: &mut SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 4> =
+        Box::leak(Box::new(SessionKit::new(runtime_support::leak_clock())));
     let rv_id = cluster
         .add_rendezvous_from_config(config, transport.clone())
         .expect("register rendezvous");

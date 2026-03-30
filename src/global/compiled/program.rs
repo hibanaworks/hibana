@@ -17,9 +17,6 @@ use crate::{
     },
 };
 
-#[cfg(test)]
-use crate::global::const_dsl::EffList;
-
 use super::LoweringSummary;
 
 /// Precomputed dynamic policy site discovered during program lowering.
@@ -181,12 +178,6 @@ impl CompiledProgram {
     {
         let summary = LoweringSummary::scan_const(program.lowering_input());
         summary.lease_budget()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn compile(eff_list: &EffList) -> Self {
-        let summary = LoweringSummary::scan_const(eff_list);
-        Self::from_summary(&summary)
     }
 
     #[cfg(test)]
@@ -432,7 +423,7 @@ mod tests {
         .policy::<ROUTE_POLICY_ID>();
 
         let summary = crate::global::compiled::LoweringSummary::scan_const(program.eff_list());
-        let compiled = CompiledProgram::compile(program.eff_list());
+        let compiled = CompiledProgram::from_summary(&summary);
         let sites: std::vec::Vec<_> = compiled.dynamic_policy_sites_for(ROUTE_POLICY_ID).collect();
 
         assert_eq!(sites.len(), 1);
@@ -487,7 +478,8 @@ mod tests {
         >();
         let program = g::route(continue_arm, break_arm);
 
-        let compiled = CompiledProgram::compile(program.eff_list());
+        let summary = crate::global::compiled::LoweringSummary::scan_const(program.eff_list());
+        let compiled = CompiledProgram::from_summary(&summary);
 
         assert_eq!(
             compiled

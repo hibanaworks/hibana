@@ -12,7 +12,7 @@ use crate::{
     control::{
         cap::mint::{GenericCapToken, ResourceKind},
         cap::typed_tokens::CapRegisteredToken,
-        types::{Lane, RendezvousId},
+        types::Lane,
     },
     transport::Transport,
 };
@@ -29,7 +29,6 @@ where
     C: crate::runtime::config::Clock,
     E: crate::control::cap::mint::EpochTable,
 {
-    rendezvous_id: RendezvousId,
     cluster: Option<NonNull<crate::control::cluster::core::SessionCluster<'rv, T, U, C, MAX_RV>>>,
     liveness_policy: crate::runtime::config::LivenessPolicy,
     _marker: core::marker::PhantomData<E>,
@@ -87,14 +86,12 @@ where
     E: crate::control::cap::mint::EpochTable,
 {
     pub(crate) fn new(
-        rendezvous_id: RendezvousId,
         _lane: Lane,
         cluster: Option<&'rv crate::control::cluster::core::SessionCluster<'rv, T, U, C, MAX_RV>>,
         liveness_policy: crate::runtime::config::LivenessPolicy,
         _resolver: Option<()>,
     ) -> Self {
         Self {
-            rendezvous_id,
             cluster: cluster.map(NonNull::from),
             liveness_policy,
             _marker: core::marker::PhantomData,
@@ -106,11 +103,6 @@ where
         &self,
     ) -> Option<&'rv crate::control::cluster::core::SessionCluster<'rv, T, U, C, MAX_RV>> {
         self.cluster.map(|ptr| unsafe { ptr.as_ref() })
-    }
-
-    #[inline]
-    pub(crate) fn rendezvous_id(&self) -> RendezvousId {
-        self.rendezvous_id
     }
 
     #[inline]

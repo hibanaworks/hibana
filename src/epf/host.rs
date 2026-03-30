@@ -13,13 +13,15 @@ use crate::{
     rendezvous::slots::{SLOT_COUNT, slot_index},
 };
 
+#[cfg(test)]
+use super::verifier::{Header, compute_hash};
 use super::{
     PolicyMode,
-    verifier::{Header, compute_hash},
     vm::{Slot, Vm, VmAction, VmCtx},
 };
 
 /// Errors surfaced by the policy host registry.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HostError {
     SlotOccupied,
@@ -35,6 +37,7 @@ pub(crate) struct Machine<'arena> {
     mem_ptr: *mut u8,
     mem_len: usize,
     fuel_max: u16,
+    #[cfg(test)]
     digest: u32,
     fuel: AtomicU16,
     lock: AtomicBool,
@@ -45,6 +48,7 @@ unsafe impl Sync for Machine<'_> {}
 
 impl<'arena> Machine<'arena> {
     /// Construct a new machine with an explicit memory length.
+    #[cfg(test)]
     pub(crate) fn with_mem(
         code: &'arena [u8],
         scratch: &'arena mut [u8],
@@ -93,6 +97,7 @@ impl<'arena> Machine<'arena> {
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) const fn digest(&self) -> u32 {
         self.digest
     }
@@ -121,12 +126,13 @@ impl<'arena> Machine<'arena> {
 
 impl core::fmt::Debug for Machine<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Machine")
-            .field("code_len", &self.code.len())
-            .field("mem_len", &self.mem_len)
-            .field("fuel_max", &self.fuel_max)
-            .field("digest", &self.digest)
-            .finish()
+        let mut debug = f.debug_struct("Machine");
+        debug.field("code_len", &self.code.len());
+        debug.field("mem_len", &self.mem_len);
+        debug.field("fuel_max", &self.fuel_max);
+        #[cfg(test)]
+        debug.field("digest", &self.digest);
+        debug.finish()
     }
 }
 
@@ -149,6 +155,7 @@ impl<'arena> HostSlots<'arena> {
     const MODE_ENFORCE: u8 = 1;
 
     #[inline]
+    #[cfg(test)]
     const fn encode_mode(mode: PolicyMode) -> u8 {
         match mode {
             PolicyMode::Shadow => Self::MODE_SHADOW,
@@ -178,6 +185,7 @@ impl<'arena> HostSlots<'arena> {
         slot_index(slot)
     }
 
+    #[cfg(test)]
     pub(crate) fn install(
         &mut self,
         slot: Slot,
@@ -192,6 +200,7 @@ impl<'arena> HostSlots<'arena> {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn uninstall(&mut self, slot: Slot) -> Result<(), HostError> {
         let idx = Self::index(slot);
         if self.machines[idx].is_none() {
@@ -204,6 +213,7 @@ impl<'arena> HostSlots<'arena> {
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn set_policy_mode(&self, slot: Slot, mode: PolicyMode) {
         self.policy_modes[Self::index(slot)].store(Self::encode_mode(mode), Ordering::Release);
     }

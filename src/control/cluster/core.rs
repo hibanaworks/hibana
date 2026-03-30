@@ -35,8 +35,8 @@ use crate::control::lease::{
     graph::{LeaseFacet, LeaseGraph, LeaseGraphError, LeaseSpec},
     map::ArrayMap,
     planner::{
-        DELEGATION_CHILD_SET_CAPACITY, LeaseFacetNeeds, LeaseSpecFacetNeeds, facet_needs,
-        facets_caps_delegation, facets_caps_splice,
+        DELEGATION_CHILD_SET_CAPACITY, LeaseFacetNeeds, facet_needs, facets_caps_delegation,
+        facets_caps_splice,
     },
 };
 use crate::endpoint::affine::LaneGuard;
@@ -66,14 +66,11 @@ use crate::eff::EffIndex;
 use crate::global::{
     compiled::{CompiledProgram, CompiledRole, LoweringSummary, ProgramStamp},
     const_dsl::{PolicyMode, ScopeId},
+    typestate::RoleCompileScratch,
 };
 use crate::observe::scope::ScopeTrace;
 use crate::rendezvous::core::{LaneLease, Rendezvous};
 use crate::rendezvous::error::RendezvousError;
-use crate::rendezvous::slots::SLOT_COUNT;
-use crate::runtime::mgmt::{
-    AwaitBegin, Cold, Manager, MgmtAutomaton, MgmtError, MgmtLeaseSpec, MgmtSeed, Reply,
-};
 use crate::transport::context::{self, ContextValue};
 use crate::transport::{TransportAlgorithm, TransportSnapshot};
 
@@ -653,6 +650,7 @@ impl RoleCacheEntry {
         program: ProgramCacheHandle,
         pins: u32,
         lowering: &LoweringSummary,
+        scratch: &mut RoleCompileScratch,
     ) {
         unsafe {
             core::ptr::addr_of_mut!((*dst).program).write(program);
@@ -661,6 +659,7 @@ impl RoleCacheEntry {
             CompiledRole::init_from_summary::<ROLE>(
                 core::ptr::addr_of_mut!((*dst).compiled),
                 lowering,
+                scratch,
             );
         }
     }
@@ -885,8 +884,8 @@ impl<const MAX: usize> DistributedSpliceState<MAX> {
 ///
 /// let mut cluster: SessionCluster<8> = SessionCluster::new(leak_clock());
 ///
-/// // Register local Rendezvous
-/// cluster.add_rendezvous(local_rendezvous)?;
+/// // Register local Rendezvous from runtime config + transport
+/// cluster.add_rendezvous_from_config(config, transport)?;
 ///
 /// // Perform distributed splice
 /// cluster.distributed_splice(
@@ -929,14 +928,14 @@ where
     /// Number of active lane leases (affine witness count).
     active_leases: core::cell::Cell<u32>,
 
-    /// Cached management manager state per rendezvous.
-    mgmt_managers: ArrayMap<RendezvousId, Manager<AwaitBegin, { SLOT_COUNT }>, MAX_RV>,
-
     /// Shared compiled-program cache keyed by stable entry id.
     compiled_programs: ArrayMap<ProgramCacheHandle, ProgramCacheEntry, MAX_COMPILED_PROGRAMS>,
 
     /// Shared compiled-role cache keyed by stable entry id.
     compiled_roles: ArrayMap<RoleCacheHandle, RoleCacheEntry, MAX_COMPILED_ROLES>,
+
+    /// Reusable scratch owner for runtime role materialization.
+    role_compile_scratch: RoleCompileScratch,
 
     next_compiled_program_id: u32,
     next_compiled_role_id: u32,
@@ -958,9 +957,9 @@ where
             core::ptr::addr_of_mut!((*dst).splice_state).write(DistributedSpliceState::new());
             ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).cached_operands));
             core::ptr::addr_of_mut!((*dst).active_leases).write(core::cell::Cell::new(0));
-            ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).mgmt_managers));
             ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).compiled_programs));
             ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).compiled_roles));
+            RoleCompileScratch::init_empty(core::ptr::addr_of_mut!((*dst).role_compile_scratch));
             core::ptr::addr_of_mut!((*dst).next_compiled_program_id).write(1);
             core::ptr::addr_of_mut!((*dst).next_compiled_role_id).write(1);
         }
@@ -1047,9 +1046,9 @@ where
                 splice_state: DistributedSpliceState::new(),
                 cached_operands: ArrayMap::new(),
                 active_leases: core::cell::Cell::new(0),
-                mgmt_managers: ArrayMap::new(),
                 compiled_programs: ArrayMap::new(),
                 compiled_roles: ArrayMap::new(),
+                role_compile_scratch: RoleCompileScratch::new(),
                 next_compiled_program_id: 1,
                 next_compiled_role_id: 1,
             }),
@@ -1353,6 +1352,7 @@ where
                                 program,
                                 u32::from(pin),
                                 &*lowering_ptr,
+                                &mut core.role_compile_scratch,
                             );
                         }
                     })
@@ -1374,6 +1374,7 @@ where
                             program,
                             u32::from(pin),
                             &*lowering_ptr,
+                            &mut core.role_compile_scratch,
                         );
                     }
                 })
@@ -1383,6 +1384,72 @@ where
         unsafe { (*self.control_ref_ptr()).compiled_roles.get(&role_handle) }
             .map(|entry| (role_handle, &entry.compiled))
             .ok_or(CpError::ResourceExhausted)
+    }
+
+    #[cfg(test)]
+    fn prime_compiled_role_for_test<'prog, const ROLE: u8, LocalSteps, Mint>(
+        &self,
+        program: &crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
+    ) -> Result<(), CpError>
+    where
+        Mint: MintConfigMarker,
+    {
+        let (program_handle, _) = self.compiled_program(program, false)?;
+        self.with_control_mut(|core| {
+            if core
+                .compiled_roles
+                .position(|_, entry| entry.program == program_handle && entry.role == ROLE)
+                .is_some()
+            {
+                return Ok(());
+            }
+            let lowering = core
+                .compiled_programs
+                .get(&program_handle)
+                .map(|entry| core::ptr::from_ref(&entry.lowering))
+                .ok_or(CpError::ResourceExhausted)?;
+
+            let handle = Self::next_role_cache_handle(core);
+            if !core.compiled_roles.is_full() {
+                core.compiled_roles
+                    .push_with(|slot| {
+                        let slot_ptr = slot.as_mut_ptr();
+                        unsafe {
+                            core::ptr::addr_of_mut!((*slot_ptr).0).write(handle);
+                            RoleCacheEntry::init_from_summary::<ROLE>(
+                                core::ptr::addr_of_mut!((*slot_ptr).1),
+                                program_handle,
+                                0,
+                                &*lowering,
+                                &mut core.role_compile_scratch,
+                            );
+                        }
+                    })
+                    .map_err(|_| CpError::ResourceExhausted)?;
+                return Ok(());
+            }
+
+            let evict_idx = core
+                .compiled_roles
+                .position(|_, entry| entry.pins == 0)
+                .ok_or(CpError::ResourceExhausted)?;
+            core.compiled_roles
+                .replace_at_with(evict_idx, |slot| {
+                    let slot_ptr = slot.as_mut_ptr();
+                    unsafe {
+                        core::ptr::addr_of_mut!((*slot_ptr).0).write(handle);
+                        RoleCacheEntry::init_from_summary::<ROLE>(
+                            core::ptr::addr_of_mut!((*slot_ptr).1),
+                            program_handle,
+                            0,
+                            &*lowering,
+                            &mut core.role_compile_scratch,
+                        );
+                    }
+                })
+                .map_err(|_| CpError::ResourceExhausted)?;
+            Ok(())
+        })
     }
 
     fn with_pinned_compiled_program<F, R>(
@@ -1462,18 +1529,6 @@ where
     ///
     /// Returns `CpError::ResourceExhausted` if the cluster is full or
     /// the ID is already registered.
-    #[cfg(test)]
-    pub(crate) fn add_rendezvous(
-        &self,
-        rv: Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>,
-    ) -> Result<RendezvousId, CpError> {
-        self.with_control_mut(|core| match core.locals.register_local(rv) {
-            Ok(id) => Ok(id),
-            Err(RegisterRendezvousError::CapacityExceeded) => Err(CpError::ResourceExhausted),
-            Err(RegisterRendezvousError::Duplicate(_)) => Err(CpError::ResourceExhausted),
-        })
-    }
-
     /// Build and register a local rendezvous from runtime config + transport.
     ///
     /// Public callers should use this entrypoint instead of constructing
@@ -2746,73 +2801,153 @@ where
         Ok(())
     }
 
-    fn populate_mgmt_links<State>(
-        &self,
+    #[allow(clippy::too_many_arguments)]
+    #[inline(never)]
+    fn attach_endpoint_with_compiled<'lease, const ROLE: u8, Mint, B>(
+        &'lease self,
         rv_id: RendezvousId,
         sid: SessionId,
-        seed: &mut MgmtSeed<State>,
-    ) where
-        State: crate::runtime::mgmt::ManagerState,
+        compiled_cache_lease: CompiledCacheLease,
+        control_semantics: crate::global::compiled::ControlSemanticsTable,
+        cursor: crate::global::typestate::PhaseCursor,
+        mut active_lanes: [bool; crate::global::role_program::MAX_LANES],
+        mint: Mint,
+        binding: B,
+    ) -> Result<
+        crate::endpoint::kernel::CursorEndpoint<
+            'cfg,
+            ROLE,
+            T,
+            U,
+            C,
+            crate::control::cap::mint::EpochTbl,
+            MAX_RV,
+            Mint,
+            B,
+        >,
+        (AttachError, CompiledCacheLease),
+    >
+    where
+        'cfg: 'lease,
+        'lease: 'cfg,
+        B: crate::binding::BindingSlot,
+        Mint: crate::control::cap::mint::MintConfigMarker,
     {
-        self.with_control_mut(|core| {
-            core.locals.for_each_available(|child_id, rv| {
-                if child_id == rv_id {
-                    return;
-                }
-                if rv.is_session_registered(sid) {
-                    seed.links_mut().push(child_id);
-                }
-            });
-        });
-    }
+        use crate::global::role_program::MAX_LANES;
 
-    fn collect_mgmt_links(
-        seed: &MgmtSeed<impl crate::runtime::mgmt::ManagerState>,
-    ) -> DelegationChildSet {
-        let mut set = DelegationChildSet::new();
-        for id in seed.links.iter() {
-            set.push(id);
-        }
-        set
-    }
+        active_lanes[0] = true;
+        let primary_lane_index = active_lanes.iter().position(|&active| active).unwrap_or(0);
 
-    fn init_mgmt_children(
-        core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
-        graph: &mut LeaseGraph<'cfg, MgmtLeaseSpec<T, U, C, crate::control::cap::mint::EpochTbl>>,
-        parent: RendezvousId,
-        links: &DelegationChildSet,
-    ) -> Result<(), LeaseGraphError> {
-        for child in links.iter() {
-            if child == parent {
+        #[cfg(feature = "std")]
+        let mut ports = {
+            let mut boxed = std::boxed::Box::<
+                [Option<
+                    crate::rendezvous::port::Port<'cfg, T, crate::control::cap::mint::EpochTbl>,
+                >; MAX_LANES],
+            >::new_uninit();
+            let base =
+                boxed.as_mut_ptr().cast::<Option<
+                    crate::rendezvous::port::Port<'cfg, T, crate::control::cap::mint::EpochTbl>,
+                >>();
+            let mut idx = 0usize;
+            while idx < MAX_LANES {
+                unsafe {
+                    base.add(idx).write(None);
+                }
+                idx += 1;
+            }
+            unsafe { boxed.assume_init() }
+        };
+        #[cfg(not(feature = "std"))]
+        let mut ports: [Option<
+            crate::rendezvous::port::Port<'cfg, T, crate::control::cap::mint::EpochTbl>,
+        >; MAX_LANES] = [None, None, None, None, None, None, None, None];
+
+        #[cfg(feature = "std")]
+        let mut guards = {
+            let mut boxed =
+                std::boxed::Box::<[Option<LaneGuard<'cfg, T, U, C>>; MAX_LANES]>::new_uninit();
+            let base = boxed
+                .as_mut_ptr()
+                .cast::<Option<LaneGuard<'cfg, T, U, C>>>();
+            let mut idx = 0usize;
+            while idx < MAX_LANES {
+                unsafe {
+                    base.add(idx).write(None);
+                }
+                idx += 1;
+            }
+            unsafe { boxed.assume_init() }
+        };
+        #[cfg(not(feature = "std"))]
+        let mut guards: [Option<LaneGuard<'cfg, T, U, C>>; MAX_LANES] =
+            [None, None, None, None, None, None, None, None];
+
+        let mut primary_brand: Option<crate::control::brand::Guard<'cfg>> = None;
+        let mut primary_lane: Option<Lane> = None;
+
+        for logical_idx in 0..MAX_LANES {
+            if !active_lanes[logical_idx] {
                 continue;
             }
-            match graph.add_child_with_bundle_config(&mut core.locals, parent, child, |_| {}) {
-                Ok(()) | Err(LeaseGraphError::DuplicateId) => {}
-                Err(err) => return Err(err),
+
+            let physical_lane = Lane::new(logical_idx as u32);
+            if let Err(err) =
+                self.with_pinned_compiled_program(compiled_cache_lease.program, |compiled| {
+                    self.init_session_effects(rv_id, sid, physical_lane, compiled.effect_envelope())
+                })
+            {
+                return Err((err.into(), compiled_cache_lease));
+            }
+
+            let lease = match self.lease_port(rv_id, sid, physical_lane, ROLE) {
+                Ok(lease) => lease,
+                Err(err) => return Err((err.into(), compiled_cache_lease)),
+            };
+            let (port, guard, brand) = match lease.into_port_guard() {
+                Ok(parts) => parts,
+                Err(err) => return Err((err.into(), compiled_cache_lease)),
+            };
+            ports[logical_idx] = Some(port);
+            guards[logical_idx] = Some(guard);
+
+            if logical_idx == primary_lane_index {
+                primary_brand = Some(brand);
+                primary_lane = Some(physical_lane);
             }
         }
-        Ok(())
-    }
 
-    pub(crate) fn take_mgmt_manager(
-        &self,
-        rv_id: RendezvousId,
-    ) -> Manager<AwaitBegin, { SLOT_COUNT }> {
-        self.with_control_mut(|core| {
-            core.mgmt_managers
-                .remove(&rv_id)
-                .unwrap_or_else(|| Manager::<Cold, { SLOT_COUNT }>::new().into_await_begin())
-        })
-    }
-
-    pub(crate) fn store_mgmt_manager(
-        &self,
-        rv_id: RendezvousId,
-        manager: Manager<AwaitBegin, { SLOT_COUNT }>,
-    ) {
-        self.with_control_mut(|core| {
-            let _ = core.mgmt_managers.insert(rv_id, manager);
+        let brand = primary_brand.expect("primary lane brand must be acquired");
+        let primary_wire_lane = primary_lane.expect("primary lane must be acquired");
+        let owner = crate::control::cap::mint::Owner::new(brand);
+        let epoch = crate::control::cap::mint::EndpointEpoch::new();
+        let liveness_policy = self.with_control_mut(|core| {
+            core.locals
+                .get_mut(&rv_id)
+                .map(|rv| rv.liveness_policy())
+                .unwrap_or_default()
         });
+        let control = crate::endpoint::control::SessionControlCtx::new(
+            primary_wire_lane,
+            Some(self),
+            liveness_policy,
+            None,
+        );
+
+        Ok(crate::endpoint::kernel::CursorEndpoint::from_parts(
+            ports,
+            guards,
+            primary_lane_index,
+            sid,
+            owner,
+            epoch,
+            cursor,
+            control_semantics,
+            compiled_cache_lease,
+            control,
+            mint,
+            binding,
+        ))
     }
 
     /// Attach a projected endpoint for the specified role with transport binding.
@@ -2850,103 +2985,33 @@ where
         B: crate::binding::BindingSlot,
         Mint: crate::control::cap::mint::MintConfigMarker,
     {
-        use crate::global::role_program::MAX_LANES;
-
         let compiled_cache_lease = self.acquire_compiled_cache(program)?;
         let control_semantics = self
             .with_pinned_compiled_program(compiled_cache_lease.program, |compiled| {
                 Ok(*compiled.control_semantics())
             })?;
-        let (role_ptr, mut active_lanes) = self
+        let (role_ptr, active_lanes) = self
             .with_pinned_compiled_role(compiled_cache_lease.role, |compiled| {
                 Ok((NonNull::from(compiled), *compiled.active_lanes()))
             })?;
         let cursor = crate::global::typestate::PhaseCursor::from_pinned_role_ptr(role_ptr);
         let mint = program.mint_config();
-        let endpoint = (|| {
-            // Ensure at least lane 0 is active (every endpoint needs at least one lane)
-            active_lanes[0] = true;
-
-            // Find primary lane (first active lane, always 0 due to above)
-            let primary_lane_index = active_lanes.iter().position(|&active| active).unwrap_or(0);
-
-            // Acquire ports and guards for all active lanes directly on the
-            // choreography-defined rendezvous lanes.
-            let mut ports: [Option<
-                crate::rendezvous::port::Port<'cfg, T, crate::control::cap::mint::EpochTbl>,
-            >; MAX_LANES] = [None, None, None, None, None, None, None, None];
-            let mut guards: [Option<LaneGuard<'cfg, T, U, C>>; MAX_LANES] =
-                [None, None, None, None, None, None, None, None];
-
-            let mut primary_brand: Option<crate::control::brand::Guard<'cfg>> = None;
-            let mut primary_lane: Option<Lane> = None;
-
-            for logical_idx in 0..MAX_LANES {
-                if active_lanes[logical_idx] {
-                    let physical_lane = Lane::new(logical_idx as u32);
-                    self.with_pinned_compiled_program(compiled_cache_lease.program, |compiled| {
-                        self.init_session_effects(
-                            rv_id,
-                            sid,
-                            physical_lane,
-                            compiled.effect_envelope(),
-                        )
-                    })?;
-                    let lease = self.lease_port(rv_id, sid, physical_lane, ROLE)?;
-                    let (port, guard, brand) =
-                        lease.into_port_guard().map_err(AttachError::Rendezvous)?;
-                    ports[logical_idx] = Some(port);
-                    guards[logical_idx] = Some(guard);
-
-                    // Store primary lane's rendezvous brand for Owner creation
-                    if logical_idx == primary_lane_index {
-                        primary_brand = Some(brand);
-                        primary_lane = Some(physical_lane);
-                    }
-                }
+        match self.attach_endpoint_with_compiled::<ROLE, Mint, B>(
+            rv_id,
+            sid,
+            compiled_cache_lease,
+            control_semantics,
+            cursor,
+            active_lanes,
+            mint,
+            binding,
+        ) {
+            Ok(endpoint) => Ok(endpoint),
+            Err((err, lease)) => {
+                self.release_compiled_cache_lease(lease);
+                Err(err)
             }
-
-            let brand = primary_brand.expect("primary lane brand must be acquired");
-            let primary_wire_lane = primary_lane.expect("primary lane must be acquired");
-
-            let owner = crate::control::cap::mint::Owner::new(brand);
-            let epoch = crate::control::cap::mint::EndpointEpoch::new();
-
-            // SessionControlCtx uses the primary endpoint lane for control operations
-            let liveness_policy = self.with_control_mut(|core| {
-                core.locals
-                    .get_mut(&rv_id)
-                    .map(|rv| rv.liveness_policy())
-                    .unwrap_or_default()
-            });
-            let control = crate::endpoint::control::SessionControlCtx::new(
-                rv_id,
-                primary_wire_lane,
-                Some(self),
-                liveness_policy,
-                None,
-            );
-
-            Ok(crate::endpoint::kernel::CursorEndpoint::from_parts(
-                ports,
-                guards,
-                primary_lane_index,
-                sid,
-                owner,
-                epoch,
-                cursor,
-                control_semantics,
-                compiled_cache_lease,
-                control,
-                mint,
-                binding,
-            ))
-        })();
-
-        if endpoint.is_err() {
-            self.release_compiled_cache_lease(compiled_cache_lease);
         }
-        endpoint
     }
 
     #[inline]
@@ -2960,11 +3025,7 @@ where
         crate::endpoint::Endpoint<
             'cfg,
             ROLE,
-            T,
-            U,
-            C,
-            crate::control::cap::mint::EpochTbl,
-            MAX_RV,
+            crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>,
             Mint,
             B,
         >,
@@ -2975,7 +3036,7 @@ where
         Mint: crate::control::cap::mint::MintConfigMarker,
     {
         self.attach_endpoint(rv_id, sid, program, binding)
-            .map(crate::endpoint::Endpoint::from_cursor)
+            .map(|endpoint| crate::endpoint::Endpoint::from_cursor(endpoint))
     }
 
     #[inline]
@@ -3003,56 +3064,6 @@ where
         C: crate::runtime::config::Clock,
     {
         Self::init_bundle_context_with_needs(core, rv_id, LeaseFacetNeeds::all())
-    }
-
-    pub(crate) fn drive_mgmt(
-        &self,
-        rv_id: RendezvousId,
-        sid: SessionId,
-        mut seed: MgmtSeed<AwaitBegin>,
-    ) -> Result<Reply, MgmtError> {
-        self.populate_mgmt_links(rv_id, sid, &mut seed);
-        let mgmt_links = Self::collect_mgmt_links(&seed);
-        let mgmt_needs =
-            <MgmtLeaseSpec<T, U, C, crate::control::cap::mint::EpochTbl> as LeaseSpecFacetNeeds>::facet_needs();
-
-        let drive_result = self.drive::<MgmtAutomaton<AwaitBegin>, _, _>(
-            rv_id,
-            seed,
-            |core, rv| Self::init_bundle_context_with_needs(core, rv, mgmt_needs),
-            move |core, graph| Self::init_mgmt_children(core, graph, rv_id, &mgmt_links),
-        );
-
-        let (manager, reply) = match drive_result {
-            Ok(ok) => ok,
-            Err(err) => {
-                return Err(match err {
-                    DelegationDriveError::Lease(_) | DelegationDriveError::Graph(_) => {
-                        MgmtError::InvalidTransition
-                    }
-                    DelegationDriveError::Automaton(err) => err,
-                });
-            }
-        };
-
-        self.store_mgmt_manager(rv_id, manager);
-        Ok(reply)
-    }
-
-    pub(crate) fn on_decision_boundary(&self, rv_id: RendezvousId) -> Result<(), MgmtError> {
-        let mut manager = self.take_mgmt_manager(rv_id);
-        let result = self.with_control_mut(|core| {
-            let mut lease = match core.locals.lease::<FullSpec>(rv_id) {
-                Ok(lease) => lease,
-                Err(_) => return Err(MgmtError::InvalidTransition),
-            };
-            lease.with_rendezvous(|rv| {
-                let facet = rv.slot_facet();
-                facet.on_decision_boundary(rv, &mut manager)
-            })
-        });
-        self.store_mgmt_manager(rv_id, manager);
-        result
     }
 
     /// Drive a delegation automaton rooted at `rv_id` using a LeaseGraph.
@@ -3153,16 +3164,150 @@ mod tests {
     use crate::binding::NoBinding;
     use crate::control::cap::mint::ResourceKind;
     use crate::control::cap::mint::{GenericCapToken, MintConfig};
+    use crate::control::cap::resource_kinds::RouteDecisionKind;
     use crate::control::types::{Generation, Lane, SessionId};
     use crate::g::{self, Msg, Role};
     use crate::global::CanonicalControl;
+    use crate::global::program::Program;
     use crate::global::role_program;
+    use crate::global::steps::{ProjectRole, SendStep, StepCons, StepNil};
     use crate::runtime::config::CounterClock;
     use crate::runtime::consts::{DefaultLabelUniverse, LABEL_ROUTE_DECISION};
     use crate::transport::{Transport, TransportError, wire::Payload};
     use core::future::{Ready, ready};
     use std::boxed::Box;
     use std::string::String;
+    use std::vec;
+
+    type SharedBorrowSteps = StepCons<
+        SendStep<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_ROUTE_DECISION },
+                GenericCapToken<RouteDecisionKind>,
+                CanonicalControl<RouteDecisionKind>,
+            >,
+            0,
+        >,
+        StepNil,
+    >;
+
+    type SharedBorrowProgram = Program<SharedBorrowSteps>;
+    type SharedBorrowLocalSteps = <SharedBorrowSteps as ProjectRole<Role<0>>>::Output;
+    type SharedBorrowRoleProgram =
+        crate::g::advanced::RoleProgram<'static, 0, SharedBorrowLocalSteps, MintConfig>;
+
+    static SHARED_BORROW_PROGRAM_A: SharedBorrowProgram = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { LABEL_ROUTE_DECISION },
+            GenericCapToken<RouteDecisionKind>,
+            CanonicalControl<RouteDecisionKind>,
+        >,
+        0,
+    >();
+
+    static SHARED_BORROW_PROGRAM_B: SharedBorrowProgram = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { LABEL_ROUTE_DECISION },
+            GenericCapToken<RouteDecisionKind>,
+            CanonicalControl<RouteDecisionKind>,
+        >,
+        0,
+    >();
+
+    static SHARED_BORROW_PROJECTED_A: SharedBorrowRoleProgram =
+        role_program::project(&SHARED_BORROW_PROGRAM_A);
+
+    static SHARED_BORROW_PROJECTED_B: SharedBorrowRoleProgram =
+        role_program::project(&SHARED_BORROW_PROGRAM_B);
+
+    const ROUTE_POLICY_ONE: u16 = 9901;
+    const ROUTE_POLICY_TWO: u16 = 9902;
+
+    static ROUTE_POLICY_PROGRAM_ONE: SharedBorrowProgram = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { LABEL_ROUTE_DECISION },
+            GenericCapToken<RouteDecisionKind>,
+            CanonicalControl<RouteDecisionKind>,
+        >,
+        0,
+    >()
+    .policy::<ROUTE_POLICY_ONE>();
+
+    static ROUTE_POLICY_PROGRAM_TWO: SharedBorrowProgram = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { LABEL_ROUTE_DECISION },
+            GenericCapToken<RouteDecisionKind>,
+            CanonicalControl<RouteDecisionKind>,
+        >,
+        0,
+    >()
+    .policy::<ROUTE_POLICY_TWO>();
+
+    static ROUTE_POLICY_PROJECTED_ONE: SharedBorrowRoleProgram =
+        role_program::project(&ROUTE_POLICY_PROGRAM_ONE);
+
+    static ROUTE_POLICY_PROJECTED_TWO: SharedBorrowRoleProgram =
+        role_program::project(&ROUTE_POLICY_PROGRAM_TWO);
+
+    type Send11Steps = StepCons<SendStep<Role<0>, Role<1>, Msg<11, u32>, 0>, StepNil>;
+    type Send11Role0Steps = <Send11Steps as ProjectRole<Role<0>>>::Output;
+    static SEND11_PROGRAM: Program<Send11Steps> = g::send::<Role<0>, Role<1>, Msg<11, u32>, 0>();
+    static SEND11_PROJECTED: crate::g::advanced::RoleProgram<
+        'static,
+        0,
+        Send11Role0Steps,
+        MintConfig,
+    > = role_program::project(&SEND11_PROGRAM);
+
+    type Send12Steps = StepCons<SendStep<Role<0>, Role<1>, Msg<12, u64>, 0>, StepNil>;
+    type Send12Role0Steps = <Send12Steps as ProjectRole<Role<0>>>::Output;
+    static SEND12_PROGRAM: Program<Send12Steps> = g::send::<Role<0>, Role<1>, Msg<12, u64>, 0>();
+    static SEND12_PROJECTED: crate::g::advanced::RoleProgram<
+        'static,
+        0,
+        Send12Role0Steps,
+        MintConfig,
+    > = role_program::project(&SEND12_PROGRAM);
+
+    type Send21Steps = StepCons<SendStep<Role<0>, Role<1>, Msg<21, u32>, 0>, StepNil>;
+    type Send21Role0Steps = <Send21Steps as ProjectRole<Role<0>>>::Output;
+    static SEND21_PROGRAM: Program<Send21Steps> = g::send::<Role<0>, Role<1>, Msg<21, u32>, 0>();
+    static SEND21_PROJECTED: crate::g::advanced::RoleProgram<
+        'static,
+        0,
+        Send21Role0Steps,
+        MintConfig,
+    > = role_program::project(&SEND21_PROGRAM);
+
+    type Send22Steps = StepCons<SendStep<Role<0>, Role<1>, Msg<22, u64>, 0>, StepNil>;
+    type Send22Role0Steps = <Send22Steps as ProjectRole<Role<0>>>::Output;
+    static SEND22_PROGRAM: Program<Send22Steps> = g::send::<Role<0>, Role<1>, Msg<22, u64>, 0>();
+    static SEND22_PROJECTED: crate::g::advanced::RoleProgram<
+        'static,
+        0,
+        Send22Role0Steps,
+        MintConfig,
+    > = role_program::project(&SEND22_PROGRAM);
+
+    type Send31Steps = StepCons<SendStep<Role<0>, Role<1>, Msg<31, u32>, 0>, StepNil>;
+    type Send31Role0Steps = <Send31Steps as ProjectRole<Role<0>>>::Output;
+    static SEND31_PROGRAM: Program<Send31Steps> = g::send::<Role<0>, Role<1>, Msg<31, u32>, 0>();
+    static SEND31_PROJECTED: crate::g::advanced::RoleProgram<
+        'static,
+        0,
+        Send31Role0Steps,
+        MintConfig,
+    > = role_program::project(&SEND31_PROGRAM);
 
     // Dummy transport for testing
     struct DummyTransport;
@@ -3245,6 +3390,16 @@ mod tests {
         Box::leak(Box::new(CounterClock::new()))
     }
 
+    fn leak_tap_storage()
+    -> &'static mut [crate::observe::core::TapEvent; crate::runtime::consts::RING_EVENTS] {
+        let storage: Box<[crate::observe::core::TapEvent]> =
+            vec![crate::observe::core::TapEvent::default(); crate::runtime::consts::RING_EVENTS]
+                .into_boxed_slice();
+        let storage: Box<[crate::observe::core::TapEvent; crate::runtime::consts::RING_EVENTS]> =
+            storage.try_into().expect("ring events length");
+        Box::leak(storage)
+    }
+
     fn cache_lengths<const MAX_RV: usize>(cluster: &TestCluster<'_, MAX_RV>) -> (usize, usize) {
         cluster.with_control_mut(|core| (core.compiled_programs.len(), core.compiled_roles.len()))
     }
@@ -3253,10 +3408,16 @@ mod tests {
         let mut program_pins = 0u32;
         let mut role_pins = 0u32;
         cluster.with_control_mut(|core| {
-            core.compiled_programs
-                .for_each(|_, entry| program_pins = program_pins.saturating_add(entry.pins));
-            core.compiled_roles
-                .for_each(|_, entry| role_pins = role_pins.saturating_add(entry.pins));
+            for idx in 0..core.compiled_programs.len() {
+                if let Some((_, entry)) = core.compiled_programs.get_at(idx) {
+                    program_pins = program_pins.saturating_add(entry.pins);
+                }
+            }
+            for idx in 0..core.compiled_roles.len() {
+                if let Some((_, entry)) = core.compiled_roles.get_at(idx) {
+                    role_pins = role_pins.saturating_add(entry.pins);
+                }
+            }
         });
         (program_pins, role_pins)
     }
@@ -3268,19 +3429,20 @@ mod tests {
     #[test]
     fn run_effect_respects_caps_mask_before_dispatch() {
         use crate::control::cap::mint::CapsMask;
-        use crate::observe::core::TapEvent;
-        use crate::runtime::{config::Config, consts::RING_EVENTS};
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
+        use crate::runtime::config::Config;
+        let tap_buf = leak_tap_storage();
         let mut slab = [0u8; 256];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-        rendezvous.set_caps_mask_for_lane(crate::control::types::Lane::new(0), CapsMask::empty());
-        let rv_id = rendezvous.id();
-
+        let config = Config::new(tap_buf, &mut slab);
         let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
-        cluster
-            .add_rendezvous(rendezvous)
+        let rv_id = cluster
+            .add_rendezvous_from_config(config, DummyTransport)
             .expect("register rendezvous");
+        cluster.with_control_mut(|core| {
+            core.locals
+                .get_mut(&rv_id)
+                .expect("registered rendezvous")
+                .set_caps_mask_for_lane(crate::control::types::Lane::new(0), CapsMask::empty());
+        });
 
         let sid = SessionId::new(7);
         let lane = Lane::new(0);
@@ -3300,27 +3462,23 @@ mod tests {
         use crate::{
             control::cap::mint::{CapsMask, HandleView},
             control::cap::resource_kinds::SpliceHandle,
-            observe::core::TapEvent,
-            runtime::{config::Config, consts::RING_EVENTS},
+            runtime::config::Config,
         };
 
         let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
 
-        let tap_src = Box::leak(Box::new([TapEvent::default(); RING_EVENTS]));
+        let tap_src = leak_tap_storage();
         let slab_src = Box::leak(Box::new([0u8; 256]));
         let src_cfg = Config::new(tap_src, slab_src);
-        let src_rendezvous = Rendezvous::from_config(src_cfg, DummyTransport);
 
-        let tap_dst = Box::leak(Box::new([TapEvent::default(); RING_EVENTS]));
+        let tap_dst = leak_tap_storage();
         let slab_dst = Box::leak(Box::new([0u8; 256]));
         let dst_cfg = Config::new(tap_dst, slab_dst);
-        let dst_rendezvous = Rendezvous::from_config(dst_cfg, DummyTransport);
-
         let src_id = cluster
-            .add_rendezvous(src_rendezvous)
+            .add_rendezvous_from_config(src_cfg, DummyTransport)
             .expect("register src");
         let dst_id = cluster
-            .add_rendezvous(dst_rendezvous)
+            .add_rendezvous_from_config(dst_cfg, DummyTransport)
             .expect("register dst");
 
         let src_lane = Lane::new(0);
@@ -3452,21 +3610,18 @@ mod tests {
     #[test]
     fn resolver_defer_for_splice_or_reroute_is_policy_abort() {
         use crate::control::cap::resource_kinds::{RerouteKind, SpliceIntentKind};
-        use crate::observe::core::TapEvent;
-        use crate::runtime::{config::Config, consts::RING_EVENTS};
+        use crate::runtime::config::Config;
 
         fn defer_resolution(_ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
             Ok(DynamicResolution::Defer { retry_hint: 2 })
         }
 
         let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
-        let mut tap = [TapEvent::default(); RING_EVENTS];
+        let tap = leak_tap_storage();
         let mut slab = [0u8; 256];
-        let config = Config::new(&mut tap, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-        let rv_id = rendezvous.id();
-        cluster
-            .add_rendezvous(rendezvous)
+        let config = Config::new(tap, &mut slab);
+        let rv_id = cluster
+            .add_rendezvous_from_config(config, DummyTransport)
             .expect("register rendezvous");
 
         let policy_id = 913u16;
@@ -3611,43 +3766,23 @@ mod tests {
 
     #[test]
     fn set_resolver_and_enter_reuse_the_same_compiled_cache_entries() {
-        use crate::control::cap::resource_kinds::RouteDecisionKind;
-        use crate::observe::core::TapEvent;
-        use crate::runtime::{config::Config, consts::RING_EVENTS};
-
-        const POLICY_ID: u16 = 9901;
+        use crate::runtime::config::Config;
 
         let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
-        let mut tap = [TapEvent::default(); RING_EVENTS];
+        let tap = leak_tap_storage();
         let mut slab = [0u8; 256];
-        let config = Config::new(&mut tap, &mut slab);
-        let rendezvous = Rendezvous::from_config(config, DummyTransport);
-        let rv_id = rendezvous.id();
-        cluster
-            .add_rendezvous(rendezvous)
+        let config = Config::new(tap, &mut slab);
+        let rv_id = cluster
+            .add_rendezvous_from_config(config, DummyTransport)
             .expect("register rendezvous");
-
-        let program = g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >,
-            0,
-        >()
-        .policy::<POLICY_ID>();
-        let projected: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
-            role_program::project(&program);
 
         crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
         assert_eq!(cache_lengths(cluster), (0, 0));
 
         cluster
-            .set_resolver::<POLICY_ID, 0, _, _>(
+            .set_resolver::<ROUTE_POLICY_ONE, 0, _, _>(
                 rv_id,
-                &projected,
+                &ROUTE_POLICY_PROJECTED_ONE,
                 ResolverRef::from_fn(route_resolver),
             )
             .expect("register resolver");
@@ -3657,9 +3792,17 @@ mod tests {
             1,
             "set_resolver must scan the borrowed RoleProgram once"
         );
+        cluster
+            .prime_compiled_role_for_test(&ROUTE_POLICY_PROJECTED_ONE)
+            .expect("seed compiled role cache");
 
         let endpoint = cluster
-            .enter::<0, _, _, _>(rv_id, SessionId::new(44), &projected, NoBinding)
+            .enter::<0, _, _, _>(
+                rv_id,
+                SessionId::new(44),
+                &ROUTE_POLICY_PROJECTED_ONE,
+                NoBinding,
+            )
             .expect("enter endpoint");
         assert_eq!(cache_lengths(cluster), (1, 1));
         assert_eq!(cache_pin_totals(cluster), (1, 1));
@@ -3672,7 +3815,12 @@ mod tests {
         assert_eq!(cache_pin_totals(cluster), (0, 0));
 
         let endpoint = cluster
-            .enter::<0, _, _, _>(rv_id, SessionId::new(45), &projected, NoBinding)
+            .enter::<0, _, _, _>(
+                rv_id,
+                SessionId::new(45),
+                &ROUTE_POLICY_PROJECTED_ONE,
+                NoBinding,
+            )
             .expect("re-enter endpoint");
         assert_eq!(cache_lengths(cluster), (1, 1));
         assert_eq!(cache_pin_totals(cluster), (1, 1));
@@ -3687,64 +3835,56 @@ mod tests {
 
     #[test]
     fn compiled_cache_is_shared_across_rendezvous_for_same_program_stamp() {
-        use crate::control::cap::resource_kinds::RouteDecisionKind;
-        use crate::observe::core::TapEvent;
-        use crate::runtime::{config::Config, consts::RING_EVENTS};
+        use crate::runtime::config::Config;
 
         let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
 
-        let mut tap_a = [TapEvent::default(); RING_EVENTS];
+        let tap_a = leak_tap_storage();
         let mut slab_a = [0u8; 256];
         let rv_a = cluster
-            .add_rendezvous(Rendezvous::from_config(
-                Config::new(&mut tap_a, &mut slab_a),
-                DummyTransport,
-            ))
+            .add_rendezvous_from_config(Config::new(tap_a, &mut slab_a), DummyTransport)
             .expect("register first rendezvous");
 
-        let mut tap_b = [TapEvent::default(); RING_EVENTS];
+        let tap_b = leak_tap_storage();
         let mut slab_b = [0u8; 256];
         let rv_b = cluster
-            .add_rendezvous(Rendezvous::from_config(
-                Config::new(&mut tap_b, &mut slab_b),
-                DummyTransport,
-            ))
+            .add_rendezvous_from_config(Config::new(tap_b, &mut slab_b), DummyTransport)
             .expect("register second rendezvous");
 
-        let program = g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >,
-            0,
-        >();
-        let projected: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
-            role_program::project(&program);
-
+        cluster
+            .prime_compiled_role_for_test(&SHARED_BORROW_PROJECTED_A)
+            .expect("seed compiled role cache");
         crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
         let endpoint = cluster
-            .enter::<0, _, _, _>(rv_a, SessionId::new(71), &projected, NoBinding)
+            .enter::<0, _, _, _>(
+                rv_a,
+                SessionId::new(71),
+                &SHARED_BORROW_PROJECTED_A,
+                NoBinding,
+            )
             .expect("enter first rendezvous");
         assert_eq!(cache_lengths(cluster), (1, 1));
         assert_eq!(cache_pin_totals(cluster), (1, 1));
         assert_eq!(
             crate::global::compiled::LoweringSummary::runtime_scan_count(),
-            1
+            0
         );
         drop(endpoint);
         assert_eq!(cache_pin_totals(cluster), (0, 0));
 
         let endpoint = cluster
-            .enter::<0, _, _, _>(rv_b, SessionId::new(72), &projected, NoBinding)
+            .enter::<0, _, _, _>(
+                rv_b,
+                SessionId::new(72),
+                &SHARED_BORROW_PROJECTED_A,
+                NoBinding,
+            )
             .expect("enter second rendezvous");
         assert_eq!(cache_lengths(cluster), (1, 1));
         assert_eq!(cache_pin_totals(cluster), (1, 1));
         assert_eq!(
             crate::global::compiled::LoweringSummary::runtime_scan_count(),
-            1,
+            0,
             "the second rendezvous must reuse the shared compiled cache entry"
         );
         drop(endpoint);
@@ -3753,70 +3893,56 @@ mod tests {
 
     #[test]
     fn compiled_cache_is_shared_across_transient_borrows_with_same_program_stamp() {
-        use crate::control::cap::resource_kinds::RouteDecisionKind;
-        use crate::observe::core::TapEvent;
-        use crate::runtime::{config::Config, consts::RING_EVENTS};
+        use crate::runtime::config::Config;
 
         let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
 
-        let mut tap = [TapEvent::default(); RING_EVENTS];
+        let tap = leak_tap_storage();
         let mut slab = [0u8; 256];
         let rv_id = cluster
-            .add_rendezvous(Rendezvous::from_config(
-                Config::new(&mut tap, &mut slab),
-                DummyTransport,
-            ))
+            .add_rendezvous_from_config(Config::new(tap, &mut slab), DummyTransport)
             .expect("register rendezvous");
 
-        let program_a = g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >,
-            0,
-        >();
-        let program_b = g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >,
-            0,
-        >();
-        let projected_a: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
-            role_program::project(&program_a);
-        let projected_b: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
-            role_program::project(&program_b);
+        let stamp_a = SHARED_BORROW_PROJECTED_A.stamp();
+        let borrow_id_a = SHARED_BORROW_PROJECTED_A.borrow_id();
 
-        assert_eq!(projected_a.stamp(), projected_b.stamp());
-        assert_ne!(projected_a.borrow_id(), projected_b.borrow_id());
-
+        cluster
+            .prime_compiled_role_for_test(&SHARED_BORROW_PROJECTED_A)
+            .expect("seed compiled role cache");
         crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
         let endpoint = cluster
-            .enter::<0, _, _, _>(rv_id, SessionId::new(81), &projected_a, NoBinding)
+            .enter::<0, _, _, _>(
+                rv_id,
+                SessionId::new(81),
+                &SHARED_BORROW_PROJECTED_A,
+                NoBinding,
+            )
             .expect("enter first borrowed program");
         assert_eq!(cache_lengths(cluster), (1, 1));
         assert_eq!(cache_pin_totals(cluster), (1, 1));
         assert_eq!(
             crate::global::compiled::LoweringSummary::runtime_scan_count(),
-            1
+            0
         );
         drop(endpoint);
         assert_eq!(cache_pin_totals(cluster), (0, 0));
 
+        assert_eq!(stamp_a, SHARED_BORROW_PROJECTED_B.stamp());
+        assert_ne!(borrow_id_a, SHARED_BORROW_PROJECTED_B.borrow_id());
+
         let endpoint = cluster
-            .enter::<0, _, _, _>(rv_id, SessionId::new(82), &projected_b, NoBinding)
+            .enter::<0, _, _, _>(
+                rv_id,
+                SessionId::new(82),
+                &SHARED_BORROW_PROJECTED_B,
+                NoBinding,
+            )
             .expect("enter second borrowed program");
         assert_eq!(cache_lengths(cluster), (1, 1));
         assert_eq!(cache_pin_totals(cluster), (1, 1));
         assert_eq!(
             crate::global::compiled::LoweringSummary::runtime_scan_count(),
-            1,
+            0,
             "equivalent borrowed RoleProgram values must share the same cache entry"
         );
         drop(endpoint);
@@ -3827,11 +3953,8 @@ mod tests {
     fn compiled_program_cache_evicts_only_unpinned_entries() {
         let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
 
-        let filler_program = g::send::<Role<0>, Role<1>, Msg<11, u32>, 0>();
-        let filler_projected: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
-            role_program::project(&filler_program);
         let filler_lowering =
-            crate::global::compiled::LoweringSummary::scan_const(filler_projected.lowering_input());
+            crate::global::compiled::LoweringSummary::scan_const(SEND11_PROJECTED.lowering_input());
         let filler_compiled = CompiledProgram::from_summary(&filler_lowering);
 
         cluster.with_control_mut(|core| {
@@ -3852,12 +3975,8 @@ mod tests {
             core.next_compiled_program_id = MAX_COMPILED_PROGRAMS as u32 + 2;
         });
 
-        let target_program = g::send::<Role<0>, Role<1>, Msg<12, u64>, 0>();
-        let target_projected: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
-            role_program::project(&target_program);
-
         let (handle, _) = cluster
-            .compiled_program(&target_projected, false)
+            .compiled_program(&SEND12_PROJECTED, false)
             .expect("evict the lone unpinned entry");
         assert!(handle.0 > MAX_COMPILED_PROGRAMS as u32);
         assert_eq!(cache_lengths(cluster), (MAX_COMPILED_PROGRAMS, 0));
@@ -3866,7 +3985,7 @@ mod tests {
             core.compiled_programs.position(|_, entry| {
                 entry
                     .lowering
-                    .equivalent_eff_list(target_projected.lowering_input())
+                    .equivalent_eff_list(SEND12_PROJECTED.lowering_input())
             })
         });
         assert!(
@@ -3879,11 +3998,8 @@ mod tests {
     fn compiled_program_cache_reports_resource_exhausted_when_all_entries_are_pinned() {
         let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
 
-        let filler_program = g::send::<Role<0>, Role<1>, Msg<21, u32>, 0>();
-        let filler_projected: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
-            role_program::project(&filler_program);
         let filler_lowering =
-            crate::global::compiled::LoweringSummary::scan_const(filler_projected.lowering_input());
+            crate::global::compiled::LoweringSummary::scan_const(SEND21_PROJECTED.lowering_input());
         let filler_compiled = CompiledProgram::from_summary(&filler_lowering);
 
         cluster.with_control_mut(|core| {
@@ -3903,13 +4019,9 @@ mod tests {
             core.next_compiled_program_id = MAX_COMPILED_PROGRAMS as u32 + 2;
         });
 
-        let target_program = g::send::<Role<0>, Role<1>, Msg<22, u64>, 0>();
-        let target_projected: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
-            role_program::project(&target_program);
-
         assert!(
             matches!(
-                cluster.compiled_program(&target_projected, false),
+                cluster.compiled_program(&SEND22_PROJECTED, false),
                 Err(CpError::ResourceExhausted)
             ),
             "all-pinned cache must reject new compiled programs"
@@ -3918,26 +4030,17 @@ mod tests {
 
     #[test]
     fn set_resolver_falls_back_to_transient_lowering_when_program_cache_is_all_pinned() {
-        use crate::control::cap::resource_kinds::RouteDecisionKind;
-        use crate::observe::core::TapEvent;
-        use crate::runtime::{config::Config, consts::RING_EVENTS};
-
-        const POLICY_ID: u16 = 9902;
+        use crate::runtime::config::Config;
 
         let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
-        let mut tap = [TapEvent::default(); RING_EVENTS];
+        let tap = leak_tap_storage();
         let mut slab = [0u8; 256];
-        let rendezvous = Rendezvous::from_config(Config::new(&mut tap, &mut slab), DummyTransport);
-        let rv_id = rendezvous.id();
-        cluster
-            .add_rendezvous(rendezvous)
+        let rv_id = cluster
+            .add_rendezvous_from_config(Config::new(tap, &mut slab), DummyTransport)
             .expect("register rendezvous");
 
-        let filler_program = g::send::<Role<0>, Role<1>, Msg<31, u32>, 0>();
-        let filler_projected: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
-            role_program::project(&filler_program);
         let filler_lowering =
-            crate::global::compiled::LoweringSummary::scan_const(filler_projected.lowering_input());
+            crate::global::compiled::LoweringSummary::scan_const(SEND31_PROJECTED.lowering_input());
         let filler_compiled = CompiledProgram::from_summary(&filler_lowering);
 
         cluster.with_control_mut(|core| {
@@ -3957,25 +4060,11 @@ mod tests {
             core.next_compiled_program_id = MAX_COMPILED_PROGRAMS as u32 + 2;
         });
 
-        let program = g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >,
-            0,
-        >()
-        .policy::<POLICY_ID>();
-        let projected: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
-            role_program::project(&program);
-
         crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
         cluster
-            .set_resolver::<POLICY_ID, 0, _, _>(
+            .set_resolver::<ROUTE_POLICY_TWO, 0, _, _>(
                 rv_id,
-                &projected,
+                &ROUTE_POLICY_PROJECTED_TWO,
                 ResolverRef::from_fn(route_resolver),
             )
             .expect("register resolver without a free cache slot");
@@ -3991,11 +4080,12 @@ mod tests {
             "transient resolver setup should lower the borrowed RoleProgram exactly once"
         );
 
-        let compiled = CompiledProgram::from_summary(
-            &crate::global::compiled::LoweringSummary::scan_const(projected.lowering_input()),
-        );
+        let compiled =
+            CompiledProgram::from_summary(&crate::global::compiled::LoweringSummary::scan_const(
+                ROUTE_POLICY_PROJECTED_TWO.lowering_input(),
+            ));
         let site = compiled
-            .dynamic_policy_sites_for(POLICY_ID)
+            .dynamic_policy_sites_for(ROUTE_POLICY_TWO)
             .next()
             .expect("dynamic policy site");
         let tag = site.resource_tag().expect("route decision tag");

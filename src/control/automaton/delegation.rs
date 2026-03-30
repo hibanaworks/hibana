@@ -16,10 +16,7 @@ use crate::{
         lease::{
             bundle::LeaseBundleFacet,
             core::{ControlAutomaton, ControlStep, DelegationSpec, RendezvousLease},
-            graph::{
-                InlineLeaseChildStorage, InlineLeaseNodeStorage, LeaseGraph, LeaseSpec,
-            },
-            planner::{LeaseFacetNeeds, LeaseSpecFacetNeeds, facets_caps_delegation},
+            graph::{InlineLeaseChildStorage, InlineLeaseNodeStorage, LeaseGraph, LeaseSpec},
         },
         types::{Lane, RendezvousId, SessionId},
     },
@@ -31,8 +28,6 @@ use crate::{
 pub(crate) const DELEGATION_LEASE_MAX_NODES: usize = 8;
 /// Maximum child capacity for [`DelegationLeaseSpec`].
 pub(crate) const DELEGATION_LEASE_MAX_CHILDREN: usize = 6;
-
-const DELEGATION_FACET_NEEDS: LeaseFacetNeeds = facets_caps_delegation();
 
 /// LeaseGraph specification for delegation orchestration.
 pub(crate) struct DelegationLeaseSpec<T, U, C, E>(PhantomData<(T, U, C, E)>);
@@ -53,19 +48,6 @@ where
         Self: 'graph;
     const MAX_NODES: usize = DELEGATION_LEASE_MAX_NODES;
     const MAX_CHILDREN: usize = DELEGATION_LEASE_MAX_CHILDREN;
-}
-
-impl<T, U, C, E> LeaseSpecFacetNeeds for DelegationLeaseSpec<T, U, C, E>
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
-{
-    #[inline(always)]
-    fn facet_needs() -> LeaseFacetNeeds {
-        DELEGATION_FACET_NEEDS
-    }
 }
 
 /// Seed describing a canonical delegation mint operation.

@@ -5,8 +5,6 @@
 
 use core::ptr;
 
-#[cfg(test)]
-use super::compiled::CompiledRole;
 use super::{
     compiled::{ProgramStamp, ProjectionSeal},
     program::Program,
@@ -279,17 +277,25 @@ pub(crate) struct ProjectedRoleLayout {
 
 impl ProjectedRoleLayout {
     #[inline(always)]
-    pub(super) unsafe fn init(
+    pub(super) unsafe fn init_from_refs(
         dst: *mut Self,
-        local_steps: [LocalStep; MAX_STEPS],
+        local_steps: &[LocalStep; MAX_STEPS],
         local_len: usize,
-        phases: [Phase; MAX_PHASES],
+        phases: &[Phase; MAX_PHASES],
         phase_len: usize,
     ) {
         unsafe {
-            ptr::addr_of_mut!((*dst).local_steps).write(local_steps);
+            ptr::copy_nonoverlapping(
+                local_steps.as_ptr(),
+                ptr::addr_of_mut!((*dst).local_steps).cast::<LocalStep>(),
+                MAX_STEPS,
+            );
             ptr::addr_of_mut!((*dst).local_len).write(local_len);
-            ptr::addr_of_mut!((*dst).phases).write(phases);
+            ptr::copy_nonoverlapping(
+                phases.as_ptr(),
+                ptr::addr_of_mut!((*dst).phases).cast::<Phase>(),
+                MAX_PHASES,
+            );
             ptr::addr_of_mut!((*dst).phase_len).write(phase_len);
         }
     }
@@ -361,12 +367,6 @@ where
         self.eff_list
     }
 
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) fn compile_role(&self) -> CompiledRole {
-        CompiledRole::compile::<ROLE>(self.eff_list)
-    }
-
     /// Mint configuration baked into the RoleProgram.
     #[inline(always)]
     pub(crate) const fn mint_config(&self) -> Mint {
@@ -389,13 +389,33 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::boxed::Box;
+
     use super::*;
     use crate::control::cap::mint::{CapShot, GenericCapToken};
     use crate::control::cap::resource_kinds::CancelKind;
     use crate::g::{self, Msg, Role};
     use crate::global::CanonicalControl;
+    use crate::global::compiled::{CompiledRole, LoweringSummary};
     use crate::global::const_dsl::{ScopeEvent, ScopeKind};
     use crate::global::steps::{self, ProjectRole, SeqSteps, StepConcat, StepCons, StepNil};
+    use crate::global::typestate::RoleCompileScratch;
+
+    fn compile_role_boxed<const ROLE: u8, LocalSteps>(
+        program: &RoleProgram<'_, ROLE, LocalSteps, MintConfig>,
+    ) -> Box<CompiledRole> {
+        let summary = LoweringSummary::scan_const(program.lowering_input());
+        let mut compiled = Box::<CompiledRole>::new_uninit();
+        let mut scratch = Box::new(RoleCompileScratch::new());
+        unsafe {
+            CompiledRole::init_from_summary::<ROLE>(
+                compiled.as_mut_ptr(),
+                &summary,
+                scratch.as_mut(),
+            );
+            compiled.assume_init()
+        }
+    }
 
     const PROTOCOL: Program<
         SeqSteps<
@@ -562,7 +582,7 @@ mod tests {
 
     #[test]
     fn projection_extracts_role_view() {
-        let role_zero = ROLE_ZERO.compile_role();
+        let role_zero = compile_role_boxed(&ROLE_ZERO);
         let role_zero_layout = role_zero.layout();
         assert_eq!(role_zero_layout.len(), 2);
         assert!(role_zero_layout.steps()[0].is_send());
@@ -570,7 +590,7 @@ mod tests {
         assert_eq!(role_zero_layout.steps()[0].peer(), 1);
         assert_eq!(role_zero_layout.steps()[1].peer(), 1);
 
-        let role_one = ROLE_ONE.compile_role();
+        let role_one = compile_role_boxed(&ROLE_ONE);
         let role_one_layout = role_one.layout();
         assert_eq!(role_one_layout.len(), 2);
         assert!(role_one_layout.steps()[0].is_recv());
@@ -613,7 +633,7 @@ mod tests {
     #[test]
     fn control_step_carries_shot_metadata() {
         // CancelMsg is a self-send (Client→Client), which projects to LocalAction
-        let cancel_role = CANCEL_ROLE.compile_role();
+        let cancel_role = compile_role_boxed(&CANCEL_ROLE);
         let cancel_layout = cancel_role.layout();
         assert_eq!(cancel_layout.len(), 1);
         let step = cancel_layout.steps()[0];
@@ -624,7 +644,7 @@ mod tests {
 
     #[test]
     fn local_action_projects_as_local_step() {
-        let local_role = LOCAL_ROLE.compile_role();
+        let local_role = compile_role_boxed(&LOCAL_ROLE);
         let local_layout = local_role.layout();
         assert_eq!(local_layout.len(), 1);
         let step = local_layout.steps()[0];
@@ -640,7 +660,7 @@ mod tests {
 
     #[test]
     fn chained_projection_preserves_typed_local_steps() {
-        let chain_role = CHAIN_ROLE.compile_role();
+        let chain_role = compile_role_boxed(&CHAIN_ROLE);
         let chain_layout = chain_role.layout();
         assert_eq!(chain_layout.len(), 3);
         assert!(chain_layout.steps()[0].is_local_action());
@@ -669,8 +689,8 @@ mod tests {
             MintConfig,
         > = project(&PARALLEL_PROGRAM);
 
-        let client_projection = client.compile_role();
-        let server_projection = server.compile_role();
+        let client_projection = compile_role_boxed(&client);
+        let server_projection = compile_role_boxed(&server);
 
         assert_eq!(client_projection.layout().phase_count(), 1);
         assert_eq!(server_projection.layout().phase_count(), 1);

@@ -1,5 +1,7 @@
+#[cfg(test)]
 use core::convert::TryInto;
 
+#[cfg(test)]
 use super::{Slot, ops, slot_contract};
 
 /// VM header as laid out in bytecode (after the four-byte magic).
@@ -16,10 +18,12 @@ impl Header {
     pub const MAGIC: [u8; 4] = *b"K1VM";
     pub const SIZE: usize = 4 + 2 + 2 + 2 + 2 + 4;
 
+    #[cfg(test)]
     pub const fn max_mem_len() -> usize {
         1024
     }
 
+    #[cfg(test)]
     pub(crate) fn parse(bytes: &[u8]) -> Result<Self, VerifyError> {
         if bytes.len() < Self::SIZE {
             return Err(VerifyError::TooShort);
@@ -47,6 +51,7 @@ impl Header {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn encode_into(&self, buf: &mut [u8; Self::SIZE]) {
         buf[..4].copy_from_slice(&Self::MAGIC);
         buf[4..6].copy_from_slice(&self.code_len.to_le_bytes());
@@ -58,6 +63,7 @@ impl Header {
 }
 
 /// Verification failures raised while loading a bytecode image.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum VerifyError {
     TooShort,
@@ -92,14 +98,17 @@ impl<'a> core::fmt::Debug for VerifiedImage<'a> {
 impl<'a> VerifiedImage<'a> {
     pub(crate) const MAX_CODE_LEN: usize = 2048;
 
+    #[cfg(test)]
     pub(crate) fn new(bytes: &'a [u8]) -> Result<Self, VerifyError> {
         Self::new_inner(bytes, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn new_for_slot(bytes: &'a [u8], slot: Slot) -> Result<Self, VerifyError> {
         Self::new_inner(bytes, Some(slot))
     }
 
+    #[cfg(test)]
     fn new_inner(bytes: &'a [u8], slot: Option<Slot>) -> Result<Self, VerifyError> {
         if bytes.len() < Header::SIZE {
             return Err(VerifyError::TooShort);
@@ -131,6 +140,7 @@ impl<'a> VerifiedImage<'a> {
     }
 }
 
+#[cfg(test)]
 fn verify_epf_input_operands(code: &[u8], slot: Option<Slot>) -> Result<(), VerifyError> {
     let mut pc = 0usize;
     while pc < code.len() {
@@ -190,6 +200,7 @@ fn verify_epf_input_operands(code: &[u8], slot: Option<Slot>) -> Result<(), Veri
 }
 
 /// Deterministic 32-bit hash (FNV-1a) used for bytecode integrity.
+#[cfg(test)]
 pub(crate) fn compute_hash(code: &[u8]) -> u32 {
     const OFFSET: u32 = 0x811C_9DC5;
     const PRIME: u32 = 0x0100_0193;

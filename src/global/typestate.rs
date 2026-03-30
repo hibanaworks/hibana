@@ -7,7 +7,13 @@
 
 mod builder;
 mod cursor;
+mod emit;
+mod emit_route;
+mod emit_scope;
+mod emit_walk;
 mod facts;
+mod registry;
+mod route_facts;
 
 pub use self::facts::StateIndex;
 #[allow(unused_imports)]
@@ -16,6 +22,7 @@ pub(crate) use self::{
         ARM_SHARED, MAX_FIRST_RECV_DISPATCH, RoleTypestate, RoleTypestateValue, ScopeRegion,
     },
     cursor::{LoopMetadata, LoopRole, PhaseCursor},
+    emit::RoleCompileScratch,
     facts::{
         JumpError, JumpReason, LocalAction, LocalMeta, LocalNode, MAX_STATES, PassiveArmNavigation,
         RecvMeta, SendMeta, as_eff_index, as_state_index, state_index_to_usize, try_local_meta,
@@ -58,17 +65,37 @@ pub(crate) fn try_local_meta(&self) -> Option<LocalMeta>
 
 #[cfg(test)]
 mod tests {
+    use std::boxed::Box;
+
     use super::{LocalAction, PhaseCursor, StateIndex};
     use crate::control::cap::mint::GenericCapToken;
     use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
     use crate::eff::EffIndex;
     use crate::g::{self, Msg, Role};
+    use crate::global::compiled::{CompiledRole, LoweringSummary};
     use crate::global::const_dsl::{PolicyMode, ScopeKind};
     use crate::global::role_program;
     use crate::global::role_program::{RoleProgram, project};
     use crate::global::steps::{LoopSteps, ProjectRole, SendStep, StepConcat, StepCons, StepNil};
+    use crate::global::typestate::RoleCompileScratch;
     use crate::global::{CanonicalControl, MessageSpec};
     use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
+
+    fn compile_role_boxed<const ROLE: u8, LocalSteps>(
+        program: &RoleProgram<'_, ROLE, LocalSteps>,
+    ) -> Box<CompiledRole> {
+        let summary = LoweringSummary::scan_const(program.lowering_input());
+        let mut compiled = Box::<CompiledRole>::new_uninit();
+        let mut scratch = Box::new(RoleCompileScratch::new());
+        unsafe {
+            CompiledRole::init_from_summary::<ROLE>(
+                compiled.as_mut_ptr(),
+                &summary,
+                scratch.as_mut(),
+            );
+            compiled.assume_init()
+        }
+    }
 
     const BODY: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>> =
         g::send::<Role<0>, Role<1>, Msg<7, ()>, 0>();
@@ -172,8 +199,8 @@ mod tests {
 
     #[test]
     fn state_cursor_rewinds_on_loop_continue() {
-        let compiled = CONTROLLER_PROGRAM.compile_role();
-        let decision = PhaseCursor::new(&compiled);
+        let compiled = compile_role_boxed(&CONTROLLER_PROGRAM);
+        let decision = PhaseCursor::new(compiled.as_ref());
         let continue_branch = decision
             .seek_label(LABEL_LOOP_CONTINUE)
             .expect("continue branch available");
@@ -191,8 +218,8 @@ mod tests {
 
     #[test]
     fn state_cursor_loop_branch_successors() {
-        let controller_compiled = CONTROLLER_PROGRAM.compile_role();
-        let decision = PhaseCursor::new(&controller_compiled);
+        let controller_compiled = compile_role_boxed(&CONTROLLER_PROGRAM);
+        let decision = PhaseCursor::new(controller_compiled.as_ref());
         assert_eq!(decision.scope_kind(), Some(ScopeKind::Route));
         let cont_cursor = decision
             .seek_label(LABEL_LOOP_CONTINUE)
@@ -218,8 +245,8 @@ mod tests {
         // LoopContinue/LoopBreak self-sends. With self-send CanonicalControl,
         // Target's projection contains only the actual cross-role messages,
         // plus PassiveObserverBranch Jump nodes for empty arms (Break arm in this case).
-        let target_compiled = TARGET_PROGRAM.compile_role();
-        let target_cursor = PhaseCursor::new(&target_compiled);
+        let target_compiled = compile_role_boxed(&TARGET_PROGRAM);
+        let target_cursor = PhaseCursor::new(target_compiled.as_ref());
         // Target sees label 7 (the loop body recv) directly
         assert_eq!(target_cursor.label(), Some(7));
 
@@ -353,7 +380,7 @@ mod tests {
             >>::Output as ProjectRole<Role<0>>>::Output,
         > = project(&ROUTE);
 
-        let compiled = CONTROLLER.compile_role();
+        let compiled = compile_role_boxed(&CONTROLLER);
         let cursor = PhaseCursor::new(&compiled);
         assert_eq!(cursor.scope_kind(), Some(ScopeKind::Route));
         let scope_id = cursor.scope_id().expect("route scope id present");
@@ -367,7 +394,7 @@ mod tests {
 
     #[test]
     fn local_action_produces_metadata() {
-        let compiled = LOCAL_ROLE.compile_role();
+        let compiled = compile_role_boxed(&LOCAL_ROLE);
         let cursor = PhaseCursor::new(&compiled);
         assert!(cursor.is_local_action());
         assert_eq!(cursor.label(), Some(<Msg<9, ()> as MessageSpec>::LABEL));

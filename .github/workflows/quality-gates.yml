@@ -25,6 +25,8 @@ jobs:
         run: ./.github/scripts/check_lowering_hygiene.sh
       - name: Surface hygiene gate
         run: ./.github/scripts/check_surface_hygiene.sh
+      - name: Warning-free gate
+        run: ./.github/scripts/check_warning_free.sh
       - name: Direct projection binary gate
         run: ./.github/scripts/check_direct_projection_binary.sh
       - name: no_std build gate

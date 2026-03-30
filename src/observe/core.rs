@@ -14,12 +14,12 @@
 //! This separation prevents Observer Effect feedback loops where streaming
 //! infrastructure events would otherwise flood the ring.
 //!
+#[cfg(test)]
+use core::slice;
 use core::{
-    cell::UnsafeCell,
     marker::PhantomData,
-    ptr, slice,
-    sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering},
-    task::Waker,
+    ptr,
+    sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
 };
 
 #[cfg(test)]
@@ -133,174 +133,6 @@ impl TapEvent {
 /// - Events: 50 × 20 bytes = 1000 bytes
 /// - Total: 1005 bytes
 pub(crate) const TAP_BATCH_MAX_EVENTS: usize = 50;
-
-/// Batch of tap events for efficient streaming.
-///
-/// Wire format: `[count:u8][lost_events:u32][events:TapEvent×count]`
-///
-/// The `lost_events` field reports how many events were dropped due to
-/// ring buffer overrun (backpressure loss). This enables consumers to
-/// detect gaps in the event stream.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct TapBatch {
-    events: [TapEvent; TAP_BATCH_MAX_EVENTS],
-    count: u8,
-    lost_events: u32,
-}
-
-impl Default for TapBatch {
-    fn default() -> Self {
-        Self::empty()
-    }
-}
-
-impl TapBatch {
-    /// Create an empty batch.
-    #[inline]
-    pub const fn empty() -> Self {
-        Self {
-            events: [TapEvent::zero(); TAP_BATCH_MAX_EVENTS],
-            count: 0,
-            lost_events: 0,
-        }
-    }
-
-    /// Push an event into the batch. Returns `true` if successful.
-    #[inline]
-    pub fn push(&mut self, event: TapEvent) -> bool {
-        if (self.count as usize) < TAP_BATCH_MAX_EVENTS {
-            self.events[self.count as usize] = event;
-            self.count += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Check if the batch is full.
-    #[inline]
-    pub const fn is_full(&self) -> bool {
-        self.count as usize >= TAP_BATCH_MAX_EVENTS
-    }
-
-    /// Number of events in the batch.
-    #[inline]
-    pub const fn len(&self) -> usize {
-        self.count as usize
-    }
-
-    /// Number of events lost due to ring overrun.
-    #[inline]
-    pub const fn lost_events(&self) -> u32 {
-        self.lost_events
-    }
-
-    /// Set the number of lost events.
-    #[inline]
-    pub fn set_lost_events(&mut self, lost: u32) {
-        self.lost_events = lost;
-    }
-
-    /// Iterate over events in the batch.
-    #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = &TapEvent> {
-        self.events[..self.count as usize].iter()
-    }
-}
-
-// -----------------------------------------------------------------------------
-// WakerSlot: no_std spinlock-based Waker management for streaming observe
-// -----------------------------------------------------------------------------
-
-const WAKER_UNLOCKED: u8 = 0;
-const WAKER_LOCKED: u8 = 1;
-
-/// Thread-safe slot for storing a single [`Waker`].
-///
-/// Uses a spinlock for `no_std` / `no_alloc` compatibility. Intended for
-/// streaming observe where a single observer awaits new tap events.
-struct WakerSlot {
-    lock: AtomicU8,
-    waker: UnsafeCell<Option<Waker>>,
-}
-
-unsafe impl Send for WakerSlot {}
-unsafe impl Sync for WakerSlot {}
-
-impl WakerSlot {
-    /// Create a new empty waker slot.
-    const fn new() -> Self {
-        Self {
-            lock: AtomicU8::new(WAKER_UNLOCKED),
-            waker: UnsafeCell::new(None),
-        }
-    }
-
-    #[inline]
-    fn acquire(&self) {
-        while self
-            .lock
-            .compare_exchange_weak(
-                WAKER_UNLOCKED,
-                WAKER_LOCKED,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            )
-            .is_err()
-        {
-            core::hint::spin_loop();
-        }
-    }
-
-    #[inline]
-    fn release(&self) {
-        self.lock.store(WAKER_UNLOCKED, Ordering::Release);
-    }
-
-    /// Register a waker to be notified on new events.
-    fn register(&self, waker: &Waker) {
-        self.acquire();
-        // SAFETY: We hold the spinlock
-        unsafe {
-            *self.waker.get() = Some(waker.clone());
-        }
-        self.release();
-    }
-
-    /// Wake the registered waker (if any) WITHOUT clearing it.
-    ///
-    /// This allows the same waker to be notified multiple times without
-    /// requiring re-registration after each wake. Essential for high-throughput
-    /// streaming where events may arrive faster than the observer can poll.
-    fn wake(&self) {
-        self.acquire();
-        // SAFETY: We hold the spinlock
-        let waker_ref = unsafe { (*self.waker.get()).as_ref() };
-        if let Some(w) = waker_ref {
-            w.wake_by_ref();
-        }
-        self.release();
-    }
-}
-
-impl Default for WakerSlot {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Waker for User ring observers (id < 0x0100).
-static USER_WAKER: WakerSlot = WakerSlot::new();
-
-/// Register a waker to be notified when new USER tap events are pushed.
-fn register_user_waker(waker: &Waker) {
-    USER_WAKER.register(waker);
-}
-
-/// Wake observers waiting for USER ring events.
-fn wake_user_observers() {
-    USER_WAKER.wake();
-}
 
 /// Single-producer ring buffer suited for DMA/SHM environments.
 struct RingBuffer<'a> {
@@ -514,9 +346,7 @@ impl GlobalTap {
     fn invoke_post(&self, event: &TapEvent) {
         #[cfg(test)]
         crate::observe::check::feed(*event);
-        if event.id < ids::USER_EVENT_RANGE_END {
-            wake_user_observers();
-        }
+        let _ = event;
     }
 }
 
@@ -540,15 +370,6 @@ pub(crate) fn push(event: TapEvent) {
 
 pub(crate) fn emit(ring: &TapRing<'_>, event: TapEvent) {
     ring.push(event);
-}
-
-pub(crate) fn user_head() -> Option<usize> {
-    GLOBAL_TAP.with_ring(|ring| ring.user_head())
-}
-
-/// Read the USER event at a specific index (modulo ring size).
-pub(crate) fn read_user_at(index: usize) -> Option<TapEvent> {
-    GLOBAL_TAP.with_ring(|ring| ring.user_slice()[index % RING_BUFFER_SIZE])
 }
 
 #[cfg(test)]
@@ -728,11 +549,13 @@ impl<'a> RingBuffer<'a> {
         }
     }
 
+    #[cfg(test)]
     fn as_slice(&self) -> &[TapEvent] {
         unsafe { slice::from_raw_parts(self.storage, RING_BUFFER_SIZE) }
     }
 
     /// Returns the number of events that have been pushed since initialisation.
+    #[cfg(test)]
     fn head(&self) -> usize {
         self.head.load(Ordering::Relaxed)
     }
@@ -813,16 +636,6 @@ impl<'a> TapRing<'a> {
         self.infra.head()
     }
 
-    /// Returns the raw storage of the USER ring.
-    pub(crate) fn user_slice(&self) -> &[TapEvent] {
-        self.user.as_slice()
-    }
-
-    /// Returns the head of the USER ring.
-    pub(crate) fn user_head(&self) -> usize {
-        self.user.head()
-    }
-
     #[cfg(test)]
     pub(crate) fn events_since<'cursor, T, F>(
         &'a self,
@@ -836,50 +649,6 @@ impl<'a> TapRing<'a> {
         'a: 'cursor,
     {
         self.infra.events_since(cursor, mapper)
-    }
-}
-
-// -----------------------------------------------------------------------------
-// WaitForNewUserEvents: Future for streaming user observe
-// -----------------------------------------------------------------------------
-
-use core::{
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-};
-
-/// Future that resolves when new USER tap events are available.
-///
-/// This future is only woken when User ring events (id < 0x0100) are pushed.
-pub(crate) struct WaitForNewUserEvents {
-    last_seen: usize,
-}
-
-impl WaitForNewUserEvents {
-    /// Create a future that waits for user events after `cursor`.
-    pub(crate) fn new(cursor: usize) -> Self {
-        Self { last_seen: cursor }
-    }
-}
-
-impl Future for WaitForNewUserEvents {
-    type Output = usize;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let current_head = user_head().unwrap_or(0);
-        if current_head > self.last_seen {
-            return Poll::Ready(current_head);
-        }
-        // Register with USER_WAKER (not INFRA_WAKER)
-        register_user_waker(cx.waker());
-        // Double-check after registration
-        let current_head = user_head().unwrap_or(0);
-        if current_head > self.last_seen {
-            Poll::Ready(current_head)
-        } else {
-            Poll::Pending
-        }
     }
 }
 

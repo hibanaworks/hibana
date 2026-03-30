@@ -14,13 +14,13 @@ note: inside `hibana::global::compiled::seal::ProjectionSeal::<1>::validate_and_
     |
     |         let typestate = RoleTypestate::<ROLE>::from_summary(&summary);
     |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::typestate::builder::RoleTypestate::<1>::from_summary`
-   --> src/global/typestate/builder.rs
+note: inside `hibana::global::typestate::emit::<impl hibana::global::typestate::builder::RoleTypestate<1>>::from_summary`
+   --> src/global/typestate/emit.rs
     |
-    |         Self::build(view, view.as_slice())
-    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::typestate::builder::RoleTypestate::<1>::build`
-   --> src/global/typestate/builder.rs
+    |         super::emit_walk::build_role_typestate::<ROLE>(view, view.as_slice())
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::typestate::emit_walk::build_role_typestate::<1>`
+   --> src/global/typestate/emit_walk.rs
     |
     | / ...   panic!(
     | | ...       "Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dynamic policy annotation provi...

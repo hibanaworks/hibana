@@ -1,4 +1,4 @@
-use hibana::substrate::{mgmt::session::tap::TapEvent, runtime::CounterClock};
+use hibana::substrate::{mgmt::tap::TapEvent, runtime::CounterClock};
 use std::boxed::Box;
 
 pub(crate) const RING_EVENTS: usize = 2048;

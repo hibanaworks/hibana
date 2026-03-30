@@ -7,8 +7,8 @@ use crate::global::{
         ProjectedRoleLayout,
     },
     typestate::{
-        ARM_SHARED, LocalAction, MAX_FIRST_RECV_DISPATCH, RoleTypestate, RoleTypestateValue,
-        StateIndex,
+        ARM_SHARED, LocalAction, MAX_FIRST_RECV_DISPATCH, RoleCompileScratch, RoleTypestate,
+        RoleTypestateValue, StateIndex,
     },
 };
 
@@ -119,57 +119,72 @@ pub(crate) struct CompiledRole {
 }
 
 impl CompiledRole {
-    #[inline(always)]
-    #[cfg(test)]
-    pub(crate) fn compile<const ROLE: u8>(eff_list: &crate::global::const_dsl::EffList) -> Self {
-        let summary = LoweringSummary::scan_const(eff_list);
-        Self::from_summary::<ROLE>(&summary)
-    }
-
-    #[inline(always)]
-    #[cfg(test)]
-    pub(crate) fn from_summary<const ROLE: u8>(summary: &LoweringSummary) -> Self {
-        let mut compiled = core::mem::MaybeUninit::<Self>::uninit();
-        unsafe {
-            Self::init_from_summary::<ROLE>(compiled.as_mut_ptr(), summary);
-            compiled.assume_init()
-        }
-    }
-
-    #[inline(always)]
+    #[inline(never)]
     pub(crate) unsafe fn init_from_summary<const ROLE: u8>(
         dst: *mut Self,
         summary: &LoweringSummary,
+        scratch: &mut RoleCompileScratch,
     ) {
-        let typed_typestate = RoleTypestate::<ROLE>::from_summary(summary);
-        let (steps, len, eff_index_to_step) = Self::build_local_steps::<ROLE>(&typed_typestate);
-        let step_index_to_state = Self::build_step_index_to_state::<ROLE>(
-            &typed_typestate,
-            &steps,
-            len,
-            &eff_index_to_step,
-        );
-        let (phases, phase_len) =
-            Self::build_phases::<ROLE>(&steps, len, &typed_typestate, &step_index_to_state);
-        let active_lanes = Self::build_active_lanes_from_phases(&phases, phase_len);
-        let controller_arm_table = Self::build_controller_arm_table(&typed_typestate);
-        let first_recv_dispatch = Self::build_first_recv_dispatch_table(&typed_typestate);
         unsafe {
             ptr::addr_of_mut!((*dst).role).write(ROLE);
-            ProjectedRoleLayout::init(
+            RoleTypestate::<ROLE>::init_value_from_summary(
+                ptr::addr_of_mut!((*dst).typestate),
+                summary,
+            );
+        }
+        let typed_typestate =
+            unsafe { &*core::ptr::addr_of!((*dst).typestate).cast::<RoleTypestate<ROLE>>() };
+        let len = Self::build_local_steps_into::<ROLE>(
+            typed_typestate,
+            &mut scratch.by_eff_index,
+            &mut scratch.present,
+            &mut scratch.steps,
+            &mut scratch.eff_index_to_step,
+        );
+        Self::build_step_index_to_state_into::<ROLE>(
+            typed_typestate,
+            &scratch.steps,
+            len,
+            &scratch.eff_index_to_step,
+            &mut scratch.step_index_to_state,
+        );
+        let phase_len = Self::build_phases_into::<ROLE>(
+            &scratch.steps,
+            len,
+            typed_typestate,
+            &scratch.step_index_to_state,
+            &mut scratch.route_guards,
+            &mut scratch.phases,
+            &mut scratch.parallel_ranges,
+        );
+        unsafe {
+            ProjectedRoleLayout::init_from_refs(
                 ptr::addr_of_mut!((*dst).layout),
-                steps,
+                &scratch.steps,
                 len,
-                phases,
+                &scratch.phases,
                 phase_len,
             );
-            ptr::addr_of_mut!((*dst).typestate).write(typed_typestate.into_value());
-            ptr::addr_of_mut!((*dst).eff_index_to_step).write(eff_index_to_step);
-            ptr::addr_of_mut!((*dst).step_index_to_state).write(step_index_to_state);
-            ptr::addr_of_mut!((*dst).active_lanes).write(active_lanes);
-            ptr::addr_of_mut!((*dst).controller_arm_table).write(controller_arm_table);
-            ptr::addr_of_mut!((*dst).first_recv_dispatch).write(first_recv_dispatch);
+            core::ptr::copy_nonoverlapping(
+                scratch.eff_index_to_step.as_ptr(),
+                ptr::addr_of_mut!((*dst).eff_index_to_step).cast::<u16>(),
+                MAX_STEPS,
+            );
+            core::ptr::copy_nonoverlapping(
+                scratch.step_index_to_state.as_ptr(),
+                ptr::addr_of_mut!((*dst).step_index_to_state).cast::<StateIndex>(),
+                MAX_STEPS,
+            );
         }
+        Self::build_active_lanes_from_phases_into(&scratch.phases, phase_len, unsafe {
+            &mut *ptr::addr_of_mut!((*dst).active_lanes)
+        });
+        Self::build_controller_arm_table_into(typed_typestate, unsafe {
+            &mut *ptr::addr_of_mut!((*dst).controller_arm_table)
+        });
+        Self::build_first_recv_dispatch_table_into(typed_typestate, unsafe {
+            &mut *ptr::addr_of_mut!((*dst).first_recv_dispatch)
+        });
     }
 
     #[inline(always)]
@@ -257,46 +272,51 @@ impl CompiledRole {
         self.first_recv_dispatch.entry(scope, idx)
     }
 
-    fn build_active_lanes_from_phases(
+    fn build_active_lanes_from_phases_into(
         phases: &[Phase; MAX_PHASES],
         phase_len: usize,
-    ) -> [bool; MAX_LANES] {
-        let mut active = [false; MAX_LANES];
+        dst: &mut [bool; MAX_LANES],
+    ) {
+        let mut lane_idx = 0usize;
+        while lane_idx < MAX_LANES {
+            dst[lane_idx] = false;
+            lane_idx += 1;
+        }
         let mut phase_idx = 0usize;
         while phase_idx < phase_len {
             let phase = phases[phase_idx];
             let mut lane_idx = 0usize;
             while lane_idx < MAX_LANES {
                 if phase.lanes[lane_idx].is_active() {
-                    active[lane_idx] = true;
+                    dst[lane_idx] = true;
                 }
                 lane_idx += 1;
             }
             phase_idx += 1;
         }
-        active
     }
 
-    const fn build_controller_arm_table<const ROLE: u8>(
+    fn build_controller_arm_table_into<const ROLE: u8>(
         typestate: &RoleTypestate<ROLE>,
-    ) -> ControllerArmTable {
-        let mut table = ControllerArmTable::EMPTY;
+        dst: &mut ControllerArmTable,
+    ) {
+        *dst = ControllerArmTable::EMPTY;
         let mut ordinal = 0usize;
         while ordinal < crate::global::const_dsl::ScopeId::ORDINAL_CAPACITY as usize {
             let scope_id = ScopeId::route(ordinal as u16);
             let mut arm = 0u8;
             while arm <= 1 {
                 if let Some((entry, label)) = typestate.controller_arm_entry_by_arm(scope_id, arm) {
-                    if table.len >= ControllerArmTable::MAX_ENTRIES {
+                    if dst.len >= ControllerArmTable::MAX_ENTRIES {
                         panic!("controller arm table capacity exceeded");
                     }
-                    table.entries[table.len] = ControllerArmEntry {
+                    dst.entries[dst.len] = ControllerArmEntry {
                         scope: scope_id,
                         arm,
                         entry,
                         label,
                     };
-                    table.len += 1;
+                    dst.len += 1;
                 }
                 if arm == 1 {
                     break;
@@ -310,16 +330,16 @@ impl CompiledRole {
                 if let Some((entry, label)) =
                     typestate.controller_arm_entry_by_arm(loop_scope, loop_arm)
                 {
-                    if table.len >= ControllerArmTable::MAX_ENTRIES {
+                    if dst.len >= ControllerArmTable::MAX_ENTRIES {
                         panic!("controller arm table capacity exceeded");
                     }
-                    table.entries[table.len] = ControllerArmEntry {
+                    dst.entries[dst.len] = ControllerArmEntry {
                         scope: loop_scope,
                         arm: loop_arm,
                         entry,
                         label,
                     };
-                    table.len += 1;
+                    dst.len += 1;
                 }
                 if loop_arm == 1 {
                     break;
@@ -328,13 +348,13 @@ impl CompiledRole {
             }
             ordinal += 1;
         }
-        table
     }
 
-    const fn build_first_recv_dispatch_table<const ROLE: u8>(
+    fn build_first_recv_dispatch_table_into<const ROLE: u8>(
         typestate: &RoleTypestate<ROLE>,
-    ) -> FirstRecvDispatchTable {
-        let mut table = FirstRecvDispatchTable::EMPTY;
+        dst: &mut FirstRecvDispatchTable,
+    ) {
+        *dst = FirstRecvDispatchTable::EMPTY;
         let mut ordinal = 0usize;
         while ordinal < crate::global::const_dsl::ScopeId::ORDINAL_CAPACITY as usize {
             let scope_id = ScopeId::route(ordinal as u16);
@@ -345,28 +365,38 @@ impl CompiledRole {
                 else {
                     break;
                 };
-                if table.len >= FirstRecvDispatchTable::MAX_ENTRIES {
+                if dst.len >= FirstRecvDispatchTable::MAX_ENTRIES {
                     panic!("first recv dispatch table capacity exceeded");
                 }
-                table.entries[table.len] = FirstRecvDispatchEntry {
+                dst.entries[dst.len] = FirstRecvDispatchEntry {
                     scope: scope_id,
                     label,
                     arm,
                     target,
                 };
-                table.len += 1;
+                dst.len += 1;
                 dispatch_idx += 1;
             }
             ordinal += 1;
         }
-        table
     }
 
-    const fn build_local_steps<const ROLE: u8>(
+    fn build_local_steps_into<const ROLE: u8>(
         typestate: &RoleTypestate<ROLE>,
-    ) -> ([LocalStep; MAX_STEPS], usize, [u16; MAX_STEPS]) {
-        let mut by_eff_index = [LocalStep::EMPTY; MAX_STEPS];
-        let mut present = [false; MAX_STEPS];
+        by_eff_index: &mut [LocalStep; MAX_STEPS],
+        present: &mut [bool; MAX_STEPS],
+        steps: &mut [LocalStep; MAX_STEPS],
+        eff_index_to_step: &mut [u16; MAX_STEPS],
+    ) -> usize {
+        let mut idx = 0usize;
+        while idx < MAX_STEPS {
+            by_eff_index[idx] = LocalStep::EMPTY;
+            present[idx] = false;
+            steps[idx] = LocalStep::EMPTY;
+            eff_index_to_step[idx] = MACHINE_NO_STEP;
+            idx += 1;
+        }
+
         let mut node_idx = 0usize;
         while node_idx < typestate.len() {
             match typestate.node(node_idx).action() {
@@ -437,8 +467,6 @@ impl CompiledRole {
             node_idx += 1;
         }
 
-        let mut steps = [LocalStep::EMPTY; MAX_STEPS];
-        let mut eff_index_to_step = [MACHINE_NO_STEP; MAX_STEPS];
         let mut len = 0usize;
         let mut idx = 0usize;
         while idx < MAX_STEPS {
@@ -449,17 +477,21 @@ impl CompiledRole {
             }
             idx += 1;
         }
-
-        (steps, len, eff_index_to_step)
+        len
     }
 
-    const fn build_step_index_to_state<const ROLE: u8>(
+    fn build_step_index_to_state_into<const ROLE: u8>(
         typestate: &RoleTypestate<ROLE>,
         steps: &[LocalStep; MAX_STEPS],
         len: usize,
         eff_index_to_step: &[u16; MAX_STEPS],
-    ) -> [StateIndex; MAX_STEPS] {
-        let mut step_index_to_state = [StateIndex::MAX; MAX_STEPS];
+        step_index_to_state: &mut [StateIndex; MAX_STEPS],
+    ) {
+        let mut idx = 0usize;
+        while idx < MAX_STEPS {
+            step_index_to_state[idx] = StateIndex::MAX;
+            idx += 1;
+        }
         let mut node_idx = 0usize;
         while node_idx < typestate.len() {
             match typestate.node(node_idx).action() {
@@ -473,7 +505,7 @@ impl CompiledRole {
                     steps,
                     len,
                     eff_index_to_step,
-                    &mut step_index_to_state,
+                    step_index_to_state,
                     node_idx,
                     eff_index,
                     true,
@@ -492,7 +524,7 @@ impl CompiledRole {
                     steps,
                     len,
                     eff_index_to_step,
-                    &mut step_index_to_state,
+                    step_index_to_state,
                     node_idx,
                     eff_index,
                     false,
@@ -510,7 +542,7 @@ impl CompiledRole {
                     steps,
                     len,
                     eff_index_to_step,
-                    &mut step_index_to_state,
+                    step_index_to_state,
                     node_idx,
                     eff_index,
                     false,
@@ -523,7 +555,6 @@ impl CompiledRole {
             }
             node_idx += 1;
         }
-        step_index_to_state
     }
 
     const fn record_step_state(
@@ -570,111 +601,32 @@ impl CompiledRole {
         }
     }
 
-    const fn build_phases<const ROLE: u8>(
+    fn build_phases_into<const ROLE: u8>(
         steps: &[LocalStep; MAX_STEPS],
         len: usize,
         typestate: &RoleTypestate<ROLE>,
         step_index_to_state: &[StateIndex; MAX_STEPS],
-    ) -> ([Phase; MAX_PHASES], usize) {
-        let phases = [Phase::EMPTY; MAX_PHASES];
-
+        route_guards: &mut [PhaseRouteGuard; MAX_STEPS],
+        phases: &mut [Phase; MAX_PHASES],
+        parallel_ranges: &mut [(usize, usize); MAX_PHASES],
+    ) -> usize {
+        let mut phase_idx = 0usize;
+        while phase_idx < MAX_PHASES {
+            phases[phase_idx] = Phase::EMPTY;
+            parallel_ranges[phase_idx] = (0, 0);
+            phase_idx += 1;
+        }
         if len == 0 {
-            return (phases, 0);
+            return 0;
         }
 
-        let has_parallel = typestate.has_parallel_phase_scope();
-        let route_guards = Self::build_route_guards_for_steps(len, typestate, step_index_to_state);
+        Self::build_route_guards_for_steps_into(len, typestate, step_index_to_state, route_guards);
 
-        if !has_parallel {
-            return Self::build_single_phase(steps, len, &route_guards);
+        if !typestate.has_parallel_phase_scope() {
+            phases[0] = Self::build_phase_for_range(steps, 0, len, route_guards);
+            return 1;
         }
 
-        Self::build_phases_with_parallel(steps, len, typestate, &route_guards)
-    }
-
-    const fn build_route_guards_for_steps<const ROLE: u8>(
-        len: usize,
-        typestate: &RoleTypestate<ROLE>,
-        step_index_to_state: &[StateIndex; MAX_STEPS],
-    ) -> [PhaseRouteGuard; MAX_STEPS] {
-        let mut guards = [PhaseRouteGuard::EMPTY; MAX_STEPS];
-        let mut step_idx = 0usize;
-        while step_idx < len {
-            let state = step_index_to_state[step_idx];
-            if let Some((scope, arm)) = typestate.phase_route_guard_for_state(state) {
-                guards[step_idx] = PhaseRouteGuard { scope, arm };
-            }
-            step_idx += 1;
-        }
-        guards
-    }
-
-    const fn build_single_phase(
-        steps: &[LocalStep; MAX_STEPS],
-        len: usize,
-        route_guards: &[PhaseRouteGuard; MAX_STEPS],
-    ) -> ([Phase; MAX_PHASES], usize) {
-        let mut phases = [Phase::EMPTY; MAX_PHASES];
-        let mut lane_lens = [0usize; MAX_LANES];
-        let mut lane_first = [usize::MAX; MAX_LANES];
-
-        let mut i = 0;
-        while i < len {
-            let lane = steps[i].lane() as usize;
-            if lane < MAX_LANES {
-                if lane_first[lane] == usize::MAX {
-                    lane_first[lane] = i;
-                }
-                lane_lens[lane] += 1;
-            }
-            i += 1;
-        }
-
-        let mut phase = Phase::EMPTY;
-        let mut lane_mask = 0u8;
-        let mut min_start = usize::MAX;
-        let mut lane_idx = 0;
-        while lane_idx < MAX_LANES {
-            if lane_lens[lane_idx] > 0 {
-                let start = lane_first[lane_idx];
-                phase.lanes[lane_idx] = LaneSteps {
-                    start,
-                    len: lane_lens[lane_idx],
-                };
-                lane_mask |= 1u8 << (lane_idx as u32);
-                if start < min_start {
-                    min_start = start;
-                }
-            }
-            lane_idx += 1;
-        }
-        phase.lane_mask = lane_mask;
-        phase.min_start = if lane_mask == 0 { 0 } else { min_start };
-        phase.route_guard = Self::route_guard_for_range(route_guards, 0, len);
-
-        phases[0] = phase;
-        (phases, 1)
-    }
-
-    #[inline(always)]
-    const fn push_phase(phases: &mut [Phase; MAX_PHASES], phase_count: &mut usize, phase: Phase) {
-        if *phase_count >= MAX_PHASES {
-            panic!("compiled role phase capacity exceeded");
-        }
-        phases[*phase_count] = phase;
-        *phase_count += 1;
-    }
-
-    const fn build_phases_with_parallel<const ROLE: u8>(
-        steps: &[LocalStep; MAX_STEPS],
-        len: usize,
-        typestate: &RoleTypestate<ROLE>,
-        route_guards: &[PhaseRouteGuard; MAX_STEPS],
-    ) -> ([Phase; MAX_PHASES], usize) {
-        let mut phases = [Phase::EMPTY; MAX_PHASES];
-        let mut phase_count = 0usize;
-
-        let mut parallel_ranges = [(0usize, 0usize); MAX_PHASES];
         let mut parallel_count = 0usize;
         loop {
             let Some(range) = typestate.parallel_phase_range_at(parallel_count) else {
@@ -688,9 +640,11 @@ impl CompiledRole {
         }
 
         if parallel_count == 0 {
-            return Self::build_single_phase(steps, len, route_guards);
+            phases[0] = Self::build_phase_for_range(steps, 0, len, route_guards);
+            return 1;
         }
 
+        let mut phase_count = 0usize;
         let mut current_step = 0usize;
         let mut range_idx = 0usize;
         while range_idx < parallel_count {
@@ -701,10 +655,9 @@ impl CompiledRole {
             while seq_end < len && steps[seq_end].eff_index().as_usize() < enter_eff {
                 seq_end += 1;
             }
-
             if seq_end > seq_start {
                 Self::push_phase(
-                    &mut phases,
+                    phases,
                     &mut phase_count,
                     Self::build_phase_for_range(steps, seq_start, seq_end, route_guards),
                 );
@@ -715,10 +668,9 @@ impl CompiledRole {
             while par_end < len && steps[par_end].eff_index().as_usize() < exit_eff {
                 par_end += 1;
             }
-
             if par_end > par_start {
                 Self::push_phase(
-                    &mut phases,
+                    phases,
                     &mut phase_count,
                     Self::build_phase_for_range(steps, par_start, par_end, route_guards),
                 );
@@ -730,17 +682,47 @@ impl CompiledRole {
 
         if current_step < len {
             Self::push_phase(
-                &mut phases,
+                phases,
                 &mut phase_count,
                 Self::build_phase_for_range(steps, current_step, len, route_guards),
             );
         }
 
         if phase_count == 0 {
-            return Self::build_single_phase(steps, len, route_guards);
+            phases[0] = Self::build_phase_for_range(steps, 0, len, route_guards);
+            return 1;
         }
+        phase_count
+    }
 
-        (phases, phase_count)
+    fn build_route_guards_for_steps_into<const ROLE: u8>(
+        len: usize,
+        typestate: &RoleTypestate<ROLE>,
+        step_index_to_state: &[StateIndex; MAX_STEPS],
+        route_guards: &mut [PhaseRouteGuard; MAX_STEPS],
+    ) {
+        let mut idx = 0usize;
+        while idx < MAX_STEPS {
+            route_guards[idx] = PhaseRouteGuard::EMPTY;
+            idx += 1;
+        }
+        let mut step_idx = 0usize;
+        while step_idx < len {
+            let state = step_index_to_state[step_idx];
+            if let Some((scope, arm)) = typestate.phase_route_guard_for_state(state) {
+                route_guards[step_idx] = PhaseRouteGuard { scope, arm };
+            }
+            step_idx += 1;
+        }
+    }
+
+    #[inline(always)]
+    const fn push_phase(phases: &mut [Phase; MAX_PHASES], phase_count: &mut usize, phase: Phase) {
+        if *phase_count >= MAX_PHASES {
+            panic!("compiled role phase capacity exceeded");
+        }
+        phases[*phase_count] = phase;
+        *phase_count += 1;
     }
 
     const fn build_phase_for_range(
@@ -811,6 +793,8 @@ impl CompiledRole {
 
 #[cfg(test)]
 mod tests {
+    use std::boxed::Box;
+
     use crate::{
         control::{
             cap::mint::{
@@ -821,8 +805,13 @@ mod tests {
             types::{Lane, SessionId},
         },
         g::{self, Msg, Role},
-        global::{CanonicalControl, ControlHandling, role_program, typestate::PhaseCursor},
+        global::{
+            CanonicalControl, ControlHandling, role_program,
+            typestate::{PhaseCursor, RoleCompileScratch},
+        },
     };
+
+    use super::{CompiledRole, LoweringSummary};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct RouteRightKind;
@@ -889,6 +878,22 @@ mod tests {
         }
     }
 
+    fn compile_role_boxed<const ROLE: u8, LocalSteps>(
+        program: &role_program::RoleProgram<'_, ROLE, LocalSteps, MintConfig>,
+    ) -> Box<CompiledRole> {
+        let summary = LoweringSummary::scan_const(program.lowering_input());
+        let mut compiled = Box::<CompiledRole>::new_uninit();
+        let mut scratch = Box::new(RoleCompileScratch::new());
+        unsafe {
+            CompiledRole::init_from_summary::<ROLE>(
+                compiled.as_mut_ptr(),
+                &summary,
+                scratch.as_mut(),
+            );
+            compiled.assume_init()
+        }
+    }
+
     #[test]
     fn compiled_role_exposes_controller_arm_and_dispatch_tables() {
         let left = g::seq(
@@ -917,8 +922,8 @@ mod tests {
 
         let controller: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
             role_program::project(&program);
-        let controller_compiled = controller.compile_role();
-        let controller_scope = PhaseCursor::new(&controller_compiled).node_scope_id();
+        let controller_compiled = compile_role_boxed(&controller);
+        let controller_scope = PhaseCursor::new(controller_compiled.as_ref()).node_scope_id();
         assert_eq!(controller_compiled.role(), 0);
         assert!(controller_compiled.active_lanes()[0]);
         assert_eq!(
@@ -936,8 +941,8 @@ mod tests {
 
         let worker: crate::g::advanced::RoleProgram<'_, 1, _, MintConfig> =
             role_program::project(&program);
-        let worker_compiled = worker.compile_role();
-        let worker_scope = PhaseCursor::new(&worker_compiled).node_scope_id();
+        let worker_compiled = compile_role_boxed(&worker);
+        let worker_scope = PhaseCursor::new(worker_compiled.as_ref()).node_scope_id();
         assert_eq!(worker_compiled.role(), 1);
         assert!(worker_compiled.active_lanes()[0]);
         assert!(worker_compiled.phase_count() > 0);

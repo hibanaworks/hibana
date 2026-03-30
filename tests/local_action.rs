@@ -8,7 +8,7 @@ use hibana::{
     g::advanced::{RoleProgram, project},
     g::{self, Msg, Role},
     substrate::{
-        SessionCluster, SessionId,
+        SessionId, SessionKit,
         binding::NoBinding,
         runtime::Config,
         wire::{CodecError, WireEncode},
@@ -63,13 +63,13 @@ async fn local_action_flow_executes() {
     let slab = leak_slab(1024);
     let config = Config::new(tap_buf, slab);
     let transport = TestTransport::default();
-    let cluster: &mut SessionCluster<
+    let cluster: &mut SessionKit<
         'static,
         TestTransport,
         hibana::substrate::runtime::DefaultLabelUniverse,
         hibana::substrate::runtime::CounterClock,
         4,
-    > = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+    > = Box::leak(Box::new(SessionKit::new(leak_clock())));
     let rv_id = cluster
         .add_rendezvous_from_config(config, transport.clone())
         .expect("register rendezvous");

@@ -10,9 +10,9 @@ use hibana::g;
 use hibana::g::advanced::steps::{ProjectRole, SendStep, SeqSteps, StepCons, StepNil};
 use hibana::g::advanced::{RoleProgram, project};
 use hibana::substrate::{
-    SessionCluster, SessionId,
+    SessionId, SessionKit,
     binding::NoBinding,
-    cap::advanced::{EpochTbl, MintConfig},
+    cap::advanced::MintConfig,
     policy::{DynamicResolution, ResolverContext, ResolverError, ResolverRef},
     runtime::{Config, CounterClock, DefaultLabelUniverse},
 };
@@ -62,8 +62,26 @@ fn runtime_mgmt_rs() -> String {
         .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
 }
 
-fn runtime_mgmt_kernel_rs() -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/runtime/mgmt/kernel.rs");
+fn runtime_mgmt_payload_rs() -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/runtime/mgmt/payload.rs");
+    fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+}
+
+fn runtime_mgmt_request_reply_rs() -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/runtime/mgmt/request_reply.rs");
+    fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+}
+
+fn runtime_mgmt_observe_stream_rs() -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/runtime/mgmt/observe_stream.rs");
+    fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+}
+
+fn runtime_mgmt_test_support_rs() -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/runtime/mgmt/test_support.rs");
     fs::read_to_string(&path)
         .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
 }
@@ -126,46 +144,6 @@ fn direct_projection_binary_check_rs() -> String {
         .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
 }
 
-fn block_body<'a>(src: &'a str, anchor: &str) -> &'a str {
-    let anchor_idx = src
-        .find(anchor)
-        .unwrap_or_else(|| panic!("missing block anchor: {anchor}"));
-    let mut cursor = anchor_idx;
-    let mut open_brace = None;
-    for line in src[anchor_idx..].split_inclusive('\n') {
-        if line.trim() == "{" {
-            open_brace = Some(
-                cursor
-                    + line
-                        .find('{')
-                        .expect("function body opening brace on brace line"),
-            );
-            break;
-        }
-        cursor += line.len();
-    }
-    let open_brace = open_brace.expect("block opening brace");
-    let mut depth = 0usize;
-    for (offset, ch) in src[open_brace..].char_indices() {
-        match ch {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    let end = open_brace + offset;
-                    return &src[open_brace + 1..end];
-                }
-            }
-            _ => {}
-        }
-    }
-    panic!("block closing brace");
-}
-
-fn count_occurrences(haystack: &str, needle: &str) -> usize {
-    haystack.match_indices(needle).count()
-}
-
 fn quality_workflow_rs() -> String {
     let path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/quality-gates.yml");
@@ -222,6 +200,36 @@ fn defer_resolver(_ctx: ResolverContext) -> Result<DynamicResolution, ResolverEr
 }
 
 #[test]
+fn substrate_internal_carrier_stays_private() {
+    let substrate_src = substrate_rs();
+    let runtime_mgmt_src = runtime_mgmt_rs();
+    let allowlist = substrate_public_api_allowlist();
+
+    assert!(
+        substrate_src.contains("type KernelSessionCluster<'cfg, T, U, C, const MAX_RV: usize> =")
+            || runtime_mgmt_src
+                .contains("type KernelSessionCluster<'cfg, T, U, C, const MAX_RV: usize> ="),
+        "substrate/runtime lower layer must keep the internal session-cluster owner alias"
+    );
+    assert!(
+        !runtime_mgmt_src.contains("endpoint::carrier::PublicEndpoint")
+            && !substrate_src.contains("endpoint::carrier::PublicEndpoint"),
+        "mgmt root surface must not regrow direct endpoint-carrier aliases"
+    );
+    for forbidden in [
+        "SessionCfg",
+        "EndpointCfg",
+        "SessionCarrier",
+        "EndpointCarrier",
+    ] {
+        assert!(
+            !allowlist.contains(forbidden),
+            "carrier internals must not leak into substrate public surface allowlist: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn hibana_core_source_stays_protocol_neutral() {
     let hygiene_gate = repo_surface_hygiene_gate_rs();
     assert!(
@@ -245,13 +253,13 @@ fn hibana_core_source_stays_protocol_neutral() {
 #[test]
 fn substrate_facade_exposes_enter_and_policy_resolver_registration() {
     let transport = common::TestTransport::default();
-    let cluster: &mut SessionCluster<
+    let cluster: &mut SessionKit<
         'static,
         common::TestTransport,
         DefaultLabelUniverse,
         CounterClock,
         1,
-    > = Box::leak(Box::new(SessionCluster::new(runtime_support::leak_clock())));
+    > = Box::leak(Box::new(SessionKit::new(runtime_support::leak_clock())));
     let rv_id = cluster
         .add_rendezvous_from_config(
             Config::new(
@@ -272,11 +280,7 @@ fn substrate_facade_exposes_enter_and_policy_resolver_registration() {
     let _: &Endpoint<
         '_,
         0,
-        common::TestTransport,
-        DefaultLabelUniverse,
-        CounterClock,
-        EpochTbl,
-        1,
+        SessionKit<'_, common::TestTransport, DefaultLabelUniverse, CounterClock, 1>,
         MintConfig,
         NoBinding,
     > = &endpoint;
@@ -293,7 +297,7 @@ fn substrate_facade_drops_canonical_token_helpers() {
     ] {
         assert!(
             !substrate_rs.contains(forbidden),
-            "substrate::SessionCluster must not expose canonical token helper surface: {forbidden}"
+            "substrate::SessionKit must not expose canonical token helper surface: {forbidden}"
         );
         assert!(
             !allowlist.contains(forbidden),
@@ -305,13 +309,13 @@ fn substrate_facade_drops_canonical_token_helpers() {
 #[test]
 fn substrate_facade_registers_rendezvous_before_enter() {
     let transport = common::TestTransport::default();
-    let cluster: &mut SessionCluster<
+    let cluster: &mut SessionKit<
         'static,
         common::TestTransport,
         DefaultLabelUniverse,
         CounterClock,
         1,
-    > = Box::leak(Box::new(SessionCluster::new(runtime_support::leak_clock())));
+    > = Box::leak(Box::new(SessionKit::new(runtime_support::leak_clock())));
 
     let rv_id = cluster
         .add_rendezvous_from_config(
@@ -332,13 +336,13 @@ fn substrate_facade_registers_rendezvous_before_enter() {
 #[test]
 fn substrate_facade_sets_resolver_before_enter() {
     let transport = common::TestTransport::default();
-    let cluster: &mut SessionCluster<
+    let cluster: &mut SessionKit<
         'static,
         common::TestTransport,
         DefaultLabelUniverse,
         CounterClock,
         1,
-    > = Box::leak(Box::new(SessionCluster::new(runtime_support::leak_clock())));
+    > = Box::leak(Box::new(SessionKit::new(runtime_support::leak_clock())));
     let rv_id = cluster
         .add_rendezvous_from_config(
             Config::new(
@@ -404,6 +408,7 @@ fn quality_workflow_runs_canonical_validation_suite() {
         "./.github/scripts/check_resolver_context_surface.sh",
         "./.github/scripts/check_lowering_hygiene.sh",
         "./.github/scripts/check_surface_hygiene.sh",
+        "./.github/scripts/check_warning_free.sh",
         "./.github/scripts/check_direct_projection_binary.sh",
         "cargo check --all-targets -p hibana",
         "cargo test -p hibana --features std",
@@ -429,13 +434,13 @@ fn quality_workflow_runs_canonical_validation_suite() {
 #[test]
 fn substrate_facade_accepts_non_static_projected_programs() {
     let transport = common::TestTransport::default();
-    let cluster: &mut SessionCluster<
+    let cluster: &mut SessionKit<
         'static,
         common::TestTransport,
         DefaultLabelUniverse,
         CounterClock,
         1,
-    > = Box::leak(Box::new(SessionCluster::new(runtime_support::leak_clock())));
+    > = Box::leak(Box::new(SessionKit::new(runtime_support::leak_clock())));
     let rv_id = cluster
         .add_rendezvous_from_config(
             Config::new(
@@ -456,11 +461,7 @@ fn substrate_facade_accepts_non_static_projected_programs() {
     let _: &Endpoint<
         '_,
         0,
-        common::TestTransport,
-        DefaultLabelUniverse,
-        CounterClock,
-        EpochTbl,
-        1,
+        SessionKit<'_, common::TestTransport, DefaultLabelUniverse, CounterClock, 1>,
         MintConfig,
         NoBinding,
     > = &endpoint;
@@ -555,25 +556,24 @@ fn repo_boundary_gates_track_current_mgmt_update_owners() {
         "hibana boundary gate must aggregate the canonical local boundary owners"
     );
     assert!(
-        mgmt_gate.contains("schedule_activate") && mgmt_gate.contains("on_decision_boundary"),
-        "mgmt boundary gate must track the full live manager mutator surface"
+        mgmt_gate.contains("pub mod session\\\\b")
+            && mgmt_gate.contains("enter_controller|enter_cluster|enter_stream_controller|enter_stream_cluster|drive_controller|drive_cluster|drive_stream_cluster|drive_stream_controller")
+            && mgmt_gate.contains("manager mutators must not be public"),
+        "mgmt boundary gate must forbid the deleted session/helper surface and public manager mutators"
     );
     assert!(
         mgmt_gate.contains("src/runtime"),
         "mgmt boundary gate must stay semantic to the runtime mgmt subtree instead of a single file path"
     );
     assert!(
-        plane_gate.contains("check_required_multiline")
+        plane_gate.contains("check_absent")
             && plane_gate.contains("fn apply_seed")
             && plane_gate.contains("drive_mgmt\\\\(")
-            && plane_gate.contains("async fn drive_load_branch")
-            && plane_gate.contains("load_begin\\\\(")
-            && plane_gate.contains("load_chunk\\\\(")
-            && plane_gate.contains("fn load_commit_with")
-            && plane_gate.contains("fn schedule_activate_with")
-            && plane_gate.contains("fn on_decision_boundary_for_slot_with")
-            && plane_gate.contains("fn revert_with"),
-        "plane boundary gate must anchor direct mutators to their canonical semantic owners"
+            && plane_gate.contains("mgmt_managers")
+            && plane_gate.contains("load_begin|load_chunk")
+            && plane_gate.contains("load_commit_with|schedule_activate_with|on_decision_boundary_for_slot_with|revert_with")
+            && plane_gate.contains("enter_controller|enter_cluster|enter_stream_controller|enter_stream_cluster|drive_controller|drive_cluster|drive_stream_cluster|drive_stream_controller"),
+        "plane boundary gate must forbid the deleted mgmt runtime, cluster-hook, and slot-bundle owners"
     );
     assert!(
         !plane_gate.contains("boundary gate stale owner path:"),
@@ -661,8 +661,8 @@ fn repo_boundary_gates_track_current_mgmt_update_owners() {
         "surface hygiene gate must reject fallback default bodies in LeaseFacet"
     );
     assert!(
-        hygiene_gate.contains("lease spec facet fallback default shim"),
-        "surface hygiene gate must reject fallback default bodies in LeaseSpecFacetNeeds"
+        !hygiene_gate.contains("lease spec facet fallback default shim"),
+        "surface hygiene gate must not keep stale checks for the removed LeaseSpecFacetNeeds shim"
     );
     assert!(
         hygiene_gate.contains("resource kind fallback default shim"),
@@ -758,7 +758,7 @@ fn repo_boundary_gates_track_current_mgmt_update_owners() {
     );
     assert!(
         hygiene_gate.contains("test fixture pure cluster alias"),
-        "surface hygiene gate must reject pure SessionCluster aliases in test fixtures"
+        "surface hygiene gate must reject pure SessionKit aliases in test fixtures"
     );
     assert!(
         hygiene_gate.contains("test fixture project-role output alias"),
@@ -839,112 +839,79 @@ fn repo_boundary_gates_track_current_mgmt_update_owners() {
 }
 
 #[test]
-fn runtime_mgmt_direct_mutators_stay_on_canonical_owners() {
+fn runtime_mgmt_deleted_helper_family_stays_absent() {
     let runtime_mgmt_src = runtime_mgmt_rs();
-    let runtime_mgmt_kernel_src = runtime_mgmt_kernel_rs();
-    let tests_anchor = runtime_mgmt_src
-        .find("#[cfg(test)]\nmod tests {")
-        .expect("runtime mgmt tests module anchor");
-    let production_runtime_mgmt = &runtime_mgmt_src[..tests_anchor];
-    let apply_seed_body = compact_ws(block_body(&runtime_mgmt_src, "fn apply_seed"));
-    let drive_load_branch_body = compact_ws(block_body(
-        &runtime_mgmt_kernel_src,
-        "async fn drive_load_branch",
-    ));
+    let runtime_mgmt_request_reply_src = runtime_mgmt_request_reply_rs();
+    let runtime_mgmt_observe_stream_src = runtime_mgmt_observe_stream_rs();
+    let runtime_mgmt_test_support_src = runtime_mgmt_test_support_rs();
+    let cluster_core_src = cluster_core_rs();
 
-    assert!(
-        apply_seed_body.contains("cluster.drive_mgmt(rv_id, sid, seed)"),
-        "apply_seed must stay the canonical direct drive_mgmt owner"
-    );
-    assert_eq!(
-        count_occurrences(&runtime_mgmt_src, ".drive_mgmt("),
-        1,
-        "runtime mgmt must keep exactly one direct drive_mgmt call"
-    );
     for forbidden in [
-        "manager.load_begin(",
-        "manager.load_chunk(",
+        "fn apply_seed",
+        "MgmtCluster",
+        "LoadMode",
+        "RequestAction",
+        "MgmtAutomaton",
+        ".drive_mgmt(",
+    ] {
+        assert!(
+            !runtime_mgmt_src.contains(forbidden),
+            "runtime::mgmt root must not keep deleted mgmt runtime owners: {forbidden}"
+        );
+    }
+    for forbidden in [
+        "fn enter_controller",
+        "fn enter_cluster",
+        "fn enter_stream_controller",
+        "fn enter_stream_cluster",
+        "fn drive_controller",
+        "fn drive_cluster",
+        "fn drive_stream_cluster",
+        "fn drive_stream_controller",
+        "fn drive_load_branch",
+        "STREAM_CONTROLLER_PROGRAM",
+        "STREAM_CLUSTER_PROGRAM",
+    ] {
+        assert!(
+            !runtime_mgmt_request_reply_src.contains(forbidden)
+                && !runtime_mgmt_observe_stream_src.contains(forbidden)
+                && !runtime_mgmt_test_support_src.contains(forbidden),
+            "runtime::mgmt lower layers must not regrow deleted helper or mutator owners: {forbidden}"
+        );
+    }
+    for forbidden in ["manager.load_begin(", "manager.load_chunk("] {
+        assert!(
+            !runtime_mgmt_request_reply_src.contains(forbidden)
+                && !runtime_mgmt_observe_stream_src.contains(forbidden),
+            "runtime::mgmt production owners must not regrow deleted load mutator owners: {forbidden}"
+        );
+    }
+    for forbidden in ["mgmt_managers", "drive_mgmt(", "on_decision_boundary("] {
+        assert!(
+            !cluster_core_src.contains(forbidden),
+            "cluster core must not keep deleted mgmt execution hooks: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn rendezvous_slot_bundle_wrappers_stay_deleted() {
+    let rendezvous_core_src = rendezvous_core_rs();
+    for forbidden in [
+        "fn load_commit_with",
+        "fn schedule_activate_with",
+        "fn on_decision_boundary_for_slot_with",
+        "fn revert_with",
         "manager.load_commit(",
         "manager.schedule_activate(",
         "manager.on_decision_boundary(",
         "manager.revert(",
     ] {
         assert!(
-            !production_runtime_mgmt.contains(forbidden),
-            "production runtime::mgmt must not keep direct manager mutators outside the canonical helpers: {forbidden}"
+            !rendezvous_core_src.contains(forbidden),
+            "rendezvous slot bundle must not regrow deleted mgmt wrapper owners: {forbidden}"
         );
     }
-
-    assert!(
-        drive_load_branch_body.contains("manager.load_begin(")
-            && drive_load_branch_body.contains("manager.load_chunk("),
-        "drive_load_branch must own the direct load_begin/load_chunk mutators"
-    );
-    assert_eq!(
-        count_occurrences(&runtime_mgmt_kernel_src, "manager.load_begin("),
-        1,
-        "mgmt kernel must keep a single direct load_begin owner"
-    );
-    assert_eq!(
-        count_occurrences(&runtime_mgmt_kernel_src, "manager.load_chunk("),
-        2,
-        "mgmt kernel must keep the canonical two load_chunk branches only"
-    );
-}
-
-#[test]
-fn rendezvous_slot_bundle_wrappers_keep_policy_mutators_scoped() {
-    let rendezvous_core_src = rendezvous_core_rs();
-    let load_commit_with_body = compact_ws(block_body(&rendezvous_core_src, "fn load_commit_with"));
-    let schedule_activate_with_body = compact_ws(block_body(
-        &rendezvous_core_src,
-        "fn schedule_activate_with",
-    ));
-    let on_decision_boundary_for_slot_with_body = compact_ws(block_body(
-        &rendezvous_core_src,
-        "fn on_decision_boundary_for_slot_with",
-    ));
-    let revert_with_body = compact_ws(block_body(&rendezvous_core_src, "fn revert_with"));
-
-    assert!(
-        load_commit_with_body.contains(".load_commit(slot, self.storage_mut(slot))"),
-        "load_commit_with must stay the canonical load_commit owner"
-    );
-    assert!(
-        schedule_activate_with_body.contains("manager.schedule_activate(slot)"),
-        "schedule_activate_with must stay the canonical schedule_activate owner"
-    );
-    assert!(
-        on_decision_boundary_for_slot_with_body.contains(
-            "unsafe { manager.on_decision_boundary(slot, &mut *storage_ptr, &mut *host_ptr) }"
-        ),
-        "on_decision_boundary_for_slot_with must stay the canonical decision-boundary owner"
-    );
-    assert!(
-        revert_with_body
-            .contains("unsafe { manager.revert(slot, &mut *storage_ptr, &mut *host_ptr) }"),
-        "revert_with must stay the canonical revert owner"
-    );
-    assert_eq!(
-        count_occurrences(&rendezvous_core_src, ".load_commit("),
-        1,
-        "rendezvous slot bundle must keep a single direct load_commit owner"
-    );
-    assert_eq!(
-        count_occurrences(&rendezvous_core_src, "manager.schedule_activate("),
-        1,
-        "rendezvous slot bundle must keep a single direct schedule_activate owner"
-    );
-    assert_eq!(
-        count_occurrences(&rendezvous_core_src, "manager.on_decision_boundary("),
-        1,
-        "rendezvous slot bundle must keep a single direct on_decision_boundary owner"
-    );
-    assert_eq!(
-        count_occurrences(&rendezvous_core_src, "manager.revert("),
-        1,
-        "rendezvous slot bundle must keep a single direct revert owner"
-    );
 }
 
 #[test]
@@ -1012,7 +979,7 @@ fn substrate_policy_root_stays_minimal() {
     );
     assert!(
         !substrate_rs.contains("transmute(resolver)"),
-        "substrate::SessionCluster::set_resolver must not use function-pointer transmute"
+        "substrate::SessionKit::set_resolver must not use function-pointer transmute"
     );
     assert!(
         !substrate_rs.contains("DynamicResolverFn"),
@@ -1051,7 +1018,7 @@ fn substrate_policy_root_stays_minimal() {
         );
     }
     assert!(
-        !runtime_rs.contains("pub type SessionCluster<'cfg, T, U, C, const MAX_RV: usize> ="),
+        !runtime_rs.contains("pub type SessionKit<'cfg, T, U, C, const MAX_RV: usize> ="),
         "runtime.rs must not hide the kernel cluster behind a type alias"
     );
     assert!(
@@ -1182,7 +1149,11 @@ fn substrate_runtime_root_stays_minimal() {
 fn substrate_mgmt_and_binding_roots_stay_minimal() {
     let substrate_rs = substrate_rs();
     let runtime_mgmt_rs = runtime_mgmt_rs();
-    let runtime_mgmt_kernel_rs = runtime_mgmt_kernel_rs();
+    let runtime_mgmt_payload_rs = runtime_mgmt_payload_rs();
+    let runtime_mgmt_request_reply_rs = runtime_mgmt_request_reply_rs();
+    let runtime_mgmt_observe_stream_rs = runtime_mgmt_observe_stream_rs();
+    let runtime_mgmt_observe_stream_ws = compact_ws(&runtime_mgmt_observe_stream_rs);
+    let runtime_mgmt_test_support_rs = runtime_mgmt_test_support_rs();
     let binding_body = {
         let start = substrate_rs
             .find("pub mod binding {")
@@ -1199,32 +1170,32 @@ fn substrate_mgmt_and_binding_roots_stay_minimal() {
             .expect("substrate::mgmt block must exist");
         let rest = &substrate_rs[start..];
         let end = rest
-            .find("    pub mod session {")
-            .expect("substrate::mgmt session block must exist");
+            .find("pub mod binding {")
+            .expect("substrate::mgmt block must end before substrate::binding");
         &rest[..end]
     };
 
     assert!(
-        !substrate_rs.contains("pub use crate::runtime::mgmt::session::*;"),
-        "substrate::mgmt::session must not glob re-export runtime session internals"
+        !substrate_rs.contains("pub mod session {"),
+        "substrate::mgmt must not keep the deleted session helper module"
     );
     assert!(
         !substrate_rs.contains("crate::runtime::mgmt::session::"),
-        "substrate::mgmt::session wrappers must not route through a stale runtime::mgmt::session owner path"
+        "substrate::mgmt must not route through a stale runtime::mgmt::session owner path"
     );
     assert!(
         !substrate_rs.contains("crate::endpoint::cursor::CursorEndpoint<")
             && !substrate_rs.contains("crate::endpoint::kernel::CursorEndpoint<"),
-        "substrate::mgmt::session must not leak CursorEndpoint in public signatures"
+        "substrate::mgmt must not leak CursorEndpoint in public signatures"
     );
     assert!(
         !substrate_rs.contains("pub struct CodeSessionRequest<'a> {"),
-        "substrate::mgmt::session must not regrow a local request wrapper owner"
+        "substrate::mgmt must not regrow a local request wrapper owner"
     );
     assert!(
         !substrate_rs
             .contains("pub fn run_code_session<'cfg, 'request, T, U, C, const MAX_RV: usize>("),
-        "substrate::mgmt::session must not regrow local code-session sugar"
+        "substrate::mgmt must not regrow local code-session sugar"
     );
     assert!(
         !runtime_mgmt_rs.contains("pub mod session;")
@@ -1232,99 +1203,120 @@ fn substrate_mgmt_and_binding_roots_stay_minimal() {
         "internal runtime management kernel must not keep the stale session module owner"
     );
     assert!(
-        runtime_mgmt_rs.contains("mod kernel;"),
-        "internal runtime management choreography must live behind a non-surface kernel module"
+        runtime_mgmt_rs.contains("mod payload;")
+            && runtime_mgmt_rs.contains("mod request_reply;")
+            && runtime_mgmt_rs.contains("mod observe_stream;")
+            && runtime_mgmt_rs.contains("#[cfg(test)]\nmod test_support;"),
+        "runtime mgmt root must wire payload/request-reply/observe-stream/test-support owners explicitly"
     );
     assert!(
-        runtime_mgmt_rs.contains("endpoint: crate::Endpoint<")
-            && !runtime_mgmt_rs.contains("endpoint: crate::endpoint::cursor::CursorEndpoint<")
-            && !runtime_mgmt_rs.contains("endpoint: crate::endpoint::kernel::CursorEndpoint<"),
-        "runtime mgmt wrappers must stay on the public Endpoint facade"
+        runtime_mgmt_rs.contains("PROGRAM as REQUEST_REPLY_PREFIX")
+            && runtime_mgmt_rs.contains("PROGRAM as OBSERVE_STREAM_PREFIX"),
+        "runtime mgmt must expose the canonical public prefix owners"
     );
-    let runtime_mgmt_ws = compact_ws(&runtime_mgmt_rs);
     assert!(
-        runtime_mgmt_ws
+        !runtime_mgmt_rs
+            .contains("pub(crate) fn enter_controller<'cfg, T, U, C, B, const MAX_RV: usize>(")
+            && !runtime_mgmt_rs
+                .contains("pub(crate) fn enter_cluster<'cfg, T, U, C, B, const MAX_RV: usize>(")
+            && !runtime_mgmt_rs.contains(
+                "pub(crate) fn enter_stream_controller<'cfg, T, U, C, B, const MAX_RV: usize>("
+            )
+            && !runtime_mgmt_rs.contains(
+                "pub(crate) fn enter_stream_cluster<'cfg, T, U, C, B, const MAX_RV: usize>("
+            )
+            && !runtime_mgmt_rs.contains("pub(crate) async fn drive_controller<")
+            && !runtime_mgmt_rs.contains("pub(crate) async fn drive_cluster<")
+            && !runtime_mgmt_rs.contains("pub(crate) async fn drive_stream_cluster<")
+            && !runtime_mgmt_rs.contains("pub(crate) async fn drive_stream_controller<"),
+        "runtime mgmt root must stay on payload/prefix ownership instead of regrowing helper wrappers"
+    );
+    let runtime_mgmt_payload_ws = compact_ws(&runtime_mgmt_payload_rs);
+    assert!(
+        runtime_mgmt_payload_ws
             .contains("pub struct LoadRequest<'a> { pub slot: crate::substrate::policy::epf::Slot, pub code: &'a [u8], pub fuel_max: u16, pub mem_len: u16, }")
-            && runtime_mgmt_ws.contains(
+            && runtime_mgmt_payload_ws.contains(
                 "pub struct SlotRequest { pub slot: crate::substrate::policy::epf::Slot, }"
             )
-            && runtime_mgmt_ws.contains(
+            && runtime_mgmt_payload_ws.contains(
                 "pub struct LoadBegin { pub slot: crate::substrate::policy::epf::Slot, pub code_len: u32, pub fuel_max: u16, pub mem_len: u16, pub hash: u32, }"
             ),
-        "runtime mgmt public payloads must spell the canonical public Slot owner directly"
+        "runtime mgmt payload owner must spell the canonical public Slot owner directly"
     );
     assert!(
-        !substrate_rs.contains(
-            "        pub use crate::runtime::mgmt::session::{drive_stream_cluster, drive_stream_controller};"
-        ),
-        "substrate::mgmt::session must not re-export runtime stream drivers directly"
+        !runtime_mgmt_rs.contains("pub struct LoadRequest<'a> {")
+            && !runtime_mgmt_rs.contains("pub struct TapBatch {"),
+        "runtime mgmt root must stay a facade instead of keeping payload/batching bodies"
+    );
+    assert!(
+        !substrate_rs.contains("crate::runtime::mgmt::enter_controller(")
+            && !substrate_rs.contains("crate::runtime::mgmt::enter_cluster(")
+            && !substrate_rs.contains("crate::runtime::mgmt::enter_stream_controller(")
+            && !substrate_rs.contains("crate::runtime::mgmt::enter_stream_cluster(")
+            && !substrate_rs.contains("crate::runtime::mgmt::drive_cluster(")
+            && !substrate_rs.contains("crate::runtime::mgmt::drive_stream_cluster(")
+            && !substrate_rs.contains("crate::runtime::mgmt::drive_stream_controller("),
+        "substrate::mgmt must not route public surface through deleted management helper wrappers"
     );
     assert!(
         !substrate_rs.contains("        pub fn set_resolver<'cfg, T, U, C, const MAX_RV: usize>("),
-        "substrate::mgmt::session must not keep a second public resolver registration entry"
+        "substrate::mgmt must not keep a second public resolver registration entry"
     );
     assert!(
         !substrate_rs.contains("crate::runtime::mgmt::set_resolver("),
-        "substrate::mgmt::session must not route through a stale runtime resolver wrapper"
+        "substrate::mgmt must not route through a stale runtime resolver wrapper"
     );
     assert!(
         !runtime_mgmt_rs
             .contains("pub(crate) fn set_resolver<'cfg, T, U, C, const MAX_RV: usize>(")
-            && !runtime_mgmt_kernel_rs
+            && !runtime_mgmt_request_reply_rs
                 .contains("pub(crate) fn set_resolver<'cfg, T, U, C, const MAX_RV: usize>("),
         "runtime management owners must not keep the deleted duplicate resolver wrapper"
     );
     for required in [
-        "        pub fn enter_controller<'cfg, T, U, C, B, const MAX_RV: usize>(",
-        "        pub fn enter_cluster<'cfg, T, U, C, B, const MAX_RV: usize>(",
-        "        pub fn enter_stream_controller<'cfg, T, U, C, B, const MAX_RV: usize>(",
-        "        pub fn enter_stream_cluster<'cfg, T, U, C, B, const MAX_RV: usize>(",
-        "        pub async fn drive_cluster<'lease, 'cfg, T, U, C, Mint, B, const MAX_RV: usize>(",
-        "        pub async fn drive_stream_cluster<'lease, T, U, C, Mint, F, B, const MAX_RV: usize>(",
-        "        pub async fn drive_stream_controller<'lease, T, U, C, Mint, F, B, const MAX_RV: usize>(",
-        "            T: crate::substrate::Transport + 'lease,",
-        "            T: crate::substrate::Transport + 'cfg,",
-        "            U: crate::substrate::runtime::LabelUniverse,",
-        "            C: crate::substrate::runtime::Clock,",
-        "            Mint: crate::substrate::cap::advanced::MintConfigMarker,",
-        "            Mint::Policy: crate::substrate::cap::advanced::AllowsCanonical,",
-        "            F: FnMut() -> bool,",
-        "            F: FnMut(crate::substrate::mgmt::session::tap::TapEvent) -> bool,",
-        "            B: crate::substrate::binding::BindingSlot,",
-        "            subscribe: crate::substrate::mgmt::SubscribeReq,",
+        "pub use crate::runtime::mgmt::{",
+        "ROLE_CLUSTER,",
+        "ROLE_CONTROLLER,",
+        "LoadRequest,",
+        "Request,",
+        "SlotRequest,",
+        "pub mod request_reply {",
+        "pub mod observe_stream {",
+        "pub use crate::runtime::mgmt::RequestReplyPrefixSteps as PrefixSteps;",
+        "pub use crate::runtime::mgmt::ObserveStreamPrefixSteps as PrefixSteps;",
+        "pub const PREFIX: crate::g::Program<PrefixSteps> =",
     ] {
         assert!(
             substrate_rs.contains(required),
-            "substrate::mgmt::session must provide curated management helpers: {required}"
+            "substrate::mgmt must expose the canonical prefix surface: {required}"
         );
     }
     for forbidden in [
-        "crate::runtime::mgmt::session::CONTROLLER_PROGRAM",
-        "crate::runtime::mgmt::session::STREAM_CONTROLLER_PROGRAM",
-        "crate::runtime::mgmt::session::STREAM_CLUSTER_PROGRAM",
-        "pub use crate::runtime::mgmt::session::{CONTROLLER_PROGRAM",
-        "pub use crate::runtime::mgmt::session::{STREAM_CLUSTER_PROGRAM",
-        "pub use crate::runtime::mgmt::session::{STREAM_CONTROLLER_PROGRAM",
-        "pub use crate::runtime::mgmt::session::{StreamControl",
+        "pub fn enter_controller<'cfg, T, U, C, B, const MAX_RV: usize>(",
+        "pub fn enter_cluster<'cfg, T, U, C, B, const MAX_RV: usize>(",
+        "pub fn enter_stream_controller<'cfg, T, U, C, B, const MAX_RV: usize>(",
+        "pub fn enter_stream_cluster<'cfg, T, U, C, B, const MAX_RV: usize>(",
+        "pub async fn drive_cluster<'lease, 'cfg, T, U, C, Mint, B, const MAX_RV: usize>(",
+        "pub async fn drive_stream_cluster<'lease, T, U, C, Mint, F, B, const MAX_RV: usize>(",
+        "pub async fn drive_stream_controller<'lease, T, U, C, Mint, F, B, const MAX_RV: usize>(",
+        "impl<'request> Request<'request> {",
+        "pub async fn drive_controller<'lease, T, U, C, Mint, B, const MAX_RV: usize>(",
     ] {
         assert!(
             !substrate_rs.contains(forbidden),
-            "substrate::mgmt::session must not re-export choreography artifacts or bespoke traits: {forbidden}"
+            "substrate::mgmt must not keep the deleted management helper family: {forbidden}"
         );
     }
+    assert!(substrate_rs.contains("pub mod tap {"));
     assert!(
-        !substrate_rs.contains("pub trait StreamControl"),
-        "substrate::mgmt::session must not define a bespoke stream control trait"
-    );
-    assert!(substrate_rs.contains("        pub mod tap {"));
-    assert!(
-        substrate_rs.contains("            pub use crate::observe::core::TapEvent;"),
-        "substrate::mgmt::session::tap must stay on the minimal TapEvent facade"
+        substrate_rs.contains("pub use crate::observe::core::TapEvent;")
+            && !substrate_rs.contains("TapBatch"),
+        "substrate::mgmt::tap must stay on TapEvent only"
     );
     for forbidden in ["            pub mod events {", "            pub mod ids {"] {
         assert!(
             !substrate_rs.contains(forbidden),
-            "substrate::mgmt::session::tap must not expose lower-layer observe helper buckets: {forbidden}"
+            "substrate::mgmt::tap must not expose lower-layer observe helper buckets: {forbidden}"
         );
     }
     for forbidden in [
@@ -1333,7 +1325,6 @@ fn substrate_mgmt_and_binding_roots_stay_minimal() {
         "PolicyEvent,",
         "PolicyEventKind,",
         "TAP_BATCH_MAX_EVENTS",
-        "TapBatch,",
         "TapRing,",
         "emit,",
         "for_each_since,",
@@ -1345,38 +1336,29 @@ fn substrate_mgmt_and_binding_roots_stay_minimal() {
     ] {
         assert!(
             !substrate_rs.contains(forbidden),
-            "substrate::mgmt::session::tap must not leak extra observe helpers: {forbidden}"
+            "substrate::mgmt::tap must not leak extra observe helpers: {forbidden}"
         );
     }
     assert!(!substrate_rs.contains("pub mod observe {"));
     assert!(
         !substrate_rs
             .contains("pub fn run_code_session<'cfg, 'request, T, U, C, const MAX_RV: usize>("),
-        "substrate::mgmt::session must not keep a local wrapper entry for management code sessions"
+        "substrate::mgmt must not keep a local wrapper entry for management code sessions"
     );
     assert!(
-        substrate_rs.contains("pub use crate::runtime::mgmt::{LoadRequest, Request, SlotRequest};"),
-        "substrate::mgmt::session must re-export the canonical request sum type and payload owners"
-    );
-    assert!(
-        substrate_rs.contains("impl<'request> Request<'request> {")
-            && substrate_rs.contains(
-                "pub async fn drive_controller<'lease, T, U, C, Mint, B, const MAX_RV: usize>("
-            ),
-        "substrate::mgmt::session must expose the canonical controller-role driver on Request itself"
+        substrate_rs.contains("LoadRequest,")
+            && substrate_rs.contains("Request,")
+            && substrate_rs.contains("SlotRequest,"),
+        "substrate::mgmt must re-export the canonical request sum type and payload owners"
     );
     for forbidden in [
         "Result<super::Reply, super::MgmtError>",
         "subscribe: super::SubscribeReq,",
         "F: FnMut(tap::TapEvent) -> bool,",
-        "B: crate::binding::BindingSlot,",
-        "            T: crate::transport::Transport + 'cfg,",
-        "            U: crate::runtime::consts::LabelUniverse + 'cfg,",
-        "            C: crate::runtime::config::Clock + 'cfg,",
     ] {
         assert!(
             !substrate_rs.contains(forbidden),
-            "substrate::mgmt::session must use canonical substrate owner paths in public contracts: {forbidden}"
+            "substrate::mgmt must use canonical substrate owner paths in public contracts: {forbidden}"
         );
     }
     assert!(
@@ -1402,44 +1384,31 @@ fn substrate_mgmt_and_binding_roots_stay_minimal() {
         "substrate::binding must not leak a second channel-store error surface"
     );
     assert!(
-        !runtime_mgmt_kernel_rs.contains("type LoopRouteSteps =")
-            && !runtime_mgmt_kernel_rs.contains("type StreamLoopRouteSteps =")
-            && !runtime_mgmt_kernel_rs.contains("type LoopContinueMsg =")
-            && !runtime_mgmt_kernel_rs.contains("type LoopBreakMsg =")
-            && !runtime_mgmt_kernel_rs.contains("type StreamContinueMsg =")
-            && !runtime_mgmt_kernel_rs.contains("type StreamBreakMsg =")
-            && !runtime_mgmt_kernel_rs.contains("type TapBatchMsg =")
-            && runtime_mgmt_kernel_rs.contains("const LOOP_SEGMENT: Program<")
-            && runtime_mgmt_kernel_rs.contains("LoopDecisionSteps<")
-            && runtime_mgmt_kernel_rs.contains("LABEL_LOOP_CONTINUE,")
-            && runtime_mgmt_kernel_rs.contains("LABEL_LOOP_BREAK,")
-            && runtime_mgmt_kernel_rs.contains("const STREAM_LOOP_ROUTE: Program<")
-            && runtime_mgmt_kernel_rs.contains("g::Role<1>,")
-            && runtime_mgmt_kernel_rs.contains(
-                "steps::SendStep<g::Role<1>, g::Role<0>, g::Msg<LABEL_OBSERVE_STREAM_END, ()>>"
-            )
-            && runtime_mgmt_kernel_rs.contains(
-                "steps::SendStep<g::Role<1>, g::Role<0>, g::Msg<LABEL_OBSERVE_BATCH, TapBatch>>"
-            ),
-        "runtime mgmt kernel must use direct canonical loop witnesses instead of local loop aliases"
+        !runtime_mgmt_request_reply_rs.contains("type CommandRouteSteps = CommandStep;")
+            && !runtime_mgmt_request_reply_rs.contains("type Controller = g::Role<0>;")
+            && !runtime_mgmt_request_reply_rs.contains("type Cluster = g::Role<1>;")
+            && runtime_mgmt_request_reply_rs.contains("const LOOP_SEGMENT: Program<")
+            && runtime_mgmt_request_reply_rs.contains("pub type ProgramSteps = SeqSteps<")
+            && runtime_mgmt_request_reply_rs.contains("pub const PROGRAM: Program<ProgramSteps> ="),
+        "request-reply owner must hold the canonical request/reply choreography directly"
     );
     assert!(
-        !runtime_mgmt_kernel_rs.contains("type CommandRouteSteps = CommandStep;"),
-        "runtime mgmt kernel must not hide the command step behind a pure synonym alias"
+        !runtime_mgmt_observe_stream_rs.contains("type StreamLoopRouteSteps =")
+            && !runtime_mgmt_observe_stream_rs.contains("type StreamContinueMsg =")
+            && !runtime_mgmt_observe_stream_rs.contains("type StreamBreakMsg =")
+            && !runtime_mgmt_observe_stream_rs.contains("type TapBatchMsg =")
+            && runtime_mgmt_observe_stream_rs.contains("pub struct TapBatch {")
+            && runtime_mgmt_observe_stream_rs.contains("const STREAM_LOOP_ROUTE: Program<")
+            && runtime_mgmt_observe_stream_ws.contains("g::Msg<LABEL_OBSERVE_STREAM_END, ()>")
+            && runtime_mgmt_observe_stream_ws.contains("g::Msg<LABEL_OBSERVE_BATCH, TapBatch>"),
+        "observe-stream owner must keep batching local while preserving the canonical loop witnesses"
     );
     assert!(
-        !runtime_mgmt_kernel_rs.contains("type Controller = g::Role<0>;")
-            && !runtime_mgmt_kernel_rs.contains("type Cluster = g::Role<1>;"),
-        "runtime mgmt kernel must not keep pure role synonym aliases"
-    );
-    assert!(
-        !runtime_mgmt_kernel_rs.contains("STREAM_LOOP_CONTINUE_PREFIX.then(")
-            && runtime_mgmt_kernel_rs.contains("const STREAM_LOOP_CONTINUE_ARM: Program<")
-            && runtime_mgmt_kernel_rs.contains("STREAM_LOOP_CONTINUE_PREFIX,")
-            && runtime_mgmt_kernel_rs.contains(
-                "g::send::<g::Role<1>, g::Role<0>, g::Msg<LABEL_OBSERVE_BATCH, TapBatch>, 0>(),"
-            ),
-        "runtime mgmt kernel must preserve the continue-arm segment via g::seq"
+        runtime_mgmt_test_support_rs
+            .contains("pub(crate) fn with_management_compiled_programs_for_test")
+            && runtime_mgmt_test_support_rs.contains("Manager<Cold, SLOTS>")
+            && runtime_mgmt_test_support_rs.contains("PromotionGateThresholds"),
+        "test-support owner must hold the staging manager and compiled-program helper"
     );
     for forbidden in [
         "BindingSlot as Binding",

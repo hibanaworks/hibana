@@ -10,9 +10,9 @@ use hibana::{
     g::advanced::{RoleProgram, project},
     g::{self},
     substrate::{
-        Lane, SessionCluster, SessionId,
+        Lane, SessionId, SessionKit,
         binding::NoBinding,
-        mgmt::session::tap::TapEvent,
+        mgmt::tap::TapEvent,
         runtime::{Config, DefaultLabelUniverse},
     },
 };
@@ -34,13 +34,13 @@ fn decode_sid_lane(packed: u32) -> (u32, u16) {
 #[test]
 fn lease_observe_tracks_lane_lifecycle() {
     // Prepare cluster and rendezvous with test transport.
-    let cluster: &'static SessionCluster<
+    let cluster: &'static SessionKit<
         'static,
         TestTransport,
         DefaultLabelUniverse,
         hibana::substrate::runtime::CounterClock,
         2,
-    > = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+    > = Box::leak(Box::new(SessionKit::new(leak_clock())));
     let transport = TestTransport::default();
     let tap_buf = leak_tap_storage();
     let tap_buf_ptr: *const [TapEvent; RING_EVENTS] = tap_buf;

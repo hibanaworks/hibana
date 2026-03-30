@@ -14,15 +14,13 @@ note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_and_
    |
    |         let typestate = RoleTypestate::<ROLE>::from_summary(&summary);
    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::typestate::builder::RoleTypestate::<0>::from_summary`
-  --> src/global/typestate/builder.rs
+note: inside `hibana::global::typestate::emit::<impl hibana::global::typestate::builder::RoleTypestate<0>>::from_summary`
+  --> src/global/typestate/emit.rs
    |
-   |         Self::build(view, view.as_slice())
-   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::typestate::builder::RoleTypestate::<0>::build`
-  --> src/global/typestate/builder.rs
+   |         super::emit_walk::build_role_typestate::<ROLE>(view, view.as_slice())
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::typestate::emit_walk::build_role_typestate::<0>`
+  --> src/global/typestate/emit_walk.rs
    |
-   | / ...                   panic!(
-   | | ...                       "route scope recorded conflicting controller policy annotations"
-   | | ...                   );
-   | |_______________________^ the failure occurred here
+   |                         panic!("route scope recorded conflicting controller policy annotations");
+   |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here

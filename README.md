@@ -280,8 +280,8 @@ stays an internal endpoint seam rather than a public authority source.
 - `PolicySignalsProvider::signals(slot)` is the single public slot-input boundary
 - EPF executes inside the resolver slot; it is not a second public policy API
 - fail-closed remains the default for verifier, trap, or fuel failures
-- policy distribution and activation belong to
-  `hibana::substrate::mgmt::session`, not to endpoint-local helpers
+- policy distribution and activation belong to the management prefixes under
+  `hibana::substrate::mgmt`, not to endpoint-local helpers
 
 ### Responsibility Matrix
 
@@ -301,14 +301,14 @@ Protocol implementors use the protocol-neutral SPI:
   compile-time control-message typing
 - `hibana::substrate` owns attach / enter / binding / resolver / policy /
   transport seams
-- the root app surface does not expose `SessionCluster`, `BindingSlot`,
+- the root app surface does not expose `SessionKit`, `BindingSlot`,
   `RoleProgram`, `PhaseCursor`, or typestate internals
 - the canonical public EPF owners are
   `hibana::substrate::policy::epf::{Header, Slot}`
 
 - `hibana::g::advanced::{project, RoleProgram, CanonicalControl, ExternalControl, MessageSpec, ControlMessage, ControlMessageKind}`
 - `hibana::g::advanced::compose::seq`
-- `hibana::substrate::SessionCluster`
+- `hibana::substrate::SessionKit`
 - `hibana::substrate::{AttachError, CpError, EffIndex, Lane, RendezvousId, SessionId}`
 - `hibana::substrate::Transport`
 - `hibana::substrate::runtime::{Clock, Config, CounterClock, DefaultLabelUniverse, LabelUniverse}`
@@ -484,9 +484,9 @@ Transport rules:
 - `recv_label_hint()` is a demux hint, not route authority
 - `metrics()` returns `TransportSnapshot` through `TransportMetrics`
 
-## Bootstrap `SessionCluster` and Enter Typed Endpoints
+## Bootstrap `SessionKit` and Enter Typed Endpoints
 
-`hibana::substrate::SessionCluster::new(clock)` is the canonical starting point.
+`hibana::substrate::SessionKit::new(clock)` is the canonical starting point.
 The borrowed / `no_alloc`-oriented path is the canonical substrate path: keep the
 clock, config storage, projected program, and resolver state borrowed; add
 rendezvous once; then `enter()`.
@@ -497,13 +497,13 @@ let mut slab = [0u8; 64 * 1024];
 let clock = hibana::substrate::runtime::CounterClock::new();
 let config = hibana::substrate::runtime::Config::new(&mut tap_buf, &mut slab);
 
-let cluster: hibana::substrate::SessionCluster<
+let cluster: hibana::substrate::SessionKit<
     '_,
     MyTransport,
     hibana::substrate::runtime::DefaultLabelUniverse,
     hibana::substrate::runtime::CounterClock,
     4,
-> = hibana::substrate::SessionCluster::new(&clock);
+> = hibana::substrate::SessionKit::new(&clock);
 
 let transport = MyTransport;
 let rv_id = cluster.add_rendezvous_from_config(config, transport)?;
@@ -529,16 +529,16 @@ let slab = Box::leak(vec![0u8; 64 * 1024].into_boxed_slice());
 let clock = Box::leak(Box::new(hibana::substrate::runtime::CounterClock::new()));
 let config = hibana::substrate::runtime::Config::new(tap_buf, slab);
 
-let cluster: hibana::substrate::SessionCluster<
+let cluster: hibana::substrate::SessionKit<
     'static,
     MyTransport,
     hibana::substrate::runtime::DefaultLabelUniverse,
     hibana::substrate::runtime::CounterClock,
     4,
-> = hibana::substrate::SessionCluster::new(clock);
+> = hibana::substrate::SessionKit::new(clock);
 ```
 
-`SessionCluster::new(clock)` is always paired with a rendezvous config. The
+`SessionKit::new(clock)` is always paired with a rendezvous config. The
 runtime config owner is `hibana::substrate::runtime::Config`, and the public
 customisation points are:
 
@@ -654,7 +654,8 @@ The public EPF owner surface is intentionally narrow:
 - `PolicySignalsProvider::signals(slot)` is the only public input boundary for slot-scoped policy data
 - policy execution is fail-closed; verifier, trap, and fuel failures reject rather than falling through
 - policy activation switches at the decision boundary through staged active/pending epochs
-- load / activate / revert stay on `hibana::substrate::mgmt::session`
+- load / activate / revert stay on the management prefixes under
+  `hibana::substrate::mgmt`
 
 Input semantics also come from the implementation contract:
 
@@ -940,38 +941,30 @@ let _state = (queue_depth, packet_number);
 
 ## Management Session
 
-Policy distribution belongs to `hibana::substrate::mgmt::session`.
+Policy distribution belongs to `hibana::substrate::mgmt`.
 
-Management is split into exactly two session families:
+Management is split into exactly two ordinary choreography prefixes:
 
-- request/reply management session
-- observe stream session
+- `hibana::substrate::mgmt::request_reply::PREFIX`
+- `hibana::substrate::mgmt::observe_stream::PREFIX`
 
-EPF image injection and execution live on the request/reply session. The public
+The public role owners are:
+
+- `hibana::substrate::mgmt::ROLE_CONTROLLER`
+- `hibana::substrate::mgmt::ROLE_CLUSTER`
+
+EPF image injection and execution live on the request/reply prefix. The public
 request vocabulary is:
 
-- `hibana::substrate::mgmt::session::Request::Load(LoadRequest)`
-- `hibana::substrate::mgmt::session::Request::LoadAndActivate(LoadRequest)`
-- `hibana::substrate::mgmt::session::Request::Activate(SlotRequest)`
-- `hibana::substrate::mgmt::session::Request::Revert(SlotRequest)`
-- `hibana::substrate::mgmt::session::Request::Stats(SlotRequest)`
+- `hibana::substrate::mgmt::Request::Load(LoadRequest)`
+- `hibana::substrate::mgmt::Request::LoadAndActivate(LoadRequest)`
+- `hibana::substrate::mgmt::Request::Activate(SlotRequest)`
+- `hibana::substrate::mgmt::Request::Revert(SlotRequest)`
+- `hibana::substrate::mgmt::Request::Stats(SlotRequest)`
 
 `LoadRequest` owns `slot`, `code`, `fuel_max`, and `mem_len`. `SlotRequest`
 owns only `slot`. That split is intentional: staged upload and command-only
 requests are different shapes, and the public surface keeps them different.
-
-The curated helpers are:
-
-- `enter_controller`
-- `enter_cluster`
-- `enter_stream_controller`
-- `enter_stream_cluster`
-- `drive_cluster`
-- `drive_stream_cluster`
-- `drive_stream_controller`
-
-Session identity (`rv_id`, `sid`) is fixed at `enter_controller` /
-`enter_cluster`. The request payload itself is just `Request`.
 
 Management payload and reply owners:
 
@@ -979,9 +972,15 @@ Management payload and reply owners:
 - `LoadChunk::mid(offset, chunk)` and `LoadChunk::last(offset, chunk)` stream the image body
 - `LoadRequest` and `SlotRequest` are the typed public request payloads
 - `LoadRequest` and `SlotRequest` carry `hibana::substrate::policy::epf::Slot` as their public slot owner
-- `Request` is the public request sum type for the request/reply session
+- `Request` is the public request sum type for the request/reply prefix
 - `SubscribeReq` configures stream-tap subscription
 - `Reply`, `LoadReport`, `MgmtError`, `StatsResp`, and `TransitionReport` are the canonical response owners
+- `hibana::substrate::mgmt::tap::TapEvent` is the minimal public tap surface for observe streaming
+- tap batching is a lower-layer observe-stream detail; there is no public `TapBatch` surface
+
+The public management surface intentionally stops at payload owners and prefix
+owners. There is no public management helper family beyond those ordinary
+choreography owners.
 
 EPF lifecycle and result surfaces:
 
@@ -993,119 +992,43 @@ EPF lifecycle and result surfaces:
 - `TransitionReport` carries the activated or reverted version plus `policy_stats`
 - `LoadReport` carries the staged version when code was uploaded without scheduling activation
 - `StatsResp` carries `traps`, `aborts`, `fuel_used`, and `active_version`
-- after activation, the image executes when its `Slot` is reached; immediate command completion returns over the request/reply session, and continuing observation stays on the stream session
+- after activation, the image executes when its `Slot` is reached; immediate command completion returns over the request/reply prefix, and continuing observation stays on the stream prefix
 - `Request::LoadAndActivate` and `Request::Activate` schedule activation at the management command boundary; `Request::Revert` restores the previous active version and clears pending activation state
 
-```rust
-use hibana::substrate::policy::epf;
+Canonical substrate usage composes the management prefix, projects typed roles,
+enters them through `SessionKit::enter`, then progresses the attached endpoints
+with the same localside core API as any other choreography:
 
-let sid = hibana::substrate::SessionId::new(9);
-let controller = hibana::substrate::mgmt::session::enter_controller(
-    &cluster,
+```rust
+use hibana::g;
+use hibana::g::advanced::{compose, project};
+
+let program = compose::seq(hibana::substrate::mgmt::request_reply::PREFIX, APP);
+let controller_program = project(&program); // typed controller-side projection
+let cluster_program = project(&program); // typed cluster-side projection
+
+let controller = cluster.enter(
     rv_id,
     sid,
+    &controller_program,
     hibana::substrate::binding::NoBinding,
 )?;
-let cluster_role = hibana::substrate::mgmt::session::enter_cluster(
-    &cluster,
+let cluster_role = cluster.enter(
     rv_id,
     sid,
+    &cluster_program,
     hibana::substrate::binding::NoBinding,
 )?;
 
-let ((controller, reply), _cluster_role) = futures::future::try_join(
-    hibana::substrate::mgmt::session::Request::LoadAndActivate(
-        hibana::substrate::mgmt::session::LoadRequest {
-            slot: epf::Slot::Route,
-            code,
-            fuel_max: 4096,
-            mem_len: 1024,
-        },
-    )
-    .drive_controller(controller),
-    hibana::substrate::mgmt::session::drive_cluster(&cluster, rv_id, sid, cluster_role),
-)
-.await?;
-
-match reply {
-    hibana::substrate::mgmt::Reply::Loaded(report) => {
-        let staged_version = report.staged_version;
-        let _state = (controller, staged_version);
-    }
-    hibana::substrate::mgmt::Reply::ActivationScheduled(report) => {
-        let active_version = report.version;
-        let commit_count = report.policy_stats.commits;
-        let _state = (controller, active_version, commit_count);
-    }
-    hibana::substrate::mgmt::Reply::Reverted(report) => {
-        let rollback_count = report.policy_stats.rollbacks;
-        let _state = (controller, rollback_count);
-    }
-    hibana::substrate::mgmt::Reply::Stats {
-        stats,
-        staged_version,
-    } => {
-        let active_version = stats.active_version;
-        let _state = (controller, active_version, staged_version);
-    }
-}
+let _state = (controller, cluster_role);
 ```
 
-Remote controller code uses the same `Request` vocabulary on the same role-0
-session:
-
-```rust
-let controller = hibana::substrate::mgmt::session::enter_controller(
-    &cluster,
-    rv_id,
-    hibana::substrate::SessionId::new(11),
-    hibana::substrate::binding::NoBinding,
-)?;
-
-let (controller, reply) = hibana::substrate::mgmt::session::Request::Activate(
-    hibana::substrate::mgmt::session::SlotRequest {
-        slot: epf::Slot::Route,
-    },
-)
-.drive_controller(controller)
-.await?;
-
-let _state = (controller, reply);
-```
-
-Streaming management keeps the tap surface on
-`hibana::substrate::mgmt::session::tap::TapEvent`.
-
-```rust
-let controller = hibana::substrate::mgmt::session::enter_stream_controller(
-    &cluster,
-    rv_id,
-    hibana::substrate::SessionId::new(10),
-    hibana::substrate::binding::NoBinding,
-)?;
-
-let controller = hibana::substrate::mgmt::session::drive_stream_controller(
-    controller,
-    hibana::substrate::mgmt::SubscribeReq::default(),
-    |event: hibana::substrate::mgmt::session::tap::TapEvent| {
-        let keep_running = event.tick != 0 || event.id != 0;
-        keep_running
-    },
-)
-.await?;
-
-let cluster_endpoint = hibana::substrate::mgmt::session::enter_stream_cluster(
-    &cluster,
-    rv_id,
-    hibana::substrate::SessionId::new(10),
-    hibana::substrate::binding::NoBinding,
-)?;
-
-let cluster_endpoint =
-    hibana::substrate::mgmt::session::drive_stream_cluster(cluster_endpoint, || true).await?;
-
-let _state = (controller, cluster_endpoint, reply);
-```
+The request/reply prefix and observe stream prefix are ordinary choreography
+artifacts. Protocol implementors compose them with `hibana::g::advanced::compose::seq`,
+that is, ordinary `compose::seq`,
+project them with `project()`, attach them with `SessionKit::enter(...)`, and
+drive the resulting endpoints with `flow().send()`, `recv()`, `offer()`, and `decode()`
+just like any other attached session.
 
 ## Validation
 
@@ -1123,6 +1046,7 @@ bash ./.github/scripts/check_boundary_contracts.sh
 bash ./.github/scripts/check_plane_boundaries.sh
 bash ./.github/scripts/check_mgmt_boundary.sh
 bash ./.github/scripts/check_resolver_context_surface.sh
+bash ./.github/scripts/check_warning_free.sh
 bash ./.github/scripts/check_direct_projection_binary.sh
 bash ./.github/scripts/check_no_std_build.sh
 

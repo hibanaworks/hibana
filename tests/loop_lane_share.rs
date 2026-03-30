@@ -28,7 +28,7 @@ use hibana::{
         policy::{DynamicResolution, ResolverContext, ResolverError},
     },
     substrate::{
-        SessionCluster, SessionId,
+        SessionId, SessionKit,
         binding::NoBinding,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
     },
@@ -47,7 +47,7 @@ fn loop_lane_resolver(_ctx: ResolverContext) -> Result<DynamicResolution, Resolv
 }
 
 fn register_loop_lane_resolvers(
-    cluster: &SessionCluster<'static, TestTransport, DefaultLabelUniverse, CounterClock, 4>,
+    cluster: &SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 4>,
     rv_id: RendezvousId,
 ) {
     cluster
@@ -293,13 +293,8 @@ async fn loop_and_control_plane_tokens_share_lane() {
     let config = Config::new(tap_buf, slab);
     let transport = TestTransport::default();
 
-    let cluster: &mut SessionCluster<
-        'static,
-        TestTransport,
-        DefaultLabelUniverse,
-        CounterClock,
-        4,
-    > = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+    let cluster: &mut SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 4> =
+        Box::leak(Box::new(SessionKit::new(leak_clock())));
     let rv_id = cluster
         .add_rendezvous_from_config(config, transport.clone())
         .expect("register rendezvous");

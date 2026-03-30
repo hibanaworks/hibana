@@ -1,7 +1,7 @@
 #![cfg(feature = "std")]
 
 use hibana::substrate::{
-    mgmt::session::tap::TapEvent,
+    mgmt::tap::TapEvent,
     policy::epf::Slot,
     transport::{TransportAlgorithm, TransportSnapshot},
 };
