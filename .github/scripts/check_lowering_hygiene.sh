@@ -32,6 +32,16 @@ check_absent_outside() {
 }
 
 check_absent \
+  "ProgramFacts" \
+  "legacy ProgramFacts owner or vocabulary reintroduced" \
+  src README.md tests
+
+check_absent \
+  "budget_for_role_program\\(" \
+  "legacy role-program budget rescan helper reintroduced" \
+  src
+
+check_absent \
   "interpret_eff_list\\(" \
   "legacy interpret_eff_list lowering shim" \
   src
@@ -121,9 +131,9 @@ check_absent \
   src/global/typestate/emit.rs
 
 for required in \
-  'src/global/typestate/emit_walk.rs:pub(super) const fn build_role_typestate<const ROLE: u8>(' \
-  'src/global/typestate/emit_scope.rs:pub(super) const fn alloc_scope_entry(' \
-  'src/global/typestate/emit_scope.rs:pub(super) const fn finalize_scope_registry(' \
+  'src/global/typestate/emit_walk.rs:pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(' \
+  'src/global/typestate/emit_scope.rs:pub(super) const fn alloc_scope_record(' \
+  'src/global/typestate/emit_scope.rs:pub(super) unsafe fn init_scope_registry(' \
   'src/global/typestate/emit_route.rs:pub(super) const MAX_LOOP_TRACKED: usize =' \
   'src/global/typestate/emit_route.rs:pub(super) const fn find_loop_entry_state('
 do
@@ -142,6 +152,9 @@ while IFS= read -r hit; do
     *"src/control/cap/resource_kinds.rs:"*"macro_rules! decode_mask"*) ;;
     *"src/control/cluster/core.rs:"*"macro_rules! mask_for"*) ;;
     *"src/global/steps.rs:"*"macro_rules! impl_role_eq"*) ;;
+    *"src/endpoint/kernel/core_offer_tests.rs:"*"macro_rules! offer_fixture"*) ;;
+    *"src/endpoint/kernel/core_offer_tests.rs:"*"macro_rules! with_offer_cluster"*) ;;
+    *"src/endpoint/kernel/core_offer_tests.rs:"*"macro_rules! with_offer_value_slot"*) ;;
     *"src/transport/wire.rs:"*"macro_rules! impl_wire_for_int"*) ;;
     *"src/transport/wire.rs:"*"macro_rules! push"*) ;;
     *)

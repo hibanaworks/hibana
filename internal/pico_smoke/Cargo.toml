@@ -1,0 +1,12 @@
+[package]
+name = "hibana-pico-smoke"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+linear-heavy = []
+fanout-heavy = []
+
+[dependencies]
+hibana = { path = "../..", default-features = false }

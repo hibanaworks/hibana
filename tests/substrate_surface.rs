@@ -1,13 +1,15 @@
 mod common;
 #[path = "support/runtime.rs"]
 mod runtime_support;
+#[path = "support/tls_ref.rs"]
+mod tls_ref_support;
 
+use ::core::{cell::UnsafeCell, mem::MaybeUninit};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use hibana::Endpoint;
 use hibana::g;
-use hibana::g::advanced::steps::{ProjectRole, SendStep, SeqSteps, StepCons, StepNil};
+use hibana::g::advanced::steps::{SendStep, SeqSteps, StepCons, StepNil};
 use hibana::g::advanced::{RoleProgram, project};
 use hibana::substrate::{
     SessionId, SessionKit,
@@ -16,16 +18,32 @@ use hibana::substrate::{
     policy::{DynamicResolution, ResolverContext, ResolverError, ResolverRef},
     runtime::{Config, CounterClock, DefaultLabelUniverse},
 };
-
-const PROGRAM: g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>, StepNil>> =
-    g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>();
+use hibana::{Endpoint, RouteBranch};
+use static_assertions::assert_not_impl_any;
+use tls_ref_support::with_tls_ref;
+const PROGRAM: g::ProgramSource<
+    StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>, StepNil>,
+> = g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>();
+type ConnectionSteps =
+    SeqSteps<StepNil, StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>, StepNil>>;
+const CONNECTION_SOURCE: g::ProgramSource<ConnectionSteps> = g::seq(StepNil::PROGRAM, PROGRAM);
 static CLIENT_PROGRAM: RoleProgram<
     'static,
     0,
-    <StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>, StepNil> as ProjectRole<
-        g::Role<0>,
-    >>::Output,
-> = project(&PROGRAM);
+    StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>, StepNil>,
+> = project(&g::freeze(&PROGRAM));
+type StaticTestKit =
+    SessionKit<'static, common::TestTransport, DefaultLabelUniverse, CounterClock, 2>;
+
+std::thread_local! {
+    static SESSION_SLOT: UnsafeCell<MaybeUninit<StaticTestKit>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
+}
+
+assert_not_impl_any!(StaticTestKit: Send, Sync);
+assert_not_impl_any!(Endpoint<'static, 0, StaticTestKit, MintConfig>: Send, Sync);
+assert_not_impl_any!(RouteBranch<'static, 'static, 0, StaticTestKit, MintConfig>: Send, Sync);
 
 fn substrate_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/substrate.rs");
@@ -151,7 +169,7 @@ fn quality_workflow_rs() -> String {
         .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
 }
 
-fn collect_rs_files(root: &Path, files: &mut Vec<PathBuf>) {
+fn visit_rs_files(root: &Path, f: &mut impl FnMut(&Path)) {
     for entry in fs::read_dir(root)
         .unwrap_or_else(|err| panic!("read_dir {} failed: {}", root.display(), err))
     {
@@ -159,20 +177,13 @@ fn collect_rs_files(root: &Path, files: &mut Vec<PathBuf>) {
             entry.unwrap_or_else(|err| panic!("read_dir entry {} failed: {}", root.display(), err));
         let path = entry.path();
         if path.is_dir() {
-            collect_rs_files(&path, files);
+            visit_rs_files(&path, f);
             continue;
         }
         if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
-            files.push(path);
+            f(&path);
         }
     }
-}
-
-fn hibana_src_files() -> Vec<PathBuf> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut files = Vec::new();
-    collect_rs_files(&root, &mut files);
-    files
 }
 
 fn read_repo_test(path: &str) -> String {
@@ -237,7 +248,8 @@ fn hibana_core_source_stays_protocol_neutral() {
         "surface hygiene gate must reject protocol-specific vocabulary from hibana core"
     );
 
-    for path in hibana_src_files() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    visit_rs_files(&root, &mut |path| {
         let body = fs::read_to_string(&path)
             .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err));
         for forbidden in ["quic", "h3", "hq"] {
@@ -247,43 +259,38 @@ fn hibana_core_source_stays_protocol_neutral() {
                 path.display()
             );
         }
-    }
+    });
 }
 
 #[test]
 fn substrate_facade_exposes_enter_and_policy_resolver_registration() {
-    let transport = common::TestTransport::default();
-    let cluster: &mut SessionKit<
-        'static,
-        common::TestTransport,
-        DefaultLabelUniverse,
-        CounterClock,
-        1,
-    > = Box::leak(Box::new(SessionKit::new(runtime_support::leak_clock())));
-    let rv_id = cluster
-        .add_rendezvous_from_config(
-            Config::new(
-                runtime_support::leak_tap_storage(),
-                runtime_support::leak_slab(1024),
-            ),
-            transport,
-        )
-        .expect("add rendezvous");
+    runtime_support::with_fixture(|clock, tap_buf, slab| {
+        let transport = common::TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(StaticTestKit::new(clock));
+            },
+            |cluster| {
+                let rv_id = cluster
+                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport)
+                    .expect("add rendezvous");
 
-    cluster
-        .set_resolver::<7, 0, _, _>(rv_id, &CLIENT_PROGRAM, ResolverRef::from_fn(defer_resolver))
-        .expect("install resolver");
+                cluster
+                    .set_resolver::<7, 0, _, _>(
+                        rv_id,
+                        &CLIENT_PROGRAM,
+                        ResolverRef::from_fn(defer_resolver),
+                    )
+                    .expect("install resolver");
 
-    let endpoint = cluster
-        .enter(rv_id, SessionId::new(1), &CLIENT_PROGRAM, NoBinding)
-        .expect("enter endpoint");
-    let _: &Endpoint<
-        '_,
-        0,
-        SessionKit<'_, common::TestTransport, DefaultLabelUniverse, CounterClock, 1>,
-        MintConfig,
-        NoBinding,
-    > = &endpoint;
+                let endpoint = cluster
+                    .enter(rv_id, SessionId::new(1), &CLIENT_PROGRAM, NoBinding)
+                    .expect("enter endpoint");
+                let _: &Endpoint<'_, 0, StaticTestKit, MintConfig> = &endpoint;
+            },
+        );
+    });
 }
 
 #[test]
@@ -307,68 +314,93 @@ fn substrate_facade_drops_canonical_token_helpers() {
 }
 
 #[test]
-fn substrate_facade_registers_rendezvous_before_enter() {
-    let transport = common::TestTransport::default();
-    let cluster: &mut SessionKit<
-        'static,
-        common::TestTransport,
-        DefaultLabelUniverse,
-        CounterClock,
-        1,
-    > = Box::leak(Box::new(SessionKit::new(runtime_support::leak_clock())));
+fn substrate_facade_keeps_enter_as_the_only_public_attach_entry() {
+    let substrate_src = substrate_rs();
+    let allowlist = substrate_public_api_allowlist();
 
-    let rv_id = cluster
-        .add_rendezvous_from_config(
-            Config::new(
-                runtime_support::leak_tap_storage(),
-                runtime_support::leak_slab(1024),
-            ),
-            transport,
-        )
-        .expect("add rendezvous");
+    for forbidden in ["pub unsafe fn init_in_place", "pub unsafe fn enter_into"] {
+        assert!(
+            !substrate_src.contains(forbidden),
+            "substrate::SessionKit must not expose placement helper surface: {forbidden}"
+        );
+        assert!(
+            !allowlist.contains(forbidden),
+            "substrate public API allowlist must not keep deleted placement helpers: {forbidden}"
+        );
+    }
 
     assert!(
-        rv_id.raw() > 0,
-        "rendezvous registration must allocate a concrete id"
+        substrate_src.contains("pub fn enter<'r, const ROLE: u8, Steps, Mint, B>("),
+        "substrate::SessionKit must keep enter(...) as the canonical public attach entry"
+    );
+    assert!(
+        substrate_src.contains("program: &crate::g::advanced::RoleProgram<'_, ROLE, Steps, Mint>,"),
+        "substrate::SessionKit::enter must accept projected programs without extending the endpoint lifetime"
+    );
+    assert!(
+        !substrate_src
+            .contains("program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, Steps, Mint>,")
+            && !substrate_src.contains("pub fn enter<'r, 'prog, const ROLE: u8, Steps, Mint, B>("),
+        "substrate::SessionKit::enter must not tie endpoint lifetime to the projected RoleProgram borrow"
     );
 }
 
 #[test]
-fn substrate_facade_sets_resolver_before_enter() {
-    let transport = common::TestTransport::default();
-    let cluster: &mut SessionKit<
-        'static,
-        common::TestTransport,
-        DefaultLabelUniverse,
-        CounterClock,
-        1,
-    > = Box::leak(Box::new(SessionKit::new(runtime_support::leak_clock())));
-    let rv_id = cluster
-        .add_rendezvous_from_config(
-            Config::new(
-                runtime_support::leak_tap_storage(),
-                runtime_support::leak_slab(1024),
-            ),
-            transport,
-        )
-        .expect("add rendezvous");
+fn substrate_facade_registers_rendezvous_before_enter() {
+    runtime_support::with_fixture(|clock, tap_buf, slab| {
+        let transport = common::TestTransport::default();
+        let rv_id = with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(StaticTestKit::new(clock));
+            },
+            |cluster| {
+                cluster
+                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport)
+                    .expect("add rendezvous")
+            },
+        );
 
-    cluster
-        .set_resolver::<7, 0, _, _>(rv_id, &CLIENT_PROGRAM, ResolverRef::from_fn(defer_resolver))
-        .expect("install resolver");
+        assert!(
+            rv_id.raw() > 0,
+            "rendezvous registration must allocate a concrete id"
+        );
+    });
+}
+
+#[test]
+fn substrate_facade_sets_resolver_before_enter() {
+    runtime_support::with_fixture(|clock, tap_buf, slab| {
+        let transport = common::TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(StaticTestKit::new(clock));
+            },
+            |cluster| {
+                let rv_id = cluster
+                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport)
+                    .expect("add rendezvous");
+
+                cluster
+                    .set_resolver::<7, 0, _, _>(
+                        rv_id,
+                        &CLIENT_PROGRAM,
+                        ResolverRef::from_fn(defer_resolver),
+                    )
+                    .expect("install resolver");
+            },
+        );
+    });
 }
 
 #[test]
 fn substrate_facade_projects_before_enter() {
-    let app = g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>();
-    let connection = g::advanced::compose::seq(StepNil::PROGRAM, app);
+    let connection = g::freeze(&CONNECTION_SOURCE);
     let program: RoleProgram<
         '_,
         0,
-        <SeqSteps<
-            StepNil,
-            StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>, StepNil>,
-        > as ProjectRole<g::Role<0>>>::Output,
+        SeqSteps<StepNil, StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>, StepNil>>,
     > = project(&connection);
 
     let _ = &program;
@@ -410,6 +442,8 @@ fn quality_workflow_runs_canonical_validation_suite() {
         "./.github/scripts/check_surface_hygiene.sh",
         "./.github/scripts/check_warning_free.sh",
         "./.github/scripts/check_direct_projection_binary.sh",
+        "./.github/scripts/check_huge_choreography_budget.sh",
+        "./.github/scripts/check_pico_size_matrix.sh",
         "cargo check --all-targets -p hibana",
         "cargo test -p hibana --features std",
         "cargo test -p hibana --test ui --features std",
@@ -433,38 +467,34 @@ fn quality_workflow_runs_canonical_validation_suite() {
 
 #[test]
 fn substrate_facade_accepts_non_static_projected_programs() {
-    let transport = common::TestTransport::default();
-    let cluster: &mut SessionKit<
-        'static,
-        common::TestTransport,
-        DefaultLabelUniverse,
-        CounterClock,
-        1,
-    > = Box::leak(Box::new(SessionKit::new(runtime_support::leak_clock())));
-    let rv_id = cluster
-        .add_rendezvous_from_config(
-            Config::new(
-                runtime_support::leak_tap_storage(),
-                runtime_support::leak_slab(1024),
-            ),
-            transport,
-        )
-        .expect("add rendezvous");
+    fn enter_from_inner_scope<'a>(
+        cluster: &'a StaticTestKit,
+        rv_id: SessionId,
+        rendezvous: hibana::substrate::RendezvousId,
+    ) -> Endpoint<'a, 0, StaticTestKit, MintConfig> {
+        let connection = g::freeze(&CONNECTION_SOURCE);
+        let program = project(&connection);
+        cluster
+            .enter(rendezvous, rv_id, &program, NoBinding)
+            .expect("enter endpoint")
+    }
 
-    let app = g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>();
-    let connection = g::advanced::compose::seq(StepNil::PROGRAM, app);
-    let program = project(&connection);
-
-    let endpoint = cluster
-        .enter(rv_id, SessionId::new(2), &program, NoBinding)
-        .expect("enter endpoint");
-    let _: &Endpoint<
-        '_,
-        0,
-        SessionKit<'_, common::TestTransport, DefaultLabelUniverse, CounterClock, 1>,
-        MintConfig,
-        NoBinding,
-    > = &endpoint;
+    runtime_support::with_fixture(|clock, tap_buf, slab| {
+        let transport = common::TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(StaticTestKit::new(clock));
+            },
+            |cluster| {
+                let rv_id = cluster
+                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport)
+                    .expect("add rendezvous");
+                let endpoint = enter_from_inner_scope(cluster, SessionId::new(2), rv_id);
+                let _: &Endpoint<'_, 0, StaticTestKit, MintConfig> = &endpoint;
+            },
+        );
+    });
 }
 
 #[test]
@@ -473,7 +503,8 @@ fn substrate_cluster_registration_avoids_rendezvous_stack_temporary() {
     let cluster_core_ws = compact_ws(&cluster_core_src);
 
     assert!(
-        cluster_core_ws.contains("core.locals.register_local_from_config(config, transport)"),
+        cluster_core_ws
+            .contains("core .locals .register_local_from_config(config, transport, MAX_RV)"),
         "cluster rendezvous registration must construct directly inside the lease-core owner slot"
     );
     for forbidden in [
@@ -488,21 +519,43 @@ fn substrate_cluster_registration_avoids_rendezvous_stack_temporary() {
 }
 
 #[test]
-fn runtime_support_avoids_stack_backed_tap_storage() {
+fn runtime_support_uses_local_borrowed_fixture_owners() {
     let runtime_support_src = read_repo_test("tests/support/runtime.rs");
 
     assert!(
-        runtime_support_src.contains("vec![TapEvent::default(); RING_EVENTS].into_boxed_slice()"),
-        "runtime support must allocate tap storage on the heap without first materializing a large stack array"
+        runtime_support_src.contains("UnsafeCell<[TapEvent; RING_EVENTS]>")
+            && runtime_support_src.contains("std::thread_local!"),
+        "runtime support must keep tap/slab storage in thread-local borrowed fixture owners"
     );
     assert!(
-        !runtime_support_src.contains("Box::new([TapEvent::default(); RING_EVENTS])"),
-        "runtime support must not keep stack-backed tap storage boxing"
+        !runtime_support_src.contains("Box::")
+            && !runtime_support_src.contains("vec![")
+            && !runtime_support_src.contains("leak_"),
+        "runtime support must not keep Box/Vec/leak-based fixture helpers"
     );
 }
 
 #[test]
-fn repo_tests_do_not_depend_on_large_stack_helpers() {
+fn repo_tests_use_erased_static_slots_for_handles() {
+    let tests_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests");
+    visit_rs_files(&tests_root, &mut |path| {
+        if path.file_name().and_then(|name| name.to_str()) == Some("substrate_surface.rs") {
+            return;
+        }
+        let src = fs::read_to_string(path)
+            .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err));
+        for forbidden in ["StaticSlot<Endpoint<", "StaticSlot<RouteBranch<"] {
+            assert!(
+                !src.contains(forbidden),
+                "tests must use erased static slots for handle storage: {} contains {forbidden}",
+                path.display()
+            );
+        }
+    });
+}
+
+#[test]
+fn repo_tests_do_not_depend_on_stack_tuning_helpers() {
     let route_dynamic_control_src = read_repo_test("tests/route_dynamic_control.rs");
     let lease_bundle_src = fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/control/lease/bundle.rs"),
@@ -510,33 +563,40 @@ fn repo_tests_do_not_depend_on_large_stack_helpers() {
     .expect("read src/control/lease/bundle.rs");
     let rust_min_stack = concat!("RUST_MIN", "_STACK");
     let hibana_test_stack = concat!("HIBANA_TEST", "_STACK");
-    let large_stack_helper = concat!("run_with_large_", "stack_async");
     let stack_size_call = concat!("stack_", "size(");
-    let stack_backed_tap_storage = concat!("Box::new([TapEvent::default(); ", "RING_EVENTS])");
-    let stack_local_tap_storage =
-        concat!("let mut storage = [TapEvent::default(); ", "RING_EVENTS];");
+    let boxed_fixture_helper = "Box::leak(Box::new(SessionKit::new(";
 
-    for forbidden in [rust_min_stack, hibana_test_stack, large_stack_helper] {
+    for forbidden in [rust_min_stack, hibana_test_stack] {
         assert!(
             !route_dynamic_control_src.contains(forbidden),
-            "route_dynamic_control must not depend on large-stack helper residue: {forbidden}"
+            "route_dynamic_control must not depend on stack-tuning residue: {forbidden}"
         );
     }
     assert!(
         !route_dynamic_control_src.contains(stack_size_call),
         "route_dynamic_control must run on the default test thread stack"
     );
-
-    for forbidden in [
-        stack_size_call,
-        stack_backed_tap_storage,
-        stack_local_tap_storage,
+    for deleted in [
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/support/large_stack_sync.rs"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/support/large_stack_async.rs"),
     ] {
+        assert!(
+            !deleted.exists(),
+            "large-stack support module must be deleted once stack tuning is eradicated: {}",
+            deleted.display()
+        );
+    }
+
+    for forbidden in [stack_size_call] {
         assert!(
             !lease_bundle_src.contains(forbidden),
             "lease::bundle tests must not reintroduce stack-backed large fixture residue: {forbidden}"
         );
     }
+    assert!(
+        !route_dynamic_control_src.contains(boxed_fixture_helper),
+        "route_dynamic_control must not hide SessionKit fixture ownership behind Box::leak(SessionKit::new(...))"
+    );
 }
 
 #[test]
@@ -923,7 +983,8 @@ fn hibana_core_and_surface_hygiene_gate_stay_protocol_neutral() {
         "surface hygiene gate must reject protocol-specific vocabulary in hibana/src"
     );
 
-    for path in hibana_src_files() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    visit_rs_files(&root, &mut |path| {
         let src = fs::read_to_string(&path)
             .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err));
         let lower = src.to_ascii_lowercase();
@@ -943,7 +1004,7 @@ fn hibana_core_and_surface_hygiene_gate_stay_protocol_neutral() {
                 );
             }
         }
-    }
+    });
 }
 
 #[test]
@@ -1043,6 +1104,22 @@ fn substrate_policy_root_stays_minimal() {
             "legacy substrate helper surface must be deleted: {forbidden}"
         );
     }
+}
+
+#[test]
+fn endpoint_and_route_branch_handles_stay_small() {
+    let endpoint_size = size_of::<Endpoint<'static, 0, StaticTestKit, MintConfig>>();
+    let branch_size = size_of::<RouteBranch<'static, 'static, 0, StaticTestKit, MintConfig>>();
+    let word = size_of::<usize>();
+
+    assert!(
+        endpoint_size <= 8 * word,
+        "Endpoint handle must stay choreography-independent and bounded: size={endpoint_size} bytes"
+    );
+    assert!(
+        branch_size <= 8 * word,
+        "RouteBranch handle must stay choreography-independent and bounded: size={branch_size} bytes"
+    );
 }
 
 #[test]
@@ -1284,7 +1361,7 @@ fn substrate_mgmt_and_binding_roots_stay_minimal() {
         "pub mod observe_stream {",
         "pub use crate::runtime::mgmt::RequestReplyPrefixSteps as PrefixSteps;",
         "pub use crate::runtime::mgmt::ObserveStreamPrefixSteps as PrefixSteps;",
-        "pub const PREFIX: crate::g::Program<PrefixSteps> =",
+        "pub const PREFIX: crate::g::ProgramSource<PrefixSteps> =",
     ] {
         assert!(
             substrate_rs.contains(required),
@@ -1387,9 +1464,10 @@ fn substrate_mgmt_and_binding_roots_stay_minimal() {
         !runtime_mgmt_request_reply_rs.contains("type CommandRouteSteps = CommandStep;")
             && !runtime_mgmt_request_reply_rs.contains("type Controller = g::Role<0>;")
             && !runtime_mgmt_request_reply_rs.contains("type Cluster = g::Role<1>;")
-            && runtime_mgmt_request_reply_rs.contains("const LOOP_SEGMENT: Program<")
+            && runtime_mgmt_request_reply_rs.contains("const LOOP_SEGMENT: ProgramSource<")
             && runtime_mgmt_request_reply_rs.contains("pub type ProgramSteps = SeqSteps<")
-            && runtime_mgmt_request_reply_rs.contains("pub const PROGRAM: Program<ProgramSteps> ="),
+            && runtime_mgmt_request_reply_rs
+                .contains("pub const PROGRAM: ProgramSource<ProgramSteps> ="),
         "request-reply owner must hold the canonical request/reply choreography directly"
     );
     assert!(
@@ -1398,7 +1476,7 @@ fn substrate_mgmt_and_binding_roots_stay_minimal() {
             && !runtime_mgmt_observe_stream_rs.contains("type StreamBreakMsg =")
             && !runtime_mgmt_observe_stream_rs.contains("type TapBatchMsg =")
             && runtime_mgmt_observe_stream_rs.contains("pub struct TapBatch {")
-            && runtime_mgmt_observe_stream_rs.contains("const STREAM_LOOP_ROUTE: Program<")
+            && runtime_mgmt_observe_stream_rs.contains("const STREAM_LOOP_ROUTE: ProgramSource<")
             && runtime_mgmt_observe_stream_ws.contains("g::Msg<LABEL_OBSERVE_STREAM_END, ()>")
             && runtime_mgmt_observe_stream_ws.contains("g::Msg<LABEL_OBSERVE_BATCH, TapBatch>"),
         "observe-stream owner must keep batching local while preserving the canonical loop witnesses"

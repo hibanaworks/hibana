@@ -1,28 +1,45 @@
 error[E0080]: evaluation panicked: Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dynamic policy annotation provided
-   --> tests/ui/g-route-unprojectable.rs:152:5
+   --> tests/ui/g-route-unprojectable.rs:152:14
     |
-152 | > = project(&ROUTE);
-    |     ^^^^^^^^^^^^^^^ evaluation of `PASSIVE_PROGRAM` failed inside this call
+152 | > = project(&g::freeze(&ROUTE));
+    |              ^^^^^^^^^^^^^^^^^ evaluation of `PASSIVE_PROGRAM` failed inside this call
     |
-note: inside `project::<1, SeqSteps<StepCons<SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<100>, GenericCapToken<RouteControl<100, 0>>, CanonicalControl<RouteControl<100, 0>>>>, StepNil>, SeqSteps<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, StepNil>, StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, SeqSteps<StepCons<SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<101>, GenericCapToken<RouteControl<101, 0>>, CanonicalControl<RouteControl<101, 0>>>>, StepNil>, SeqSteps<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, StepNil>, SeqSteps<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, StepNil>, StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<77>, ()>>, StepNil>>>>>>>, MintConfig>`
-   --> src/global/role_program.rs
+note: inside `freeze::<SeqSteps<StepCons<SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<100>, GenericCapToken<RouteControl<100, 0>>, CanonicalControl<RouteControl<100, 0>>>>, StepNil>, SeqSteps<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, StepNil>, StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, SeqSteps<StepCons<SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<101>, GenericCapToken<RouteControl<101, 0>>, CanonicalControl<RouteControl<101, 0>>>>, StepNil>, SeqSteps<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, StepNil>, SeqSteps<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, StepNil>, StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<77>, ()>>, StepNil>>>>>>>>`
+   --> src/global/program.rs
     |
-    |     let stamp = ProjectionSeal::<ROLE>::validate_and_stamp::<Steps, Mint>(program);
-    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::compiled::seal::ProjectionSeal::<1>::validate_and_stamp::<SeqSteps<StepCons<SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<100>, GenericCapToken<RouteControl<100, 0>>, CanonicalControl<RouteControl<100, 0>>>>, StepNil>, SeqSteps<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, StepNil>, StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, SeqSteps<StepCons<SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<101>, GenericCapToken<RouteControl<101, 0>>, CanonicalControl<RouteControl<101, 0>>>>, StepNil>, SeqSteps<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, StepNil>, SeqSteps<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, StepNil>, StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<77>, ()>>, StepNil>>>>>>>, MintConfig>`
+    |     validate_all_roles(&summary);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::compiled::seal::validate_all_roles`
    --> src/global/compiled/seal.rs
     |
-    |         let typestate = RoleTypestate::<ROLE>::from_summary(&summary);
-    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::typestate::emit::<impl hibana::global::typestate::builder::RoleTypestate<1>>::from_summary`
-   --> src/global/typestate/emit.rs
+    |     ProjectionSeal::<1>::validate_compiled_layout(summary.view());
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::compiled::seal::ProjectionSeal::<1>::validate_compiled_layout`
+   --> src/global/compiled/seal.rs
     |
-    |         super::emit_walk::build_role_typestate::<ROLE>(view, view.as_slice())
-    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::typestate::emit_walk::build_role_typestate::<1>`
-   --> src/global/typestate/emit_walk.rs
+    |         Self::validate_route_projection_guarantees(view);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::compiled::seal::ProjectionSeal::<1>::validate_route_projection_guarantees`
+   --> src/global/compiled/seal.rs
+    |
+    | /                 Self::validate_route_scope(
+    | |                     view,
+    | |                     scope_markers,
+    | |                     marker.scope_id,
+    | |                     marker.controller_role,
+    | |                     marker.linger,
+    | |                 );
+    | |_________________^
+note: inside `hibana::global::compiled::seal::ProjectionSeal::<1>::validate_route_scope`
+   --> src/global/compiled/seal.rs
     |
     | / ...   panic!(
     | | ...       "Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dynamic policy annotation provi...
     | | ...   );
     | |_______^ the failure occurred here
+
+note: erroneous constant encountered
+   --> tests/ui/g-route-unprojectable.rs:152:13
+    |
+152 | > = project(&g::freeze(&ROUTE));
+    |             ^^^^^^^^^^^^^^^^^^

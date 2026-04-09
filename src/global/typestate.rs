@@ -16,31 +16,31 @@ mod registry;
 mod route_facts;
 
 pub use self::facts::StateIndex;
+pub(crate) use self::registry::{RouteScopeRecord, ScopeRecord};
+#[cfg(test)]
+pub(crate) use self::{builder::RoleTypestate, emit::phase_route_guard_for_built_state_for_role};
 #[allow(unused_imports)]
 pub(crate) use self::{
-    builder::{
-        ARM_SHARED, MAX_FIRST_RECV_DISPATCH, RoleTypestate, RoleTypestateValue, ScopeRegion,
+    builder::{ARM_SHARED, MAX_FIRST_RECV_DISPATCH, RoleTypestateValue, ScopeRegion},
+    cursor::{LoopMetadata, LoopRole, PhaseCursor, PhaseCursorState},
+    emit::{
+        RoleCompileScratch, init_value_from_summary_for_role, phase_route_guard_for_state_for_role,
     },
-    cursor::{LoopMetadata, LoopRole, PhaseCursor},
-    emit::RoleCompileScratch,
     facts::{
         JumpError, JumpReason, LocalAction, LocalMeta, LocalNode, MAX_STATES, PassiveArmNavigation,
-        RecvMeta, SendMeta, as_eff_index, as_state_index, state_index_to_usize, try_local_meta,
-        try_recv_meta, try_send_meta,
+        RecvMeta, SendMeta, as_eff_index, as_state_index, state_index_to_usize,
     },
 };
 
 /*
 Canonical split owners retained under src/global/typestate/{facts,builder,cursor}.rs:
 pub struct StateIndex(u16);
-pub(crate) struct RouteRecvIndex(u16);
 pub(crate) const MAX_STATES: usize =
 pub(crate) enum JumpReason {
 pub(crate) struct JumpError {
 pub(crate) enum PassiveArmNavigation {
 pub(crate) enum LocalAction {
 pub(crate) struct LocalNode {
-pub(crate) struct ScopeEntry {
 pub(crate) struct ScopeRegion {
 pub(crate) struct ScopeRecord {
 pub struct SendMeta {
@@ -65,9 +65,10 @@ pub(crate) fn try_local_meta(&self) -> Option<LocalMeta>
 
 #[cfg(test)]
 mod tests {
-    use std::boxed::Box;
+    use core::{cell::UnsafeCell, mem::MaybeUninit, ptr};
+    use std::{thread::LocalKey, thread_local};
 
-    use super::{LocalAction, PhaseCursor, StateIndex};
+    use super::{LocalAction, StateIndex};
     use crate::control::cap::mint::GenericCapToken;
     use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
     use crate::eff::EffIndex;
@@ -76,35 +77,51 @@ mod tests {
     use crate::global::const_dsl::{PolicyMode, ScopeKind};
     use crate::global::role_program;
     use crate::global::role_program::{RoleProgram, project};
-    use crate::global::steps::{LoopSteps, ProjectRole, SendStep, StepConcat, StepCons, StepNil};
+    use crate::global::steps::{LoopSteps, SendStep, StepConcat, StepCons, StepNil};
     use crate::global::typestate::RoleCompileScratch;
     use crate::global::{CanonicalControl, MessageSpec};
     use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
 
-    fn compile_role_boxed<const ROLE: u8, LocalSteps>(
-        program: &RoleProgram<'_, ROLE, LocalSteps>,
-    ) -> Box<CompiledRole> {
-        let summary = LoweringSummary::scan_const(program.lowering_input());
-        let mut compiled = Box::<CompiledRole>::new_uninit();
-        let mut scratch = Box::new(RoleCompileScratch::new());
-        unsafe {
-            CompiledRole::init_from_summary::<ROLE>(
-                compiled.as_mut_ptr(),
-                &summary,
-                scratch.as_mut(),
-            );
-            compiled.assume_init()
-        }
+    thread_local! {
+        static COMPILED_ROLE_STORAGE: UnsafeCell<MaybeUninit<CompiledRole>> =
+            const { UnsafeCell::new(MaybeUninit::uninit()) };
+        static COMPILED_ROLE_SCRATCH: UnsafeCell<MaybeUninit<RoleCompileScratch>> =
+            const { UnsafeCell::new(MaybeUninit::uninit()) };
+        static COMPILED_ROLE_STORAGE_ALT: UnsafeCell<MaybeUninit<CompiledRole>> =
+            const { UnsafeCell::new(MaybeUninit::uninit()) };
+        static COMPILED_ROLE_SCRATCH_ALT: UnsafeCell<MaybeUninit<RoleCompileScratch>> =
+            const { UnsafeCell::new(MaybeUninit::uninit()) };
     }
 
-    const BODY: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>> =
+    fn with_compiled_role_slot<const ROLE: u8, Steps, R>(
+        compiled_slot: &'static LocalKey<UnsafeCell<MaybeUninit<CompiledRole>>>,
+        scratch_slot: &'static LocalKey<UnsafeCell<MaybeUninit<RoleCompileScratch>>>,
+        program: &RoleProgram<'_, ROLE, Steps>,
+        f: impl FnOnce(&CompiledRole) -> R,
+    ) -> R {
+        let summary = LoweringSummary::scan_const(program.lowering_input());
+        compiled_slot.with(|compiled| {
+            scratch_slot.with(|scratch| unsafe {
+                let compiled_ptr = (*compiled.get()).as_mut_ptr();
+                let scratch_ptr = (*scratch.get()).as_mut_ptr();
+                scratch_ptr.write(RoleCompileScratch::new());
+                CompiledRole::init_from_summary::<ROLE>(compiled_ptr, &summary, &mut *scratch_ptr);
+                let result = f(&*compiled_ptr);
+                ptr::drop_in_place(compiled_ptr);
+                ptr::drop_in_place(scratch_ptr);
+                result
+            })
+        })
+    }
+
+    const BODY: g::ProgramSource<StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>> =
         g::send::<Role<0>, Role<1>, Msg<7, ()>, 0>();
 
     const LOOP_POLICY_ID: u16 = 9300;
     const ROUTE_POLICY_ID: u16 = 9301;
 
     #[allow(clippy::type_complexity)]
-    const LOOP_PROGRAM: g::Program<
+    const LOOP_PROGRAM: g::ProgramSource<
         LoopSteps<
             StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>,
             Role<0>,
@@ -152,7 +169,7 @@ mod tests {
     const CONTROLLER_PROGRAM: RoleProgram<
         'static,
         0,
-        <LoopSteps<
+        LoopSteps<
             StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>,
             Role<0>,
             Msg<
@@ -166,13 +183,13 @@ mod tests {
                 CanonicalControl<LoopBreakKind>,
             >,
             StepNil,
-        > as ProjectRole<Role<0>>>::Output,
-    > = project(&LOOP_PROGRAM);
+        >,
+    > = project(&g::freeze(&LOOP_PROGRAM));
 
     const TARGET_PROGRAM: RoleProgram<
         'static,
         1,
-        <LoopSteps<
+        LoopSteps<
             StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>,
             Role<0>,
             Msg<
@@ -186,120 +203,172 @@ mod tests {
                 CanonicalControl<LoopBreakKind>,
             >,
             StepNil,
-        > as ProjectRole<Role<1>>>::Output,
-    > = project(&LOOP_PROGRAM);
+        >,
+    > = project(&g::freeze(&LOOP_PROGRAM));
 
-    const LOCAL_PROGRAM: g::Program<StepCons<SendStep<Role<0>, Role<0>, Msg<9, ()>>, StepNil>> =
-        g::send::<Role<0>, Role<0>, Msg<9, ()>, 0>();
+    const LOCAL_PROGRAM: g::ProgramSource<
+        StepCons<SendStep<Role<0>, Role<0>, Msg<9, ()>>, StepNil>,
+    > = g::send::<Role<0>, Role<0>, Msg<9, ()>, 0>();
     const LOCAL_ROLE: role_program::RoleProgram<
         'static,
         0,
-        <StepCons<SendStep<Role<0>, Role<0>, Msg<9, ()>>, StepNil> as ProjectRole<Role<0>>>::Output,
-    > = role_program::project(&LOCAL_PROGRAM);
+        StepCons<SendStep<Role<0>, Role<0>, Msg<9, ()>>, StepNil>,
+    > = role_program::project(&g::freeze(&LOCAL_PROGRAM));
 
     #[test]
     fn state_cursor_rewinds_on_loop_continue() {
-        let compiled = compile_role_boxed(&CONTROLLER_PROGRAM);
-        let decision = PhaseCursor::new(compiled.as_ref());
-        let continue_branch = decision
-            .seek_label(LABEL_LOOP_CONTINUE)
-            .expect("continue branch available");
-        assert_eq!(continue_branch.label(), Some(LABEL_LOOP_CONTINUE));
+        with_compiled_role_slot(
+            &COMPILED_ROLE_STORAGE,
+            &COMPILED_ROLE_SCRATCH,
+            &CONTROLLER_PROGRAM,
+            |compiled| {
+                let typestate = compiled.typestate_ref();
+                let scope_id = typestate.node(0).scope();
+                let (continue_entry_idx, continue_label) = compiled
+                    .controller_arm_entry_by_arm(scope_id, 0)
+                    .expect("continue arm entry");
+                assert_eq!(continue_label, LABEL_LOOP_CONTINUE);
+                let continue_entry = typestate.node(continue_entry_idx.as_usize());
+                match continue_entry.action() {
+                    LocalAction::Local { label, .. } => assert_eq!(label, LABEL_LOOP_CONTINUE),
+                    other => panic!("expected continue local action, got {other:?}"),
+                }
 
-        let after_continue = continue_branch.advance();
-        assert!(after_continue.is_send());
-        assert_eq!(after_continue.label(), Some(7));
+                let after_continue = typestate.node(continue_entry.next().as_usize());
+                match after_continue.action() {
+                    LocalAction::Send { label, .. } => assert_eq!(label, 7),
+                    other => panic!("expected loop body send after continue, got {other:?}"),
+                }
 
-        let rewind = decision
-            .seek_label(LABEL_LOOP_CONTINUE)
-            .expect("continue branch rewinds");
-        assert_eq!(rewind.label(), Some(LABEL_LOOP_CONTINUE));
+                let (rewind_entry_idx, rewind_label) = compiled
+                    .controller_arm_entry_by_arm(scope_id, 0)
+                    .expect("continue branch rewinds");
+                assert_eq!(rewind_label, LABEL_LOOP_CONTINUE);
+                let rewind_entry = typestate.node(rewind_entry_idx.as_usize());
+                match rewind_entry.action() {
+                    LocalAction::Local { label, .. } => assert_eq!(label, LABEL_LOOP_CONTINUE),
+                    other => panic!("expected rewound continue local action, got {other:?}"),
+                }
+            },
+        );
     }
 
     #[test]
     fn state_cursor_loop_branch_successors() {
-        let controller_compiled = compile_role_boxed(&CONTROLLER_PROGRAM);
-        let decision = PhaseCursor::new(controller_compiled.as_ref());
-        assert_eq!(decision.scope_kind(), Some(ScopeKind::Route));
-        let cont_cursor = decision
-            .seek_label(LABEL_LOOP_CONTINUE)
-            .expect("continue branch")
-            .advance();
-        let mut cont_cursor = cont_cursor;
-        while cont_cursor.label() == Some(LABEL_LOOP_CONTINUE) {
-            cont_cursor = cont_cursor.advance();
-        }
-        assert_eq!(cont_cursor.label(), Some(7));
+        with_compiled_role_slot(
+            &COMPILED_ROLE_STORAGE,
+            &COMPILED_ROLE_SCRATCH,
+            &CONTROLLER_PROGRAM,
+            |controller_compiled| {
+                let typestate = controller_compiled.typestate_ref();
+                let scope_id = typestate.node(0).scope();
+                let region = typestate
+                    .scope_region_for(scope_id)
+                    .expect("controller route scope");
+                assert_eq!(region.kind, ScopeKind::Route);
 
-        let break_branch = decision.seek_label(LABEL_LOOP_BREAK).expect("break branch");
-        assert_eq!(break_branch.label(), Some(LABEL_LOOP_BREAK));
-        // After advancing from Local(BREAK), we land on Jump(LoopBreak).
-        // Follow the Jump to its target (terminal).
-        let break_cursor = break_branch
-            .advance()
-            .try_follow_jumps()
-            .expect("follow loop break jump");
-        break_cursor.assert_terminal();
-
-        // Target (Role<1>) only sees the LoopBody message (label 7), not the
-        // LoopContinue/LoopBreak self-sends. With self-send CanonicalControl,
-        // Target's projection contains only the actual cross-role messages,
-        // plus PassiveObserverBranch Jump nodes for empty arms (Break arm in this case).
-        let target_compiled = compile_role_boxed(&TARGET_PROGRAM);
-        let target_cursor = PhaseCursor::new(target_compiled.as_ref());
-        // Target sees label 7 (the loop body recv) directly
-        assert_eq!(target_cursor.label(), Some(7));
-
-        let ts = target_compiled.typestate();
-        let after_body = target_cursor.advance();
-        // After advancing past the Recv, we encounter PassiveObserverBranch Jump nodes.
-        // - Jump for arm 0 (Continue): loops back to loop_start
-        // - Jump for arm 1 (Break): goes to scope_end (terminal)
-        let cursor = after_body;
-
-        // For a passive observer in a linger scope, the normal flow after Recv
-        // is determined by which arm was selected. The arm 0 Jump loops back,
-        // so we need to check that arm 1 (Break) properly terminates.
-        assert!(
-            cursor.is_jump(),
-            "after Recv should be arm 0 PassiveObserverBranch Jump"
-        );
-        let jump_node = ts.node(cursor.index());
-        // Arm 0 Jump targets loop start (idx 0)
-        assert_eq!(
-            jump_node.next(),
-            StateIndex::ZERO,
-            "arm 0 should jump to loop start"
-        );
-
-        // Advance past arm 0 Jump to find arm 1 Jump
-        // Note: advance() on a Jump follows the target, so we need to check next node manually
-        let arm1_idx = cursor.index() + 1;
-        if arm1_idx < ts.len() && !matches!(ts.node(arm1_idx).action(), LocalAction::None) {
-            let arm1_node = ts.node(arm1_idx);
-            if arm1_node.action().is_jump() {
-                // Arm 1 (Break) Jump should target scope_end (which should be terminal)
-                let arm1_target = arm1_node.next();
-                let target_idx = arm1_target.as_usize();
-                if target_idx < ts.len() {
-                    let terminal_node = ts.node(target_idx);
-                    assert!(
-                        terminal_node.action().is_terminal(),
-                        "arm 1 Break Jump should reach terminal"
-                    );
+                let (continue_entry_idx, continue_label) = controller_compiled
+                    .controller_arm_entry_by_arm(scope_id, 0)
+                    .expect("continue arm entry");
+                assert_eq!(continue_label, LABEL_LOOP_CONTINUE);
+                let continue_entry = typestate.node(continue_entry_idx.as_usize());
+                match continue_entry.action() {
+                    LocalAction::Local { label, .. } => assert_eq!(label, LABEL_LOOP_CONTINUE),
+                    other => panic!("expected continue local action, got {other:?}"),
                 }
-            }
-        }
+                let continue_after = typestate.node(continue_entry.next().as_usize());
+                match continue_after.action() {
+                    LocalAction::Send { label, .. } => assert_eq!(label, 7),
+                    other => panic!("expected loop body send after continue, got {other:?}"),
+                }
 
-        // The test passes if we've verified the structure. The actual runtime
-        // behavior uses offer() to select which arm, not linear advance().
-        // For linger scopes with passive observers, both arms have Jump nodes.
+                let (break_entry_idx, break_label) = controller_compiled
+                    .controller_arm_entry_by_arm(scope_id, 1)
+                    .expect("break arm entry");
+                assert_eq!(break_label, LABEL_LOOP_BREAK);
+                let break_entry = typestate.node(break_entry_idx.as_usize());
+                match break_entry.action() {
+                    LocalAction::Local { label, .. } => assert_eq!(label, LABEL_LOOP_BREAK),
+                    other => panic!("expected break local action, got {other:?}"),
+                }
+                let break_jump = typestate.node(break_entry.next().as_usize());
+                assert!(
+                    break_jump.action().is_jump(),
+                    "break branch should advance into LoopBreak jump"
+                );
+                let break_terminal = typestate.node(break_jump.next().as_usize());
+                assert!(
+                    break_terminal.action().is_terminal(),
+                    "LoopBreak jump should reach terminal"
+                );
+
+                // Target (Role<1>) only sees the LoopBody message (label 7), not the
+                // LoopContinue/LoopBreak self-sends. With self-send CanonicalControl,
+                // Target's projection contains only the actual cross-role messages,
+                // plus PassiveObserverBranch Jump nodes for empty arms (Break arm in this case).
+                with_compiled_role_slot(
+                    &COMPILED_ROLE_STORAGE_ALT,
+                    &COMPILED_ROLE_SCRATCH_ALT,
+                    &TARGET_PROGRAM,
+                    |target_compiled| {
+                        let ts = target_compiled.typestate();
+                        let target_first = ts.node(0);
+                        match target_first.action() {
+                            LocalAction::Recv { label, .. } => assert_eq!(label, 7),
+                            other => panic!("target should start at loop body recv, got {other:?}"),
+                        }
+                        let after_body = target_first.next().as_usize();
+                        // After advancing past the Recv, we encounter PassiveObserverBranch Jump nodes.
+                        // - Jump for arm 0 (Continue): loops back to loop_start
+                        // - Jump for arm 1 (Break): goes to scope_end (terminal)
+                        let cursor = ts.node(after_body);
+
+                        // For a passive observer in a linger scope, the normal flow after Recv
+                        // is determined by which arm was selected. The arm 0 Jump loops back,
+                        // so we need to check that arm 1 (Break) properly terminates.
+                        assert!(
+                            cursor.action().is_jump(),
+                            "after Recv should be arm 0 PassiveObserverBranch Jump"
+                        );
+                        // Arm 0 Jump targets loop start (idx 0)
+                        assert_eq!(
+                            cursor.next(),
+                            StateIndex::ZERO,
+                            "arm 0 should jump to loop start"
+                        );
+
+                        // Advance past arm 0 Jump to find arm 1 Jump
+                        // Note: advance() on a Jump follows the target, so we need to check next node manually
+                        let arm1_idx = after_body + 1;
+                        if arm1_idx < ts.len() {
+                            let arm1_node = ts.node(arm1_idx);
+                            if arm1_node.action().is_jump() {
+                                // Arm 1 (Break) Jump should target scope_end (which should be terminal)
+                                let arm1_target = arm1_node.next();
+                                let target_idx = arm1_target.as_usize();
+                                if target_idx < ts.len() {
+                                    let terminal_node = ts.node(target_idx);
+                                    assert!(
+                                        terminal_node.action().is_terminal(),
+                                        "arm 1 Break Jump should reach terminal"
+                                    );
+                                }
+                            }
+                        }
+                    },
+                );
+
+                // The test passes if we've verified the structure. The actual runtime
+                // behavior uses offer() to select which arm, not linear advance().
+                // For linger scopes with passive observers, both arms have Jump nodes.
+            },
+        );
     }
 
     #[test]
     fn route_scope_kind_detected() {
         // Route is local to Controller (0 → 0)
-        const ROUTE: g::Program<
+        const ROUTE: g::ProgramSource<
             <StepCons<
                 SendStep<
                     Role<0>,
@@ -353,7 +422,7 @@ mod tests {
         const CONTROLLER: RoleProgram<
             'static,
             0,
-            <<StepCons<
+            <StepCons<
                 SendStep<
                     Role<0>,
                     Role<0>,
@@ -377,28 +446,53 @@ mod tests {
                     >,
                     StepNil,
                 >,
-            >>::Output as ProjectRole<Role<0>>>::Output,
-        > = project(&ROUTE);
+            >>::Output,
+        > = project(&g::freeze(&ROUTE));
 
-        let compiled = compile_role_boxed(&CONTROLLER);
-        let cursor = PhaseCursor::new(&compiled);
-        assert_eq!(cursor.scope_kind(), Some(ScopeKind::Route));
-        let scope_id = cursor.scope_id().expect("route scope id present");
-        let (policy, eff_index, _) = cursor
-            .route_scope_controller_policy(scope_id)
-            .expect("controller policy recorded");
-        let expected_policy = PolicyMode::dynamic(ROUTE_POLICY_ID).with_scope(scope_id);
-        assert_eq!(policy, expected_policy);
-        assert_ne!(eff_index, EffIndex::MAX);
+        with_compiled_role_slot(
+            &COMPILED_ROLE_STORAGE,
+            &COMPILED_ROLE_SCRATCH,
+            &CONTROLLER,
+            |compiled| {
+                let typestate = compiled.typestate_ref();
+                let scope_id = typestate.node(0).scope();
+                let region = typestate
+                    .scope_region_for(scope_id)
+                    .expect("route scope region present");
+                assert_eq!(region.kind, ScopeKind::Route);
+                let (policy, eff_index, _) = typestate
+                    .route_controller(scope_id)
+                    .expect("controller policy recorded");
+                let expected_policy = PolicyMode::dynamic(ROUTE_POLICY_ID).with_scope(scope_id);
+                assert_eq!(policy, expected_policy);
+                assert_ne!(eff_index, EffIndex::MAX);
+            },
+        );
     }
 
     #[test]
     fn local_action_produces_metadata() {
-        let compiled = compile_role_boxed(&LOCAL_ROLE);
-        let cursor = PhaseCursor::new(&compiled);
-        assert!(cursor.is_local_action());
-        assert_eq!(cursor.label(), Some(<Msg<9, ()> as MessageSpec>::LABEL));
-        let cursor = cursor.advance();
-        cursor.assert_terminal();
+        with_compiled_role_slot(
+            &COMPILED_ROLE_STORAGE,
+            &COMPILED_ROLE_SCRATCH,
+            &LOCAL_ROLE,
+            |compiled| {
+                let typestate = compiled.typestate_ref();
+                let first = typestate.node(0);
+                assert!(first.action().is_local_action());
+                match first.action() {
+                    LocalAction::Local { label, .. } => {
+                        assert_eq!(label, <Msg<9, ()> as MessageSpec>::LABEL);
+                    }
+                    other => panic!("expected local action, got {other:?}"),
+                }
+
+                let next = super::state_index_to_usize(first.next());
+                assert!(matches!(
+                    typestate.node(next).action(),
+                    LocalAction::Terminate
+                ));
+            },
+        );
     }
 }

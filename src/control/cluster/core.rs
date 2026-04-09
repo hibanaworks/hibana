@@ -3,8 +3,13 @@
 //! This module implements SessionCluster, which coordinates multiple Rendezvous
 //! instances for local distributed session management.
 
-use core::{marker::PhantomData, mem::MaybeUninit, ptr::NonNull};
+use core::cell::UnsafeCell;
+use core::marker::PhantomData;
+#[cfg(test)]
+use core::mem::MaybeUninit;
 
+#[cfg(test)]
+use crate::control::automaton::splice::SpliceLeaseSpec;
 use crate::control::automaton::{
     delegation::{DelegateMintAutomaton, DelegateMintSeed, DelegationLeaseSpec},
     distributed::{DistributedSplice, DistributedSpliceInv, SpliceAck, SpliceIntent},
@@ -24,7 +29,7 @@ use crate::control::cap::resource_kinds::{
     SpliceIntentKind,
 };
 use crate::control::cap::typed_tokens::CapFrameToken;
-use crate::control::cluster::effects::{CpEffect, EffectEnvelope};
+use crate::control::cluster::effects::{CpEffect, EffectEnvelopeRef};
 use crate::control::handle::{bag::HandleBag, spec};
 use crate::control::lease::{
     bundle::{LeaseBundleContext, LeaseGraphBundleExt},
@@ -40,11 +45,49 @@ use crate::control::lease::{
     },
 };
 use crate::endpoint::affine::LaneGuard;
+use crate::global::const_dsl::ControlScopeKind;
 
-const MAX_CACHED_SPLICES: usize = 64;
-const HANDLE_RESOLVER_SLOTS: usize = 128;
-const MAX_COMPILED_PROGRAMS: usize = 64;
-const MAX_COMPILED_ROLES: usize = 128;
+type CachedSpliceOperandsMap =
+    ArrayMap<SessionId, SpliceOperands, { crate::runtime::consts::LANES_MAX as usize }>;
+type PublicEndpointKernel<'r, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint> =
+    crate::endpoint::kernel::CursorEndpoint<
+        'r,
+        ROLE,
+        T,
+        U,
+        C,
+        crate::control::cap::mint::EpochTbl,
+        MAX_RV,
+        Mint,
+        crate::binding::BindingHandle<'r>,
+    >;
+#[cfg(test)]
+type ErasedPublicEndpointKernel<'cfg, T, U, C, const MAX_RV: usize> =
+    crate::endpoint::kernel::CursorEndpoint<
+        'cfg,
+        0,
+        T,
+        U,
+        C,
+        crate::control::cap::mint::EpochTbl,
+        MAX_RV,
+        crate::control::cap::mint::MintConfig,
+        crate::binding::BindingHandle<'cfg>,
+    >;
+type PublicEndpointDropFn = unsafe fn(*mut ());
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PublicEndpointStorageLayout {
+    total_bytes: usize,
+    total_align: usize,
+    header_bytes: usize,
+    port_slots_bytes: usize,
+    guard_slots_bytes: usize,
+    header_padding_bytes: usize,
+    arena_offset: usize,
+    arena_bytes: usize,
+    arena_align: usize,
+}
 
 fn splice_operands_from_handle(handle: SpliceHandle) -> SpliceOperands {
     SpliceOperands::new(
@@ -63,16 +106,55 @@ use super::error::{AttachError, CpError, DelegationError, SpliceError};
 use crate::control::automaton::txn::{InAcked, InBegin, NoopTap};
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 use crate::eff::EffIndex;
+#[cfg(test)]
+use crate::global::compiled::CompiledProgram;
+#[cfg(test)]
+use crate::global::typestate::RoleCompileScratch;
 use crate::global::{
-    compiled::{CompiledProgram, CompiledRole, LoweringSummary, ProgramStamp},
+    compiled::{CompiledProgramImage, CompiledRoleImage, ControlSemanticsTable},
     const_dsl::{PolicyMode, ScopeId},
-    typestate::RoleCompileScratch,
 };
 use crate::observe::scope::ScopeTrace;
 use crate::rendezvous::core::{LaneLease, Rendezvous};
 use crate::rendezvous::error::RendezvousError;
 use crate::transport::context::{self, ContextValue};
 use crate::transport::{TransportAlgorithm, TransportSnapshot};
+
+#[cfg(test)]
+use std::thread_local;
+
+#[cfg(test)]
+const TEST_ENDPOINT_ARENA_SLOTS: usize = 16;
+#[cfg(test)]
+const TEST_ENDPOINT_ARENA_LAYOUT: crate::endpoint::kernel::EndpointArenaLayout =
+    crate::endpoint::kernel::EndpointArenaLayout::new(
+        crate::global::role_program::MAX_LANES,
+        crate::global::role_program::MAX_LANES,
+        crate::endpoint::kernel::MAX_ROUTE_ARM_STACK,
+        crate::eff::meta::MAX_EFF_NODES,
+        crate::global::role_program::MAX_LANES,
+    );
+#[cfg(test)]
+const TEST_ENDPOINT_ARENA_BYTES: usize =
+    TEST_ENDPOINT_ARENA_LAYOUT.total_bytes() + TEST_ENDPOINT_ARENA_LAYOUT.total_align();
+#[cfg(test)]
+const TEST_COMPILED_PROGRAM_IMAGE_BYTES: usize = CompiledProgramImage::max_persistent_bytes();
+#[cfg(test)]
+const TEST_COMPILED_PROGRAM_IMAGE_ALIGN: usize = CompiledProgramImage::persistent_align();
+#[cfg(test)]
+const TEST_COMPILED_PROGRAM_IMAGE_STORAGE_BYTES: usize =
+    TEST_COMPILED_PROGRAM_IMAGE_BYTES + TEST_COMPILED_PROGRAM_IMAGE_ALIGN;
+#[cfg(test)]
+const TEST_COMPILED_ROLE_IMAGE_BYTES: usize = CompiledRoleImage::persistent_bytes_for_counts(
+    crate::eff::meta::MAX_EFF_NODES,
+    crate::eff::meta::MAX_EFF_NODES,
+    crate::eff::meta::MAX_EFF_NODES,
+);
+#[cfg(test)]
+const TEST_COMPILED_ROLE_IMAGE_ALIGN: usize = CompiledRoleImage::persistent_align();
+#[cfg(test)]
+const TEST_COMPILED_ROLE_IMAGE_STORAGE_BYTES: usize =
+    TEST_COMPILED_ROLE_IMAGE_BYTES + TEST_COMPILED_ROLE_IMAGE_ALIGN;
 
 /// Control-plane effect envelope encompassing the effect and its operands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -203,11 +285,7 @@ pub(crate) struct CpCommand {
     pub(crate) sid: Option<SessionId>,
     pub(crate) lane: Option<Lane>,
     pub(crate) generation: Option<Generation>,
-    pub(crate) prev_generation: Option<Generation>,
-    pub(crate) fences: Option<(u32, u32)>,
     pub(crate) splice: Option<SpliceOperands>,
-    pub(crate) intent: Option<SpliceIntent>,
-    pub(crate) ack: Option<SpliceAck>,
     pub(crate) delegate: Option<DelegateOperands>,
 }
 
@@ -218,11 +296,7 @@ impl CpCommand {
             sid: None,
             lane: None,
             generation: None,
-            prev_generation: None,
-            fences: None,
             splice: None,
-            intent: None,
-            ack: None,
             delegate: None,
         }
     }
@@ -242,28 +316,8 @@ impl CpCommand {
         self
     }
 
-    pub(crate) fn with_prev_generation(mut self, generation: Generation) -> Self {
-        self.prev_generation = Some(generation);
-        self
-    }
-
-    pub(crate) fn with_fences(mut self, fences: Option<(u32, u32)>) -> Self {
-        self.fences = fences;
-        self
-    }
-
     pub(crate) fn with_splice(mut self, operands: SpliceOperands) -> Self {
         self.splice = Some(operands);
-        self
-    }
-
-    pub(crate) fn with_intent(mut self, intent: SpliceIntent) -> Self {
-        self.intent = Some(intent);
-        self
-    }
-
-    pub(crate) fn with_ack(mut self, ack: SpliceAck) -> Self {
-        self.ack = Some(ack);
         self
     }
 
@@ -303,34 +357,21 @@ impl CpCommand {
         Self::new(CpEffect::SpliceBegin)
             .with_sid(sid)
             .with_lane(operands.src_lane)
-            .with_generation(operands.new_gen)
-            .with_prev_generation(operands.old_gen)
-            .with_fences(Some((operands.seq_tx, operands.seq_rx)))
             .with_splice(operands)
-            .with_intent(operands.intent(sid))
     }
 
     pub(crate) fn splice_ack(sid: SessionId, operands: SpliceOperands) -> Self {
         Self::new(CpEffect::SpliceAck)
             .with_sid(sid)
             .with_lane(operands.dst_lane)
-            .with_generation(operands.new_gen)
-            .with_prev_generation(operands.old_gen)
-            .with_fences(Some((operands.seq_tx, operands.seq_rx)))
             .with_splice(operands)
-            .with_intent(operands.intent(sid))
-            .with_ack(operands.ack(sid))
     }
 
     pub(crate) fn splice_commit(sid: SessionId, operands: SpliceOperands) -> Self {
         Self::new(CpEffect::SpliceCommit)
             .with_sid(sid)
             .with_lane(operands.src_lane)
-            .with_generation(operands.new_gen)
-            .with_prev_generation(operands.old_gen)
-            .with_fences(Some((operands.seq_tx, operands.seq_rx)))
             .with_splice(operands)
-            .with_ack(operands.ack(sid))
     }
 
     pub(crate) fn cancel_begin(sid: SessionId, lane: Lane) -> Self {
@@ -589,80 +630,244 @@ impl DynamicResolverKey {
     }
 }
 
+#[derive(Clone, Copy)]
 struct DynamicResolverEntry<'cfg> {
     resolver: ResolverRef<'cfg>,
     policy: PolicyMode,
     scope_trace: Option<ScopeTrace>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ProgramCacheHandle(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct RoleCacheHandle(u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct CompiledCacheLease {
-    program: ProgramCacheHandle,
-    role: RoleCacheHandle,
-}
-
-struct ProgramCacheEntry {
-    stamp: ProgramStamp,
-    pins: u32,
-    compiled: CompiledProgram,
-    lowering: LoweringSummary,
-}
-
-struct RoleCacheEntry {
-    program: ProgramCacheHandle,
-    role: u8,
-    pins: u32,
-    compiled: CompiledRole,
-}
-
-enum ReadOnlyCompiledProgram {
-    Cached(ProgramCacheHandle),
-    Transient(CompiledProgram),
-}
-
-impl ProgramCacheEntry {
-    unsafe fn init_from_projection_input(
-        dst: *mut Self,
-        eff_list: &crate::global::const_dsl::EffList,
-        pins: u32,
-    ) {
-        unsafe {
-            LoweringSummary::init_scan(core::ptr::addr_of_mut!((*dst).lowering), eff_list);
-        }
-        let lowering = unsafe { &*core::ptr::addr_of!((*dst).lowering) };
-        unsafe {
-            core::ptr::addr_of_mut!((*dst).stamp).write(lowering.stamp());
-            core::ptr::addr_of_mut!((*dst).pins).write(pins);
-            CompiledProgram::init_from_summary(core::ptr::addr_of_mut!((*dst).compiled), lowering);
-        }
+#[inline]
+const fn cluster_rendezvous_slot<const MAX_RV: usize>(rv_id: RendezvousId) -> Option<usize> {
+    let raw = rv_id.raw() as usize;
+    if raw == 0 || raw > MAX_RV {
+        None
+    } else {
+        Some(raw - 1)
     }
 }
 
-impl RoleCacheEntry {
-    unsafe fn init_from_summary<const ROLE: u8>(
-        dst: *mut Self,
-        program: ProgramCacheHandle,
-        pins: u32,
-        lowering: &LoweringSummary,
-        scratch: &mut RoleCompileScratch,
-    ) {
+#[derive(Clone, Copy)]
+struct ResolverBucketEntry<'cfg> {
+    eff_index: EffIndex,
+    tag: u8,
+    entry: DynamicResolverEntry<'cfg>,
+}
+
+struct ResolverBucket<'cfg> {
+    entries: UnsafeCell<*mut Option<ResolverBucketEntry<'cfg>>>,
+    capacity: usize,
+    _no_send_sync: PhantomData<*mut ()>,
+}
+
+impl<'cfg> ResolverBucket<'cfg> {
+    const STORAGE_TAG_MASK: usize = Self::storage_align().saturating_sub(1);
+
+    unsafe fn init_empty(dst: *mut Self) {
         unsafe {
-            core::ptr::addr_of_mut!((*dst).program).write(program);
-            core::ptr::addr_of_mut!((*dst).role).write(ROLE);
-            core::ptr::addr_of_mut!((*dst).pins).write(pins);
-            CompiledRole::init_from_summary::<ROLE>(
-                core::ptr::addr_of_mut!((*dst).compiled),
-                lowering,
-                scratch,
-            );
+            core::ptr::addr_of_mut!((*dst).entries).write(UnsafeCell::new(core::ptr::null_mut()));
+            core::ptr::addr_of_mut!((*dst).capacity).write(0);
+            core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
         }
     }
+
+    #[inline]
+    const fn storage_align() -> usize {
+        core::mem::align_of::<Option<ResolverBucketEntry<'cfg>>>()
+    }
+
+    #[inline]
+    const fn storage_bytes(capacity: usize) -> usize {
+        capacity.saturating_mul(core::mem::size_of::<Option<ResolverBucketEntry<'cfg>>>())
+    }
+
+    #[inline]
+    fn raw_entries(&self) -> *mut Option<ResolverBucketEntry<'cfg>> {
+        unsafe { *self.entries.get() }
+    }
+
+    #[inline]
+    fn entries_ptr(&self) -> *mut Option<ResolverBucketEntry<'cfg>> {
+        self.raw_entries()
+            .map_addr(|addr| addr & !Self::STORAGE_TAG_MASK)
+    }
+
+    #[inline]
+    fn encode_entries_ptr(
+        entries: *mut Option<ResolverBucketEntry<'cfg>>,
+        reclaim_delta: usize,
+    ) -> *mut Option<ResolverBucketEntry<'cfg>> {
+        debug_assert_eq!(entries.addr() & Self::STORAGE_TAG_MASK, 0);
+        debug_assert!(reclaim_delta <= Self::STORAGE_TAG_MASK);
+        entries.map_addr(|addr| addr | reclaim_delta)
+    }
+
+    #[inline]
+    fn storage_ptr(&self) -> *mut u8 {
+        self.entries_ptr().cast::<u8>()
+    }
+
+    #[inline]
+    fn storage_reclaim_delta(&self) -> usize {
+        self.raw_entries().addr() & Self::STORAGE_TAG_MASK
+    }
+
+    #[inline]
+    fn storage_len(&self) -> usize {
+        Self::storage_bytes(self.capacity)
+    }
+
+    #[inline]
+    fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    fn occupied_len(&self) -> usize {
+        let entries = self.entries_ptr();
+        if entries.is_null() {
+            return 0;
+        }
+        let mut idx = 0usize;
+        let mut occupied = 0usize;
+        while idx < self.capacity {
+            unsafe {
+                if (*entries.add(idx)).is_some() {
+                    occupied += 1;
+                }
+            }
+            idx += 1;
+        }
+        occupied
+    }
+
+    unsafe fn bind_from_storage(&mut self, storage: *mut u8, capacity: usize, reclaim_delta: usize) {
+        let entries = storage.cast::<Option<ResolverBucketEntry<'cfg>>>();
+        let mut idx = 0usize;
+        while idx < capacity {
+            unsafe {
+                entries.add(idx).write(None);
+            }
+            idx += 1;
+        }
+        *self.entries.get_mut() = Self::encode_entries_ptr(entries, reclaim_delta);
+        self.capacity = capacity;
+    }
+
+    unsafe fn rebind_from_storage(
+        &mut self,
+        storage: *mut u8,
+        new_capacity: usize,
+        reclaim_delta: usize,
+    ) {
+        let old_entries = self.entries_ptr();
+        let old_capacity = self.capacity;
+        let new_entries = storage.cast::<Option<ResolverBucketEntry<'cfg>>>();
+        let mut idx = 0usize;
+        while idx < new_capacity {
+            unsafe {
+                new_entries.add(idx).write(None);
+            }
+            idx += 1;
+        }
+
+        if !old_entries.is_null() {
+            let mut next = 0usize;
+            let mut old_idx = 0usize;
+            while old_idx < old_capacity {
+                unsafe {
+                    if let Some(entry) = (*old_entries.add(old_idx)).take() {
+                        debug_assert!(next < new_capacity, "resolver bucket rebind overflow");
+                        new_entries.add(next).write(Some(entry));
+                        next += 1;
+                    }
+                }
+                old_idx += 1;
+            }
+        }
+
+        *self.entries.get_mut() = Self::encode_entries_ptr(new_entries, reclaim_delta);
+        self.capacity = new_capacity;
+    }
+
+    fn insert(
+        &mut self,
+        eff_index: EffIndex,
+        tag: u8,
+        entry: DynamicResolverEntry<'cfg>,
+    ) -> Result<(), CpError> {
+        let entries = self.entries_ptr();
+        if entries.is_null() {
+            return Err(CpError::ResourceExhausted);
+        }
+        let mut first_empty = None;
+        let mut idx = 0usize;
+        while idx < self.capacity {
+            unsafe {
+                let slot = &mut *entries.add(idx);
+                match slot {
+                    Some(stored) if stored.eff_index == eff_index && stored.tag == tag => {
+                        stored.entry = entry;
+                        return Ok(());
+                    }
+                    None if first_empty.is_none() => first_empty = Some(idx),
+                    _ => {}
+                }
+            }
+            idx += 1;
+        }
+        let Some(idx) = first_empty else {
+            return Err(CpError::ResourceExhausted);
+        };
+        unsafe {
+            *entries.add(idx) = Some(ResolverBucketEntry {
+                eff_index,
+                tag,
+                entry,
+            });
+        }
+        Ok(())
+    }
+
+    fn get(&self, eff_index: EffIndex, tag: u8) -> Option<&DynamicResolverEntry<'cfg>> {
+        let entries = self.entries_ptr();
+        if entries.is_null() {
+            return None;
+        }
+        let mut idx = 0usize;
+        while idx < self.capacity {
+            unsafe {
+                if let Some(stored) = (&*entries.add(idx)).as_ref()
+                    && stored.eff_index == eff_index
+                    && stored.tag == tag
+                {
+                    return Some(&stored.entry);
+                }
+            }
+            idx += 1;
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+const TEST_TRANSIENT_GRAPH_SCRATCH_BYTES: usize = 16_384;
+
+#[cfg(test)]
+thread_local! {
+    static TEST_TRANSIENT_GRAPH_SCRATCH: UnsafeCell<[u8; TEST_TRANSIENT_GRAPH_SCRATCH_BYTES]> =
+        const { UnsafeCell::new([0; TEST_TRANSIENT_GRAPH_SCRATCH_BYTES]) };
+    static TEST_ENDPOINT_ARENA_POOL: UnsafeCell<
+        [[u8; TEST_ENDPOINT_ARENA_BYTES]; TEST_ENDPOINT_ARENA_SLOTS]
+    > = const { UnsafeCell::new([[0; TEST_ENDPOINT_ARENA_BYTES]; TEST_ENDPOINT_ARENA_SLOTS]) };
+    static TEST_COMPILED_PROGRAM_POOL: UnsafeCell<
+        [[u8; TEST_COMPILED_PROGRAM_IMAGE_STORAGE_BYTES]; TEST_ENDPOINT_ARENA_SLOTS]
+    > = const { UnsafeCell::new([[0; TEST_COMPILED_PROGRAM_IMAGE_STORAGE_BYTES]; TEST_ENDPOINT_ARENA_SLOTS]) };
+    static TEST_COMPILED_ROLE_POOL: UnsafeCell<
+        [[u8; TEST_COMPILED_ROLE_IMAGE_STORAGE_BYTES]; TEST_ENDPOINT_ARENA_SLOTS]
+    > = const { UnsafeCell::new([[0; TEST_COMPILED_ROLE_IMAGE_STORAGE_BYTES]; TEST_ENDPOINT_ARENA_SLOTS]) };
+    static TEST_ROLE_COMPILE_SCRATCH_POOL: UnsafeCell<
+        [MaybeUninit<RoleCompileScratch>; TEST_ENDPOINT_ARENA_SLOTS]
+    > = const { UnsafeCell::new([const { MaybeUninit::uninit() }; TEST_ENDPOINT_ARENA_SLOTS]) };
 }
 
 /// Validate that the resource tag represents a supported dynamic control operation.
@@ -736,7 +941,6 @@ enum DistributedPhase {
     },
     Acked {
         txn: InAcked<DistributedSpliceInv, crate::control::types::One>,
-        ack: SpliceAck,
     },
 }
 
@@ -745,11 +949,268 @@ struct DistributedEntry {
     phase: DistributedPhase,
 }
 
+struct DistributedSpliceBucketEntry {
+    sid: SessionId,
+    entry: DistributedEntry,
+}
+
+#[derive(Clone, Copy)]
+struct DistributedSpliceBucket {
+    entries: *mut Option<DistributedSpliceBucketEntry>,
+    capacity: usize,
+    _no_send_sync: PhantomData<*mut ()>,
+}
+
+impl DistributedSpliceBucket {
+    const STORAGE_TAG_MASK: usize = Self::storage_align().saturating_sub(1);
+
+    const fn empty() -> Self {
+        Self {
+            entries: core::ptr::null_mut(),
+            capacity: 0,
+            _no_send_sync: PhantomData,
+        }
+    }
+
+    unsafe fn init_empty(dst: *mut Self) {
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).entries).write(core::ptr::null_mut());
+            core::ptr::addr_of_mut!((*dst).capacity).write(0);
+            core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
+        }
+    }
+
+    #[inline]
+    const fn storage_align() -> usize {
+        core::mem::align_of::<Option<DistributedSpliceBucketEntry>>()
+    }
+
+    #[inline]
+    const fn storage_bytes(capacity: usize) -> usize {
+        capacity.saturating_mul(core::mem::size_of::<Option<DistributedSpliceBucketEntry>>())
+    }
+
+    #[inline]
+    fn raw_entries(&self) -> *mut Option<DistributedSpliceBucketEntry> {
+        self.entries
+    }
+
+    #[inline]
+    fn entries_ptr(&self) -> *mut Option<DistributedSpliceBucketEntry> {
+        self.raw_entries()
+            .map_addr(|addr| addr & !Self::STORAGE_TAG_MASK)
+    }
+
+    #[inline]
+    fn encode_entries_ptr(
+        entries: *mut Option<DistributedSpliceBucketEntry>,
+        reclaim_delta: usize,
+    ) -> *mut Option<DistributedSpliceBucketEntry> {
+        debug_assert_eq!(entries.addr() & Self::STORAGE_TAG_MASK, 0);
+        debug_assert!(reclaim_delta <= Self::STORAGE_TAG_MASK);
+        entries.map_addr(|addr| addr | reclaim_delta)
+    }
+
+    #[inline]
+    fn storage_ptr(&self) -> *mut u8 {
+        self.entries_ptr().cast::<u8>()
+    }
+
+    #[inline]
+    fn storage_reclaim_delta(&self) -> usize {
+        self.raw_entries().addr() & Self::STORAGE_TAG_MASK
+    }
+
+    #[inline]
+    fn storage_len(&self) -> usize {
+        Self::storage_bytes(self.capacity)
+    }
+
+    #[inline]
+    fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    fn occupied_len(&self) -> usize {
+        let entries = self.entries_ptr();
+        if entries.is_null() {
+            return 0;
+        }
+        let mut idx = 0usize;
+        let mut occupied = 0usize;
+        while idx < self.capacity {
+            unsafe {
+                if (*entries.add(idx)).is_some() {
+                    occupied += 1;
+                }
+            }
+            idx += 1;
+        }
+        occupied
+    }
+
+    unsafe fn bind_from_storage(&mut self, storage: *mut u8, capacity: usize, reclaim_delta: usize) {
+        let entries = storage.cast::<Option<DistributedSpliceBucketEntry>>();
+        let mut idx = 0usize;
+        while idx < capacity {
+            unsafe {
+                entries.add(idx).write(None);
+            }
+            idx += 1;
+        }
+        self.entries = Self::encode_entries_ptr(entries, reclaim_delta);
+        self.capacity = capacity;
+    }
+
+    unsafe fn rebind_from_storage(
+        &mut self,
+        storage: *mut u8,
+        new_capacity: usize,
+        reclaim_delta: usize,
+    ) {
+        let old_entries = self.entries_ptr();
+        let old_capacity = self.capacity;
+        let new_entries = storage.cast::<Option<DistributedSpliceBucketEntry>>();
+        let mut idx = 0usize;
+        while idx < new_capacity {
+            unsafe {
+                new_entries.add(idx).write(None);
+            }
+            idx += 1;
+        }
+
+        if !old_entries.is_null() {
+            let mut next = 0usize;
+            let mut old_idx = 0usize;
+            while old_idx < old_capacity {
+                unsafe {
+                    if let Some(entry) = (*old_entries.add(old_idx)).take() {
+                        debug_assert!(next < new_capacity, "distributed splice rebind overflow");
+                        new_entries.add(next).write(Some(entry));
+                        next += 1;
+                    }
+                }
+                old_idx += 1;
+            }
+        }
+
+        self.entries = Self::encode_entries_ptr(new_entries, reclaim_delta);
+        self.capacity = new_capacity;
+    }
+
+    fn contains_sid(&self, sid: SessionId) -> bool {
+        let entries = self.entries_ptr();
+        if entries.is_null() {
+            return false;
+        }
+        let mut idx = 0usize;
+        while idx < self.capacity {
+            unsafe {
+                if let Some(stored) = (&*entries.add(idx)).as_ref()
+                    && stored.sid == sid
+                {
+                    return true;
+                }
+            }
+            idx += 1;
+        }
+        false
+    }
+
+    fn insert(&mut self, sid: SessionId, entry: DistributedEntry) -> Result<(), CpError> {
+        let entries = self.entries_ptr();
+        if entries.is_null() {
+            return Err(CpError::ResourceExhausted);
+        }
+        let mut first_empty = None;
+        let mut idx = 0usize;
+        while idx < self.capacity {
+            unsafe {
+                let slot = &mut *entries.add(idx);
+                match slot {
+                    Some(stored) if stored.sid == sid => {
+                        return Err(CpError::ReplayDetected {
+                            operation: CpEffect::SpliceBegin as u8,
+                            nonce: sid.raw(),
+                        });
+                    }
+                    None if first_empty.is_none() => first_empty = Some(idx),
+                    _ => {}
+                }
+            }
+            idx += 1;
+        }
+        let Some(idx) = first_empty else {
+            return Err(CpError::ResourceExhausted);
+        };
+        unsafe {
+            *entries.add(idx) = Some(DistributedSpliceBucketEntry { sid, entry });
+        }
+        Ok(())
+    }
+
+    fn get(&self, sid: SessionId) -> Option<&DistributedEntry> {
+        let entries = self.entries_ptr();
+        if entries.is_null() {
+            return None;
+        }
+        let mut idx = 0usize;
+        while idx < self.capacity {
+            unsafe {
+                if let Some(stored) = (&*entries.add(idx)).as_ref()
+                    && stored.sid == sid
+                {
+                    return Some(&stored.entry);
+                }
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    fn get_mut(&mut self, sid: SessionId) -> Option<&mut DistributedEntry> {
+        let entries = self.entries_ptr();
+        if entries.is_null() {
+            return None;
+        }
+        let mut idx = 0usize;
+        while idx < self.capacity {
+            unsafe {
+                if let Some(stored) = (&mut *entries.add(idx)).as_mut()
+                    && stored.sid == sid
+                {
+                    return Some(&mut stored.entry);
+                }
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    fn remove(&mut self, sid: SessionId) -> Option<DistributedEntry> {
+        let entries = self.entries_ptr();
+        if entries.is_null() {
+            return None;
+        }
+        let mut idx = 0usize;
+        while idx < self.capacity {
+            unsafe {
+                let slot = &mut *entries.add(idx);
+                if slot.as_ref().is_some_and(|stored| stored.sid == sid) {
+                    return slot.take().map(|stored| stored.entry);
+                }
+            }
+            idx += 1;
+        }
+        None
+    }
+}
+
 /// Distributed splice state tracking.
 ///
 /// Tracks in-flight distributed splice operations to ensure exactly-once semantics.
 pub(crate) struct DistributedSpliceState<const MAX: usize> {
-    entries: ArrayMap<SessionId, DistributedEntry, MAX>,
+    buckets: [DistributedSpliceBucket; MAX],
 }
 
 impl<const MAX: usize> Default for DistributedSpliceState<MAX> {
@@ -762,8 +1223,85 @@ impl<const MAX: usize> DistributedSpliceState<MAX> {
     /// Create a new empty state.
     pub(crate) const fn new() -> Self {
         Self {
-            entries: ArrayMap::new(),
+            buckets: [DistributedSpliceBucket::empty(); MAX],
         }
+    }
+
+    unsafe fn init_empty(dst: *mut Self) {
+        unsafe {
+            let mut slot = 0usize;
+            while slot < MAX {
+                DistributedSpliceBucket::init_empty(core::ptr::addr_of_mut!((*dst).buckets[slot]));
+                slot += 1;
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn bucket(&self, rv_id: RendezvousId) -> Option<&DistributedSpliceBucket> {
+        let slot = cluster_rendezvous_slot::<MAX>(rv_id)?;
+        Some(&self.buckets[slot])
+    }
+
+    fn bucket_mut(&mut self, rv_id: RendezvousId) -> Option<&mut DistributedSpliceBucket> {
+        let slot = cluster_rendezvous_slot::<MAX>(rv_id)?;
+        Some(&mut self.buckets[slot])
+    }
+
+    fn contains_sid(&self, sid: SessionId) -> bool {
+        let mut slot = 0usize;
+        while slot < MAX {
+            if self.buckets[slot].contains_sid(sid) {
+                return true;
+            }
+            slot += 1;
+        }
+        false
+    }
+
+    fn ensure_capacity<FA, FF>(
+        &mut self,
+        rv_id: RendezvousId,
+        additional_entries: usize,
+        allocate: FA,
+        free: FF,
+    ) -> Result<(), CpError>
+    where
+        FA: FnOnce(usize, usize) -> Option<(*mut u8, usize)>,
+        FF: FnOnce(*mut u8, usize, usize),
+    {
+        if additional_entries == 0 {
+            return Ok(());
+        }
+        let bucket = self.bucket_mut(rv_id).ok_or(CpError::RendezvousMismatch {
+            expected: rv_id.raw(),
+            actual: 0,
+        })?;
+        let required = bucket
+            .occupied_len()
+            .checked_add(additional_entries)
+            .ok_or(CpError::ResourceExhausted)?;
+        if bucket.capacity() >= required {
+            return Ok(());
+        }
+
+        let old_ptr = bucket.storage_ptr();
+        let old_len = bucket.storage_len();
+        let old_reclaim_delta = bucket.storage_reclaim_delta();
+        let (storage, reclaim_delta) = allocate(
+            DistributedSpliceBucket::storage_bytes(required),
+            DistributedSpliceBucket::storage_align(),
+        )
+        .ok_or(CpError::ResourceExhausted)?;
+        unsafe {
+            if old_ptr.is_null() {
+                bucket.bind_from_storage(storage, required, reclaim_delta);
+            } else {
+                bucket.rebind_from_storage(storage, required, reclaim_delta);
+                free(old_ptr, old_len, old_reclaim_delta);
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn begin(
@@ -771,7 +1309,7 @@ impl<const MAX: usize> DistributedSpliceState<MAX> {
         sid: SessionId,
         operands: SpliceOperands,
     ) -> Result<(SpliceIntent, SpliceAck), CpError> {
-        if self.entries.contains_key(&sid) {
+        if self.contains_sid(sid) {
             return Err(CpError::ReplayDetected {
                 operation: CpEffect::SpliceBegin as u8,
                 nonce: sid.raw(),
@@ -798,18 +1336,24 @@ impl<const MAX: usize> DistributedSpliceState<MAX> {
                 txn: Some(in_begin),
             },
         };
-
-        self.entries
-            .insert(sid, entry)
-            .map_err(|_| CpError::ResourceExhausted)?;
+        self.bucket_mut(operands.src_rv)
+            .ok_or(CpError::RendezvousMismatch {
+                expected: operands.src_rv.raw(),
+                actual: 0,
+            })?
+            .insert(sid, entry)?;
 
         Ok((intent, operands.ack(sid)))
     }
 
-    pub(crate) fn acknowledge(&mut self, sid: SessionId) -> Result<SpliceAck, CpError> {
+    pub(crate) fn acknowledge(
+        &mut self,
+        sid: SessionId,
+        src_rv: RendezvousId,
+    ) -> Result<SpliceAck, CpError> {
         let entry = self
-            .entries
-            .get_mut(&sid)
+            .bucket_mut(src_rv)
+            .and_then(|bucket| bucket.get_mut(sid))
             .ok_or(CpError::Splice(SpliceError::InvalidSession))?;
 
         let txn = match &mut entry.phase {
@@ -828,7 +1372,7 @@ impl<const MAX: usize> DistributedSpliceState<MAX> {
         let mut tap = NoopTap;
         let in_acked = DistributedSplice::acknowledge(txn, &mut tap);
         let ack = entry.operands.ack(sid);
-        entry.phase = DistributedPhase::Acked { txn: in_acked, ack };
+        entry.phase = DistributedPhase::Acked { txn: in_acked };
 
         Ok(ack)
     }
@@ -836,19 +1380,20 @@ impl<const MAX: usize> DistributedSpliceState<MAX> {
     pub(crate) fn commit(
         &mut self,
         sid: SessionId,
+        src_rv: RendezvousId,
         expected: Option<SpliceAck>,
     ) -> Result<SpliceOperands, CpError> {
         let entry = self
-            .entries
-            .remove(&sid)
+            .bucket_mut(src_rv)
+            .and_then(|bucket| bucket.remove(sid))
             .ok_or(CpError::Splice(SpliceError::InvalidSession))?;
 
         let DistributedEntry { operands, phase } = entry;
 
         match phase {
-            DistributedPhase::Acked { txn, ack } => {
+            DistributedPhase::Acked { txn } => {
                 if let Some(exp) = expected
-                    && exp != ack
+                    && exp != operands.ack(sid)
                 {
                     return Err(CpError::Splice(SpliceError::CommitFailed));
                 }
@@ -862,7 +1407,14 @@ impl<const MAX: usize> DistributedSpliceState<MAX> {
     }
 
     pub(crate) fn get(&self, sid: SessionId) -> Option<&SpliceOperands> {
-        self.entries.get(&sid).map(|entry| &entry.operands)
+        let mut slot = 0usize;
+        while slot < MAX {
+            if let Some(entry) = self.buckets[slot].get(sid) {
+                return Some(&entry.operands);
+            }
+            slot += 1;
+        }
+        None
     }
 }
 
@@ -882,7 +1434,8 @@ impl<const MAX: usize> DistributedSpliceState<MAX> {
 /// ```rust,ignore
 /// use hibana::substrate::{RendezvousId, SessionCluster};
 ///
-/// let mut cluster: SessionCluster<8> = SessionCluster::new(leak_clock());
+/// let clock = CounterClock::new();
+/// let mut cluster: SessionCluster<8> = SessionCluster::new(&clock);
 ///
 /// // Register local Rendezvous from runtime config + transport
 /// cluster.add_rendezvous_from_config(config, transport)?;
@@ -923,22 +1476,13 @@ where
     splice_state: DistributedSpliceState<MAX_RV>,
 
     /// Cached operands staged between minting intent and ack tokens.
-    cached_operands: ArrayMap<SessionId, SpliceOperands, MAX_CACHED_SPLICES>,
+    cached_operands: [CachedSpliceOperandsMap; MAX_RV],
 
     /// Number of active lane leases (affine witness count).
     active_leases: core::cell::Cell<u32>,
 
-    /// Shared compiled-program cache keyed by stable entry id.
-    compiled_programs: ArrayMap<ProgramCacheHandle, ProgramCacheEntry, MAX_COMPILED_PROGRAMS>,
-
-    /// Shared compiled-role cache keyed by stable entry id.
-    compiled_roles: ArrayMap<RoleCacheHandle, RoleCacheEntry, MAX_COMPILED_ROLES>,
-
-    /// Reusable scratch owner for runtime role materialization.
-    role_compile_scratch: RoleCompileScratch,
-
-    next_compiled_program_id: u32,
-    next_compiled_role_id: u32,
+    /// Session-owned public endpoint cells backing thin-handle `Endpoint`.
+    endpoint_cells: [PublicEndpointCell; MAX_RV],
 }
 
 impl<'cfg, T, U, C, E, const MAX_RV: usize> ControlCore<'cfg, T, U, C, E, MAX_RV>
@@ -948,33 +1492,215 @@ where
     C: crate::runtime::config::Clock,
     E: crate::control::cap::mint::EpochTable,
 {
-    #[cfg(feature = "std")]
     unsafe fn init_empty(dst: *mut Self) {
         unsafe {
             crate::control::lease::core::ControlCore::init_empty(core::ptr::addr_of_mut!(
                 (*dst).locals
             ));
-            core::ptr::addr_of_mut!((*dst).splice_state).write(DistributedSpliceState::new());
-            ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).cached_operands));
+            DistributedSpliceState::init_empty(core::ptr::addr_of_mut!((*dst).splice_state));
             core::ptr::addr_of_mut!((*dst).active_leases).write(core::cell::Cell::new(0));
-            ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).compiled_programs));
-            ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).compiled_roles));
-            RoleCompileScratch::init_empty(core::ptr::addr_of_mut!((*dst).role_compile_scratch));
-            core::ptr::addr_of_mut!((*dst).next_compiled_program_id).write(1);
-            core::ptr::addr_of_mut!((*dst).next_compiled_role_id).write(1);
+            let mut slot = 0usize;
+            while slot < MAX_RV {
+                ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).cached_operands[slot]));
+                PublicEndpointCell::init_empty(core::ptr::addr_of_mut!(
+                    (*dst).endpoint_cells[slot]
+                ));
+                slot += 1;
+            }
         }
+    }
+
+    #[inline]
+    fn cached_operands_slot(rv_id: RendezvousId) -> Option<usize> {
+        cluster_rendezvous_slot::<MAX_RV>(rv_id)
+    }
+
+    fn cached_operands_bucket_mut(
+        &mut self,
+        rv_id: RendezvousId,
+    ) -> Option<&mut CachedSpliceOperandsMap> {
+        let slot = Self::cached_operands_slot(rv_id)?;
+        if !self.locals.is_registered(&rv_id) {
+            return None;
+        }
+        Some(&mut self.cached_operands[slot])
+    }
+
+    fn cached_operands_get(&self, sid: SessionId) -> Option<&SpliceOperands> {
+        let mut slot = 0usize;
+        while slot < MAX_RV {
+            if let Some(operands) = self.cached_operands[slot].get(&sid) {
+                return Some(operands);
+            }
+            slot += 1;
+        }
+        None
+    }
+
+    fn cached_operands_insert(
+        &mut self,
+        sid: SessionId,
+        operands: SpliceOperands,
+    ) -> Result<(), CpError> {
+        self.cached_operands_bucket_mut(operands.src_rv)
+            .ok_or(CpError::RendezvousMismatch {
+                expected: operands.src_rv.raw(),
+                actual: 0,
+            })?
+            .insert(sid, operands)
+            .map_err(|_| CpError::ResourceExhausted)
+    }
+
+    fn cached_operands_remove(&mut self, sid: SessionId) -> Option<SpliceOperands> {
+        let mut slot = 0usize;
+        while slot < MAX_RV {
+            if let Some(operands) = self.cached_operands[slot].remove(&sid) {
+                return Some(operands);
+            }
+            slot += 1;
+        }
+        None
+    }
+
+    fn ensure_distributed_splice_capacity(
+        &mut self,
+        rv_id: RendezvousId,
+        additional_entries: usize,
+    ) -> Result<(), CpError> {
+        if additional_entries == 0 {
+            return Ok(());
+        }
+        let rv = self
+            .locals
+            .get_mut(&rv_id)
+            .ok_or(CpError::RendezvousMismatch {
+                expected: rv_id.raw(),
+                actual: 0,
+            })?;
+        let rv_ptr = core::ptr::from_mut(rv);
+        self.splice_state.ensure_capacity(
+            rv_id,
+            additional_entries,
+            |bytes, align| unsafe {
+                (&mut *rv_ptr).allocate_external_persistent_sidecar_bytes(bytes, align)
+            },
+            |ptr, bytes, reclaim_delta| unsafe {
+                (&mut *rv_ptr).free_external_persistent_sidecar_bytes(ptr, bytes, reclaim_delta)
+            },
+        )
     }
 }
 
-struct ResolverCore<'cfg> {
-    table: ArrayMap<DynamicResolverKey, DynamicResolverEntry<'cfg>, HANDLE_RESOLVER_SLOTS>,
+struct ResolverCore<'cfg, const MAX_RV: usize> {
+    buckets: [ResolverBucket<'cfg>; MAX_RV],
 }
 
-impl<'cfg> ResolverCore<'cfg> {
-    #[cfg(feature = "std")]
+impl<'cfg, const MAX_RV: usize> ResolverCore<'cfg, MAX_RV> {
     unsafe fn init_empty(dst: *mut Self) {
         unsafe {
-            ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).table));
+            let mut slot = 0usize;
+            while slot < MAX_RV {
+                ResolverBucket::init_empty(core::ptr::addr_of_mut!((*dst).buckets[slot]));
+                slot += 1;
+            }
+        }
+    }
+
+    fn bucket(&self, rv_id: RendezvousId) -> Option<&ResolverBucket<'cfg>> {
+        let slot = cluster_rendezvous_slot::<MAX_RV>(rv_id)?;
+        Some(&self.buckets[slot])
+    }
+
+    fn bucket_mut(&mut self, rv_id: RendezvousId) -> Option<&mut ResolverBucket<'cfg>> {
+        let slot = cluster_rendezvous_slot::<MAX_RV>(rv_id)?;
+        Some(&mut self.buckets[slot])
+    }
+
+    fn ensure_capacity<FA, FF>(
+        &mut self,
+        rv_id: RendezvousId,
+        additional_entries: usize,
+        allocate: FA,
+        free: FF,
+    ) -> Result<(), CpError>
+    where
+        FA: FnOnce(usize, usize) -> Option<(*mut u8, usize)>,
+        FF: FnOnce(*mut u8, usize, usize),
+    {
+        if additional_entries == 0 {
+            return Ok(());
+        }
+        let bucket = self.bucket_mut(rv_id).ok_or(CpError::RendezvousMismatch {
+            expected: rv_id.raw(),
+            actual: 0,
+        })?;
+        let required = bucket
+            .occupied_len()
+            .checked_add(additional_entries)
+            .ok_or(CpError::ResourceExhausted)?;
+        if bucket.capacity() >= required {
+            return Ok(());
+        }
+
+        let old_ptr = bucket.storage_ptr();
+        let old_len = bucket.storage_len();
+        let old_reclaim_delta = bucket.storage_reclaim_delta();
+        let (storage, reclaim_delta) = allocate(
+            ResolverBucket::storage_bytes(required),
+            ResolverBucket::storage_align(),
+        )
+        .ok_or(CpError::ResourceExhausted)?;
+        unsafe {
+            if old_ptr.is_null() {
+                bucket.bind_from_storage(storage, required, reclaim_delta);
+            } else {
+                bucket.rebind_from_storage(storage, required, reclaim_delta);
+                free(old_ptr, old_len, old_reclaim_delta);
+            }
+        }
+        Ok(())
+    }
+
+    fn insert(
+        &mut self,
+        key: DynamicResolverKey,
+        entry: DynamicResolverEntry<'cfg>,
+    ) -> Result<(), CpError> {
+        self.bucket_mut(key.rv)
+            .ok_or(CpError::RendezvousMismatch {
+                expected: key.rv.raw(),
+                actual: 0,
+            })?
+            .insert(key.eff_index, key.tag, entry)
+    }
+
+    fn get(&self, key: DynamicResolverKey) -> Option<&DynamicResolverEntry<'cfg>> {
+        self.bucket(key.rv)?.get(key.eff_index, key.tag)
+    }
+}
+
+struct PublicEndpointCell {
+    generation: core::cell::Cell<u32>,
+    occupied: core::cell::Cell<bool>,
+    rv_raw: core::cell::Cell<u32>,
+    storage_offset: core::cell::Cell<u32>,
+    storage_len: core::cell::Cell<u32>,
+    drop_fn: core::cell::Cell<Option<PublicEndpointDropFn>>,
+}
+
+unsafe impl Sync for PublicEndpointCell {}
+
+impl PublicEndpointCell {
+    const EMPTY_RV_RAW: u32 = 0;
+
+    unsafe fn init_empty(dst: *mut Self) {
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).generation).write(core::cell::Cell::new(0));
+            core::ptr::addr_of_mut!((*dst).occupied).write(core::cell::Cell::new(false));
+            core::ptr::addr_of_mut!((*dst).rv_raw).write(core::cell::Cell::new(Self::EMPTY_RV_RAW));
+            core::ptr::addr_of_mut!((*dst).storage_offset).write(core::cell::Cell::new(0));
+            core::ptr::addr_of_mut!((*dst).storage_len).write(core::cell::Cell::new(0));
+            core::ptr::addr_of_mut!((*dst).drop_fn).write(core::cell::Cell::new(None));
         }
     }
 }
@@ -999,21 +1725,14 @@ where
     C: crate::runtime::config::Clock + 'cfg,
 {
     /// Control-plane state guarded by interior mutability.
-    #[cfg(feature = "std")]
-    control: core::cell::UnsafeCell<
-        std::boxed::Box<ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>>,
-    >,
-    #[cfg(not(feature = "std"))]
     control: core::cell::UnsafeCell<
         ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
     >,
     /// Dynamic resolver table separated from core control state.
-    #[cfg(feature = "std")]
-    resolvers: core::cell::UnsafeCell<std::boxed::Box<ResolverCore<'cfg>>>,
-    #[cfg(not(feature = "std"))]
-    resolvers: core::cell::UnsafeCell<ResolverCore<'cfg>>,
+    resolvers: core::cell::UnsafeCell<ResolverCore<'cfg, MAX_RV>>,
     /// Clock for timestamping tap events.
     clock: &'cfg C,
+    _local_only: crate::local::LocalOnly,
 }
 
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionCluster<'cfg, T, U, C, MAX_RV>
@@ -1022,55 +1741,19 @@ where
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
-    /// Create a new empty cluster with the given clock.
-    pub(crate) fn new(clock: &'cfg C) -> Self {
-        #[cfg(feature = "std")]
+    pub(crate) unsafe fn init_empty(dst: *mut Self, clock: &'cfg C) {
         unsafe {
-            let mut control = std::boxed::Box::<
-                ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
-            >::new_uninit();
-            let mut resolvers = std::boxed::Box::<ResolverCore<'cfg>>::new_uninit();
-            ControlCore::init_empty(control.as_mut_ptr());
-            ResolverCore::init_empty(resolvers.as_mut_ptr());
-            return Self {
-                control: core::cell::UnsafeCell::new(control.assume_init()),
-                resolvers: core::cell::UnsafeCell::new(resolvers.assume_init()),
-                clock,
-            };
-        }
-
-        #[cfg(not(feature = "std"))]
-        Self {
-            control: core::cell::UnsafeCell::new(ControlCore {
-                locals: crate::control::lease::core::ControlCore::new(),
-                splice_state: DistributedSpliceState::new(),
-                cached_operands: ArrayMap::new(),
-                active_leases: core::cell::Cell::new(0),
-                compiled_programs: ArrayMap::new(),
-                compiled_roles: ArrayMap::new(),
-                role_compile_scratch: RoleCompileScratch::new(),
-                next_compiled_program_id: 1,
-                next_compiled_role_id: 1,
-            }),
-            resolvers: core::cell::UnsafeCell::new(ResolverCore {
-                table: ArrayMap::new(),
-            }),
-            clock,
+            ControlCore::<T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>::init_empty(
+                core::ptr::addr_of_mut!((*dst).control).cast(),
+            );
+            ResolverCore::<'cfg, MAX_RV>::init_empty(
+                core::ptr::addr_of_mut!((*dst).resolvers).cast(),
+            );
+            core::ptr::addr_of_mut!((*dst).clock).write(clock);
+            core::ptr::addr_of_mut!((*dst)._local_only).write(crate::local::LocalOnly::new());
         }
     }
 
-    #[cfg(feature = "std")]
-    #[inline]
-    fn control_ptr(
-        &self,
-    ) -> *mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV> {
-        unsafe {
-            (&mut *self.control.get()).as_mut()
-                as *mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>
-        }
-    }
-
-    #[cfg(not(feature = "std"))]
     #[inline]
     fn control_ptr(
         &self,
@@ -1078,18 +1761,6 @@ where
         self.control.get()
     }
 
-    #[cfg(feature = "std")]
-    #[inline]
-    fn control_ref_ptr(
-        &self,
-    ) -> *const ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV> {
-        unsafe {
-            (&*self.control.get()).as_ref()
-                as *const ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>
-        }
-    }
-
-    #[cfg(not(feature = "std"))]
     #[inline]
     fn control_ref_ptr(
         &self,
@@ -1098,28 +1769,14 @@ where
             as *const ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>
     }
 
-    #[cfg(feature = "std")]
     #[inline]
-    fn resolvers_ptr(&self) -> *mut ResolverCore<'cfg> {
-        unsafe { (&mut *self.resolvers.get()).as_mut() as *mut ResolverCore<'cfg> }
-    }
-
-    #[cfg(not(feature = "std"))]
-    #[inline]
-    fn resolvers_ptr(&self) -> *mut ResolverCore<'cfg> {
+    fn resolvers_ptr(&self) -> *mut ResolverCore<'cfg, MAX_RV> {
         self.resolvers.get()
     }
 
-    #[cfg(feature = "std")]
     #[inline]
-    fn resolvers_ref_ptr(&self) -> *const ResolverCore<'cfg> {
-        unsafe { (&*self.resolvers.get()).as_ref() as *const ResolverCore<'cfg> }
-    }
-
-    #[cfg(not(feature = "std"))]
-    #[inline]
-    fn resolvers_ref_ptr(&self) -> *const ResolverCore<'cfg> {
-        self.resolvers.get() as *const ResolverCore<'cfg>
+    fn resolvers_ref_ptr(&self) -> *const ResolverCore<'cfg, MAX_RV> {
+        self.resolvers.get() as *const ResolverCore<'cfg, MAX_RV>
     }
 
     /// Internal helper to access mutable control core (NOT PUBLIC).
@@ -1135,385 +1792,565 @@ where
     /// Internal helper to access mutable resolver state.
     fn with_resolvers_mut<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&mut ResolverCore<'cfg>) -> R,
+        F: FnOnce(&mut ResolverCore<'cfg, MAX_RV>) -> R,
     {
         unsafe { f(&mut *self.resolvers_ptr()) }
     }
 
-    fn next_program_cache_handle(
+    #[inline]
+    fn public_endpoint_cell(&self, slot: u8) -> Option<&PublicEndpointCell> {
+        unsafe { (&(*self.control_ref_ptr()).endpoint_cells).get(slot as usize) }
+    }
+
+    unsafe fn transient_graph_storage_ptr<Spec>(
         core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
-    ) -> ProgramCacheHandle {
-        let handle = ProgramCacheHandle(core.next_compiled_program_id);
-        core.next_compiled_program_id = core.next_compiled_program_id.wrapping_add(1).max(1);
-        handle
-    }
-
-    fn next_role_cache_handle(
-        core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
-    ) -> RoleCacheHandle {
-        let handle = RoleCacheHandle(core.next_compiled_role_id);
-        core.next_compiled_role_id = core.next_compiled_role_id.wrapping_add(1).max(1);
-        handle
-    }
-
-    fn compiled_program<'prog, const ROLE: u8, LocalSteps, Mint>(
-        &self,
-        program: &crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
-        pin: bool,
-    ) -> Result<(ProgramCacheHandle, &CompiledProgram), CpError>
+        rv_id: RendezvousId,
+    ) -> Result<*mut LeaseGraph<'cfg, Spec>, LeaseGraphError>
     where
-        Mint: MintConfigMarker,
+        Spec: LeaseSpec + 'cfg,
     {
-        let stamp = program.stamp();
-        let lowering_input = program.lowering_input();
-        let program_handle =
-            self.with_control_mut(|core| -> Result<ProgramCacheHandle, CpError> {
-                if let Some(idx) = core.compiled_programs.position(|_, entry| {
-                    entry.stamp == stamp && entry.lowering.equivalent_eff_list(lowering_input)
-                }) {
-                    let (handle, entry) = core
-                        .compiled_programs
-                        .get_mut_at(idx)
-                        .ok_or(CpError::ResourceExhausted)?;
-                    if pin {
-                        entry.pins = entry.pins.saturating_add(1);
-                    }
-                    return Ok(*handle);
-                }
-
-                let handle = Self::next_program_cache_handle(core);
-
-                if !core.compiled_programs.is_full() {
-                    core.compiled_programs
-                        .push_with(|slot| {
-                            let slot_ptr = slot.as_mut_ptr();
-                            unsafe {
-                                core::ptr::addr_of_mut!((*slot_ptr).0).write(handle);
-                                ProgramCacheEntry::init_from_projection_input(
-                                    core::ptr::addr_of_mut!((*slot_ptr).1),
-                                    lowering_input,
-                                    u32::from(pin),
-                                );
-                            }
-                        })
-                        .map_err(|_| CpError::ResourceExhausted)?;
-                    return Ok(handle);
-                }
-
-                let evict_idx = core
-                    .compiled_programs
-                    .position(|_, cached| cached.pins == 0)
-                    .ok_or(CpError::ResourceExhausted)?;
-                core.compiled_programs
-                    .replace_at_with(evict_idx, |slot| {
-                        let slot_ptr = slot.as_mut_ptr();
-                        unsafe {
-                            core::ptr::addr_of_mut!((*slot_ptr).0).write(handle);
-                            ProgramCacheEntry::init_from_projection_input(
-                                core::ptr::addr_of_mut!((*slot_ptr).1),
-                                lowering_input,
-                                u32::from(pin),
-                            );
-                        }
-                    })
-                    .map_err(|_| CpError::ResourceExhausted)?;
-                Ok(handle)
-            })?;
-        unsafe {
-            (*self.control_ref_ptr())
-                .compiled_programs
-                .get(&program_handle)
+        #[cfg(test)]
+        {
+            let mut test_graph = None;
+            TEST_TRANSIENT_GRAPH_SCRATCH.with(|storage| {
+                test_graph = unsafe {
+                    Self::graph_storage_ptr_from_bytes::<Spec>(
+                        (*storage.get()).as_mut_ptr(),
+                        TEST_TRANSIENT_GRAPH_SCRATCH_BYTES,
+                    )
+                };
+            });
+            if let Some(graph) = test_graph {
+                return Ok(graph);
+            }
         }
-        .map(|entry| (program_handle, &entry.compiled))
-        .ok_or(CpError::ResourceExhausted)
+
+        let rv = core
+            .locals
+            .get(&rv_id)
+            .ok_or(LeaseGraphError::NodeNotFound)?;
+        let (storage, len) = rv.scratch_storage_ptr_and_len();
+        unsafe { Self::graph_storage_ptr_from_bytes::<Spec>(storage, len) }
+            .ok_or(LeaseGraphError::GraphFull)
     }
 
-    fn with_compiled_program<'prog, const ROLE: u8, LocalSteps, Mint, F, R>(
-        &self,
-        program: &crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
-        f: F,
-    ) -> Result<R, CpError>
+    unsafe fn graph_storage_ptr_from_bytes<Spec>(
+        storage: *mut u8,
+        len: usize,
+    ) -> Option<*mut LeaseGraph<'cfg, Spec>>
     where
-        Mint: MintConfigMarker,
-        F: FnOnce(&CompiledProgram) -> Result<R, CpError>,
+        Spec: LeaseSpec + 'cfg,
     {
-        let stamp = program.stamp();
-        let lowering_input = program.lowering_input();
-        let access = self.with_control_mut(|core| -> Result<ReadOnlyCompiledProgram, CpError> {
-            if let Some(idx) = core.compiled_programs.position(|_, entry| {
-                entry.stamp == stamp && entry.lowering.equivalent_eff_list(lowering_input)
-            }) {
-                let (handle, _) = core
-                    .compiled_programs
-                    .get_at(idx)
-                    .ok_or(CpError::ResourceExhausted)?;
-                return Ok(ReadOnlyCompiledProgram::Cached(*handle));
-            }
-
-            if !core.compiled_programs.is_full() {
-                let handle = Self::next_program_cache_handle(core);
-                core.compiled_programs
-                    .push_with(|slot| {
-                        let slot_ptr = slot.as_mut_ptr();
-                        unsafe {
-                            core::ptr::addr_of_mut!((*slot_ptr).0).write(handle);
-                            ProgramCacheEntry::init_from_projection_input(
-                                core::ptr::addr_of_mut!((*slot_ptr).1),
-                                lowering_input,
-                                0,
-                            );
-                        }
-                    })
-                    .map_err(|_| CpError::ResourceExhausted)?;
-                return Ok(ReadOnlyCompiledProgram::Cached(handle));
-            }
-
-            if let Some(evict_idx) = core
-                .compiled_programs
-                .position(|_, cached| cached.pins == 0)
-            {
-                let handle = Self::next_program_cache_handle(core);
-                core.compiled_programs
-                    .replace_at_with(evict_idx, |slot| {
-                        let slot_ptr = slot.as_mut_ptr();
-                        unsafe {
-                            core::ptr::addr_of_mut!((*slot_ptr).0).write(handle);
-                            ProgramCacheEntry::init_from_projection_input(
-                                core::ptr::addr_of_mut!((*slot_ptr).1),
-                                lowering_input,
-                                0,
-                            );
-                        }
-                    })
-                    .map_err(|_| CpError::ResourceExhausted)?;
-                return Ok(ReadOnlyCompiledProgram::Cached(handle));
-            }
-
-            let lowering = LoweringSummary::scan(lowering_input);
-            let mut compiled = MaybeUninit::<CompiledProgram>::uninit();
-            unsafe {
-                CompiledProgram::init_from_summary(compiled.as_mut_ptr(), &lowering);
-                Ok(ReadOnlyCompiledProgram::Transient(compiled.assume_init()))
-            }
-        })?;
-
-        match access {
-            ReadOnlyCompiledProgram::Cached(handle) => {
-                unsafe { (*self.control_ref_ptr()).compiled_programs.get(&handle) }
-                    .map(|entry| f(&entry.compiled))
-                    .ok_or(CpError::ResourceExhausted)?
-            }
-            ReadOnlyCompiledProgram::Transient(compiled) => f(&compiled),
+        let base = storage as usize;
+        let align = core::mem::align_of::<LeaseGraph<'cfg, Spec>>();
+        let bytes = core::mem::size_of::<LeaseGraph<'cfg, Spec>>();
+        let aligned = Self::align_up(base, align);
+        let offset = aligned.wrapping_sub(base);
+        if offset + bytes > len {
+            return None;
         }
-    }
-
-    fn compiled_role<const ROLE: u8>(
-        &self,
-        program: ProgramCacheHandle,
-        pin: bool,
-    ) -> Result<(RoleCacheHandle, &CompiledRole), CpError> {
-        let role_handle = self.with_control_mut(|core| -> Result<RoleCacheHandle, CpError> {
-            let _ = core
-                .compiled_programs
-                .get(&program)
-                .ok_or(CpError::ResourceExhausted)?;
-
-            if let Some(idx) = core
-                .compiled_roles
-                .position(|_, entry| entry.program == program && entry.role == ROLE)
-            {
-                let (handle, entry) = core
-                    .compiled_roles
-                    .get_mut_at(idx)
-                    .ok_or(CpError::ResourceExhausted)?;
-                if pin {
-                    entry.pins = entry.pins.saturating_add(1);
-                }
-                return Ok(*handle);
-            }
-
-            let handle = Self::next_role_cache_handle(core);
-            let lowering_ptr = core::ptr::from_ref(
-                &core
-                    .compiled_programs
-                    .get(&program)
-                    .ok_or(CpError::ResourceExhausted)?
-                    .lowering,
-            );
-
-            if !core.compiled_roles.is_full() {
-                core.compiled_roles
-                    .push_with(|slot| {
-                        let slot_ptr = slot.as_mut_ptr();
-                        unsafe {
-                            core::ptr::addr_of_mut!((*slot_ptr).0).write(handle);
-                            RoleCacheEntry::init_from_summary::<ROLE>(
-                                core::ptr::addr_of_mut!((*slot_ptr).1),
-                                program,
-                                u32::from(pin),
-                                &*lowering_ptr,
-                                &mut core.role_compile_scratch,
-                            );
-                        }
-                    })
-                    .map_err(|_| CpError::ResourceExhausted)?;
-                return Ok(handle);
-            }
-
-            let evict_idx = core
-                .compiled_roles
-                .position(|_, cached| cached.pins == 0)
-                .ok_or(CpError::ResourceExhausted)?;
-            core.compiled_roles
-                .replace_at_with(evict_idx, |slot| {
-                    let slot_ptr = slot.as_mut_ptr();
-                    unsafe {
-                        core::ptr::addr_of_mut!((*slot_ptr).0).write(handle);
-                        RoleCacheEntry::init_from_summary::<ROLE>(
-                            core::ptr::addr_of_mut!((*slot_ptr).1),
-                            program,
-                            u32::from(pin),
-                            &*lowering_ptr,
-                            &mut core.role_compile_scratch,
-                        );
-                    }
-                })
-                .map_err(|_| CpError::ResourceExhausted)?;
-            Ok(handle)
-        })?;
-        unsafe { (*self.control_ref_ptr()).compiled_roles.get(&role_handle) }
-            .map(|entry| (role_handle, &entry.compiled))
-            .ok_or(CpError::ResourceExhausted)
+        Some(aligned as *mut LeaseGraph<'cfg, Spec>)
     }
 
     #[cfg(test)]
-    fn prime_compiled_role_for_test<'prog, const ROLE: u8, LocalSteps, Mint>(
-        &self,
-        program: &crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
-    ) -> Result<(), CpError>
+    fn allocate_test_endpoint_arena(
+        slot: u8,
+        required_bytes: usize,
+        required_align: usize,
+    ) -> Option<*mut u8> {
+        let mut result = None;
+        TEST_ENDPOINT_ARENA_POOL.with(|storage| unsafe {
+            let slot_idx = slot as usize;
+            if slot_idx >= TEST_ENDPOINT_ARENA_SLOTS {
+                return;
+            }
+            let slots = &mut *storage.get();
+            let base = slots[slot_idx].as_mut_ptr() as usize;
+            let aligned = Self::align_up(base, required_align);
+            let offset = aligned.wrapping_sub(base);
+            if offset + required_bytes > TEST_ENDPOINT_ARENA_BYTES {
+                return;
+            }
+            result = Some(aligned as *mut u8);
+        });
+        result
+    }
+
+    #[cfg(test)]
+    fn materialize_test_compiled_images<'prog, const ROLE: u8, GlobalSteps, Mint>(
+        slot: u8,
+        program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, GlobalSteps, Mint>,
+    ) -> Option<(*const CompiledProgramImage, *const CompiledRoleImage)>
     where
         Mint: MintConfigMarker,
+        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
+        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
+            crate::global::steps::StepCount,
     {
-        let (program_handle, _) = self.compiled_program(program, false)?;
-        self.with_control_mut(|core| {
-            if core
-                .compiled_roles
-                .position(|_, entry| entry.program == program_handle && entry.role == ROLE)
-                .is_some()
-            {
-                return Ok(());
-            }
-            let lowering = core
-                .compiled_programs
-                .get(&program_handle)
-                .map(|entry| core::ptr::from_ref(&entry.lowering))
-                .ok_or(CpError::ResourceExhausted)?;
-
-            let handle = Self::next_role_cache_handle(core);
-            if !core.compiled_roles.is_full() {
-                core.compiled_roles
-                    .push_with(|slot| {
-                        let slot_ptr = slot.as_mut_ptr();
-                        unsafe {
-                            core::ptr::addr_of_mut!((*slot_ptr).0).write(handle);
-                            RoleCacheEntry::init_from_summary::<ROLE>(
-                                core::ptr::addr_of_mut!((*slot_ptr).1),
-                                program_handle,
-                                0,
-                                &*lowering,
-                                &mut core.role_compile_scratch,
-                            );
-                        }
-                    })
-                    .map_err(|_| CpError::ResourceExhausted)?;
-                return Ok(());
-            }
-
-            let evict_idx = core
-                .compiled_roles
-                .position(|_, entry| entry.pins == 0)
-                .ok_or(CpError::ResourceExhausted)?;
-            core.compiled_roles
-                .replace_at_with(evict_idx, |slot| {
-                    let slot_ptr = slot.as_mut_ptr();
-                    unsafe {
-                        core::ptr::addr_of_mut!((*slot_ptr).0).write(handle);
-                        RoleCacheEntry::init_from_summary::<ROLE>(
-                            core::ptr::addr_of_mut!((*slot_ptr).1),
-                            program_handle,
-                            0,
-                            &*lowering,
-                            &mut core.role_compile_scratch,
-                        );
-                    }
-                })
-                .map_err(|_| CpError::ResourceExhausted)?;
-            Ok(())
-        })
+        let slot_idx = slot as usize;
+        if slot_idx >= TEST_ENDPOINT_ARENA_SLOTS {
+            return None;
+        }
+        let summary =
+            crate::global::compiled::LoweringSummary::scan_const(program.lowering_input());
+        let mut result = None;
+        TEST_COMPILED_PROGRAM_POOL.with(|program_storage| {
+            TEST_COMPILED_ROLE_POOL.with(|role_storage| {
+                TEST_ROLE_COMPILE_SCRATCH_POOL.with(|scratch_storage| unsafe {
+                    let program_slot = &mut (&mut *program_storage.get())[slot_idx];
+                    let program_base = program_slot.as_mut_ptr() as usize;
+                    let program_aligned =
+                        Self::align_up(program_base, TEST_COMPILED_PROGRAM_IMAGE_ALIGN);
+                    debug_assert!(
+                        program_aligned + TEST_COMPILED_PROGRAM_IMAGE_BYTES
+                            <= program_base + TEST_COMPILED_PROGRAM_IMAGE_STORAGE_BYTES
+                    );
+                    let program_ptr = program_aligned as *mut CompiledProgramImage;
+                    let role_slot = &mut (&mut *role_storage.get())[slot_idx];
+                    let role_base = role_slot.as_mut_ptr() as usize;
+                    let role_aligned = Self::align_up(role_base, TEST_COMPILED_ROLE_IMAGE_ALIGN);
+                    debug_assert!(
+                        role_aligned + TEST_COMPILED_ROLE_IMAGE_BYTES
+                            <= role_base + TEST_COMPILED_ROLE_IMAGE_STORAGE_BYTES
+                    );
+                    let role_ptr = role_aligned as *mut CompiledRoleImage;
+                    let scratch_ptr = (&mut *scratch_storage.get())[slot_idx].as_mut_ptr();
+                    scratch_ptr.write(RoleCompileScratch::new());
+                    CompiledProgramImage::init_from_summary(program_ptr, &summary);
+                    CompiledRoleImage::init_from_summary_for_program::<ROLE, GlobalSteps>(
+                        role_ptr,
+                        &summary,
+                        &mut *scratch_ptr,
+                        program.passive_linger_route_scope_count(),
+                        program.route_scope_count(),
+                        program.parallel_enter_count(),
+                    );
+                    result = Some((program_ptr.cast_const(), role_ptr.cast_const()));
+                });
+            });
+        });
+        result
     }
 
-    fn with_pinned_compiled_program<F, R>(
-        &self,
-        handle: ProgramCacheHandle,
-        f: F,
-    ) -> Result<R, CpError>
-    where
-        F: FnOnce(&CompiledProgram) -> Result<R, CpError>,
-    {
-        unsafe { (*self.control_ref_ptr()).compiled_programs.get(&handle) }
-            .map(|entry| f(&entry.compiled))
-            .ok_or(CpError::ResourceExhausted)?
+    #[inline]
+    fn next_public_endpoint_generation(cell: &PublicEndpointCell) -> u32 {
+        let next = cell.generation.get().wrapping_add(1);
+        let generation = if next == 0 { 1 } else { next };
+        cell.generation.set(generation);
+        generation
     }
 
-    fn with_pinned_compiled_role<F, R>(&self, handle: RoleCacheHandle, f: F) -> Result<R, CpError>
-    where
-        F: FnOnce(&CompiledRole) -> Result<R, CpError>,
-    {
-        unsafe { (*self.control_ref_ptr()).compiled_roles.get(&handle) }
-            .map(|entry| f(&entry.compiled))
-            .ok_or(CpError::ResourceExhausted)?
+    #[inline(always)]
+    const fn align_up(value: usize, align: usize) -> usize {
+        let mask = align.saturating_sub(1);
+        (value + mask) & !mask
     }
 
-    fn acquire_compiled_cache<'prog, const ROLE: u8, LocalSteps, Mint>(
-        &self,
-        program: &crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
-    ) -> Result<CompiledCacheLease, CpError>
-    where
-        Mint: MintConfigMarker,
-    {
-        let (program_handle, _) = self.compiled_program(program, true)?;
-        match self.compiled_role::<ROLE>(program_handle, true) {
-            Ok((role_handle, _)) => Ok(CompiledCacheLease {
-                program: program_handle,
-                role: role_handle,
-            }),
-            Err(err) => {
-                self.release_compiled_program_pin(program_handle);
-                Err(err)
-            }
+    #[inline]
+    fn public_endpoint_storage_requirement(
+        compiled_role: &CompiledRoleImage,
+        binding_enabled: bool,
+    ) -> PublicEndpointStorageLayout {
+        let arena_layout = compiled_role.endpoint_arena_layout_for_binding(binding_enabled);
+        let storage_layout = crate::endpoint::kernel::cursor_endpoint_storage_layout::<
+            0,
+            T,
+            U,
+            C,
+            crate::control::cap::mint::EpochTbl,
+            MAX_RV,
+            crate::control::cap::mint::MintConfig,
+            crate::binding::BindingHandle<'cfg>,
+        >(&arena_layout, compiled_role.endpoint_lane_slot_count());
+        PublicEndpointStorageLayout {
+            total_bytes: storage_layout.total_bytes(),
+            total_align: storage_layout.total_align(),
+            header_bytes: storage_layout.header_bytes(),
+            port_slots_bytes: storage_layout.port_slots_bytes(),
+            guard_slots_bytes: storage_layout.guard_slots_bytes(),
+            header_padding_bytes: storage_layout.arena_offset().saturating_sub(
+                storage_layout.header_bytes()
+                    + storage_layout.port_slots_bytes()
+                    + storage_layout.guard_slots_bytes(),
+            ),
+            arena_offset: storage_layout.arena_offset(),
+            arena_bytes: storage_layout.arena_bytes(),
+            arena_align: storage_layout.arena_align(),
         }
     }
 
-    fn release_compiled_program_pin(&self, handle: ProgramCacheHandle) {
-        self.with_control_mut(|core| {
-            if let Some(entry) = core.compiled_programs.get_mut(&handle) {
-                debug_assert!(entry.pins > 0);
-                entry.pins = entry.pins.saturating_sub(1);
-            }
-        });
+    #[inline]
+    fn public_endpoint_resident_budget<const ROLE: u8, GlobalSteps, Mint>(
+        compiled_role: &CompiledRoleImage,
+        _program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+    ) -> crate::rendezvous::core::EndpointResidentBudget
+    where
+        Mint: MintConfigMarker,
+    {
+        crate::rendezvous::core::EndpointResidentBudget::with_route_storage(
+            compiled_role.route_table_frame_slots(),
+            compiled_role.route_table_lane_slots(),
+            compiled_role.loop_table_slots(),
+            compiled_role.resident_cap_entries(),
+        )
     }
 
-    pub(crate) fn release_compiled_cache_lease(&self, lease: CompiledCacheLease) {
+    fn allocate_storage_for_rv(
+        &self,
+        rv_id: RendezvousId,
+        slot: u8,
+        generation: u32,
+        required_bytes: usize,
+        required_align: usize,
+        resident_budget: crate::rendezvous::core::EndpointResidentBudget,
+    ) -> Option<(*mut u8, usize)> {
+        let mut result = None;
         self.with_control_mut(|core| {
-            if let Some(entry) = core.compiled_roles.get_mut(&lease.role) {
-                debug_assert!(entry.pins > 0);
-                entry.pins = entry.pins.saturating_sub(1);
+            let Some(rv) = core.locals.get_mut(&rv_id) else {
+                return;
+            };
+            if rv
+                .ensure_endpoint_resident_budget(resident_budget)
+                .is_none()
+            {
+                return;
             }
-            if let Some(entry) = core.compiled_programs.get_mut(&lease.program) {
-                debug_assert!(entry.pins > 0);
-                entry.pins = entry.pins.saturating_sub(1);
+            let Some((offset, _len)) = (unsafe {
+                rv.allocate_endpoint_lease(slot, generation, required_bytes, required_align)
+            }) else {
+                return;
+            };
+            let (slab_ptr, slab_len) = rv.slab_ptr_and_len();
+            if offset + required_bytes > slab_len {
+                rv.release_endpoint_lease(slot, generation);
+                return;
             }
+            rv.record_endpoint_resident_budget(slot, generation, resident_budget);
+            result = Some((unsafe { slab_ptr.add(offset) }, offset));
         });
+        result
+    }
+
+    fn allocate_public_endpoint_storage_for_rv<'r, const ROLE: u8, Mint>(
+        &self,
+        rv_id: RendezvousId,
+        slot: u8,
+        generation: u32,
+        required_bytes: usize,
+        required_align: usize,
+        resident_budget: crate::rendezvous::core::EndpointResidentBudget,
+    ) -> Option<(
+        *mut PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>,
+        usize,
+    )>
+    where
+        Mint: crate::control::cap::mint::MintConfigMarker,
+        'cfg: 'r,
+    {
+        self.allocate_storage_for_rv(
+            rv_id,
+            slot,
+            generation,
+            required_bytes,
+            required_align,
+            resident_budget,
+        )
+        .map(|(ptr, offset)| {
+            (
+                ptr.cast::<PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>>(),
+                offset,
+            )
+        })
+    }
+
+    #[inline(never)]
+    fn pin_compiled_images_for_public_endpoint<const ROLE: u8>(
+        &self,
+        rv_id: RendezvousId,
+        slot: u8,
+        generation: u32,
+        stamp: crate::global::compiled::ProgramStamp,
+    ) -> Result<(), AttachError> {
+        let pinned = self.with_control_mut(|core| {
+            let Some(rv) = core.locals.get_mut(&rv_id) else {
+                return false;
+            };
+            rv.pin_endpoint_images::<ROLE>(slot, generation, stamp)
+        });
+        if pinned {
+            Ok(())
+        } else {
+            self.with_control_mut(|core| {
+                if let Some(rv) = core.locals.get_mut(&rv_id) {
+                    rv.release_endpoint_lease(slot, generation);
+                }
+            });
+            Err(AttachError::Control(CpError::ResourceExhausted))
+        }
+    }
+
+    fn public_endpoint_storage_raw_ptr(&self, slot: u8) -> Option<*mut ()> {
+        let cell = self.public_endpoint_cell(slot)?;
+        let rv_raw = cell.rv_raw.get();
+        if rv_raw == PublicEndpointCell::EMPTY_RV_RAW {
+            return None;
+        }
+        let rv = self.get_local(&RendezvousId::new(rv_raw as u16))?;
+        let (slab_ptr, slab_len) = rv.slab_ptr_and_len();
+        let offset = cell.storage_offset.get() as usize;
+        let len = cell.storage_len.get() as usize;
+        if len == 0 || offset + len > slab_len {
+            return None;
+        }
+        Some(unsafe { slab_ptr.add(offset).cast() })
+    }
+
+    fn acquire_public_endpoint_slot(&self) -> Result<(u8, u32), AttachError> {
+        self.with_control_mut(|core| {
+            let mut slot = 0usize;
+            while slot < MAX_RV {
+                let cell = &core.endpoint_cells[slot];
+                if !cell.occupied.get() {
+                    cell.occupied.set(true);
+                    cell.rv_raw.set(PublicEndpointCell::EMPTY_RV_RAW);
+                    cell.storage_offset.set(0);
+                    cell.storage_len.set(0);
+                    cell.drop_fn.set(None);
+                    return Ok((slot as u8, Self::next_public_endpoint_generation(cell)));
+                }
+                slot += 1;
+            }
+            Err(AttachError::Control(CpError::ResourceExhausted))
+        })
+    }
+
+    fn ensure_program_image<const ROLE: u8, GlobalSteps, Mint>(
+        &self,
+        rv_id: RendezvousId,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+    ) -> Result<*const CompiledProgramImage, AttachError>
+    where
+        Mint: MintConfigMarker,
+    {
+        let core = unsafe { &mut *self.control_ptr() };
+        let rv = core
+            .locals
+            .get_mut(&rv_id)
+            .ok_or(AttachError::Control(CpError::ResourceExhausted))?;
+        if let Some(existing) = rv.program_image(program.stamp()) {
+            return Ok(existing);
+        }
+        let (mut storage, mut len) = rv.scratch_storage_ptr_and_len();
+        let guard = rv.program_image_guard_bytes();
+        if guard > len {
+            return Err(AttachError::Control(CpError::ResourceExhausted));
+        }
+        storage = unsafe { storage.add(guard) };
+        len -= guard;
+        unsafe {
+            program.with_summary_from_storage(storage, len, |summary| {
+                rv.materialize_program_image_from_summary(program.stamp(), summary)
+            })
+        }
+        .flatten()
+        .ok_or(AttachError::Control(CpError::ResourceExhausted))
+    }
+
+    #[inline(never)]
+    fn ensure_compiled_images<const ROLE: u8, GlobalSteps, Mint>(
+        &self,
+        rv_id: RendezvousId,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+    ) -> Result<(*const CompiledProgramImage, *const CompiledRoleImage), AttachError>
+    where
+        Mint: MintConfigMarker,
+        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
+        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
+            crate::global::steps::StepCount,
+    {
+        let core = unsafe { &mut *self.control_ptr() };
+        let rv = core
+            .locals
+            .get_mut(&rv_id)
+            .ok_or(AttachError::Control(CpError::ResourceExhausted))?;
+        if let (Some(program_image), Some(role_image)) = (
+            rv.program_image(program.stamp()),
+            rv.role_image::<ROLE>(program.stamp()),
+        ) {
+            return Ok((program_image, role_image));
+        }
+        let (mut storage, mut len) = rv.scratch_storage_ptr_and_len();
+        let has_program = rv.has_program_image(program.stamp());
+        let has_role = rv.has_role_image::<ROLE>(program.stamp());
+        let role_image_bytes = if has_role {
+            0
+        } else {
+            CompiledRoleImage::persistent_bytes_for_program::<ROLE, GlobalSteps>(
+                program.stamp().scope_count(),
+                program.passive_linger_route_scope_count(),
+                program.route_scope_count(),
+                program.parallel_enter_count(),
+                program.eff_count(),
+            )
+        };
+        let guard = if has_program {
+            if has_role {
+                0
+            } else {
+                rv.role_image_guard_bytes(role_image_bytes)
+            }
+        } else if has_role {
+            rv.program_image_guard_bytes()
+        } else {
+            rv.program_and_role_image_guard_bytes(role_image_bytes)
+        };
+        if guard > len {
+            return Err(AttachError::Control(CpError::ResourceExhausted));
+        }
+        storage = unsafe { storage.add(guard) };
+        len -= guard;
+
+        unsafe {
+            program.with_lowering_scratch_from_storage(storage, len, |summary, scratch| {
+                let program_image = if has_program {
+                    rv.program_image(program.stamp())
+                } else {
+                    rv.materialize_program_image_from_summary(program.stamp(), summary)
+                }?;
+                let role_image = if has_role {
+                    rv.role_image::<ROLE>(program.stamp())
+                } else {
+                    rv.materialize_role_image_from_summary_for_program::<ROLE, GlobalSteps>(
+                        program.stamp(),
+                        summary,
+                        scratch,
+                        program.passive_linger_route_scope_count(),
+                        program.route_scope_count(),
+                        program.parallel_enter_count(),
+                    )
+                }?;
+                Some((program_image, role_image))
+            })
+        }
+        .flatten()
+        .ok_or(AttachError::Control(CpError::ResourceExhausted))
+    }
+
+    unsafe fn public_endpoint_storage_ptr<'r, const ROLE: u8, Mint>(
+        &self,
+        slot: u8,
+    ) -> Option<*mut PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>>
+    where
+        Mint: crate::control::cap::mint::MintConfigMarker,
+        'cfg: 'r,
+    {
+        self.public_endpoint_storage_raw_ptr(slot)
+            .map(|ptr| ptr.cast::<PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>>())
+    }
+
+    pub(crate) unsafe fn public_endpoint_ptr<'r, const ROLE: u8, Mint>(
+        &self,
+        slot: u8,
+        generation: u32,
+    ) -> Option<*mut PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>>
+    where
+        Mint: crate::control::cap::mint::MintConfigMarker,
+        'cfg: 'r,
+    {
+        let cell = self.public_endpoint_cell(slot)?;
+        if !cell.occupied.get() || cell.generation.get() != generation {
+            return None;
+        }
+        let ptr = unsafe { self.public_endpoint_storage_ptr::<ROLE, Mint>(slot) };
+        ptr
+    }
+
+    pub(crate) unsafe fn release_public_endpoint_slot(&self, slot: u8, generation: u32) {
+        let Some(cell) = self.public_endpoint_cell(slot) else {
+            return;
+        };
+        if !cell.occupied.get() || cell.generation.get() != generation {
+            return;
+        }
+        if let Some(drop_fn) = cell.drop_fn.replace(None)
+            && let Some(ptr) = self.public_endpoint_storage_raw_ptr(slot)
+        {
+            unsafe { drop_fn(ptr) };
+        }
+        let rv_raw = cell.rv_raw.get();
+        if rv_raw != PublicEndpointCell::EMPTY_RV_RAW {
+            self.with_control_mut(|core| {
+                if let Some(rv) = core.locals.get_mut(&RendezvousId::new(rv_raw as u16)) {
+                    rv.release_endpoint_lease(slot, generation);
+                }
+            });
+        }
+        cell.rv_raw.set(PublicEndpointCell::EMPTY_RV_RAW);
+        cell.storage_offset.set(0);
+        cell.storage_len.set(0);
+        cell.occupied.set(false);
+    }
+
+    #[inline]
+    pub(crate) fn release_public_endpoint_slot_owned(&self, slot: u8, generation: u32) {
+        unsafe {
+            self.release_public_endpoint_slot(slot, generation);
+        }
+    }
+
+    unsafe fn drop_public_endpoint_value<const ROLE: u8, Mint>(ptr: *mut ())
+    where
+        Mint: crate::control::cap::mint::MintConfigMarker,
+    {
+        unsafe {
+            core::ptr::drop_in_place(
+                ptr.cast::<PublicEndpointKernel<'cfg, ROLE, T, U, C, MAX_RV, Mint>>(),
+            );
+        }
+    }
+
+    fn with_transient_compiled_program<const ROLE: u8, GlobalSteps, Mint, F, R, E>(
+        &self,
+        rv_id: RendezvousId,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        f: F,
+    ) -> Result<R, E>
+    where
+        Mint: MintConfigMarker,
+        E: From<CpError>,
+        F: FnOnce(&CompiledProgramImage) -> Result<R, E>,
+    {
+        let compiled = self
+            .ensure_program_image(rv_id, program)
+            .map_err(|err| match err {
+                AttachError::Control(cp) => E::from(cp),
+                AttachError::Rendezvous(_) => E::from(CpError::ResourceExhausted),
+            })?;
+        unsafe { f(&*compiled) }
+    }
+
+    #[cfg(test)]
+    fn with_transient_compiled_role<const ROLE: u8, GlobalSteps, Mint, F, R, E>(
+        &self,
+        rv_id: RendezvousId,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        f: F,
+    ) -> Result<R, E>
+    where
+        Mint: MintConfigMarker,
+        E: From<CpError>,
+        F: FnOnce(&CompiledProgramImage, &CompiledRoleImage) -> Result<R, E>,
+        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
+        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
+            crate::global::steps::StepCount,
+    {
+        let (compiled_program, compiled_role) = self
+            .ensure_compiled_images(rv_id, program)
+            .map_err(|err| match err {
+                AttachError::Control(cp) => E::from(cp),
+                AttachError::Rendezvous(_) => E::from(CpError::ResourceExhausted),
+            })?;
+        unsafe { f(&*compiled_program, &*compiled_role) }
     }
 
     /// Add a local Rendezvous instance to the cluster (takes ownership).
@@ -1527,8 +2364,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns `CpError::ResourceExhausted` if the cluster is full or
-    /// the ID is already registered.
+    /// Returns `CpError::ResourceExhausted` if the cluster is full.
     /// Build and register a local rendezvous from runtime config + transport.
     ///
     /// Public callers should use this entrypoint instead of constructing
@@ -1539,10 +2375,15 @@ where
         transport: T,
     ) -> Result<RendezvousId, CpError> {
         self.with_control_mut(|core| {
-            match core.locals.register_local_from_config(config, transport) {
+            match core
+                .locals
+                .register_local_from_config(config, transport, MAX_RV)
+            {
                 Ok(id) => Ok(id),
-                Err(RegisterRendezvousError::CapacityExceeded) => Err(CpError::ResourceExhausted),
-                Err(RegisterRendezvousError::Duplicate(_)) => Err(CpError::ResourceExhausted),
+                Err(
+                    RegisterRendezvousError::CapacityExceeded
+                    | RegisterRendezvousError::StorageExhausted,
+                ) => Err(CpError::ResourceExhausted),
             }
         })
     }
@@ -1563,6 +2404,24 @@ where
         // - Caller must not call mutable methods while holding this reference
         // - This pattern is documented in SessionCluster's safety contract
         unsafe { (*self.control_ref_ptr()).locals.get(id) }
+    }
+
+    fn ensure_local_splice_storage(
+        &self,
+        target: RendezvousId,
+        _lane: Lane,
+    ) -> Result<(), CpError> {
+        self.with_control_mut(|core| {
+            let rv = core
+                .locals
+                .get_mut(&target)
+                .ok_or(CpError::RendezvousMismatch {
+                    expected: target.raw(),
+                    actual: 0,
+                })?;
+            rv.ensure_splice_control_storage()
+                .ok_or(CpError::ResourceExhausted)
+        })
     }
 
     pub(crate) fn canonical_session_token<K, Mint>(
@@ -1643,6 +2502,7 @@ where
         sid: SessionId,
         lane: Lane,
         role: u8,
+        role_count: u8,
     ) -> Result<LaneLease<'cfg, T, U, C, MAX_RV>, RendezvousError> {
         // SAFETY: exclusive access is guaranteed by &self; we immediately move the
         // resulting rendezvous lease out, so no aliasing occurs.
@@ -1669,7 +2529,7 @@ where
 
         let guard = LaneGuard::new(lease, lane, active, true);
 
-        Ok(LaneLease::new(guard, sid, lane, role, brand))
+        Ok(LaneLease::new(guard, sid, lane, role, role_count, brand))
     }
 
     /// Execute a control-plane effect on a specific local Rendezvous.
@@ -1696,12 +2556,16 @@ where
                                 effect: CpEffect::SpliceBegin,
                             });
                         }
+                        self.ensure_local_splice_storage(target, lane)?;
                     }
 
-                    let intent = envelope
-                        .intent
+                    let sid = envelope
+                        .sid
+                        .ok_or(CpError::Splice(SpliceError::InvalidSession))?;
+                    let operands = envelope
+                        .splice
                         .ok_or(CpError::Splice(SpliceError::InvalidState))?;
-                    let seed = intent;
+                    let seed = operands.intent(sid);
                     let dst_rv = seed.dst_rv;
 
                     let begin_needs = facets_caps_splice();
@@ -1742,12 +2606,16 @@ where
                     return self.after_local_effect(envelope);
                 }
                 CpEffect::SpliceCommit => {
+                    if let Some(lane_id) = envelope.lane {
+                        self.ensure_local_splice_storage(target, Lane::new(lane_id.raw()))?;
+                    }
                     let sid = envelope
                         .sid
                         .ok_or(CpError::Splice(SpliceError::InvalidSession))?;
-                    let ack = envelope
-                        .ack
+                    let operands = envelope
+                        .splice
                         .ok_or(CpError::Splice(SpliceError::InvalidState))?;
+                    let ack = operands.ack(sid);
                     let cached_intent = {
                         let ack_for_cache = ack;
                         self.with_control_mut(|core| {
@@ -1757,7 +2625,7 @@ where
                                 rv.take_cached_distributed_intent(session, dst)
                             })
                         })
-                        .or_else(|| self.distributed_operands(sid).map(|ops| ops.intent(sid)))
+                        .or(Some(operands.intent(sid)))
                     };
 
                     let dst_rv = ack.dst_rv;
@@ -1800,10 +2668,13 @@ where
                     return self.after_local_effect(envelope);
                 }
                 _ => {
-                    if let Some(rv) = self.get_local(&target) {
+                    if self.get_local(&target).is_some() {
                         if let Some(lane_id) = envelope.lane {
                             let lane = Lane::new(lane_id.raw());
-                            let caps = rv.caps_mask_for_lane(lane);
+                            let caps = self
+                                .get_local(&target)
+                                .expect("local rendezvous must remain available")
+                                .caps_mask_for_lane(lane);
                             if !caps.allows(envelope.effect)
                                 && !matches!(
                                     envelope.effect,
@@ -1814,7 +2685,13 @@ where
                                     effect: envelope.effect,
                                 });
                             }
+                            if matches!(envelope.effect, CpEffect::SpliceAck) {
+                                self.ensure_local_splice_storage(target, lane)?;
+                            }
                         }
+                        let rv = self
+                            .get_local(&target)
+                            .expect("local rendezvous must remain available");
                         let run_result = EffectRunner::run_effect(rv, envelope.clone());
                         run_result?;
                         return self.after_local_effect(envelope);
@@ -1853,7 +2730,7 @@ where
             core.splice_state
                 .get(sid)
                 .copied()
-                .or_else(|| core.cached_operands.get(&sid).copied())
+                .or_else(|| core.cached_operands_get(sid).copied())
         })
     }
 
@@ -1862,15 +2739,45 @@ where
         sid: SessionId,
         operands: SpliceOperands,
     ) -> Result<(), CpError> {
+        self.with_control_mut(|core| core.cached_operands_insert(sid, operands))
+    }
+
+    fn ensure_dynamic_resolver_capacity(
+        &self,
+        rv_id: RendezvousId,
+        additional_entries: usize,
+    ) -> Result<(), CpError> {
+        if additional_entries == 0 {
+            return Ok(());
+        }
         self.with_control_mut(|core| {
-            core.cached_operands
-                .insert(sid, operands)
-                .map_err(|_| CpError::ResourceExhausted)
+            let rv = core
+                .locals
+                .get_mut(&rv_id)
+                .ok_or(CpError::RendezvousMismatch {
+                    expected: rv_id.raw(),
+                    actual: 0,
+                })?;
+            let rv_ptr = ::core::ptr::from_mut(rv);
+            unsafe { &mut *self.resolvers_ptr() }.ensure_capacity(
+                rv_id,
+                additional_entries,
+                |bytes, align| unsafe {
+                    (&mut *rv_ptr).allocate_external_persistent_sidecar_bytes(bytes, align)
+                },
+                |ptr, bytes, reclaim_delta| unsafe {
+                    (&mut *rv_ptr).free_external_persistent_sidecar_bytes(
+                        ptr,
+                        bytes,
+                        reclaim_delta,
+                    )
+                },
+            )
         })
     }
 
     fn dynamic_resolver(&self, key: DynamicResolverKey) -> Option<&DynamicResolverEntry<'cfg>> {
-        unsafe { (*self.resolvers_ref_ptr()).table.get(&key) }
+        unsafe { (*self.resolvers_ref_ptr()).get(key) }
     }
 
     pub(crate) fn set_resolver<'prog, const POLICY: u16, const ROLE: u8, LocalSteps, Mint>(
@@ -1882,7 +2789,11 @@ where
     where
         Mint: MintConfigMarker,
     {
-        self.with_compiled_program(program, |compiled| {
+        self.with_transient_compiled_program(rv_id, program, |compiled| {
+            self.ensure_dynamic_resolver_capacity(
+                rv_id,
+                compiled.dynamic_policy_sites_for(POLICY).count(),
+            )?;
             for site in compiled.dynamic_policy_sites_for(POLICY) {
                 let tag = site
                     .resource_tag()
@@ -1930,11 +2841,8 @@ where
             policy,
             scope_trace,
         };
-        self.with_resolvers_mut(|core| {
-            core.table
-                .insert(key, entry)
-                .map_err(|_| CpError::ResourceExhausted)
-        })
+        self.ensure_dynamic_resolver_capacity(rv_id, 1)?;
+        self.with_resolvers_mut(|core| core.insert(key, entry))
     }
 
     pub(crate) fn resolve_dynamic_policy(
@@ -2194,7 +3102,7 @@ where
     }
 
     pub(crate) fn take_cached_splice_operands(&self, sid: SessionId) -> Option<SpliceOperands> {
-        self.with_control_mut(|core| core.cached_operands.remove(&sid))
+        self.with_control_mut(|core| core.cached_operands_remove(sid))
     }
 
     fn dispatch_splice_intent_with_view(
@@ -2614,93 +3522,105 @@ where
     /// # Errors
     ///
     /// Returns `CpError::RendezvousMismatch` if the Rendezvous ID is not registered.
+    #[inline(never)]
     pub(crate) fn init_session_effects(
         &self,
         rv_id: RendezvousId,
         sid: SessionId,
         lane: Lane,
-        effect_envelope: &EffectEnvelope,
+        effect_envelope: EffectEnvelopeRef<'_>,
     ) -> Result<(), CpError> {
-        let core = unsafe { &*self.control_ref_ptr() };
-
-        if !core.locals.is_registered(&rv_id) {
-            return Err(CpError::RendezvousMismatch {
-                expected: rv_id.raw(),
-                actual: 0,
-            });
-        }
-
-        if core.locals.is_active(&rv_id) {
-            return Ok(());
-        }
-
-        let rv = self.get_local(&rv_id).ok_or(CpError::RendezvousMismatch {
-            expected: rv_id.raw(),
-            actual: 0,
-        })?;
-
-        if rv.is_session_registered(sid) {
-            return Ok(());
-        }
-
-        rv.reset_policy(lane);
-        let mut control_marker_count = 0u32;
-        for marker in effect_envelope.controls() {
-            rv.initialise_control_marker(lane, marker);
-            control_marker_count = control_marker_count.saturating_add(1);
-        }
-
-        let cp_sid = crate::control::types::SessionId::new(sid.raw());
-        let cp_lane = crate::control::types::Lane::new(lane.raw());
-
-        let mut applied_effects = 0u32;
-        for effect in effect_envelope.cp_effects() {
-            if let Some(command) = initializer_command(*effect, cp_sid, cp_lane) {
-                rv.run_effect(command)?;
-                applied_effects = applied_effects.saturating_add(1);
+        self.with_control_mut(|core| {
+            if !core.locals.is_registered(&rv_id) {
+                return Err(CpError::RendezvousMismatch {
+                    expected: rv_id.raw(),
+                    actual: 0,
+                });
             }
-        }
 
-        let mut resource_events = 0u32;
-        let mut caps_mask_acc = CapsMask::empty();
-        for descriptor in effect_envelope.resources() {
-            resource_events = resource_events.saturating_add(1);
-            rv.register_policy(
-                lane,
-                descriptor.eff_index(),
-                descriptor.tag(),
-                descriptor.policy(),
-            )?;
-            if let Some(mask) = session_caps_mask_for_tag(descriptor.tag(), sid, lane) {
-                caps_mask_acc = caps_mask_acc.union(mask);
+            if core.locals.is_active(&rv_id) {
+                return Ok(());
             }
-        }
 
-        let lane_caps = if caps_mask_acc.bits() != 0 {
-            caps_mask_acc
-        } else {
-            CapsMask::allow_all()
-        };
-        rv.set_caps_mask_for_lane(lane, lane_caps);
+            let rv = core
+                .locals
+                .get_mut(&rv_id)
+                .ok_or(CpError::RendezvousMismatch {
+                    expected: rv_id.raw(),
+                    actual: 0,
+                })?;
 
-        if resource_events > 0 {
-            applied_effects = applied_effects.saturating_add(resource_events);
-        }
+            if rv.is_session_registered(sid) {
+                return Ok(());
+            }
 
-        if applied_effects == 0 && control_marker_count > 0 {
-            applied_effects = control_marker_count.max(1);
-        }
+            rv.reset_policy(lane);
+            let mut control_marker_count = 0u32;
+            for scope_kind in effect_envelope.control_scopes() {
+                if matches!(scope_kind, ControlScopeKind::Splice) {
+                    rv.prepare_splice_control_scope(lane)
+                        .ok_or(CpError::ResourceExhausted)?;
+                } else {
+                    rv.initialise_control_scope(lane, scope_kind);
+                }
+                control_marker_count = control_marker_count.saturating_add(1);
+            }
 
-        if applied_effects > 0 {
-            let ts = rv.now32();
-            crate::observe::core::push(crate::observe::events::EffectInit::new(
-                ts,
-                sid.raw(),
-                applied_effects,
-            ));
-        }
+            let cp_sid = crate::control::types::SessionId::new(sid.raw());
+            let cp_lane = crate::control::types::Lane::new(lane.raw());
 
-        Ok(())
+            let mut applied_effects = 0u32;
+            for descriptor in effect_envelope.resources() {
+                let Some(effect) = CpEffect::from_resource_tag(descriptor.tag()) else {
+                    continue;
+                };
+                if let Some(command) = initializer_command(effect, cp_sid, cp_lane) {
+                    rv.run_effect(command)?;
+                    applied_effects = applied_effects.saturating_add(1);
+                }
+            }
+
+            let mut resource_events = 0u32;
+            let mut caps_mask_acc = CapsMask::empty();
+            for descriptor in effect_envelope.resources() {
+                resource_events = resource_events.saturating_add(1);
+                rv.register_policy(
+                    lane,
+                    descriptor.eff_index(),
+                    descriptor.tag(),
+                    effect_envelope.resource_policy(descriptor),
+                )?;
+                if let Some(mask) = session_caps_mask_for_tag(descriptor.tag(), sid, lane) {
+                    caps_mask_acc = caps_mask_acc.union(mask);
+                }
+            }
+
+            let lane_caps = if caps_mask_acc.bits() != 0 {
+                caps_mask_acc
+            } else {
+                CapsMask::allow_all()
+            };
+            rv.set_caps_mask_for_lane(lane, lane_caps);
+
+            if resource_events > 0 {
+                applied_effects = applied_effects.saturating_add(resource_events);
+            }
+
+            if applied_effects == 0 && control_marker_count > 0 {
+                applied_effects = control_marker_count.max(1);
+            }
+
+            if applied_effects > 0 {
+                let ts = rv.now32();
+                crate::observe::core::push(crate::observe::events::EffectInit::new(
+                    ts,
+                    sid.raw(),
+                    applied_effects,
+                ));
+            }
+
+            Ok(())
+        })
     }
 
     fn after_local_effect(&self, envelope: CpCommand) -> Result<PendingEffect, CpError> {
@@ -2713,11 +3633,13 @@ where
                     .sid
                     .ok_or(CpError::Splice(SpliceError::InvalidSession))?;
                 self.with_control_mut(|core| {
+                    core.ensure_distributed_splice_capacity(
+                        operands.src_rv,
+                        usize::from(!core.splice_state.contains_sid(sid)),
+                    )?;
                     let begin_result = core.splice_state.begin(sid, operands);
-                    let (intent, ack) = begin_result?;
-                    let dispatch = CpCommand::splice_ack(sid, operands)
-                        .with_intent(intent)
-                        .with_ack(ack);
+                    let (_intent, _ack) = begin_result?;
+                    let dispatch = CpCommand::splice_ack(sid, operands);
 
                     Ok(PendingEffect::Dispatch {
                         target: operands.dst_rv,
@@ -2732,17 +3654,16 @@ where
                 let sid = envelope
                     .sid
                     .ok_or(CpError::Splice(SpliceError::InvalidSession))?;
-
-                let expected_ack = envelope.ack.unwrap_or_else(|| operands.ack(sid));
+                let expected_ack = operands.ack(sid);
 
                 self.with_control_mut(|core| {
-                    let ack = core.splice_state.acknowledge(sid)?;
+                    let ack = core.splice_state.acknowledge(sid, operands.src_rv)?;
 
                     if ack != expected_ack {
                         return Err(CpError::Splice(SpliceError::GenerationMismatch));
                     }
 
-                    let dispatch = CpCommand::splice_commit(sid, operands).with_ack(ack);
+                    let dispatch = CpCommand::splice_commit(sid, operands);
                     Ok(PendingEffect::Dispatch {
                         target: operands.src_rv,
                         envelope: dispatch,
@@ -2753,11 +3674,16 @@ where
                 if envelope.splice.is_none() {
                     return Ok(PendingEffect::None);
                 }
+                let operands = envelope
+                    .splice
+                    .ok_or(CpError::Splice(SpliceError::InvalidSession))?;
                 let sid = envelope
                     .sid
                     .ok_or(CpError::Splice(SpliceError::InvalidSession))?;
-
-                self.with_control_mut(|core| core.splice_state.commit(sid, envelope.ack))?;
+                self.with_control_mut(|core| {
+                    core.splice_state
+                        .commit(sid, operands.src_rv, Some(operands.ack(sid)))
+                })?;
                 Ok(PendingEffect::None)
             }
             _ => Ok(PendingEffect::None),
@@ -2801,21 +3727,11 @@ where
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[inline(never)]
-    fn attach_endpoint_with_compiled<'lease, const ROLE: u8, Mint, B>(
+    fn attach_secondary_endpoint_lanes<'lease, const ROLE: u8, Mint, B>(
         &'lease self,
-        rv_id: RendezvousId,
-        sid: SessionId,
-        compiled_cache_lease: CompiledCacheLease,
-        control_semantics: crate::global::compiled::ControlSemanticsTable,
-        cursor: crate::global::typestate::PhaseCursor,
-        mut active_lanes: [bool; crate::global::role_program::MAX_LANES],
-        mint: Mint,
-        binding: B,
-    ) -> Result<
-        crate::endpoint::kernel::CursorEndpoint<
-            'cfg,
+        dst: *mut crate::endpoint::kernel::CursorEndpoint<
+            'lease,
             ROLE,
             T,
             U,
@@ -2825,101 +3741,108 @@ where
             Mint,
             B,
         >,
-        (AttachError, CompiledCacheLease),
-    >
+        rv_id: RendezvousId,
+        sid: SessionId,
+        role_count: u8,
+        effect_envelope: EffectEnvelopeRef<'_>,
+        active_lane_mask: u8,
+        primary_lane_index: usize,
+    ) -> Result<(), AttachError>
     where
         'cfg: 'lease,
-        'lease: 'cfg,
         B: crate::binding::BindingSlot,
         Mint: crate::control::cap::mint::MintConfigMarker,
     {
         use crate::global::role_program::MAX_LANES;
+        let cluster_ref: &'cfg Self = unsafe { &*(self as *const Self) };
 
-        active_lanes[0] = true;
-        let primary_lane_index = active_lanes.iter().position(|&active| active).unwrap_or(0);
-
-        #[cfg(feature = "std")]
-        let mut ports = {
-            let mut boxed = std::boxed::Box::<
-                [Option<
-                    crate::rendezvous::port::Port<'cfg, T, crate::control::cap::mint::EpochTbl>,
-                >; MAX_LANES],
-            >::new_uninit();
-            let base =
-                boxed.as_mut_ptr().cast::<Option<
-                    crate::rendezvous::port::Port<'cfg, T, crate::control::cap::mint::EpochTbl>,
-                >>();
-            let mut idx = 0usize;
-            while idx < MAX_LANES {
-                unsafe {
-                    base.add(idx).write(None);
-                }
-                idx += 1;
-            }
-            unsafe { boxed.assume_init() }
-        };
-        #[cfg(not(feature = "std"))]
-        let mut ports: [Option<
-            crate::rendezvous::port::Port<'cfg, T, crate::control::cap::mint::EpochTbl>,
-        >; MAX_LANES] = [None, None, None, None, None, None, None, None];
-
-        #[cfg(feature = "std")]
-        let mut guards = {
-            let mut boxed =
-                std::boxed::Box::<[Option<LaneGuard<'cfg, T, U, C>>; MAX_LANES]>::new_uninit();
-            let base = boxed
-                .as_mut_ptr()
-                .cast::<Option<LaneGuard<'cfg, T, U, C>>>();
-            let mut idx = 0usize;
-            while idx < MAX_LANES {
-                unsafe {
-                    base.add(idx).write(None);
-                }
-                idx += 1;
-            }
-            unsafe { boxed.assume_init() }
-        };
-        #[cfg(not(feature = "std"))]
-        let mut guards: [Option<LaneGuard<'cfg, T, U, C>>; MAX_LANES] =
-            [None, None, None, None, None, None, None, None];
-
-        let mut primary_brand: Option<crate::control::brand::Guard<'cfg>> = None;
-        let mut primary_lane: Option<Lane> = None;
-
-        for logical_idx in 0..MAX_LANES {
-            if !active_lanes[logical_idx] {
+        let mut logical_idx = 0usize;
+        while logical_idx < MAX_LANES {
+            if logical_idx == primary_lane_index || ((active_lane_mask >> logical_idx) & 1) == 0 {
+                logical_idx += 1;
                 continue;
             }
 
             let physical_lane = Lane::new(logical_idx as u32);
-            if let Err(err) =
-                self.with_pinned_compiled_program(compiled_cache_lease.program, |compiled| {
-                    self.init_session_effects(rv_id, sid, physical_lane, compiled.effect_envelope())
-                })
-            {
-                return Err((err.into(), compiled_cache_lease));
+            self.init_session_effects(rv_id, sid, physical_lane, effect_envelope)?;
+            let lease = cluster_ref
+                .lease_port(rv_id, sid, physical_lane, ROLE, role_count)
+                .map_err(AttachError::from)?;
+            let (port, guard, _brand) = lease.into_port_guard().map_err(AttachError::from)?;
+            let port: crate::rendezvous::port::Port<
+                'lease,
+                T,
+                crate::control::cap::mint::EpochTbl,
+            > = unsafe { core::mem::transmute(port) };
+            let guard: LaneGuard<'lease, T, U, C> = unsafe { core::mem::transmute(guard) };
+            unsafe {
+                crate::endpoint::kernel::endpoint_init::write_port_slot(dst, logical_idx, port);
+                crate::endpoint::kernel::endpoint_init::write_guard_slot(dst, logical_idx, guard);
             }
-
-            let lease = match self.lease_port(rv_id, sid, physical_lane, ROLE) {
-                Ok(lease) => lease,
-                Err(err) => return Err((err.into(), compiled_cache_lease)),
-            };
-            let (port, guard, brand) = match lease.into_port_guard() {
-                Ok(parts) => parts,
-                Err(err) => return Err((err.into(), compiled_cache_lease)),
-            };
-            ports[logical_idx] = Some(port);
-            guards[logical_idx] = Some(guard);
-
-            if logical_idx == primary_lane_index {
-                primary_brand = Some(brand);
-                primary_lane = Some(physical_lane);
-            }
+            logical_idx += 1;
         }
+        Ok(())
+    }
 
-        let brand = primary_brand.expect("primary lane brand must be acquired");
-        let primary_wire_lane = primary_lane.expect("primary lane must be acquired");
-        let owner = crate::control::cap::mint::Owner::new(brand);
+    #[allow(clippy::too_many_arguments)]
+    #[inline(never)]
+    unsafe fn init_endpoint_with_compiled_into<'r, const ROLE: u8, Mint, B>(
+        &'r self,
+        dst: *mut crate::endpoint::kernel::CursorEndpoint<
+            'r,
+            ROLE,
+            T,
+            U,
+            C,
+            crate::control::cap::mint::EpochTbl,
+            MAX_RV,
+            Mint,
+            B,
+        >,
+        arena_storage: *mut u8,
+        rv_id: RendezvousId,
+        sid: SessionId,
+        compiled_program: &CompiledProgramImage,
+        compiled_role: *const CompiledRoleImage,
+        public_slot: u8,
+        public_generation: u32,
+        public_slot_owned: bool,
+        mint: Mint,
+        binding_enabled: bool,
+        binding: B,
+    ) -> Result<(), AttachError>
+    where
+        'cfg: 'r,
+        B: crate::binding::BindingSlot,
+        Mint: crate::control::cap::mint::MintConfigMarker,
+    {
+        let cluster_ref: &'cfg Self = unsafe { &*(self as *const Self) };
+        let compiled_role = unsafe { &*compiled_role };
+        let effect_envelope = compiled_program.effect_envelope();
+        let role_count = core::cmp::min(compiled_program.role_count(), u8::MAX as usize) as u8;
+        let active_lane_mask = compiled_role.active_lane_mask() | 1;
+        let primary_lane_index = (0..crate::global::role_program::MAX_LANES)
+            .find(|lane_idx| ((active_lane_mask >> lane_idx) & 1) != 0)
+            .unwrap_or(0);
+        let primary_wire_lane = Lane::new(primary_lane_index as u32);
+        self.init_session_effects(rv_id, sid, primary_wire_lane, effect_envelope)?;
+        let primary_lease = cluster_ref
+            .lease_port(rv_id, sid, primary_wire_lane, ROLE, role_count)
+            .map_err(AttachError::from)?;
+        let (primary_port, primary_guard, primary_brand) =
+            primary_lease.into_port_guard().map_err(AttachError::from)?;
+        let primary_port: crate::rendezvous::port::Port<
+            'r,
+            T,
+            crate::control::cap::mint::EpochTbl,
+        > = unsafe { core::mem::transmute(primary_port) };
+        let primary_guard: LaneGuard<'r, T, U, C> = unsafe { core::mem::transmute(primary_guard) };
+        let owner: crate::control::cap::mint::Owner<'r, crate::control::cap::mint::E0> = unsafe {
+            core::mem::transmute(crate::control::cap::mint::Owner::<
+                'cfg,
+                crate::control::cap::mint::E0,
+            >::new(primary_brand))
+        };
         let epoch = crate::control::cap::mint::EndpointEpoch::new();
         let liveness_policy = self.with_control_mut(|core| {
             core.locals
@@ -2927,47 +3850,181 @@ where
                 .map(|rv| rv.liveness_policy())
                 .unwrap_or_default()
         });
-        let control = crate::endpoint::control::SessionControlCtx::new(
-            primary_wire_lane,
-            Some(self),
-            liveness_policy,
-            None,
+        let control: crate::endpoint::control::SessionControlCtx<
+            'r,
+            T,
+            U,
+            C,
+            crate::control::cap::mint::EpochTbl,
+            MAX_RV,
+        > = unsafe {
+            core::mem::transmute(crate::endpoint::control::SessionControlCtx::<
+                'cfg,
+                T,
+                U,
+                C,
+                crate::control::cap::mint::EpochTbl,
+                MAX_RV,
+            >::new(
+                primary_wire_lane,
+                Some(cluster_ref),
+                liveness_policy,
+                None,
+            ))
+        };
+
+        unsafe {
+            crate::endpoint::kernel::endpoint_init::init_empty_from_compiled(
+                dst,
+                arena_storage,
+                primary_lane_index,
+                sid,
+                owner,
+                epoch,
+                compiled_role as *const CompiledRoleImage,
+                compiled_program.control_semantics() as *const ControlSemanticsTable,
+                public_slot,
+                public_generation,
+                public_slot_owned,
+                liveness_policy,
+                control,
+                mint,
+                binding_enabled,
+                binding,
+            );
+            crate::endpoint::kernel::endpoint_init::write_port_slot(
+                dst,
+                primary_lane_index,
+                primary_port,
+            );
+            crate::endpoint::kernel::endpoint_init::write_guard_slot(
+                dst,
+                primary_lane_index,
+                primary_guard,
+            );
+        }
+
+        let init_result = self.attach_secondary_endpoint_lanes::<ROLE, Mint, B>(
+            dst,
+            rv_id,
+            sid,
+            role_count,
+            effect_envelope,
+            active_lane_mask,
+            primary_lane_index,
         );
 
-        Ok(crate::endpoint::kernel::CursorEndpoint::from_parts(
-            ports,
-            guards,
-            primary_lane_index,
-            sid,
-            owner,
-            epoch,
-            cursor,
-            control_semantics,
-            compiled_cache_lease,
-            control,
-            mint,
-            binding,
-        ))
+        if let Err(err) = init_result {
+            unsafe {
+                core::ptr::drop_in_place(dst);
+            }
+            return Err(err);
+        }
+
+        unsafe {
+            crate::endpoint::kernel::endpoint_init::finish_init(dst);
+        }
+
+        Ok(())
     }
 
-    /// Attach a projected endpoint for the specified role with transport binding.
-    ///
-    /// The binding parameter enables flow operations to automatically invoke
-    /// transport operations (e.g., STREAM writes). Use `NoBinding` when the
-    /// transport layer is handled separately or for choreography-only tests.
-    ///
-    /// This method acquires all active lanes defined in the program's choreography.
-    /// For `g::par` programs, multiple ports are acquired automatically.
-    /// For single-lane programs, only lane 0 is acquired.
-    pub(crate) fn attach_endpoint<'lease, 'prog, const ROLE: u8, LocalSteps, Mint, B>(
-        &'lease self,
+    #[inline]
+    pub(crate) fn attach_public_endpoint<'r, const ROLE: u8, GlobalSteps, Mint>(
+        &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
-        binding: B,
-    ) -> Result<
-        crate::endpoint::kernel::CursorEndpoint<
-            'cfg,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        binding: crate::binding::BindingHandle<'r>,
+    ) -> Result<(u8, u32), AttachError>
+    where
+        Mint: crate::control::cap::mint::MintConfigMarker,
+        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
+        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
+            crate::global::steps::StepCount,
+        'cfg: 'r,
+    {
+        self.attach_public_endpoint_inner(rv_id, sid, program, binding)
+    }
+
+    #[inline]
+    fn attach_public_endpoint_inner<'r, const ROLE: u8, GlobalSteps, Mint>(
+        &'r self,
+        rv_id: RendezvousId,
+        sid: SessionId,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        binding: crate::binding::BindingHandle<'r>,
+    ) -> Result<(u8, u32), AttachError>
+    where
+        Mint: crate::control::cap::mint::MintConfigMarker,
+        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
+        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
+            crate::global::steps::StepCount,
+        'cfg: 'r,
+    {
+        let (slot, generation) = self.acquire_public_endpoint_slot()?;
+        let init_result = match self.ensure_compiled_images(rv_id, program) {
+            Ok((compiled_program, compiled_role)) => unsafe {
+                let binding_enabled = binding.uses_binding_storage();
+                let storage_layout =
+                    Self::public_endpoint_storage_requirement(&*compiled_role, binding_enabled);
+                let resident_budget =
+                    Self::public_endpoint_resident_budget(&*compiled_role, program);
+                if let Some((dst, offset)) = self
+                    .allocate_public_endpoint_storage_for_rv::<ROLE, Mint>(
+                        rv_id,
+                        slot,
+                        generation,
+                        storage_layout.total_bytes,
+                        storage_layout.total_align,
+                        resident_budget,
+                    )
+                {
+                    let arena_storage = dst.cast::<u8>().add(storage_layout.arena_offset);
+                    self.init_endpoint_with_compiled_into::<ROLE, Mint, crate::binding::BindingHandle<'r>>(
+                        dst,
+                        arena_storage,
+                        rv_id,
+                        sid,
+                        &*compiled_program,
+                        compiled_role,
+                        slot,
+                        generation,
+                        false,
+                        program.mint_config(),
+                        binding_enabled,
+                        binding,
+                    )?;
+                    self.pin_compiled_images_for_public_endpoint::<ROLE>(
+                        rv_id,
+                        slot,
+                        generation,
+                        program.stamp(),
+                    )?;
+                    if let Some(cell) = self.public_endpoint_cell(slot) {
+                        cell.rv_raw.set(rv_id.raw() as u32);
+                        cell.storage_offset.set(offset as u32);
+                        cell.storage_len.set(storage_layout.total_bytes as u32);
+                        cell.drop_fn
+                            .set(Some(Self::drop_public_endpoint_value::<ROLE, Mint>));
+                    }
+                    Ok(())
+                } else {
+                    Err(AttachError::Control(CpError::ResourceExhausted))
+                }
+            },
+            Err(err) => Err(err),
+        };
+        if init_result.is_err() {
+            unsafe { self.release_public_endpoint_slot(slot, generation) };
+        }
+        init_result.map(|_| (slot, generation))
+    }
+
+    #[cfg(test)]
+    pub(crate) unsafe fn attach_endpoint_into<'r, const ROLE: u8, GlobalSteps, Mint, B>(
+        &'r self,
+        dst: *mut crate::endpoint::kernel::CursorEndpoint<
+            'r,
             ROLE,
             T,
             U,
@@ -2977,66 +4034,113 @@ where
             Mint,
             B,
         >,
-        AttachError,
-    >
+        rv_id: RendezvousId,
+        sid: SessionId,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        binding: B,
+    ) -> Result<(), AttachError>
     where
-        'cfg: 'lease,
-        'lease: 'cfg,
+        'cfg: 'r,
         B: crate::binding::BindingSlot,
         Mint: crate::control::cap::mint::MintConfigMarker,
+        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
+        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
+            crate::global::steps::StepCount,
     {
-        let compiled_cache_lease = self.acquire_compiled_cache(program)?;
-        let control_semantics = self
-            .with_pinned_compiled_program(compiled_cache_lease.program, |compiled| {
-                Ok(*compiled.control_semantics())
-            })?;
-        let (role_ptr, active_lanes) = self
-            .with_pinned_compiled_role(compiled_cache_lease.role, |compiled| {
-                Ok((NonNull::from(compiled), *compiled.active_lanes()))
-            })?;
-        let cursor = crate::global::typestate::PhaseCursor::from_pinned_role_ptr(role_ptr);
-        let mint = program.mint_config();
-        match self.attach_endpoint_with_compiled::<ROLE, Mint, B>(
-            rv_id,
-            sid,
-            compiled_cache_lease,
-            control_semantics,
-            cursor,
-            active_lanes,
-            mint,
-            binding,
-        ) {
-            Ok(endpoint) => Ok(endpoint),
-            Err((err, lease)) => {
-                self.release_compiled_cache_lease(lease);
-                Err(err)
-            }
+        let (slot, generation) = self.acquire_public_endpoint_slot()?;
+        let init_result = match Self::materialize_test_compiled_images(slot, program) {
+            Some((compiled_program, compiled_role)) => unsafe {
+                let binding_enabled = true;
+                let resident_budget =
+                    Self::public_endpoint_resident_budget(&*compiled_role, program);
+                let resident_ready = self.with_control_mut(|core| {
+                    let Some(rv) = core.locals.get_mut(&rv_id) else {
+                        return false;
+                    };
+                    if rv
+                        .ensure_endpoint_resident_budget(resident_budget)
+                        .is_none()
+                    {
+                        return false;
+                    }
+                    rv.record_endpoint_resident_budget(slot, generation, resident_budget);
+                    true
+                });
+                if !resident_ready {
+                    return Err(AttachError::Control(CpError::ResourceExhausted));
+                }
+                let arena_layout =
+                    (*compiled_role).endpoint_arena_layout_for_binding(binding_enabled);
+                let Some(arena_storage) = Self::allocate_test_endpoint_arena(
+                    slot,
+                    arena_layout.total_bytes(),
+                    arena_layout.total_align(),
+                ) else {
+                    return Err(AttachError::Control(CpError::ResourceExhausted));
+                };
+                self.init_endpoint_with_compiled_into::<ROLE, Mint, B>(
+                    dst,
+                    arena_storage,
+                    rv_id,
+                    sid,
+                    &*compiled_program,
+                    compiled_role,
+                    slot,
+                    generation,
+                    true,
+                    program.mint_config(),
+                    binding_enabled,
+                    binding,
+                )?;
+                Ok(())
+            },
+            None => Err(AttachError::Control(CpError::ResourceExhausted)),
+        };
+        if init_result.is_ok()
+            && let Some(cell) = self.public_endpoint_cell(slot)
+        {
+            cell.rv_raw.set(rv_id.raw() as u32);
         }
+        if init_result.is_err() {
+            unsafe { self.release_public_endpoint_slot(slot, generation) };
+        }
+        init_result
     }
 
     #[inline]
-    pub(crate) fn enter<'prog, const ROLE: u8, LocalSteps, Mint, B>(
-        &'cfg self,
+    pub(crate) fn enter<'r, const ROLE: u8, LocalSteps, Mint>(
+        &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
-        binding: B,
-    ) -> Result<
-        crate::endpoint::Endpoint<
-            'cfg,
-            ROLE,
-            crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>,
-            Mint,
-            B,
-        >,
-        AttachError,
-    >
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, LocalSteps, Mint>,
+        binding: crate::binding::BindingHandle<'r>,
+    ) -> Result<(u8, u32), AttachError>
     where
-        B: crate::binding::BindingSlot,
         Mint: crate::control::cap::mint::MintConfigMarker,
+        LocalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
+        <LocalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
+            crate::global::steps::StepCount,
+        'cfg: 'r,
     {
-        self.attach_endpoint(rv_id, sid, program, binding)
-            .map(|endpoint| crate::endpoint::Endpoint::from_cursor(endpoint))
+        self.enter_with_binding(rv_id, sid, program, binding)
+    }
+
+    #[inline]
+    fn enter_with_binding<'r, const ROLE: u8, LocalSteps, Mint>(
+        &'r self,
+        rv_id: RendezvousId,
+        sid: SessionId,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, LocalSteps, Mint>,
+        binding: crate::binding::BindingHandle<'r>,
+    ) -> Result<(u8, u32), AttachError>
+    where
+        Mint: crate::control::cap::mint::MintConfigMarker,
+        LocalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
+        <LocalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
+            crate::global::steps::StepCount,
+        'cfg: 'r,
+    {
+        self.attach_public_endpoint(rv_id, sid, program, binding)
     }
 
     #[inline]
@@ -3095,12 +4199,19 @@ where
     {
         self.with_control_mut(|core| {
             let root_context = root_builder(core, rv_id);
-            let mut graph = LeaseGraph::<A::GraphSpec>::new(
-                rv_id,
-                <A::GraphSpec as LeaseSpec>::Facet::default(),
-                root_context,
-            );
-            let graph_ptr: *mut LeaseGraph<'cfg, A::GraphSpec> = &mut graph;
+            let graph_ptr =
+                match unsafe { Self::transient_graph_storage_ptr::<A::GraphSpec>(core, rv_id) } {
+                    Ok(graph_ptr) => graph_ptr,
+                    Err(err) => return Err(DelegationDriveError::Graph(err)),
+                };
+            unsafe {
+                LeaseGraph::<A::GraphSpec>::init_new(
+                    graph_ptr,
+                    rv_id,
+                    <A::GraphSpec as LeaseSpec>::Facet::default(),
+                    root_context,
+                );
+            }
 
             if let Err(err) = graph_init(core, unsafe { &mut *graph_ptr }) {
                 unsafe {
@@ -3161,23 +4272,86 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::binding::NoBinding;
+    extern crate self as hibana;
+
+    mod fanout_program {
+        extern crate self as hibana;
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/internal/pico_smoke/src/fanout_program.rs"
+        ));
+    }
+    mod huge_program {
+        extern crate self as hibana;
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/internal/pico_smoke/src/huge_program.rs"
+        ));
+    }
+    mod linear_program {
+        extern crate self as hibana;
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/internal/pico_smoke/src/linear_program.rs"
+        ));
+    }
+    mod route_control_kinds {
+        extern crate self as hibana;
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/internal/pico_smoke/src/route_control_kinds.rs"
+        ));
+    }
+    mod scenario {
+        extern crate self as hibana;
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/internal/pico_smoke/src/scenario.rs"
+        ));
+    }
+
+    fn retain_pico_smoke_fixture_symbols() {
+        let _ = fanout_program::ROUTE_SCOPE_COUNT;
+        let _ = fanout_program::EXPECTED_WORKER_BRANCH_LABELS;
+        let _ = fanout_program::ACK_LABELS;
+        let _ = fanout_program::run::<scenario::FixtureHarness>;
+        let _ = huge_program::ROUTE_SCOPE_COUNT;
+        let _ = huge_program::EXPECTED_WORKER_BRANCH_LABELS;
+        let _ = huge_program::ACK_LABELS;
+        let _ = huge_program::run::<scenario::FixtureHarness>;
+        let _ = linear_program::ROUTE_SCOPE_COUNT;
+        let _ = linear_program::EXPECTED_WORKER_BRANCH_LABELS;
+        let _ = linear_program::ACK_LABELS;
+        let _ = linear_program::run::<scenario::FixtureHarness>;
+    }
+
+    #[test]
+    fn pico_smoke_fixture_symbols_are_reachable() {
+        retain_pico_smoke_fixture_symbols();
+    }
+
     use crate::control::cap::mint::ResourceKind;
     use crate::control::cap::mint::{GenericCapToken, MintConfig};
     use crate::control::cap::resource_kinds::RouteDecisionKind;
     use crate::control::types::{Generation, Lane, SessionId};
     use crate::g::{self, Msg, Role};
     use crate::global::CanonicalControl;
-    use crate::global::program::Program;
+    use crate::global::compiled::LoweringSummary;
+    use crate::global::program::ProgramSource;
     use crate::global::role_program;
-    use crate::global::steps::{ProjectRole, SendStep, StepCons, StepNil};
-    use crate::runtime::config::CounterClock;
-    use crate::runtime::consts::{DefaultLabelUniverse, LABEL_ROUTE_DECISION};
+    use crate::global::steps::{SendStep, StepCons, StepNil};
+    use crate::global::typestate::RoleCompileScratch;
+    use crate::observe::core::TapEvent;
+    use crate::runtime::config::{Config, CounterClock};
+    use crate::runtime::consts::{DefaultLabelUniverse, LABEL_ROUTE_DECISION, RING_EVENTS};
     use crate::transport::{Transport, TransportError, wire::Payload};
-    use core::future::{Ready, ready};
-    use std::boxed::Box;
-    use std::string::String;
-    use std::vec;
+    use core::mem::size_of;
+    use core::{
+        cell::UnsafeCell,
+        future::{Ready, ready},
+        mem::MaybeUninit,
+    };
+    use std::{string::String, thread_local};
 
     type SharedBorrowSteps = StepCons<
         SendStep<
@@ -3193,10 +4367,9 @@ mod tests {
         StepNil,
     >;
 
-    type SharedBorrowProgram = Program<SharedBorrowSteps>;
-    type SharedBorrowLocalSteps = <SharedBorrowSteps as ProjectRole<Role<0>>>::Output;
+    type SharedBorrowProgram = ProgramSource<SharedBorrowSteps>;
     type SharedBorrowRoleProgram =
-        crate::g::advanced::RoleProgram<'static, 0, SharedBorrowLocalSteps, MintConfig>;
+        crate::g::advanced::RoleProgram<'static, 0, SharedBorrowSteps, MintConfig>;
 
     static SHARED_BORROW_PROGRAM_A: SharedBorrowProgram = g::send::<
         Role<0>,
@@ -3208,6 +4381,8 @@ mod tests {
         >,
         0,
     >();
+    static SHARED_BORROW_TOKEN_A: crate::g::Program<SharedBorrowSteps> =
+        g::freeze(&SHARED_BORROW_PROGRAM_A);
 
     static SHARED_BORROW_PROGRAM_B: SharedBorrowProgram = g::send::<
         Role<0>,
@@ -3219,12 +4394,8 @@ mod tests {
         >,
         0,
     >();
-
-    static SHARED_BORROW_PROJECTED_A: SharedBorrowRoleProgram =
-        role_program::project(&SHARED_BORROW_PROGRAM_A);
-
-    static SHARED_BORROW_PROJECTED_B: SharedBorrowRoleProgram =
-        role_program::project(&SHARED_BORROW_PROGRAM_B);
+    static SHARED_BORROW_TOKEN_B: crate::g::Program<SharedBorrowSteps> =
+        g::freeze(&SHARED_BORROW_PROGRAM_B);
 
     const ROUTE_POLICY_ONE: u16 = 9901;
     const ROUTE_POLICY_TWO: u16 = 9902;
@@ -3240,6 +4411,8 @@ mod tests {
         0,
     >()
     .policy::<ROUTE_POLICY_ONE>();
+    static ROUTE_POLICY_TOKEN_ONE: crate::g::Program<SharedBorrowSteps> =
+        g::freeze(&ROUTE_POLICY_PROGRAM_ONE);
 
     static ROUTE_POLICY_PROGRAM_TWO: SharedBorrowProgram = g::send::<
         Role<0>,
@@ -3252,62 +4425,8 @@ mod tests {
         0,
     >()
     .policy::<ROUTE_POLICY_TWO>();
-
-    static ROUTE_POLICY_PROJECTED_ONE: SharedBorrowRoleProgram =
-        role_program::project(&ROUTE_POLICY_PROGRAM_ONE);
-
-    static ROUTE_POLICY_PROJECTED_TWO: SharedBorrowRoleProgram =
-        role_program::project(&ROUTE_POLICY_PROGRAM_TWO);
-
-    type Send11Steps = StepCons<SendStep<Role<0>, Role<1>, Msg<11, u32>, 0>, StepNil>;
-    type Send11Role0Steps = <Send11Steps as ProjectRole<Role<0>>>::Output;
-    static SEND11_PROGRAM: Program<Send11Steps> = g::send::<Role<0>, Role<1>, Msg<11, u32>, 0>();
-    static SEND11_PROJECTED: crate::g::advanced::RoleProgram<
-        'static,
-        0,
-        Send11Role0Steps,
-        MintConfig,
-    > = role_program::project(&SEND11_PROGRAM);
-
-    type Send12Steps = StepCons<SendStep<Role<0>, Role<1>, Msg<12, u64>, 0>, StepNil>;
-    type Send12Role0Steps = <Send12Steps as ProjectRole<Role<0>>>::Output;
-    static SEND12_PROGRAM: Program<Send12Steps> = g::send::<Role<0>, Role<1>, Msg<12, u64>, 0>();
-    static SEND12_PROJECTED: crate::g::advanced::RoleProgram<
-        'static,
-        0,
-        Send12Role0Steps,
-        MintConfig,
-    > = role_program::project(&SEND12_PROGRAM);
-
-    type Send21Steps = StepCons<SendStep<Role<0>, Role<1>, Msg<21, u32>, 0>, StepNil>;
-    type Send21Role0Steps = <Send21Steps as ProjectRole<Role<0>>>::Output;
-    static SEND21_PROGRAM: Program<Send21Steps> = g::send::<Role<0>, Role<1>, Msg<21, u32>, 0>();
-    static SEND21_PROJECTED: crate::g::advanced::RoleProgram<
-        'static,
-        0,
-        Send21Role0Steps,
-        MintConfig,
-    > = role_program::project(&SEND21_PROGRAM);
-
-    type Send22Steps = StepCons<SendStep<Role<0>, Role<1>, Msg<22, u64>, 0>, StepNil>;
-    type Send22Role0Steps = <Send22Steps as ProjectRole<Role<0>>>::Output;
-    static SEND22_PROGRAM: Program<Send22Steps> = g::send::<Role<0>, Role<1>, Msg<22, u64>, 0>();
-    static SEND22_PROJECTED: crate::g::advanced::RoleProgram<
-        'static,
-        0,
-        Send22Role0Steps,
-        MintConfig,
-    > = role_program::project(&SEND22_PROGRAM);
-
-    type Send31Steps = StepCons<SendStep<Role<0>, Role<1>, Msg<31, u32>, 0>, StepNil>;
-    type Send31Role0Steps = <Send31Steps as ProjectRole<Role<0>>>::Output;
-    static SEND31_PROGRAM: Program<Send31Steps> = g::send::<Role<0>, Role<1>, Msg<31, u32>, 0>();
-    static SEND31_PROJECTED: crate::g::advanced::RoleProgram<
-        'static,
-        0,
-        Send31Role0Steps,
-        MintConfig,
-    > = role_program::project(&SEND31_PROGRAM);
+    static ROUTE_POLICY_TOKEN_TWO: crate::g::Program<SharedBorrowSteps> =
+        g::freeze(&ROUTE_POLICY_PROGRAM_TWO);
 
     // Dummy transport for testing
     struct DummyTransport;
@@ -3381,45 +4500,599 @@ mod tests {
         );
     }
 
-    // Type alias for test cluster
-    type TestCluster<'cfg, const MAX_RV: usize> =
-        SessionCluster<'cfg, DummyTransport, DefaultLabelUniverse, CounterClock, MAX_RV>;
+    type StaticTestCluster<const MAX_RV: usize> =
+        SessionCluster<'static, DummyTransport, DefaultLabelUniverse, CounterClock, MAX_RV>;
 
-    // Helper to create a leaked clock for tests
-    fn leak_clock() -> &'static CounterClock {
-        Box::leak(Box::new(CounterClock::new()))
+    const CLUSTER_TEST_SLAB_CAPACITY: usize = 262_144;
+    const ROUTE_HEAVY_PROGRAM: crate::g::Program<huge_program::ProgramSteps> =
+        crate::g::freeze(&huge_program::PROGRAM);
+    const LINEAR_HEAVY_PROGRAM: crate::g::Program<linear_program::ProgramSteps> =
+        crate::g::freeze(&linear_program::PROGRAM);
+    const FANOUT_HEAVY_PROGRAM: crate::g::Program<fanout_program::ProgramSteps> =
+        crate::g::freeze(&fanout_program::PROGRAM);
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct MeasuredResidentShape {
+        route_scope_count: usize,
+        active_lane_count: usize,
+        max_route_stack_depth: usize,
+        max_loop_stack_depth: usize,
+        route_bytes: usize,
+        loop_bytes: usize,
+        cap_bytes: usize,
+        endpoint_bytes: usize,
+        endpoint_header_bytes: usize,
+        endpoint_port_slots_bytes: usize,
+        endpoint_guard_slots_bytes: usize,
+        endpoint_header_padding_bytes: usize,
+        compiled_program_header_bytes: usize,
+        compiled_role_header_bytes: usize,
+        compiled_program_persistent_bytes: usize,
+        compiled_role_persistent_bytes: usize,
+        endpoint_phase_cursor_state_bytes: usize,
+        endpoint_route_state_bytes: usize,
+        endpoint_route_arm_stack_bytes: usize,
+        endpoint_lane_offer_state_slots_bytes: usize,
+        endpoint_frontier_state_bytes: usize,
+        endpoint_frontier_root_rows_bytes: usize,
+        endpoint_frontier_root_active_slots_bytes: usize,
+        endpoint_frontier_root_observed_key_slots_bytes: usize,
+        endpoint_frontier_offer_entry_slots_bytes: usize,
+        endpoint_binding_inbox_bytes: usize,
+        endpoint_binding_slots_bytes: usize,
+        endpoint_binding_len_bytes: usize,
+        endpoint_binding_label_masks_bytes: usize,
+        endpoint_scope_evidence_store_bytes: usize,
+        endpoint_scope_evidence_slots_bytes: usize,
+        endpoint_padding_bytes: usize,
     }
 
-    fn leak_tap_storage()
-    -> &'static mut [crate::observe::core::TapEvent; crate::runtime::consts::RING_EVENTS] {
-        let storage: Box<[crate::observe::core::TapEvent]> =
-            vec![crate::observe::core::TapEvent::default(); crate::runtime::consts::RING_EVENTS]
-                .into_boxed_slice();
-        let storage: Box<[crate::observe::core::TapEvent; crate::runtime::consts::RING_EVENTS]> =
-            storage.try_into().expect("ring events length");
-        Box::leak(storage)
+    fn measure_huge_shape<const ROLE: u8, Steps>(
+        slot: u8,
+        program: &crate::g::Program<Steps>,
+    ) -> MeasuredResidentShape
+    where
+        Steps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
+        <Steps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
+            crate::global::steps::StepCount,
+    {
+        let projected: crate::g::advanced::RoleProgram<'_, ROLE, _, MintConfig> =
+            role_program::project(program);
+        let summary = LoweringSummary::scan_const(projected.lowering_input());
+        let counts = CompiledProgramImage::counts(&summary);
+        let (_, compiled_role) = SessionCluster::<
+            'static,
+            DummyTransport,
+            DefaultLabelUniverse,
+            CounterClock,
+            4,
+        >::materialize_test_compiled_images(slot, &projected)
+        .expect("materialize huge choreography compiled image");
+        let compiled_role = unsafe { &*compiled_role };
+        let active_lane_count = compiled_role.active_lane_count();
+        let endpoint_layout = compiled_role.endpoint_arena_layout_for_binding(false);
+        let endpoint_storage =
+            StaticTestCluster::<4>::public_endpoint_storage_requirement(compiled_role, false);
+        let endpoint_section_bytes = endpoint_layout.phase_cursor_state().bytes()
+            + endpoint_layout.route_state().bytes()
+            + endpoint_layout.route_arm_stack().bytes()
+            + endpoint_layout.lane_offer_state_slots().bytes()
+            + endpoint_layout.frontier_state().bytes()
+            + endpoint_layout.frontier_root_rows().bytes()
+            + endpoint_layout.frontier_root_active_slots().bytes()
+            + endpoint_layout.frontier_root_observed_key_slots().bytes()
+            + endpoint_layout.frontier_offer_entry_slots().bytes()
+            + endpoint_layout.binding_inbox().bytes()
+            + endpoint_layout.binding_slots().bytes()
+            + endpoint_layout.binding_len().bytes()
+            + endpoint_layout.binding_label_masks().bytes()
+            + endpoint_layout.scope_evidence_slots().bytes();
+
+        MeasuredResidentShape {
+            route_scope_count: compiled_role.route_scope_count(),
+            active_lane_count,
+            max_route_stack_depth: compiled_role.max_route_stack_depth(),
+            max_loop_stack_depth: compiled_role.max_loop_stack_depth(),
+            route_bytes: crate::rendezvous::tables::RouteTable::storage_bytes(
+                compiled_role.route_table_frame_slots(),
+                compiled_role.route_table_lane_slots(),
+            ),
+            loop_bytes: crate::rendezvous::tables::LoopTable::storage_bytes(
+                compiled_role.loop_table_slots(),
+            ),
+            cap_bytes: crate::rendezvous::capability::CapTable::storage_bytes(
+                compiled_role.resident_cap_entries(),
+            ),
+            endpoint_bytes: endpoint_layout.total_bytes(),
+            endpoint_header_bytes: endpoint_storage.header_bytes,
+            endpoint_port_slots_bytes: endpoint_storage.port_slots_bytes,
+            endpoint_guard_slots_bytes: endpoint_storage.guard_slots_bytes,
+            endpoint_header_padding_bytes: endpoint_storage.header_padding_bytes,
+            compiled_program_header_bytes: size_of::<CompiledProgramImage>(),
+            compiled_role_header_bytes: size_of::<CompiledRoleImage>(),
+            compiled_program_persistent_bytes: CompiledProgramImage::persistent_bytes_for_counts(
+                counts,
+            ),
+            compiled_role_persistent_bytes: CompiledRoleImage::persistent_bytes_for_program::<
+                ROLE,
+                Steps,
+            >(
+                projected.stamp().scope_count(),
+                projected.passive_linger_route_scope_count(),
+                projected.route_scope_count(),
+                projected.parallel_enter_count(),
+                summary.view().as_slice().len(),
+            ),
+            endpoint_phase_cursor_state_bytes: endpoint_layout.phase_cursor_state().bytes(),
+            endpoint_route_state_bytes: endpoint_layout.route_state().bytes(),
+            endpoint_route_arm_stack_bytes: endpoint_layout.route_arm_stack().bytes(),
+            endpoint_lane_offer_state_slots_bytes: endpoint_layout.lane_offer_state_slots().bytes(),
+            endpoint_frontier_state_bytes: endpoint_layout.frontier_state().bytes(),
+            endpoint_frontier_root_rows_bytes: endpoint_layout.frontier_root_rows().bytes(),
+            endpoint_frontier_root_active_slots_bytes: endpoint_layout
+                .frontier_root_active_slots()
+                .bytes(),
+            endpoint_frontier_root_observed_key_slots_bytes: endpoint_layout
+                .frontier_root_observed_key_slots()
+                .bytes(),
+            endpoint_frontier_offer_entry_slots_bytes: endpoint_layout
+                .frontier_offer_entry_slots()
+                .bytes(),
+            endpoint_binding_inbox_bytes: endpoint_layout.binding_inbox().bytes(),
+            endpoint_binding_slots_bytes: endpoint_layout.binding_slots().bytes(),
+            endpoint_binding_len_bytes: endpoint_layout.binding_len().bytes(),
+            endpoint_binding_label_masks_bytes: endpoint_layout.binding_label_masks().bytes(),
+            endpoint_scope_evidence_store_bytes: 0,
+            endpoint_scope_evidence_slots_bytes: endpoint_layout.scope_evidence_slots().bytes(),
+            endpoint_padding_bytes: endpoint_layout
+                .total_bytes()
+                .saturating_sub(endpoint_section_bytes),
+        }
     }
 
-    fn cache_lengths<const MAX_RV: usize>(cluster: &TestCluster<'_, MAX_RV>) -> (usize, usize) {
-        cluster.with_control_mut(|core| (core.compiled_programs.len(), core.compiled_roles.len()))
+    #[test]
+    fn public_endpoint_cell_stays_small_and_metadata_only() {
+        assert!(
+            size_of::<PublicEndpointCell>() <= 6 * size_of::<usize>(),
+            "public endpoint cell must stay a small metadata owner"
+        );
+        let endpoint_storage_bytes = size_of::<
+            ErasedPublicEndpointKernel<
+                'static,
+                DummyTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                2,
+            >,
+        >();
+        assert!(
+            endpoint_storage_bytes <= CLUSTER_TEST_SLAB_CAPACITY,
+            "shared cluster test slab must cover one leased public endpoint (required={}, cap={})",
+            endpoint_storage_bytes,
+            CLUSTER_TEST_SLAB_CAPACITY,
+        );
     }
 
-    fn cache_pin_totals<const MAX_RV: usize>(cluster: &TestCluster<'_, MAX_RV>) -> (u32, u32) {
-        let mut program_pins = 0u32;
-        let mut role_pins = 0u32;
-        cluster.with_control_mut(|core| {
-            for idx in 0..core.compiled_programs.len() {
-                if let Some((_, entry)) = core.compiled_programs.get_at(idx) {
-                    program_pins = program_pins.saturating_add(entry.pins);
-                }
-            }
-            for idx in 0..core.compiled_roles.len() {
-                if let Some((_, entry)) = core.compiled_roles.get_at(idx) {
-                    role_pins = role_pins.saturating_add(entry.pins);
-                }
-            }
-        });
-        (program_pins, role_pins)
+    #[test]
+    fn pico2_resident_component_sizes() {
+        let session_cluster_bytes = size_of::<StaticTestCluster<1>>();
+        let control_core_bytes = size_of::<
+            ControlCore<
+                'static,
+                DummyTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                crate::control::cap::mint::EpochTbl,
+                1,
+            >,
+        >();
+        let rv_core_bytes = size_of::<
+            crate::control::lease::core::ControlCore<
+                'static,
+                DummyTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                crate::control::cap::mint::EpochTbl,
+                1,
+            >,
+        >();
+        let resolver_core_bytes = size_of::<ResolverCore<'static, 1>>();
+        let lowering_summary_bytes = size_of::<LoweringSummary>();
+        let compiled_program_bytes = size_of::<CompiledProgramImage>();
+        let compiled_role_bytes = size_of::<CompiledRoleImage>();
+        let role_compile_scratch_bytes = size_of::<RoleCompileScratch>();
+        let endpoint_storage_bytes = size_of::<
+            ErasedPublicEndpointKernel<
+                'static,
+                DummyTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                1,
+            >,
+        >();
+        let rendezvous_header_bytes = size_of::<
+            crate::rendezvous::core::Rendezvous<
+                'static,
+                'static,
+                DummyTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                crate::control::cap::mint::EpochTbl,
+            >,
+        >();
+        let route_table_bytes = size_of::<crate::rendezvous::tables::RouteTable>();
+        let loop_table_bytes = size_of::<crate::rendezvous::tables::LoopTable>();
+        let cap_table_bytes = size_of::<crate::rendezvous::capability::CapTable>();
+        let slot_arena_bytes = size_of::<crate::rendezvous::slots::SlotArena>();
+        let host_slots_bytes = size_of::<crate::epf::host::HostSlots<'static>>();
+        let delegation_graph_bytes = size_of::<
+            LeaseGraph<
+                'static,
+                DelegationLeaseSpec<
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    crate::control::cap::mint::EpochTbl,
+                >,
+            >,
+        >();
+        let splice_graph_bytes = size_of::<
+            LeaseGraph<
+                'static,
+                SpliceLeaseSpec<
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    crate::control::cap::mint::EpochTbl,
+                >,
+            >,
+        >();
+
+        assert!(
+            session_cluster_bytes <= 1_700_000
+                && control_core_bytes <= 1_700_000
+                && rv_core_bytes <= 250_000
+                && resolver_core_bytes <= 8_000
+                && lowering_summary_bytes <= 20_000
+                && compiled_program_bytes <= 25_000
+                && compiled_role_bytes <= 25_000
+                && role_compile_scratch_bytes <= 60_000
+                && endpoint_storage_bytes <= 90_000
+                && rendezvous_header_bytes <= 32_768
+                && route_table_bytes <= 128
+                && loop_table_bytes <= 64
+                && cap_table_bytes <= 64
+                && slot_arena_bytes <= 512
+                && host_slots_bytes <= 512
+                && delegation_graph_bytes <= 3_000
+                && splice_graph_bytes <= 2_000,
+            "resident regression: session_cluster={session_cluster_bytes} control_core={control_core_bytes} rv_core={rv_core_bytes} resolver={resolver_core_bytes} lowering_summary={lowering_summary_bytes} compiled_program={compiled_program_bytes} compiled_role={compiled_role_bytes} role_compile_scratch={role_compile_scratch_bytes} endpoint_storage={endpoint_storage_bytes} rendezvous_header={rendezvous_header_bytes} route_table={route_table_bytes} loop_table={loop_table_bytes} cap_table={cap_table_bytes} slot_arena={slot_arena_bytes} host_slots={host_slots_bytes} delegation_graph={delegation_graph_bytes} splice_graph={splice_graph_bytes}"
+        );
+    }
+
+    #[test]
+    fn huge_shape_matrix_resident_bytes_stay_measured_and_local() {
+        let route = measure_huge_shape::<1, _>(0, &ROUTE_HEAVY_PROGRAM);
+        let linear = measure_huge_shape::<1, _>(1, &LINEAR_HEAVY_PROGRAM);
+        let fanout = measure_huge_shape::<1, _>(2, &FANOUT_HEAVY_PROGRAM);
+
+        for (name, measured) in [
+            ("route_heavy", route),
+            ("linear_heavy", linear),
+            ("fanout_heavy", fanout),
+        ] {
+            std::println!(
+                "resident-shape name={name} route_bytes={} loop_bytes={} cap_bytes={} endpoint_bytes={} endpoint_header_bytes={} endpoint_port_slots_bytes={} endpoint_guard_slots_bytes={} endpoint_header_padding_bytes={} compiled_program_header_bytes={} compiled_role_header_bytes={} compiled_program_persistent_bytes={} compiled_role_persistent_bytes={} endpoint_phase_cursor_state_bytes={} endpoint_route_state_bytes={} endpoint_route_arm_stack_bytes={} endpoint_lane_offer_state_slots_bytes={} endpoint_frontier_state_bytes={} endpoint_frontier_root_rows_bytes={} endpoint_frontier_root_active_slots_bytes={} endpoint_frontier_root_observed_key_slots_bytes={} endpoint_frontier_offer_entry_slots_bytes={} endpoint_binding_inbox_bytes={} endpoint_binding_slots_bytes={} endpoint_binding_len_bytes={} endpoint_binding_label_masks_bytes={} endpoint_scope_evidence_store_bytes={} endpoint_scope_evidence_slots_bytes={} endpoint_padding_bytes={}",
+                measured.route_bytes,
+                measured.loop_bytes,
+                measured.cap_bytes,
+                measured.endpoint_bytes,
+                measured.endpoint_header_bytes,
+                measured.endpoint_port_slots_bytes,
+                measured.endpoint_guard_slots_bytes,
+                measured.endpoint_header_padding_bytes,
+                measured.compiled_program_header_bytes,
+                measured.compiled_role_header_bytes,
+                measured.compiled_program_persistent_bytes,
+                measured.compiled_role_persistent_bytes,
+                measured.endpoint_phase_cursor_state_bytes,
+                measured.endpoint_route_state_bytes,
+                measured.endpoint_route_arm_stack_bytes,
+                measured.endpoint_lane_offer_state_slots_bytes,
+                measured.endpoint_frontier_state_bytes,
+                measured.endpoint_frontier_root_rows_bytes,
+                measured.endpoint_frontier_root_active_slots_bytes,
+                measured.endpoint_frontier_root_observed_key_slots_bytes,
+                measured.endpoint_frontier_offer_entry_slots_bytes,
+                measured.endpoint_binding_inbox_bytes,
+                measured.endpoint_binding_slots_bytes,
+                measured.endpoint_binding_len_bytes,
+                measured.endpoint_binding_label_masks_bytes,
+                measured.endpoint_scope_evidence_store_bytes,
+                measured.endpoint_scope_evidence_slots_bytes,
+                measured.endpoint_padding_bytes,
+            );
+        }
+
+        assert_eq!(route.route_scope_count, huge_program::ROUTE_SCOPE_COUNT);
+        assert_eq!(linear.route_scope_count, linear_program::ROUTE_SCOPE_COUNT);
+        assert_eq!(fanout.route_scope_count, fanout_program::ROUTE_SCOPE_COUNT);
+
+        assert!(
+            route.route_bytes <= 2 * 1024,
+            "route-heavy route resident bytes regressed: {:?}",
+            route
+        );
+        assert!(
+            linear.route_bytes <= 2 * 1024,
+            "linear-heavy route resident bytes regressed: {:?}",
+            linear
+        );
+        assert!(
+            fanout.route_bytes <= 2 * 1024,
+            "fanout-heavy route resident bytes regressed: {:?}",
+            fanout
+        );
+
+        assert!(
+            route.loop_bytes <= 2 * 1024,
+            "route-heavy loop resident bytes regressed: {:?}",
+            route
+        );
+        assert!(
+            linear.loop_bytes <= 2 * 1024,
+            "linear-heavy loop resident bytes regressed: {:?}",
+            linear
+        );
+        assert!(
+            fanout.loop_bytes <= 2 * 1024,
+            "fanout-heavy loop resident bytes regressed: {:?}",
+            fanout
+        );
+
+        assert!(
+            route.cap_bytes <= 512,
+            "route-heavy cap resident bytes regressed: {:?}",
+            route
+        );
+        assert!(
+            linear.cap_bytes <= 512,
+            "linear-heavy cap resident bytes regressed: {:?}",
+            linear
+        );
+        assert!(
+            fanout.cap_bytes <= 512,
+            "fanout-heavy cap resident bytes regressed: {:?}",
+            fanout
+        );
+
+        assert!(
+            route.endpoint_bytes <= 12 * 1024,
+            "route-heavy endpoint resident bytes regressed: {:?}",
+            route
+        );
+        assert!(
+            linear.endpoint_bytes <= 8 * 1024,
+            "linear-heavy endpoint resident bytes regressed: {:?}",
+            linear
+        );
+        assert!(
+            fanout.endpoint_bytes <= 12 * 1024,
+            "fanout-heavy endpoint resident bytes regressed: {:?}",
+            fanout
+        );
+        assert_eq!(
+            route.endpoint_bytes,
+            route.endpoint_phase_cursor_state_bytes
+                + route.endpoint_route_state_bytes
+                + route.endpoint_route_arm_stack_bytes
+                + route.endpoint_lane_offer_state_slots_bytes
+                + route.endpoint_frontier_state_bytes
+                + route.endpoint_frontier_root_rows_bytes
+                + route.endpoint_frontier_root_active_slots_bytes
+                + route.endpoint_frontier_root_observed_key_slots_bytes
+                + route.endpoint_frontier_offer_entry_slots_bytes
+                + route.endpoint_binding_inbox_bytes
+                + route.endpoint_binding_slots_bytes
+                + route.endpoint_binding_len_bytes
+                + route.endpoint_binding_label_masks_bytes
+                + route.endpoint_scope_evidence_store_bytes
+                + route.endpoint_scope_evidence_slots_bytes
+                + route.endpoint_padding_bytes,
+            "route-heavy endpoint arena breakdown must cover the full resident total: {route:?}"
+        );
+        assert_eq!(
+            linear.endpoint_bytes,
+            linear.endpoint_phase_cursor_state_bytes
+                + linear.endpoint_route_state_bytes
+                + linear.endpoint_route_arm_stack_bytes
+                + linear.endpoint_lane_offer_state_slots_bytes
+                + linear.endpoint_frontier_state_bytes
+                + linear.endpoint_frontier_root_rows_bytes
+                + linear.endpoint_frontier_root_active_slots_bytes
+                + linear.endpoint_frontier_root_observed_key_slots_bytes
+                + linear.endpoint_frontier_offer_entry_slots_bytes
+                + linear.endpoint_binding_inbox_bytes
+                + linear.endpoint_binding_slots_bytes
+                + linear.endpoint_binding_len_bytes
+                + linear.endpoint_binding_label_masks_bytes
+                + linear.endpoint_scope_evidence_store_bytes
+                + linear.endpoint_scope_evidence_slots_bytes
+                + linear.endpoint_padding_bytes,
+            "linear-heavy endpoint arena breakdown must cover the full resident total: {linear:?}"
+        );
+        assert_eq!(
+            fanout.endpoint_bytes,
+            fanout.endpoint_phase_cursor_state_bytes
+                + fanout.endpoint_route_state_bytes
+                + fanout.endpoint_route_arm_stack_bytes
+                + fanout.endpoint_lane_offer_state_slots_bytes
+                + fanout.endpoint_frontier_state_bytes
+                + fanout.endpoint_frontier_root_rows_bytes
+                + fanout.endpoint_frontier_root_active_slots_bytes
+                + fanout.endpoint_frontier_root_observed_key_slots_bytes
+                + fanout.endpoint_frontier_offer_entry_slots_bytes
+                + fanout.endpoint_binding_inbox_bytes
+                + fanout.endpoint_binding_slots_bytes
+                + fanout.endpoint_binding_len_bytes
+                + fanout.endpoint_binding_label_masks_bytes
+                + fanout.endpoint_scope_evidence_store_bytes
+                + fanout.endpoint_scope_evidence_slots_bytes
+                + fanout.endpoint_padding_bytes,
+            "fanout-heavy endpoint arena breakdown must cover the full resident total: {fanout:?}"
+        );
+
+        assert!(
+            route.compiled_program_header_bytes <= 1024
+                && linear.compiled_program_header_bytes <= 1024
+                && fanout.compiled_program_header_bytes <= 1024,
+            "compiled program header must stay small-header only: route={route:?} linear={linear:?} fanout={fanout:?}"
+        );
+        assert!(
+            route.compiled_role_header_bytes <= 16 * 1024
+                && linear.compiled_role_header_bytes <= 16 * 1024
+                && fanout.compiled_role_header_bytes <= 16 * 1024,
+            "compiled role header still looks too fat for atlas migration: route={route:?} linear={linear:?} fanout={fanout:?}"
+        );
+
+        assert!(
+            route.compiled_program_persistent_bytes <= 1024
+                && linear.compiled_program_persistent_bytes <= 1024
+                && fanout.compiled_program_persistent_bytes <= 2 * 1024,
+            "compiled program atlas tail regressed: route={route:?} linear={linear:?} fanout={fanout:?}"
+        );
+        assert!(
+            route.compiled_role_persistent_bytes <= 18 * 1024
+                && linear.compiled_role_persistent_bytes <= 17 * 1024
+                && fanout.compiled_role_persistent_bytes <= 20 * 1024,
+            "compiled role atlas tail regressed: route={route:?} linear={linear:?} fanout={fanout:?}"
+        );
+
+        assert!(
+            route.route_bytes >= linear.route_bytes,
+            "route-heavy resident bytes must not fall below linear when route scopes are present: route={route:?} linear={linear:?}"
+        );
+        assert_eq!(
+            route.route_bytes, fanout.route_bytes,
+            "route resident bytes must stay tied to live route depth rather than total scope count: route={route:?} fanout={fanout:?}"
+        );
+        assert!(
+            fanout.endpoint_bytes >= route.endpoint_bytes,
+            "fanout-heavy endpoint resident bytes should dominate route-heavy due to larger branch fan-out: route={route:?} fanout={fanout:?}"
+        );
+    }
+
+    struct ClusterRuntimeGuard {
+        tap0: *mut [TapEvent; RING_EVENTS],
+        tap1: *mut [TapEvent; RING_EVENTS],
+        slab0: *mut [u8; CLUSTER_TEST_SLAB_CAPACITY],
+        slab1: *mut [u8; CLUSTER_TEST_SLAB_CAPACITY],
+        clock: *const CounterClock,
+    }
+
+    thread_local! {
+        static CLUSTER_TAP0: UnsafeCell<[TapEvent; RING_EVENTS]> =
+            const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
+        static CLUSTER_TAP1: UnsafeCell<[TapEvent; RING_EVENTS]> =
+            const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
+        static CLUSTER_SLAB0: UnsafeCell<[u8; CLUSTER_TEST_SLAB_CAPACITY]> =
+            const { UnsafeCell::new([0u8; CLUSTER_TEST_SLAB_CAPACITY]) };
+        static CLUSTER_SLAB1: UnsafeCell<[u8; CLUSTER_TEST_SLAB_CAPACITY]> =
+            const { UnsafeCell::new([0u8; CLUSTER_TEST_SLAB_CAPACITY]) };
+        static CLUSTER_SLOT_4: UnsafeCell<MaybeUninit<StaticTestCluster<4>>> =
+            const { UnsafeCell::new(MaybeUninit::uninit()) };
+        static CLUSTER_TEST_CLOCK: CounterClock = const { CounterClock::new() };
+    }
+
+    fn with_cluster_runtime<R>(f: impl FnOnce(&mut ClusterRuntimeGuard) -> R) -> R {
+        CLUSTER_TAP0.with(|tap0| {
+            CLUSTER_TAP1.with(|tap1| {
+                CLUSTER_SLAB0.with(|slab0| {
+                    CLUSTER_SLAB1.with(|slab1| {
+                        CLUSTER_TEST_CLOCK.with(|clock| unsafe {
+                            let tap0 = &mut *tap0.get();
+                            tap0.fill(TapEvent::zero());
+                            let tap1 = &mut *tap1.get();
+                            tap1.fill(TapEvent::zero());
+                            let slab0 = &mut *slab0.get();
+                            slab0.fill(0);
+                            let slab1 = &mut *slab1.get();
+                            slab1.fill(0);
+                            let mut fixture = ClusterRuntimeGuard {
+                                tap0,
+                                tap1,
+                                slab0,
+                                slab1,
+                                clock: clock as *const CounterClock,
+                            };
+                            f(&mut fixture)
+                        })
+                    })
+                })
+            })
+        })
+    }
+
+    impl ClusterRuntimeGuard {
+        fn config0(&mut self) -> Config<'static, DefaultLabelUniverse, CounterClock> {
+            let tap = unsafe { &mut *self.tap0 };
+            let slab = unsafe { &mut *self.slab0 };
+            Config::new(tap, slab)
+        }
+
+        fn config1(&mut self) -> Config<'static, DefaultLabelUniverse, CounterClock> {
+            let tap = unsafe { &mut *self.tap1 };
+            let slab = unsafe { &mut *self.slab1 };
+            Config::new(tap, slab)
+        }
+
+        fn clock(&self) -> &'static CounterClock {
+            unsafe { &*self.clock }
+        }
+    }
+
+    fn with_cluster_fixture<R>(
+        f: impl FnOnce(&'static CounterClock, Config<'static, DefaultLabelUniverse, CounterClock>) -> R,
+    ) -> R {
+        with_cluster_runtime(|fixture| {
+            let config = fixture.config0();
+            f(fixture.clock(), config)
+        })
+    }
+
+    fn with_cluster_fixture_pair<R>(
+        f: impl FnOnce(
+            &'static CounterClock,
+            Config<'static, DefaultLabelUniverse, CounterClock>,
+            Config<'static, DefaultLabelUniverse, CounterClock>,
+        ) -> R,
+    ) -> R {
+        with_cluster_runtime(|fixture| {
+            let config0 = fixture.config0();
+            let config1 = fixture.config1();
+            f(fixture.clock(), config0, config1)
+        })
+    }
+
+    fn with_test_cluster<R>(
+        clock: &'static CounterClock,
+        f: impl FnOnce(&'static StaticTestCluster<4>) -> R,
+    ) -> R {
+        CLUSTER_SLOT_4.with(|slot| unsafe {
+            let ptr = (*slot.get()).as_mut_ptr();
+            SessionCluster::init_empty(ptr, clock);
+            let result = f(&*ptr);
+            core::ptr::drop_in_place(ptr);
+            result
+        })
+    }
+
+    fn run_on_transient_compiled_test_stack<F>(name: &'static str, test: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let _ = name;
+        test();
     }
 
     fn route_resolver(_ctx: ResolverContext) -> ResolverResult {
@@ -3428,260 +5101,506 @@ mod tests {
 
     #[test]
     fn run_effect_respects_caps_mask_before_dispatch() {
-        use crate::control::cap::mint::CapsMask;
-        use crate::runtime::config::Config;
-        let tap_buf = leak_tap_storage();
-        let mut slab = [0u8; 256];
-        let config = Config::new(tap_buf, &mut slab);
-        let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
-        let rv_id = cluster
-            .add_rendezvous_from_config(config, DummyTransport)
-            .expect("register rendezvous");
-        cluster.with_control_mut(|core| {
-            core.locals
-                .get_mut(&rv_id)
-                .expect("registered rendezvous")
-                .set_caps_mask_for_lane(crate::control::types::Lane::new(0), CapsMask::empty());
-        });
+        run_on_transient_compiled_test_stack(
+            "run_effect_respects_caps_mask_before_dispatch",
+            || {
+                use crate::control::cap::mint::CapsMask;
+                with_cluster_fixture(|clock, config| {
+                    with_test_cluster(clock, |cluster| {
+                        let rv_id = cluster
+                            .add_rendezvous_from_config(config, DummyTransport)
+                            .expect("register rendezvous");
+                        cluster.with_control_mut(|core| {
+                            core.locals
+                                .get_mut(&rv_id)
+                                .expect("registered rendezvous")
+                                .set_caps_mask_for_lane(
+                                    crate::control::types::Lane::new(0),
+                                    CapsMask::empty(),
+                                );
+                        });
 
-        let sid = SessionId::new(7);
-        let lane = Lane::new(0);
-        let envelope = CpCommand::checkpoint(sid, lane);
+                        let sid = SessionId::new(7);
+                        let lane = Lane::new(0);
+                        let envelope = CpCommand::checkpoint(sid, lane);
 
-        let err = cluster.run_effect(rv_id, envelope).unwrap_err();
-        assert!(matches!(
-            err,
-            CpError::Authorisation {
-                effect: CpEffect::Checkpoint
-            }
-        ));
+                        let err = cluster.run_effect(rv_id, envelope).unwrap_err();
+                        assert!(matches!(
+                            err,
+                            CpError::Authorisation {
+                                effect: CpEffect::Checkpoint
+                            }
+                        ));
+                    });
+                });
+            },
+        );
     }
 
     #[test]
     fn dispatch_splice_ack_tracks_masks_and_rolls_back() {
-        use crate::{
-            control::cap::mint::{CapsMask, HandleView},
-            control::cap::resource_kinds::SpliceHandle,
-            runtime::config::Config,
-        };
+        run_on_transient_compiled_test_stack(
+            "dispatch_splice_ack_tracks_masks_and_rolls_back",
+            || {
+                use crate::{
+                    control::cap::mint::{CapsMask, HandleView},
+                    control::cap::resource_kinds::SpliceHandle,
+                };
 
-        let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+                with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
+                    with_test_cluster(clock, |cluster| {
+                        let src_id = cluster
+                            .add_rendezvous_from_config(src_cfg, DummyTransport)
+                            .expect("register src");
+                        let dst_id = cluster
+                            .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                            .expect("register dst");
 
-        let tap_src = leak_tap_storage();
-        let slab_src = Box::leak(Box::new([0u8; 256]));
-        let src_cfg = Config::new(tap_src, slab_src);
+                        let src_lane = Lane::new(0);
+                        let dst_lane = Lane::new(1);
 
-        let tap_dst = leak_tap_storage();
-        let slab_dst = Box::leak(Box::new([0u8; 256]));
-        let dst_cfg = Config::new(tap_dst, slab_dst);
-        let src_id = cluster
-            .add_rendezvous_from_config(src_cfg, DummyTransport)
-            .expect("register src");
-        let dst_id = cluster
-            .add_rendezvous_from_config(dst_cfg, DummyTransport)
-            .expect("register dst");
+                        cluster.with_control_mut(|core| {
+                            let src_rv = core.locals.get_mut(&src_id).unwrap();
+                            src_rv.set_caps_mask_for_lane(
+                                crate::control::types::Lane::new(src_lane.raw()),
+                                CapsMask::empty()
+                                    .with(CpEffect::SpliceBegin)
+                                    .with(CpEffect::SpliceCommit),
+                            );
+                            let dst_rv = core.locals.get_mut(&dst_id).unwrap();
+                            dst_rv.set_caps_mask_for_lane(
+                                crate::control::types::Lane::new(dst_lane.raw()),
+                                CapsMask::empty(),
+                            );
+                        });
 
-        let src_lane = Lane::new(0);
-        let dst_lane = Lane::new(1);
+                        let ack_caps = CapsMask::empty().with(CpEffect::SpliceAck);
 
-        cluster.with_control_mut(|core| {
-            let src_rv = core.locals.get_mut(&src_id).unwrap();
-            src_rv.set_caps_mask_for_lane(
-                crate::control::types::Lane::new(src_lane.raw()),
-                CapsMask::empty()
-                    .with(CpEffect::SpliceBegin)
-                    .with(CpEffect::SpliceCommit),
-            );
-            let dst_rv = core.locals.get_mut(&dst_id).unwrap();
-            dst_rv.set_caps_mask_for_lane(
-                crate::control::types::Lane::new(dst_lane.raw()),
-                CapsMask::empty(),
-            );
-        });
+                        let sid = SessionId::new(7);
+                        let operands = SpliceOperands::new(
+                            src_id,
+                            dst_id,
+                            src_lane,
+                            dst_lane,
+                            Generation::new(0),
+                            Generation::new(1),
+                            0,
+                            0,
+                        );
 
-        let ack_caps = CapsMask::empty().with(CpEffect::SpliceAck);
+                        let pending = cluster
+                            .run_effect_step(src_id, CpCommand::splice_begin(sid, operands))
+                            .expect("begin effect");
+                        assert!(matches!(pending, PendingEffect::Dispatch { .. }));
 
-        let sid = SessionId::new(7);
-        let operands = SpliceOperands::new(
-            src_id,
-            dst_id,
-            src_lane,
-            dst_lane,
-            Generation::new(0),
-            Generation::new(1),
-            0,
-            0,
+                        let handle = SpliceHandle {
+                            src_rv: src_id.raw(),
+                            dst_rv: dst_id.raw(),
+                            src_lane: src_lane.raw() as u16,
+                            dst_lane: dst_lane.raw() as u16,
+                            old_gen: operands.old_gen.raw(),
+                            new_gen: operands.new_gen.raw(),
+                            seq_tx: operands.seq_tx,
+                            seq_rx: operands.seq_rx,
+                            flags: 0,
+                        };
+                        let handle_bytes = handle.encode();
+                        let view =
+                            HandleView::decode(&handle_bytes, ack_caps).expect("decode view");
+
+                        cluster
+                            .dispatch_splice_ack_with_view(dst_id, sid, dst_lane, view, None)
+                            .expect("dispatch succeeds");
+
+                        cluster.with_control_mut(|core| {
+                            let rv = core.locals.get_mut(&dst_id).unwrap();
+                            let mask = rv.caps_mask_for_lane(crate::control::types::Lane::new(
+                                dst_lane.raw(),
+                            ));
+                            assert!(mask.allows(CpEffect::SpliceAck));
+                            rv.set_caps_mask_for_lane(
+                                crate::control::types::Lane::new(dst_lane.raw()),
+                                CapsMask::empty(),
+                            );
+                        });
+
+                        let sid_fail = SessionId::new(9);
+                        let operands_fail = SpliceOperands::new(
+                            src_id,
+                            dst_id,
+                            src_lane,
+                            dst_lane,
+                            Generation::new(1),
+                            Generation::new(2),
+                            0,
+                            0,
+                        );
+
+                        cluster
+                            .run_effect_step(
+                                src_id,
+                                CpCommand::splice_begin(sid_fail, operands_fail),
+                            )
+                            .expect("second begin effect");
+
+                        cluster.with_control_mut(|core| {
+                            let rv = core.locals.get_mut(&dst_id).unwrap();
+                            rv.set_caps_mask_for_lane(
+                                crate::control::types::Lane::new(dst_lane.raw()),
+                                CapsMask::empty(),
+                            );
+                        });
+
+                        let failure_handle = SpliceHandle {
+                            src_rv: src_id.raw(),
+                            dst_rv: dst_id.raw(),
+                            src_lane: src_lane.raw() as u16,
+                            dst_lane: dst_lane.raw() as u16,
+                            old_gen: operands_fail.old_gen.raw(),
+                            new_gen: operands_fail.new_gen.raw(),
+                            seq_tx: operands_fail.seq_tx,
+                            seq_rx: operands_fail.seq_rx,
+                            flags: 0,
+                        };
+                        let failure_bytes = failure_handle.encode();
+                        let failure_view = HandleView::decode(&failure_bytes, ack_caps)
+                            .expect("decode failure view");
+
+                        let err = cluster
+                            .dispatch_splice_ack_with_view(
+                                dst_id,
+                                sid_fail,
+                                dst_lane,
+                                failure_view,
+                                None,
+                            )
+                            .expect_err("second ack should fail due to busy lane");
+                        assert!(
+                            matches!(
+                                err,
+                                CpError::Splice(
+                                    crate::control::cluster::error::SpliceError::LaneMismatch
+                                        | crate::control::cluster::error::SpliceError::InvalidState
+                                )
+                            ),
+                            "error was {:?}",
+                            err
+                        );
+
+                        cluster.with_control_mut(|core| {
+                            let rv = core.locals.get_mut(&dst_id).unwrap();
+                            let mask = rv.caps_mask_for_lane(crate::control::types::Lane::new(
+                                dst_lane.raw(),
+                            ));
+                            assert_eq!(mask.bits(), CapsMask::empty().bits());
+                        });
+                    });
+                });
+            },
         );
+    }
 
-        let pending = cluster
-            .run_effect_step(src_id, CpCommand::splice_begin(sid, operands))
-            .expect("begin effect");
-        assert!(matches!(pending, PendingEffect::Dispatch { .. }));
+    #[test]
+    fn cached_splice_operands_shard_by_source_rv() {
+        run_on_transient_compiled_test_stack("cached_splice_operands_shard_by_source_rv", || {
+            with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
+                with_test_cluster(clock, |cluster| {
+                    let src_id = cluster
+                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .expect("register src");
+                    let dst_id = cluster
+                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .expect("register dst");
 
-        let handle = SpliceHandle {
-            src_rv: src_id.raw(),
-            dst_rv: dst_id.raw(),
-            src_lane: src_lane.raw() as u16,
-            dst_lane: dst_lane.raw() as u16,
-            old_gen: operands.old_gen.raw(),
-            new_gen: operands.new_gen.raw(),
-            seq_tx: operands.seq_tx,
-            seq_rx: operands.seq_rx,
-            flags: 0,
-        };
-        let handle_bytes = handle.encode();
-        let view = HandleView::decode(&handle_bytes, ack_caps).expect("decode view");
+                    let sid0 = SessionId::new(7);
+                    let sid1 = SessionId::new(9);
+                    let ops0 = SpliceOperands::new(
+                        src_id,
+                        dst_id,
+                        Lane::new(0),
+                        Lane::new(1),
+                        Generation::new(0),
+                        Generation::new(1),
+                        0,
+                        0,
+                    );
+                    let ops1 = SpliceOperands::new(
+                        dst_id,
+                        src_id,
+                        Lane::new(1),
+                        Lane::new(0),
+                        Generation::new(2),
+                        Generation::new(3),
+                        1,
+                        1,
+                    );
 
-        cluster
-            .dispatch_splice_ack_with_view(dst_id, sid, dst_lane, view, None)
-            .expect("dispatch succeeds");
+                    cluster
+                        .cache_splice_operands(sid0, ops0)
+                        .expect("cache first shard");
+                    cluster
+                        .cache_splice_operands(sid1, ops1)
+                        .expect("cache second shard");
 
-        cluster.with_control_mut(|core| {
-            let rv = core.locals.get_mut(&dst_id).unwrap();
-            let mask = rv.caps_mask_for_lane(crate::control::types::Lane::new(dst_lane.raw()));
-            assert!(mask.allows(CpEffect::SpliceAck));
-            rv.set_caps_mask_for_lane(
-                crate::control::types::Lane::new(dst_lane.raw()),
-                CapsMask::empty(),
-            );
+                    assert_eq!(cluster.distributed_operands(sid0), Some(ops0));
+                    assert_eq!(cluster.distributed_operands(sid1), Some(ops1));
+                    assert_eq!(cluster.take_cached_splice_operands(sid0), Some(ops0));
+                    assert_eq!(cluster.take_cached_splice_operands(sid1), Some(ops1));
+                    assert!(cluster.distributed_operands(sid0).is_none());
+                    assert!(cluster.distributed_operands(sid1).is_none());
+                });
+            });
         });
+    }
 
-        let sid_fail = SessionId::new(9);
-        let operands_fail = SpliceOperands::new(
-            src_id,
-            dst_id,
-            src_lane,
-            dst_lane,
-            Generation::new(1),
-            Generation::new(2),
-            0,
-            0,
-        );
-
-        cluster
-            .run_effect_step(src_id, CpCommand::splice_begin(sid_fail, operands_fail))
-            .expect("second begin effect");
-
-        cluster.with_control_mut(|core| {
-            let rv = core.locals.get_mut(&dst_id).unwrap();
-            rv.set_caps_mask_for_lane(
-                crate::control::types::Lane::new(dst_lane.raw()),
-                CapsMask::empty(),
-            );
-        });
-
-        let failure_handle = SpliceHandle {
-            src_rv: src_id.raw(),
-            dst_rv: dst_id.raw(),
-            src_lane: src_lane.raw() as u16,
-            dst_lane: dst_lane.raw() as u16,
-            old_gen: operands_fail.old_gen.raw(),
-            new_gen: operands_fail.new_gen.raw(),
-            seq_tx: operands_fail.seq_tx,
-            seq_rx: operands_fail.seq_rx,
-            flags: 0,
-        };
-        let failure_bytes = failure_handle.encode();
-        let failure_view =
-            HandleView::decode(&failure_bytes, ack_caps).expect("decode failure view");
-
-        let err = cluster
-            .dispatch_splice_ack_with_view(dst_id, sid_fail, dst_lane, failure_view, None)
-            .expect_err("second ack should fail due to busy lane");
-        assert!(
-            matches!(
-                err,
-                CpError::Splice(
-                    crate::control::cluster::error::SpliceError::LaneMismatch
-                        | crate::control::cluster::error::SpliceError::InvalidState
-                )
+    fn test_distributed_splice_entry(seq_tx: u32) -> DistributedEntry {
+        DistributedEntry {
+            operands: SpliceOperands::new(
+                RendezvousId::new(1),
+                RendezvousId::new(2),
+                Lane::new(3),
+                Lane::new(4),
+                Generation::new(5),
+                Generation::new(6),
+                seq_tx,
+                8,
             ),
-            "error was {:?}",
-            err
+            phase: DistributedPhase::Begin { txn: None },
+        }
+    }
+
+    #[test]
+    fn distributed_splice_bucket_accesses_untagged_entries() {
+        let capacity = 2usize;
+        let layout = std::alloc::Layout::from_size_align(
+            DistributedSpliceBucket::storage_bytes(capacity),
+            DistributedSpliceBucket::storage_align(),
+        )
+        .expect("bucket storage layout");
+        let storage = unsafe { std::alloc::alloc(layout) };
+        if storage.is_null() {
+            std::alloc::handle_alloc_error(layout);
+        }
+
+        let mut bucket = DistributedSpliceBucket::empty();
+        let reclaim_delta = 1usize;
+        assert!(
+            DistributedSpliceBucket::STORAGE_TAG_MASK >= reclaim_delta,
+            "test requires a non-zero reclaim tag bit"
         );
 
-        cluster.with_control_mut(|core| {
-            let rv = core.locals.get_mut(&dst_id).unwrap();
-            let mask = rv.caps_mask_for_lane(crate::control::types::Lane::new(dst_lane.raw()));
-            assert_eq!(mask.bits(), CapsMask::empty().bits());
+        unsafe {
+            bucket.bind_from_storage(storage, capacity, reclaim_delta);
+        }
+
+        let entries = bucket.entries_ptr();
+        assert_ne!(bucket.raw_entries().addr(), entries.addr());
+
+        let sid = SessionId::new(17);
+        bucket
+            .insert(sid, test_distributed_splice_entry(7))
+            .expect("insert uses untagged storage");
+
+        let stored = unsafe { (&*entries).as_ref() }.expect("entry stored at untagged base");
+        assert_eq!(stored.sid, sid);
+        assert_eq!(stored.entry.operands.seq_tx, 7);
+        assert_eq!(bucket.occupied_len(), 1);
+        assert!(bucket.contains_sid(sid));
+        assert_eq!(bucket.get(sid).map(|entry| entry.operands.seq_tx), Some(7));
+
+        let entry = bucket.get_mut(sid).expect("mutable entry");
+        entry.operands.seq_tx = 9;
+        assert_eq!(
+            unsafe { (&*entries).as_ref().map(|stored| stored.entry.operands.seq_tx) },
+            Some(9)
+        );
+
+        let removed = bucket.remove(sid).expect("remove entry");
+        assert_eq!(removed.operands.seq_tx, 9);
+        assert_eq!(bucket.occupied_len(), 0);
+        assert!(!bucket.contains_sid(sid));
+        assert!(bucket.get(sid).is_none());
+
+        unsafe {
+            std::alloc::dealloc(storage, layout);
+        }
+    }
+
+    #[test]
+    fn distributed_splice_state_binds_by_source_rv() {
+        run_on_transient_compiled_test_stack("distributed_splice_state_binds_by_source_rv", || {
+            with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
+                with_test_cluster(clock, |cluster| {
+                    let src_id = cluster
+                        .add_rendezvous_from_config(src_cfg, DummyTransport)
+                        .expect("register src");
+                    let dst_id = cluster
+                        .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                        .expect("register dst");
+
+                    let sid0 = SessionId::new(11);
+                    let sid1 = SessionId::new(13);
+                    let ops0 = SpliceOperands::new(
+                        src_id,
+                        dst_id,
+                        Lane::new(0),
+                        Lane::new(1),
+                        Generation::new(0),
+                        Generation::new(1),
+                        0,
+                        0,
+                    );
+                    let ops1 = SpliceOperands::new(
+                        dst_id,
+                        src_id,
+                        Lane::new(1),
+                        Lane::new(0),
+                        Generation::new(2),
+                        Generation::new(3),
+                        1,
+                        1,
+                    );
+
+                    cluster.with_control_mut(|core| {
+                        assert!(
+                            core.splice_state
+                                .bucket(src_id)
+                                .expect("src bucket")
+                                .storage_ptr()
+                                .is_null()
+                        );
+                        assert!(
+                            core.splice_state
+                                .bucket(dst_id)
+                                .expect("dst bucket")
+                                .storage_ptr()
+                                .is_null()
+                        );
+
+                        core.ensure_distributed_splice_capacity(src_id, 1)
+                            .expect("bind src bucket");
+                        core.splice_state.begin(sid0, ops0).expect("begin src");
+                        assert!(
+                            !core
+                                .splice_state
+                                .bucket(src_id)
+                                .expect("src bucket bound")
+                                .storage_ptr()
+                                .is_null()
+                        );
+                        assert!(
+                            core.splice_state
+                                .bucket(dst_id)
+                                .expect("dst bucket still unbound")
+                                .storage_ptr()
+                                .is_null()
+                        );
+
+                        core.ensure_distributed_splice_capacity(dst_id, 1)
+                            .expect("bind dst bucket");
+                        core.splice_state.begin(sid1, ops1).expect("begin dst");
+                        assert!(
+                            !core
+                                .splice_state
+                                .bucket(dst_id)
+                                .expect("dst bucket bound")
+                                .storage_ptr()
+                                .is_null()
+                        );
+
+                        let ack0 = core
+                            .splice_state
+                            .acknowledge(sid0, src_id)
+                            .expect("ack src shard");
+                        assert_eq!(ack0, ops0.ack(sid0));
+                        assert_eq!(core.splice_state.commit(sid0, src_id, Some(ack0)), Ok(ops0));
+                        assert_eq!(core.splice_state.get(sid1).copied(), Some(ops1));
+                    });
+
+                    assert!(cluster.distributed_operands(sid0).is_none());
+                    assert_eq!(cluster.distributed_operands(sid1), Some(ops1));
+                });
+            });
         });
     }
 
     #[test]
     fn resolver_defer_for_splice_or_reroute_is_policy_abort() {
-        use crate::control::cap::resource_kinds::{RerouteKind, SpliceIntentKind};
-        use crate::runtime::config::Config;
+        run_on_transient_compiled_test_stack(
+            "resolver_defer_for_splice_or_reroute_is_policy_abort",
+            || {
+                use crate::control::cap::resource_kinds::{RerouteKind, SpliceIntentKind};
 
-        fn defer_resolution(_ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
-            Ok(DynamicResolution::Defer { retry_hint: 2 })
-        }
+                fn defer_resolution(
+                    _ctx: ResolverContext,
+                ) -> Result<DynamicResolution, ResolverError> {
+                    Ok(DynamicResolution::Defer { retry_hint: 2 })
+                }
 
-        let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
-        let tap = leak_tap_storage();
-        let mut slab = [0u8; 256];
-        let config = Config::new(tap, &mut slab);
-        let rv_id = cluster
-            .add_rendezvous_from_config(config, DummyTransport)
-            .expect("register rendezvous");
+                with_cluster_fixture(|clock, config| {
+                    with_test_cluster(clock, |cluster| {
+                        let rv_id = cluster
+                            .add_rendezvous_from_config(config, DummyTransport)
+                            .expect("register rendezvous");
 
-        let policy_id = 913u16;
-        let eff_index = EffIndex::new(7);
-        let policy = crate::global::const_dsl::PolicyMode::dynamic(policy_id);
+                        let policy_id = 913u16;
+                        let eff_index = EffIndex::new(7);
+                        let policy = crate::global::const_dsl::PolicyMode::dynamic(policy_id);
 
-        cluster.with_resolvers_mut(|core| {
-            assert!(
-                core.table
-                    .insert(
-                        DynamicResolverKey::new(rv_id, eff_index, SpliceIntentKind::TAG),
-                        DynamicResolverEntry {
-                            resolver: ResolverRef::from_fn(defer_resolution),
-                            policy,
-                            scope_trace: None,
-                        },
-                    )
-                    .is_ok()
-            );
-            assert!(
-                core.table
-                    .insert(
-                        DynamicResolverKey::new(rv_id, eff_index, RerouteKind::TAG),
-                        DynamicResolverEntry {
-                            resolver: ResolverRef::from_fn(defer_resolution),
-                            policy,
-                            scope_trace: None,
-                        },
-                    )
-                    .is_ok()
-            );
-        });
+                        cluster
+                            .register_dynamic_policy_resolver(
+                                rv_id,
+                                eff_index,
+                                SpliceIntentKind::TAG,
+                                policy,
+                                SpliceIntentKind::TAG,
+                                None,
+                                ResolverRef::from_fn(defer_resolution),
+                            )
+                            .expect("register splice resolver");
+                        cluster
+                            .register_dynamic_policy_resolver(
+                                rv_id,
+                                eff_index,
+                                RerouteKind::TAG,
+                                policy,
+                                RerouteKind::TAG,
+                                None,
+                                ResolverRef::from_fn(defer_resolution),
+                            )
+                            .expect("register reroute resolver");
 
-        let splice_err = cluster
-            .resolve_dynamic_policy(
-                rv_id,
-                None,
-                Lane::new(0),
-                eff_index,
-                SpliceIntentKind::TAG,
-                crate::transport::TransportSnapshot::default(),
-                [0; 4],
-                crate::transport::context::PolicyAttrs::new(),
-            )
-            .expect_err("splice defer must be rejected");
-        assert_eq!(splice_err, CpError::PolicyAbort { reason: policy_id });
+                        let splice_err = cluster
+                            .resolve_dynamic_policy(
+                                rv_id,
+                                None,
+                                Lane::new(0),
+                                eff_index,
+                                SpliceIntentKind::TAG,
+                                crate::transport::TransportSnapshot::default(),
+                                [0; 4],
+                                crate::transport::context::PolicyAttrs::new(),
+                            )
+                            .expect_err("splice defer must be rejected");
+                        assert_eq!(splice_err, CpError::PolicyAbort { reason: policy_id });
 
-        let reroute_err = cluster
-            .resolve_dynamic_policy(
-                rv_id,
-                None,
-                Lane::new(0),
-                eff_index,
-                RerouteKind::TAG,
-                crate::transport::TransportSnapshot::default(),
-                [0; 4],
-                crate::transport::context::PolicyAttrs::new(),
-            )
-            .expect_err("reroute defer must be rejected");
-        assert_eq!(reroute_err, CpError::PolicyAbort { reason: policy_id });
+                        let reroute_err = cluster
+                            .resolve_dynamic_policy(
+                                rv_id,
+                                None,
+                                Lane::new(0),
+                                eff_index,
+                                RerouteKind::TAG,
+                                crate::transport::TransportSnapshot::default(),
+                                [0; 4],
+                                crate::transport::context::PolicyAttrs::new(),
+                            )
+                            .expect_err("reroute defer must be rejected");
+                        assert_eq!(reroute_err, CpError::PolicyAbort { reason: policy_id });
+                    });
+                });
+            },
+        );
     }
 
     #[test]
@@ -3765,335 +5684,170 @@ mod tests {
     }
 
     #[test]
-    fn set_resolver_and_enter_reuse_the_same_compiled_cache_entries() {
-        use crate::runtime::config::Config;
+    fn set_resolver_and_enter_materialize_transient_compiled_artifacts_each_time() {
+        run_on_transient_compiled_test_stack(
+            "set_resolver_and_enter_materialize_transient_compiled_artifacts_each_time",
+            || {
+                with_cluster_fixture(|clock, config| {
+                    with_test_cluster(clock, |cluster| {
+                        let route_policy_projected_one: SharedBorrowRoleProgram =
+                            role_program::project(&ROUTE_POLICY_TOKEN_ONE);
+                        let rv_id = cluster
+                            .add_rendezvous_from_config(config, DummyTransport)
+                            .expect("register rendezvous");
 
-        let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
-        let tap = leak_tap_storage();
-        let mut slab = [0u8; 256];
-        let config = Config::new(tap, &mut slab);
-        let rv_id = cluster
-            .add_rendezvous_from_config(config, DummyTransport)
-            .expect("register rendezvous");
+                        crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
 
-        crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
-        assert_eq!(cache_lengths(cluster), (0, 0));
+                        cluster
+                            .set_resolver::<ROUTE_POLICY_ONE, 0, _, _>(
+                                rv_id,
+                                &route_policy_projected_one,
+                                ResolverRef::from_fn(route_resolver),
+                            )
+                            .expect("register resolver");
+                        assert_eq!(
+                            crate::global::compiled::LoweringSummary::runtime_scan_count(),
+                            1,
+                            "set_resolver must scan the borrowed RoleProgram once"
+                        );
 
-        cluster
-            .set_resolver::<ROUTE_POLICY_ONE, 0, _, _>(
-                rv_id,
-                &ROUTE_POLICY_PROJECTED_ONE,
-                ResolverRef::from_fn(route_resolver),
-            )
-            .expect("register resolver");
-        assert_eq!(cache_lengths(cluster), (1, 0));
-        assert_eq!(
-            crate::global::compiled::LoweringSummary::runtime_scan_count(),
-            1,
-            "set_resolver must scan the borrowed RoleProgram once"
-        );
-        cluster
-            .prime_compiled_role_for_test(&ROUTE_POLICY_PROJECTED_ONE)
-            .expect("seed compiled role cache");
+                        cluster
+                            .with_transient_compiled_role(
+                                rv_id,
+                                &route_policy_projected_one,
+                                |_, _| Ok::<(), AttachError>(()),
+                            )
+                            .expect("materialize transient compiled role");
+                        assert_eq!(
+                            crate::global::compiled::LoweringSummary::runtime_scan_count(),
+                            2,
+                            "transient compiled role materialization must scan the borrowed RoleProgram once"
+                        );
 
-        let endpoint = cluster
-            .enter::<0, _, _, _>(
-                rv_id,
-                SessionId::new(44),
-                &ROUTE_POLICY_PROJECTED_ONE,
-                NoBinding,
-            )
-            .expect("enter endpoint");
-        assert_eq!(cache_lengths(cluster), (1, 1));
-        assert_eq!(cache_pin_totals(cluster), (1, 1));
-        assert_eq!(
-            crate::global::compiled::LoweringSummary::runtime_scan_count(),
-            1,
-            "enter must reuse the cached program lowering summary"
-        );
-        drop(endpoint);
-        assert_eq!(cache_pin_totals(cluster), (0, 0));
-
-        let endpoint = cluster
-            .enter::<0, _, _, _>(
-                rv_id,
-                SessionId::new(45),
-                &ROUTE_POLICY_PROJECTED_ONE,
-                NoBinding,
-            )
-            .expect("re-enter endpoint");
-        assert_eq!(cache_lengths(cluster), (1, 1));
-        assert_eq!(cache_pin_totals(cluster), (1, 1));
-        assert_eq!(
-            crate::global::compiled::LoweringSummary::runtime_scan_count(),
-            1,
-            "re-enter must keep reusing the same borrowed-program cache entry"
-        );
-        drop(endpoint);
-        assert_eq!(cache_pin_totals(cluster), (0, 0));
-    }
-
-    #[test]
-    fn compiled_cache_is_shared_across_rendezvous_for_same_program_stamp() {
-        use crate::runtime::config::Config;
-
-        let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
-
-        let tap_a = leak_tap_storage();
-        let mut slab_a = [0u8; 256];
-        let rv_a = cluster
-            .add_rendezvous_from_config(Config::new(tap_a, &mut slab_a), DummyTransport)
-            .expect("register first rendezvous");
-
-        let tap_b = leak_tap_storage();
-        let mut slab_b = [0u8; 256];
-        let rv_b = cluster
-            .add_rendezvous_from_config(Config::new(tap_b, &mut slab_b), DummyTransport)
-            .expect("register second rendezvous");
-
-        cluster
-            .prime_compiled_role_for_test(&SHARED_BORROW_PROJECTED_A)
-            .expect("seed compiled role cache");
-        crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
-        let endpoint = cluster
-            .enter::<0, _, _, _>(
-                rv_a,
-                SessionId::new(71),
-                &SHARED_BORROW_PROJECTED_A,
-                NoBinding,
-            )
-            .expect("enter first rendezvous");
-        assert_eq!(cache_lengths(cluster), (1, 1));
-        assert_eq!(cache_pin_totals(cluster), (1, 1));
-        assert_eq!(
-            crate::global::compiled::LoweringSummary::runtime_scan_count(),
-            0
-        );
-        drop(endpoint);
-        assert_eq!(cache_pin_totals(cluster), (0, 0));
-
-        let endpoint = cluster
-            .enter::<0, _, _, _>(
-                rv_b,
-                SessionId::new(72),
-                &SHARED_BORROW_PROJECTED_A,
-                NoBinding,
-            )
-            .expect("enter second rendezvous");
-        assert_eq!(cache_lengths(cluster), (1, 1));
-        assert_eq!(cache_pin_totals(cluster), (1, 1));
-        assert_eq!(
-            crate::global::compiled::LoweringSummary::runtime_scan_count(),
-            0,
-            "the second rendezvous must reuse the shared compiled cache entry"
-        );
-        drop(endpoint);
-        assert_eq!(cache_pin_totals(cluster), (0, 0));
-    }
-
-    #[test]
-    fn compiled_cache_is_shared_across_transient_borrows_with_same_program_stamp() {
-        use crate::runtime::config::Config;
-
-        let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
-
-        let tap = leak_tap_storage();
-        let mut slab = [0u8; 256];
-        let rv_id = cluster
-            .add_rendezvous_from_config(Config::new(tap, &mut slab), DummyTransport)
-            .expect("register rendezvous");
-
-        let stamp_a = SHARED_BORROW_PROJECTED_A.stamp();
-        let borrow_id_a = SHARED_BORROW_PROJECTED_A.borrow_id();
-
-        cluster
-            .prime_compiled_role_for_test(&SHARED_BORROW_PROJECTED_A)
-            .expect("seed compiled role cache");
-        crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
-        let endpoint = cluster
-            .enter::<0, _, _, _>(
-                rv_id,
-                SessionId::new(81),
-                &SHARED_BORROW_PROJECTED_A,
-                NoBinding,
-            )
-            .expect("enter first borrowed program");
-        assert_eq!(cache_lengths(cluster), (1, 1));
-        assert_eq!(cache_pin_totals(cluster), (1, 1));
-        assert_eq!(
-            crate::global::compiled::LoweringSummary::runtime_scan_count(),
-            0
-        );
-        drop(endpoint);
-        assert_eq!(cache_pin_totals(cluster), (0, 0));
-
-        assert_eq!(stamp_a, SHARED_BORROW_PROJECTED_B.stamp());
-        assert_ne!(borrow_id_a, SHARED_BORROW_PROJECTED_B.borrow_id());
-
-        let endpoint = cluster
-            .enter::<0, _, _, _>(
-                rv_id,
-                SessionId::new(82),
-                &SHARED_BORROW_PROJECTED_B,
-                NoBinding,
-            )
-            .expect("enter second borrowed program");
-        assert_eq!(cache_lengths(cluster), (1, 1));
-        assert_eq!(cache_pin_totals(cluster), (1, 1));
-        assert_eq!(
-            crate::global::compiled::LoweringSummary::runtime_scan_count(),
-            0,
-            "equivalent borrowed RoleProgram values must share the same cache entry"
-        );
-        drop(endpoint);
-        assert_eq!(cache_pin_totals(cluster), (0, 0));
-    }
-
-    #[test]
-    fn compiled_program_cache_evicts_only_unpinned_entries() {
-        let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
-
-        let filler_lowering =
-            crate::global::compiled::LoweringSummary::scan_const(SEND11_PROJECTED.lowering_input());
-        let filler_compiled = CompiledProgram::from_summary(&filler_lowering);
-
-        cluster.with_control_mut(|core| {
-            for idx in 0..MAX_COMPILED_PROGRAMS {
-                let pins = if idx == 0 { 0 } else { 1 };
-                let entry = ProgramCacheEntry {
-                    stamp: filler_lowering.stamp(),
-                    pins,
-                    compiled: filler_compiled.clone(),
-                    lowering: filler_lowering.clone(),
-                };
-                core.compiled_programs
-                    .push_with(|slot| {
-                        slot.write((ProgramCacheHandle(idx as u32 + 1), entry));
-                    })
-                    .expect("prefill program cache");
-            }
-            core.next_compiled_program_id = MAX_COMPILED_PROGRAMS as u32 + 2;
-        });
-
-        let (handle, _) = cluster
-            .compiled_program(&SEND12_PROJECTED, false)
-            .expect("evict the lone unpinned entry");
-        assert!(handle.0 > MAX_COMPILED_PROGRAMS as u32);
-        assert_eq!(cache_lengths(cluster), (MAX_COMPILED_PROGRAMS, 0));
-
-        let target_present = cluster.with_control_mut(|core| {
-            core.compiled_programs.position(|_, entry| {
-                entry
-                    .lowering
-                    .equivalent_eff_list(SEND12_PROJECTED.lowering_input())
-            })
-        });
-        assert!(
-            target_present.is_some(),
-            "a new compiled program must replace an unpinned slot"
+                        cluster
+                            .with_transient_compiled_role(
+                                rv_id,
+                                &route_policy_projected_one,
+                                |_, _| Ok::<(), AttachError>(()),
+                            )
+                            .expect("rematerialize transient compiled role");
+                        assert_eq!(
+                            crate::global::compiled::LoweringSummary::runtime_scan_count(),
+                            2,
+                            "re-materialization against the same borrowed RoleProgram must reuse its lazy shared image"
+                        );
+                    });
+                });
+            },
         );
     }
 
     #[test]
-    fn compiled_program_cache_reports_resource_exhausted_when_all_entries_are_pinned() {
-        let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
+    fn equivalent_borrowed_role_programs_reuse_shared_runtime_image() {
+        run_on_transient_compiled_test_stack(
+            "equivalent_borrowed_role_programs_reuse_shared_runtime_image",
+            || {
+                with_cluster_fixture(|clock, config| {
+                    with_test_cluster(clock, |cluster| {
+                        let shared_borrow_projected_a: SharedBorrowRoleProgram =
+                            role_program::project(&SHARED_BORROW_TOKEN_A);
+                        let shared_borrow_projected_b: SharedBorrowRoleProgram =
+                            role_program::project(&SHARED_BORROW_TOKEN_B);
+                        let rv_id = cluster
+                            .add_rendezvous_from_config(config, DummyTransport)
+                            .expect("register rendezvous");
 
-        let filler_lowering =
-            crate::global::compiled::LoweringSummary::scan_const(SEND21_PROJECTED.lowering_input());
-        let filler_compiled = CompiledProgram::from_summary(&filler_lowering);
+                        assert_eq!(
+                            shared_borrow_projected_a.stamp(),
+                            shared_borrow_projected_b.stamp()
+                        );
+                        assert_ne!(
+                            shared_borrow_projected_a.borrow_id(),
+                            shared_borrow_projected_b.borrow_id()
+                        );
 
-        cluster.with_control_mut(|core| {
-            for idx in 0..MAX_COMPILED_PROGRAMS {
-                let entry = ProgramCacheEntry {
-                    stamp: filler_lowering.stamp(),
-                    pins: 1,
-                    compiled: filler_compiled.clone(),
-                    lowering: filler_lowering.clone(),
-                };
-                core.compiled_programs
-                    .push_with(|slot| {
-                        slot.write((ProgramCacheHandle(idx as u32 + 1), entry));
-                    })
-                    .expect("prefill pinned program cache");
-            }
-            core.next_compiled_program_id = MAX_COMPILED_PROGRAMS as u32 + 2;
-        });
+                        crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
+                        cluster
+                            .with_transient_compiled_role(
+                                rv_id,
+                                &shared_borrow_projected_a,
+                                |_, _| Ok::<(), AttachError>(()),
+                            )
+                            .expect("materialize first borrowed program");
+                        assert_eq!(
+                            crate::global::compiled::LoweringSummary::runtime_scan_count(),
+                            1,
+                            "first borrowed program must materialize one transient lowering"
+                        );
 
-        assert!(
-            matches!(
-                cluster.compiled_program(&SEND22_PROJECTED, false),
-                Err(CpError::ResourceExhausted)
-            ),
-            "all-pinned cache must reject new compiled programs"
+                        cluster
+                            .with_transient_compiled_role(
+                                rv_id,
+                                &shared_borrow_projected_b,
+                                |_, _| Ok::<(), AttachError>(()),
+                            )
+                            .expect("materialize second borrowed program");
+                        assert_eq!(
+                            crate::global::compiled::LoweringSummary::runtime_scan_count(),
+                            1,
+                            "equivalent borrowed RoleProgram values must reuse the shared runtime image keyed by program stamp and role"
+                        );
+                    });
+                });
+            },
         );
     }
 
     #[test]
-    fn set_resolver_falls_back_to_transient_lowering_when_program_cache_is_all_pinned() {
-        use crate::runtime::config::Config;
+    fn set_resolver_registers_dynamic_policy_sites_without_resident_cache() {
+        run_on_transient_compiled_test_stack(
+            "set_resolver_registers_dynamic_policy_sites_without_resident_cache",
+            || {
+                with_cluster_fixture(|clock, config| {
+                    with_test_cluster(clock, |cluster| {
+                        let route_policy_projected_two: SharedBorrowRoleProgram =
+                            role_program::project(&ROUTE_POLICY_TOKEN_TWO);
+                        let rv_id = cluster
+                            .add_rendezvous_from_config(config, DummyTransport)
+                            .expect("register rendezvous");
 
-        let cluster: &TestCluster<4> = Box::leak(Box::new(SessionCluster::new(leak_clock())));
-        let tap = leak_tap_storage();
-        let mut slab = [0u8; 256];
-        let rv_id = cluster
-            .add_rendezvous_from_config(Config::new(tap, &mut slab), DummyTransport)
-            .expect("register rendezvous");
+                        crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
+                        cluster
+                            .set_resolver::<ROUTE_POLICY_TWO, 0, _, _>(
+                                rv_id,
+                                &route_policy_projected_two,
+                                ResolverRef::from_fn(route_resolver),
+                            )
+                            .expect("register resolver without a free cache slot");
+                        assert_eq!(
+                            crate::global::compiled::LoweringSummary::runtime_scan_count(),
+                            1,
+                            "resolver setup should lower the borrowed RoleProgram exactly once"
+                        );
 
-        let filler_lowering =
-            crate::global::compiled::LoweringSummary::scan_const(SEND31_PROJECTED.lowering_input());
-        let filler_compiled = CompiledProgram::from_summary(&filler_lowering);
-
-        cluster.with_control_mut(|core| {
-            for idx in 0..MAX_COMPILED_PROGRAMS {
-                let entry = ProgramCacheEntry {
-                    stamp: filler_lowering.stamp(),
-                    pins: 1,
-                    compiled: filler_compiled.clone(),
-                    lowering: filler_lowering.clone(),
-                };
-                core.compiled_programs
-                    .push_with(|slot| {
-                        slot.write((ProgramCacheHandle(idx as u32 + 1), entry));
-                    })
-                    .expect("prefill pinned program cache");
-            }
-            core.next_compiled_program_id = MAX_COMPILED_PROGRAMS as u32 + 2;
-        });
-
-        crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
-        cluster
-            .set_resolver::<ROUTE_POLICY_TWO, 0, _, _>(
-                rv_id,
-                &ROUTE_POLICY_PROJECTED_TWO,
-                ResolverRef::from_fn(route_resolver),
-            )
-            .expect("register resolver without a free cache slot");
-
-        assert_eq!(
-            cache_lengths(cluster),
-            (MAX_COMPILED_PROGRAMS, 0),
-            "transient resolver setup must not require a resident cache slot"
-        );
-        assert_eq!(
-            crate::global::compiled::LoweringSummary::runtime_scan_count(),
-            1,
-            "transient resolver setup should lower the borrowed RoleProgram exactly once"
-        );
-
-        let compiled =
-            CompiledProgram::from_summary(&crate::global::compiled::LoweringSummary::scan_const(
-                ROUTE_POLICY_PROJECTED_TWO.lowering_input(),
-            ));
-        let site = compiled
-            .dynamic_policy_sites_for(ROUTE_POLICY_TWO)
-            .next()
-            .expect("dynamic policy site");
-        let tag = site.resource_tag().expect("route decision tag");
-        assert!(
-            cluster
-                .dynamic_resolver(DynamicResolverKey::new(rv_id, site.eff_index(), tag))
-                .is_some(),
-            "resolver registration must still succeed when the cache is saturated"
+                        let compiled = CompiledProgram::from_summary(
+                            &crate::global::compiled::LoweringSummary::scan_const(
+                                route_policy_projected_two.lowering_input(),
+                            ),
+                        );
+                        let site = compiled
+                            .dynamic_policy_sites_for(ROUTE_POLICY_TWO)
+                            .next()
+                            .expect("dynamic policy site");
+                        let tag = site.resource_tag().expect("route decision tag");
+                        assert!(
+                            cluster
+                                .dynamic_resolver(DynamicResolverKey::new(
+                                    rv_id,
+                                    site.eff_index(),
+                                    tag
+                                ))
+                                .is_some(),
+                            "resolver registration must still succeed when the cache is saturated"
+                        );
+                    });
+                });
+            },
         );
     }
 }

@@ -155,20 +155,17 @@ impl<'ctx, K: ResourceKind> ControlFrame<'ctx, K> {
         })?;
 
         let handle_bytes = K::encode_handle(view.handle());
-        let caps_mask = view.grant_mask();
         let cap_table = rendezvous.caps();
 
         // Only insert if not already registered (provenance check)
         if !self.is_registered {
             let entry = CapEntry {
                 sid,
-                lane,
+                lane_raw: lane.as_wire(),
                 kind_tag: K::TAG,
-                shot,
+                shot_state: shot.as_u8(),
                 role,
-                consumed: false,
                 nonce,
-                caps_mask,
                 handle: handle_bytes,
             };
 

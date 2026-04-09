@@ -1,11 +1,12 @@
 //! Typed program representation built from const DSL combinators.
 //!
-//! `Program<Steps>` pairs the value-level `EffList` with a type-level typelist
-//! describing each global send. Projection uses this typelist to recover
-//! payload types at compile time.
+//! `ProgramSource<Steps>` is the value-level raw source owner used only by the
+//! compile layer. `Program<Steps>` is the thin frozen token that projection and
+//! attach paths accept.
 
 use core::marker::PhantomData;
 
+use crate::global::compiled::{LoweringSummary, ProgramStamp, validate_all_roles};
 use crate::global::const_dsl::{EffList, PolicyMode, ScopeId};
 use crate::global::steps::{BuildEffList, PolicyEligible, SeqSteps, StepConcat, StepNil};
 use crate::global::{
@@ -13,30 +14,52 @@ use crate::global::{
     SameRouteController, TailLoopControl,
 };
 
-/// Value + type-level representation of a global protocol fragment.
-pub struct Program<Steps> {
+/// Raw source owner for a global protocol fragment.
+pub struct ProgramSource<Steps> {
     eff: EffList,
+    stamp: ProgramStamp,
     scope_budget: u16,
     loop_scope_pending: bool,
     tail_is_loop_control: bool,
     steps: PhantomData<Steps>,
 }
 
-impl<Steps> Clone for Program<Steps> {
-    fn clone(&self) -> Self {
-        *self
+/// Thin frozen choreography token accepted by projection.
+#[derive(Clone, Copy)]
+pub struct Program<Steps: 'static> {
+    source: &'static ProgramSource<Steps>,
+    steps: PhantomData<Steps>,
+}
+
+pub const fn freeze<Steps: 'static>(source: &'static ProgramSource<Steps>) -> Program<Steps> {
+    let summary = LoweringSummary::scan_const(source.eff_list());
+    summary.validate_projection_program();
+    validate_all_roles(&summary);
+    Program {
+        source,
+        steps: PhantomData,
     }
 }
 
-impl<Steps> Copy for Program<Steps> {}
+impl<Steps: 'static> Program<Steps> {
+    #[inline(always)]
+    pub(crate) const fn eff_list(&self) -> &EffList {
+        self.source.eff_list()
+    }
 
-impl Program<StepNil> {
+    #[inline(always)]
+    pub(crate) const fn stamp(&self) -> ProgramStamp {
+        self.source.stamp()
+    }
+}
+
+impl ProgramSource<StepNil> {
     pub(crate) const fn empty() -> Self {
         Self::build()
     }
 }
 
-impl<Steps> Program<Steps> {
+impl<Steps> ProgramSource<Steps> {
     const fn wrap_with_hint(
         eff: EffList,
         loop_scope_pending: bool,
@@ -44,6 +67,7 @@ impl<Steps> Program<Steps> {
     ) -> Self {
         Self {
             eff,
+            stamp: LoweringSummary::scan_const(&eff).stamp(),
             scope_budget: eff.scope_budget(),
             loop_scope_pending,
             tail_is_loop_control,
@@ -66,6 +90,11 @@ impl<Steps> Program<Steps> {
         &self.eff
     }
 
+    #[inline(always)]
+    pub(crate) const fn stamp(&self) -> ProgramStamp {
+        self.stamp
+    }
+
     pub(crate) const fn into_eff(self) -> EffList {
         self.eff
     }
@@ -74,7 +103,7 @@ impl<Steps> Program<Steps> {
         self.scope_budget
     }
 
-    const fn compose_parts<NextSteps>(self, next: Program<NextSteps>) -> (EffList, u16) {
+    const fn compose_parts<NextSteps>(self, next: ProgramSource<NextSteps>) -> (EffList, u16) {
         let rebased = next.eff.rebase_scopes(self.scope_budget);
         let mut eff = self.eff;
         let mut scope_budget = self.scope_budget;
@@ -99,8 +128,8 @@ impl<Steps> Program<Steps> {
 
     pub(crate) const fn then<NextSteps>(
         self,
-        next: Program<NextSteps>,
-    ) -> Program<<Steps as StepConcat<NextSteps>>::Output>
+        next: ProgramSource<NextSteps>,
+    ) -> ProgramSource<<Steps as StepConcat<NextSteps>>::Output>
     where
         Steps: StepConcat<NextSteps>,
     {
@@ -110,8 +139,9 @@ impl<Steps> Program<Steps> {
             next.tail_is_loop_control
         };
         let (eff, scope_budget) = self.compose_parts(next);
-        Program {
+        ProgramSource {
             eff,
+            stamp: LoweringSummary::scan_const(&eff).stamp(),
             scope_budget,
             loop_scope_pending: false,
             tail_is_loop_control: next_tail_is_loop_control,
@@ -121,17 +151,18 @@ impl<Steps> Program<Steps> {
 }
 
 pub const fn seq<LeftSteps, RightSteps>(
-    left: Program<LeftSteps>,
-    right: Program<RightSteps>,
-) -> Program<SeqSteps<LeftSteps, RightSteps>> {
+    left: ProgramSource<LeftSteps>,
+    right: ProgramSource<RightSteps>,
+) -> ProgramSource<SeqSteps<LeftSteps, RightSteps>> {
     let right_tail_is_loop_control = if right.eff.is_empty() {
         left.tail_is_loop_control
     } else {
         right.tail_is_loop_control
     };
     let (eff, scope_budget) = left.compose_parts(right);
-    Program {
+    ProgramSource {
         eff,
+        stamp: LoweringSummary::scan_const(&eff).stamp(),
         scope_budget,
         loop_scope_pending: false,
         tail_is_loop_control: right_tail_is_loop_control,
@@ -139,7 +170,7 @@ pub const fn seq<LeftSteps, RightSteps>(
     }
 }
 
-impl<Steps> Program<Steps>
+impl<Steps> ProgramSource<Steps>
 where
     Steps: PolicyEligible,
 {
@@ -161,9 +192,9 @@ const fn add_scope_budget(lhs: u16, rhs: u16) -> u16 {
 }
 
 pub(crate) const fn route_binary<LeftSteps, RightSteps>(
-    left: Program<LeftSteps>,
-    right: Program<RightSteps>,
-) -> Program<<LeftSteps as StepConcat<RightSteps>>::Output>
+    left: ProgramSource<LeftSteps>,
+    right: ProgramSource<RightSteps>,
+) -> ProgramSource<<LeftSteps as StepConcat<RightSteps>>::Output>
 where
     LeftSteps: StepConcat<RightSteps>
         + RouteArmHead
@@ -172,12 +203,11 @@ where
         + DistinctRouteLabels<RightSteps>,
     RightSteps: RouteArmHead + RouteArmLoopHead + TailLoopControl,
 {
+    let scope = ScopeId::route(0);
+    let left_budget = left.scope_budget();
     let left_arm = left.into_eff();
     let right_arm = right.into_eff();
     let controller = <<LeftSteps as RouteArmHead>::Controller as crate::global::RoleMarker>::INDEX;
-
-    let scope = ScopeId::route(0);
-    let left_budget = left.scope_budget();
     let right_offset = add_scope_budget(1, left_budget);
     let left_eff = left_arm
         .rebase_scopes(1)
@@ -197,7 +227,7 @@ where
         eff
     };
     let loop_scope_pending = eff.scope_has_linger(scope);
-    Program::wrap_with_hint(
+    ProgramSource::wrap_with_hint(
         eff,
         loop_scope_pending,
         <RightSteps as TailLoopControl>::IS_LOOP_CONTROL,
@@ -205,9 +235,9 @@ where
 }
 
 pub(crate) const fn par_binary<LeftSteps, RightSteps>(
-    left: Program<LeftSteps>,
-    right: Program<RightSteps>,
-) -> Program<<LeftSteps as StepConcat<RightSteps>>::Output>
+    left: ProgramSource<LeftSteps>,
+    right: ProgramSource<RightSteps>,
+) -> ProgramSource<<LeftSteps as StepConcat<RightSteps>>::Output>
 where
     LeftSteps: StepConcat<RightSteps> + NonEmptyParallelArm,
     RightSteps: NonEmptyParallelArm + TailLoopControl,
@@ -223,7 +253,7 @@ where
     let right_offset = add_scope_budget(1, left_budget);
     let left_eff = left.into_eff().rebase_scopes(1);
     let right_eff = right.into_eff().rebase_scopes(right_offset);
-    Program::wrap_with_hint(
+    ProgramSource::wrap_with_hint(
         left_eff.extend_list(right_eff).with_scope(parallel_scope),
         false,
         <RightSteps as TailLoopControl>::IS_LOOP_CONTROL,
@@ -246,7 +276,7 @@ const fn is_binary_loop_route(
 
 #[cfg(test)]
 mod tests {
-    use super::Program;
+    use super::ProgramSource;
     use crate::g;
     use crate::g::advanced::CanonicalControl;
     use crate::g::advanced::steps::{
@@ -257,7 +287,7 @@ mod tests {
     use crate::substrate::cap::GenericCapToken;
     use crate::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
 
-    const LOOP_CONTINUE_ONLY: Program<
+    const LOOP_CONTINUE_ONLY: ProgramSource<
         LoopContinueSteps<
             g::Role<0>,
             g::Msg<
@@ -267,7 +297,7 @@ mod tests {
             >,
             StepNil,
         >,
-    > = g::advanced::compose::seq(
+    > = g::seq(
         g::send::<
             g::Role<0>,
             g::Role<0>,
@@ -281,7 +311,7 @@ mod tests {
         StepNil::PROGRAM,
     );
 
-    const LOOP_BREAK_ONLY: Program<
+    const LOOP_BREAK_ONLY: ProgramSource<
         LoopBreakSteps<
             g::Role<0>,
             g::Msg<
@@ -302,7 +332,7 @@ mod tests {
         0,
     >();
 
-    const LOOP_DECISION: Program<
+    const LOOP_DECISION: ProgramSource<
         LoopDecisionSteps<
             g::Role<0>,
             g::Msg<
@@ -322,7 +352,7 @@ mod tests {
 
     #[test]
     fn seq_with_empty_suffix_preserves_loop_tail_hint() {
-        let composed = g::advanced::compose::seq(LOOP_CONTINUE_ONLY, StepNil::PROGRAM);
+        let composed = g::seq(LOOP_CONTINUE_ONLY, StepNil::PROGRAM);
         assert!(
             composed.tail_is_loop_control,
             "empty seq suffix must preserve loop-control tail hints"
@@ -332,10 +362,7 @@ mod tests {
     #[test]
     fn empty_seq_suffix_does_not_change_pending_loop_scope_attachment() {
         let direct = g::seq(LOOP_CONTINUE_ONLY, LOOP_DECISION);
-        let nested = g::seq(
-            g::advanced::compose::seq(LOOP_CONTINUE_ONLY, StepNil::PROGRAM),
-            LOOP_DECISION,
-        );
+        let nested = g::seq(g::seq(LOOP_CONTINUE_ONLY, StepNil::PROGRAM), LOOP_DECISION);
         assert!(
             LoweringSummary::scan_const(direct.eff_list()).equivalent_eff_list(nested.eff_list()),
             "empty seq suffix must not change the loop-scoped effect list"

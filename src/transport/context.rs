@@ -145,7 +145,7 @@ impl ContextValue {
     }
 }
 
-/// Atomic policy signals provided by bindings.
+/// Policy signals provided by bindings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PolicySignals {
     pub input: [u32; 4],

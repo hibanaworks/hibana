@@ -6,12 +6,12 @@ use hibana::substrate::cap::{
 };
 use hibana::g::{self, Msg, Role};
 use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
-use hibana::g::advanced::steps::{ProjectRole, SendStep, StepConcat, StepCons, StepNil};
+use hibana::g::advanced::steps::{SendStep, StepConcat, StepCons, StepNil};
 
 type ArmWithPolicyKind = control_kinds::UnitControl<0x95, 5, 7, 0x0400>;
 type ArmWithoutPolicyKind = control_kinds::UnitControl<0x96, 6, 7, 0x0400>;
 
-const ARM_WITH_POLICY: g::Program<
+const ARM_WITH_POLICY: g::ProgramSource<
     StepCons<
         SendStep<
             Role<0>,
@@ -29,7 +29,7 @@ const ARM_WITH_POLICY: g::Program<
         0,
     >()
     .policy::<9>();
-const ARM_WITHOUT_POLICY: g::Program<
+const ARM_WITHOUT_POLICY: g::ProgramSource<
     StepCons<
         SendStep<
             Role<0>,
@@ -48,7 +48,7 @@ const ARM_WITHOUT_POLICY: g::Program<
     >()
     .policy::<10>();
 
-const ROUTE: g::Program<
+const ROUTE: g::ProgramSource<
     <StepCons<
         SendStep<
             Role<0>,
@@ -73,7 +73,7 @@ const ROUTE: g::Program<
 const CONTROLLER: RoleProgram<
     'static,
     0,
-    <<StepCons<
+    <StepCons<
         SendStep<
             Role<0>,
             Role<0>,
@@ -91,7 +91,7 @@ const CONTROLLER: RoleProgram<
             >,
             StepNil,
         >,
-    >>::Output as ProjectRole<Role<0>>>::Output,
-> = project(&ROUTE);
+    >>::Output,
+> = project(&g::freeze(&ROUTE));
 
 fn main() {}

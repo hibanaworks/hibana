@@ -1,5 +1,5 @@
-error[E0599]: no method named `eff_list` found for struct `RoleProgram<'prog, ROLE, LocalSteps, Mint>` in the current scope
-  --> tests/ui/g-efflist-deref.rs:19:21
+error[E0599]: no method named `eff_list` found for struct `RoleProgram<'prog, ROLE, GlobalSteps, Mint>` in the current scope
+  --> tests/ui/g-efflist-deref.rs:17:21
    |
-19 |     let _ = program.eff_list();
+17 |     let _ = program.eff_list();
    |                     ^^^^^^^^ private field, not a method

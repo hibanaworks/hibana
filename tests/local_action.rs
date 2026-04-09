@@ -1,20 +1,26 @@
 mod common;
 #[path = "support/runtime.rs"]
 mod runtime_support;
+#[path = "support/tls_ref.rs"]
+mod tls_ref_support;
+
+use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 use common::TestTransport;
 use hibana::{
-    g::advanced::steps::{ProjectRole, SendStep, StepCons, StepNil},
+    g::advanced::steps::{SendStep, StepCons, StepNil},
     g::advanced::{RoleProgram, project},
     g::{self, Msg, Role},
     substrate::{
         SessionId, SessionKit,
         binding::NoBinding,
-        runtime::Config,
+        mgmt::tap::TapEvent,
+        runtime::{Config, CounterClock},
         wire::{CodecError, WireEncode},
     },
 };
-use runtime_support::{leak_clock, leak_slab, leak_tap_storage};
+use runtime_support::with_fixture;
+use tls_ref_support::with_tls_ref;
 
 #[derive(Clone, Copy)]
 struct InstallPayload {
@@ -35,67 +41,76 @@ impl WireEncode for InstallPayload {
     }
 }
 
-const PROGRAM: g::Program<
+const PROGRAM: g::ProgramSource<
     StepCons<SendStep<Role<0>, Role<0>, Msg<7, InstallPayload>, 0>, StepNil>,
 > = g::send::<Role<0>, Role<0>, Msg<7, InstallPayload>, 0>();
 
 static ACTOR_PROGRAM: RoleProgram<
     'static,
     0,
-    <StepCons<SendStep<Role<0>, Role<0>, Msg<7, InstallPayload>, 0>, StepNil> as ProjectRole<
-        Role<0>,
-    >>::Output,
-> = project(&PROGRAM);
+    StepCons<SendStep<Role<0>, Role<0>, Msg<7, InstallPayload>, 0>, StepNil>,
+> = project(&g::freeze(&PROGRAM));
+type TestKit = SessionKit<
+    'static,
+    TestTransport,
+    hibana::substrate::runtime::DefaultLabelUniverse,
+    CounterClock,
+    2,
+>;
 
-fn transport_queue_is_empty(transport: &TestTransport) -> bool {
-    transport
-        .state
-        .lock()
-        .expect("state lock")
-        .queues
-        .values()
-        .all(|queue| queue.is_empty())
+std::thread_local! {
+    static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
 }
 
-#[tokio::test]
-async fn local_action_flow_executes() {
-    let tap_buf = leak_tap_storage();
-    let slab = leak_slab(1024);
-    let config = Config::new(tap_buf, slab);
-    let transport = TestTransport::default();
-    let cluster: &mut SessionKit<
-        'static,
-        TestTransport,
-        hibana::substrate::runtime::DefaultLabelUniverse,
-        hibana::substrate::runtime::CounterClock,
-        4,
-    > = Box::leak(Box::new(SessionKit::new(leak_clock())));
+fn transport_queue_is_empty(transport: &TestTransport) -> bool {
+    transport.queue_is_empty()
+}
+
+fn run_local_action_flow(
+    cluster: &'static TestKit,
+    tap_buf: &'static mut [TapEvent; runtime_support::RING_EVENTS],
+    slab: &'static mut [u8],
+    transport: &TestTransport,
+) {
     let rv_id = cluster
-        .add_rendezvous_from_config(config, transport.clone())
+        .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
         .expect("register rendezvous");
 
     let sid = SessionId::new(42);
 
-    let endpoint = cluster
-        .enter::<0, _, _, _>(rv_id, sid, &ACTOR_PROGRAM, NoBinding)
-        .expect("attach actor endpoint");
-
-    // Local action via flow().send() - unified API
     let payload = InstallPayload {
         data: [0x13, 0x37, 0xC0, 0xDE],
     };
 
-    let (endpoint, outcome) = endpoint
-        .flow::<Msg<7, InstallPayload>>()
-        .expect("flow for local action")
-        .send(&payload)
-        .await
-        .expect("local action succeeded");
+    let mut endpoint = cluster
+        .enter(rv_id, sid, &ACTOR_PROGRAM, NoBinding)
+        .expect("attach actor endpoint");
+    let outcome = futures::executor::block_on(
+        endpoint
+            .flow::<Msg<7, InstallPayload>>()
+            .expect("install flow")
+            .send(&payload),
+    )
+    .expect("local action succeeded");
 
-    // For non-control messages, outcome is None
     assert!(outcome.is_none());
-    // Self-send should NOT transmit over wire
-    assert!(transport_queue_is_empty(&transport));
+    assert!(transport_queue_is_empty(transport));
+}
 
-    drop(endpoint);
+#[test]
+fn local_action_flow_executes() {
+    with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                run_local_action_flow(cluster, tap_buf, slab, &transport);
+            },
+        );
+    });
 }

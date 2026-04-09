@@ -85,10 +85,10 @@ pub const LABEL_CONTROL_END: u8 = 58;
 /// [`crate::control::types::Lane`]), so this bound never exceeds `u8::MAX`. Configuration
 /// surfaces such as [`crate::runtime::config::Config::with_lane_range`] refer to this
 /// constant when validating caller-provided ranges.
-pub const LANES_MAX: u8 = 16;
+pub const LANES_MAX: u8 = 8;
 
 /// Number of tap events maintained in the observation ring buffer.
-pub const RING_EVENTS: usize = 2048;
+pub const RING_EVENTS: usize = 128;
 
 /// Size of each individual ring buffer (User and Infra).
 pub const RING_BUFFER_SIZE: usize = RING_EVENTS / 2;

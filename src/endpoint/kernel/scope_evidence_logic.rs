@@ -12,7 +12,7 @@ where
 {
     #[inline]
     pub(in crate::endpoint::kernel) fn bump_scope_evidence_generation(&mut self, slot: usize) {
-        self.evidence_store.bump_generation(slot);
+        self.route_state.scope_evidence.bump_generation(slot);
     }
 
     #[inline]
@@ -40,9 +40,10 @@ where
     pub(in crate::endpoint::kernel) fn scope_evidence_generation_for_scope(
         &self,
         scope_id: ScopeId,
-    ) -> u32 {
-        self.evidence_store
-            .generation(self.scope_slot_for_route(scope_id))
+    ) -> u16 {
+        self.route_state
+            .scope_evidence
+            .generation_for_slot(self.scope_slot_for_route(scope_id))
     }
 
     #[inline]
@@ -52,7 +53,7 @@ where
         token: RouteDecisionToken,
     ) {
         if let Some(slot) = self.scope_slot_for_route(scope_id)
-            && self.evidence_store.record_ack(slot, token)
+            && self.route_state.scope_evidence.record_ack(slot, token)
         {
             self.bump_scope_evidence_generation_for_scope(scope_id, slot);
         }
@@ -64,7 +65,7 @@ where
         scope_id: ScopeId,
     ) -> Option<RouteDecisionToken> {
         let slot = self.scope_slot_for_route(scope_id)?;
-        self.evidence_store.peek_ack(slot)
+        self.route_state.scope_evidence.peek_ack(slot)
     }
 
     #[inline]
@@ -73,7 +74,7 @@ where
         scope_id: ScopeId,
     ) -> Option<RouteDecisionToken> {
         let slot = self.scope_slot_for_route(scope_id)?;
-        let token = self.evidence_store.take_ack(slot);
+        let token = self.route_state.scope_evidence.take_ack(slot);
         if token.is_some() {
             self.bump_scope_evidence_generation_for_scope(scope_id, slot);
         }
@@ -86,7 +87,7 @@ where
             return;
         }
         if let Some(slot) = self.scope_slot_for_route(scope_id)
-            && self.evidence_store.record_hint(slot, label)
+            && self.route_state.scope_evidence.record_hint(slot, label)
         {
             self.bump_scope_evidence_generation_for_scope(scope_id, slot);
         }
@@ -102,7 +103,10 @@ where
             return;
         }
         if let Some(slot) = self.scope_slot_for_route(scope_id)
-            && self.evidence_store.record_hint_dynamic(slot, label)
+            && self
+                .route_state
+                .scope_evidence
+                .record_hint_dynamic(slot, label)
         {
             self.bump_scope_evidence_generation_for_scope(scope_id, slot);
         }
@@ -116,7 +120,10 @@ where
         poll_ready: bool,
     ) {
         if let Some(slot) = self.scope_slot_for_route(scope_id)
-            && self.evidence_store.mark_ready_arm(slot, arm, poll_ready)
+            && self
+                .route_state
+                .scope_evidence
+                .mark_ready_arm(slot, arm, poll_ready)
         {
             self.bump_scope_evidence_generation_for_scope(scope_id, slot);
         }
@@ -280,7 +287,7 @@ where
         let Some(slot) = self.scope_slot_for_route(scope_id) else {
             return 0;
         };
-        self.evidence_store.ready_arm_mask(slot)
+        self.route_state.scope_evidence.ready_arm_mask(slot)
     }
 
     #[inline]
@@ -288,7 +295,7 @@ where
         let Some(slot) = self.scope_slot_for_route(scope_id) else {
             return 0;
         };
-        self.evidence_store.poll_ready_arm_mask(slot)
+        self.route_state.scope_evidence.poll_ready_arm_mask(slot)
     }
 
     #[inline]
@@ -315,7 +322,7 @@ where
         arm: u8,
     ) {
         if let Some(slot) = self.scope_slot_for_route(scope_id)
-            && self.evidence_store.consume_ready_arm(slot, arm)
+            && self.route_state.scope_evidence.consume_ready_arm(slot, arm)
         {
             self.bump_scope_evidence_generation_for_scope(scope_id, slot);
         }
@@ -324,13 +331,14 @@ where
     #[inline]
     pub(in crate::endpoint::kernel) fn peek_scope_hint(&self, scope_id: ScopeId) -> Option<u8> {
         let slot = self.scope_slot_for_route(scope_id)?;
-        self.evidence_store.peek_hint(slot)
+        self.route_state.scope_evidence.peek_hint(slot)
     }
 
+    #[cfg(test)]
     #[inline]
     pub(in crate::endpoint::kernel) fn take_scope_hint(&mut self, scope_id: ScopeId) -> Option<u8> {
         let slot = self.scope_slot_for_route(scope_id)?;
-        let label = self.evidence_store.take_hint(slot);
+        let label = self.route_state.scope_evidence.take_hint(slot);
         if label.is_some() {
             self.bump_scope_evidence_generation_for_scope(scope_id, slot);
         }
@@ -340,7 +348,7 @@ where
     #[inline]
     pub(in crate::endpoint::kernel) fn clear_scope_evidence(&mut self, scope_id: ScopeId) {
         if let Some(slot) = self.scope_slot_for_route(scope_id)
-            && self.evidence_store.clear(slot)
+            && self.route_state.scope_evidence.clear(slot)
         {
             self.bump_scope_evidence_generation_for_scope(scope_id, slot);
         }
@@ -351,7 +359,7 @@ where
         let Some(slot) = self.scope_slot_for_route(scope_id) else {
             return false;
         };
-        self.evidence_store.conflicted(slot)
+        self.route_state.scope_evidence.conflicted(slot)
     }
 
     #[inline]
@@ -432,23 +440,26 @@ where
         transport_payload_len: &mut usize,
         transport_payload_lane: &mut u8,
     ) -> RecvResult<()> {
+        let materialization_meta = self.selection_materialization_meta(selection);
         if let Some(arm) = selected_arm
             && selection.at_route_offer_entry
-            && let Some(entry) = selection.materialization_meta.passive_arm_entry(arm)
+            && let Some(entry) = materialization_meta.passive_arm_entry(arm)
         {
-            let target_cursor = self.cursor.with_index(state_index_to_usize(entry));
-            if !target_cursor.is_recv() {
+            if !self.cursor.is_recv_at(state_index_to_usize(entry)) {
                 return Ok(());
             }
         }
         if binding_classification.is_none()
-            && let Some((_, classification)) = self.poll_binding_for_offer(
-                selection.scope_id,
-                selection.offer_lane_idx,
-                selection.offer_lane_mask,
-                selection.label_meta,
-                selection.materialization_meta,
-            )
+            && let Some((_, classification)) = {
+                let label_meta = self.selection_label_meta(selection);
+                self.poll_binding_for_offer(
+                    selection.scope_id,
+                    selection.offer_lane_idx as usize,
+                    selection.offer_lane_mask,
+                    label_meta,
+                    materialization_meta,
+                )
+            }
         {
             *binding_classification = Some(classification);
             return Ok(());
@@ -558,7 +569,7 @@ where
             return false;
         };
         if idx != self.cursor.index() {
-            self.set_cursor(self.cursor.with_index(idx));
+            self.set_cursor_index(idx);
         }
         true
     }
@@ -633,16 +644,14 @@ where
             return true;
         }
         if let Some((entry, _label)) = cursor.controller_arm_entry_by_arm(scope_id, arm) {
-            let target_cursor = cursor.with_index(state_index_to_usize(entry));
-            if target_cursor.is_recv() {
+            if cursor.is_recv_at(state_index_to_usize(entry)) {
                 return true;
             }
         }
         if let Some(PassiveArmNavigation::WithinArm { entry }) =
             cursor.follow_passive_observer_arm_for_scope(scope_id, arm)
         {
-            let target_cursor = cursor.with_index(state_index_to_usize(entry));
-            return target_cursor.is_recv();
+            return cursor.is_recv_at(state_index_to_usize(entry));
         }
         let mut dispatch_idx = 0usize;
         while let Some((_label, dispatch_arm, target)) =
@@ -650,8 +659,7 @@ where
         {
             if (dispatch_arm == arm || dispatch_arm == ARM_SHARED)
                 && cursor
-                    .with_index(state_index_to_usize(target))
-                    .try_recv_meta()
+                    .try_recv_meta_at(state_index_to_usize(target))
                     .is_some()
             {
                 return true;
@@ -674,8 +682,7 @@ where
             .unwrap_or(true);
         if self.cursor.is_route_controller(scope_id) && at_scope_offer_entry {
             if let Some((entry, _label)) = self.cursor.controller_arm_entry_by_arm(scope_id, arm) {
-                let target_cursor = self.cursor.with_index(state_index_to_usize(entry));
-                if let Some(recv_meta) = target_cursor.try_recv_meta() {
+                if let Some(recv_meta) = self.cursor.try_recv_meta_at(state_index_to_usize(entry)) {
                     return recv_meta.peer != ROLE;
                 }
                 return false;
@@ -685,8 +692,7 @@ where
             .cursor
             .follow_passive_observer_arm_for_scope(scope_id, arm)
         {
-            let target_cursor = self.cursor.with_index(state_index_to_usize(entry));
-            let Some(recv_meta) = target_cursor.try_recv_meta() else {
+            let Some(recv_meta) = self.cursor.try_recv_meta_at(state_index_to_usize(entry)) else {
                 return false;
             };
             if recv_meta.peer == ROLE {
@@ -744,10 +750,11 @@ where
             .map(Port::route_change_epoch)
             .unwrap_or(0);
         let port = self.port_for_lane(lane_idx);
-        let taken = if !port.has_route_hint_for_label_mask(label_meta.hint_label_mask) {
+        let hint_label_mask = label_meta.hint_label_mask();
+        let taken = if !port.has_route_hint_for_label_mask(hint_label_mask) {
             None
         } else {
-            port.take_route_hint_for_label_mask(label_meta.hint_label_mask)
+            port.take_route_hint_for_label_mask(hint_label_mask)
         };
         self.refresh_frontier_observation_cache_for_route_lane(lane_idx, previous_change_epoch);
         taken
@@ -760,8 +767,13 @@ where
         scope_id: ScopeId,
         offer_lane_mask: u8,
     ) -> u8 {
-        let port = self.port_for_lane(lane_idx);
-        (port.pending_route_decision_lane_mask(scope_id, ROLE) as u8) & offer_lane_mask
+        self.ports
+            .get(lane_idx)
+            .and_then(|port| port.as_ref())
+            .map(|port| {
+                (port.pending_route_decision_lane_mask(scope_id, ROLE) as u8) & offer_lane_mask
+            })
+            .unwrap_or(0)
     }
 
     #[inline]
@@ -777,9 +789,11 @@ where
             .and_then(|port| port.as_ref())
             .map(Port::route_change_epoch)
             .unwrap_or(0);
-        let port = self.port_for_lane(lane_idx);
+        let Some(port) = self.ports.get(lane_idx).and_then(|port| port.as_ref()) else {
+            return 0;
+        };
         let lane_mask =
-            (port.pending_route_hint_lane_mask_for_label_mask(label_meta.hint_label_mask) as u8)
+            (port.pending_route_hint_lane_mask_for_label_mask(label_meta.hint_label_mask()) as u8)
                 & offer_lane_mask;
         self.refresh_frontier_observation_cache_for_route_lane(lane_idx, previous_change_epoch);
         lane_mask
@@ -954,7 +968,7 @@ where
             return true;
         }
         self.preview_passive_materialization_index_for_selected_arm(scope_id, arm)
-            .map(|target_idx| self.cursor.with_index(target_idx).try_recv_meta().is_some())
+            .map(|target_idx| self.cursor.try_recv_meta_at(target_idx).is_some())
             .unwrap_or(false)
     }
 }

@@ -21,14 +21,6 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn root_frontier_slot(&self, root: ScopeId) -> Option<usize> {
-        if root.is_none() {
-            return None;
-        }
-        self.frontier_state.root_frontier_slot(root.canonical())
-    }
-
-    #[inline]
     pub(in crate::endpoint::kernel) fn root_frontier_active_mask(&self, root: ScopeId) -> u8 {
         self.frontier_state.root_frontier_active_mask(root)
     }
@@ -43,12 +35,14 @@ where
 
     #[inline]
     pub(in crate::endpoint::kernel) fn root_frontier_offer_lane_mask(&self, root: ScopeId) -> u8 {
-        self.frontier_state.root_frontier_offer_lane_mask(root)
+        self.offer_lane_mask_for_active_entries(self.root_frontier_active_entries(root))
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn offer_entry_active_mask(&self, entry_idx: usize) -> u8 {
-        self.frontier_state.offer_entry_active_mask(entry_idx)
+        self.offer_entry_state_snapshot(entry_idx)
+            .map(|state| state.active_mask)
+            .unwrap_or(0)
     }
 
     #[inline]
@@ -58,96 +52,7 @@ where
     ) -> ActiveEntrySet {
         current_parallel
             .map(|root| self.root_frontier_active_entries(root))
-            .unwrap_or(self.frontier_state.global_active_entries())
-    }
-
-    pub(super) fn offer_lane_mask_for_active_entries(&self, active_entries: ActiveEntrySet) -> u8 {
-        let mut offer_lane_mask = 0u8;
-        let mut remaining_entries = active_entries.occupancy_mask();
-        while let Some(slot_idx) = Self::next_lane_in_mask(&mut remaining_entries) {
-            let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
-                continue;
-            };
-            let Some(state) = self
-                .frontier_state
-                .offer_entry_state
-                .get(entry_idx)
-                .copied()
-            else {
-                continue;
-            };
-            if state.active_mask == 0 {
-                continue;
-            }
-            offer_lane_mask |= state.offer_lane_mask;
-        }
-        offer_lane_mask
-    }
-
-    pub(super) fn offer_lane_entry_slot_masks_for_active_entries(
-        &self,
-        active_entries: ActiveEntrySet,
-    ) -> [u8; MAX_LANES] {
-        let mut slot_masks = [0u8; MAX_LANES];
-        let mut remaining_entries = active_entries.occupancy_mask();
-        while let Some(slot_idx) = Self::next_lane_in_mask(&mut remaining_entries) {
-            let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
-                continue;
-            };
-            let Some(state) = self
-                .frontier_state
-                .offer_entry_state
-                .get(entry_idx)
-                .copied()
-            else {
-                continue;
-            };
-            if state.active_mask == 0 {
-                continue;
-            }
-            let mut lane_mask = state.offer_lane_mask;
-            while let Some(lane_idx) = Self::next_lane_in_mask(&mut lane_mask) {
-                slot_masks[lane_idx] |= 1u8 << slot_idx;
-            }
-        }
-        slot_masks
-    }
-
-    pub(super) fn recompute_global_offer_lane_mask(&mut self) {
-        self.frontier_state.set_global_offer_lane_mask(
-            self.offer_lane_mask_for_active_entries(self.frontier_state.global_active_entries()),
-        );
-    }
-
-    pub(super) fn recompute_global_offer_lane_entry_slot_masks(&mut self) {
-        self.frontier_state.set_global_offer_lane_entry_slot_masks(
-            self.offer_lane_entry_slot_masks_for_active_entries(
-                self.frontier_state.global_active_entries(),
-            ),
-        );
-    }
-
-    pub(super) fn recompute_root_frontier_offer_lane_mask(&mut self, root: ScopeId) {
-        let Some(slot_idx) = self.root_frontier_slot(root) else {
-            return;
-        };
-        let active_entries = self.frontier_state.root_frontier_state[slot_idx].active_entries;
-        self.frontier_state.set_root_frontier_offer_lane_mask(
-            root,
-            self.offer_lane_mask_for_active_entries(active_entries),
-        );
-    }
-
-    pub(super) fn recompute_root_frontier_offer_lane_entry_slot_masks(&mut self, root: ScopeId) {
-        let Some(slot_idx) = self.root_frontier_slot(root) else {
-            return;
-        };
-        let active_entries = self.frontier_state.root_frontier_state[slot_idx].active_entries;
-        self.frontier_state
-            .set_root_frontier_offer_lane_entry_slot_masks(
-                root,
-                self.offer_lane_entry_slot_masks_for_active_entries(active_entries),
-            );
+            .unwrap_or(self.global_active_entries())
     }
 
     pub(super) fn detach_lane_from_root_frontier(&mut self, lane_idx: usize, info: LaneOfferState) {
@@ -187,30 +92,66 @@ where
         entry_idx: usize,
     ) -> OfferEntryStaticSummary {
         let mut summary = OfferEntryStaticSummary::EMPTY;
+        #[cfg(test)]
+        let mut matched_lane = false;
         let mut lane_mask = active_mask;
         while lane_mask != 0 {
             let lane_idx = lane_mask.trailing_zeros() as usize;
             lane_mask &= !(1u8 << lane_idx);
-            let info = self.route_state.lane_offer_state[lane_idx];
+            let info = self.route_state.lane_offer_state(lane_idx);
             if info.scope.is_none() || state_index_to_usize(info.entry) != entry_idx {
                 continue;
             }
             summary.observe_lane(info);
+            #[cfg(test)]
+            {
+                matched_lane = true;
+            }
+        }
+        #[cfg(test)]
+        if !matched_lane {
+            if let Some(entry_state) = self.offer_entry_state_snapshot(entry_idx) {
+                if entry_state.active_mask == active_mask {
+                    return entry_state.summary;
+                }
+            }
         }
         summary
     }
 
+    #[inline]
+    pub(in crate::endpoint::kernel) fn offer_entry_frontier_mask(
+        &self,
+        entry_idx: usize,
+        entry_state: OfferEntryState,
+    ) -> u8 {
+        self.compute_offer_entry_static_summary(entry_state.active_mask, entry_idx)
+            .frontier_mask
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn offer_entry_frontier_mask_for_entry(
+        &self,
+        entry_idx: usize,
+    ) -> Option<u8> {
+        let entry_state = self.offer_entry_state_snapshot(entry_idx)?;
+        if entry_state.active_mask == 0 {
+            return None;
+        }
+        Some(self.offer_entry_frontier_mask(entry_idx, entry_state))
+    }
+
     pub(super) fn refresh_offer_entry_state(&mut self, entry_idx: usize) {
-        let Some(state) = self.frontier_state.offer_entry_state(entry_idx) else {
+        let Some(entry_state) = self.offer_entry_state_snapshot(entry_idx) else {
             return;
         };
-        let previous_root = state.parallel_root;
-        if state.active_mask == 0 {
+        let previous_root = self
+            .offer_entry_parallel_root_from_state(entry_idx, entry_state)
+            .unwrap_or(ScopeId::none());
+        let active_mask = entry_state.active_mask;
+        if active_mask == 0 {
+            #[cfg(test)]
             self.frontier_state.clear_offer_entry_state(entry_idx);
-            self.recompute_global_offer_lane_mask();
-            self.recompute_global_offer_lane_entry_slot_masks();
-            self.recompute_root_frontier_offer_lane_mask(previous_root);
-            self.recompute_root_frontier_offer_lane_entry_slot_masks(previous_root);
             self.refresh_frontier_observation_caches_for_entry(
                 entry_idx,
                 previous_root,
@@ -218,16 +159,15 @@ where
             );
             return;
         }
-        self.detach_offer_entry_from_root_frontier(entry_idx, state.parallel_root);
-        self.frontier_state.remove_global_active_entry(entry_idx);
-        let lane_idx = state.active_mask.trailing_zeros() as usize;
+        self.detach_offer_entry_from_root_frontier(entry_idx, previous_root);
+        self.ensure_global_frontier_scratch_initialized();
+        let mut global_active_entries = self.global_active_entries();
+        global_active_entries.remove_entry(entry_idx);
+        let lane_idx = active_mask.trailing_zeros() as usize;
         let info = self.route_state.lane_offer_state(lane_idx);
         if info.scope.is_none() {
+            #[cfg(test)]
             self.frontier_state.clear_offer_entry_state(entry_idx);
-            self.recompute_global_offer_lane_mask();
-            self.recompute_global_offer_lane_entry_slot_masks();
-            self.recompute_root_frontier_offer_lane_mask(previous_root);
-            self.recompute_root_frontier_offer_lane_entry_slot_masks(previous_root);
             self.refresh_frontier_observation_caches_for_entry(
                 entry_idx,
                 previous_root,
@@ -235,48 +175,62 @@ where
             );
             return;
         }
-        let (offer_lanes, offer_lanes_len) = self.offer_lanes_for_scope(info.scope);
-        let mut offer_lane_mask = 0u8;
-        let mut offer_lane_idx = 0usize;
-        while offer_lane_idx < offer_lanes_len {
-            let offer_lane = offer_lanes[offer_lane_idx] as usize;
-            if offer_lane < MAX_LANES {
-                offer_lane_mask |= 1u8 << offer_lane;
-            }
-            offer_lane_idx += 1;
-        }
+        #[cfg(test)]
+        let (_, offer_lanes_len) = self.offer_lanes_for_scope(info.scope);
+        #[cfg(test)]
         let selection_meta =
             self.compute_offer_entry_selection_meta(info.scope, info, offer_lanes_len != 0);
+        #[cfg(test)]
+        let loop_meta = Self::scope_loop_meta_at(
+            &self.cursor,
+            &self.control_semantics(),
+            info.scope,
+            entry_idx,
+        );
+        #[cfg(test)]
+        let label_meta = Self::scope_label_meta_at(
+            &self.cursor,
+            &self.control_semantics(),
+            info.scope,
+            loop_meta,
+            entry_idx,
+        );
+        #[cfg(test)]
         let materialization_meta = self.compute_scope_arm_materialization_meta(info.scope);
-        let summary = self.compute_offer_entry_static_summary(state.active_mask, entry_idx);
-        let mut next_state = state;
-        next_state.lane_idx = lane_idx as u8;
-        next_state.parallel_root = info.parallel_root;
-        next_state.frontier = info.frontier;
-        next_state.scope_id = info.scope;
-        next_state.offer_lane_mask = offer_lane_mask;
-        next_state.offer_lanes = offer_lanes;
-        next_state.offer_lanes_len = offer_lanes_len as u8;
-        next_state.selection_meta = selection_meta;
-        next_state.label_meta = info.label_meta;
-        next_state.materialization_meta = materialization_meta;
-        next_state.summary = summary;
-        self.frontier_state
-            .set_offer_entry_state(entry_idx, next_state);
-        self.frontier_state
-            .insert_global_active_entry(entry_idx, lane_idx as u8);
+        #[cfg(test)]
+        let offer_lane_mask = self.offer_lane_mask_for_scope_id(info.scope);
+        #[cfg(test)]
+        let test_summary = self.compute_offer_entry_static_summary(active_mask, entry_idx);
+        #[cfg(test)]
+        {
+            let Some(state) = self.frontier_state.offer_entry_state_mut(entry_idx) else {
+                return;
+            };
+            state.lane_idx = lane_idx as u8;
+            state.parallel_root = info.parallel_root;
+            state.frontier = info.frontier;
+            state.scope_id = info.scope;
+            state.offer_lane_mask = offer_lane_mask;
+            state.selection_meta = selection_meta;
+            state.label_meta = label_meta;
+            state.materialization_meta = materialization_meta;
+            state.summary = test_summary;
+        }
+        self.ensure_global_frontier_scratch_initialized();
+        let mut global_active_entries = self.global_active_entries();
+        global_active_entries.insert_entry(entry_idx, lane_idx as u8);
         self.attach_offer_entry_to_root_frontier(entry_idx, info.parallel_root, lane_idx as u8);
-        self.recompute_global_offer_lane_mask();
-        self.recompute_global_offer_lane_entry_slot_masks();
-        self.recompute_root_frontier_offer_lane_mask(previous_root);
-        self.recompute_root_frontier_offer_lane_entry_slot_masks(previous_root);
-        self.recompute_root_frontier_offer_lane_mask(info.parallel_root);
-        self.recompute_root_frontier_offer_lane_entry_slot_masks(info.parallel_root);
+        #[cfg(test)]
         let observed = self
             .recompute_offer_entry_observed_state_non_consuming(entry_idx)
-            .unwrap_or(OfferEntryObservedState::EMPTY);
+            .unwrap_or_else(|| {
+                unreachable!("test observed state must recompute for active offer entry")
+            });
+        #[cfg(test)]
         self.frontier_state
             .set_offer_entry_observed(entry_idx, observed);
+        #[cfg(not(test))]
+        let _ = self.recompute_offer_entry_observed_state_non_consuming(entry_idx);
         self.refresh_frontier_observation_caches_for_entry(
             entry_idx,
             previous_root,
@@ -290,25 +244,29 @@ where
             return;
         }
         let bit = 1u8 << lane_idx;
-        let Some(state) = self.frontier_state.offer_entry_state(entry_idx) else {
+        let Some(entry_state) = self.offer_entry_state_snapshot(entry_idx) else {
             return;
         };
-        let active_mask = state.active_mask & !bit;
+        let parallel_root = self
+            .offer_entry_parallel_root_from_state(entry_idx, entry_state)
+            .unwrap_or(ScopeId::none());
+        let active_mask = entry_state.active_mask;
+        let active_mask = active_mask & !bit;
         if active_mask == 0 {
-            self.detach_offer_entry_from_root_frontier(entry_idx, state.parallel_root);
-            self.frontier_state.remove_global_active_entry(entry_idx);
+            self.detach_offer_entry_from_root_frontier(entry_idx, parallel_root);
+            self.ensure_global_frontier_scratch_initialized();
+            let mut global_active_entries = self.global_active_entries();
+            global_active_entries.remove_entry(entry_idx);
+            #[cfg(test)]
             self.frontier_state.clear_offer_entry_state(entry_idx);
-            self.recompute_global_offer_lane_mask();
-            self.recompute_global_offer_lane_entry_slot_masks();
-            self.recompute_root_frontier_offer_lane_mask(state.parallel_root);
-            self.recompute_root_frontier_offer_lane_entry_slot_masks(state.parallel_root);
             self.refresh_frontier_observation_caches_for_entry(
                 entry_idx,
-                state.parallel_root,
+                parallel_root,
                 ScopeId::none(),
             );
             return;
         }
+        #[cfg(test)]
         self.frontier_state
             .set_offer_entry_active_mask(entry_idx, active_mask);
         self.refresh_offer_entry_state(entry_idx);
@@ -320,16 +278,24 @@ where
             return;
         }
         let bit = 1u8 << lane_idx;
-        let mut state = self
-            .frontier_state
-            .offer_entry_state(entry_idx)
-            .unwrap_or(OfferEntryState::EMPTY);
-        let was_inactive = state.active_mask == 0;
-        state.active_mask |= bit;
-        self.frontier_state.set_offer_entry_state(entry_idx, state);
+        #[cfg(not(test))]
+        let was_inactive = (self.offer_entry_active_mask_from_route_state(entry_idx) & !bit) == 0;
+        #[cfg(test)]
+        let was_inactive = if let Some(state) = self.frontier_state.offer_entry_state_mut(entry_idx)
+        {
+            let was_inactive = state.active_mask == 0;
+            state.active_mask |= bit;
+            was_inactive
+        } else {
+            let mut state = OfferEntryState::EMPTY;
+            state.active_mask = bit;
+            self.frontier_state.set_offer_entry_state(entry_idx, state);
+            true
+        };
         if was_inactive {
-            self.frontier_state
-                .insert_global_active_entry(entry_idx, lane_idx as u8);
+            self.ensure_global_frontier_scratch_initialized();
+            let mut global_active_entries = self.global_active_entries();
+            global_active_entries.insert_entry(entry_idx, lane_idx as u8);
             self.attach_offer_entry_to_root_frontier(entry_idx, info.parallel_root, lane_idx as u8);
         }
         self.refresh_offer_entry_state(entry_idx);
@@ -342,7 +308,7 @@ where
         self.detach_lane_from_root_frontier(lane_idx, old);
     }
 
-    pub(super) fn sync_lane_offer_state(&mut self) {
+    pub(crate) fn sync_lane_offer_state(&mut self) {
         let refresh_mask = self.offer_refresh_mask();
         let mut stale_mask = self.route_state.active_offer_mask & !refresh_mask;
         while stale_mask != 0 {
@@ -366,8 +332,9 @@ where
         self.detach_lane_from_offer_entry(lane_idx, old);
         self.detach_lane_from_root_frontier(lane_idx, old);
         if let Some(info) = self.compute_lane_offer_state(lane_idx) {
+            let is_linger = self.is_linger_route(info.scope);
             self.route_state
-                .set_lane_offer_state(lane_idx, info, self.is_linger_route(info.scope));
+                .set_lane_offer_state(lane_idx, info, is_linger);
             self.attach_lane_to_root_frontier(lane_idx, info);
             self.attach_lane_to_offer_entry(lane_idx, info);
         }
@@ -406,22 +373,19 @@ where
         if lane_idx >= MAX_LANES {
             return None;
         }
-        let (mut entry_idx, mut scope_id, mut lane_cursor) =
+        let (mut entry_idx, mut scope_id) =
             if let Some(idx) = self.cursor.index_for_lane_step(lane_idx) {
-                let lane_cursor = self.cursor.with_index(idx);
-                let scope_id = lane_cursor.node_scope_id();
-                (idx, scope_id, lane_cursor)
+                (idx, self.cursor.node_scope_id_at(idx))
             } else {
                 let (scope_id, entry) = self.active_linger_offer_for_lane(lane_idx)?;
-                let entry_idx = state_index_to_usize(entry);
-                let lane_cursor = self.cursor.with_index(entry_idx);
-                (entry_idx, scope_id, lane_cursor)
+                (state_index_to_usize(entry), scope_id)
             };
-        let mut region = lane_cursor.scope_region_by_id(scope_id)?;
+        let mut region = self.cursor.scope_region_by_id(scope_id)?;
         if region.kind != ScopeKind::Route {
             return None;
         }
-        let mut entry = lane_cursor
+        let mut entry = self
+            .cursor
             .route_scope_offer_entry(region.scope_id)
             .unwrap_or(StateIndex::MAX);
         if !entry.is_max() && state_index_to_usize(entry) != entry_idx {
@@ -433,18 +397,17 @@ where
                     // Once a non-linger route arm has been selected, re-entering offer_entry
                     // would replay a settled decision.
                     entry_idx = canonical_entry;
-                    lane_cursor = self.cursor.with_index(entry_idx);
                 } else if let Some((linger_scope, linger_entry)) =
                     self.active_linger_offer_for_lane(lane_idx)
                 {
                     scope_id = linger_scope;
                     entry_idx = state_index_to_usize(linger_entry);
-                    lane_cursor = self.cursor.with_index(entry_idx);
-                    region = lane_cursor.scope_region_by_id(scope_id)?;
+                    region = self.cursor.scope_region_by_id(scope_id)?;
                     if region.kind != ScopeKind::Route {
                         return None;
                     }
-                    entry = lane_cursor
+                    entry = self
+                        .cursor
                         .route_scope_offer_entry(region.scope_id)
                         .unwrap_or(StateIndex::MAX);
                     if !entry.is_max() && state_index_to_usize(entry) != entry_idx {
@@ -459,12 +422,12 @@ where
                 {
                     scope_id = linger_scope;
                     entry_idx = state_index_to_usize(linger_entry);
-                    lane_cursor = self.cursor.with_index(entry_idx);
-                    region = lane_cursor.scope_region_by_id(scope_id)?;
+                    region = self.cursor.scope_region_by_id(scope_id)?;
                     if region.kind != ScopeKind::Route {
                         return None;
                     }
-                    entry = lane_cursor
+                    entry = self
+                        .cursor
                         .route_scope_offer_entry(region.scope_id)
                         .unwrap_or(StateIndex::MAX);
                     if !entry.is_max() && state_index_to_usize(entry) != entry_idx {
@@ -480,23 +443,19 @@ where
         } else {
             state_index_to_usize(entry)
         };
-        let is_controller = lane_cursor.is_route_controller(region.scope_id);
-        let is_dynamic = lane_cursor
+        let is_controller = self.cursor.is_route_controller(region.scope_id);
+        let is_dynamic = self
+            .cursor
             .route_scope_controller_policy(region.scope_id)
             .map(|(policy, _, _)| policy.is_dynamic())
             .unwrap_or(false);
-        let static_facts = Self::frontier_static_facts(
-            &lane_cursor,
+        let static_facts = Self::frontier_static_facts_at(
+            &self.cursor,
             &self.control_semantics(),
             region.scope_id,
             is_controller,
             is_dynamic,
-        );
-        let label_meta = Self::scope_label_meta(
-            &lane_cursor,
-            &self.control_semantics(),
-            region.scope_id,
-            static_facts.loop_meta,
+            entry_idx,
         );
         let mut flags = 0u8;
         if is_controller {
@@ -506,14 +465,12 @@ where
             flags |= LaneOfferState::FLAG_DYNAMIC;
         }
         let parallel_root =
-            Self::parallel_scope_root(&lane_cursor, region.scope_id).unwrap_or(ScopeId::none());
+            Self::parallel_scope_root(&self.cursor, region.scope_id).unwrap_or(ScopeId::none());
         Some(LaneOfferState {
             scope: region.scope_id,
             entry: StateIndex::from_usize(entry_idx),
             parallel_root,
             frontier: static_facts.frontier,
-            loop_meta: static_facts.loop_meta,
-            label_meta,
             static_ready: static_facts.ready,
             flags,
         })

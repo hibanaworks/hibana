@@ -1,15 +1,22 @@
 #![cfg(feature = "std")]
 mod common;
+#[path = "support/placement.rs"]
+mod placement_support;
 #[path = "support/route_control_kinds.rs"]
 mod route_control_kinds;
 #[path = "support/runtime.rs"]
 mod runtime_support;
+#[path = "support/tls_mut.rs"]
+mod tls_mut_support;
+#[path = "support/tls_ref.rs"]
+mod tls_ref_support;
 
+use ::core::{cell::UnsafeCell, mem::MaybeUninit};
 use common::TestTransport;
 use hibana::{
     g::advanced::steps::{
-        LoopBreakSteps, LoopContinueSteps, LoopDecisionSteps, ProjectRole, SendStep, SeqSteps,
-        StepConcat, StepCons, StepNil,
+        LoopBreakSteps, LoopContinueSteps, LoopDecisionSteps, SendStep, SeqSteps, StepConcat,
+        StepCons, StepNil,
     },
     g::advanced::{CanonicalControl, RoleProgram, project},
     g::{self, Msg, Role},
@@ -30,7 +37,11 @@ use hibana::{
         policy::{DynamicResolution, ResolverContext, ResolverError},
     },
 };
-use runtime_support::{leak_clock, leak_slab, leak_tap_storage};
+use placement_support::write_value;
+use runtime_support::with_fixture;
+use std::cell::Cell;
+use tls_mut_support::with_tls_mut;
+use tls_ref_support::with_tls_ref;
 
 const LABEL_LOOP_CONTINUE: u8 = 48;
 const LABEL_LOOP_BREAK: u8 = 49;
@@ -38,40 +49,66 @@ const LABEL_ROUTE_DECISION: u8 = 57;
 
 type RouteRightKind = route_control_kinds::RouteControl<11, 0>;
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicU32, Ordering},
-};
-
 fn block_on_async<F>(future: F) -> F::Output
 where
     F: std::future::Future,
 {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("build tokio runtime");
-    rt.block_on(future)
+    futures::executor::block_on(future)
 }
 
 const ROUTE_POLICY_ID: u16 = 9;
-static ROUTE_ALLOW: AtomicBool = AtomicBool::new(false);
 const POLICY_INPUT_ID: ContextId = ContextId::new(0x9001);
+type TestKit = SessionKit<
+    'static,
+    TestTransport,
+    DefaultLabelUniverse,
+    hibana::substrate::runtime::CounterClock,
+    2,
+>;
+type ControllerEndpoint = hibana::Endpoint<'static, 0, TestKit>;
+type WorkerEndpoint = hibana::Endpoint<'static, 1, TestKit>;
+
+std::thread_local! {
+    static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
+    static POLICY_INPUT_SLOT: UnsafeCell<MaybeUninit<Cell<u32>>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
+    static POLICY_BINDING_SLOT: UnsafeCell<MaybeUninit<PolicyInputBinding>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
+    static ROUTE_ALLOW: Cell<bool> = const { Cell::new(false) };
+    static CONTROLLER_ENDPOINT_SLOT: UnsafeCell<MaybeUninit<ControllerEndpoint>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
+    static WORKER_ENDPOINT_SLOT: UnsafeCell<MaybeUninit<WorkerEndpoint>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
+}
+
+fn route_allow() -> bool {
+    ROUTE_ALLOW.with(Cell::get)
+}
+
+fn set_route_allow(value: bool) {
+    ROUTE_ALLOW.with(|cell| cell.set(value));
+}
 
 #[derive(Clone)]
 struct PolicyInputBinding {
-    policy_input0: Arc<AtomicU32>,
+    policy_input0: &'static Cell<u32>,
 }
 
 impl PolicyInputBinding {
-    fn new(policy_input0: Arc<AtomicU32>) -> Self {
+    fn new(policy_input0: &'static Cell<u32>) -> Self {
         Self { policy_input0 }
     }
 }
 
 impl PolicySignalsProvider for PolicyInputBinding {
     fn signals(&self, slot: Slot) -> PolicySignals {
-        let policy_input0 = self.policy_input0.load(Ordering::Relaxed);
+        let policy_input0 = self.policy_input0.get();
         let input = if matches!(slot, Slot::Route) {
             [policy_input0, 0, 0, 0]
         } else {
@@ -97,7 +134,7 @@ impl BindingSlot for PolicyInputBinding {
     }
 }
 
-const LEFT_ARM: g::Program<
+const LEFT_ARM: g::ProgramSource<
     StepCons<
         SendStep<
             Role<0>,
@@ -121,7 +158,7 @@ const LEFT_ARM: g::Program<
     0,
 >()
 .policy::<ROUTE_POLICY_ID>();
-const RIGHT_ARM: g::Program<
+const RIGHT_ARM: g::ProgramSource<
     StepCons<
         SendStep<
             Role<0>,
@@ -138,7 +175,7 @@ const RIGHT_ARM: g::Program<
 >()
 .policy::<ROUTE_POLICY_ID>();
 // Route is local to Controller (0 → 0) since all arms are self-sends
-const PROGRAM: g::Program<
+const PROGRAM: g::ProgramSource<
     <StepCons<
         SendStep<
             Role<0>,
@@ -165,7 +202,7 @@ const PROGRAM: g::Program<
 static CONTROLLER_PROGRAM: RoleProgram<
     'static,
     0,
-    <<StepCons<
+    <StepCons<
         SendStep<
             Role<0>,
             Role<0>,
@@ -185,12 +222,12 @@ static CONTROLLER_PROGRAM: RoleProgram<
             >,
             StepNil,
         >,
-    >>::Output as ProjectRole<Role<0>>>::Output,
-> = project(&PROGRAM);
+    >>::Output,
+> = project(&g::freeze(&PROGRAM));
 static WORKER_PROGRAM: RoleProgram<
     'static,
     1,
-    <<StepCons<
+    <StepCons<
         SendStep<
             Role<0>,
             Role<0>,
@@ -210,23 +247,17 @@ static WORKER_PROGRAM: RoleProgram<
             >,
             StepNil,
         >,
-    >>::Output as ProjectRole<Role<1>>>::Output,
-> = project(&PROGRAM);
+    >>::Output,
+> = project(&g::freeze(&PROGRAM));
 
 const LOOP_POLICY_ID: u16 = 10;
 
 fn transport_queue_is_empty(transport: &TestTransport) -> bool {
-    transport
-        .state
-        .lock()
-        .expect("state lock")
-        .queues
-        .values()
-        .all(|queue| queue.is_empty())
+    transport.queue_is_empty()
 }
 
 // Self-send for CanonicalControl: Controller → Controller
-const LOOP_CONTINUE_ARM: g::Program<
+const LOOP_CONTINUE_ARM: g::ProgramSource<
     LoopContinueSteps<
         Role<0>,
         Msg<
@@ -250,7 +281,7 @@ const LOOP_CONTINUE_ARM: g::Program<
     .policy::<LOOP_POLICY_ID>(),
     StepNil::PROGRAM,
 );
-const LOOP_BREAK_ARM: g::Program<
+const LOOP_BREAK_ARM: g::ProgramSource<
     LoopBreakSteps<
         Role<0>,
         Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
@@ -264,7 +295,7 @@ const LOOP_BREAK_ARM: g::Program<
 >()
 .policy::<LOOP_POLICY_ID>();
 // Route is local to Controller (0 → 0)
-const LOOP_PROGRAM: g::Program<
+const LOOP_PROGRAM: g::ProgramSource<
     LoopDecisionSteps<
         Role<0>,
         Msg<
@@ -279,7 +310,7 @@ const LOOP_PROGRAM: g::Program<
 static LOOP_CONTROLLER_PROGRAM: RoleProgram<
     'static,
     0,
-    <LoopDecisionSteps<
+    LoopDecisionSteps<
         Role<0>,
         Msg<
             { LABEL_LOOP_CONTINUE },
@@ -287,10 +318,10 @@ static LOOP_CONTROLLER_PROGRAM: RoleProgram<
             CanonicalControl<LoopContinueKind>,
         >,
         Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
-    > as ProjectRole<Role<0>>>::Output,
-> = project(&LOOP_PROGRAM);
+    >,
+> = project(&g::freeze(&LOOP_PROGRAM));
 
-const OUTER_LOOP_CONTINUE_ARM: g::Program<
+const OUTER_LOOP_CONTINUE_ARM: g::ProgramSource<
     SeqSteps<
         LoopContinueSteps<
             Role<0>,
@@ -317,7 +348,7 @@ const OUTER_LOOP_CONTINUE_ARM: g::Program<
     >,
 > = g::seq(LOOP_CONTINUE_ARM, LOOP_PROGRAM);
 // Route is local to Controller (0 → 0)
-const NESTED_LOOP_PROGRAM: g::Program<
+const NESTED_LOOP_PROGRAM: g::ProgramSource<
     <SeqSteps<
         LoopContinueSteps<
             Role<0>,
@@ -357,7 +388,7 @@ const NESTED_LOOP_PROGRAM: g::Program<
 static NESTED_LOOP_CONTROLLER_PROGRAM: RoleProgram<
     'static,
     0,
-    <<SeqSteps<
+    <SeqSteps<
         LoopContinueSteps<
             Role<0>,
             Msg<
@@ -390,14 +421,14 @@ static NESTED_LOOP_CONTROLLER_PROGRAM: RoleProgram<
             >,
             StepNil,
         >,
-    >>::Output as ProjectRole<Role<0>>>::Output,
-> = project(&NESTED_LOOP_PROGRAM);
+    >>::Output,
+> = project(&g::freeze(&NESTED_LOOP_PROGRAM));
 
 fn route_resolver(ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
     if ctx.attr(core::TAG).map(|value| value.as_u8()) != Some(RouteDecisionKind::TAG) {
         return Err(ResolverError::Reject);
     }
-    if ROUTE_ALLOW.load(Ordering::Relaxed) {
+    if route_allow() {
         Ok(DynamicResolution::RouteArm { arm: 0 })
     } else {
         Err(ResolverError::Reject)
@@ -421,165 +452,232 @@ fn route_policy_input_resolver(ctx: ResolverContext) -> Result<DynamicResolution
 /// via flow().send(()) which skips wire transmission for self-send.
 #[test]
 fn route_dynamic_self_send_send_path_skips_revalidation() {
-    block_on_async(async {
-        let tap_buf = leak_tap_storage();
-        let slab = leak_slab(2048);
-        let config = Config::new(tap_buf, slab);
-        let transport = TestTransport::default();
+    with_fixture(|clock, tap_buf, slab| {
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let config = Config::new(tap_buf, slab);
+                let transport = TestTransport::default();
 
-        let cluster: &mut SessionKit<
-            'static,
-            TestTransport,
-            DefaultLabelUniverse,
-            hibana::substrate::runtime::CounterClock,
-            4,
-        > = Box::leak(Box::new(SessionKit::new(leak_clock())));
+                let rv_id = cluster
+                    .add_rendezvous_from_config(config, transport.clone())
+                    .expect("register rendezvous");
+                cluster
+                    .set_resolver::<ROUTE_POLICY_ID, 0, _, _>(
+                        rv_id,
+                        &CONTROLLER_PROGRAM,
+                        hibana::substrate::policy::ResolverRef::from_fn(route_resolver),
+                    )
+                    .expect("register route resolver");
 
-        let rv_id = cluster
-            .add_rendezvous_from_config(config, transport.clone())
-            .expect("register rendezvous");
-        cluster
-            .set_resolver::<ROUTE_POLICY_ID, 0, _, _>(
-                rv_id,
-                &CONTROLLER_PROGRAM,
-                hibana::substrate::policy::ResolverRef::from_fn(route_resolver),
-            )
-            .expect("register route resolver");
+                let sid = SessionId::new(7);
 
-        // First attempt: resolver rejects, but self-send send-path must not
-        // re-evaluate dynamic route policy after arm selection.
-        let sid = SessionId::new(7);
+                with_tls_mut(
+                    &WORKER_ENDPOINT_SLOT,
+                    |ptr| unsafe {
+                        write_value(
+                            ptr,
+                            cluster
+                                .enter(rv_id, sid, &WORKER_PROGRAM, NoBinding)
+                                .expect("worker endpoint"),
+                        );
+                    },
+                    |_worker_endpoint| {
+                        with_tls_mut(
+                            &CONTROLLER_ENDPOINT_SLOT,
+                            |ptr| unsafe {
+                                write_value(
+                                    ptr,
+                                    cluster
+                                        .enter(rv_id, sid, &CONTROLLER_PROGRAM, NoBinding)
+                                        .expect("controller endpoint"),
+                                );
+                            },
+                            |controller_cursor| {
+                                set_route_allow(false);
+                                block_on_async(async {
+                                    let first_flow = controller_cursor
+                                        .flow::<Msg<
+                                            { LABEL_ROUTE_DECISION },
+                                            GenericCapToken<RouteDecisionKind>,
+                                            CanonicalControl<RouteDecisionKind>,
+                                        >>()
+                                        .expect("self-send route flow should be available");
+                                    let first_outcome = first_flow
+                                        .send(())
+                                        .await
+                                        .expect("self-send route should not re-evaluate disallowed resolver");
+                                    assert!(first_outcome.is_canonical());
+                                });
+                            },
+                        );
+                    },
+                );
 
-        let worker_endpoint = cluster
-            .enter(rv_id, sid, &WORKER_PROGRAM, NoBinding)
-            .expect("worker endpoint");
+                set_route_allow(true);
 
-        ROUTE_ALLOW.store(false, Ordering::Relaxed);
-        let controller_cursor = cluster
-            .enter(rv_id, sid, &CONTROLLER_PROGRAM, NoBinding)
-            .expect("controller endpoint");
+                let sid2 = SessionId::new(8);
 
-        let first_flow = controller_cursor
-            .flow::<Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >>()
-            .expect("self-send route flow should be available");
-        let (controller_cursor, first_outcome) = first_flow
-            .send(())
-            .await
-            .expect("self-send route should not re-evaluate disallowed resolver");
-        assert!(first_outcome.is_canonical());
-        drop(controller_cursor);
+                with_tls_mut(
+                    &WORKER_ENDPOINT_SLOT,
+                    |ptr| unsafe {
+                        write_value(
+                            ptr,
+                            cluster
+                                .enter(rv_id, sid2, &WORKER_PROGRAM, NoBinding)
+                                .expect("worker endpoint (retry)"),
+                        );
+                    },
+                    |_worker_endpoint| {
+                        with_tls_mut(
+                            &CONTROLLER_ENDPOINT_SLOT,
+                            |ptr| unsafe {
+                                write_value(
+                                    ptr,
+                                    cluster
+                                        .enter(rv_id, sid2, &CONTROLLER_PROGRAM, NoBinding)
+                                        .expect("controller endpoint (retry)"),
+                                );
+                            },
+                            |controller_cursor| {
+                                block_on_async(async {
+                                    let send_flow = controller_cursor
+                                        .flow::<Msg<
+                                            { LABEL_ROUTE_DECISION },
+                                            GenericCapToken<RouteDecisionKind>,
+                                            CanonicalControl<RouteDecisionKind>,
+                                        >>()
+                                        .expect("route should proceed when allowed");
 
-        drop(worker_endpoint);
+                                    let outcome =
+                                        send_flow.send(()).await.expect("send route decision");
+                                    assert!(outcome.is_canonical());
+                                });
+                            },
+                        );
+                    },
+                );
 
-        // Second attempt: resolver allows (ROUTE_ALLOW = true)
-        ROUTE_ALLOW.store(true, Ordering::Relaxed);
-
-        let sid2 = SessionId::new(8);
-
-        let worker_endpoint = cluster
-            .enter(rv_id, sid2, &WORKER_PROGRAM, NoBinding)
-            .expect("worker endpoint (retry)");
-
-        let controller_cursor = cluster
-            .enter(rv_id, sid2, &CONTROLLER_PROGRAM, NoBinding)
-            .expect("controller endpoint (retry)");
-
-        // Use flow().send(()) pattern for self-send CanonicalControl
-        let send_flow = controller_cursor
-            .flow::<Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >>()
-            .expect("route should proceed when allowed");
-
-        let (controller_endpoint, outcome) = send_flow.send(()).await.expect("send route decision");
-        assert!(outcome.is_canonical());
-
-        // Worker doesn't receive anything for self-send control - the route decision
-        // is purely local to the Controller. Worker endpoint is already at end state.
-        drop(worker_endpoint);
-        drop(controller_endpoint);
-
-        assert!(transport_queue_is_empty(&transport));
+                assert!(transport_queue_is_empty(&transport));
+            },
+        );
     });
 }
 
 #[test]
 fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
-    block_on_async(async {
-        let tap_buf = leak_tap_storage();
-        let slab = leak_slab(2048);
-        let config = Config::new(tap_buf, slab);
-        let transport = TestTransport::default();
-        let policy_input0 = Arc::new(AtomicU32::new(0));
+    with_fixture(|clock, tap_buf, slab| {
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                with_tls_mut(
+                    &POLICY_INPUT_SLOT,
+                    |ptr: *mut Cell<u32>| unsafe { ptr.write(Cell::new(0)) },
+                    |policy_input0| {
+                        let policy_input: &'static Cell<u32> = policy_input0;
+                        with_tls_mut(
+                            &POLICY_BINDING_SLOT,
+                            |ptr: *mut PolicyInputBinding| unsafe {
+                                ptr.write(PolicyInputBinding::new(policy_input))
+                            },
+                            |controller_binding| {
+                                let config = Config::new(tap_buf, slab);
+                                let transport = TestTransport::default();
+                                let rv_id = cluster
+                                    .add_rendezvous_from_config(config, transport.clone())
+                                    .expect("register rendezvous");
 
-        let cluster: &mut SessionKit<
-            'static,
-            TestTransport,
-            DefaultLabelUniverse,
-            hibana::substrate::runtime::CounterClock,
-            4,
-        > = Box::leak(Box::new(SessionKit::new(leak_clock())));
-        let rv_id = cluster
-            .add_rendezvous_from_config(config, transport.clone())
-            .expect("register rendezvous");
+                                cluster
+                                    .set_resolver::<ROUTE_POLICY_ID, 0, _, _>(
+                                        rv_id,
+                                        &CONTROLLER_PROGRAM,
+                                        hibana::substrate::policy::ResolverRef::from_fn(
+                                            route_policy_input_resolver,
+                                        ),
+                                    )
+                                    .expect("register route resolver");
 
-        cluster
-            .set_resolver::<ROUTE_POLICY_ID, 0, _, _>(
-                rv_id,
-                &CONTROLLER_PROGRAM,
-                hibana::substrate::policy::ResolverRef::from_fn(route_policy_input_resolver),
-            )
-            .expect("register route resolver");
+                                let sid = SessionId::new(9);
+                                with_tls_mut(
+                                    &WORKER_ENDPOINT_SLOT,
+                                    |ptr| unsafe {
+                                        write_value(
+                                            ptr,
+                                            cluster
+                                                .enter(rv_id, sid, &WORKER_PROGRAM, NoBinding)
+                                                .expect("worker endpoint"),
+                                        );
+                                    },
+                                    |_worker| {
+                                        with_tls_mut(
+                                            &CONTROLLER_ENDPOINT_SLOT,
+                                            |ptr| unsafe {
+                                                write_value(
+                                                    ptr,
+                                                    cluster
+                                                        .enter(
+                                                            rv_id,
+                                                            sid,
+                                                            &CONTROLLER_PROGRAM,
+                                                            controller_binding,
+                                                        )
+                                                        .expect("controller endpoint"),
+                                                );
+                                            },
+                                            |controller| {
+                                                block_on_async(async {
+                                                    let send_flow = controller
+                                                        .flow::<Msg<
+                                                            { LABEL_ROUTE_DECISION },
+                                                            GenericCapToken<RouteDecisionKind>,
+                                                            CanonicalControl<RouteDecisionKind>,
+                                                        >>(
+                                                        )
+                                                        .expect("route should select left arm");
 
-        let sid = SessionId::new(9);
-        let worker = cluster
-            .enter(rv_id, sid, &WORKER_PROGRAM, NoBinding)
-            .expect("worker endpoint");
-        let controller = cluster
-            .enter(
-                rv_id,
-                sid,
-                &CONTROLLER_PROGRAM,
-                PolicyInputBinding::new(policy_input0.clone()),
-            )
-            .expect("controller endpoint");
+                                                    policy_input.set(1);
 
-        let send_flow = controller
-            .flow::<Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >>()
-            .expect("route should select left arm");
+                                                    let outcome = send_flow
+                                                        .send(())
+                                                        .await
+                                                        .expect("send route decision");
+                                                    let handle = outcome
+                                                        .into_canonical()
+                                                        .expect(
+                                                            "expected canonical control token",
+                                                        )
+                                                        .as_generic()
+                                                        .decode_handle()
+                                                        .expect(
+                                                            "decode canonical route decision handle",
+                                                        );
 
-        policy_input0.store(1, Ordering::Relaxed);
-
-        let (controller, outcome) = send_flow.send(()).await.expect("send route decision");
-        let handle = outcome
-            .into_canonical()
-            .expect("expected canonical control token")
-            .as_generic()
-            .decode_handle()
-            .expect("decode canonical route decision handle");
-
-        assert_eq!(
-            handle.arm, 0,
-            "token arm must remain equal to offer-selected arm"
+                                                    assert_eq!(
+                                                        handle.arm, 0,
+                                                        "token arm must remain equal to offer-selected arm"
+                                                    );
+                                                    assert!(
+                                                        !handle.scope.is_none(),
+                                                        "canonical route decision handle must carry a materialized scope"
+                                                    );
+                                                });
+                                            },
+                                        );
+                                    },
+                                );
+                                assert!(transport_queue_is_empty(&transport));
+                            },
+                        )
+                    },
+                );
+            },
         );
-        assert!(
-            !handle.scope.is_none(),
-            "canonical route decision handle must carry a materialized scope"
-        );
-
-        drop(worker);
-        drop(controller);
-        assert!(transport_queue_is_empty(&transport));
     });
 }
 
@@ -592,7 +690,6 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
 /// This test verifies the type definitions are correct after removing the Target parameter.
 #[test]
 fn loop_dynamic_resolver_policy_abort_and_success() {
-    // Verify the loop program compiles with self-send semantics
     let _controller_program = &LOOP_CONTROLLER_PROGRAM;
 }
 
@@ -602,25 +699,23 @@ fn loop_dynamic_resolver_policy_abort_and_success() {
 /// are local to the Controller role. Worker doesn't participate in route control.
 #[test]
 fn nested_loop_dynamic_send_and_offer() {
-    let tap_buf = leak_tap_storage();
-    let slab = leak_slab(4096);
-    let config = Config::new(tap_buf, slab);
-    let transport = TestTransport::default();
+    with_fixture(|clock, tap_buf, slab| {
+        let config = Config::new(tap_buf, slab);
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let _rv_id = cluster
+                    .add_rendezvous_from_config(config, transport.clone())
+                    .expect("register rendezvous");
 
-    let cluster: &mut SessionKit<
-        'static,
-        TestTransport,
-        DefaultLabelUniverse,
-        hibana::substrate::runtime::CounterClock,
-        4,
-    > = Box::leak(Box::new(SessionKit::new(leak_clock())));
+                let _controller_program = &NESTED_LOOP_CONTROLLER_PROGRAM;
+            },
+        );
 
-    let _rv_id = cluster
-        .add_rendezvous_from_config(config, transport.clone())
-        .expect("register rendezvous");
-
-    // With self-send loops, verify the type definitions compile correctly
-    let _controller_program = &NESTED_LOOP_CONTROLLER_PROGRAM;
-
-    assert!(transport_queue_is_empty(&transport));
+        assert!(transport_queue_is_empty(&transport));
+    });
 }

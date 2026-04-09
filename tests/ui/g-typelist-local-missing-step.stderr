@@ -1,8 +1,15 @@
-error[E0271]: type mismatch resolving `<StepCons<LocalSend<Role<1>, Message<LabelMarker<7>, u16>>, StepNil> as StepConcat<StepNil>>::Output == StepNil`
- --> tests/ui/g-typelist-local-missing-step.rs:9:50
-  |
-9 | const CLIENT: RoleProgram<'static, 0, StepNil> = project(&PROGRAM);
-  |                                                  ^^^^^^^^^^^^^^^^^ expected `StepNil`, found `StepCons<LocalSend<Role<1>, ...>, ...>`
-  |
-  = note: expected struct `StepNil`
-             found struct `StepCons<LocalSend<Role<1>, hibana::global::Message<hibana::global::LabelMarker<7>, u16>>, StepNil>`
+error[E0308]: mismatched types
+  --> tests/ui/g-typelist-local-missing-step.rs:11:58
+   |
+11 | const CLIENT: RoleProgram<'static, 0, StepNil> = project(&PROGRAM_TOKEN);
+   |                                                  ------- ^^^^^^^^^^^^^^ expected `&Program<StepNil>`, found `&Program<StepCons<..., ...>>`
+   |                                                  |
+   |                                                  arguments to this function are incorrect
+   |
+   = note: expected reference `&Program<StepNil>`
+              found reference `&Program<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<7>, u16>>, StepNil>>`
+note: function defined here
+  --> src/global/role_program.rs
+   |
+   | pub const fn project<'prog, const ROLE: u8, Steps, Mint>(
+   |              ^^^^^^^

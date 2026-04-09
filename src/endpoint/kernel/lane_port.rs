@@ -19,6 +19,29 @@ where
 }
 
 #[inline]
+pub(super) fn scratch_ptr<'r, T, E>(port: &Port<'r, T, E>) -> *mut [u8]
+where
+    T: Transport + 'r,
+    E: EpochTable + 'r,
+{
+    port.scratch_ptr()
+}
+
+#[inline]
+pub(super) fn frontier_scratch_ptr<'r, T, E>(port: &Port<'r, T, E>) -> *mut [u8]
+where
+    T: Transport + 'r,
+    E: EpochTable + 'r,
+{
+    port.frontier_scratch_ptr()
+}
+
+#[inline]
+pub(super) fn with_scratch_ptr<R>(scratch_ptr: *mut [u8], f: impl FnOnce(&mut [u8]) -> R) -> R {
+    unsafe { f(&mut *scratch_ptr) }
+}
+
+#[inline]
 pub(super) fn scratch<'a, 'r, T, E>(port: &'a Port<'r, T, E>) -> &'a [u8]
 where
     T: Transport + 'r,

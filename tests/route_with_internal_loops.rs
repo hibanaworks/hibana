@@ -14,8 +14,7 @@
 mod route_control_kinds;
 
 use hibana::g::advanced::steps::{
-    LoopBreakSteps, LoopDecisionSteps, ProjectRole, SendStep, SeqSteps, StepConcat, StepCons,
-    StepNil,
+    LoopBreakSteps, LoopDecisionSteps, SendStep, SeqSteps, StepConcat, StepCons, StepNil,
 };
 use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
 use hibana::g::{self, Msg, Role};
@@ -40,10 +39,11 @@ type ArmBKind = route_control_kinds::RouteControl<LABEL_ARM_B, 0>;
 const ROUTE_POLICY_ID: u16 = 0x1000;
 
 // Arm A: marker + loop
-const ARM_A_LOOP_BODY: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>> =
-    g::send::<Role<0>, Role<1>, Msg<1, ()>, 0>();
+const ARM_A_LOOP_BODY: g::ProgramSource<
+    StepCons<SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>,
+> = g::send::<Role<0>, Role<1>, Msg<1, ()>, 0>();
 
-const ARM_A_LOOP_CONT: g::Program<
+const ARM_A_LOOP_CONT: g::ProgramSource<
     SeqSteps<
         StepCons<
             SendStep<
@@ -75,7 +75,7 @@ const ARM_A_LOOP_CONT: g::Program<
     ARM_A_LOOP_BODY,
 );
 
-const ARM_A_LOOP_BREAK: g::Program<
+const ARM_A_LOOP_BREAK: g::ProgramSource<
     LoopBreakSteps<
         Role<0>,
         Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
@@ -88,7 +88,7 @@ const ARM_A_LOOP_BREAK: g::Program<
 >()
 .policy::<{ ROUTE_POLICY_ID + 1 }>();
 
-const ARM_A_LOOP: g::Program<
+const ARM_A_LOOP: g::ProgramSource<
     LoopDecisionSteps<
         Role<0>,
         Msg<
@@ -102,7 +102,7 @@ const ARM_A_LOOP: g::Program<
     >,
 > = g::route(ARM_A_LOOP_CONT, ARM_A_LOOP_BREAK);
 
-const ARM_A: g::Program<
+const ARM_A: g::ProgramSource<
     SeqSteps<
         StepCons<
             SendStep<
@@ -141,10 +141,11 @@ const ARM_A: g::Program<
 );
 
 // Arm B: marker + loop
-const ARM_B_LOOP_BODY: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<2, ()>, 0>, StepNil>> =
-    g::send::<Role<0>, Role<1>, Msg<2, ()>, 0>();
+const ARM_B_LOOP_BODY: g::ProgramSource<
+    StepCons<SendStep<Role<0>, Role<1>, Msg<2, ()>, 0>, StepNil>,
+> = g::send::<Role<0>, Role<1>, Msg<2, ()>, 0>();
 
-const ARM_B_LOOP_CONT: g::Program<
+const ARM_B_LOOP_CONT: g::ProgramSource<
     SeqSteps<
         StepCons<
             SendStep<
@@ -176,7 +177,7 @@ const ARM_B_LOOP_CONT: g::Program<
     ARM_B_LOOP_BODY,
 );
 
-const ARM_B_LOOP_BREAK: g::Program<
+const ARM_B_LOOP_BREAK: g::ProgramSource<
     LoopBreakSteps<
         Role<0>,
         Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
@@ -189,7 +190,7 @@ const ARM_B_LOOP_BREAK: g::Program<
 >()
 .policy::<{ ROUTE_POLICY_ID + 2 }>();
 
-const ARM_B_LOOP: g::Program<
+const ARM_B_LOOP: g::ProgramSource<
     LoopDecisionSteps<
         Role<0>,
         Msg<
@@ -203,7 +204,7 @@ const ARM_B_LOOP: g::Program<
     >,
 > = g::route(ARM_B_LOOP_CONT, ARM_B_LOOP_BREAK);
 
-const ARM_B: g::Program<
+const ARM_B: g::ProgramSource<
     SeqSteps<
         StepCons<
             SendStep<
@@ -243,7 +244,7 @@ const ARM_B: g::Program<
 
 // Route with both arms (this is the key test - both arms have internal loops)
 // Passive observers can distinguish arms by recv label (functional dispatch).
-const ROUTE_PROGRAM: g::Program<
+const ROUTE_PROGRAM: g::ProgramSource<
     <SeqSteps<
         StepCons<
             SendStep<
@@ -303,7 +304,7 @@ const ROUTE_PROGRAM: g::Program<
 static CLIENT_PROGRAM: RoleProgram<
     'static,
     0,
-    <<SeqSteps<
+    <SeqSteps<
         StepCons<
             SendStep<
                 Role<0>,
@@ -355,12 +356,12 @@ static CLIENT_PROGRAM: RoleProgram<
                 StepCons<SendStep<Role<0>, Role<1>, Msg<2, ()>, 0>, StepNil>,
             >,
         >,
-    >>::Output as ProjectRole<Role<0>>>::Output,
-> = project(&ROUTE_PROGRAM);
+    >>::Output,
+> = project(&g::freeze(&ROUTE_PROGRAM));
 static SERVER_PROGRAM: RoleProgram<
     'static,
     1,
-    <<SeqSteps<
+    <SeqSteps<
         StepCons<
             SendStep<
                 Role<0>,
@@ -412,8 +413,8 @@ static SERVER_PROGRAM: RoleProgram<
                 StepCons<SendStep<Role<0>, Role<1>, Msg<2, ()>, 0>, StepNil>,
             >,
         >,
-    >>::Output as ProjectRole<Role<1>>>::Output,
-> = project(&ROUTE_PROGRAM);
+    >>::Output,
+> = project(&g::freeze(&ROUTE_PROGRAM));
 
 // -----------------------------------------------------------------------------
 // Tests

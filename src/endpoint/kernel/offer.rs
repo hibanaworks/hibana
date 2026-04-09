@@ -1,11 +1,11 @@
 //! Offer-path helpers for scope selection and branch materialization.
 
-use super::authority::RouteDecisionToken;
+use super::authority::{RouteDecisionSource, RouteDecisionToken};
 use super::core::{CursorEndpoint, RouteBranch};
-use super::evidence::{ScopeLabelMeta, ScopeLoopMeta};
+use super::evidence::ScopeLabelMeta;
 #[cfg(test)]
 use super::frontier::FrontierCandidate;
-use super::frontier::{FrontierKind, FrontierVisitSet};
+use super::frontier::FrontierKind;
 use super::lane_port;
 use crate::binding::BindingSlot;
 use crate::control::cap::mint::{CapShot, EpochTable, MintConfigMarker};
@@ -25,12 +25,9 @@ pub(super) struct OfferScopeSelection {
     pub(super) frontier_parallel_root: Option<ScopeId>,
     pub(super) offer_lanes: [u8; MAX_LANES],
     pub(super) offer_lane_mask: u8,
-    pub(super) offer_lanes_len: usize,
+    pub(super) offer_lanes_len: u8,
     pub(super) offer_lane: u8,
-    pub(super) offer_lane_idx: usize,
-    pub(super) label_meta: ScopeLabelMeta,
-    pub(super) materialization_meta: ScopeArmMaterializationMeta,
-    pub(super) passive_recv_meta: [CachedRecvMeta; 2],
+    pub(super) offer_lane_idx: u8,
     pub(super) at_route_offer_entry: bool,
 }
 
@@ -73,8 +70,13 @@ impl CachedRecvMeta {
     };
 
     #[inline]
-    pub(super) fn recv_meta(self) -> Option<(usize, RecvMeta)> {
-        if self.cursor_index.is_max() || self.next.is_max() {
+    pub(super) const fn is_empty(&self) -> bool {
+        self.cursor_index.is_max() || self.next.is_max()
+    }
+
+    #[inline]
+    pub(super) fn recv_meta(&self) -> Option<(usize, RecvMeta)> {
+        if self.is_empty() {
             return None;
         }
         Some((
@@ -97,7 +99,7 @@ impl CachedRecvMeta {
     }
 
     #[inline]
-    pub(super) fn is_recv_step(self) -> bool {
+    pub(super) fn is_recv_step(&self) -> bool {
         (self.flags & Self::FLAG_RECV_STEP) != 0
     }
 }
@@ -133,7 +135,7 @@ impl ScopeArmMaterializationMeta {
     };
 
     #[inline]
-    pub(super) fn controller_arm_entry(self, arm: u8) -> Option<(StateIndex, u8)> {
+    pub(super) fn controller_arm_entry(&self, arm: u8) -> Option<(StateIndex, u8)> {
         let arm = arm as usize;
         if arm >= 2 {
             return None;
@@ -143,7 +145,7 @@ impl ScopeArmMaterializationMeta {
     }
 
     #[inline]
-    pub(super) fn recv_entry(self, arm: u8) -> Option<StateIndex> {
+    pub(super) fn recv_entry(&self, arm: u8) -> Option<StateIndex> {
         let arm = arm as usize;
         if arm >= 2 {
             return None;
@@ -153,7 +155,7 @@ impl ScopeArmMaterializationMeta {
     }
 
     #[inline]
-    pub(super) fn passive_arm_entry(self, arm: u8) -> Option<StateIndex> {
+    pub(super) fn passive_arm_entry(&self, arm: u8) -> Option<StateIndex> {
         let arm = arm as usize;
         if arm >= 2 {
             return None;
@@ -163,7 +165,7 @@ impl ScopeArmMaterializationMeta {
     }
 
     #[inline]
-    pub(super) fn passive_arm_scope(self, arm: u8) -> Option<ScopeId> {
+    pub(super) fn passive_arm_scope(&self, arm: u8) -> Option<ScopeId> {
         let arm = arm as usize;
         if arm >= 2 {
             return None;
@@ -187,7 +189,7 @@ impl ScopeArmMaterializationMeta {
     }
 
     #[inline]
-    pub(super) fn binding_demux_lane_mask(self, preferred_arm: Option<u8>) -> u8 {
+    pub(super) fn binding_demux_lane_mask(&self, preferred_arm: Option<u8>) -> u8 {
         preferred_arm
             .and_then(|arm| self.binding_demux_lane_mask.get(arm as usize).copied())
             .unwrap_or(self.binding_demux_lane_mask[0] | self.binding_demux_lane_mask[1])
@@ -195,7 +197,7 @@ impl ScopeArmMaterializationMeta {
 
     #[inline]
     pub(super) fn binding_demux_lane_mask_for_label_mask(
-        self,
+        &self,
         label_meta: ScopeLabelMeta,
         label_mask: u128,
     ) -> u8 {
@@ -221,7 +223,7 @@ impl ScopeArmMaterializationMeta {
     }
 
     #[inline]
-    pub(super) fn first_recv_target(self, label: u8) -> Option<(u8, StateIndex)> {
+    pub(super) fn first_recv_target(&self, label: u8) -> Option<(u8, StateIndex)> {
         let mut idx = 0usize;
         while idx < self.first_recv_len as usize {
             let (entry_label, arm, target) = self.first_recv_dispatch[idx];
@@ -234,7 +236,7 @@ impl ScopeArmMaterializationMeta {
     }
 
     #[inline]
-    pub(super) fn arm_has_first_recv_dispatch(self, arm: u8) -> bool {
+    pub(super) fn arm_has_first_recv_dispatch(&self, arm: u8) -> bool {
         let mut idx = 0usize;
         while idx < self.first_recv_len as usize {
             let (_label, dispatch_arm, target) = self.first_recv_dispatch[idx];
@@ -247,12 +249,12 @@ impl ScopeArmMaterializationMeta {
     }
 
     #[inline]
-    pub(super) fn controller_arm_is_recv(self, arm: u8) -> bool {
+    pub(super) fn controller_arm_is_recv(&self, arm: u8) -> bool {
         arm < 2 && (self.controller_recv_mask & (1u8 << arm)) != 0
     }
 
     #[inline]
-    pub(super) fn controller_arm_requires_ready_evidence(self, arm: u8) -> bool {
+    pub(super) fn controller_arm_requires_ready_evidence(&self, arm: u8) -> bool {
         arm < 2 && (self.controller_cross_role_recv_mask & (1u8 << arm)) != 0
     }
 }
@@ -332,9 +334,9 @@ impl CurrentFrontierSelectionState {
         current_idx: usize,
         candidate: FrontierCandidate,
     ) {
-        if candidate.scope_id == current_scope && candidate.entry_idx == current_idx {
-            self.ready = candidate.ready;
-            self.has_progress_evidence = candidate.has_evidence;
+        if candidate.scope_id == current_scope && candidate.entry_idx as usize == current_idx {
+            self.ready = candidate.ready();
+            self.has_progress_evidence = candidate.has_evidence();
         }
     }
 
@@ -350,7 +352,6 @@ impl CurrentFrontierSelectionState {
 #[derive(Clone, Copy)]
 pub(super) struct FrontierStaticFacts {
     pub(super) frontier: FrontierKind,
-    pub(super) loop_meta: ScopeLoopMeta,
     pub(super) ready: bool,
 }
 
@@ -367,6 +368,8 @@ pub(crate) struct BranchMeta {
     pub(crate) eff_index: EffIndex,
     /// Classification of the branch for decode() dispatch.
     pub(crate) kind: BranchKind,
+    /// Route decision source used when commit emits route-decision events.
+    pub(crate) route_source: RouteDecisionSource,
 }
 
 /// Classification of branch types for `decode()` dispatch.
@@ -378,7 +381,7 @@ pub(crate) enum BranchKind {
     /// Decode from zero buffer; scope settlement uses meta fields directly.
     LocalControl,
     /// Arm starts with Send operation (passive observer scenario).
-    /// The driver should use `into_endpoint()` and `flow().send()` instead of `decode()`.
+    /// The driver should continue on the same borrowed endpoint with `flow().send()`.
     ArmSendHint,
     /// Empty arm leading to terminal (e.g., empty break arm).
     /// Decode succeeds with zero buffer; cursor advances to scope end.
@@ -401,9 +404,16 @@ where
     /// the current route scope.
     /// Loop control evidence that resolves a recv-less branch is treated as
     /// EmptyArmTerminal and skip decode.
-    pub async fn offer(self) -> RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
-        let mut self_endpoint = self;
-        let mut frontier_visited = FrontierVisitSet::EMPTY;
+    pub async fn offer(
+        &mut self,
+    ) -> RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
+        if let Some(branch) = self.take_pending_branch_preview() {
+            return Ok(branch);
+        }
+        let self_endpoint = self;
+        let mut frontier_scratch = self_endpoint.frontier_scratch_view();
+        let mut frontier_visited =
+            super::frontier::frontier_visit_set_from_scratch(&mut frontier_scratch);
         let mut carried_binding_classification = None;
         let mut carried_transport_payload = None;
         'offer_frontier: loop {
@@ -412,9 +422,9 @@ where
             frontier_visited.record(scope_id);
             let offer_lane_mask = selection.offer_lane_mask;
             let offer_lane = selection.offer_lane;
-            let offer_lane_idx = selection.offer_lane_idx;
-            let label_meta = selection.label_meta;
+            let offer_lane_idx = selection.offer_lane_idx as usize;
             let at_route_offer_entry = selection.at_route_offer_entry;
+            let loop_meta = self_endpoint.selection_label_meta(selection).loop_meta();
 
             let cursor_is_not_recv = !self_endpoint.cursor.is_recv();
             let is_route_controller = self_endpoint.cursor.is_route_controller(scope_id);
@@ -425,7 +435,6 @@ where
                     .try_recv_meta()
                     .map(|recv_meta| recv_meta.peer != ROLE)
                     .unwrap_or(false);
-            let loop_meta = label_meta.loop_meta();
 
             let route_policy_is_dynamic = self_endpoint
                 .cursor
@@ -434,13 +443,16 @@ where
                 .unwrap_or(false);
             let is_dynamic_route_scope = route_policy_is_dynamic;
             let suppress_scope_hint = is_dynamic_route_scope;
-            self_endpoint.ingest_scope_evidence_for_offer(
-                scope_id,
-                offer_lane_idx,
-                selection.offer_lane_mask,
-                suppress_scope_hint,
-                label_meta,
-            );
+            {
+                let label_meta = self_endpoint.selection_label_meta(selection);
+                self_endpoint.ingest_scope_evidence_for_offer(
+                    scope_id,
+                    offer_lane_idx,
+                    selection.offer_lane_mask,
+                    suppress_scope_hint,
+                    label_meta,
+                );
+            }
             let preview_route_decision = self_endpoint.preview_scope_ack_token_non_consuming(
                 scope_id,
                 offer_lane_idx,
@@ -517,12 +529,15 @@ where
                 } else {
                     'offer_recv: loop {
                         if !is_route_controller || controller_selected_recv_step {
+                            let label_meta = self_endpoint.selection_label_meta(selection);
+                            let materialization_meta =
+                                self_endpoint.selection_materialization_meta(selection);
                             if let Some((_, classification)) = self_endpoint.poll_binding_for_offer(
                                 scope_id,
                                 offer_lane_idx,
                                 offer_lane_mask,
                                 label_meta,
-                                selection.materialization_meta,
+                                materialization_meta,
                             ) {
                                 binding_classification = Some(classification);
                                 break 'offer_recv 0usize;
@@ -546,12 +561,15 @@ where
                         };
 
                         if !is_route_controller || controller_selected_recv_step {
+                            let label_meta = self_endpoint.selection_label_meta(selection);
+                            let materialization_meta =
+                                self_endpoint.selection_materialization_meta(selection);
                             if let Some((_, classification)) = self_endpoint.poll_binding_for_offer(
                                 scope_id,
                                 offer_lane_idx,
                                 offer_lane_mask,
                                 label_meta,
-                                selection.materialization_meta,
+                                materialization_meta,
                             ) {
                                 binding_classification = Some(classification);
                                 break 'offer_recv 0usize;
@@ -574,6 +592,7 @@ where
                 }
             }
             if let Some(classification) = binding_classification.as_ref() {
+                let label_meta = self_endpoint.selection_label_meta(selection);
                 self_endpoint.ingest_binding_scope_evidence(
                     scope_id,
                     classification.label,
@@ -581,13 +600,16 @@ where
                     label_meta,
                 );
             }
-            self_endpoint.ingest_scope_evidence_for_offer(
-                scope_id,
-                offer_lane_idx,
-                selection.offer_lane_mask,
-                suppress_scope_hint,
-                label_meta,
-            );
+            {
+                let label_meta = self_endpoint.selection_label_meta(selection);
+                self_endpoint.ingest_scope_evidence_for_offer(
+                    scope_id,
+                    offer_lane_idx,
+                    selection.offer_lane_mask,
+                    suppress_scope_hint,
+                    label_meta,
+                );
+            }
             if self_endpoint.scope_evidence_conflicted(scope_id)
                 && !self_endpoint.recover_scope_evidence_conflict(
                     scope_id,
@@ -608,23 +630,30 @@ where
                     &mut transport_payload_lane,
                     &mut frontier_visited,
                 )
-                .await?
+                .await
             {
-                ResolveTokenOutcome::RestartFrontier => {
-                    carried_binding_classification = binding_classification;
-                    carried_transport_payload = (transport_payload_len != 0)
-                        .then_some((transport_payload_len, transport_payload_lane));
-                    continue 'offer_frontier;
-                }
-                ResolveTokenOutcome::Resolved(resolved) => resolved,
+                Ok(resolved) => match resolved {
+                    ResolveTokenOutcome::RestartFrontier => {
+                        carried_binding_classification = binding_classification;
+                        carried_transport_payload = (transport_payload_len != 0)
+                            .then_some((transport_payload_len, transport_payload_lane));
+                        continue 'offer_frontier;
+                    }
+                    ResolveTokenOutcome::Resolved(resolved) => resolved,
+                },
+                Err(err) => return Err(err),
             };
-            if !is_route_controller
-                && self_endpoint.descend_selected_passive_route(selection, resolved)?
-            {
-                carried_binding_classification = binding_classification;
-                carried_transport_payload = (transport_payload_len != 0)
-                    .then_some((transport_payload_len, transport_payload_lane));
-                continue 'offer_frontier;
+            if !is_route_controller {
+                match self_endpoint.descend_selected_passive_route(selection, resolved) {
+                    Ok(true) => {
+                        carried_binding_classification = binding_classification;
+                        carried_transport_payload = (transport_payload_len != 0)
+                            .then_some((transport_payload_len, transport_payload_lane));
+                        continue 'offer_frontier;
+                    }
+                    Ok(false) => {}
+                    Err(err) => return Err(err),
+                }
             }
             return self_endpoint.materialize_branch(
                 selection,

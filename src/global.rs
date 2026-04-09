@@ -5,7 +5,7 @@
 
 use core::marker::PhantomData;
 
-use self::program::Program;
+use self::program::ProgramSource;
 use self::steps::{SendStep, SeqSteps, StepConcat, StepCons, StepNil};
 use crate::control::cap::mint::{ControlPayload, ControlResourceKind, ResourceKind};
 use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
@@ -28,10 +28,6 @@ pub mod advanced {
     pub use super::{
         CanonicalControl, ControlMessage, ControlMessageKind, ExternalControl, MessageSpec,
     };
-
-    pub mod compose {
-        pub use super::super::program::seq;
-    }
 
     pub mod steps {
         pub use super::super::steps::{
@@ -613,7 +609,7 @@ where
 /// )
 /// ```
 pub const fn send<From, To, M, const LANE: u8>()
--> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
+-> ProgramSource<StepCons<SendStep<From, To, M, LANE>, StepNil>>
 where
     From: KnownRole + RoleMarker + steps::RoleEq<To>,
     To: KnownRole + RoleMarker,
@@ -622,14 +618,14 @@ where
     <M as MessageSpec>::ControlKind:
         RequireSelfSendForCanonical<<From as steps::RoleEq<To>>::Output>,
 {
-    Program::build()
+    ProgramSource::build()
 }
 
 /// Sequentially compose two protocol fragments.
 pub const fn seq<LeftSteps, RightSteps>(
-    left: Program<LeftSteps>,
-    right: Program<RightSteps>,
-) -> Program<SeqSteps<LeftSteps, RightSteps>> {
+    left: ProgramSource<LeftSteps>,
+    right: ProgramSource<RightSteps>,
+) -> ProgramSource<SeqSteps<LeftSteps, RightSteps>> {
     program::seq(left, right)
 }
 
@@ -639,9 +635,9 @@ pub const fn seq<LeftSteps, RightSteps>(
 /// Both arms must begin with the same controller self-send.
 #[allow(private_bounds)]
 pub const fn route<LeftSteps, RightSteps>(
-    left: Program<LeftSteps>,
-    right: Program<RightSteps>,
-) -> Program<<LeftSteps as StepConcat<RightSteps>>::Output>
+    left: ProgramSource<LeftSteps>,
+    right: ProgramSource<RightSteps>,
+) -> ProgramSource<<LeftSteps as StepConcat<RightSteps>>::Output>
 where
     LeftSteps: StepConcat<RightSteps>
         + RouteArmHead
@@ -656,9 +652,9 @@ where
 /// Construct a binary parallel composition.
 #[allow(private_bounds)]
 pub const fn par<LeftSteps, RightSteps>(
-    left: Program<LeftSteps>,
-    right: Program<RightSteps>,
-) -> Program<<LeftSteps as StepConcat<RightSteps>>::Output>
+    left: ProgramSource<LeftSteps>,
+    right: ProgramSource<RightSteps>,
+) -> ProgramSource<<LeftSteps as StepConcat<RightSteps>>::Output>
 where
     LeftSteps: StepConcat<RightSteps> + NonEmptyParallelArm,
     RightSteps: NonEmptyParallelArm + TailLoopControl,

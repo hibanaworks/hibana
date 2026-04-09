@@ -4,88 +4,105 @@
 use core::marker::PhantomData;
 
 use crate::{
-    binding::{BindingSlot, NoBinding},
+    binding::BindingHandle,
     control::cap::mint::{AllowsCanonical, EpochTbl, MintConfigMarker},
-    endpoint::{Endpoint, SendResult, carrier, control::ControlOutcome},
-    global::typestate::SendMeta,
+    endpoint::{SendResult, carrier, control::ControlOutcome},
+    global::typestate::{SendMeta, StateIndex},
     global::{ControlHandling, ControlPayloadKind, MessageSpec, SendableLabel},
 };
 
-type EndpointCfg<K, Mint, B> = carrier::EndpointCfg<K, Mint, B>;
-type KernelEndpoint<'r, const ROLE: u8, K, Mint, B> =
-    carrier::KernelCursorEndpoint<'r, ROLE, K, EpochTbl, Mint, B>;
+type EndpointBinding<'r> = BindingHandle<'r>;
+type EndpointCfg<'r, K, Mint> = carrier::EndpointCfg<K, Mint, EndpointBinding<'r>>;
+type KernelEndpoint<'r, const ROLE: u8, K, Mint> =
+    carrier::KernelCursorEndpoint<'r, ROLE, K, EpochTbl, Mint, EndpointBinding<'r>>;
+
+#[derive(Clone, Copy)]
+pub(crate) struct SendPreview {
+    meta: SendMeta,
+    cursor_index: StateIndex,
+}
+
+impl SendPreview {
+    #[inline]
+    pub(crate) const fn new(meta: SendMeta, cursor_index: StateIndex) -> Self {
+        Self { meta, cursor_index }
+    }
+
+    #[inline]
+    pub(crate) const fn into_parts(self) -> (SendMeta, StateIndex) {
+        (self.meta, self.cursor_index)
+    }
+}
 
 /// Affine flow handle for a pending send transition.
 ///
 /// Created by `Endpoint::flow()` and consumed by `.send(arg).await`.
 /// The type name matches the constructor for clarity: `flow()` → `CapFlow`.
-pub(crate) struct CapFlow<'r, const ROLE: u8, M, K, Mint, B: BindingSlot = NoBinding>
+pub(crate) struct CapFlow<'e, 'r, const ROLE: u8, M, K, Mint>
 where
     M: MessageSpec + SendableLabel,
     K: carrier::SessionKitFamily + 'r,
     Mint: MintConfigMarker,
-    B: BindingSlot,
 {
-    endpoint: KernelEndpoint<'r, ROLE, K, Mint, B>,
-    meta: SendMeta,
-    _msg: PhantomData<(M, EndpointCfg<K, Mint, B>)>,
+    endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>,
+    preview: SendPreview,
+    _msg: PhantomData<(&'e mut EndpointCfg<'r, K, Mint>, M)>,
 }
 
 /// Public flow facade returned by [`Endpoint::flow`](crate::Endpoint::flow).
-struct FlowInner<'r, const ROLE: u8, M, K, Mint, B>
+struct FlowInner<'e, 'r, const ROLE: u8, M, K, Mint>
 where
     M: MessageSpec + SendableLabel,
     K: carrier::SessionKitFamily + 'r,
     Mint: MintConfigMarker,
-    B: BindingSlot,
 {
-    inner: CapFlow<'r, ROLE, M, K, Mint, B>,
+    inner: CapFlow<'e, 'r, ROLE, M, K, Mint>,
 }
 
 #[allow(private_bounds)]
-pub struct Flow<'r, const ROLE: u8, M, K, Mint, B: BindingSlot = NoBinding>
+pub struct Flow<'e, 'r, const ROLE: u8, M, K, Mint>
 where
     M: MessageSpec + SendableLabel,
     K: carrier::SessionKitFamily + 'r,
     Mint: MintConfigMarker,
-    B: BindingSlot,
 {
-    inner: FlowInner<'r, ROLE, M, K, Mint, B>,
+    inner: FlowInner<'e, 'r, ROLE, M, K, Mint>,
 }
 
 #[allow(private_bounds)]
-impl<'r, const ROLE: u8, M, K, Mint, B> Flow<'r, ROLE, M, K, Mint, B>
+impl<'e, 'r, const ROLE: u8, M, K, Mint> Flow<'e, 'r, ROLE, M, K, Mint>
 where
     M: MessageSpec + SendableLabel,
     K: carrier::SessionKitFamily + 'r,
     Mint: MintConfigMarker,
-    B: BindingSlot,
 {
     #[inline]
-    pub(crate) fn from_cap_flow(inner: CapFlow<'r, ROLE, M, K, Mint, B>) -> Self {
+    pub(crate) fn from_cap_flow(inner: CapFlow<'e, 'r, ROLE, M, K, Mint>) -> Self {
         Self {
             inner: FlowInner { inner },
         }
     }
 }
 
-impl<'r, const ROLE: u8, M, K, Mint, B> CapFlow<'r, ROLE, M, K, Mint, B>
+impl<'e, 'r, const ROLE: u8, M, K, Mint> CapFlow<'e, 'r, ROLE, M, K, Mint>
 where
     M: MessageSpec + SendableLabel,
     K: carrier::SessionKitFamily + 'r,
     Mint: MintConfigMarker,
-    B: BindingSlot,
 {
-    pub(crate) fn new(endpoint: KernelEndpoint<'r, ROLE, K, Mint, B>, meta: SendMeta) -> Self {
+    pub(crate) fn new(
+        endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>,
+        preview: SendPreview,
+    ) -> Self {
         Self {
             endpoint,
-            meta,
+            preview,
             _msg: PhantomData,
         }
     }
 
-    fn into_parts(self) -> (KernelEndpoint<'r, ROLE, K, Mint, B>, SendMeta) {
-        (self.endpoint, self.meta)
+    fn into_parts(self) -> (*mut KernelEndpoint<'r, ROLE, K, Mint>, SendPreview) {
+        (self.endpoint, self.preview)
     }
 }
 
@@ -93,8 +110,8 @@ where
 // Unified send implementation
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-impl<'r, 'cfg, const ROLE: u8, M, T, U, C, const MAX_RV: usize, Mint, B>
-    CapFlow<'r, ROLE, M, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint, B>
+impl<'e, 'r, 'cfg, const ROLE: u8, M, T, U, C, const MAX_RV: usize, Mint>
+    CapFlow<'e, 'r, ROLE, M, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>
 where
     M: MessageSpec + SendableLabel,
     M::Payload: crate::transport::wire::WireEncode,
@@ -108,13 +125,12 @@ where
             Mint,
             MAX_RV,
             M,
-            B,
+            EndpointBinding<'r>,
         >,
     T: crate::substrate::Transport + 'cfg,
     U: crate::substrate::runtime::LabelUniverse + 'cfg,
     C: crate::substrate::runtime::Clock + 'cfg,
     Mint: MintConfigMarker,
-    B: BindingSlot,
 {
     /// Send the message with a payload provider.
     ///
@@ -124,25 +140,36 @@ where
     ///
     /// Type resolution happens at compile-time via the `FlowSendArg` trait.
     #[inline]
-    pub(crate) async fn send<'a, A>(
+    pub(crate) fn send<'a, A>(
         self,
         arg: A,
-    ) -> SendResult<(
-        KernelEndpoint<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint, B>,
-        ControlOutcome<'r, <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>,
-    )>
+    ) -> impl core::future::Future<
+        Output = SendResult<
+            ControlOutcome<
+                'r,
+                <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind,
+            >,
+        >,
+    > + 'a
     where
         A: FlowSendArg<'a, M, Mint>,
         M::Payload: 'a,
+        M: 'a,
+        A: 'a,
+        Mint: 'a,
+        'r: 'a,
+        'cfg: 'a,
+        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
     {
-        let (endpoint, meta) = self.into_parts();
+        let (endpoint, preview) = self.into_parts();
         let payload = arg.into_payload();
-        endpoint.send_with_meta::<M>(&meta, payload).await
+        unsafe { (&mut *endpoint).send_with_preview_in_place::<M>(preview, payload) }
     }
 }
 
-impl<'r, 'cfg, const ROLE: u8, M, T, U, C, const MAX_RV: usize, Mint, B>
-    Flow<'r, ROLE, M, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint, B>
+#[allow(private_bounds)]
+impl<'e, 'r, 'cfg, const ROLE: u8, M, T, U, C, const MAX_RV: usize, Mint>
+    Flow<'e, 'r, ROLE, M, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>
 where
     M: MessageSpec + SendableLabel,
     M::Payload: crate::transport::wire::WireEncode,
@@ -156,28 +183,36 @@ where
             Mint,
             MAX_RV,
             M,
-            B,
+            EndpointBinding<'r>,
         >,
     T: crate::substrate::Transport + 'cfg,
     U: crate::substrate::runtime::LabelUniverse + 'cfg,
     C: crate::substrate::runtime::Clock + 'cfg,
     Mint: MintConfigMarker,
-    B: BindingSlot,
 {
     #[inline]
-    pub async fn send<'a, A>(
+    pub fn send<'a, A>(
         self,
         arg: A,
-    ) -> SendResult<(
-        Endpoint<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint, B>,
-        ControlOutcome<'r, <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>,
-    )>
+    ) -> impl core::future::Future<
+        Output = SendResult<
+            ControlOutcome<
+                'r,
+                <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind,
+            >,
+        >,
+    > + 'a
     where
         A: FlowSendArg<'a, M, Mint>,
         M::Payload: 'a,
+        M: 'a,
+        A: 'a,
+        Mint: 'a,
+        'r: 'a,
+        'cfg: 'a,
+        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
     {
-        let (endpoint, outcome) = self.inner.inner.send(arg).await?;
-        Ok((Endpoint::from_cursor(endpoint), outcome))
+        self.inner.inner.send(arg)
     }
 }
 

@@ -13,15 +13,17 @@ use crate::{
             planner::LeaseFacetNeeds,
         },
     },
-    epf::vm::Slot,
     observe::core::TapEvent,
-    rendezvous::{capability::CapTable, core::Rendezvous, slots::SlotArena},
+    rendezvous::{capability::CapTable, core::Rendezvous},
     runtime::{config::Clock, consts::LabelUniverse},
     transport::Transport,
 };
+#[cfg(test)]
+use crate::{epf::vm::Slot, rendezvous::slots::SlotArena};
 
 const CAP_LOG_CAPACITY: usize = 4;
 const CAP_MASK_LOG_CAPACITY: usize = 4;
+#[cfg(test)]
 const SLOT_LOG_CAPACITY: usize = 4;
 
 /// Error returned when a lease bundle handle runs out of tracking capacity.
@@ -35,10 +37,23 @@ struct CapsMintRecord {
     nonce: [u8; crate::control::cap::mint::CAP_NONCE_LEN],
 }
 
+impl CapsMintRecord {
+    const EMPTY: Self = Self {
+        nonce: [0; crate::control::cap::mint::CAP_NONCE_LEN],
+    };
+}
+
 #[derive(Clone, Copy)]
 struct CapsMaskRecord {
     lane: Lane,
     mask: CapsMask,
+}
+
+impl CapsMaskRecord {
+    const EMPTY: Self = Self {
+        lane: Lane::new(0),
+        mask: CapsMask::empty(),
+    };
 }
 
 /// Handle that records minted capabilities and capability mask adjustments so rollback can purge them.
@@ -51,8 +66,10 @@ where
 {
     rendezvous: NonNull<Rendezvous<'ctx, 'cfg, T, U, C, E>>,
     table: NonNull<CapTable>,
-    pending: [Option<CapsMintRecord>; CAP_LOG_CAPACITY],
-    masks: [Option<CapsMaskRecord>; CAP_MASK_LOG_CAPACITY],
+    pending: [CapsMintRecord; CAP_LOG_CAPACITY],
+    pending_mask: u8,
+    masks: [CapsMaskRecord; CAP_MASK_LOG_CAPACITY],
+    masks_mask: u8,
     _marker: PhantomData<&'ctx crate::observe::core::TapRing<'cfg>>,
 }
 
@@ -70,8 +87,10 @@ where
         Self {
             rendezvous,
             table,
-            pending: [None; CAP_LOG_CAPACITY],
-            masks: [None; CAP_MASK_LOG_CAPACITY],
+            pending: [CapsMintRecord::EMPTY; CAP_LOG_CAPACITY],
+            pending_mask: 0,
+            masks: [CapsMaskRecord::EMPTY; CAP_MASK_LOG_CAPACITY],
+            masks_mask: 0,
             _marker: PhantomData,
         }
     }
@@ -81,15 +100,22 @@ where
         &mut self,
         nonce: [u8; crate::control::cap::mint::CAP_NONCE_LEN],
     ) -> Result<(), LeaseBundleError> {
-        if self
-            .pending
-            .iter()
-            .any(|entry| entry.is_some_and(|rec| rec.nonce == nonce))
-        {
-            return Ok(());
+        let mut free_slot = None;
+        let mut idx = 0usize;
+        while idx < CAP_LOG_CAPACITY {
+            let bit = 1u8 << idx;
+            if self.pending_mask & bit != 0 {
+                if self.pending[idx].nonce == nonce {
+                    return Ok(());
+                }
+            } else if free_slot.is_none() {
+                free_slot = Some(idx);
+            }
+            idx += 1;
         }
-        if let Some(slot) = self.pending.iter_mut().find(|entry| entry.is_none()) {
-            *slot = Some(CapsMintRecord { nonce });
+        if let Some(slot) = free_slot {
+            self.pending[slot] = CapsMintRecord { nonce };
+            self.pending_mask |= 1 << slot;
             Ok(())
         } else {
             Err(LeaseBundleError::Capacity)
@@ -102,18 +128,25 @@ where
         lane: Lane,
         previous: CapsMask,
     ) -> Result<(), LeaseBundleError> {
-        if self
-            .masks
-            .iter()
-            .any(|entry| entry.is_some_and(|rec| rec.lane == lane))
-        {
-            return Ok(());
+        let mut free_slot = None;
+        let mut idx = 0usize;
+        while idx < CAP_MASK_LOG_CAPACITY {
+            let bit = 1u8 << idx;
+            if self.masks_mask & bit != 0 {
+                if self.masks[idx].lane == lane {
+                    return Ok(());
+                }
+            } else if free_slot.is_none() {
+                free_slot = Some(idx);
+            }
+            idx += 1;
         }
-        if let Some(slot) = self.masks.iter_mut().find(|entry| entry.is_none()) {
-            *slot = Some(CapsMaskRecord {
+        if let Some(slot) = free_slot {
+            self.masks[slot] = CapsMaskRecord {
                 lane,
                 mask: previous,
-            });
+            };
+            self.masks_mask |= 1 << slot;
             Ok(())
         } else {
             Err(LeaseBundleError::Capacity)
@@ -122,13 +155,16 @@ where
 
     #[inline]
     fn on_commit(&mut self) {
-        self.pending.fill(None);
-        self.masks.fill(None);
+        self.pending_mask = 0;
+        self.masks_mask = 0;
     }
 
     fn on_rollback(&mut self) {
-        for entry in self.masks.iter_mut() {
-            if let Some(record) = entry.take() {
+        let mut idx = 0usize;
+        while idx < CAP_MASK_LOG_CAPACITY {
+            let bit = 1u8 << idx;
+            if self.masks_mask & bit != 0 {
+                let record = self.masks[idx];
                 // SAFETY: rendezvous pointer originates from an exclusive lease.
                 unsafe {
                     self.rendezvous
@@ -136,71 +172,102 @@ where
                         .set_caps_mask_for_lane(record.lane, record.mask);
                 }
             }
+            idx += 1;
         }
-        for entry in self.pending.iter_mut() {
-            if let Some(record) = entry.take() {
+        self.masks_mask = 0;
+        idx = 0;
+        while idx < CAP_LOG_CAPACITY {
+            let bit = 1u8 << idx;
+            if self.pending_mask & bit != 0 {
+                let record = self.pending[idx];
                 unsafe {
                     self.table.as_ref().release_by_nonce(&record.nonce);
                 }
             }
+            idx += 1;
         }
+        self.pending_mask = 0;
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy)]
 struct SlotStageRecord {
     slot: Slot,
 }
 
+#[cfg(test)]
+impl SlotStageRecord {
+    const EMPTY: Self = Self {
+        slot: Slot::Forward,
+    };
+}
+
 /// Handle that records slot staging so rollback can scrub temporary buffers.
+#[cfg(test)]
 pub(crate) struct SlotBundleHandle<'ctx, 'cfg> {
     arena: NonNull<SlotArena>,
-    stages: [Option<SlotStageRecord>; SLOT_LOG_CAPACITY],
+    stages: [SlotStageRecord; SLOT_LOG_CAPACITY],
+    stages_mask: u8,
     _marker: PhantomData<&'ctx crate::observe::core::TapRing<'cfg>>,
 }
 
+#[cfg(test)]
 impl<'ctx, 'cfg> SlotBundleHandle<'ctx, 'cfg> {
     pub(crate) const fn new(arena: NonNull<SlotArena>) -> Self {
         Self {
             arena,
-            stages: [None; SLOT_LOG_CAPACITY],
+            stages: [SlotStageRecord::EMPTY; SLOT_LOG_CAPACITY],
+            stages_mask: 0,
             _marker: PhantomData,
         }
     }
 
     #[inline]
-    #[cfg(test)]
     pub(crate) fn track_stage(&mut self, slot: Slot) -> Result<(), LeaseBundleError> {
-        if self
-            .stages
-            .iter()
-            .any(|entry| entry.is_some_and(|rec| rec.slot == slot))
-        {
-            return Ok(());
+        let mut idx = 0usize;
+        while idx < SLOT_LOG_CAPACITY {
+            let bit = 1u8 << idx;
+            if self.stages_mask & bit != 0 && self.stages[idx].slot == slot {
+                return Ok(());
+            }
+            idx += 1;
         }
-        if let Some(entry) = self.stages.iter_mut().find(|entry| entry.is_none()) {
-            *entry = Some(SlotStageRecord { slot });
-            Ok(())
-        } else {
-            Err(LeaseBundleError::Capacity)
+
+        idx = 0;
+        while idx < SLOT_LOG_CAPACITY {
+            let bit = 1u8 << idx;
+            if self.stages_mask & bit == 0 {
+                self.stages[idx] = SlotStageRecord { slot };
+                self.stages_mask |= bit;
+                return Ok(());
+            }
+            idx += 1;
         }
+
+        Err(LeaseBundleError::Capacity)
     }
 
     #[inline]
     fn on_commit(&mut self) {
-        self.stages.fill(None);
+        self.stages_mask = 0;
     }
 
     fn on_rollback(&mut self) {
-        for entry in self.stages.iter_mut() {
-            if let Some(record) = entry.take() {
+        let mut idx = 0usize;
+        while idx < SLOT_LOG_CAPACITY {
+            let bit = 1u8 << idx;
+            if self.stages_mask & bit != 0 {
+                let record = self.stages[idx];
                 unsafe {
                     let arena = self.arena.as_mut();
                     let storage = arena.storage_mut(record.slot);
                     storage.staging_mut().fill(0);
                 }
             }
+            idx += 1;
         }
+        self.stages_mask = 0;
     }
 }
 
@@ -258,6 +325,7 @@ where
     observe: Option<LeaseObserve<'ctx, 'cfg>>,
     splice: Option<SpliceGraphContext>,
     caps: Option<CapsBundleHandle<'ctx, 'cfg, T, U, C, E>>,
+    #[cfg(test)]
     slots: Option<SlotBundleHandle<'ctx, 'cfg>>,
     commit_event: Option<TapEvent>,
     rollback_event: Option<TapEvent>,
@@ -289,6 +357,7 @@ where
             observe: None,
             splice: None,
             caps: None,
+            #[cfg(test)]
             slots: None,
             commit_event: None,
             rollback_event: None,
@@ -318,6 +387,7 @@ where
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn set_slot_bundle(&mut self, handle: SlotBundleHandle<'ctx, 'cfg>) {
         self.slots = Some(handle);
     }
@@ -361,6 +431,7 @@ where
             self.set_caps(CapsBundleHandle::new(rendezvous_ptr, caps_ptr));
         }
 
+        #[cfg(test)]
         if needs.requires_slots() {
             let mut bundle = rendezvous.slot_bundle();
             let arena_ptr = NonNull::from(bundle.arena());
@@ -382,6 +453,7 @@ where
         if let Some(handle) = self.caps.as_mut() {
             handle.on_commit();
         }
+        #[cfg(test)]
         if let Some(handle) = self.slots.as_mut() {
             handle.on_commit();
         }
@@ -398,6 +470,7 @@ where
         if let Some(handle) = self.caps.as_mut() {
             handle.on_rollback();
         }
+        #[cfg(test)]
         if let Some(handle) = self.slots.as_mut() {
             handle.on_rollback();
         }
@@ -539,15 +612,14 @@ where
 mod tests {
     use super::LeaseGraphBundleExt;
     use super::*;
-    use core::ptr::NonNull;
-    use std::boxed::Box;
-    use std::vec;
+    use core::{cell::UnsafeCell, mem::MaybeUninit, ptr, ptr::NonNull};
+    use std::thread_local;
 
     use crate::{
         control::cap::mint::{CapShot, CapsMask, EndpointResource, ResourceKind},
         control::cluster::effects::CpEffect,
         control::types::{Lane, RendezvousId, SessionId},
-        observe::core::TapRing,
+        observe::core::{TapEvent, TapRing},
         observe::{self},
         rendezvous::capability::CapEntry,
         runtime::{
@@ -632,49 +704,129 @@ mod tests {
         const MAX_CHILDREN: usize = 3;
     }
 
-    fn leak_empty_control_core<const MAX_RV: usize>() -> &'static mut ControlCore<
+    // Keep bundle fixture slabs above the current rendezvous resident floor so
+    // these tests exercise lease wiring rather than stale tiny-slab assumptions.
+    const TEST_SLAB_CAPACITY: usize = 8 * 1024;
+
+    type TestControlCore = ControlCore<
         'static,
         DummyTransport,
         DefaultLabelUniverse,
         CounterClock,
         crate::control::cap::mint::EpochTbl,
-        MAX_RV,
-    > {
-        let mut core = Box::<
-            ControlCore<
-                'static,
-                DummyTransport,
-                DefaultLabelUniverse,
-                CounterClock,
-                crate::control::cap::mint::EpochTbl,
-                MAX_RV,
-            >,
-        >::new_uninit();
-        unsafe {
-            ControlCore::init_empty(core.as_mut_ptr());
-            Box::leak(core.assume_init())
+        4,
+    >;
+
+    type TestRendezvous = crate::rendezvous::core::Rendezvous<
+        'static,
+        'static,
+        DummyTransport,
+        DefaultLabelUniverse,
+        CounterClock,
+        crate::control::cap::mint::EpochTbl,
+    >;
+
+    struct BundleRuntimeGuard {
+        tap0: *mut [TapEvent; RING_EVENTS],
+        tap1: *mut [TapEvent; RING_EVENTS],
+        slab0: *mut [u8; TEST_SLAB_CAPACITY],
+        slab1: *mut [u8; TEST_SLAB_CAPACITY],
+    }
+
+    thread_local! {
+        static BUNDLE_TAP0: UnsafeCell<[TapEvent; RING_EVENTS]> =
+            const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
+        static BUNDLE_TAP1: UnsafeCell<[TapEvent; RING_EVENTS]> =
+            const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
+        static BUNDLE_SLAB0: UnsafeCell<[u8; TEST_SLAB_CAPACITY]> =
+            const { UnsafeCell::new([0u8; TEST_SLAB_CAPACITY]) };
+        static BUNDLE_SLAB1: UnsafeCell<[u8; TEST_SLAB_CAPACITY]> =
+            const { UnsafeCell::new([0u8; TEST_SLAB_CAPACITY]) };
+        static BUNDLE_CONTROL_CORE: UnsafeCell<MaybeUninit<TestControlCore>> =
+            const { UnsafeCell::new(MaybeUninit::uninit()) };
+        static BUNDLE_RENDEZVOUS: UnsafeCell<MaybeUninit<TestRendezvous>> =
+            const { UnsafeCell::new(MaybeUninit::uninit()) };
+    }
+
+    fn with_bundle_runtime<R>(f: impl FnOnce(&mut BundleRuntimeGuard) -> R) -> R {
+        BUNDLE_TAP0.with(|tap0| {
+            BUNDLE_TAP1.with(|tap1| {
+                BUNDLE_SLAB0.with(|slab0| {
+                    BUNDLE_SLAB1.with(|slab1| unsafe {
+                        let tap0 = &mut *tap0.get();
+                        tap0.fill(TapEvent::zero());
+                        let tap1 = &mut *tap1.get();
+                        tap1.fill(TapEvent::zero());
+                        let slab0 = &mut *slab0.get();
+                        slab0.fill(0);
+                        let slab1 = &mut *slab1.get();
+                        slab1.fill(0);
+                        let mut runtime = BundleRuntimeGuard {
+                            tap0,
+                            tap1,
+                            slab0,
+                            slab1,
+                        };
+                        f(&mut runtime)
+                    })
+                })
+            })
+        })
+    }
+
+    impl BundleRuntimeGuard {
+        fn config0<const N: usize>(
+            &mut self,
+        ) -> Config<'static, DefaultLabelUniverse, CounterClock> {
+            assert!(N <= TEST_SLAB_CAPACITY, "fixture slab 0 too small");
+            let tap = unsafe { &mut *self.tap0 };
+            let slab = unsafe { &mut *self.slab0 };
+            Config::new(tap, slab)
+        }
+
+        fn config1<const N: usize>(
+            &mut self,
+        ) -> Config<'static, DefaultLabelUniverse, CounterClock> {
+            assert!(N <= TEST_SLAB_CAPACITY, "fixture slab 1 too small");
+            let tap = unsafe { &mut *self.tap1 };
+            let slab = unsafe { &mut *self.slab1 };
+            Config::new(tap, slab)
+        }
+
+        fn tap0(&mut self) -> &'static mut [TapEvent; RING_EVENTS] {
+            unsafe { &mut *self.tap0 }
         }
     }
 
-    fn leak_tap_storage() -> &'static mut [TapEvent; RING_EVENTS] {
-        let storage: Box<[TapEvent]> = vec![TapEvent::default(); RING_EVENTS].into_boxed_slice();
-        let storage: Box<[TapEvent; RING_EVENTS]> = storage.try_into().expect("ring events length");
-        Box::leak(storage)
+    fn with_bundle_control_core<R>(f: impl FnOnce(&mut TestControlCore) -> R) -> R {
+        BUNDLE_CONTROL_CORE.with(|value| unsafe {
+            let ptr = (*value.get()).as_mut_ptr();
+            TestControlCore::init_empty(ptr);
+            let result = f(&mut *ptr);
+            ptr::drop_in_place(ptr);
+            result
+        })
     }
 
-    fn leak_slab(size: usize) -> &'static mut [u8] {
-        Box::leak(vec![0u8; size].into_boxed_slice())
+    fn with_bundle_rendezvous<R>(
+        config: Config<'static, DefaultLabelUniverse, CounterClock>,
+        f: impl FnOnce(&mut TestRendezvous) -> R,
+    ) -> R {
+        BUNDLE_RENDEZVOUS.with(|value| unsafe {
+            let ptr = (*value.get()).as_mut_ptr();
+            let rv_id = RendezvousId::new(1);
+            TestRendezvous::init_from_config(ptr, rv_id, config, DummyTransport, 0);
+            let result = f(&mut *ptr);
+            ptr::drop_in_place(ptr);
+            result
+        })
     }
 
     #[test]
     fn populate_local_sets_handles() {
-        let tap_storage = leak_tap_storage();
-        let slab = leak_slab(512);
-        let config = Config::new(tap_storage, slab);
-        crate::rendezvous::core::with_test_rendezvous_from_config(
-            config,
-            DummyTransport,
-            |rendezvous| {
+        with_bundle_runtime(|fixture| {
+            let config = fixture.config0::<512>();
+            with_bundle_rendezvous(config, |rendezvous| {
                 let mut ctx: LeaseBundleContext<
                     'static,
                     'static,
@@ -688,100 +840,102 @@ mod tests {
                 assert!(ctx.observe().is_some(), "observe facet seeded");
                 assert!(ctx.caps_mut().is_some(), "caps bundle seeded");
                 assert!(ctx.slots_mut().is_some(), "slot bundle seeded");
-            },
-        );
+            })
+        });
     }
 
     #[test]
     fn control_core_builder_returns_context() {
         const MAX_RV: usize = 4;
 
-        let tap_storage = leak_tap_storage();
-        let slab = leak_slab(512);
-        let config = Config::new(tap_storage, slab);
-        let core = leak_empty_control_core::<MAX_RV>();
-        let rv_id = core
-            .register_local_from_config(config, DummyTransport)
-            .expect("register rendezvous succeeds");
+        with_bundle_runtime(|fixture| {
+            let config = fixture.config0::<512>();
+            with_bundle_control_core(|core| {
+                let rv_id = core
+                    .register_local_from_config(config, DummyTransport, 0)
+                    .expect("register rendezvous succeeds");
 
-        let mut ctx = LeaseBundleContext::from_control_core::<MAX_RV>(core, rv_id)
-            .expect("context available for local rendezvous");
+                let mut ctx = LeaseBundleContext::from_control_core::<MAX_RV>(core, rv_id)
+                    .expect("context available for local rendezvous");
 
-        assert!(ctx.observe().is_some());
-        assert!(ctx.caps_mut().is_some());
-        assert!(ctx.slots_mut().is_some());
+                assert!(ctx.observe().is_some());
+                assert!(ctx.caps_mut().is_some());
+                assert!(ctx.slots_mut().is_some());
+            })
+        });
     }
 
     #[test]
     fn lease_graph_bundle_adds_child_with_handles() {
         const MAX_RV: usize = 4;
 
-        let tap_storage_root = leak_tap_storage();
-        let slab_root = leak_slab(512);
-        let config_root = Config::new(tap_storage_root, slab_root);
-        let tap_storage_child = leak_tap_storage();
-        let slab_child = leak_slab(512);
-        let config_child = Config::new(tap_storage_child, slab_child);
-        let core = leak_empty_control_core::<MAX_RV>();
-        let root_id = core
-            .register_local_from_config(config_root, DummyTransport)
-            .expect("register root rendezvous");
-        let child_id = core
-            .register_local_from_config(config_child, DummyTransport)
-            .expect("register child rendezvous");
+        with_bundle_runtime(|fixture| {
+            let config_root = fixture.config0::<512>();
+            let config_child = fixture.config1::<512>();
+            with_bundle_control_core(|core| {
+                let root_id = core
+                    .register_local_from_config(config_root, DummyTransport, 0)
+                    .expect("register root rendezvous");
+                let child_id = core
+                    .register_local_from_config(config_child, DummyTransport, 0)
+                    .expect("register child rendezvous");
 
-        let root_ctx = LeaseBundleContext::from_control_core::<MAX_RV>(core, root_id)
-            .expect("root context available");
-        let mut graph = LeaseGraph::<TestSpec>::new(
-            root_id,
-            LeaseBundleFacet::<
-                DummyTransport,
-                DefaultLabelUniverse,
-                CounterClock,
-                crate::control::cap::mint::EpochTbl,
-            >::default(),
-            root_ctx,
-        );
-        graph
-            .add_child_with_bundle(core, root_id, child_id)
-            .expect("child added");
+                let root_ctx = LeaseBundleContext::from_control_core::<MAX_RV>(core, root_id)
+                    .expect("root context available");
+                let mut graph = LeaseGraph::<TestSpec>::new(
+                    root_id,
+                    LeaseBundleFacet::<
+                        DummyTransport,
+                        DefaultLabelUniverse,
+                        CounterClock,
+                        crate::control::cap::mint::EpochTbl,
+                    >::default(),
+                    root_ctx,
+                );
+                graph
+                    .add_child_with_bundle(core, root_id, child_id)
+                    .expect("child added");
 
-        let mut child_handle = graph.handle_mut(child_id).expect("child handle");
-        let ctx = child_handle.context();
-        assert!(ctx.caps_mut().is_some(), "caps bundle seeded in child");
-        assert!(ctx.slots_mut().is_some(), "slot bundle seeded in child");
+                let mut child_handle = graph.handle_mut(child_id).expect("child handle");
+                let ctx = child_handle.context();
+                assert!(ctx.caps_mut().is_some(), "caps bundle seeded in child");
+                assert!(ctx.slots_mut().is_some(), "slot bundle seeded in child");
+            })
+        });
     }
 
     #[test]
     fn commit_emits_registered_tap() {
-        let ring = TapRing::from_storage(leak_tap_storage());
-        let static_ring = unsafe { ring.assume_static() };
+        with_bundle_runtime(|fixture| {
+            let ring = TapRing::from_storage(fixture.tap0());
+            let static_ring = unsafe { ring.assume_static() };
 
-        let mut ctx: LeaseBundleContext<
-            'static,
-            'static,
-            DummyTransport,
-            DefaultLabelUniverse,
-            CounterClock,
-            crate::control::cap::mint::EpochTbl,
-        > = LeaseBundleContext::new();
-        ctx.set_observe(LeaseObserve::new(core::ptr::from_ref(static_ring)));
-        let event = observe::events::DelegSplice::new(7, 1, 2);
-        ctx.register_commit_tap(event);
+            let mut ctx: LeaseBundleContext<
+                'static,
+                'static,
+                DummyTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                crate::control::cap::mint::EpochTbl,
+            > = LeaseBundleContext::new();
+            ctx.set_observe(LeaseObserve::new(core::ptr::from_ref(static_ring)));
+            let event = observe::events::DelegSplice::new(7, 1, 2);
+            ctx.register_commit_tap(event);
 
-        let facet = LeaseBundleFacet::<
-            DummyTransport,
-            DefaultLabelUniverse,
-            CounterClock,
-            crate::control::cap::mint::EpochTbl,
-        >::default();
-        facet.on_commit(&mut ctx);
+            let facet = LeaseBundleFacet::<
+                DummyTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                crate::control::cap::mint::EpochTbl,
+            >::default();
+            facet.on_commit(&mut ctx);
 
-        assert_eq!(ring.head(), 1);
-        let recorded = ring.as_slice()[0];
-        assert_eq!(recorded.id, event.id);
-        assert_eq!(recorded.arg0, event.arg0);
-        assert_eq!(recorded.arg1, event.arg1);
+            assert_eq!(ring.head(), 1);
+            let recorded = ring.as_slice()[0];
+            assert_eq!(recorded.id, event.id);
+            assert_eq!(recorded.arg0, event.arg0);
+            assert_eq!(recorded.arg1, event.arg1);
+        });
     }
 
     #[test]
@@ -789,13 +943,19 @@ mod tests {
         use crate::control::cap::mint::{CAP_HANDLE_LEN, CAP_NONCE_LEN, CapsMask};
         use crate::rendezvous::error::CapError;
 
-        let tap_storage = leak_tap_storage();
-        let slab = leak_slab(256);
-        let config = Config::new(tap_storage, slab);
-        crate::rendezvous::core::with_test_rendezvous_from_config(
-            config,
-            DummyTransport,
-            |rendezvous| {
+        with_bundle_runtime(|fixture| {
+            let config = fixture.config0::<256>();
+            with_bundle_rendezvous(config, |rendezvous| {
+                rendezvous
+                    .ensure_endpoint_resident_budget(
+                        crate::rendezvous::core::EndpointResidentBudget::with_route_storage(
+                            0,
+                            crate::runtime::consts::LANES_MAX as usize,
+                            0,
+                            1,
+                        ),
+                    )
+                    .expect("reserve lazy cap storage");
                 let rv_ptr = NonNull::from(&mut *rendezvous);
                 let cap_ptr = NonNull::from(rendezvous.caps());
                 let cap_table = rendezvous.caps();
@@ -814,13 +974,11 @@ mod tests {
                 let nonce = [0xAB; CAP_NONCE_LEN];
                 let entry = CapEntry {
                     sid,
-                    lane: Lane::new(lane.raw()),
+                    lane_raw: lane.as_wire(),
                     kind_tag: EndpointResource::TAG,
-                    shot: CapShot::Many,
+                    shot_state: CapShot::Many.as_u8(),
                     role: 7,
-                    consumed: false,
                     nonce,
-                    caps_mask: CapsMask::allow_all(),
                     handle: [0u8; CAP_HANDLE_LEN],
                 };
                 cap_table.insert_entry(entry).expect("insert succeeds");
@@ -842,8 +1000,8 @@ mod tests {
                     CapsMask::allow_all(),
                 );
                 assert!(matches!(claim, Err(CapError::UnknownToken)));
-            },
-        );
+            })
+        });
     }
 
     #[test]
@@ -892,14 +1050,46 @@ mod tests {
     }
 
     #[test]
-    fn caps_mask_restored_on_rollback() {
-        let tap_storage = leak_tap_storage();
-        let slab = leak_slab(256);
-        let config = Config::new(tap_storage, slab);
-        crate::rendezvous::core::with_test_rendezvous_from_config(
-            config,
+    fn duplicate_slot_stage_does_not_consume_capacity() {
+        use crate::rendezvous::slots::SlotArena;
+
+        let mut arena = SlotArena::new();
+        let arena_ptr = NonNull::from(&mut arena);
+        let mut ctx: LeaseBundleContext<
+            'static,
+            'static,
             DummyTransport,
-            |rendezvous| {
+            DefaultLabelUniverse,
+            CounterClock,
+            crate::control::cap::mint::EpochTbl,
+        > = LeaseBundleContext::new();
+        ctx.set_slot_bundle(SlotBundleHandle::new(arena_ptr));
+
+        let slots = ctx.slots_mut().expect("slot handle present");
+        slots.track_stage(Slot::Forward).expect("log stage");
+        slots
+            .track_stage(Slot::Forward)
+            .expect("duplicate stage stays idempotent");
+        slots
+            .track_stage(Slot::EndpointRx)
+            .expect("log second stage");
+        slots
+            .track_stage(Slot::EndpointTx)
+            .expect("log third stage");
+        slots
+            .track_stage(Slot::Rendezvous)
+            .expect("log fourth stage");
+        assert!(matches!(
+            slots.track_stage(Slot::Route),
+            Err(LeaseBundleError::Capacity)
+        ));
+    }
+
+    #[test]
+    fn caps_mask_restored_on_rollback() {
+        with_bundle_runtime(|fixture| {
+            let config = fixture.config0::<256>();
+            with_bundle_rendezvous(config, |rendezvous| {
                 let original = rendezvous.caps_mask_for_lane(Lane::new(0));
                 let rv_ptr = NonNull::from(&mut *rendezvous);
                 let cap_ptr = NonNull::from(rendezvous.caps());
@@ -928,7 +1118,7 @@ mod tests {
                     rendezvous.caps_mask_for_lane(Lane::new(0)).bits(),
                     original.bits()
                 );
-            },
-        );
+            })
+        });
     }
 }

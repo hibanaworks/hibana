@@ -47,19 +47,25 @@
 //! with [`Trap::VerifyFailed`]; the verifier prevents these in well-formed
 //! bytecode, but the interpreter defends against malformed images.
 
+#[cfg(not(test))]
+use core::marker::PhantomData;
+
+#[cfg(test)]
+use crate::observe::scope::{ScopeTrace, tap_scope};
 use crate::{
     control::cap::mint::CapsMask,
     control::types::{Lane, SessionId},
     observe::core::TapEvent,
-    observe::scope::{ScopeTrace, tap_scope},
     transport::TransportSnapshot,
 };
 
+#[cfg(test)]
 use super::{
     dispatch::{self, RaOp, SyscallError},
     ops,
 };
 
+#[cfg(test)]
 const REG_COUNT: usize = 8;
 
 /// Execution slot defines which subsystem triggered the VM.
@@ -73,6 +79,7 @@ pub enum Slot {
 }
 
 /// Trap reasons emitted by the interpreter.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Trap {
     FuelExhausted,
@@ -82,7 +89,13 @@ pub(crate) enum Trap {
     VerifyFailed,
 }
 
+/// Trap reasons emitted by the interpreter.
+#[cfg(not(test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Trap {}
+
 /// Host-facing action emitted by the VM.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum VmAction {
     Proceed,
@@ -108,9 +121,11 @@ pub(crate) enum VmAction {
 }
 
 /// Maximum annotations that can be stored per VM invocation.
+#[cfg(test)]
 pub(crate) const ANNOT_CAP: usize = 4;
 
 /// A single annotation entry (key-value pair).
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Annotation {
     pub key: u16,
@@ -118,6 +133,7 @@ pub(crate) struct Annotation {
 }
 
 /// Execution context punctured into the interpreter.
+#[cfg(test)]
 #[derive(Debug)]
 pub(crate) struct VmCtx<'a> {
     slot: Slot,
@@ -133,6 +149,14 @@ pub(crate) struct VmCtx<'a> {
     annot_cnt: u8,
 }
 
+/// Execution context punctured into the interpreter.
+#[cfg(not(test))]
+#[derive(Debug, Default)]
+pub(crate) struct VmCtx<'a> {
+    _marker: PhantomData<&'a TapEvent>,
+}
+
+#[cfg(test)]
 impl<'a> VmCtx<'a> {
     pub(crate) fn new(slot: Slot, event: &'a TapEvent, caps: CapsMask) -> Self {
         Self {
@@ -227,13 +251,36 @@ impl<'a> VmCtx<'a> {
     }
 }
 
+#[cfg(not(test))]
+impl<'a> VmCtx<'a> {
+    pub(crate) fn new(_slot: Slot, _event: &'a TapEvent, _caps: CapsMask) -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn set_session(&mut self, _session: SessionId) {}
+
+    #[inline]
+    pub(crate) fn set_lane(&mut self, _lane: Lane) {}
+
+    #[inline]
+    pub(crate) fn set_transport_snapshot(&mut self, _snapshot: TransportSnapshot) {}
+
+    #[inline]
+    pub(crate) fn set_policy_input(&mut self, _input: [u32; 4]) {}
+}
+
 /// Opaque VM instance (bytecode + scratch buffers).
+#[cfg(test)]
 pub(crate) struct Vm<'code> {
     pub(crate) code: &'code [u8],
     pub(crate) fuel: u16,
     pub(crate) mem: &'code mut [u8],
 }
 
+#[cfg(test)]
 impl<'code> Vm<'code> {
     pub(crate) fn new(code: &'code [u8], mem: &'code mut [u8], fuel: u16) -> Self {
         Self { code, fuel, mem }
@@ -752,6 +799,7 @@ impl<'code> Vm<'code> {
     }
 }
 
+#[cfg(test)]
 fn read_u8(code: &[u8], pc: &mut usize) -> Option<u8> {
     if *pc < code.len() {
         let byte = code[*pc];
@@ -762,12 +810,14 @@ fn read_u8(code: &[u8], pc: &mut usize) -> Option<u8> {
     }
 }
 
+#[cfg(test)]
 fn read_u16(code: &[u8], pc: &mut usize) -> Option<u16> {
     let lo = read_u8(code, pc)? as u16;
     let hi = read_u8(code, pc)? as u16;
     Some(lo | (hi << 8))
 }
 
+#[cfg(test)]
 fn read_u32(code: &[u8], pc: &mut usize) -> Option<u32> {
     let b0 = read_u8(code, pc)? as u32;
     let b1 = read_u8(code, pc)? as u32;
@@ -776,11 +826,13 @@ fn read_u32(code: &[u8], pc: &mut usize) -> Option<u32> {
     Some(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))
 }
 
+#[cfg(test)]
 fn read_reg(code: &[u8], pc: &mut usize) -> Option<usize> {
     let idx = read_u8(code, pc)? as usize;
     if idx < REG_COUNT { Some(idx) } else { None }
 }
 
+#[cfg(test)]
 fn encode_latency(value: Option<u64>) -> u32 {
     const MAX: u64 = u32::MAX as u64;
     value.map(|lat| lat.min(MAX) as u32).unwrap_or(0)

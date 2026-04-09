@@ -13,12 +13,8 @@ use crate::{
     runtime::consts::RING_EVENTS,
     transport::TransportSnapshot,
 };
-use std::{
-    boxed::Box,
-    collections::BTreeMap,
-    sync::{Mutex, OnceLock},
-    vec,
-};
+use core::{cell::UnsafeCell, mem::MaybeUninit, ptr};
+use std::thread_local;
 
 const SLOT: super::vm::Slot = super::vm::Slot::Route;
 const FUEL_MAX: u16 = 64;
@@ -31,12 +27,6 @@ const POLICY_REPLAY_INPUT1_ID: u16 = 0x040C;
 const POLICY_REPLAY_TRANSPORT0_ID: u16 = 0x040D;
 const POLICY_REPLAY_TRANSPORT1_ID: u16 = 0x040E;
 const POLICY_REPLAY_EVENT_EXT_ID: u16 = 0x040F;
-
-fn leak_tap_storage() -> &'static mut [TapEvent; RING_EVENTS] {
-    let storage: Box<[TapEvent]> = vec![TapEvent::default(); RING_EVENTS].into_boxed_slice();
-    let storage: Box<[TapEvent; RING_EVENTS]> = storage.try_into().expect("ring events length");
-    Box::leak(storage)
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct AuditVerdict {
@@ -83,27 +73,50 @@ impl ReplayPending {
     }
 }
 
-fn policy_replay_test_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
+thread_local! {
+    static POLICY_REPLAY_RING_STORAGE: UnsafeCell<[TapEvent; RING_EVENTS]> =
+        const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
+    static POLICY_REPLAY_RING_SLOT: UnsafeCell<MaybeUninit<TapRing<'static>>> =
+        const { UnsafeCell::new(MaybeUninit::uninit()) };
 }
 
-fn install_test_ring() -> (&'static TapRing<'static>, Option<&'static TapRing<'static>>) {
-    let storage = leak_tap_storage();
-    let ring = Box::leak(Box::new(TapRing::from_storage(storage)));
-    let previous = unsafe { install_ring(assume_static_ring(ring)) };
-    (ring, previous)
+fn with_policy_replay_ring<R>(f: impl FnOnce(&'static TapRing<'static>) -> R) -> R {
+    POLICY_REPLAY_RING_STORAGE.with(|storage| {
+        POLICY_REPLAY_RING_SLOT.with(|ring_slot| unsafe {
+            let storage = &mut *storage.get();
+            storage.fill(TapEvent::zero());
+            let ring_ptr = (*ring_slot.get()).as_mut_ptr();
+            ring_ptr.write(TapRing::from_storage(storage));
+            let ring = (&*ring_ptr).assume_static();
+            let previous = install_ring(ring);
+            let result = f(ring);
+            let _ = uninstall_ring(ring);
+            if let Some(prev) = previous {
+                let _ = install_ring(prev);
+            }
+            ptr::drop_in_place(ring_ptr);
+            result
+        })
+    })
 }
 
-fn restore_ring(ring: &'static TapRing<'static>, previous: Option<&'static TapRing<'static>>) {
-    let _ = uninstall_ring(ring);
-    if let Some(prev) = previous {
-        let _ = install_ring(prev);
+#[derive(Clone, Copy)]
+struct ReplayCatalog {
+    entries: [(u32, &'static [u8]); 2],
+}
+
+impl ReplayCatalog {
+    fn code(self, digest: u32) -> Option<&'static [u8]> {
+        let mut idx = 0usize;
+        while idx < self.entries.len() {
+            let (entry_digest, code) = self.entries[idx];
+            if entry_digest == digest {
+                return Some(code);
+            }
+            idx += 1;
+        }
+        None
     }
-}
-
-unsafe fn assume_static_ring(ring: &TapRing<'_>) -> &'static TapRing<'static> {
-    unsafe { &*(ring as *const TapRing<'_>).cast::<TapRing<'static>>() }
 }
 
 fn replay_digests(ring: &TapRing<'_>, slot: super::vm::Slot, cursor: &mut usize) -> DigestState {
@@ -131,11 +144,13 @@ fn replay_digests(ring: &TapRing<'_>, slot: super::vm::Slot, cursor: &mut usize)
     replay
 }
 
-fn replay_catalog() -> BTreeMap<u32, &'static [u8]> {
-    let mut catalog = BTreeMap::new();
-    let _ = catalog.insert(super::verifier::compute_hash(&CODE_V1), &CODE_V1[..]);
-    let _ = catalog.insert(super::verifier::compute_hash(&CODE_V2), &CODE_V2[..]);
-    catalog
+fn replay_catalog() -> ReplayCatalog {
+    ReplayCatalog {
+        entries: [
+            (super::verifier::compute_hash(&CODE_V1), &CODE_V1[..]),
+            (super::verifier::compute_hash(&CODE_V2), &CODE_V2[..]),
+        ],
+    }
 }
 
 fn decode_slot_mode(raw: u32) -> Result<(super::vm::Slot, PolicyMode), &'static str> {
@@ -191,7 +206,7 @@ fn verdict_from_action(action: Action, fuel_used: u32) -> AuditVerdict {
 }
 
 fn execute_policy_verdict(
-    catalog: &BTreeMap<u32, &'static [u8]>,
+    catalog: &ReplayCatalog,
     policy_digest: u32,
     slot: super::vm::Slot,
     mode: PolicyMode,
@@ -199,8 +214,8 @@ fn execute_policy_verdict(
     policy_input: [u32; 4],
     transport_snapshot: TransportSnapshot,
 ) -> Result<AuditVerdict, &'static str> {
-    let code = *catalog
-        .get(&policy_digest)
+    let code = catalog
+        .code(policy_digest)
         .ok_or("unknown policy digest for replay")?;
     let mut scratch = [0u8; MEM_LEN];
     let machine = super::host::Machine::with_mem(code, &mut scratch, MEM_LEN, FUEL_MAX)
@@ -303,7 +318,7 @@ fn push_policy_audit_tuple(
 fn replay_verdict_from_audit(
     ring: &TapRing<'_>,
     cursor: &mut usize,
-    catalog: &BTreeMap<u32, &'static [u8]>,
+    catalog: &ReplayCatalog,
 ) -> Result<usize, &'static str> {
     let mut pending = ReplayPending::default();
     let mut rows = 0usize;
@@ -512,242 +527,227 @@ fn replay_verdict_from_audit(
 
 #[test]
 fn replay_from_audit_log_tracks_digest_transitions() {
-    let _guard = policy_replay_test_lock()
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
-    let (ring, previous) = install_test_ring();
-    let mut cursor = ring.head();
-    let digest_v1 = super::verifier::compute_hash(&CODE_V1);
-    let digest_v2 = super::verifier::compute_hash(&CODE_V2);
+    with_policy_replay_ring(|ring| {
+        let mut cursor = ring.head();
+        let digest_v1 = super::verifier::compute_hash(&CODE_V1);
+        let digest_v2 = super::verifier::compute_hash(&CODE_V2);
 
-    ring.push(
-        RawEvent::new(1, ids::POLICY_COMMIT)
-            .with_arg0(slot_tag(SLOT) as u32)
-            .with_arg1(1)
-            .with_arg2(digest_v1),
-    );
-    ring.push(
-        RawEvent::new(2, ids::POLICY_COMMIT)
-            .with_arg0(slot_tag(SLOT) as u32)
-            .with_arg1(2)
-            .with_arg2(digest_v2),
-    );
-    ring.push(
-        RawEvent::new(3, ids::POLICY_ROLLBACK)
-            .with_arg0(slot_tag(SLOT) as u32)
-            .with_arg1(1)
-            .with_arg2(digest_v1),
-    );
+        ring.push(
+            RawEvent::new(1, ids::POLICY_COMMIT)
+                .with_arg0(slot_tag(SLOT) as u32)
+                .with_arg1(1)
+                .with_arg2(digest_v1),
+        );
+        ring.push(
+            RawEvent::new(2, ids::POLICY_COMMIT)
+                .with_arg0(slot_tag(SLOT) as u32)
+                .with_arg1(2)
+                .with_arg2(digest_v2),
+        );
+        ring.push(
+            RawEvent::new(3, ids::POLICY_ROLLBACK)
+                .with_arg0(slot_tag(SLOT) as u32)
+                .with_arg1(1)
+                .with_arg2(digest_v1),
+        );
 
-    let replay = replay_digests(ring, SLOT, &mut cursor);
-    let expected = DigestState {
-        active_digest: Some(digest_v1),
-        standby_digest: Some(digest_v2),
-        last_good_digest: Some(digest_v1),
-    };
-    assert_eq!(replay, expected);
-
-    restore_ring(ring, previous);
+        let replay = replay_digests(ring, SLOT, &mut cursor);
+        let expected = DigestState {
+            active_digest: Some(digest_v1),
+            standby_digest: Some(digest_v2),
+            last_good_digest: Some(digest_v1),
+        };
+        assert_eq!(replay, expected);
+    });
 }
 
 #[test]
 fn replay_from_audit_log_recomputes_same_verdict() {
-    let _guard = policy_replay_test_lock()
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
-    let (ring, previous) = install_test_ring();
-    let mut cursor = ring.head();
-    let catalog = replay_catalog();
+    with_policy_replay_ring(|ring| {
+        let mut cursor = ring.head();
+        let catalog = replay_catalog();
 
-    let slot = super::vm::Slot::Route;
-    let mode = PolicyMode::Enforce;
-    let policy_digest = super::verifier::compute_hash(&CODE_V1);
-    let policy_input = [1, 0, 0, 0];
-    let transport_snapshot = TransportSnapshot::new(Some(11), Some(2))
-        .with_congestion_marks(Some(1))
-        .with_retransmissions(Some(0));
+        let slot = super::vm::Slot::Route;
+        let mode = PolicyMode::Enforce;
+        let policy_digest = super::verifier::compute_hash(&CODE_V1);
+        let policy_input = [1, 0, 0, 0];
+        let transport_snapshot = TransportSnapshot::new(Some(11), Some(2))
+            .with_congestion_marks(Some(1))
+            .with_retransmissions(Some(0));
 
-    let event_one = RawEvent::new(1, ids::ROUTE_DECISION)
-        .with_arg0(1)
-        .with_arg1(42);
-    let expected_one = execute_policy_verdict(
-        &catalog,
-        policy_digest,
-        slot,
-        mode,
-        &event_one,
-        policy_input,
-        transport_snapshot,
-    )
-    .expect("expected verdict one");
-    push_policy_audit_tuple(
-        ring,
-        1,
-        slot,
-        mode,
-        policy_digest,
-        ids::ROUTE_DECISION,
-        1,
-        42,
-        policy_input,
-        transport_snapshot,
-        expected_one,
-    );
+        let event_one = RawEvent::new(1, ids::ROUTE_DECISION)
+            .with_arg0(1)
+            .with_arg1(42);
+        let expected_one = execute_policy_verdict(
+            &catalog,
+            policy_digest,
+            slot,
+            mode,
+            &event_one,
+            policy_input,
+            transport_snapshot,
+        )
+        .expect("expected verdict one");
+        push_policy_audit_tuple(
+            ring,
+            1,
+            slot,
+            mode,
+            policy_digest,
+            ids::ROUTE_DECISION,
+            1,
+            42,
+            policy_input,
+            transport_snapshot,
+            expected_one,
+        );
 
-    let event_two = RawEvent::new(2, ids::ROUTE_DECISION)
-        .with_arg0(1)
-        .with_arg1(42);
-    let expected_two = execute_policy_verdict(
-        &catalog,
-        policy_digest,
-        slot,
-        mode,
-        &event_two,
-        policy_input,
-        transport_snapshot,
-    )
-    .expect("expected verdict two");
-    push_policy_audit_tuple(
-        ring,
-        2,
-        slot,
-        mode,
-        policy_digest,
-        ids::ROUTE_DECISION,
-        1,
-        42,
-        policy_input,
-        transport_snapshot,
-        expected_two,
-    );
+        let event_two = RawEvent::new(2, ids::ROUTE_DECISION)
+            .with_arg0(1)
+            .with_arg1(42);
+        let expected_two = execute_policy_verdict(
+            &catalog,
+            policy_digest,
+            slot,
+            mode,
+            &event_two,
+            policy_input,
+            transport_snapshot,
+        )
+        .expect("expected verdict two");
+        push_policy_audit_tuple(
+            ring,
+            2,
+            slot,
+            mode,
+            policy_digest,
+            ids::ROUTE_DECISION,
+            1,
+            42,
+            policy_input,
+            transport_snapshot,
+            expected_two,
+        );
 
-    let rows =
-        replay_verdict_from_audit(ring, &mut cursor, &catalog).expect("verdict replay must match");
-    assert_eq!(rows, 2);
-
-    restore_ring(ring, previous);
+        let rows = replay_verdict_from_audit(ring, &mut cursor, &catalog)
+            .expect("verdict replay must match");
+        assert_eq!(rows, 2);
+    });
 }
 
 #[test]
 fn replay_from_audit_log_detects_verdict_divergence() {
-    let _guard = policy_replay_test_lock()
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
-    let (ring, previous) = install_test_ring();
-    let mut cursor = ring.head();
-    let catalog = replay_catalog();
+    with_policy_replay_ring(|ring| {
+        let mut cursor = ring.head();
+        let catalog = replay_catalog();
 
-    let slot = super::vm::Slot::Route;
-    let mode = PolicyMode::Enforce;
-    let policy_digest = super::verifier::compute_hash(&CODE_V1);
-    let policy_input = [3, 0, 0, 0];
-    let transport_snapshot = TransportSnapshot::new(Some(7), Some(1))
-        .with_congestion_marks(Some(2))
-        .with_retransmissions(Some(1));
-    let event = RawEvent::new(10, ids::ROUTE_DECISION)
-        .with_arg0(0)
-        .with_arg1(99);
-    let expected = execute_policy_verdict(
-        &catalog,
-        policy_digest,
-        slot,
-        mode,
-        &event,
-        policy_input,
-        transport_snapshot,
-    )
-    .expect("expected verdict");
+        let slot = super::vm::Slot::Route;
+        let mode = PolicyMode::Enforce;
+        let policy_digest = super::verifier::compute_hash(&CODE_V1);
+        let policy_input = [3, 0, 0, 0];
+        let transport_snapshot = TransportSnapshot::new(Some(7), Some(1))
+            .with_congestion_marks(Some(2))
+            .with_retransmissions(Some(1));
+        let event = RawEvent::new(10, ids::ROUTE_DECISION)
+            .with_arg0(0)
+            .with_arg1(99);
+        let expected = execute_policy_verdict(
+            &catalog,
+            policy_digest,
+            slot,
+            mode,
+            &event,
+            policy_input,
+            transport_snapshot,
+        )
+        .expect("expected verdict");
 
-    push_policy_audit_tuple(
-        ring,
-        10,
-        slot,
-        mode,
-        policy_digest,
-        ids::ROUTE_DECISION,
-        0,
-        99,
-        policy_input,
-        transport_snapshot,
-        expected,
-    );
+        push_policy_audit_tuple(
+            ring,
+            10,
+            slot,
+            mode,
+            policy_digest,
+            ids::ROUTE_DECISION,
+            0,
+            99,
+            policy_input,
+            transport_snapshot,
+            expected,
+        );
 
-    let mismatched = AuditVerdict {
-        verdict_meta: (2u32 << 24) | (1u32 << 16),
-        reason: 0xFFFF,
-        fuel_used: expected.fuel_used,
-    };
-    push_policy_audit_tuple(
-        ring,
-        11,
-        slot,
-        mode,
-        policy_digest,
-        ids::ROUTE_DECISION,
-        0,
-        99,
-        policy_input,
-        transport_snapshot,
-        mismatched,
-    );
+        let mismatched = AuditVerdict {
+            verdict_meta: (2u32 << 24) | (1u32 << 16),
+            reason: 0xFFFF,
+            fuel_used: expected.fuel_used,
+        };
+        push_policy_audit_tuple(
+            ring,
+            11,
+            slot,
+            mode,
+            policy_digest,
+            ids::ROUTE_DECISION,
+            0,
+            99,
+            policy_input,
+            transport_snapshot,
+            mismatched,
+        );
 
-    let result = replay_verdict_from_audit(ring, &mut cursor, &catalog);
-    assert!(matches!(result, Err("verdict replay mismatch")));
-
-    restore_ring(ring, previous);
+        let result = replay_verdict_from_audit(ring, &mut cursor, &catalog);
+        assert!(matches!(result, Err("verdict replay mismatch")));
+    });
 }
 
 #[test]
 fn policy_replay_with_defer_matches() {
-    let _guard = policy_replay_test_lock()
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
-    let (ring, previous) = install_test_ring();
-    let mut cursor = ring.head();
-    let catalog = replay_catalog();
+    with_policy_replay_ring(|ring| {
+        let mut cursor = ring.head();
+        let catalog = replay_catalog();
 
-    let slot = super::vm::Slot::Route;
-    let mode = PolicyMode::Enforce;
-    let policy_digest = super::verifier::compute_hash(&CODE_V1);
-    let policy_input = [5, 0, 0, 0];
-    let transport_snapshot = TransportSnapshot::new(Some(5), Some(1))
-        .with_congestion_marks(Some(0))
-        .with_retransmissions(Some(0));
-    let event = RawEvent::new(20, ids::ROUTE_DECISION)
-        .with_arg0(1)
-        .with_arg1(7);
-    let expected = execute_policy_verdict(
-        &catalog,
-        policy_digest,
-        slot,
-        mode,
-        &event,
-        policy_input,
-        transport_snapshot,
-    )
-    .expect("expected verdict");
-    push_policy_audit_tuple(
-        ring,
-        20,
-        slot,
-        mode,
-        policy_digest,
-        ids::ROUTE_DECISION,
-        1,
-        7,
-        policy_input,
-        transport_snapshot,
-        expected,
-    );
-    ring.push(
-        RawEvent::new(21, ids::POLICY_AUDIT_DEFER)
-            .with_arg0((1u32 << 24) | (3u32 << 16) | 6u32)
-            .with_arg1(1)
-            .with_arg2((2u32 << 16) | 0),
-    );
+        let slot = super::vm::Slot::Route;
+        let mode = PolicyMode::Enforce;
+        let policy_digest = super::verifier::compute_hash(&CODE_V1);
+        let policy_input = [5, 0, 0, 0];
+        let transport_snapshot = TransportSnapshot::new(Some(5), Some(1))
+            .with_congestion_marks(Some(0))
+            .with_retransmissions(Some(0));
+        let event = RawEvent::new(20, ids::ROUTE_DECISION)
+            .with_arg0(1)
+            .with_arg1(7);
+        let expected = execute_policy_verdict(
+            &catalog,
+            policy_digest,
+            slot,
+            mode,
+            &event,
+            policy_input,
+            transport_snapshot,
+        )
+        .expect("expected verdict");
+        push_policy_audit_tuple(
+            ring,
+            20,
+            slot,
+            mode,
+            policy_digest,
+            ids::ROUTE_DECISION,
+            1,
+            7,
+            policy_input,
+            transport_snapshot,
+            expected,
+        );
+        ring.push(
+            RawEvent::new(21, ids::POLICY_AUDIT_DEFER)
+                .with_arg0((1u32 << 24) | (3u32 << 16) | 6u32)
+                .with_arg1(1)
+                .with_arg2((2u32 << 16) | 0),
+        );
 
-    let rows = replay_verdict_from_audit(ring, &mut cursor, &catalog).expect("replay must match");
-    assert_eq!(rows, 1);
-
-    restore_ring(ring, previous);
+        let rows =
+            replay_verdict_from_audit(ring, &mut cursor, &catalog).expect("replay must match");
+        assert_eq!(rows, 1);
+    });
 }

@@ -3,6 +3,10 @@
 mod common;
 #[path = "support/runtime.rs"]
 mod runtime_support;
+#[path = "support/tls_ref.rs"]
+mod tls_ref_support;
+
+use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 use common::TestTransport;
 use hibana::{
@@ -16,11 +20,25 @@ use hibana::{
         runtime::{Config, DefaultLabelUniverse},
     },
 };
-use runtime_support::{RING_EVENTS, leak_clock, leak_slab, leak_tap_storage};
+use runtime_support::{RING_EVENTS, with_fixture};
+use tls_ref_support::with_tls_ref;
 
-const PROGRAM: g::Program<StepNil> = StepNil::PROGRAM;
+const PROGRAM: g::ProgramSource<StepNil> = StepNil::PROGRAM;
 
-static CONTROLLER_PROGRAM: RoleProgram<'static, 0, StepNil> = project(&PROGRAM);
+static CONTROLLER_PROGRAM: RoleProgram<'static, 0, StepNil> = project(&g::freeze(&PROGRAM));
+type TestKit = SessionKit<
+    'static,
+    TestTransport,
+    DefaultLabelUniverse,
+    hibana::substrate::runtime::CounterClock,
+    2,
+>;
+
+std::thread_local! {
+    static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
+}
 
 const LANE_ACQUIRE_ID: u16 = 0x0210;
 const LANE_RELEASE_ID: u16 = 0x0211;
@@ -33,74 +51,59 @@ fn decode_sid_lane(packed: u32) -> (u32, u16) {
 
 #[test]
 fn lease_observe_tracks_lane_lifecycle() {
-    // Prepare cluster and rendezvous with test transport.
-    let cluster: &'static SessionKit<
-        'static,
-        TestTransport,
-        DefaultLabelUniverse,
-        hibana::substrate::runtime::CounterClock,
-        2,
-    > = Box::leak(Box::new(SessionKit::new(leak_clock())));
-    let transport = TestTransport::default();
-    let tap_buf = leak_tap_storage();
-    let tap_buf_ptr: *const [TapEvent; RING_EVENTS] = tap_buf;
-    let rv_id = cluster
-        .add_rendezvous_from_config(Config::new(tap_buf, leak_slab(1024)), transport.clone())
-        .expect("register rendezvous");
+    with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        let tap_ptr = tap_buf as *mut [TapEvent; runtime_support::RING_EVENTS];
+        let slab_ptr = slab as *mut [u8];
+        let (expected_rv, expected_sid, expected_lane) = with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let tap_buf = unsafe { &mut *tap_ptr };
+                let slab = unsafe { &mut *slab_ptr };
+                let rv_id = cluster
+                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+                    .expect("register rendezvous");
 
-    let sid = SessionId::new(7);
-    // Lane 0 is always active (primary lane)
-    let lane = Lane::new(0);
+                let sid = SessionId::new(7);
+                let lane = Lane::new(0);
+                let _endpoint = cluster
+                    .enter(rv_id, sid, &CONTROLLER_PROGRAM, NoBinding)
+                    .expect("attach cursor");
 
-    {
-        let endpoint = cluster
-            .enter::<0, _, _, _>(rv_id, sid, &CONTROLLER_PROGRAM, NoBinding)
-            .expect("attach cursor");
-        drop(endpoint);
-    }
+                (rv_id.raw() as u32, sid.raw(), lane.raw() as u16)
+            },
+        );
 
-    let storage = unsafe { &*tap_buf_ptr };
-    let events: Vec<TapEvent> = storage
-        .iter()
-        .copied()
-        .filter(|event| event.id != 0)
-        .collect();
-    let expected_rv = rv_id.raw() as u32;
-    let expected_sid = sid.raw();
-    let expected_lane = lane.raw() as u16;
-    let acquire_count = events
-        .iter()
-        .filter(|event| event.id == LANE_ACQUIRE_ID)
-        .count();
-    let release_count = events
-        .iter()
-        .filter(|event| event.id == LANE_RELEASE_ID)
-        .count();
-    let has_expected_acquire = events.iter().any(|event| {
-        if event.id != LANE_ACQUIRE_ID {
-            return false;
+        let events = unsafe { &*tap_ptr };
+        let mut acquire_count = 0usize;
+        let mut release_count = 0usize;
+        let mut has_expected_acquire = false;
+        let mut has_expected_release = false;
+        let mut idx = 0usize;
+        while idx < RING_EVENTS {
+            let event = events[idx];
+            if event.id == LANE_ACQUIRE_ID {
+                acquire_count += 1;
+                let (event_sid, event_lane) = decode_sid_lane(event.arg1);
+                has_expected_acquire |= event.arg0 == expected_rv
+                    && event_sid == expected_sid
+                    && event_lane == expected_lane;
+            } else if event.id == LANE_RELEASE_ID {
+                release_count += 1;
+                let (event_sid, event_lane) = decode_sid_lane(event.arg1);
+                has_expected_release |= event.arg0 == expected_rv
+                    && event_sid == expected_sid
+                    && event_lane == expected_lane;
+            }
+            idx += 1;
         }
-        let (event_sid, event_lane) = decode_sid_lane(event.arg1);
-        event.arg0 == expected_rv && event_sid == expected_sid && event_lane == expected_lane
-    });
-    let has_expected_release = events.iter().any(|event| {
-        if event.id != LANE_RELEASE_ID {
-            return false;
-        }
-        let (event_sid, event_lane) = decode_sid_lane(event.arg1);
-        event.arg0 == expected_rv && event_sid == expected_sid && event_lane == expected_lane
-    });
 
-    assert!(
-        has_expected_acquire,
-        "expected lane acquire event, got {:?}",
-        events
-    );
-    assert!(
-        has_expected_release,
-        "expected lane release event, got {:?}",
-        events
-    );
-    assert_eq!(acquire_count, 1, "expected exactly one acquire event");
-    assert_eq!(release_count, 1, "expected exactly one release event");
+        assert!(has_expected_acquire, "expected lane acquire event");
+        assert!(has_expected_release, "expected lane release event");
+        assert_eq!(acquire_count, 1, "expected exactly one acquire event");
+        assert_eq!(release_count, 1, "expected exactly one release event");
+    });
 }

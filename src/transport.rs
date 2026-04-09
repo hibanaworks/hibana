@@ -581,42 +581,40 @@ mod tests {
     use super::*;
     use crate::transport::wire::Payload;
     use core::{
+        cell::{Cell, UnsafeCell},
         future::{Future, ready},
         pin::Pin,
-        task::{Context, Poll, Waker},
-    };
-    use futures::task::{ArcWake, waker};
-    use std::{
-        sync::atomic::{AtomicBool, Ordering},
-        sync::{Arc, Mutex},
+        task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
     };
 
     #[derive(Default)]
     struct SharedState {
-        waker: Mutex<Option<Waker>>,
-        ready: AtomicBool,
+        waker: UnsafeCell<Option<Waker>>,
+        ready: Cell<bool>,
     }
 
     impl SharedState {
         fn store_waker(&self, waker: &Waker) {
-            *self.waker.lock().expect("poison-free") = Some(waker.clone());
+            unsafe {
+                *self.waker.get() = Some(waker.clone());
+            }
         }
 
         fn take_waker(&self) -> Option<Waker> {
-            self.waker.lock().expect("poison-free").take()
+            unsafe { (*self.waker.get()).take() }
         }
 
         fn set_ready(&self) {
-            self.ready.store(true, Ordering::SeqCst);
+            self.ready.set(true);
         }
 
         fn take_ready(&self) -> bool {
-            self.ready.swap(false, Ordering::SeqCst)
+            self.ready.replace(false)
         }
     }
 
     struct RecvFuture<'a> {
-        state: Arc<SharedState>,
+        state: &'a SharedState,
         payload: Option<Payload<'a>>,
     }
 
@@ -634,20 +632,19 @@ mod tests {
         }
     }
 
-    #[derive(Clone)]
     struct WakerAwareTransport {
-        state: Arc<SharedState>,
+        state: SharedState,
     }
 
     impl WakerAwareTransport {
         fn new() -> Self {
             Self {
-                state: Arc::new(SharedState::default()),
+                state: SharedState::default(),
             }
         }
 
-        fn state(&self) -> Arc<SharedState> {
-            self.state.clone()
+        fn state(&self) -> &SharedState {
+            &self.state
         }
     }
 
@@ -690,7 +687,7 @@ mod tests {
             static PAYLOAD: [u8; 0] = [];
             let payload = Payload::new(&PAYLOAD);
             RecvFuture {
-                state: self.state.clone(),
+                state: &self.state,
                 payload: Some(payload),
             }
         }
@@ -716,21 +713,28 @@ mod tests {
         }
     }
 
-    struct FlagWake {
-        flag: AtomicBool,
-    }
-
-    impl FlagWake {
-        fn new() -> Arc<Self> {
-            Arc::new(Self {
-                flag: AtomicBool::new(false),
-            })
+    unsafe fn flag_waker(flag: &Cell<bool>) -> Waker {
+        unsafe fn clone(data: *const ()) -> RawWaker {
+            RawWaker::new(data, &VTABLE)
         }
-    }
 
-    impl ArcWake for FlagWake {
-        fn wake_by_ref(arc_self: &Arc<Self>) {
-            arc_self.flag.store(true, Ordering::SeqCst);
+        unsafe fn wake(data: *const ()) {
+            unsafe { (*(data as *const Cell<bool>)).set(true) };
+        }
+
+        unsafe fn wake_by_ref(data: *const ()) {
+            unsafe { (*(data as *const Cell<bool>)).set(true) };
+        }
+
+        unsafe fn drop(_: *const ()) {}
+
+        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop);
+
+        unsafe {
+            Waker::from_raw(RawWaker::new(
+                flag as *const Cell<bool> as *const (),
+                &VTABLE,
+            ))
         }
     }
 
@@ -743,8 +747,8 @@ mod tests {
 
         assert!(shared.take_waker().is_none(), "no waker before polling");
 
-        let wake_handle = FlagWake::new();
-        let waker = waker(wake_handle.clone());
+        let wake_flag = Cell::new(false);
+        let waker = unsafe { flag_waker(&wake_flag) };
         let mut cx = Context::from_waker(&waker);
 
         assert!(matches!(Pin::new(&mut future).poll(&mut cx), Poll::Pending));
@@ -752,7 +756,7 @@ mod tests {
         let stored = shared.take_waker().expect("future recorded waker");
         shared.set_ready();
         stored.wake();
-        assert!(wake_handle.flag.load(Ordering::SeqCst), "wake flag flipped");
+        assert!(wake_flag.get(), "wake flag flipped");
 
         assert!(matches!(
             Pin::new(&mut future).poll(&mut cx),

@@ -34,8 +34,8 @@ note: erroneous constant encountered
   |             <Steps as TailLoopControl>::IS_LOOP_CONTROL,
   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-note: the above error was encountered while instantiating `fn Program::<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<48>, GenericCapToken<LoopContinueKind>, ExternalControl<LoopContinueKind>>>, StepNil>>::build`
+note: the above error was encountered while instantiating `fn ProgramSource::<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<48>, GenericCapToken<LoopContinueKind>, ExternalControl<LoopContinueKind>>>, StepNil>>::build`
  --> src/global.rs
   |
-  |     Program::build()
-  |     ^^^^^^^^^^^^^^^^
+  |     ProgramSource::build()
+  |     ^^^^^^^^^^^^^^^^^^^^^^

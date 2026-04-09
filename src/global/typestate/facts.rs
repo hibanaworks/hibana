@@ -1,10 +1,10 @@
 //! Immutable typestate facts and metadata.
 
-use super::builder::RoleTypestate;
+use super::builder::RoleTypestateValue;
 use crate::{
     control::cap::mint::CapShot,
     eff::{self, EffIndex},
-    global::const_dsl::{PolicyMode, ScopeId},
+    global::const_dsl::{CompactScopeId, PolicyMode, ScopeId},
 };
 
 /// Index identifying a local state within the synthesized typestate graph.
@@ -57,34 +57,6 @@ impl PartialEq<StateIndex> for u16 {
     }
 }
 
-/// Index into the per-scope route-recv linked list and flattened recv table.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct RouteRecvIndex(u16);
-
-impl RouteRecvIndex {
-    pub(crate) const ZERO: Self = Self(0);
-    pub(crate) const MAX: Self = Self(u16::MAX);
-
-    #[inline(always)]
-    pub(crate) const fn from_usize(idx: usize) -> Self {
-        if idx > (u16::MAX as usize) {
-            panic!("route recv index overflow");
-        }
-        Self(idx as u16)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn as_usize(self) -> usize {
-        self.0 as usize
-    }
-
-    #[inline(always)]
-    pub(crate) const fn is_max(self) -> bool {
-        self.0 == u16::MAX
-    }
-}
-
 /// Maximum number of local states tracked per role (one extra slot for the
 /// terminal state).
 pub(crate) const MAX_STATES: usize = eff::meta::MAX_EFF_NODES + 1;
@@ -129,8 +101,6 @@ pub(crate) enum PassiveArmNavigation {
 /// Local action associated with a typestate node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LocalAction {
-    /// Placeholder used to prefill the backing array.
-    None,
     /// Role sends a message to a peer.
     Send {
         eff_index: EffIndex,
@@ -178,6 +148,62 @@ pub(crate) enum LocalAction {
     },
 }
 
+const LOCAL_ACTION_STATIC_POLICY_ID: u16 = u16::MAX;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PackedLocalAction {
+    Send {
+        eff_index: EffIndex,
+        peer: u8,
+        label: u8,
+        resource: Option<u8>,
+        is_control: bool,
+        shot: Option<CapShot>,
+        policy_id: u16,
+        lane: u8,
+    },
+    Recv {
+        eff_index: EffIndex,
+        peer: u8,
+        label: u8,
+        resource: Option<u8>,
+        is_control: bool,
+        shot: Option<CapShot>,
+        policy_id: u16,
+        lane: u8,
+    },
+    Local {
+        eff_index: EffIndex,
+        label: u8,
+        resource: Option<u8>,
+        is_control: bool,
+        shot: Option<CapShot>,
+        policy_id: u16,
+        lane: u8,
+    },
+    Terminate,
+    Jump {
+        reason: JumpReason,
+    },
+}
+
+#[inline(always)]
+const fn encode_policy_id(policy: PolicyMode) -> u16 {
+    match policy.dynamic_policy_id() {
+        Some(policy_id) => policy_id,
+        None => LOCAL_ACTION_STATIC_POLICY_ID,
+    }
+}
+
+#[inline(always)]
+const fn decode_policy(policy_id: u16, scope: CompactScopeId) -> PolicyMode {
+    if policy_id == LOCAL_ACTION_STATIC_POLICY_ID {
+        PolicyMode::Static
+    } else {
+        PolicyMode::Dynamic { policy_id, scope }
+    }
+}
+
 impl LocalAction {
     /// True when the node corresponds to a send action.
     #[inline(always)]
@@ -223,26 +249,50 @@ impl LocalAction {
 /// Single node in the synthesized typestate graph.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LocalNode {
-    action: LocalAction,
+    action: PackedLocalAction,
     next: StateIndex,
-    scope: ScopeId,
-    loop_scope: Option<ScopeId>,
-    route_arm: Option<u8>,
-    /// Whether this node is a choice determinant (first recv of a route arm).
-    /// Used by passive observers to identify which recv determines route selection.
-    is_choice_determinant: bool,
+    scope: CompactScopeId,
+    route_arm_raw: u8,
+    /// Bit-packed node flags.
+    /// FLAG_CHOICE_DETERMINANT marks the first recv of a route arm.
+    flags: u8,
 }
 
 impl LocalNode {
-    /// Placeholder used to prefill the backing array.
-    pub(crate) const EMPTY: Self = Self {
-        action: LocalAction::None,
-        next: StateIndex::ZERO,
-        scope: ScopeId::none(),
-        loop_scope: None,
-        route_arm: None,
-        is_choice_determinant: false,
-    };
+    const ROUTE_ARM_NONE: u8 = u8::MAX;
+    const FLAG_CHOICE_DETERMINANT: u8 = 1 << 0;
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) const fn packed_action_size() -> usize {
+        core::mem::size_of::<PackedLocalAction>()
+    }
+
+    #[inline(always)]
+    const fn encode_route_arm(route_arm: Option<u8>) -> u8 {
+        match route_arm {
+            Some(arm) => arm,
+            None => Self::ROUTE_ARM_NONE,
+        }
+    }
+
+    #[inline(always)]
+    const fn decode_route_arm(raw: u8) -> Option<u8> {
+        if raw == Self::ROUTE_ARM_NONE {
+            None
+        } else {
+            Some(raw)
+        }
+    }
+
+    #[inline(always)]
+    const fn flags(is_choice_determinant: bool) -> u8 {
+        if is_choice_determinant {
+            Self::FLAG_CHOICE_DETERMINANT
+        } else {
+            0
+        }
+    }
 
     /// Construct a send node that advances to `next`.
     #[allow(clippy::too_many_arguments)]
@@ -257,26 +307,25 @@ impl LocalNode {
         lane: u8,
         next: StateIndex,
         scope: ScopeId,
-        loop_scope: Option<ScopeId>,
+        _loop_scope: Option<ScopeId>,
         route_arm: Option<u8>,
         is_choice_determinant: bool,
     ) -> Self {
         Self {
-            action: LocalAction::Send {
+            action: PackedLocalAction::Send {
                 eff_index,
                 peer,
                 label,
                 resource,
                 is_control,
                 shot,
-                policy,
+                policy_id: encode_policy_id(policy),
                 lane,
             },
             next,
-            scope,
-            loop_scope,
-            route_arm,
-            is_choice_determinant,
+            scope: CompactScopeId::from_scope_id(scope),
+            route_arm_raw: Self::encode_route_arm(route_arm),
+            flags: Self::flags(is_choice_determinant),
         }
     }
 
@@ -293,26 +342,25 @@ impl LocalNode {
         lane: u8,
         next: StateIndex,
         scope: ScopeId,
-        loop_scope: Option<ScopeId>,
+        _loop_scope: Option<ScopeId>,
         route_arm: Option<u8>,
         is_choice_determinant: bool,
     ) -> Self {
         Self {
-            action: LocalAction::Recv {
+            action: PackedLocalAction::Recv {
                 eff_index,
                 peer,
                 label,
                 resource,
                 is_control,
                 shot,
-                policy,
+                policy_id: encode_policy_id(policy),
                 lane,
             },
             next,
-            scope,
-            loop_scope,
-            route_arm,
-            is_choice_determinant,
+            scope: CompactScopeId::from_scope_id(scope),
+            route_arm_raw: Self::encode_route_arm(route_arm),
+            flags: Self::flags(is_choice_determinant),
         }
     }
 
@@ -328,37 +376,35 @@ impl LocalNode {
         lane: u8,
         next: StateIndex,
         scope: ScopeId,
-        loop_scope: Option<ScopeId>,
+        _loop_scope: Option<ScopeId>,
         route_arm: Option<u8>,
         is_choice_determinant: bool,
     ) -> Self {
         Self {
-            action: LocalAction::Local {
+            action: PackedLocalAction::Local {
                 eff_index,
                 label,
                 resource,
                 is_control,
                 shot,
-                policy,
+                policy_id: encode_policy_id(policy),
                 lane,
             },
             next,
-            scope,
-            loop_scope,
-            route_arm,
-            is_choice_determinant,
+            scope: CompactScopeId::from_scope_id(scope),
+            route_arm_raw: Self::encode_route_arm(route_arm),
+            flags: Self::flags(is_choice_determinant),
         }
     }
 
     /// Construct a terminal node that loops to itself.
     pub(crate) const fn terminal(index: StateIndex) -> Self {
         Self {
-            action: LocalAction::Terminate,
+            action: PackedLocalAction::Terminate,
             next: index,
-            scope: ScopeId::none(),
-            loop_scope: None,
-            route_arm: None,
-            is_choice_determinant: false,
+            scope: CompactScopeId::none(),
+            route_arm_raw: Self::ROUTE_ARM_NONE,
+            flags: 0,
         }
     }
 
@@ -370,23 +416,80 @@ impl LocalNode {
         target: StateIndex,
         reason: JumpReason,
         scope: ScopeId,
-        loop_scope: Option<ScopeId>,
+        _loop_scope: Option<ScopeId>,
         route_arm: Option<u8>,
     ) -> Self {
         Self {
-            action: LocalAction::Jump { reason },
+            action: PackedLocalAction::Jump { reason },
             next: target,
-            scope,
-            loop_scope,
-            route_arm,
-            is_choice_determinant: false,
+            scope: CompactScopeId::from_scope_id(scope),
+            route_arm_raw: Self::encode_route_arm(route_arm),
+            flags: 0,
         }
     }
 
     /// Action associated with the node.
     #[inline(always)]
     pub(crate) const fn action(&self) -> LocalAction {
-        self.action
+        match self.action {
+            PackedLocalAction::Send {
+                eff_index,
+                peer,
+                label,
+                resource,
+                is_control,
+                shot,
+                policy_id,
+                lane,
+            } => LocalAction::Send {
+                eff_index,
+                peer,
+                label,
+                resource,
+                is_control,
+                shot,
+                policy: decode_policy(policy_id, self.scope),
+                lane,
+            },
+            PackedLocalAction::Recv {
+                eff_index,
+                peer,
+                label,
+                resource,
+                is_control,
+                shot,
+                policy_id,
+                lane,
+            } => LocalAction::Recv {
+                eff_index,
+                peer,
+                label,
+                resource,
+                is_control,
+                shot,
+                policy: decode_policy(policy_id, self.scope),
+                lane,
+            },
+            PackedLocalAction::Local {
+                eff_index,
+                label,
+                resource,
+                is_control,
+                shot,
+                policy_id,
+                lane,
+            } => LocalAction::Local {
+                eff_index,
+                label,
+                resource,
+                is_control,
+                shot,
+                policy: decode_policy(policy_id, self.scope),
+                lane,
+            },
+            PackedLocalAction::Terminate => LocalAction::Terminate,
+            PackedLocalAction::Jump { reason } => LocalAction::Jump { reason },
+        }
     }
 
     /// Successor state reached after performing the action.
@@ -395,26 +498,20 @@ impl LocalNode {
         self.next
     }
 
-    /// Scope identifier associated with the node, when present.
     #[inline(always)]
     pub(crate) const fn scope(&self) -> ScopeId {
-        self.scope
-    }
-
-    #[inline(always)]
-    pub(crate) const fn loop_scope(&self) -> Option<ScopeId> {
-        self.loop_scope
+        self.scope.to_scope_id()
     }
 
     #[inline(always)]
     pub(crate) const fn route_arm(&self) -> Option<u8> {
-        self.route_arm
+        Self::decode_route_arm(self.route_arm_raw)
     }
 
     /// Whether this node is a choice determinant (first recv of a route arm).
     #[inline(always)]
     pub(crate) const fn is_choice_determinant(&self) -> bool {
-        self.is_choice_determinant
+        (self.flags & Self::FLAG_CHOICE_DETERMINANT) != 0
     }
 
     /// Returns a copy of this node with a different `next` value.
@@ -427,18 +524,20 @@ impl LocalNode {
 
     #[inline(always)]
     pub(crate) const fn with_scope(self, scope: ScopeId) -> Self {
-        Self { scope, ..self }
+        Self {
+            scope: CompactScopeId::from_scope_id(scope),
+            ..self
+        }
     }
 
     #[inline(always)]
     pub(crate) const fn with_route_arm(self, route_arm: Option<u8>) -> Self {
-        Self { route_arm, ..self }
+        Self {
+            route_arm_raw: Self::encode_route_arm(route_arm),
+            ..self
+        }
     }
 }
-
-pub(in crate::global::typestate) const SCOPE_ORDINAL_INDEX_CAPACITY: usize =
-    ScopeId::ORDINAL_CAPACITY as usize;
-pub(in crate::global::typestate) const SCOPE_ORDINAL_INDEX_EMPTY: u16 = u16::MAX;
 
 /// Metadata for a send transition derived from typestate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -527,12 +626,7 @@ pub(crate) struct LocalMeta {
     pub lane: u8,
 }
 
-/// Try to fetch send metadata for a specific typestate location.
-/// Returns `None` if the node is not a Send action.
-pub(crate) fn try_send_meta<const ROLE: u8>(
-    ts: &RoleTypestate<ROLE>,
-    idx: usize,
-) -> Option<SendMeta> {
+pub(crate) fn try_send_meta_value(ts: &RoleTypestateValue, idx: usize) -> Option<SendMeta> {
     let node = ts.node(idx);
     match node.action() {
         LocalAction::Send {
@@ -561,12 +655,7 @@ pub(crate) fn try_send_meta<const ROLE: u8>(
     }
 }
 
-/// Try to fetch receive metadata for a specific typestate location.
-/// Returns `None` if the node is not a Recv action.
-pub(crate) fn try_recv_meta<const ROLE: u8>(
-    ts: &RoleTypestate<ROLE>,
-    idx: usize,
-) -> Option<RecvMeta> {
+pub(crate) fn try_recv_meta_value(ts: &RoleTypestateValue, idx: usize) -> Option<RecvMeta> {
     let node = ts.node(idx);
     match node.action() {
         LocalAction::Recv {
@@ -596,12 +685,7 @@ pub(crate) fn try_recv_meta<const ROLE: u8>(
     }
 }
 
-/// Try to fetch local action metadata for a specific typestate location.
-/// Returns `None` if the node is not a Local action.
-pub(crate) fn try_local_meta<const ROLE: u8>(
-    ts: &RoleTypestate<ROLE>,
-    idx: usize,
-) -> Option<LocalMeta> {
+pub(crate) fn try_local_meta_value(ts: &RoleTypestateValue, idx: usize) -> Option<LocalMeta> {
     let node = ts.node(idx);
     match node.action() {
         LocalAction::Local {

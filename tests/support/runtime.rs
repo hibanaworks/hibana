@@ -1,18 +1,33 @@
+use core::cell::UnsafeCell;
 use hibana::substrate::{mgmt::tap::TapEvent, runtime::CounterClock};
-use std::boxed::Box;
 
-pub(crate) const RING_EVENTS: usize = 2048;
+pub(crate) const RING_EVENTS: usize = 128;
+const FIXTURE_SLAB_CAPACITY: usize = 262_144;
 
-pub(crate) fn leak_tap_storage() -> &'static mut [TapEvent; RING_EVENTS] {
-    let storage: Box<[TapEvent]> = vec![TapEvent::default(); RING_EVENTS].into_boxed_slice();
-    let storage: Box<[TapEvent; RING_EVENTS]> = storage.try_into().expect("ring events length");
-    Box::leak(storage)
+std::thread_local! {
+    static FIXTURE_CLOCK: CounterClock = const { CounterClock::new() };
+    static FIXTURE_TAP: UnsafeCell<[TapEvent; RING_EVENTS]> =
+        const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
+    static FIXTURE_SLAB: UnsafeCell<[u8; FIXTURE_SLAB_CAPACITY]> =
+        const { UnsafeCell::new([0u8; FIXTURE_SLAB_CAPACITY]) };
 }
 
-pub(crate) fn leak_slab(size: usize) -> &'static mut [u8] {
-    Box::leak(vec![0u8; size].into_boxed_slice())
-}
-
-pub(crate) fn leak_clock() -> &'static CounterClock {
-    Box::leak(Box::new(CounterClock::new()))
+pub(crate) fn with_fixture<R>(
+    f: impl FnOnce(&'static CounterClock, &'static mut [TapEvent; RING_EVENTS], &'static mut [u8]) -> R,
+) -> R {
+    FIXTURE_CLOCK.with(|clock| {
+        FIXTURE_TAP.with(|tap| {
+            FIXTURE_SLAB.with(|slab| unsafe {
+                let tap = &mut *tap.get();
+                let slab = &mut *slab.get();
+                tap.fill(TapEvent::zero());
+                slab.fill(0);
+                f(
+                    &*(clock as *const CounterClock),
+                    &mut *(tap as *mut [TapEvent; RING_EVENTS]),
+                    &mut *(slab.as_mut_slice() as *mut [u8]),
+                )
+            })
+        })
+    })
 }

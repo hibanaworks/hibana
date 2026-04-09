@@ -5,7 +5,7 @@
 //! current implementation keeps per-flow counters for AMPST cancellation, loop,
 //! policy, and rollback safety.
 
-use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
+use core::cell::Cell;
 
 use super::ids;
 use crate::observe::core::PolicyEventKind;
@@ -15,159 +15,137 @@ use crate::{
     endpoint::LocalFailureReason, observe::local::LocalActionFailure, runtime::consts::LANES_MAX,
 };
 
+#[cfg(test)]
+use std::thread_local;
+
 const LANES_MAX_USIZE: usize = LANES_MAX as usize;
 const LOOP_INDEX_LIMIT: usize = 64;
 
-const fn zero_atomic_u64_array() -> [AtomicU64; LANES_MAX_USIZE] {
-    [
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-        AtomicU64::new(0),
-    ]
+const fn zero_u64_cell_array() -> [Cell<u64>; LANES_MAX_USIZE] {
+    [const { Cell::new(0) }; LANES_MAX_USIZE]
 }
 
-const fn zero_atomic_u32_array() -> [AtomicU32; LANES_MAX_USIZE] {
-    [
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-    ]
+const fn zero_u32_cell_array() -> [Cell<u32>; LANES_MAX_USIZE] {
+    [const { Cell::new(0) }; LANES_MAX_USIZE]
 }
 
 struct CheckState {
-    cancel_begin: AtomicU32,
-    cancel_ack: AtomicU32,
-    cancel_inflight: AtomicI32,
-    lane_acquire: AtomicU32,
-    lane_release: AtomicU32,
-    lane_inflight: AtomicI32,
-    rollback_req: AtomicU32,
-    rollback_ok: AtomicU32,
-    rollback_inflight: AtomicI32,
-    loop_continue: AtomicU32,
-    loop_break: AtomicU32,
-    loop_inflight_continue: AtomicI32,
-    loop_inflight_break: AtomicI32,
-    loop_pending_continue: [AtomicU64; LANES_MAX_USIZE],
-    loop_pending_break: [AtomicU64; LANES_MAX_USIZE],
-    policy_abort: AtomicU32,
-    policy_trap: AtomicU32,
-    policy_annot: AtomicU32,
-    policy_effect: AtomicU32,
-    policy_effect_ok: AtomicU32,
-    policy_commit: AtomicU32,
-    policy_rollback: AtomicU32,
-    lane_sid: [AtomicU32; LANES_MAX_USIZE],
-    policy_lane_total: AtomicU32,
-    policy_lane_match: AtomicU32,
-    policy_lane_mismatch: AtomicU32,
-    policy_sid_match: AtomicU32,
-    policy_sid_mismatch: AtomicU32,
-    local_failures: AtomicU32,
-    unexpected_local_failure: AtomicBool,
+    cancel_begin: Cell<u32>,
+    cancel_ack: Cell<u32>,
+    cancel_inflight: Cell<i32>,
+    lane_acquire: Cell<u32>,
+    lane_release: Cell<u32>,
+    lane_inflight: Cell<i32>,
+    rollback_req: Cell<u32>,
+    rollback_ok: Cell<u32>,
+    rollback_inflight: Cell<i32>,
+    loop_continue: Cell<u32>,
+    loop_break: Cell<u32>,
+    loop_inflight_continue: Cell<i32>,
+    loop_inflight_break: Cell<i32>,
+    loop_pending_continue: [Cell<u64>; LANES_MAX_USIZE],
+    loop_pending_break: [Cell<u64>; LANES_MAX_USIZE],
+    policy_abort: Cell<u32>,
+    policy_trap: Cell<u32>,
+    policy_annot: Cell<u32>,
+    policy_effect: Cell<u32>,
+    policy_effect_ok: Cell<u32>,
+    policy_commit: Cell<u32>,
+    policy_rollback: Cell<u32>,
+    lane_sid: [Cell<u32>; LANES_MAX_USIZE],
+    policy_lane_total: Cell<u32>,
+    policy_lane_match: Cell<u32>,
+    policy_lane_mismatch: Cell<u32>,
+    policy_sid_match: Cell<u32>,
+    policy_sid_mismatch: Cell<u32>,
+    local_failures: Cell<u32>,
+    unexpected_local_failure: Cell<bool>,
 }
 
 impl CheckState {
     const fn new() -> Self {
         Self {
-            cancel_begin: AtomicU32::new(0),
-            cancel_ack: AtomicU32::new(0),
-            cancel_inflight: AtomicI32::new(0),
-            rollback_req: AtomicU32::new(0),
-            rollback_ok: AtomicU32::new(0),
-            rollback_inflight: AtomicI32::new(0),
-            loop_continue: AtomicU32::new(0),
-            loop_break: AtomicU32::new(0),
-            loop_inflight_continue: AtomicI32::new(0),
-            loop_inflight_break: AtomicI32::new(0),
-            loop_pending_continue: zero_atomic_u64_array(),
-            loop_pending_break: zero_atomic_u64_array(),
-            policy_abort: AtomicU32::new(0),
-            policy_trap: AtomicU32::new(0),
-            policy_annot: AtomicU32::new(0),
-            policy_effect: AtomicU32::new(0),
-            policy_effect_ok: AtomicU32::new(0),
-            policy_commit: AtomicU32::new(0),
-            policy_rollback: AtomicU32::new(0),
-            lane_sid: zero_atomic_u32_array(),
-            policy_lane_total: AtomicU32::new(0),
-            policy_lane_match: AtomicU32::new(0),
-            policy_lane_mismatch: AtomicU32::new(0),
-            policy_sid_match: AtomicU32::new(0),
-            policy_sid_mismatch: AtomicU32::new(0),
-            local_failures: AtomicU32::new(0),
-            unexpected_local_failure: AtomicBool::new(false),
-            lane_acquire: AtomicU32::new(0),
-            lane_release: AtomicU32::new(0),
-            lane_inflight: AtomicI32::new(0),
+            cancel_begin: Cell::new(0),
+            cancel_ack: Cell::new(0),
+            cancel_inflight: Cell::new(0),
+            rollback_req: Cell::new(0),
+            rollback_ok: Cell::new(0),
+            rollback_inflight: Cell::new(0),
+            loop_continue: Cell::new(0),
+            loop_break: Cell::new(0),
+            loop_inflight_continue: Cell::new(0),
+            loop_inflight_break: Cell::new(0),
+            loop_pending_continue: zero_u64_cell_array(),
+            loop_pending_break: zero_u64_cell_array(),
+            policy_abort: Cell::new(0),
+            policy_trap: Cell::new(0),
+            policy_annot: Cell::new(0),
+            policy_effect: Cell::new(0),
+            policy_effect_ok: Cell::new(0),
+            policy_commit: Cell::new(0),
+            policy_rollback: Cell::new(0),
+            lane_sid: zero_u32_cell_array(),
+            policy_lane_total: Cell::new(0),
+            policy_lane_match: Cell::new(0),
+            policy_lane_mismatch: Cell::new(0),
+            policy_sid_match: Cell::new(0),
+            policy_sid_mismatch: Cell::new(0),
+            local_failures: Cell::new(0),
+            unexpected_local_failure: Cell::new(false),
+            lane_acquire: Cell::new(0),
+            lane_release: Cell::new(0),
+            lane_inflight: Cell::new(0),
         }
+    }
+
+    #[inline(always)]
+    fn add_u32(cell: &Cell<u32>, delta: u32) {
+        cell.set(cell.get().wrapping_add(delta));
+    }
+
+    #[inline(always)]
+    fn add_i32(cell: &Cell<i32>, delta: i32) {
+        cell.set(cell.get().wrapping_add(delta));
     }
 
     #[cfg(test)]
     fn reset(&self) {
-        self.cancel_begin.store(0, Ordering::Relaxed);
-        self.cancel_ack.store(0, Ordering::Relaxed);
-        self.cancel_inflight.store(0, Ordering::Relaxed);
-        self.lane_acquire.store(0, Ordering::Relaxed);
-        self.lane_release.store(0, Ordering::Relaxed);
-        self.lane_inflight.store(0, Ordering::Relaxed);
-        self.rollback_req.store(0, Ordering::Relaxed);
-        self.rollback_ok.store(0, Ordering::Relaxed);
-        self.rollback_inflight.store(0, Ordering::Relaxed);
-        self.loop_continue.store(0, Ordering::Relaxed);
-        self.loop_break.store(0, Ordering::Relaxed);
-        self.loop_inflight_continue.store(0, Ordering::Relaxed);
-        self.loop_inflight_break.store(0, Ordering::Relaxed);
+        self.cancel_begin.set(0);
+        self.cancel_ack.set(0);
+        self.cancel_inflight.set(0);
+        self.lane_acquire.set(0);
+        self.lane_release.set(0);
+        self.lane_inflight.set(0);
+        self.rollback_req.set(0);
+        self.rollback_ok.set(0);
+        self.rollback_inflight.set(0);
+        self.loop_continue.set(0);
+        self.loop_break.set(0);
+        self.loop_inflight_continue.set(0);
+        self.loop_inflight_break.set(0);
         for lane in &self.loop_pending_continue {
-            lane.store(0, Ordering::Relaxed);
+            lane.set(0);
         }
         for lane in &self.loop_pending_break {
-            lane.store(0, Ordering::Relaxed);
+            lane.set(0);
         }
-        self.policy_abort.store(0, Ordering::Relaxed);
-        self.policy_trap.store(0, Ordering::Relaxed);
-        self.policy_annot.store(0, Ordering::Relaxed);
-        self.policy_effect.store(0, Ordering::Relaxed);
-        self.policy_effect_ok.store(0, Ordering::Relaxed);
-        self.policy_commit.store(0, Ordering::Relaxed);
-        self.policy_rollback.store(0, Ordering::Relaxed);
+        self.policy_abort.set(0);
+        self.policy_trap.set(0);
+        self.policy_annot.set(0);
+        self.policy_effect.set(0);
+        self.policy_effect_ok.set(0);
+        self.policy_commit.set(0);
+        self.policy_rollback.set(0);
         for lane in &self.lane_sid {
-            lane.store(0, Ordering::Relaxed);
+            lane.set(0);
         }
-        self.policy_lane_total.store(0, Ordering::Relaxed);
-        self.policy_lane_match.store(0, Ordering::Relaxed);
-        self.policy_lane_mismatch.store(0, Ordering::Relaxed);
-        self.policy_sid_match.store(0, Ordering::Relaxed);
-        self.policy_sid_mismatch.store(0, Ordering::Relaxed);
-        self.local_failures.store(0, Ordering::Relaxed);
-        self.unexpected_local_failure
-            .store(false, Ordering::Relaxed);
+        self.policy_lane_total.set(0);
+        self.policy_lane_match.set(0);
+        self.policy_lane_mismatch.set(0);
+        self.policy_sid_match.set(0);
+        self.policy_sid_mismatch.set(0);
+        self.local_failures.set(0);
+        self.unexpected_local_failure.set(false);
     }
 
     fn record_policy_lane(&self, spec: PolicyEventSpec, event: TapEvent) {
@@ -177,29 +155,29 @@ impl CheckState {
         }
 
         let lane_idx = lane_marker.saturating_sub(1) as usize;
-        self.policy_lane_total.fetch_add(1, Ordering::Relaxed);
+        Self::add_u32(&self.policy_lane_total, 1);
 
         if lane_idx >= LANES_MAX_USIZE {
-            self.policy_lane_mismatch.fetch_add(1, Ordering::Relaxed);
+            Self::add_u32(&self.policy_lane_mismatch, 1);
             return;
         }
 
-        let active_sid_marker = self.lane_sid[lane_idx].load(Ordering::Relaxed);
+        let active_sid_marker = self.lane_sid[lane_idx].get();
         if active_sid_marker == 0 {
-            self.policy_lane_mismatch.fetch_add(1, Ordering::Relaxed);
+            Self::add_u32(&self.policy_lane_mismatch, 1);
             return;
         }
 
-        self.policy_lane_match.fetch_add(1, Ordering::Relaxed);
+        Self::add_u32(&self.policy_lane_match, 1);
 
         if let Some(expected_sid) = spec.sid_hint_from_tap(event)
             && expected_sid != 0
         {
             let active_sid = active_sid_marker.wrapping_sub(1);
             if active_sid == expected_sid {
-                self.policy_sid_match.fetch_add(1, Ordering::Relaxed);
+                Self::add_u32(&self.policy_sid_match, 1);
             } else {
-                self.policy_sid_mismatch.fetch_add(1, Ordering::Relaxed);
+                Self::add_u32(&self.policy_sid_mismatch, 1);
             }
         }
     }
@@ -207,25 +185,25 @@ impl CheckState {
     fn record_policy_event(&self, spec: PolicyEventSpec, event: TapEvent) {
         match spec.kind {
             PolicyEventKind::Abort => {
-                self.policy_abort.fetch_add(1, Ordering::Relaxed);
+                Self::add_u32(&self.policy_abort, 1);
             }
             PolicyEventKind::Trap => {
-                self.policy_trap.fetch_add(1, Ordering::Relaxed);
+                Self::add_u32(&self.policy_trap, 1);
             }
             PolicyEventKind::Annotate => {
-                self.policy_annot.fetch_add(1, Ordering::Relaxed);
+                Self::add_u32(&self.policy_annot, 1);
             }
             PolicyEventKind::Effect => {
-                self.policy_effect.fetch_add(1, Ordering::Relaxed);
+                Self::add_u32(&self.policy_effect, 1);
             }
             PolicyEventKind::EffectOk => {
-                self.policy_effect_ok.fetch_add(1, Ordering::Relaxed);
+                Self::add_u32(&self.policy_effect_ok, 1);
             }
             PolicyEventKind::Commit => {
-                self.policy_commit.fetch_add(1, Ordering::Relaxed);
+                Self::add_u32(&self.policy_commit, 1);
             }
             PolicyEventKind::Rollback => {
-                self.policy_rollback.fetch_add(1, Ordering::Relaxed);
+                Self::add_u32(&self.policy_rollback, 1);
             }
         }
         self.record_policy_lane(spec, event);
@@ -238,37 +216,37 @@ impl CheckState {
         }
         match event.id {
             id if id == ids::CANCEL_BEGIN => {
-                self.cancel_begin.fetch_add(1, Ordering::Relaxed);
-                self.cancel_inflight.fetch_add(1, Ordering::Relaxed);
+                Self::add_u32(&self.cancel_begin, 1);
+                Self::add_i32(&self.cancel_inflight, 1);
             }
             id if id == ids::CANCEL_ACK => {
-                self.cancel_ack.fetch_add(1, Ordering::Relaxed);
-                self.cancel_inflight.fetch_sub(1, Ordering::Relaxed);
+                Self::add_u32(&self.cancel_ack, 1);
+                Self::add_i32(&self.cancel_inflight, -1);
             }
             id if id == ids::LANE_ACQUIRE => {
-                self.lane_acquire.fetch_add(1, Ordering::Relaxed);
-                self.lane_inflight.fetch_add(1, Ordering::Relaxed);
+                Self::add_u32(&self.lane_acquire, 1);
+                Self::add_i32(&self.lane_inflight, 1);
                 let lane_idx = (event.arg1 & 0xFFFF) as usize;
                 let sid = event.arg1 >> 16;
                 if lane_idx < LANES_MAX_USIZE {
-                    self.lane_sid[lane_idx].store(sid.wrapping_add(1), Ordering::Relaxed);
+                    self.lane_sid[lane_idx].set(sid.wrapping_add(1));
                 }
             }
             id if id == ids::LANE_RELEASE => {
-                self.lane_release.fetch_add(1, Ordering::Relaxed);
-                self.lane_inflight.fetch_sub(1, Ordering::Relaxed);
+                Self::add_u32(&self.lane_release, 1);
+                Self::add_i32(&self.lane_inflight, -1);
                 let lane_idx = (event.arg1 & 0xFFFF) as usize;
                 if lane_idx < LANES_MAX_USIZE {
-                    self.lane_sid[lane_idx].store(0, Ordering::Relaxed);
+                    self.lane_sid[lane_idx].set(0);
                 }
             }
             id if id == ids::ROLLBACK_REQ => {
-                self.rollback_req.fetch_add(1, Ordering::Relaxed);
-                self.rollback_inflight.fetch_add(1, Ordering::Relaxed);
+                Self::add_u32(&self.rollback_req, 1);
+                Self::add_i32(&self.rollback_inflight, 1);
             }
             id if id == ids::ROLLBACK_OK => {
-                self.rollback_ok.fetch_add(1, Ordering::Relaxed);
-                self.rollback_inflight.fetch_sub(1, Ordering::Relaxed);
+                Self::add_u32(&self.rollback_ok, 1);
+                Self::add_i32(&self.rollback_inflight, -1);
             }
             id if id == ids::LOOP_DECISION => {
                 let lane = ((event.arg1 >> 16) & 0xFFFF) as usize;
@@ -276,37 +254,38 @@ impl CheckState {
                 let decision = (event.arg1 & 0xFF) as u8;
                 let within_bounds = lane < LANES_MAX_USIZE && idx < LOOP_INDEX_LIMIT;
                 if decision == 1 {
-                    self.loop_continue.fetch_add(1, Ordering::Relaxed);
+                    Self::add_u32(&self.loop_continue, 1);
                     if within_bounds {
                         let mask = 1u64 << idx;
-                        let prev =
-                            self.loop_pending_continue[lane].fetch_xor(mask, Ordering::Relaxed);
+                        let prev = self.loop_pending_continue[lane].get();
+                        self.loop_pending_continue[lane].set(prev ^ mask);
                         if (prev & mask) == 0 {
-                            self.loop_inflight_continue.fetch_add(1, Ordering::Relaxed);
+                            Self::add_i32(&self.loop_inflight_continue, 1);
                         } else {
-                            self.loop_inflight_continue.fetch_sub(1, Ordering::Relaxed);
+                            Self::add_i32(&self.loop_inflight_continue, -1);
                         }
                     }
                 } else {
-                    self.loop_break.fetch_add(1, Ordering::Relaxed);
+                    Self::add_u32(&self.loop_break, 1);
                     if within_bounds {
                         let mask = 1u64 << idx;
-                        let prev = self.loop_pending_break[lane].fetch_xor(mask, Ordering::Relaxed);
+                        let prev = self.loop_pending_break[lane].get();
+                        self.loop_pending_break[lane].set(prev ^ mask);
                         if (prev & mask) == 0 {
-                            self.loop_inflight_break.fetch_add(1, Ordering::Relaxed);
+                            Self::add_i32(&self.loop_inflight_break, 1);
                         } else {
-                            self.loop_inflight_break.fetch_sub(1, Ordering::Relaxed);
+                            Self::add_i32(&self.loop_inflight_break, -1);
                         }
                     }
                 }
             }
             id if id == ids::LOCAL_ACTION_FAIL => {
-                self.local_failures.fetch_add(1, Ordering::Relaxed);
+                Self::add_u32(&self.local_failures, 1);
                 if LocalActionFailure::from_tap(event)
                     .map(|failure| failure.reason == LocalFailureReason::INTERNAL)
                     .unwrap_or(false)
                 {
-                    self.unexpected_local_failure.store(true, Ordering::Relaxed);
+                    self.unexpected_local_failure.set(true);
                 }
             }
             _ => {}
@@ -315,34 +294,34 @@ impl CheckState {
 
     #[cfg(test)]
     fn snapshot(&self) -> CheckReport {
-        let cancel_begin = self.cancel_begin.load(Ordering::Relaxed);
-        let cancel_ack = self.cancel_ack.load(Ordering::Relaxed);
-        let cancel_inflight = self.cancel_inflight.load(Ordering::Relaxed);
-        let lane_acquire = self.lane_acquire.load(Ordering::Relaxed);
-        let lane_release = self.lane_release.load(Ordering::Relaxed);
-        let lane_inflight = self.lane_inflight.load(Ordering::Relaxed);
-        let rollback_req = self.rollback_req.load(Ordering::Relaxed);
-        let rollback_ok = self.rollback_ok.load(Ordering::Relaxed);
-        let rollback_inflight = self.rollback_inflight.load(Ordering::Relaxed);
-        let loop_continue = self.loop_continue.load(Ordering::Relaxed);
-        let loop_break = self.loop_break.load(Ordering::Relaxed);
-        let loop_inflight_continue = self.loop_inflight_continue.load(Ordering::Relaxed);
-        let loop_inflight_break = self.loop_inflight_break.load(Ordering::Relaxed);
+        let cancel_begin = self.cancel_begin.get();
+        let cancel_ack = self.cancel_ack.get();
+        let cancel_inflight = self.cancel_inflight.get();
+        let lane_acquire = self.lane_acquire.get();
+        let lane_release = self.lane_release.get();
+        let lane_inflight = self.lane_inflight.get();
+        let rollback_req = self.rollback_req.get();
+        let rollback_ok = self.rollback_ok.get();
+        let rollback_inflight = self.rollback_inflight.get();
+        let loop_continue = self.loop_continue.get();
+        let loop_break = self.loop_break.get();
+        let loop_inflight_continue = self.loop_inflight_continue.get();
+        let loop_inflight_break = self.loop_inflight_break.get();
         let loop_balanced = loop_inflight_continue == 0 && loop_inflight_break == 0;
-        let policy_abort = self.policy_abort.load(Ordering::Relaxed);
-        let policy_trap = self.policy_trap.load(Ordering::Relaxed);
-        let policy_annot = self.policy_annot.load(Ordering::Relaxed);
-        let policy_effect = self.policy_effect.load(Ordering::Relaxed);
-        let policy_effect_ok = self.policy_effect_ok.load(Ordering::Relaxed);
-        let policy_commit = self.policy_commit.load(Ordering::Relaxed);
-        let policy_rollback = self.policy_rollback.load(Ordering::Relaxed);
-        let policy_lane_total = self.policy_lane_total.load(Ordering::Relaxed);
-        let policy_lane_match = self.policy_lane_match.load(Ordering::Relaxed);
-        let policy_lane_mismatch = self.policy_lane_mismatch.load(Ordering::Relaxed);
-        let policy_sid_match = self.policy_sid_match.load(Ordering::Relaxed);
-        let policy_sid_mismatch = self.policy_sid_mismatch.load(Ordering::Relaxed);
-        let local_failures = self.local_failures.load(Ordering::Relaxed);
-        let unexpected_local_failure = self.unexpected_local_failure.load(Ordering::Relaxed);
+        let policy_abort = self.policy_abort.get();
+        let policy_trap = self.policy_trap.get();
+        let policy_annot = self.policy_annot.get();
+        let policy_effect = self.policy_effect.get();
+        let policy_effect_ok = self.policy_effect_ok.get();
+        let policy_commit = self.policy_commit.get();
+        let policy_rollback = self.policy_rollback.get();
+        let policy_lane_total = self.policy_lane_total.get();
+        let policy_lane_match = self.policy_lane_match.get();
+        let policy_lane_mismatch = self.policy_lane_mismatch.get();
+        let policy_sid_match = self.policy_sid_match.get();
+        let policy_sid_mismatch = self.policy_sid_mismatch.get();
+        let local_failures = self.local_failures.get();
+        let unexpected_local_failure = self.unexpected_local_failure.get();
 
         CheckReport {
             cancel_begin,
@@ -380,23 +359,44 @@ impl CheckState {
     }
 }
 
+#[cfg(not(test))]
 static STATE: CheckState = CheckState::new();
+
+#[cfg(not(test))]
+unsafe impl Sync for CheckState {}
+
+#[cfg(test)]
+thread_local! {
+    static STATE: CheckState = const { CheckState::new() };
+}
+
+#[inline(always)]
+fn with_state<R>(f: impl FnOnce(&CheckState) -> R) -> R {
+    #[cfg(test)]
+    {
+        STATE.with(f)
+    }
+    #[cfg(not(test))]
+    {
+        f(&STATE)
+    }
+}
 
 /// Reset the streaming checker state back to zero.
 #[cfg(test)]
 fn reset() {
-    STATE.reset();
+    with_state(CheckState::reset);
 }
 
 /// Feed a tap event into the streaming checker.
 pub(super) fn feed(event: TapEvent) {
-    STATE.observe(event);
+    with_state(|state| state.observe(event));
 }
 
 /// Snapshot the current checker summary.
 #[cfg(test)]
 fn snapshot() -> CheckReport {
-    STATE.snapshot()
+    with_state(CheckState::snapshot)
 }
 
 /// Summary of the streaming checker counters.
@@ -443,19 +443,10 @@ struct CheckReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    fn test_guard() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("test lock")
-    }
 
     #[test]
     fn effect_init_does_not_break_cancel_balance() {
         use crate::observe::events;
-        let _guard = test_guard();
         reset();
         feed(events::EffectInit::new(1, 7, 3));
         feed(events::CancelBegin::new(2, 7, 11));
@@ -471,7 +462,6 @@ mod tests {
     #[test]
     fn cancel_begin_ack_balance_survives_initialisation() {
         use crate::observe::events;
-        let _guard = test_guard();
         reset();
         feed(events::EffectInit::new(10, 42, 1));
         feed(events::CancelBegin::new(11, 42, 0));
@@ -487,7 +477,6 @@ mod tests {
     #[test]
     fn rollback_balance_with_acknowledgement() {
         use crate::observe::events;
-        let _guard = test_guard();
         reset();
         feed(events::EffectInit::new(20, 9, 2));
         feed(events::RollbackReq::new(21, 9, 0));
@@ -503,7 +492,6 @@ mod tests {
     #[test]
     fn lane_acquire_release_balance() {
         use crate::observe::events;
-        let _guard = test_guard();
         reset();
         feed(events::LaneAcquire::new(30, 1, 0, 0));
         feed(events::LaneRelease::new(31, 1, 0, 0));

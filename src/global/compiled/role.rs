@@ -1,123 +1,322 @@
 use core::ptr;
 
-use crate::global::{
-    const_dsl::ScopeId,
-    role_program::{
-        LaneSteps, LocalStep, MAX_LANES, MAX_PHASES, MAX_STEPS, Phase, PhaseRouteGuard,
-        ProjectedRoleLayout,
-    },
-    typestate::{
-        ARM_SHARED, LocalAction, MAX_FIRST_RECV_DISPATCH, RoleCompileScratch, RoleTypestate,
-        RoleTypestateValue, StateIndex,
-    },
+use crate::endpoint::kernel::{EndpointArenaLayout, FrontierScratchLayout};
+#[cfg(test)]
+use crate::global::role_program::ProjectedRoleLayout;
+use crate::global::role_program::{
+    LaneSteps, LocalStep, MAX_LANES, MAX_PHASES, MAX_STEPS, Phase, PhaseRouteGuard,
+};
+use crate::global::steps::StepCount;
+#[cfg(test)]
+use crate::global::typestate::RoleTypestate;
+use crate::global::typestate::{
+    LocalAction, LocalNode, MAX_STATES, RoleCompileScratch, RoleTypestateValue, RouteScopeRecord,
+    ScopeRecord, StateIndex,
 };
 
 use super::LoweringSummary;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ControllerArmEntry {
-    pub scope: ScopeId,
-    pub arm: u8,
-    pub entry: StateIndex,
-    pub label: u8,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ControllerArmTable {
-    entries: [ControllerArmEntry; Self::MAX_ENTRIES],
-    len: usize,
-}
-
-impl ControllerArmTable {
-    const MAX_ENTRIES: usize = crate::global::const_dsl::ScopeId::ORDINAL_CAPACITY as usize * 2;
-    const EMPTY_ENTRY: ControllerArmEntry = ControllerArmEntry {
-        scope: ScopeId::none(),
-        arm: 0,
-        entry: StateIndex::MAX,
-        label: 0,
-    };
-
-    const EMPTY: Self = Self {
-        entries: [Self::EMPTY_ENTRY; Self::MAX_ENTRIES],
-        len: 0,
-    };
-
-    #[inline(always)]
-    pub(crate) const fn entry_by_arm(&self, scope: ScopeId, arm: u8) -> Option<(StateIndex, u8)> {
-        let mut idx = 0usize;
-        while idx < self.len {
-            let entry = self.entries[idx];
-            if entry.scope.raw() == scope.raw() && entry.arm == arm {
-                return Some((entry.entry, entry.label));
-            }
-            idx += 1;
-        }
-        None
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct FirstRecvDispatchEntry {
-    pub scope: ScopeId,
-    pub label: u8,
-    pub arm: u8,
-    pub target: StateIndex,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct FirstRecvDispatchTable {
-    entries: [FirstRecvDispatchEntry; Self::MAX_ENTRIES],
-    len: usize,
-}
-
-impl FirstRecvDispatchTable {
-    const MAX_ENTRIES: usize =
-        crate::global::const_dsl::ScopeId::ORDINAL_CAPACITY as usize * MAX_FIRST_RECV_DISPATCH;
-    const EMPTY_ENTRY: FirstRecvDispatchEntry = FirstRecvDispatchEntry {
-        scope: ScopeId::none(),
-        label: 0,
-        arm: ARM_SHARED,
-        target: StateIndex::MAX,
-    };
-
-    const EMPTY: Self = Self {
-        entries: [Self::EMPTY_ENTRY; Self::MAX_ENTRIES],
-        len: 0,
-    };
-
-    #[inline(always)]
-    pub(crate) const fn entry(&self, scope: ScopeId, idx: usize) -> Option<(u8, u8, StateIndex)> {
-        let mut scope_idx = 0usize;
-        let mut table_idx = 0usize;
-        while table_idx < self.len {
-            let entry = self.entries[table_idx];
-            if entry.scope.raw() == scope.raw() {
-                if scope_idx == idx {
-                    return Some((entry.label, entry.arm, entry.target));
-                }
-                scope_idx += 1;
-            }
-            table_idx += 1;
-        }
-        None
-    }
-}
-
 const MACHINE_NO_STEP: u16 = u16::MAX;
+const RESERVED_BINDING_LANES: usize = 2;
+#[cfg(test)]
+const TEST_FRONTIER_ENTRY_FLOOR: usize = 8;
+
+#[inline(always)]
+const fn test_frontier_entry_capacity(compiled: usize) -> usize {
+    #[cfg(test)]
+    {
+        if compiled > TEST_FRONTIER_ENTRY_FLOOR {
+            compiled
+        } else {
+            TEST_FRONTIER_ENTRY_FLOOR
+        }
+    }
+    #[cfg(not(test))]
+    {
+        compiled
+    }
+}
+
+#[inline(always)]
+const fn encode_compact_step_index(value: usize) -> u16 {
+    if value > u16::MAX as usize {
+        panic!("compiled role compact index overflow");
+    }
+    value as u16
+}
 
 /// Crate-private owner for lowered role-local facts.
+#[cfg(test)]
 #[derive(Clone, Debug)]
 pub(crate) struct CompiledRole {
     role: u8,
     layout: ProjectedRoleLayout,
-    typestate: RoleTypestateValue,
+    typestate: RoleTypestate<0>,
+    scope_records: [crate::global::typestate::ScopeRecord; crate::eff::meta::MAX_EFF_NODES],
+    scope_slots_by_scope: [u16; crate::eff::meta::MAX_EFF_NODES],
+    scope_route_dense_by_slot: [u16; crate::eff::meta::MAX_EFF_NODES],
+    route_scope_records:
+        [crate::global::typestate::RouteScopeRecord; crate::eff::meta::MAX_EFF_NODES],
     eff_index_to_step: [u16; MAX_STEPS],
     step_index_to_state: [StateIndex; MAX_STEPS],
-    active_lanes: [bool; MAX_LANES],
-    controller_arm_table: ControllerArmTable,
-    first_recv_dispatch: FirstRecvDispatchTable,
 }
 
+/// Crate-private runtime image for role-local immutable facts.
+#[derive(Clone, Debug)]
+pub(crate) struct CompiledRoleImage {
+    role: u8,
+    phases: *const Phase,
+    phase_len: u16,
+    typestate: *const RoleTypestateValue,
+    eff_index_to_step: *const u16,
+    eff_index_to_step_len: u16,
+    step_index_to_state: *const StateIndex,
+    step_index_to_state_len: u16,
+}
+
+struct CompiledRoleScopeStorage {
+    typestate: *mut RoleTypestateValue,
+    typestate_nodes: *mut LocalNode,
+    typestate_node_cap: usize,
+    phases: *mut Phase,
+    phase_cap: usize,
+    records: *mut ScopeRecord,
+    slots_by_scope: *mut u16,
+    route_dense_by_slot: *mut u16,
+    route_records: *mut RouteScopeRecord,
+    route_scope_cap: usize,
+    scope_cap: usize,
+    eff_index_to_step: *mut u16,
+    step_index_to_state: *mut StateIndex,
+}
+
+impl CompiledRoleScopeStorage {
+    #[inline(always)]
+    const fn align_up(value: usize, align: usize) -> usize {
+        let mask = align.saturating_sub(1);
+        (value + mask) & !mask
+    }
+
+    #[inline(always)]
+    const fn scope_cap(scope_count: usize) -> usize {
+        scope_count
+    }
+
+    #[inline(always)]
+    const fn route_scope_cap(route_scope_count: usize) -> usize {
+        route_scope_count
+    }
+
+    #[inline(always)]
+    const fn step_cap(eff_count: usize) -> usize {
+        if eff_count == 0 { 1 } else { eff_count }
+    }
+
+    #[inline(always)]
+    const fn typestate_node_cap(
+        scope_count: usize,
+        passive_linger_route_scope_count: usize,
+        local_step_count: usize,
+    ) -> usize {
+        // Local nodes cover the projected local steps plus at most one boundary
+        // node per structured scope. Passive linger route scopes may additionally need
+        // one arm-navigation jump beyond that base budget, plus one terminal slot.
+        let capped = local_step_count
+            .saturating_add(scope_count)
+            .saturating_add(passive_linger_route_scope_count)
+            .saturating_add(1);
+        if capped == 0 {
+            1
+        } else if capped < MAX_STATES {
+            capped
+        } else {
+            MAX_STATES
+        }
+    }
+
+    #[inline(always)]
+    const fn phase_cap(local_step_count: usize, parallel_enter_count: usize) -> usize {
+        if local_step_count == 0 {
+            1
+        } else {
+            let derived = parallel_enter_count.saturating_mul(2).saturating_add(1);
+            let capped = if derived < local_step_count {
+                derived
+            } else {
+                local_step_count
+            };
+            if capped == 0 {
+                1
+            } else if capped < MAX_PHASES {
+                capped
+            } else {
+                MAX_PHASES
+            }
+        }
+    }
+
+    #[inline(always)]
+    const fn total_bytes_for_layout(
+        scope_count: usize,
+        passive_linger_route_scope_count: usize,
+        route_scope_count: usize,
+        parallel_enter_count: usize,
+        eff_count: usize,
+        step_index_to_state_count: usize,
+    ) -> usize {
+        let scope_cap = Self::scope_cap(scope_count);
+        let route_scope_cap = Self::route_scope_cap(route_scope_count);
+        let eff_index_cap = Self::step_cap(eff_count);
+        let step_index_cap = Self::step_cap(step_index_to_state_count);
+        let typestate_node_cap = Self::typestate_node_cap(
+            scope_count,
+            passive_linger_route_scope_count,
+            step_index_to_state_count,
+        );
+        let phase_cap = Self::phase_cap(step_index_to_state_count, parallel_enter_count);
+        let header = core::mem::size_of::<CompiledRoleImage>();
+        let typestate_start = Self::align_up(
+            header,
+            if core::mem::align_of::<RoleTypestateValue>()
+                > core::mem::align_of::<CompiledRoleImage>()
+            {
+                core::mem::align_of::<RoleTypestateValue>()
+            } else {
+                core::mem::align_of::<CompiledRoleImage>()
+            },
+        );
+        let typestate_end = typestate_start + core::mem::size_of::<RoleTypestateValue>();
+        let typestate_nodes_start =
+            Self::align_up(typestate_end, core::mem::align_of::<LocalNode>());
+        let typestate_nodes_end = typestate_nodes_start
+            + typestate_node_cap.saturating_mul(core::mem::size_of::<LocalNode>());
+        let phases_start = Self::align_up(typestate_nodes_end, core::mem::align_of::<Phase>());
+        let phases_end = phases_start + phase_cap.saturating_mul(core::mem::size_of::<Phase>());
+        let records_start = Self::align_up(phases_end, core::mem::align_of::<ScopeRecord>());
+        let records_end =
+            records_start + scope_cap.saturating_mul(core::mem::size_of::<ScopeRecord>());
+        let slots_start = Self::align_up(records_end, core::mem::align_of::<u16>());
+        let slots_end = slots_start + scope_cap.saturating_mul(core::mem::size_of::<u16>());
+        let route_dense_start = Self::align_up(slots_end, core::mem::align_of::<u16>());
+        let route_dense_end =
+            route_dense_start + scope_cap.saturating_mul(core::mem::size_of::<u16>());
+        let route_records_start =
+            Self::align_up(route_dense_end, core::mem::align_of::<RouteScopeRecord>());
+        let route_records_end = route_records_start
+            + route_scope_cap.saturating_mul(core::mem::size_of::<RouteScopeRecord>());
+        let eff_index_start = Self::align_up(route_records_end, core::mem::align_of::<u16>());
+        let eff_index_end =
+            eff_index_start + eff_index_cap.saturating_mul(core::mem::size_of::<u16>());
+        let step_index_start = Self::align_up(eff_index_end, core::mem::align_of::<StateIndex>());
+        step_index_start + step_index_cap.saturating_mul(core::mem::size_of::<StateIndex>())
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    const fn total_bytes_for_counts(
+        scope_count: usize,
+        route_scope_count: usize,
+        eff_count: usize,
+    ) -> usize {
+        Self::total_bytes_for_layout(
+            scope_count,
+            route_scope_count,
+            route_scope_count,
+            scope_count,
+            eff_count,
+            eff_count,
+        )
+    }
+
+    #[inline(always)]
+    const fn overall_align() -> usize {
+        let mut align = core::mem::align_of::<CompiledRoleImage>();
+        if core::mem::align_of::<RoleTypestateValue>() > align {
+            align = core::mem::align_of::<RoleTypestateValue>();
+        }
+        if core::mem::align_of::<LocalNode>() > align {
+            align = core::mem::align_of::<LocalNode>();
+        }
+        if core::mem::align_of::<Phase>() > align {
+            align = core::mem::align_of::<Phase>();
+        }
+        if core::mem::align_of::<ScopeRecord>() > align {
+            align = core::mem::align_of::<ScopeRecord>();
+        }
+        if core::mem::align_of::<RouteScopeRecord>() > align {
+            align = core::mem::align_of::<RouteScopeRecord>();
+        }
+        if core::mem::align_of::<StateIndex>() > align {
+            align = core::mem::align_of::<StateIndex>();
+        }
+        align
+    }
+
+    #[inline(always)]
+    unsafe fn from_image_ptr_with_layout(
+        image: *mut CompiledRoleImage,
+        scope_count: usize,
+        passive_linger_route_scope_count: usize,
+        route_scope_count: usize,
+        parallel_enter_count: usize,
+        eff_count: usize,
+        step_index_to_state_count: usize,
+    ) -> Self {
+        let scope_cap = Self::scope_cap(scope_count);
+        let route_scope_cap = Self::route_scope_cap(route_scope_count);
+        let eff_index_cap = Self::step_cap(eff_count);
+        let typestate_node_cap = Self::typestate_node_cap(
+            scope_count,
+            passive_linger_route_scope_count,
+            step_index_to_state_count,
+        );
+        let phase_cap = Self::phase_cap(step_index_to_state_count, parallel_enter_count);
+        let base = image.cast::<u8>() as usize;
+        let header_end = base + core::mem::size_of::<CompiledRoleImage>();
+        let typestate_start =
+            Self::align_up(header_end, core::mem::align_of::<RoleTypestateValue>());
+        let typestate_end = typestate_start + core::mem::size_of::<RoleTypestateValue>();
+        let typestate_nodes_start =
+            Self::align_up(typestate_end, core::mem::align_of::<LocalNode>());
+        let typestate_nodes_end = typestate_nodes_start
+            + typestate_node_cap.saturating_mul(core::mem::size_of::<LocalNode>());
+        let phases_start = Self::align_up(typestate_nodes_end, core::mem::align_of::<Phase>());
+        let phases_end = phases_start + phase_cap.saturating_mul(core::mem::size_of::<Phase>());
+        let records_start = Self::align_up(phases_end, core::mem::align_of::<ScopeRecord>());
+        let records_end =
+            records_start + scope_cap.saturating_mul(core::mem::size_of::<ScopeRecord>());
+        let slots_start = Self::align_up(records_end, core::mem::align_of::<u16>());
+        let slots_end = slots_start + scope_cap.saturating_mul(core::mem::size_of::<u16>());
+        let route_dense_start = Self::align_up(slots_end, core::mem::align_of::<u16>());
+        let route_dense_end =
+            route_dense_start + scope_cap.saturating_mul(core::mem::size_of::<u16>());
+        let route_records_start =
+            Self::align_up(route_dense_end, core::mem::align_of::<RouteScopeRecord>());
+        let route_records_end = route_records_start
+            + route_scope_cap.saturating_mul(core::mem::size_of::<RouteScopeRecord>());
+        let eff_index_start = Self::align_up(route_records_end, core::mem::align_of::<u16>());
+        let eff_index_end =
+            eff_index_start + eff_index_cap.saturating_mul(core::mem::size_of::<u16>());
+        let step_index_start = Self::align_up(eff_index_end, core::mem::align_of::<StateIndex>());
+        Self {
+            typestate: typestate_start as *mut RoleTypestateValue,
+            typestate_nodes: typestate_nodes_start as *mut LocalNode,
+            typestate_node_cap,
+            phases: phases_start as *mut Phase,
+            phase_cap,
+            records: records_start as *mut ScopeRecord,
+            slots_by_scope: slots_start as *mut u16,
+            route_dense_by_slot: route_dense_start as *mut u16,
+            route_records: route_records_start as *mut RouteScopeRecord,
+            route_scope_cap,
+            scope_cap,
+            eff_index_to_step: eff_index_start as *mut u16,
+            step_index_to_state: step_index_start as *mut StateIndex,
+        }
+    }
+}
+
+#[cfg(test)]
 impl CompiledRole {
     #[inline(never)]
     pub(crate) unsafe fn init_from_summary<const ROLE: u8>(
@@ -127,9 +326,27 @@ impl CompiledRole {
     ) {
         unsafe {
             ptr::addr_of_mut!((*dst).role).write(ROLE);
+            ptr::addr_of_mut!((*dst).scope_records).write(
+                [crate::global::typestate::ScopeRecord::EMPTY; crate::eff::meta::MAX_EFF_NODES],
+            );
+            ptr::addr_of_mut!((*dst).scope_slots_by_scope)
+                .write([u16::MAX; crate::eff::meta::MAX_EFF_NODES]);
+            ptr::addr_of_mut!((*dst).scope_route_dense_by_slot)
+                .write([u16::MAX; crate::eff::meta::MAX_EFF_NODES]);
+            ptr::addr_of_mut!((*dst).route_scope_records).write(
+                [crate::global::typestate::RouteScopeRecord::EMPTY;
+                    crate::eff::meta::MAX_EFF_NODES],
+            );
             RoleTypestate::<ROLE>::init_value_from_summary(
-                ptr::addr_of_mut!((*dst).typestate),
+                ptr::addr_of_mut!((*dst).typestate).cast::<RoleTypestate<ROLE>>(),
+                &mut *ptr::addr_of_mut!((*dst).scope_records),
+                ptr::addr_of_mut!((*dst).scope_slots_by_scope).cast::<u16>(),
+                ptr::addr_of_mut!((*dst).scope_route_dense_by_slot).cast::<u16>(),
+                ptr::addr_of_mut!((*dst).route_scope_records)
+                    .cast::<crate::global::typestate::RouteScopeRecord>(),
+                crate::eff::meta::MAX_EFF_NODES,
                 summary,
+                scratch,
             );
         }
         let typed_typestate =
@@ -176,15 +393,6 @@ impl CompiledRole {
                 MAX_STEPS,
             );
         }
-        Self::build_active_lanes_from_phases_into(&scratch.phases, phase_len, unsafe {
-            &mut *ptr::addr_of_mut!((*dst).active_lanes)
-        });
-        Self::build_controller_arm_table_into(typed_typestate, unsafe {
-            &mut *ptr::addr_of_mut!((*dst).controller_arm_table)
-        });
-        Self::build_first_recv_dispatch_table_into(typed_typestate, unsafe {
-            &mut *ptr::addr_of_mut!((*dst).first_recv_dispatch)
-        });
     }
 
     #[inline(always)]
@@ -198,39 +406,30 @@ impl CompiledRole {
         &self.layout
     }
 
+    #[cfg(test)]
     #[inline(always)]
-    pub(crate) const fn phase_count(&self) -> usize {
+    pub(crate) fn phase_count(&self) -> usize {
         self.layout.phase_count()
     }
 
+    #[cfg(test)]
     #[inline(always)]
-    pub(crate) const fn step_count(&self) -> usize {
+    pub(crate) fn step_count(&self) -> usize {
         self.layout.len()
     }
 
+    #[cfg(test)]
     #[inline(always)]
-    pub(crate) fn phase(&self, idx: usize) -> Option<&Phase> {
-        if idx < self.layout.phase_count() {
-            Some(&self.layout.phases()[idx])
-        } else {
-            None
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn step(&self, idx: usize) -> Option<&LocalStep> {
-        if idx < self.layout.len() {
-            Some(&self.layout.steps()[idx])
-        } else {
-            None
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn typestate(&self) -> &RoleTypestateValue {
+    pub(crate) const fn typestate(&self) -> &RoleTypestate<0> {
         &self.typestate
     }
 
+    #[inline(always)]
+    pub(crate) const fn typestate_ref(&self) -> &RoleTypestate<0> {
+        &self.typestate
+    }
+
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn step_for_eff_index(&self, idx: usize) -> Option<u16> {
         if idx < MAX_STEPS {
@@ -240,6 +439,7 @@ impl CompiledRole {
         }
     }
 
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn state_for_step_index(&self, idx: usize) -> Option<StateIndex> {
         if idx < MAX_STEPS {
@@ -250,135 +450,33 @@ impl CompiledRole {
     }
 
     #[inline(always)]
-    pub(crate) const fn active_lanes(&self) -> &[bool; MAX_LANES] {
-        &self.active_lanes
+    pub(crate) fn is_active_lane(&self, lane_idx: usize) -> bool {
+        lane_idx < MAX_LANES && ((self.active_lane_mask() >> lane_idx) & 1) != 0
     }
 
     #[inline(always)]
-    pub(crate) const fn controller_arm_entry_by_arm(
+    fn active_lane_mask(&self) -> u8 {
+        build_active_lane_mask_from_phase_slice(self.layout.phases())
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) fn controller_arm_entry_by_arm(
         &self,
-        scope: ScopeId,
+        scope: crate::global::const_dsl::ScopeId,
         arm: u8,
     ) -> Option<(StateIndex, u8)> {
-        self.controller_arm_table.entry_by_arm(scope, arm)
+        self.typestate.controller_arm_entry_by_arm(scope, arm)
     }
 
+    #[cfg(test)]
     #[inline(always)]
-    pub(crate) const fn first_recv_dispatch_entry(
+    pub(crate) fn first_recv_dispatch_entry(
         &self,
-        scope: ScopeId,
+        scope: crate::global::const_dsl::ScopeId,
         idx: usize,
     ) -> Option<(u8, u8, StateIndex)> {
-        self.first_recv_dispatch.entry(scope, idx)
-    }
-
-    fn build_active_lanes_from_phases_into(
-        phases: &[Phase; MAX_PHASES],
-        phase_len: usize,
-        dst: &mut [bool; MAX_LANES],
-    ) {
-        let mut lane_idx = 0usize;
-        while lane_idx < MAX_LANES {
-            dst[lane_idx] = false;
-            lane_idx += 1;
-        }
-        let mut phase_idx = 0usize;
-        while phase_idx < phase_len {
-            let phase = phases[phase_idx];
-            let mut lane_idx = 0usize;
-            while lane_idx < MAX_LANES {
-                if phase.lanes[lane_idx].is_active() {
-                    dst[lane_idx] = true;
-                }
-                lane_idx += 1;
-            }
-            phase_idx += 1;
-        }
-    }
-
-    fn build_controller_arm_table_into<const ROLE: u8>(
-        typestate: &RoleTypestate<ROLE>,
-        dst: &mut ControllerArmTable,
-    ) {
-        *dst = ControllerArmTable::EMPTY;
-        let mut ordinal = 0usize;
-        while ordinal < crate::global::const_dsl::ScopeId::ORDINAL_CAPACITY as usize {
-            let scope_id = ScopeId::route(ordinal as u16);
-            let mut arm = 0u8;
-            while arm <= 1 {
-                if let Some((entry, label)) = typestate.controller_arm_entry_by_arm(scope_id, arm) {
-                    if dst.len >= ControllerArmTable::MAX_ENTRIES {
-                        panic!("controller arm table capacity exceeded");
-                    }
-                    dst.entries[dst.len] = ControllerArmEntry {
-                        scope: scope_id,
-                        arm,
-                        entry,
-                        label,
-                    };
-                    dst.len += 1;
-                }
-                if arm == 1 {
-                    break;
-                }
-                arm += 1;
-            }
-
-            let loop_scope = ScopeId::loop_scope(ordinal as u16);
-            let mut loop_arm = 0u8;
-            while loop_arm <= 1 {
-                if let Some((entry, label)) =
-                    typestate.controller_arm_entry_by_arm(loop_scope, loop_arm)
-                {
-                    if dst.len >= ControllerArmTable::MAX_ENTRIES {
-                        panic!("controller arm table capacity exceeded");
-                    }
-                    dst.entries[dst.len] = ControllerArmEntry {
-                        scope: loop_scope,
-                        arm: loop_arm,
-                        entry,
-                        label,
-                    };
-                    dst.len += 1;
-                }
-                if loop_arm == 1 {
-                    break;
-                }
-                loop_arm += 1;
-            }
-            ordinal += 1;
-        }
-    }
-
-    fn build_first_recv_dispatch_table_into<const ROLE: u8>(
-        typestate: &RoleTypestate<ROLE>,
-        dst: &mut FirstRecvDispatchTable,
-    ) {
-        *dst = FirstRecvDispatchTable::EMPTY;
-        let mut ordinal = 0usize;
-        while ordinal < crate::global::const_dsl::ScopeId::ORDINAL_CAPACITY as usize {
-            let scope_id = ScopeId::route(ordinal as u16);
-            let mut dispatch_idx = 0usize;
-            loop {
-                let Some((label, arm, target)) =
-                    typestate.first_recv_dispatch_entry(scope_id, dispatch_idx)
-                else {
-                    break;
-                };
-                if dst.len >= FirstRecvDispatchTable::MAX_ENTRIES {
-                    panic!("first recv dispatch table capacity exceeded");
-                }
-                dst.entries[dst.len] = FirstRecvDispatchEntry {
-                    scope: scope_id,
-                    label,
-                    arm,
-                    target,
-                };
-                dst.len += 1;
-                dispatch_idx += 1;
-            }
-            ordinal += 1;
-        }
+        self.typestate.first_recv_dispatch_entry(scope, idx)
     }
 
     fn build_local_steps_into<const ROLE: u8>(
@@ -462,7 +560,7 @@ impl CompiledRole {
                         present[idx] = true;
                     }
                 }
-                LocalAction::None | LocalAction::Terminate | LocalAction::Jump { .. } => {}
+                LocalAction::Terminate | LocalAction::Jump { .. } => {}
             }
             node_idx += 1;
         }
@@ -551,7 +649,7 @@ impl CompiledRole {
                     0,
                     lane,
                 ),
-                LocalAction::None | LocalAction::Terminate | LocalAction::Jump { .. } => {}
+                LocalAction::Terminate | LocalAction::Jump { .. } => {}
             }
             node_idx += 1;
         }
@@ -623,7 +721,7 @@ impl CompiledRole {
         Self::build_route_guards_for_steps_into(len, typestate, step_index_to_state, route_guards);
 
         if !typestate.has_parallel_phase_scope() {
-            phases[0] = Self::build_phase_for_range(steps, 0, len, route_guards);
+            phases[0] = build_phase_for_range(steps, 0, len, route_guards);
             return 1;
         }
 
@@ -640,7 +738,7 @@ impl CompiledRole {
         }
 
         if parallel_count == 0 {
-            phases[0] = Self::build_phase_for_range(steps, 0, len, route_guards);
+            phases[0] = build_phase_for_range(steps, 0, len, route_guards);
             return 1;
         }
 
@@ -656,10 +754,10 @@ impl CompiledRole {
                 seq_end += 1;
             }
             if seq_end > seq_start {
-                Self::push_phase(
+                push_phase(
                     phases,
                     &mut phase_count,
-                    Self::build_phase_for_range(steps, seq_start, seq_end, route_guards),
+                    build_phase_for_range(steps, seq_start, seq_end, route_guards),
                 );
             }
 
@@ -669,10 +767,10 @@ impl CompiledRole {
                 par_end += 1;
             }
             if par_end > par_start {
-                Self::push_phase(
+                push_phase(
                     phases,
                     &mut phase_count,
-                    Self::build_phase_for_range(steps, par_start, par_end, route_guards),
+                    build_phase_for_range(steps, par_start, par_end, route_guards),
                 );
             }
 
@@ -681,15 +779,15 @@ impl CompiledRole {
         }
 
         if current_step < len {
-            Self::push_phase(
+            push_phase(
                 phases,
                 &mut phase_count,
-                Self::build_phase_for_range(steps, current_step, len, route_guards),
+                build_phase_for_range(steps, current_step, len, route_guards),
             );
         }
 
         if phase_count == 0 {
-            phases[0] = Self::build_phase_for_range(steps, 0, len, route_guards);
+            phases[0] = build_phase_for_range(steps, 0, len, route_guards);
             return 1;
         }
         phase_count
@@ -709,92 +807,1025 @@ impl CompiledRole {
         let mut step_idx = 0usize;
         while step_idx < len {
             let state = step_index_to_state[step_idx];
-            if let Some((scope, arm)) = typestate.phase_route_guard_for_state(state) {
-                route_guards[step_idx] = PhaseRouteGuard { scope, arm };
+            if let Some((scope, arm)) =
+                crate::global::typestate::phase_route_guard_for_built_state_for_role(
+                    typestate, ROLE, state,
+                )
+            {
+                route_guards[step_idx] = PhaseRouteGuard::new(scope, arm);
             }
             step_idx += 1;
         }
     }
 
-    #[inline(always)]
-    const fn push_phase(phases: &mut [Phase; MAX_PHASES], phase_count: &mut usize, phase: Phase) {
-        if *phase_count >= MAX_PHASES {
-            panic!("compiled role phase capacity exceeded");
-        }
-        phases[*phase_count] = phase;
-        *phase_count += 1;
-    }
+}
 
-    const fn build_phase_for_range(
-        steps: &[LocalStep; MAX_STEPS],
-        start: usize,
-        end: usize,
-        route_guards: &[PhaseRouteGuard; MAX_STEPS],
-    ) -> Phase {
-        let mut phase = Phase::EMPTY;
-        let mut lane_lens = [0usize; MAX_LANES];
-        let mut lane_first = [usize::MAX; MAX_LANES];
-
-        let mut i = start;
-        while i < end {
-            let lane = steps[i].lane() as usize;
-            if lane < MAX_LANES {
-                if lane_first[lane] == usize::MAX {
-                    lane_first[lane] = i;
-                }
-                lane_lens[lane] += 1;
-            }
-            i += 1;
-        }
-
-        let mut lane_mask = 0u8;
-        let mut min_start = usize::MAX;
-        let mut lane_idx = 0;
+fn build_active_lane_mask_from_phase_slice(phases: &[Phase]) -> u8 {
+    let mut mask = 0u8;
+    let mut phase_idx = 0usize;
+    while phase_idx < phases.len() {
+        let phase = phases[phase_idx];
+        let mut lane_idx = 0usize;
         while lane_idx < MAX_LANES {
-            if lane_lens[lane_idx] > 0 {
-                let lane_start = lane_first[lane_idx];
-                phase.lanes[lane_idx] = LaneSteps {
-                    start: lane_start,
-                    len: lane_lens[lane_idx],
-                };
-                lane_mask |= 1u8 << (lane_idx as u32);
-                if lane_start < min_start {
-                    min_start = lane_start;
-                }
+            if phase.lanes[lane_idx].is_active() {
+                mask |= 1u8 << lane_idx;
             }
             lane_idx += 1;
         }
-        phase.lane_mask = lane_mask;
-        phase.min_start = if lane_mask == 0 { 0 } else { min_start };
-        phase.route_guard = Self::route_guard_for_range(route_guards, start, end);
-        phase
+        phase_idx += 1;
+    }
+    mask
+}
+
+#[inline(always)]
+fn active_lane_count_from_mask(mask: u8) -> usize {
+    let clipped = if MAX_LANES >= u8::BITS as usize {
+        mask
+    } else {
+        mask & ((1u8 << MAX_LANES) - 1)
+    };
+    clipped.count_ones() as usize
+}
+
+fn build_local_steps_into(
+    role: u8,
+    typestate: &RoleTypestateValue,
+    by_eff_index: &mut [LocalStep; MAX_STEPS],
+    present: &mut [bool; MAX_STEPS],
+    steps: &mut [LocalStep; MAX_STEPS],
+    eff_index_to_step: &mut [u16; MAX_STEPS],
+) -> usize {
+    let mut idx = 0usize;
+    while idx < MAX_STEPS {
+        by_eff_index[idx] = LocalStep::EMPTY;
+        present[idx] = false;
+        steps[idx] = LocalStep::EMPTY;
+        eff_index_to_step[idx] = MACHINE_NO_STEP;
+        idx += 1;
     }
 
-    const fn route_guard_for_range(
-        route_guards: &[PhaseRouteGuard; MAX_STEPS],
-        start: usize,
-        end: usize,
-    ) -> PhaseRouteGuard {
-        if start >= end || start >= MAX_STEPS {
+    let mut node_idx = 0usize;
+    while node_idx < typestate.len() {
+        match typestate.node(node_idx).action() {
+            LocalAction::Send {
+                eff_index,
+                peer,
+                label,
+                resource,
+                is_control,
+                shot,
+                lane,
+                ..
+            } => {
+                let idx = eff_index.as_usize();
+                if idx >= MAX_STEPS {
+                    panic!("local step eff_index exceeds MAX_STEPS");
+                }
+                if !present[idx] {
+                    by_eff_index[idx] =
+                        LocalStep::send(eff_index, peer, label, resource, is_control, shot, lane);
+                    present[idx] = true;
+                }
+            }
+            LocalAction::Recv {
+                eff_index,
+                peer,
+                label,
+                resource,
+                is_control,
+                shot,
+                lane,
+                ..
+            } => {
+                let idx = eff_index.as_usize();
+                if idx >= MAX_STEPS {
+                    panic!("local step eff_index exceeds MAX_STEPS");
+                }
+                if !present[idx] {
+                    by_eff_index[idx] =
+                        LocalStep::recv(eff_index, peer, label, resource, is_control, shot, lane);
+                    present[idx] = true;
+                }
+            }
+            LocalAction::Local {
+                eff_index,
+                label,
+                resource,
+                is_control,
+                shot,
+                lane,
+                ..
+            } => {
+                let idx = eff_index.as_usize();
+                if idx >= MAX_STEPS {
+                    panic!("local step eff_index exceeds MAX_STEPS");
+                }
+                if !present[idx] {
+                    by_eff_index[idx] =
+                        LocalStep::local(eff_index, role, label, resource, is_control, shot, lane);
+                    present[idx] = true;
+                }
+            }
+            LocalAction::Terminate | LocalAction::Jump { .. } => {}
+        }
+        node_idx += 1;
+    }
+
+    let mut len = 0usize;
+    let mut idx = 0usize;
+    while idx < MAX_STEPS {
+        if present[idx] {
+            steps[len] = by_eff_index[idx];
+            eff_index_to_step[idx] = len as u16;
+            len += 1;
+        }
+        idx += 1;
+    }
+    len
+}
+
+fn build_step_index_to_state_into(
+    typestate: &RoleTypestateValue,
+    steps: &[LocalStep; MAX_STEPS],
+    len: usize,
+    eff_index_to_step: &[u16; MAX_STEPS],
+    step_index_to_state: &mut [StateIndex; MAX_STEPS],
+) {
+    let mut idx = 0usize;
+    while idx < MAX_STEPS {
+        step_index_to_state[idx] = StateIndex::MAX;
+        idx += 1;
+    }
+    let mut node_idx = 0usize;
+    while node_idx < typestate.len() {
+        match typestate.node(node_idx).action() {
+            LocalAction::Send {
+                eff_index,
+                peer,
+                label,
+                lane,
+                ..
+            } => record_step_state(
+                steps,
+                len,
+                eff_index_to_step,
+                step_index_to_state,
+                node_idx,
+                eff_index,
+                true,
+                false,
+                label,
+                peer,
+                lane,
+            ),
+            LocalAction::Recv {
+                eff_index,
+                peer,
+                label,
+                lane,
+                ..
+            } => record_step_state(
+                steps,
+                len,
+                eff_index_to_step,
+                step_index_to_state,
+                node_idx,
+                eff_index,
+                false,
+                false,
+                label,
+                peer,
+                lane,
+            ),
+            LocalAction::Local {
+                eff_index,
+                label,
+                lane,
+                ..
+            } => record_step_state(
+                steps,
+                len,
+                eff_index_to_step,
+                step_index_to_state,
+                node_idx,
+                eff_index,
+                false,
+                true,
+                label,
+                0,
+                lane,
+            ),
+            LocalAction::Terminate | LocalAction::Jump { .. } => {}
+        }
+        node_idx += 1;
+    }
+}
+
+const fn record_step_state(
+    steps: &[LocalStep; MAX_STEPS],
+    len: usize,
+    eff_index_to_step: &[u16; MAX_STEPS],
+    step_index_to_state: &mut [StateIndex; MAX_STEPS],
+    node_idx: usize,
+    eff_index: crate::eff::EffIndex,
+    is_send: bool,
+    is_local: bool,
+    label: u8,
+    peer: u8,
+    lane: u8,
+) {
+    let eff_idx = eff_index.as_usize();
+    if eff_idx >= MAX_STEPS {
+        panic!("eff_index out of bounds for compiled role mapping");
+    }
+    let step_idx = eff_index_to_step[eff_idx];
+    if step_idx == MACHINE_NO_STEP {
+        return;
+    }
+    let step_idx = step_idx as usize;
+    if step_idx >= len {
+        panic!("compiled role step index out of bounds");
+    }
+    let step = steps[step_idx];
+    let matches = if is_local {
+        step.is_local_action() && step.label() == label && step.lane() == lane
+    } else if is_send {
+        step.is_send() && step.label() == label && step.peer() == peer && step.lane() == lane
+    } else {
+        step.is_recv() && step.label() == label && step.peer() == peer && step.lane() == lane
+    };
+    if !matches {
+        panic!("compiled role typestate mapping mismatch");
+    }
+    let mapped = StateIndex::from_usize(node_idx);
+    if step_index_to_state[step_idx].is_max() {
+        step_index_to_state[step_idx] = mapped;
+    } else if step_index_to_state[step_idx].raw() != mapped.raw() {
+        panic!("duplicate typestate mapping for step index");
+    }
+}
+
+fn build_phases_into(
+    role: u8,
+    steps: &[LocalStep; MAX_STEPS],
+    len: usize,
+    typestate: &RoleTypestateValue,
+    step_index_to_state: &[StateIndex; MAX_STEPS],
+    route_guards: &mut [PhaseRouteGuard; MAX_STEPS],
+    phases: &mut [Phase; MAX_PHASES],
+    parallel_ranges: &mut [(usize, usize); MAX_PHASES],
+) -> usize {
+    let mut phase_idx = 0usize;
+    while phase_idx < MAX_PHASES {
+        phases[phase_idx] = Phase::EMPTY;
+        parallel_ranges[phase_idx] = (0, 0);
+        phase_idx += 1;
+    }
+    if len == 0 {
+        return 0;
+    }
+
+    build_route_guards_for_steps_into(role, len, typestate, step_index_to_state, route_guards);
+
+    if !typestate.has_parallel_phase_scope() {
+        phases[0] = build_phase_for_range(steps, 0, len, route_guards);
+        return 1;
+    }
+
+    let mut parallel_count = 0usize;
+    loop {
+        let Some(range) = typestate.parallel_phase_range_at(parallel_count) else {
+            break;
+        };
+        if parallel_count >= MAX_PHASES {
+            panic!("compiled role phase capacity exceeded");
+        }
+        parallel_ranges[parallel_count] = range;
+        parallel_count += 1;
+    }
+
+    if parallel_count == 0 {
+        phases[0] = build_phase_for_range(steps, 0, len, route_guards);
+        return 1;
+    }
+
+    let mut phase_count = 0usize;
+    let mut current_step = 0usize;
+    let mut range_idx = 0usize;
+    while range_idx < parallel_count {
+        let (enter_eff, exit_eff) = parallel_ranges[range_idx];
+
+        let seq_start = current_step;
+        let mut seq_end = current_step;
+        while seq_end < len && steps[seq_end].eff_index().as_usize() < enter_eff {
+            seq_end += 1;
+        }
+        if seq_end > seq_start {
+            push_phase(
+                phases,
+                &mut phase_count,
+                build_phase_for_range(steps, seq_start, seq_end, route_guards),
+            );
+        }
+
+        let par_start = seq_end;
+        let mut par_end = par_start;
+        while par_end < len && steps[par_end].eff_index().as_usize() < exit_eff {
+            par_end += 1;
+        }
+        if par_end > par_start {
+            push_phase(
+                phases,
+                &mut phase_count,
+                build_phase_for_range(steps, par_start, par_end, route_guards),
+            );
+        }
+
+        current_step = par_end;
+        range_idx += 1;
+    }
+
+    if current_step < len {
+        push_phase(
+            phases,
+            &mut phase_count,
+            build_phase_for_range(steps, current_step, len, route_guards),
+        );
+    }
+
+    if phase_count == 0 {
+        phases[0] = build_phase_for_range(steps, 0, len, route_guards);
+        return 1;
+    }
+    phase_count
+}
+
+fn build_route_guards_for_steps_into(
+    role: u8,
+    len: usize,
+    typestate: &RoleTypestateValue,
+    step_index_to_state: &[StateIndex; MAX_STEPS],
+    route_guards: &mut [PhaseRouteGuard; MAX_STEPS],
+) {
+    let mut idx = 0usize;
+    while idx < MAX_STEPS {
+        route_guards[idx] = PhaseRouteGuard::EMPTY;
+        idx += 1;
+    }
+    let mut step_idx = 0usize;
+    while step_idx < len {
+        let state = step_index_to_state[step_idx];
+        if let Some((scope, arm)) =
+            crate::global::typestate::phase_route_guard_for_state_for_role(typestate, role, state)
+        {
+            route_guards[step_idx] = PhaseRouteGuard::new(scope, arm);
+        }
+        step_idx += 1;
+    }
+}
+
+#[inline(always)]
+const fn push_phase(phases: &mut [Phase; MAX_PHASES], phase_count: &mut usize, phase: Phase) {
+    if *phase_count >= MAX_PHASES {
+        panic!("compiled role phase capacity exceeded");
+    }
+    phases[*phase_count] = phase;
+    *phase_count += 1;
+}
+
+const fn build_phase_for_range(
+    steps: &[LocalStep; MAX_STEPS],
+    start: usize,
+    end: usize,
+    route_guards: &[PhaseRouteGuard; MAX_STEPS],
+) -> Phase {
+    let mut phase = Phase::EMPTY;
+    let mut lane_lens = [0u16; MAX_LANES];
+    let mut lane_first = [u16::MAX; MAX_LANES];
+
+    let mut i = start;
+    while i < end {
+        let lane = steps[i].lane() as usize;
+        if lane < MAX_LANES {
+            if lane_first[lane] == u16::MAX {
+                lane_first[lane] = encode_compact_step_index(i);
+            }
+            if lane_lens[lane] == u16::MAX {
+                panic!("phase lane length overflow");
+            }
+            lane_lens[lane] += 1;
+        }
+        i += 1;
+    }
+
+    let mut lane_mask = 0u8;
+    let mut min_start = u16::MAX;
+    let mut lane_idx = 0;
+    while lane_idx < MAX_LANES {
+        if lane_lens[lane_idx] > 0 {
+            let lane_start = lane_first[lane_idx];
+            phase.lanes[lane_idx] = LaneSteps {
+                start: lane_start,
+                len: lane_lens[lane_idx],
+            };
+            lane_mask |= 1u8 << (lane_idx as u32);
+            if lane_start < min_start {
+                min_start = lane_start;
+            }
+        }
+        lane_idx += 1;
+    }
+    phase.lane_mask = lane_mask;
+    phase.min_start = if lane_mask == 0 { 0 } else { min_start };
+    phase.route_guard = route_guard_for_range(route_guards, start, end);
+    phase
+}
+
+const fn route_guard_for_range(
+    route_guards: &[PhaseRouteGuard; MAX_STEPS],
+    start: usize,
+    end: usize,
+) -> PhaseRouteGuard {
+    if start >= end || start >= MAX_STEPS {
+        return PhaseRouteGuard::EMPTY;
+    }
+    let guard = route_guards[start];
+    let mut idx = start + 1;
+    while idx < end && idx < MAX_STEPS {
+        let candidate = route_guards[idx];
+        if !guard.matches(candidate) {
             return PhaseRouteGuard::EMPTY;
         }
-        let guard = route_guards[start];
-        let mut idx = start + 1;
-        while idx < end && idx < MAX_STEPS {
-            let candidate = route_guards[idx];
-            if !guard.matches(candidate) {
-                return PhaseRouteGuard::EMPTY;
-            }
-            idx += 1;
+        idx += 1;
+    }
+    guard
+}
+
+#[inline(never)]
+unsafe fn init_empty_compiled_role_image(dst: *mut CompiledRoleImage, role: u8) {
+    unsafe { CompiledRoleImage::init_empty_compiled_role(dst, role) };
+}
+
+#[inline(never)]
+unsafe fn finalize_compiled_role_image_from_typestate(
+    dst: *mut CompiledRoleImage,
+    scratch: &mut RoleCompileScratch,
+) {
+    unsafe { CompiledRoleImage::finalize_compiled_role_from_typestate(dst, scratch) };
+}
+
+impl CompiledRoleImage {
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) const fn persistent_bytes_for_counts(
+        scope_count: usize,
+        route_scope_count: usize,
+        eff_count: usize,
+    ) -> usize {
+        CompiledRoleScopeStorage::total_bytes_for_counts(scope_count, route_scope_count, eff_count)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn persistent_bytes_for_program<const ROLE: u8, GlobalSteps>(
+        scope_count: usize,
+        passive_linger_route_scope_count: usize,
+        route_scope_count: usize,
+        parallel_enter_count: usize,
+        eff_count: usize,
+    ) -> usize
+    where
+        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
+        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
+            StepCount,
+    {
+        CompiledRoleScopeStorage::total_bytes_for_layout(
+            scope_count,
+            passive_linger_route_scope_count,
+            route_scope_count,
+            parallel_enter_count,
+            eff_count,
+            <<GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output as StepCount>::LEN,
+        )
+    }
+
+    #[inline(always)]
+    pub(crate) const fn persistent_align() -> usize {
+        CompiledRoleScopeStorage::overall_align()
+    }
+
+    #[inline(never)]
+    unsafe fn init_empty_compiled_role(dst: *mut Self, role: u8) {
+        unsafe {
+            ptr::addr_of_mut!((*dst).role).write(role);
+            ptr::addr_of_mut!((*dst).phases).write(core::ptr::null());
+            ptr::addr_of_mut!((*dst).phase_len).write(0);
+            ptr::addr_of_mut!((*dst).typestate).write(core::ptr::null());
+            ptr::addr_of_mut!((*dst).eff_index_to_step).write(core::ptr::null());
+            ptr::addr_of_mut!((*dst).eff_index_to_step_len).write(0);
+            ptr::addr_of_mut!((*dst).step_index_to_state).write(core::ptr::null());
+            ptr::addr_of_mut!((*dst).step_index_to_state_len).write(0);
         }
-        guard
+    }
+
+    #[inline(never)]
+    unsafe fn finalize_compiled_role_from_typestate(
+        dst: *mut Self,
+        scratch: &mut RoleCompileScratch,
+    ) {
+        let role = unsafe { (*dst).role };
+        let typed_typestate = unsafe { &*(*dst).typestate };
+        let len = build_local_steps_into(
+            role,
+            typed_typestate,
+            &mut scratch.by_eff_index,
+            &mut scratch.present,
+            &mut scratch.steps,
+            &mut scratch.eff_index_to_step,
+        );
+        build_step_index_to_state_into(
+            typed_typestate,
+            &scratch.steps,
+            len,
+            &scratch.eff_index_to_step,
+            &mut scratch.step_index_to_state,
+        );
+        let step_state_cap = unsafe { (*dst).step_index_to_state_len as usize };
+        if len > step_state_cap {
+            panic!("compiled role local step count exceeds allocated step-state capacity");
+        }
+        unsafe {
+            ptr::addr_of_mut!((*dst).step_index_to_state_len)
+                .write(core::cmp::min(len, u16::MAX as usize) as u16);
+        }
+        let phase_len = build_phases_into(
+            role,
+            &scratch.steps,
+            len,
+            typed_typestate,
+            &scratch.step_index_to_state,
+            &mut scratch.route_guards,
+            &mut scratch.phases,
+            &mut scratch.parallel_ranges,
+        );
+        let phase_cap = unsafe { (*dst).phase_len as usize };
+        if phase_len > phase_cap {
+            panic!("compiled role phase count exceeds allocated phase capacity");
+        }
+        unsafe {
+            ptr::addr_of_mut!((*dst).phase_len)
+                .write(core::cmp::min(phase_len, u16::MAX as usize) as u16);
+            core::ptr::copy_nonoverlapping(
+                scratch.phases.as_ptr(),
+                (*dst).phases.cast_mut(),
+                phase_len,
+            );
+        }
+        let eff_index_len = unsafe { (*dst).eff_index_to_step_len as usize };
+        let mut eff_idx = 0usize;
+        while eff_idx < eff_index_len {
+            unsafe {
+                (*dst)
+                    .eff_index_to_step
+                    .cast_mut()
+                    .add(eff_idx)
+                    .write(MACHINE_NO_STEP);
+            }
+            eff_idx += 1;
+        }
+        let copy_eff_index_len = core::cmp::min(eff_index_len, MAX_STEPS);
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                scratch.eff_index_to_step.as_ptr(),
+                (*dst).eff_index_to_step.cast_mut(),
+                copy_eff_index_len,
+            );
+        }
+        let step_state_len = unsafe { (*dst).step_index_to_state_len as usize };
+        let mut step_idx = 0usize;
+        while step_idx < step_state_len {
+            unsafe {
+                (*dst)
+                    .step_index_to_state
+                    .cast_mut()
+                    .add(step_idx)
+                    .write(StateIndex::MAX);
+            }
+            step_idx += 1;
+        }
+        let copy_step_state_len = core::cmp::min(step_state_len, MAX_STEPS);
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                scratch.step_index_to_state.as_ptr(),
+                (*dst).step_index_to_state.cast_mut(),
+                copy_step_state_len,
+            );
+        }
+    }
+
+    #[cfg(test)]
+    #[inline(never)]
+    pub(crate) unsafe fn init_from_summary<const ROLE: u8>(
+        dst: *mut Self,
+        summary: &LoweringSummary,
+        scratch: &mut RoleCompileScratch,
+    ) {
+        unsafe {
+            Self::init_from_summary_with_layout::<ROLE>(
+                dst,
+                summary,
+                scratch,
+                None,
+                summary.stamp().scope_count(),
+                summary.stamp().scope_count(),
+                summary.stamp().scope_count(),
+            )
+        };
+    }
+
+    #[inline(never)]
+    pub(crate) unsafe fn init_from_summary_for_program<const ROLE: u8, GlobalSteps>(
+        dst: *mut Self,
+        summary: &LoweringSummary,
+        scratch: &mut RoleCompileScratch,
+        passive_linger_route_scope_count: usize,
+        route_scope_count: usize,
+        parallel_enter_count: usize,
+    ) where
+        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
+        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
+            StepCount,
+    {
+        unsafe {
+            Self::init_from_summary_with_layout::<ROLE>(
+                dst,
+                summary,
+                scratch,
+                Some(
+                    <<GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output as StepCount>::LEN,
+                ),
+                passive_linger_route_scope_count,
+                route_scope_count,
+                parallel_enter_count,
+            )
+        };
+    }
+
+    #[inline(never)]
+    unsafe fn init_from_summary_with_layout<const ROLE: u8>(
+        dst: *mut Self,
+        summary: &LoweringSummary,
+        scratch: &mut RoleCompileScratch,
+        step_index_to_state_count: Option<usize>,
+        passive_linger_route_scope_count: usize,
+        route_scope_count: usize,
+        parallel_enter_count: usize,
+    ) {
+        let init_empty =
+            core::hint::black_box(init_empty_compiled_role_image as unsafe fn(*mut Self, u8));
+        unsafe { init_empty(dst, ROLE) };
+        let scope_count = summary.stamp().scope_count();
+        let eff_count = summary.view().as_slice().len();
+        let step_index_to_state_len = step_index_to_state_count.unwrap_or(eff_count);
+        let storage = unsafe {
+            CompiledRoleScopeStorage::from_image_ptr_with_layout(
+                dst,
+                scope_count,
+                passive_linger_route_scope_count,
+                route_scope_count,
+                parallel_enter_count,
+                eff_count,
+                step_index_to_state_len,
+            )
+        };
+        unsafe {
+            ptr::addr_of_mut!((*dst).typestate).write(storage.typestate.cast_const());
+            ptr::addr_of_mut!((*dst).phases).write(storage.phases.cast_const());
+            ptr::addr_of_mut!((*dst).phase_len)
+                .write(core::cmp::min(storage.phase_cap, u16::MAX as usize) as u16);
+            ptr::addr_of_mut!((*dst).eff_index_to_step)
+                .write(storage.eff_index_to_step.cast_const());
+            ptr::addr_of_mut!((*dst).eff_index_to_step_len)
+                .write(core::cmp::min(eff_count, u16::MAX as usize) as u16);
+            ptr::addr_of_mut!((*dst).step_index_to_state)
+                .write(storage.step_index_to_state.cast_const());
+            ptr::addr_of_mut!((*dst).step_index_to_state_len)
+                .write(core::cmp::min(step_index_to_state_len, u16::MAX as usize) as u16);
+        }
+        unsafe {
+            crate::global::typestate::init_value_from_summary_for_role(
+                storage.typestate,
+                storage.typestate_nodes,
+                storage.typestate_node_cap,
+                ROLE,
+                core::slice::from_raw_parts_mut(storage.records, storage.scope_cap),
+                storage.slots_by_scope,
+                storage.route_dense_by_slot,
+                storage.route_records,
+                storage.route_scope_cap,
+                summary,
+                scratch,
+            );
+        }
+        let finalize = core::hint::black_box(
+            finalize_compiled_role_image_from_typestate
+                as unsafe fn(*mut Self, &mut RoleCompileScratch),
+        );
+        unsafe { finalize(dst, scratch) };
+    }
+
+    #[inline(always)]
+    pub(crate) const fn role(&self) -> u8 {
+        self.role
+    }
+
+    #[inline(always)]
+    pub(crate) fn local_len(&self) -> usize {
+        self.step_index_to_state_len as usize
+    }
+
+    #[inline(always)]
+    pub(crate) fn phase(&self, idx: usize) -> Option<Phase> {
+        if idx >= self.phase_len() {
+            return None;
+        }
+        Some(unsafe { *self.phases.add(idx) })
+    }
+
+    #[inline(always)]
+    pub(crate) fn typestate_ref(&self) -> &RoleTypestateValue {
+        debug_assert!(!self.typestate.is_null());
+        unsafe { &*self.typestate }
+    }
+
+    #[inline(always)]
+    pub(crate) fn eff_index_to_step(&self) -> &[u16] {
+        unsafe {
+            core::slice::from_raw_parts(self.eff_index_to_step, self.eff_index_to_step_len as usize)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn step_index_to_state(&self) -> &[StateIndex] {
+        unsafe {
+            core::slice::from_raw_parts(
+                self.step_index_to_state,
+                self.step_index_to_state_len as usize,
+            )
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn active_lane_mask(&self) -> u8 {
+        let phases = unsafe { core::slice::from_raw_parts(self.phases, self.phase_len()) };
+        build_active_lane_mask_from_phase_slice(phases)
+    }
+
+    #[inline(always)]
+    pub(crate) fn fill_active_lane_dense_by_lane(&self, dst: &mut [u8; MAX_LANES]) -> usize {
+        Self::build_active_lane_dense_map_into(self.active_lane_mask(), dst)
+    }
+
+    #[inline(always)]
+    pub(crate) fn fill_logical_lane_dense_by_lane(&self, dst: &mut [u8; MAX_LANES]) -> usize {
+        Self::build_logical_lane_dense_map_into(self.logical_lane_count(), dst)
+    }
+
+    #[inline(always)]
+    pub(crate) fn logical_lane_count(&self) -> usize {
+        Self::binding_lane_count(self.active_lane_count())
+    }
+
+    #[inline(always)]
+    pub(crate) fn endpoint_lane_slot_count(&self) -> usize {
+        Self::endpoint_lane_slot_count_from_mask(self.active_lane_mask())
+    }
+
+    #[inline(always)]
+    pub(crate) fn max_route_stack_depth(&self) -> usize {
+        self.typestate_ref().max_route_stack_depth()
+    }
+
+    #[inline(always)]
+    pub(crate) fn max_loop_stack_depth(&self) -> usize {
+        self.typestate_ref().max_loop_stack_depth()
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_table_frame_slots(&self) -> usize {
+        core::cmp::max(
+            self.max_route_stack_depth(),
+            usize::from(self.route_scope_count() != 0),
+        )
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_table_lane_slots(&self) -> usize {
+        if self.route_table_frame_slots() == 0 {
+            0
+        } else {
+            self.endpoint_lane_slot_count()
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn loop_table_slots(&self) -> usize {
+        self.max_loop_stack_depth()
+    }
+
+    #[inline(always)]
+    pub(crate) fn resident_cap_entries(&self) -> usize {
+        self.active_lane_count().saturating_mul(4).max(4)
+    }
+
+    #[inline(always)]
+    pub(crate) fn max_frontier_entries(&self) -> usize {
+        let compiled = core::cmp::max(
+            core::cmp::min(self.typestate_ref().max_offer_entries(), MAX_LANES),
+            usize::from(self.route_scope_count() != 0),
+        );
+        if cfg!(test) {
+            test_frontier_entry_capacity(compiled)
+        } else {
+            compiled
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_scope_count(&self) -> usize {
+        self.typestate_ref().route_scope_count()
+    }
+
+    #[inline(always)]
+    pub(crate) fn endpoint_arena_layout_for_binding(
+        &self,
+        binding_enabled: bool,
+    ) -> EndpointArenaLayout {
+        #[cfg(test)]
+        let max_frontier_entries = self.compiled_max_frontier_entries();
+        #[cfg(not(test))]
+        let max_frontier_entries = self.max_frontier_entries();
+        EndpointArenaLayout::new(
+            self.active_lane_count(),
+            if binding_enabled {
+                self.logical_lane_count()
+            } else {
+                0
+            },
+            self.max_route_stack_depth(),
+            self.route_scope_count(),
+            max_frontier_entries,
+        )
+    }
+
+    #[inline(always)]
+    pub(crate) fn frontier_scratch_layout(&self) -> FrontierScratchLayout {
+        if cfg!(test) {
+            FrontierScratchLayout::new(test_frontier_entry_capacity(self.max_frontier_entries()))
+        } else {
+            FrontierScratchLayout::new(self.max_frontier_entries())
+        }
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) fn compiled_max_frontier_entries(&self) -> usize {
+        core::cmp::max(
+            core::cmp::min(self.typestate_ref().max_offer_entries(), MAX_LANES),
+            usize::from(self.route_scope_count() != 0),
+        )
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) fn compiled_frontier_scratch_layout(&self) -> FrontierScratchLayout {
+        FrontierScratchLayout::new(self.compiled_max_frontier_entries())
+    }
+
+    #[inline(always)]
+    pub(crate) fn active_lane_count(&self) -> usize {
+        active_lane_count_from_mask(self.active_lane_mask())
+    }
+
+    #[inline(always)]
+    fn phase_len(&self) -> usize {
+        self.phase_len as usize
+    }
+
+    fn build_active_lane_dense_map_into(active_lane_mask: u8, dst: &mut [u8; MAX_LANES]) -> usize {
+        let mut lane_idx = 0usize;
+        let mut dense = 0usize;
+        while lane_idx < MAX_LANES {
+            if ((active_lane_mask >> lane_idx) & 1) != 0 {
+                dst[lane_idx] = dense as u8;
+                dense += 1;
+            } else {
+                dst[lane_idx] = u8::MAX;
+            }
+            lane_idx += 1;
+        }
+        dense
+    }
+
+    fn binding_lane_count(active_lane_count: usize) -> usize {
+        core::cmp::min(
+            MAX_LANES,
+            active_lane_count.saturating_add(RESERVED_BINDING_LANES),
+        )
+    }
+
+    fn endpoint_lane_slot_count_from_mask(active_lane_mask: u8) -> usize {
+        let live_lane_mask = active_lane_mask | 1;
+        if live_lane_mask == 0 {
+            0
+        } else {
+            core::cmp::min(
+                MAX_LANES,
+                (u8::BITS as usize).saturating_sub(live_lane_mask.leading_zeros() as usize),
+            )
+        }
+    }
+
+    fn build_logical_lane_dense_map_into(
+        logical_lane_count: usize,
+        dst: &mut [u8; MAX_LANES],
+    ) -> usize {
+        let mut lane_idx = 0usize;
+        while lane_idx < MAX_LANES {
+            dst[lane_idx] = if lane_idx < logical_lane_count {
+                lane_idx as u8
+            } else {
+                u8::MAX
+            };
+            lane_idx += 1;
+        }
+        logical_lane_count
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::boxed::Box;
+    use core::{cell::UnsafeCell, mem::MaybeUninit, ptr};
+    use std::thread_local;
 
+    extern crate self as hibana;
+
+    mod fanout_program {
+        extern crate self as hibana;
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/internal/pico_smoke/src/fanout_program.rs"
+        ));
+    }
+    mod huge_program {
+        extern crate self as hibana;
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/internal/pico_smoke/src/huge_program.rs"
+        ));
+    }
+    mod linear_program {
+        extern crate self as hibana;
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/internal/pico_smoke/src/linear_program.rs"
+        ));
+    }
+    mod route_control_kinds {
+        extern crate self as hibana;
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/internal/pico_smoke/src/route_control_kinds.rs"
+        ));
+    }
+    mod scenario {
+        extern crate self as hibana;
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/internal/pico_smoke/src/scenario.rs"
+        ));
+    }
+
+    fn retain_pico_smoke_fixture_symbols() {
+        let _ = fanout_program::ROUTE_SCOPE_COUNT;
+        let _ = fanout_program::EXPECTED_WORKER_BRANCH_LABELS;
+        let _ = fanout_program::ACK_LABELS;
+        let _ = fanout_program::run::<scenario::FixtureHarness>;
+        let _ = huge_program::ROUTE_SCOPE_COUNT;
+        let _ = huge_program::EXPECTED_WORKER_BRANCH_LABELS;
+        let _ = huge_program::ACK_LABELS;
+        let _ = huge_program::run::<scenario::FixtureHarness>;
+        let _ = linear_program::ROUTE_SCOPE_COUNT;
+        let _ = linear_program::EXPECTED_WORKER_BRANCH_LABELS;
+        let _ = linear_program::ACK_LABELS;
+        let _ = linear_program::run::<scenario::FixtureHarness>;
+    }
+
+    #[test]
+    fn pico_smoke_fixture_symbols_are_reachable() {
+        retain_pico_smoke_fixture_symbols();
+    }
+
+    use super::{CompiledRole, CompiledRoleImage, LoweringSummary};
     use crate::{
         control::{
             cap::mint::{
@@ -807,11 +1838,10 @@ mod tests {
         g::{self, Msg, Role},
         global::{
             CanonicalControl, ControlHandling, role_program,
-            typestate::{PhaseCursor, RoleCompileScratch},
+            steps::{SendStep, SeqSteps, StepConcat, StepCons, StepNil},
+            typestate::{JumpReason, LocalAction, RoleCompileScratch},
         },
     };
-
-    use super::{CompiledRole, LoweringSummary};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct RouteRightKind;
@@ -878,25 +1908,209 @@ mod tests {
         }
     }
 
-    fn compile_role_boxed<const ROLE: u8, LocalSteps>(
-        program: &role_program::RoleProgram<'_, ROLE, LocalSteps, MintConfig>,
-    ) -> Box<CompiledRole> {
-        let summary = LoweringSummary::scan_const(program.lowering_input());
-        let mut compiled = Box::<CompiledRole>::new_uninit();
-        let mut scratch = Box::new(RoleCompileScratch::new());
-        unsafe {
-            CompiledRole::init_from_summary::<ROLE>(
-                compiled.as_mut_ptr(),
-                &summary,
-                scratch.as_mut(),
-            );
-            compiled.assume_init()
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct CheckpointKind;
+
+    impl ResourceKind for CheckpointKind {
+        type Handle = ();
+        const TAG: u8 = 242;
+        const NAME: &'static str = "CheckpointKind";
+        const AUTO_MINT_EXTERNAL: bool = false;
+
+        fn encode_handle(_handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
+            [0u8; CAP_HANDLE_LEN]
         }
+
+        fn decode_handle(_data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
+            Ok(())
+        }
+
+        fn zeroize(_handle: &mut Self::Handle) {}
+
+        fn caps_mask(_handle: &Self::Handle) -> CapsMask {
+            CapsMask::empty()
+        }
+
+        fn scope_id(_handle: &Self::Handle) -> Option<crate::global::const_dsl::ScopeId> {
+            None
+        }
+    }
+
+    impl SessionScopedKind for CheckpointKind {
+        fn handle_for_session(_sid: SessionId, _lane: Lane) -> Self::Handle {}
+
+        fn shot() -> CapShot {
+            CapShot::One
+        }
+    }
+
+    impl ControlResourceKind for CheckpointKind {
+        const LABEL: u8 = 0x52;
+        const SCOPE: crate::global::const_dsl::ControlScopeKind =
+            crate::global::const_dsl::ControlScopeKind::Checkpoint;
+        const TAP_ID: u16 = 0x0400;
+        const SHOT: CapShot = CapShot::One;
+        const HANDLING: ControlHandling = ControlHandling::Canonical;
+    }
+
+    impl ControlMint for CheckpointKind {
+        fn mint_handle(
+            _sid: SessionId,
+            _lane: Lane,
+            _scope: crate::global::const_dsl::ScopeId,
+        ) -> Self::Handle {
+        }
+    }
+
+    type SendOnly<const LANE: u8, S, D, M> = StepCons<SendStep<S, D, M, LANE>, StepNil>;
+    type BranchSteps<L, R> = <L as StepConcat<R>>::Output;
+
+    const COMPILED_ROLE_IMAGE_BYTES: usize =
+        super::CompiledRoleScopeStorage::total_bytes_for_counts(
+            crate::eff::meta::MAX_EFF_NODES,
+            crate::eff::meta::MAX_EFF_NODES,
+            crate::eff::meta::MAX_EFF_NODES,
+        );
+    const COMPILED_ROLE_IMAGE_ALIGN: usize = super::CompiledRoleScopeStorage::overall_align();
+    const COMPILED_ROLE_IMAGE_STORAGE_BYTES: usize =
+        COMPILED_ROLE_IMAGE_BYTES + COMPILED_ROLE_IMAGE_ALIGN;
+
+    thread_local! {
+        static COMPILED_ROLE_STORAGE: UnsafeCell<MaybeUninit<CompiledRole>> =
+            const { UnsafeCell::new(MaybeUninit::uninit()) };
+        static COMPILED_ROLE_IMAGE_STORAGE: UnsafeCell<[u8; COMPILED_ROLE_IMAGE_STORAGE_BYTES]> =
+            const { UnsafeCell::new([0u8; COMPILED_ROLE_IMAGE_STORAGE_BYTES]) };
+        static COMPILED_ROLE_SCRATCH: UnsafeCell<MaybeUninit<RoleCompileScratch>> =
+            const { UnsafeCell::new(MaybeUninit::uninit()) };
+    }
+
+    fn with_compiled_role<const ROLE: u8, LocalSteps, R>(
+        program: &role_program::RoleProgram<'_, ROLE, LocalSteps, MintConfig>,
+        f: impl FnOnce(&CompiledRole) -> R,
+    ) -> R {
+        let summary = LoweringSummary::scan_const(program.lowering_input());
+        COMPILED_ROLE_STORAGE.with(|compiled| {
+            COMPILED_ROLE_SCRATCH.with(|scratch| unsafe {
+                let compiled_ptr = (*compiled.get()).as_mut_ptr();
+                let scratch_ptr = (*scratch.get()).as_mut_ptr();
+                scratch_ptr.write(RoleCompileScratch::new());
+                CompiledRole::init_from_summary::<ROLE>(compiled_ptr, &summary, &mut *scratch_ptr);
+                let result = f(&*compiled_ptr);
+                ptr::drop_in_place(compiled_ptr);
+                ptr::drop_in_place(scratch_ptr);
+                result
+            })
+        })
+    }
+
+    fn with_compiled_role_image<const ROLE: u8, LocalSteps, R>(
+        program: &role_program::RoleProgram<'_, ROLE, LocalSteps, MintConfig>,
+        f: impl FnOnce(&CompiledRoleImage) -> R,
+    ) -> R
+    where
+        LocalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
+        <LocalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
+            crate::global::steps::StepCount,
+    {
+        let summary = LoweringSummary::scan_const(program.lowering_input());
+        COMPILED_ROLE_IMAGE_STORAGE.with(|compiled| {
+            COMPILED_ROLE_SCRATCH.with(|scratch| unsafe {
+                let base = (*compiled.get()).as_mut_ptr() as usize;
+                let compiled_ptr = ((base + COMPILED_ROLE_IMAGE_ALIGN - 1)
+                    & !(COMPILED_ROLE_IMAGE_ALIGN - 1))
+                    as *mut CompiledRoleImage;
+                debug_assert!(
+                    (compiled_ptr as usize) + COMPILED_ROLE_IMAGE_BYTES
+                        <= base + COMPILED_ROLE_IMAGE_STORAGE_BYTES
+                );
+                let scratch_ptr = (*scratch.get()).as_mut_ptr();
+                scratch_ptr.write(RoleCompileScratch::new());
+                CompiledRoleImage::init_from_summary_for_program::<ROLE, LocalSteps>(
+                    compiled_ptr,
+                    &summary,
+                    &mut *scratch_ptr,
+                    program.passive_linger_route_scope_count(),
+                    program.route_scope_count(),
+                    program.parallel_enter_count(),
+                );
+                let result = f(&*compiled_ptr);
+                ptr::drop_in_place(compiled_ptr);
+                ptr::drop_in_place(scratch_ptr);
+                result
+            })
+        })
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    struct TypestateNodeStats {
+        node_count: usize,
+        send_count: usize,
+        recv_count: usize,
+        local_count: usize,
+        jump_count: usize,
+        terminate_count: usize,
+        route_arm_end_jumps: usize,
+        loop_continue_jumps: usize,
+        loop_break_jumps: usize,
+        passive_observer_branch_jumps: usize,
+    }
+
+    fn typestate_node_stats(image: &CompiledRoleImage) -> TypestateNodeStats {
+        let typestate = image.typestate_ref();
+        let mut stats = TypestateNodeStats::default();
+        let mut idx = 0usize;
+        while idx < typestate.len() {
+            let node = typestate.node(idx);
+            stats.node_count += 1;
+            match node.action() {
+                LocalAction::Send { .. } => stats.send_count += 1,
+                LocalAction::Recv { .. } => stats.recv_count += 1,
+                LocalAction::Local { .. } => stats.local_count += 1,
+                LocalAction::Terminate => stats.terminate_count += 1,
+                LocalAction::Jump { reason } => {
+                    stats.jump_count += 1;
+                    match reason {
+                        JumpReason::RouteArmEnd => stats.route_arm_end_jumps += 1,
+                        JumpReason::LoopContinue => stats.loop_continue_jumps += 1,
+                        JumpReason::LoopBreak => stats.loop_break_jumps += 1,
+                        JumpReason::PassiveObserverBranch => {
+                            stats.passive_observer_branch_jumps += 1;
+                        }
+                    }
+                }
+            }
+            idx += 1;
+        }
+        stats
     }
 
     #[test]
     fn compiled_role_exposes_controller_arm_and_dispatch_tables() {
-        let left = g::seq(
+        type LeftSteps = SeqSteps<
+            SendOnly<
+                0,
+                Role<0>,
+                Role<0>,
+                Msg<
+                    { crate::runtime::consts::LABEL_ROUTE_DECISION },
+                    GenericCapToken<RouteDecisionKind>,
+                    CanonicalControl<RouteDecisionKind>,
+                >,
+            >,
+            SendOnly<0, Role<0>, Role<1>, Msg<41, ()>>,
+        >;
+        type RightSteps = SeqSteps<
+            SendOnly<
+                0,
+                Role<0>,
+                Role<0>,
+                Msg<99, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+            >,
+            SendOnly<0, Role<0>, Role<1>, Msg<47, ()>>,
+        >;
+        type ProgramSteps = BranchSteps<LeftSteps, RightSteps>;
+
+        const LEFT: g::ProgramSource<LeftSteps> = g::seq(
             g::send::<
                 Role<0>,
                 Role<0>,
@@ -909,7 +2123,7 @@ mod tests {
             >(),
             g::send::<Role<0>, Role<1>, Msg<41, ()>, 0>(),
         );
-        let right = g::seq(
+        const RIGHT: g::ProgramSource<RightSteps> = g::seq(
             g::send::<
                 Role<0>,
                 Role<0>,
@@ -918,48 +2132,697 @@ mod tests {
             >(),
             g::send::<Role<0>, Role<1>, Msg<47, ()>, 0>(),
         );
-        let program = g::route(left, right);
+        const PROGRAM: g::ProgramSource<ProgramSteps> = g::route(LEFT, RIGHT);
+        let program = g::freeze(&PROGRAM);
 
         let controller: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
             role_program::project(&program);
-        let controller_compiled = compile_role_boxed(&controller);
-        let controller_scope = PhaseCursor::new(controller_compiled.as_ref()).node_scope_id();
-        assert_eq!(controller_compiled.role(), 0);
-        assert!(controller_compiled.active_lanes()[0]);
-        assert_eq!(
-            controller_compiled
-                .controller_arm_entry_by_arm(controller_scope, 0)
-                .map(|(_, label)| label),
-            Some(crate::runtime::consts::LABEL_ROUTE_DECISION)
-        );
-        assert_eq!(
-            controller_compiled
-                .controller_arm_entry_by_arm(controller_scope, 1)
-                .map(|(_, label)| label),
-            Some(99)
-        );
+        with_compiled_role(&controller, |controller_compiled| {
+            let controller_scope = controller_compiled.typestate_ref().node(0).scope();
+            assert_eq!(controller_compiled.role(), 0);
+            assert!(controller_compiled.is_active_lane(0));
+            assert_eq!(
+                controller_compiled
+                    .controller_arm_entry_by_arm(controller_scope, 0)
+                    .map(|(_, label)| label),
+                Some(crate::runtime::consts::LABEL_ROUTE_DECISION)
+            );
+            assert_eq!(
+                controller_compiled
+                    .controller_arm_entry_by_arm(controller_scope, 1)
+                    .map(|(_, label)| label),
+                Some(99)
+            );
+            assert!(
+                controller_compiled
+                    .typestate_ref()
+                    .controller_arm_entry_by_arm(controller_scope, 0)
+                    .is_some(),
+                "compiled role typestate must remain the single source of controller-arm facts"
+            );
+        });
 
         let worker: crate::g::advanced::RoleProgram<'_, 1, _, MintConfig> =
             role_program::project(&program);
-        let worker_compiled = compile_role_boxed(&worker);
-        let worker_scope = PhaseCursor::new(worker_compiled.as_ref()).node_scope_id();
-        assert_eq!(worker_compiled.role(), 1);
-        assert!(worker_compiled.active_lanes()[0]);
-        assert!(worker_compiled.phase_count() > 0);
-        assert!(worker_compiled.step_count() > 0);
-        assert_eq!(
-            worker_compiled
-                .first_recv_dispatch_entry(worker_scope, 0)
-                .map(|(label, arm, _)| (label, arm)),
-            Some((41, 0))
+        with_compiled_role(&worker, |worker_compiled| {
+            let worker_scope = worker_compiled.typestate_ref().node(0).scope();
+            assert_eq!(worker_compiled.role(), 1);
+            assert!(worker_compiled.is_active_lane(0));
+            assert!(worker_compiled.phase_count() > 0);
+            assert!(worker_compiled.step_count() > 0);
+            assert_eq!(
+                worker_compiled
+                    .first_recv_dispatch_entry(worker_scope, 0)
+                    .map(|(label, arm, _)| (label, arm)),
+                Some((41, 0))
+            );
+            assert_eq!(
+                worker_compiled
+                    .first_recv_dispatch_entry(worker_scope, 1)
+                    .map(|(label, arm, _)| (label, arm)),
+                Some((47, 1))
+            );
+            assert!(
+                worker_compiled
+                    .typestate_ref()
+                    .first_recv_dispatch_entry(worker_scope, 0)
+                    .is_some(),
+                "compiled role typestate must remain the single source of first-recv dispatch facts"
+            );
+            assert!(worker_compiled.step_for_eff_index(0).is_some());
+            assert!(worker_compiled.state_for_step_index(0).is_some());
+        });
+    }
+
+    #[test]
+    fn large_route_prefix_keeps_offer_and_frontier_bounds_local() {
+        type Prefix01 = StepCons<SendStep<Role<0>, Role<1>, Msg<1, u8>, 0>, StepNil>;
+        type Prefix02 = StepCons<SendStep<Role<1>, Role<0>, Msg<2, u8>, 0>, StepNil>;
+        type Prefix03 = StepCons<SendStep<Role<0>, Role<1>, Msg<3, u8>, 0>, StepNil>;
+        type Prefix04 = StepCons<SendStep<Role<1>, Role<0>, Msg<4, u8>, 0>, StepNil>;
+        type Prefix05 = StepCons<SendStep<Role<0>, Role<1>, Msg<5, u8>, 0>, StepNil>;
+        type Prefix06 = StepCons<SendStep<Role<1>, Role<0>, Msg<6, u8>, 0>, StepNil>;
+        type Prefix07 = StepCons<SendStep<Role<0>, Role<1>, Msg<7, u8>, 0>, StepNil>;
+        type Prefix08 = StepCons<SendStep<Role<1>, Role<0>, Msg<8, u8>, 0>, StepNil>;
+        type Prefix09 = StepCons<SendStep<Role<0>, Role<1>, Msg<9, u8>, 0>, StepNil>;
+        type Prefix10 = StepCons<SendStep<Role<1>, Role<0>, Msg<10, u8>, 0>, StepNil>;
+        type Prefix11 = StepCons<SendStep<Role<0>, Role<1>, Msg<11, u8>, 0>, StepNil>;
+        type Prefix12 = StepCons<SendStep<Role<1>, Role<0>, Msg<12, u8>, 0>, StepNil>;
+        type Prefix13 = StepCons<SendStep<Role<0>, Role<1>, Msg<13, u8>, 0>, StepNil>;
+        type Prefix14 = StepCons<SendStep<Role<1>, Role<0>, Msg<14, u8>, 0>, StepNil>;
+        type Prefix15 = StepCons<SendStep<Role<0>, Role<1>, Msg<15, u8>, 0>, StepNil>;
+        type Prefix16 = StepCons<SendStep<Role<1>, Role<0>, Msg<16, u8>, 0>, StepNil>;
+        type PrefixSteps = SeqSteps<
+            Prefix01,
+            SeqSteps<
+                Prefix02,
+                SeqSteps<
+                    Prefix03,
+                    SeqSteps<
+                        Prefix04,
+                        SeqSteps<
+                            Prefix05,
+                            SeqSteps<
+                                Prefix06,
+                                SeqSteps<
+                                    Prefix07,
+                                    SeqSteps<
+                                        Prefix08,
+                                        SeqSteps<
+                                            Prefix09,
+                                            SeqSteps<
+                                                Prefix10,
+                                                SeqSteps<
+                                                    Prefix11,
+                                                    SeqSteps<
+                                                        Prefix12,
+                                                        SeqSteps<
+                                                            Prefix13,
+                                                            SeqSteps<
+                                                                Prefix14,
+                                                                SeqSteps<Prefix15, Prefix16>,
+                                                            >,
+                                                        >,
+                                                    >,
+                                                >,
+                                            >,
+                                        >,
+                                    >,
+                                >,
+                            >,
+                        >,
+                    >,
+                >,
+            >,
+        >;
+        type LeftSteps = SeqSteps<
+            StepCons<
+                SendStep<
+                    Role<0>,
+                    Role<0>,
+                    Msg<
+                        { crate::runtime::consts::LABEL_ROUTE_DECISION },
+                        GenericCapToken<RouteDecisionKind>,
+                        CanonicalControl<RouteDecisionKind>,
+                    >,
+                    0,
+                >,
+                StepNil,
+            >,
+            StepCons<SendStep<Role<0>, Role<1>, Msg<41, ()>, 0>, StepNil>,
+        >;
+        type RightSteps = SeqSteps<
+            StepCons<
+                SendStep<
+                    Role<0>,
+                    Role<0>,
+                    Msg<99, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+                    0,
+                >,
+                StepNil,
+            >,
+            StepCons<SendStep<Role<0>, Role<1>, Msg<47, ()>, 0>, StepNil>,
+        >;
+        type ProgramSteps = SeqSteps<PrefixSteps, <LeftSteps as StepConcat<RightSteps>>::Output>;
+
+        const PREFIX: crate::g::ProgramSource<PrefixSteps> = g::seq(
+            g::send::<Role<0>, Role<1>, Msg<1, u8>, 0>(),
+            g::seq(
+                g::send::<Role<1>, Role<0>, Msg<2, u8>, 0>(),
+                g::seq(
+                    g::send::<Role<0>, Role<1>, Msg<3, u8>, 0>(),
+                    g::seq(
+                        g::send::<Role<1>, Role<0>, Msg<4, u8>, 0>(),
+                        g::seq(
+                            g::send::<Role<0>, Role<1>, Msg<5, u8>, 0>(),
+                            g::seq(
+                                g::send::<Role<1>, Role<0>, Msg<6, u8>, 0>(),
+                                g::seq(
+                                    g::send::<Role<0>, Role<1>, Msg<7, u8>, 0>(),
+                                    g::seq(
+                                        g::send::<Role<1>, Role<0>, Msg<8, u8>, 0>(),
+                                        g::seq(
+                                            g::send::<Role<0>, Role<1>, Msg<9, u8>, 0>(),
+                                            g::seq(
+                                                g::send::<Role<1>, Role<0>, Msg<10, u8>, 0>(),
+                                                g::seq(
+                                                    g::send::<Role<0>, Role<1>, Msg<11, u8>, 0>(),
+                                                    g::seq(
+                                                        g::send::<Role<1>, Role<0>, Msg<12, u8>, 0>(
+                                                        ),
+                                                        g::seq(
+                                                            g::send::<
+                                                                Role<0>,
+                                                                Role<1>,
+                                                                Msg<13, u8>,
+                                                                0,
+                                                            >(
+                                                            ),
+                                                            g::seq(
+                                                                g::send::<
+                                                                    Role<1>,
+                                                                    Role<0>,
+                                                                    Msg<14, u8>,
+                                                                    0,
+                                                                >(
+                                                                ),
+                                                                g::seq(
+                                                                    g::send::<
+                                                                        Role<0>,
+                                                                        Role<1>,
+                                                                        Msg<15, u8>,
+                                                                        0,
+                                                                    >(
+                                                                    ),
+                                                                    g::send::<
+                                                                        Role<1>,
+                                                                        Role<0>,
+                                                                        Msg<16, u8>,
+                                                                        0,
+                                                                    >(
+                                                                    ),
+                                                                ),
+                                                            ),
+                                                        ),
+                                                    ),
+                                                ),
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
         );
-        assert_eq!(
-            worker_compiled
-                .first_recv_dispatch_entry(worker_scope, 1)
-                .map(|(label, arm, _)| (label, arm)),
-            Some((47, 1))
+        const LEFT: crate::g::ProgramSource<LeftSteps> = g::seq(
+            g::send::<
+                Role<0>,
+                Role<0>,
+                Msg<
+                    { crate::runtime::consts::LABEL_ROUTE_DECISION },
+                    GenericCapToken<RouteDecisionKind>,
+                    CanonicalControl<RouteDecisionKind>,
+                >,
+                0,
+            >(),
+            g::send::<Role<0>, Role<1>, Msg<41, ()>, 0>(),
         );
-        assert!(worker_compiled.step_for_eff_index(0).is_some());
-        assert!(worker_compiled.state_for_step_index(0).is_some());
+        const RIGHT: crate::g::ProgramSource<RightSteps> = g::seq(
+            g::send::<
+                Role<0>,
+                Role<0>,
+                Msg<99, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+                0,
+            >(),
+            g::send::<Role<0>, Role<1>, Msg<47, ()>, 0>(),
+        );
+        const PROGRAM: crate::g::ProgramSource<ProgramSteps> =
+            g::seq(PREFIX, g::route(LEFT, RIGHT));
+        let program = crate::g::freeze(&PROGRAM);
+
+        let worker: crate::g::advanced::RoleProgram<'_, 1, _, MintConfig> =
+            role_program::project(&program);
+        let summary = LoweringSummary::scan_const(worker.lowering_input());
+        assert!(
+            CompiledRoleImage::persistent_bytes_for_program::<1, ProgramSteps>(
+                summary.stamp().scope_count(),
+                worker.passive_linger_route_scope_count(),
+                worker.route_scope_count(),
+                worker.parallel_enter_count(),
+                summary.view().as_slice().len(),
+            ) < CompiledRoleImage::persistent_bytes_for_counts(
+                summary.stamp().scope_count(),
+                worker.route_scope_count(),
+                summary.view().as_slice().len(),
+            ),
+            "role image sizing should use the projected local step count instead of full eff_count"
+        );
+        with_compiled_role_image(&worker, |image| {
+            assert!(
+                image.local_len() >= 9,
+                "large prefix should still project a substantial local program"
+            );
+            assert_eq!(
+                image.route_scope_count(),
+                1,
+                "single trailing route should compile to one route scope"
+            );
+            assert_eq!(
+                image.compiled_max_frontier_entries(),
+                1,
+                "frontier bound must stay tied to the active route frontier"
+            );
+            assert!(
+                image.compiled_frontier_scratch_layout().total_bytes()
+                    < image.local_len()
+                        * core::mem::size_of::<crate::global::typestate::StateIndex>()
+                        * 8,
+                "frontier scratch must stay local to route metadata instead of scaling with the full local program"
+            );
+        });
+    }
+
+    fn assert_huge_shape_bounds<Steps>(
+        program: &crate::g::Program<Steps>,
+        expected_route_scope_count: usize,
+        expected_frontier_entries: usize,
+    ) where
+        Steps: crate::g::advanced::steps::ProjectRole<crate::g::Role<1>>,
+    {
+        let worker: crate::g::advanced::RoleProgram<'_, 1, _, MintConfig> =
+            role_program::project(program);
+        with_compiled_role_image(&worker, |image| {
+            let active_lane_count = image.active_lane_count();
+            let layout = image.endpoint_arena_layout_for_binding(true);
+            let no_binding_layout = image.endpoint_arena_layout_for_binding(false);
+
+            assert!(
+                image.local_len() >= expected_route_scope_count,
+                "huge choreography local length must dominate the route scope count"
+            );
+            assert_eq!(
+                image.route_scope_count(),
+                expected_route_scope_count,
+                "route scope count must stay tied to the huge choreography shape"
+            );
+            assert_eq!(
+                image.compiled_max_frontier_entries(),
+                expected_frontier_entries,
+                "frontier bound must stay tied to branch-local fan-out"
+            );
+            assert!(
+                image.compiled_max_frontier_entries() < image.local_len().max(1),
+                "frontier bound must not grow with the full local prefix"
+            );
+            assert_eq!(
+                layout.scope_evidence_slots().count(),
+                expected_route_scope_count,
+                "scope evidence storage must stay exact-bound to the route scope count"
+            );
+            assert_eq!(
+                layout.binding_slots().count(),
+                image.logical_lane_count() * 8,
+                "binding storage must stay exact-bound to the logical lane count"
+            );
+            assert_eq!(
+                no_binding_layout.binding_slots().count(),
+                0,
+                "NoBinding layout must not reserve buffered binding slots"
+            );
+            assert_eq!(
+                no_binding_layout.binding_len().count(),
+                0,
+                "NoBinding layout must not reserve binding len storage"
+            );
+            assert_eq!(
+                no_binding_layout.binding_label_masks().count(),
+                0,
+                "NoBinding layout must not reserve binding label masks"
+            );
+            assert!(
+                no_binding_layout.total_bytes() < layout.total_bytes(),
+                "NoBinding layout must stay smaller than the binding-capable layout"
+            );
+            assert_eq!(
+                layout.route_arm_stack().count(),
+                active_lane_count * image.max_route_stack_depth(),
+                "route-arm stack must stay exact-bound to active lanes and route depth"
+            );
+            assert_eq!(
+                layout.frontier_offer_entry_slots().count(),
+                image.max_frontier_entries(),
+                "offer entry storage must stay tied to the test-visible simultaneous frontier bound"
+            );
+        });
+    }
+
+    fn count_parallel_enter_markers(summary: &LoweringSummary) -> usize {
+        let markers = summary.view().scope_markers();
+        let mut count = 0usize;
+        let mut idx = 0usize;
+        while idx < markers.len() {
+            let marker = markers[idx];
+            if matches!(marker.event, crate::global::const_dsl::ScopeEvent::Enter)
+                && matches!(
+                    marker.scope_kind,
+                    crate::global::const_dsl::ScopeKind::Parallel
+                )
+            {
+                count += 1;
+            }
+            idx += 1;
+        }
+        count
+    }
+
+    #[test]
+    fn huge_shape_phase_counts_stay_bounded_by_parallel_markers() {
+        let route_program = crate::g::freeze(&huge_program::PROGRAM);
+        let route_worker: crate::g::advanced::RoleProgram<'_, 1, _, MintConfig> =
+            role_program::project(&route_program);
+        let route_summary = LoweringSummary::scan_const(route_worker.lowering_input());
+        let route_parallel_markers = count_parallel_enter_markers(&route_summary);
+        with_compiled_role_image(&route_worker, |image| {
+            let phase_count = image.phase_len();
+            let local_len = image.local_len();
+            let bound = if local_len == 0 {
+                0
+            } else {
+                route_parallel_markers.saturating_mul(2).saturating_add(1)
+            };
+            assert!(
+                phase_count <= bound,
+                "route-heavy phase count must stay bounded by parallel enter markers"
+            );
+            std::println!(
+                "phase-shape name=route_heavy local_len={} phase_count={} parallel_enter_markers={} phase_size={} lane_steps_size={} route_guard_size={}",
+                local_len,
+                phase_count,
+                route_parallel_markers,
+                core::mem::size_of::<crate::global::role_program::Phase>(),
+                core::mem::size_of::<crate::global::role_program::LaneSteps>(),
+                core::mem::size_of::<crate::global::role_program::PhaseRouteGuard>(),
+            );
+        });
+
+        let linear_program = crate::g::freeze(&linear_program::PROGRAM);
+        let linear_worker: crate::g::advanced::RoleProgram<'_, 1, _, MintConfig> =
+            role_program::project(&linear_program);
+        let linear_summary = LoweringSummary::scan_const(linear_worker.lowering_input());
+        let linear_parallel_markers = count_parallel_enter_markers(&linear_summary);
+        with_compiled_role_image(&linear_worker, |image| {
+            let phase_count = image.phase_len();
+            let local_len = image.local_len();
+            let bound = if local_len == 0 {
+                0
+            } else {
+                linear_parallel_markers.saturating_mul(2).saturating_add(1)
+            };
+            assert!(
+                phase_count <= bound,
+                "linear-heavy phase count must stay bounded by parallel enter markers"
+            );
+            std::println!(
+                "phase-shape name=linear_heavy local_len={} phase_count={} parallel_enter_markers={}",
+                local_len,
+                phase_count,
+                linear_parallel_markers,
+            );
+        });
+
+        let fanout_program = crate::g::freeze(&fanout_program::PROGRAM);
+        let fanout_worker: crate::g::advanced::RoleProgram<'_, 1, _, MintConfig> =
+            role_program::project(&fanout_program);
+        let fanout_summary = LoweringSummary::scan_const(fanout_worker.lowering_input());
+        let fanout_parallel_markers = count_parallel_enter_markers(&fanout_summary);
+        with_compiled_role_image(&fanout_worker, |image| {
+            let phase_count = image.phase_len();
+            let local_len = image.local_len();
+            let bound = if local_len == 0 {
+                0
+            } else {
+                fanout_parallel_markers.saturating_mul(2).saturating_add(1)
+            };
+            assert!(
+                phase_count <= bound,
+                "fanout-heavy phase count must stay bounded by parallel enter markers"
+            );
+            std::println!(
+                "phase-shape name=fanout_heavy local_len={} phase_count={} parallel_enter_markers={}",
+                local_len,
+                phase_count,
+                fanout_parallel_markers,
+            );
+        });
+    }
+
+    fn print_role_tail_breakdown<const ROLE: u8, Steps>(
+        name: &str,
+        program: &crate::g::Program<Steps>,
+    ) where
+        Steps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
+        <Steps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
+            crate::global::steps::StepCount,
+    {
+        let worker: crate::g::advanced::RoleProgram<'_, ROLE, _, MintConfig> =
+            role_program::project(program);
+        let summary = LoweringSummary::scan_const(worker.lowering_input());
+        let scope_count = summary.stamp().scope_count();
+        let eff_count = worker.eff_count();
+        let route_enter_count = worker
+            .lowering_input()
+            .scope_markers()
+            .iter()
+            .filter(|marker| {
+                matches!(marker.event, crate::global::const_dsl::ScopeEvent::Enter)
+                    && matches!(
+                        marker.scope_kind,
+                        crate::global::const_dsl::ScopeKind::Route
+                    )
+            })
+            .count();
+        let local_len = <<Steps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output as crate::global::steps::StepCount>::LEN;
+        let phase_cap =
+            super::CompiledRoleScopeStorage::phase_cap(local_len, worker.parallel_enter_count());
+        let typestate_node_cap = super::CompiledRoleScopeStorage::typestate_node_cap(
+            scope_count,
+            worker.passive_linger_route_scope_count(),
+            local_len,
+        );
+        let scope_cap = super::CompiledRoleScopeStorage::scope_cap(scope_count);
+        let route_scope_cap =
+            super::CompiledRoleScopeStorage::route_scope_cap(worker.route_scope_count());
+        let eff_cap = super::CompiledRoleScopeStorage::step_cap(eff_count);
+        let step_cap = super::CompiledRoleScopeStorage::step_cap(local_len);
+        let route_stats = with_compiled_role_image(&worker, |image| {
+            image.typestate_ref().route_scope_payload_stats()
+        });
+        let scope_stats =
+            with_compiled_role_image(&worker, |image| image.typestate_ref().scope_payload_stats());
+        let node_stats = with_compiled_role_image(&worker, typestate_node_stats);
+        std::println!(
+            "role-tail-breakdown name={name} scope_count={} eff_count={} local_len={} phase_cap={} typestate_node_cap={} built_node_len={} typestate_node_slack={} local_node_size={} local_action_size={} policy_mode_size={} scope_record_size={} route_scope_record_size={} state_index_size={} typestate_nodes_bytes={} phases_bytes={} records_bytes={} slots_bytes={} route_dense_bytes={} route_records_bytes={} route_recv_bytes={} eff_index_bytes={} step_index_bytes={} total_bytes={} send_nodes={} recv_nodes={} local_nodes={} jump_nodes={} terminate_nodes={} route_arm_end_jumps={} loop_continue_jumps={} loop_break_jumps={} passive_observer_branch_jumps={} total_lane_first_entries={} max_lane_first_entries={} total_lane_last_entries={} max_lane_last_entries={} total_arm_entries={} max_arm_entries={} total_passive_arm_scopes={} max_passive_arm_scopes={} route_scope_count={} route_enter_count={} total_first_recv_entries={} max_first_recv_entries={} total_arm_lane_last_entries={} max_arm_lane_last_entries={} total_arm_lane_last_override_entries={} max_arm_lane_last_override_entries={} total_offer_lane_entries={} max_offer_lane_entries={}",
+            scope_count,
+            eff_count,
+            local_len,
+            phase_cap,
+            typestate_node_cap,
+            node_stats.node_count,
+            typestate_node_cap.saturating_sub(node_stats.node_count),
+            core::mem::size_of::<crate::global::typestate::LocalNode>(),
+            crate::global::typestate::LocalNode::packed_action_size(),
+            core::mem::size_of::<crate::global::const_dsl::PolicyMode>(),
+            core::mem::size_of::<crate::global::typestate::ScopeRecord>(),
+            core::mem::size_of::<crate::global::typestate::RouteScopeRecord>(),
+            core::mem::size_of::<crate::global::typestate::StateIndex>(),
+            typestate_node_cap * core::mem::size_of::<crate::global::typestate::LocalNode>(),
+            phase_cap * core::mem::size_of::<crate::global::role_program::Phase>(),
+            scope_cap * core::mem::size_of::<crate::global::typestate::ScopeRecord>(),
+            scope_cap * core::mem::size_of::<u16>(),
+            scope_cap * core::mem::size_of::<u16>(),
+            route_scope_cap * core::mem::size_of::<crate::global::typestate::RouteScopeRecord>(),
+            0usize,
+            eff_cap * core::mem::size_of::<u16>(),
+            step_cap * core::mem::size_of::<crate::global::typestate::StateIndex>(),
+            CompiledRoleImage::persistent_bytes_for_program::<ROLE, Steps>(
+                summary.stamp().scope_count(),
+                worker.passive_linger_route_scope_count(),
+                worker.route_scope_count(),
+                worker.parallel_enter_count(),
+                eff_count,
+            ),
+            node_stats.send_count,
+            node_stats.recv_count,
+            node_stats.local_count,
+            node_stats.jump_count,
+            node_stats.terminate_count,
+            node_stats.route_arm_end_jumps,
+            node_stats.loop_continue_jumps,
+            node_stats.loop_break_jumps,
+            node_stats.passive_observer_branch_jumps,
+            scope_stats.total_lane_first_entries,
+            scope_stats.max_lane_first_entries,
+            scope_stats.total_lane_last_entries,
+            scope_stats.max_lane_last_entries,
+            scope_stats.total_arm_entries,
+            scope_stats.max_arm_entries,
+            scope_stats.total_passive_arm_scopes,
+            scope_stats.max_passive_arm_scopes,
+            route_stats.route_scope_count,
+            route_enter_count,
+            route_stats.total_first_recv_entries,
+            route_stats.max_first_recv_entries,
+            route_stats.total_arm_lane_last_entries,
+            route_stats.max_arm_lane_last_entries,
+            route_stats.total_arm_lane_last_override_entries,
+            route_stats.max_arm_lane_last_override_entries,
+            route_stats.total_offer_lane_entries,
+            route_stats.max_offer_lane_entries,
+        );
+    }
+
+    #[test]
+    fn huge_shape_role_image_tail_breakdown_is_reported() {
+        let route_program = crate::g::freeze(&huge_program::PROGRAM);
+        print_role_tail_breakdown::<1, huge_program::ProgramSteps>("route_heavy", &route_program);
+
+        let linear_program = crate::g::freeze(&linear_program::PROGRAM);
+        print_role_tail_breakdown::<1, linear_program::ProgramSteps>(
+            "linear_heavy",
+            &linear_program,
+        );
+
+        let fanout_program = crate::g::freeze(&fanout_program::PROGRAM);
+        print_role_tail_breakdown::<1, fanout_program::ProgramSteps>(
+            "fanout_heavy",
+            &fanout_program,
+        );
+    }
+
+    #[test]
+    fn offer_regression_role_tail_breakdown_is_reported() {
+        type LoopContinueMsg = Msg<
+            { crate::runtime::consts::LABEL_LOOP_CONTINUE },
+            GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
+            CanonicalControl<crate::control::cap::resource_kinds::LoopContinueKind>,
+        >;
+        type LoopBreakMsg = Msg<
+            { crate::runtime::consts::LABEL_LOOP_BREAK },
+            GenericCapToken<crate::control::cap::resource_kinds::LoopBreakKind>,
+            CanonicalControl<crate::control::cap::resource_kinds::LoopBreakKind>,
+        >;
+        type SessionRequestWireMsg = Msg<0x10, u8>;
+        type AdminReplyMsg = Msg<0x50, u8>;
+        type SnapshotCandidatesReplyMsg = Msg<0x51, u8>;
+        type CheckpointMsg = Msg<
+            { CheckpointKind::LABEL },
+            GenericCapToken<CheckpointKind>,
+            CanonicalControl<CheckpointKind>,
+        >;
+        type StaticRouteLeftMsg = Msg<
+            { crate::runtime::consts::LABEL_ROUTE_DECISION },
+            GenericCapToken<RouteDecisionKind>,
+            CanonicalControl<RouteDecisionKind>,
+        >;
+        type StaticRouteRightMsg =
+            Msg<99, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>;
+        type ReplyDecisionLeftSteps = SeqSteps<
+            SendOnly<3, Role<1>, Role<1>, StaticRouteLeftMsg>,
+            SendOnly<3, Role<1>, Role<0>, AdminReplyMsg>,
+        >;
+        type SnapshotReplyPathSteps = SeqSteps<
+            SendOnly<3, Role<1>, Role<1>, StaticRouteLeftMsg>,
+            SeqSteps<
+                SendOnly<3, Role<1>, Role<1>, StaticRouteLeftMsg>,
+                SeqSteps<
+                    SendOnly<3, Role<1>, Role<0>, SnapshotCandidatesReplyMsg>,
+                    SendOnly<3, Role<0>, Role<0>, CheckpointMsg>,
+                >,
+            >,
+        >;
+        type ReplyDecisionRightSteps =
+            SeqSteps<SendOnly<3, Role<1>, Role<1>, StaticRouteRightMsg>, SnapshotReplyPathSteps>;
+        type ReplyDecisionSteps = BranchSteps<ReplyDecisionLeftSteps, ReplyDecisionRightSteps>;
+        type RequestExchangeSteps =
+            SeqSteps<SendOnly<3, Role<0>, Role<1>, SessionRequestWireMsg>, ReplyDecisionSteps>;
+        type ContinueArmSteps =
+            SeqSteps<SendOnly<3, Role<0>, Role<0>, LoopContinueMsg>, RequestExchangeSteps>;
+        type BreakArmSteps = SendOnly<3, Role<0>, Role<0>, LoopBreakMsg>;
+        type LoopProgramSteps = BranchSteps<ContinueArmSteps, BreakArmSteps>;
+
+        const REPLY_DECISION: g::ProgramSource<ReplyDecisionSteps> = g::route(
+            g::seq(
+                g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
+                g::send::<Role<1>, Role<0>, AdminReplyMsg, 3>(),
+            ),
+            g::seq(
+                g::send::<Role<1>, Role<1>, StaticRouteRightMsg, 3>(),
+                g::seq(
+                    g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
+                    g::seq(
+                        g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
+                        g::seq(
+                            g::send::<Role<1>, Role<0>, SnapshotCandidatesReplyMsg, 3>(),
+                            g::send::<Role<0>, Role<0>, CheckpointMsg, 3>(),
+                        ),
+                    ),
+                ),
+            ),
+        );
+        const REQUEST_EXCHANGE: g::ProgramSource<RequestExchangeSteps> = g::seq(
+            g::send::<Role<0>, Role<1>, SessionRequestWireMsg, 3>(),
+            REPLY_DECISION,
+        );
+        const LOOP_PROGRAM: g::ProgramSource<LoopProgramSteps> = g::route(
+            g::seq(
+                g::send::<Role<0>, Role<0>, LoopContinueMsg, 3>(),
+                REQUEST_EXCHANGE,
+            ),
+            g::send::<Role<0>, Role<0>, LoopBreakMsg, 3>(),
+        );
+        let program = crate::g::freeze(&LOOP_PROGRAM);
+
+        print_role_tail_breakdown::<0, LoopProgramSteps>("offer_admin_snapshot_client", &program);
+        print_role_tail_breakdown::<1, LoopProgramSteps>("offer_admin_snapshot_server", &program);
+    }
+
+    #[test]
+    fn huge_route_heavy_shape_keeps_resident_bounds_local() {
+        let program = crate::g::freeze(&huge_program::PROGRAM);
+        assert_huge_shape_bounds(&program, huge_program::ROUTE_SCOPE_COUNT, 1);
+    }
+
+    #[test]
+    fn huge_linear_heavy_shape_keeps_resident_bounds_local() {
+        let program = crate::g::freeze(&linear_program::PROGRAM);
+        assert_huge_shape_bounds(&program, linear_program::ROUTE_SCOPE_COUNT, 0);
+    }
+
+    #[test]
+    fn huge_fanout_heavy_shape_keeps_resident_bounds_local() {
+        let program = crate::g::freeze(&fanout_program::PROGRAM);
+        assert_huge_shape_bounds(&program, fanout_program::ROUTE_SCOPE_COUNT, 1);
     }
 }

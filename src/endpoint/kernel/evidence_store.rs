@@ -2,64 +2,131 @@
 
 use super::authority::RouteDecisionToken;
 use super::evidence::ScopeEvidence;
+use core::ops::{Index, IndexMut};
 
-#[cfg(feature = "std")]
-fn boxed_repeat_array<T: Clone, const N: usize>(value: T) -> std::boxed::Box<[T; N]> {
-    let values: std::boxed::Box<[T]> = std::vec![value; N].into_boxed_slice();
-    match values.try_into() {
-        Ok(fixed) => fixed,
-        Err(_) => panic!("fixed array length"),
-    }
+#[derive(Clone, Copy)]
+pub(super) struct ScopeEvidenceSlot {
+    evidence: ScopeEvidence,
+    generation: u16,
 }
 
-pub(super) struct ScopeEvidenceStore {
-    #[cfg(feature = "std")]
-    pub(super) scope_evidence: std::boxed::Box<[ScopeEvidence; crate::eff::meta::MAX_EFF_NODES]>,
-    #[cfg(not(feature = "std"))]
-    pub(super) scope_evidence: [ScopeEvidence; crate::eff::meta::MAX_EFF_NODES],
-    #[cfg(feature = "std")]
-    pub(super) scope_evidence_generations: std::boxed::Box<[u32; crate::eff::meta::MAX_EFF_NODES]>,
-    #[cfg(not(feature = "std"))]
-    pub(super) scope_evidence_generations: [u32; crate::eff::meta::MAX_EFF_NODES],
+impl ScopeEvidenceSlot {
+    const EMPTY: Self = Self {
+        evidence: ScopeEvidence::EMPTY,
+        generation: 0,
+    };
 }
 
-impl ScopeEvidenceStore {
-    #[cfg(feature = "std")]
-    pub(super) fn new() -> Self {
-        Self {
-            scope_evidence: boxed_repeat_array(ScopeEvidence::EMPTY),
-            scope_evidence_generations: boxed_repeat_array(0u32),
+#[derive(Clone, Copy)]
+pub(super) struct ScopeEvidenceTable {
+    slots: *mut ScopeEvidenceSlot,
+    len: u16,
+}
+
+impl ScopeEvidenceTable {
+    pub(super) unsafe fn init_from_parts(
+        dst: *mut Self,
+        slots: *mut ScopeEvidenceSlot,
+        len: usize,
+    ) {
+        if len > u16::MAX as usize {
+            panic!("scope evidence capacity overflow");
         }
-    }
-
-    #[cfg(not(feature = "std"))]
-    pub(super) fn new() -> Self {
-        Self {
-            scope_evidence: [ScopeEvidence::EMPTY; crate::eff::meta::MAX_EFF_NODES],
-            scope_evidence_generations: [0; crate::eff::meta::MAX_EFF_NODES],
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).slots).write(slots);
+            core::ptr::addr_of_mut!((*dst).len).write(len as u16);
+        }
+        let mut idx = 0usize;
+        while idx < len {
+            unsafe {
+                slots.add(idx).write(ScopeEvidenceSlot::EMPTY);
+            }
+            idx += 1;
         }
     }
 
     #[inline]
-    pub(super) fn generation(&self, slot: Option<usize>) -> u32 {
-        slot.and_then(|slot| self.scope_evidence_generations.get(slot).copied())
-            .unwrap_or(0)
+    fn contains(&self, slot: usize) -> bool {
+        slot < self.len as usize
     }
 
     #[inline]
+    pub(super) fn get(&self, slot: usize) -> Option<&ScopeEvidence> {
+        if !self.contains(slot) {
+            return None;
+        }
+        Some(unsafe { &(*self.slots.add(slot)).evidence })
+    }
+
+    #[inline]
+    pub(super) fn get_mut(&mut self, slot: usize) -> Option<&mut ScopeEvidence> {
+        if !self.contains(slot) {
+            return None;
+        }
+        Some(unsafe { &mut (*self.slots.add(slot)).evidence })
+    }
+
+    #[inline]
+    pub(super) fn generation(&self, slot: usize) -> u16 {
+        if !self.contains(slot) {
+            return 0;
+        }
+        unsafe { (*self.slots.add(slot)).generation }
+    }
+
     pub(super) fn bump_generation(&mut self, slot: usize) {
-        let Some(generation) = self.scope_evidence_generations.get_mut(slot) else {
+        if !self.contains(slot) {
             return;
-        };
+        }
+        let generation = unsafe { &mut (*self.slots.add(slot)).generation };
         let next = generation.wrapping_add(1);
         *generation = if next == 0 { 1 } else { next };
     }
 
-    #[inline]
-    pub(super) fn record_ack(&mut self, slot: usize, token: RouteDecisionToken) -> bool {
-        let Some(evidence) = self.scope_evidence.get_mut(slot) else {
+    pub(super) fn clear(&mut self, slot: usize) -> bool {
+        let Some(evidence) = self.get_mut(slot) else {
             return false;
         };
+        let changed = evidence.ack.is_some()
+            || evidence.hint_label != ScopeEvidence::NONE
+            || evidence.ready_arm_mask != 0
+            || evidence.poll_ready_arm_mask != 0
+            || evidence.flags != 0;
+        if changed {
+            *evidence = ScopeEvidence::EMPTY;
+        }
+        changed
+    }
+}
+
+static EMPTY_SCOPE_EVIDENCE: ScopeEvidence = ScopeEvidence::EMPTY;
+
+impl Index<usize> for ScopeEvidenceTable {
+    type Output = ScopeEvidence;
+
+    #[inline]
+    fn index(&self, index: usize) -> &Self::Output {
+        self.get(index).unwrap_or(&EMPTY_SCOPE_EVIDENCE)
+    }
+}
+
+impl IndexMut<usize> for ScopeEvidenceTable {
+    #[inline]
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        self.get_mut(index)
+            .expect("scope evidence slot must fit compiled dense route scope bound")
+    }
+}
+
+impl ScopeEvidenceTable {
+    #[inline]
+    pub(super) fn generation_for_slot(&self, slot: Option<usize>) -> u16 {
+        slot.map(|slot| self.generation(slot)).unwrap_or(0)
+    }
+
+    #[inline]
+    pub(super) fn record_ack(&mut self, slot: usize, token: RouteDecisionToken) -> bool {
+        let evidence = &mut self[slot];
         let arm = token.arm().as_u8();
         if (evidence.flags & ScopeEvidence::FLAG_ACK_CONFLICT) != 0 {
             return false;
@@ -82,7 +149,7 @@ impl ScopeEvidenceStore {
 
     #[inline]
     pub(super) fn peek_ack(&self, slot: usize) -> Option<RouteDecisionToken> {
-        let evidence = *self.scope_evidence.get(slot)?;
+        let evidence = *self.get(slot)?;
         if (evidence.flags & ScopeEvidence::FLAG_ACK_CONFLICT) != 0 {
             return None;
         }
@@ -91,7 +158,7 @@ impl ScopeEvidenceStore {
 
     #[inline]
     pub(super) fn take_ack(&mut self, slot: usize) -> Option<RouteDecisionToken> {
-        let evidence = self.scope_evidence.get_mut(slot)?;
+        let evidence = self.get_mut(slot)?;
         if (evidence.flags & ScopeEvidence::FLAG_ACK_CONFLICT) != 0 {
             return None;
         }
@@ -102,9 +169,7 @@ impl ScopeEvidenceStore {
 
     #[inline]
     pub(super) fn record_hint(&mut self, slot: usize, label: u8) -> bool {
-        let Some(evidence) = self.scope_evidence.get_mut(slot) else {
-            return false;
-        };
+        let evidence = &mut self[slot];
         if (evidence.flags & ScopeEvidence::FLAG_HINT_CONFLICT) != 0 {
             return false;
         }
@@ -122,9 +187,7 @@ impl ScopeEvidenceStore {
 
     #[inline]
     pub(super) fn record_hint_dynamic(&mut self, slot: usize, label: u8) -> bool {
-        let Some(evidence) = self.scope_evidence.get_mut(slot) else {
-            return false;
-        };
+        let evidence = &mut self[slot];
         let old_label = evidence.hint_label;
         let old_flags = evidence.flags;
         evidence.hint_label = label;
@@ -134,9 +197,7 @@ impl ScopeEvidenceStore {
 
     #[inline]
     pub(super) fn mark_ready_arm(&mut self, slot: usize, arm: u8, poll_ready: bool) -> bool {
-        let Some(evidence) = self.scope_evidence.get_mut(slot) else {
-            return false;
-        };
+        let evidence = &mut self[slot];
         let bit = ScopeEvidence::arm_bit(arm);
         let ready_changed = (evidence.ready_arm_mask & bit) == 0;
         let poll_changed = poll_ready && (evidence.poll_ready_arm_mask & bit) == 0;
@@ -151,23 +212,21 @@ impl ScopeEvidenceStore {
 
     #[inline]
     pub(super) fn ready_arm_mask(&self, slot: usize) -> u8 {
-        self.scope_evidence
-            .get(slot)
+        self.get(slot)
             .map(|evidence| evidence.ready_arm_mask)
             .unwrap_or(0)
     }
 
     #[inline]
     pub(super) fn poll_ready_arm_mask(&self, slot: usize) -> u8 {
-        self.scope_evidence
-            .get(slot)
+        self.get(slot)
             .map(|evidence| evidence.poll_ready_arm_mask)
             .unwrap_or(0)
     }
 
     #[inline]
     pub(super) fn consume_ready_arm(&mut self, slot: usize, arm: u8) -> bool {
-        let Some(evidence) = self.scope_evidence.get_mut(slot) else {
+        let Some(evidence) = self.get_mut(slot) else {
             return false;
         };
         let bit = ScopeEvidence::arm_bit(arm);
@@ -184,7 +243,7 @@ impl ScopeEvidenceStore {
 
     #[inline]
     pub(super) fn peek_hint(&self, slot: usize) -> Option<u8> {
-        let evidence = *self.scope_evidence.get(slot)?;
+        let evidence = *self.get(slot)?;
         if (evidence.flags & ScopeEvidence::FLAG_HINT_CONFLICT) != 0 {
             return None;
         }
@@ -195,9 +254,10 @@ impl ScopeEvidenceStore {
         }
     }
 
+    #[cfg(test)]
     #[inline]
     pub(super) fn take_hint(&mut self, slot: usize) -> Option<u8> {
-        let evidence = self.scope_evidence.get_mut(slot)?;
+        let evidence = self.get_mut(slot)?;
         if (evidence.flags & ScopeEvidence::FLAG_HINT_CONFLICT) != 0 {
             return None;
         }
@@ -211,25 +271,8 @@ impl ScopeEvidenceStore {
     }
 
     #[inline]
-    pub(super) fn clear(&mut self, slot: usize) -> bool {
-        let Some(evidence) = self.scope_evidence.get(slot).copied() else {
-            return false;
-        };
-        let changed = evidence.ack.is_some()
-            || evidence.hint_label != ScopeEvidence::NONE
-            || evidence.ready_arm_mask != 0
-            || evidence.poll_ready_arm_mask != 0
-            || evidence.flags != 0;
-        if changed {
-            self.scope_evidence[slot] = ScopeEvidence::EMPTY;
-        }
-        changed
-    }
-
-    #[inline]
     pub(super) fn conflicted(&self, slot: usize) -> bool {
-        self.scope_evidence
-            .get(slot)
+        self.get(slot)
             .map(|evidence| evidence.flags != 0)
             .unwrap_or(false)
     }

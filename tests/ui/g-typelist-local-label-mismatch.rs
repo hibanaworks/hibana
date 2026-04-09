@@ -2,15 +2,17 @@ use hibana::g::{self};
 use hibana::g::advanced::{RoleProgram, project};
 use hibana::g::advanced::steps::{LocalSend, SendStep, StepCons, StepNil};
 
-const PROGRAM: g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<7, u16>, 0>, StepNil>> =
+const PROGRAM: g::ProgramSource<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<7, u16>, 0>, StepNil>> =
     g::send::<g::Role<0>, g::Role<1>, g::Msg<7, u16>, 0>();
+const PROGRAM_TOKEN: g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<7, u16>, 0>, StepNil>> =
+    g::freeze(&PROGRAM);
 
 // Expecting the wrong label (`8` instead of `7`) must fail during compilation.
 const CLIENT: RoleProgram<
     'static,
     0,
     StepCons<LocalSend<g::Role<1>, g::Msg<8, u16>>, StepNil>,
-> = project(&PROGRAM);
+> = project(&PROGRAM_TOKEN);
 
 fn main() {
     let _ = CLIENT;

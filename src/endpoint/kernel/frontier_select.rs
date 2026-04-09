@@ -11,6 +11,57 @@ where
     B: BindingSlot,
 {
     #[inline]
+    pub(in crate::endpoint::kernel) fn offer_entry_active_mask_from_route_state(
+        &self,
+        entry_idx: usize,
+    ) -> u8 {
+        let mut active_mask = 0u8;
+        let mut remaining_lanes = self.route_state.active_offer_mask;
+        while remaining_lanes != 0 {
+            let lane_idx = remaining_lanes.trailing_zeros() as usize;
+            remaining_lanes &= !(1u8 << lane_idx);
+            if lane_idx >= MAX_LANES {
+                continue;
+            }
+            let info = self.route_state.lane_offer_state(lane_idx);
+            if !info.entry.is_max() && state_index_to_usize(info.entry) == entry_idx {
+                active_mask |= 1u8 << lane_idx;
+            }
+        }
+        active_mask
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn offer_entry_state_snapshot(
+        &self,
+        entry_idx: usize,
+    ) -> Option<OfferEntryState> {
+        let active_mask = self.offer_entry_active_mask_from_route_state(entry_idx);
+        #[cfg(test)]
+        {
+            if let Some(mut state) = self
+                .frontier_state
+                .offer_entry_state
+                .get(entry_idx)
+                .copied()
+            {
+                if state.active_mask != 0 {
+                    return Some(state);
+                }
+                if active_mask != 0 {
+                    state.active_mask = active_mask;
+                    return Some(state);
+                }
+                return None;
+            }
+        }
+        (active_mask != 0).then_some(OfferEntryState {
+            active_mask,
+            ..OfferEntryState::EMPTY
+        })
+    }
+
+    #[inline]
     pub(in crate::endpoint::kernel) fn observed_reentry_entry_idx(
         &self,
         observed_entries: ObservedEntrySet,
@@ -32,11 +83,25 @@ where
         scope_id: ScopeId,
         entry_idx: usize,
     ) -> Option<CurrentScopeSelectionMeta> {
-        self.frontier_state
-            .offer_entry_state
-            .get(entry_idx)
-            .filter(|state| state.active_mask != 0 && state.scope_id == scope_id)
-            .map(|state| state.selection_meta)
+        let state = self.offer_entry_state_snapshot(entry_idx)?;
+        if state.active_mask == 0 || self.offer_entry_scope_id(entry_idx, state) != scope_id {
+            return None;
+        }
+        if let Some(info) = self.offer_entry_lane_state(scope_id, entry_idx) {
+            return Some(self.compute_offer_entry_selection_meta(
+                scope_id,
+                info,
+                self.offer_lanes_for_scope(scope_id).1 != 0,
+            ));
+        }
+        #[cfg(test)]
+        {
+            return Some(state.selection_meta);
+        }
+        #[cfg(not(test))]
+        {
+            None
+        }
     }
 
     #[inline]
@@ -45,11 +110,39 @@ where
         scope_id: ScopeId,
         entry_idx: usize,
     ) -> Option<ScopeLabelMeta> {
-        self.frontier_state
-            .offer_entry_state
-            .get(entry_idx)
-            .filter(|state| state.active_mask != 0 && state.scope_id == scope_id)
-            .map(|state| state.label_meta)
+        let state = self.offer_entry_state_snapshot(entry_idx)?;
+        if state.active_mask == 0 || self.offer_entry_scope_id(entry_idx, state) != scope_id {
+            return None;
+        }
+        if let Some(info) = self.offer_entry_lane_state(scope_id, entry_idx) {
+            let representative_idx = state_index_to_usize(info.entry);
+            let loop_meta = Self::scope_loop_meta_at(
+                &self.cursor,
+                &self.control_semantics(),
+                scope_id,
+                representative_idx,
+            );
+            return Some(Self::scope_label_meta_at(
+                &self.cursor,
+                &self.control_semantics(),
+                scope_id,
+                loop_meta,
+                representative_idx,
+            ));
+        }
+        let loop_meta = Self::scope_loop_meta(&self.cursor, &self.control_semantics(), scope_id);
+        #[cfg(test)]
+        {
+            if !state.label_meta.scope_id().is_none() {
+                return Some(state.label_meta);
+            }
+        }
+        Some(Self::scope_label_meta(
+            &self.cursor,
+            &self.control_semantics(),
+            scope_id,
+            loop_meta,
+        ))
     }
 
     #[inline]
@@ -58,11 +151,17 @@ where
         scope_id: ScopeId,
         entry_idx: usize,
     ) -> Option<ScopeArmMaterializationMeta> {
-        self.frontier_state
-            .offer_entry_state
-            .get(entry_idx)
-            .filter(|state| state.active_mask != 0 && state.scope_id == scope_id)
-            .map(|state| state.materialization_meta)
+        let state = self.offer_entry_state_snapshot(entry_idx)?;
+        if state.active_mask == 0 || self.offer_entry_scope_id(entry_idx, state) != scope_id {
+            return None;
+        }
+        #[cfg(test)]
+        {
+            if state.materialization_meta.arm_count != 0 {
+                return Some(state.materialization_meta);
+            }
+        }
+        Some(self.compute_scope_arm_materialization_meta(scope_id))
     }
 
     #[inline]
@@ -71,28 +170,178 @@ where
         scope_id: ScopeId,
         entry_idx: usize,
     ) -> Option<LaneOfferState> {
-        let state = self.frontier_state.offer_entry_state.get(entry_idx)?;
-        if state.active_mask == 0 || state.scope_id != scope_id {
+        let state = self.offer_entry_state_snapshot(entry_idx)?;
+        if state.active_mask == 0 || self.offer_entry_scope_id(entry_idx, state) != scope_id {
             return None;
         }
-        let lane_idx = state.lane_idx as usize;
-        if lane_idx >= MAX_LANES || (state.active_mask & (1u8 << lane_idx)) == 0 {
-            return None;
-        }
-        let info = self.route_state.lane_offer_state[lane_idx];
-        (info.scope == scope_id && state_index_to_usize(info.entry) == entry_idx).then_some(info)
+        self.offer_entry_representative_lane_state(entry_idx, state)
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_parallel_root(
+    pub(in crate::endpoint::kernel) fn offer_entry_parallel_root_from_state(
         &self,
         entry_idx: usize,
+        entry_state: OfferEntryState,
     ) -> Option<ScopeId> {
-        self.frontier_state
-            .offer_entry_state
-            .get(entry_idx)
-            .map(|state| state.parallel_root)
-            .filter(|root| !root.is_none())
+        if let Some(info) = self.offer_entry_representative_lane_state(entry_idx, entry_state) {
+            let parallel_root = info.parallel_root;
+            return (!parallel_root.is_none()).then_some(parallel_root);
+        }
+        #[cfg(test)]
+        {
+            return (!entry_state.parallel_root.is_none()).then_some(entry_state.parallel_root);
+        }
+        #[cfg(not(test))]
+        {
+            None
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn offer_entry_representative_lane_state(
+        &self,
+        entry_idx: usize,
+        entry_state: OfferEntryState,
+    ) -> Option<LaneOfferState> {
+        let mut remaining_lanes = entry_state.active_mask;
+        while remaining_lanes != 0 {
+            let lane_idx = remaining_lanes.trailing_zeros() as usize;
+            remaining_lanes &= !(1u8 << lane_idx);
+            if lane_idx >= MAX_LANES {
+                continue;
+            }
+            let info = self.route_state.lane_offer_state(lane_idx);
+            if state_index_to_usize(info.entry) == entry_idx {
+                return Some(info);
+            }
+        }
+        None
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn offer_entry_representative_lane_idx(
+        &self,
+        entry_idx: usize,
+        entry_state: OfferEntryState,
+    ) -> Option<usize> {
+        let mut remaining_lanes = entry_state.active_mask;
+        while remaining_lanes != 0 {
+            let lane_idx = remaining_lanes.trailing_zeros() as usize;
+            remaining_lanes &= !(1u8 << lane_idx);
+            if lane_idx >= MAX_LANES {
+                continue;
+            }
+            let info = self.route_state.lane_offer_state(lane_idx);
+            if state_index_to_usize(info.entry) == entry_idx {
+                return Some(lane_idx);
+            }
+        }
+        #[cfg(test)]
+        {
+            let lane_idx = entry_state.lane_idx as usize;
+            if lane_idx < MAX_LANES {
+                return Some(lane_idx);
+            }
+        }
+        None
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn offer_entry_scope_id(
+        &self,
+        entry_idx: usize,
+        entry_state: OfferEntryState,
+    ) -> ScopeId {
+        if entry_state.active_mask == 0 {
+            return ScopeId::none();
+        }
+        if let Some(info) = self.offer_entry_representative_lane_state(entry_idx, entry_state) {
+            return info.scope;
+        }
+        #[cfg(test)]
+        {
+            return entry_state.scope_id;
+        }
+        #[cfg(not(test))]
+        {
+            ScopeId::none()
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn offer_lane_mask_for_scope_id(
+        &self,
+        scope_id: ScopeId,
+    ) -> u8 {
+        let (offer_lanes, offer_lanes_len) = self.offer_lanes_for_scope(scope_id);
+        let mut offer_lane_mask = 0u8;
+        let mut offer_lane_idx = 0usize;
+        while offer_lane_idx < offer_lanes_len {
+            let lane_idx = offer_lanes[offer_lane_idx] as usize;
+            if lane_idx < MAX_LANES {
+                offer_lane_mask |= 1u8 << lane_idx;
+            }
+            offer_lane_idx += 1;
+        }
+        offer_lane_mask
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn offer_entry_offer_lane_mask(
+        &self,
+        entry_idx: usize,
+        entry_state: OfferEntryState,
+    ) -> u8 {
+        if entry_state.active_mask == 0 {
+            return 0;
+        }
+        #[cfg(test)]
+        if self
+            .offer_entry_representative_lane_state(entry_idx, entry_state)
+            .is_none()
+        {
+            return entry_state.offer_lane_mask;
+        }
+        let scope_id = self.offer_entry_scope_id(entry_idx, entry_state);
+        if scope_id.is_none() {
+            return 0;
+        }
+        let offer_lane_mask = self.offer_lane_mask_for_scope_id(scope_id);
+        if offer_lane_mask != 0 {
+            return offer_lane_mask;
+        }
+        #[cfg(test)]
+        {
+            return entry_state.offer_lane_mask;
+        }
+        #[cfg(not(test))]
+        {
+            0
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn offer_lane_mask_for_active_entries(
+        &self,
+        active_entries: ActiveEntrySet,
+    ) -> u8 {
+        let mut offer_lane_mask = 0u8;
+        let mut remaining_entries = active_entries.occupancy_mask();
+        while remaining_entries != 0 {
+            let slot_idx = remaining_entries.trailing_zeros() as usize;
+            remaining_entries &= !(1u8 << slot_idx);
+            let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
+                continue;
+            };
+            let Some(state) = self.offer_entry_state_snapshot(entry_idx) else {
+                continue;
+            };
+            if state.active_mask == 0 {
+                continue;
+            }
+            offer_lane_mask |= self.offer_entry_offer_lane_mask(entry_idx, state);
+        }
+        offer_lane_mask
     }
 
     pub(in crate::endpoint::kernel) fn compute_offer_entry_selection_meta(
@@ -131,8 +380,7 @@ where
             if let Some((entry, label)) = self.cursor.controller_arm_entry_by_arm(scope_id, arm) {
                 meta.controller_arm_entry[arm_idx] = entry;
                 meta.controller_arm_label[arm_idx] = label;
-                let target_cursor = self.cursor.with_index(state_index_to_usize(entry));
-                if let Some(recv_meta) = target_cursor.try_recv_meta() {
+                if let Some(recv_meta) = self.cursor.try_recv_meta_at(state_index_to_usize(entry)) {
                     meta.controller_recv_mask |= 1u8 << arm_idx;
                     if recv_meta.peer != ROLE {
                         meta.controller_cross_role_recv_mask |= 1u8 << arm_idx;
@@ -144,11 +392,7 @@ where
                 && let Some(entry) = checked_state_index(entry)
             {
                 meta.recv_entry[arm_idx] = entry;
-                if let Some(recv_meta) = self
-                    .cursor
-                    .with_index(state_index_to_usize(entry))
-                    .try_recv_meta()
-                {
+                if let Some(recv_meta) = self.cursor.try_recv_meta_at(state_index_to_usize(entry)) {
                     meta.record_binding_demux_lane(arm, recv_meta.lane);
                 }
             }
@@ -173,8 +417,7 @@ where
         {
             let (_label, dispatch_arm, target) = dispatch;
             meta.first_recv_dispatch[dispatch_idx] = dispatch;
-            let target_cursor = self.cursor.with_index(state_index_to_usize(target));
-            if let Some(recv_meta) = target_cursor.try_recv_meta() {
+            if let Some(recv_meta) = self.cursor.try_recv_meta_at(state_index_to_usize(target)) {
                 meta.record_binding_demux_lane(dispatch_arm, recv_meta.lane);
             }
             dispatch_idx += 1;
@@ -194,15 +437,14 @@ where
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 continue;
             };
-            let Some(state) = self
-                .frontier_state
-                .offer_entry_state
-                .get(entry_idx)
-                .copied()
-            else {
+            let Some(state) = self.offer_entry_state_snapshot(entry_idx) else {
                 continue;
             };
-            if state.active_mask != 0 && state.lane_idx != u8::MAX {
+            if state.active_mask != 0
+                && self
+                    .offer_entry_representative_lane_idx(entry_idx, state)
+                    .is_some()
+            {
                 return Some(entry_idx);
             }
         }
@@ -212,34 +454,50 @@ where
     #[inline]
     pub(in crate::endpoint::kernel) fn offer_entry_frontier(
         &self,
+        entry_idx: usize,
         entry_state: OfferEntryState,
     ) -> FrontierKind {
-        entry_state.frontier
+        if let Some(info) = self.offer_entry_representative_lane_state(entry_idx, entry_state) {
+            return info.frontier;
+        }
+        #[cfg(test)]
+        {
+            return entry_state.frontier;
+        }
+        #[cfg(not(test))]
+        {
+            FrontierKind::Route
+        }
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn preview_offer_entry_evidence_non_consuming(
         &mut self,
+        entry_idx: usize,
         entry_state: OfferEntryState,
     ) -> (bool, bool, bool) {
+        let scope_id = self.offer_entry_scope_id(entry_idx, entry_state);
+        let offer_lane_mask = self.offer_entry_offer_lane_mask(entry_idx, entry_state);
         let binding_ready = self
             .binding_inbox
-            .has_buffered_for_lane_mask(entry_state.offer_lane_mask);
-        let mut has_ack = self.peek_scope_ack(entry_state.scope_id).is_some();
-        let lane_idx = entry_state.lane_idx as usize;
-        let pending_ack_mask = if lane_idx < MAX_LANES {
-            self.pending_scope_ack_lane_mask(
-                lane_idx,
-                entry_state.scope_id,
-                entry_state.offer_lane_mask,
-            )
+            .has_buffered_for_lane_mask(offer_lane_mask);
+        let mut has_ack = !scope_id.is_none() && self.peek_scope_ack(scope_id).is_some();
+        let pending_ack_mask = if let Some(lane_idx) =
+            self.offer_entry_representative_lane_idx(entry_idx, entry_state)
+        {
+            if scope_id.is_none() {
+                0
+            } else {
+                self.pending_scope_ack_lane_mask(lane_idx, scope_id, offer_lane_mask)
+            }
         } else {
             0
         };
         if !has_ack {
             has_ack = pending_ack_mask != 0;
         }
-        let has_ready_arm_evidence = self.scope_has_ready_arm_evidence(entry_state.scope_id);
+        let has_ready_arm_evidence =
+            !scope_id.is_none() && self.scope_has_ready_arm_evidence(scope_id);
         (binding_ready, has_ack, has_ready_arm_evidence)
     }
 
@@ -252,23 +510,45 @@ where
         has_ack: bool,
         has_ready_arm_evidence: bool,
     ) -> (OfferEntryObservedState, FrontierCandidate) {
-        let loop_meta = if entry_state.lane_idx as usize >= MAX_LANES {
-            entry_state.label_meta.loop_meta()
+        let scope_id = self.offer_entry_scope_id(entry_idx, entry_state);
+        let summary = self.compute_offer_entry_static_summary(entry_state.active_mask, entry_idx);
+        let loop_meta = if let Some(info) =
+            self.offer_entry_representative_lane_state(entry_idx, entry_state)
+        {
+            Self::scope_loop_meta_at(
+                &self.cursor,
+                &self.control_semantics(),
+                scope_id,
+                state_index_to_usize(info.entry),
+            )
         } else {
-            self.route_state.lane_offer_state[entry_state.lane_idx as usize].loop_meta
+            #[cfg(test)]
+            {
+                entry_state.label_meta.loop_meta()
+            }
+            #[cfg(not(test))]
+            {
+                if scope_id.is_none() {
+                    ScopeLoopMeta::EMPTY
+                } else {
+                    Self::scope_loop_meta(&self.cursor, &self.control_semantics(), scope_id)
+                }
+            }
         };
         let ack_is_progress = Self::ack_is_progress_evidence(loop_meta, has_ack);
         let observed = offer_entry_observed_state(
-            entry_state.scope_id,
-            entry_state.summary,
+            scope_id,
+            summary,
             has_ready_arm_evidence,
             ack_is_progress,
             binding_ready,
         );
         let candidate = offer_entry_frontier_candidate(
+            scope_id,
             entry_idx,
-            entry_state.parallel_root,
-            self.offer_entry_frontier(entry_state),
+            self.offer_entry_parallel_root_from_state(entry_idx, entry_state)
+                .unwrap_or(ScopeId::none()),
+            self.offer_entry_frontier(entry_idx, entry_state),
             observed,
         );
         (observed, candidate)
@@ -278,16 +558,12 @@ where
         &mut self,
         entry_idx: usize,
     ) -> Option<FrontierCandidate> {
-        let entry_state = self
-            .frontier_state
-            .offer_entry_state
-            .get(entry_idx)
-            .copied()?;
+        let entry_state = self.offer_entry_state_snapshot(entry_idx)?;
         if entry_state.active_mask == 0 {
             return None;
         }
         let (binding_ready, has_ack, has_ready_arm_evidence) =
-            self.preview_offer_entry_evidence_non_consuming(entry_state);
+            self.preview_offer_entry_evidence_non_consuming(entry_idx, entry_state);
         let (_observed, candidate) = self.offer_entry_candidate_from_observation(
             entry_idx,
             entry_state,
@@ -354,25 +630,17 @@ where
         );
         visited.record(scope_id);
         let current_entry_idx = self.cursor.index();
-        let current_cursor = self.cursor.with_index(current_entry_idx);
-        let current_is_controller = current_cursor.is_route_controller(scope_id);
-        let mut snapshot = FrontierSnapshot {
-            current_scope: scope_id,
+        let current_is_controller = self.cursor.is_route_controller(scope_id);
+        let mut scratch = self.frontier_scratch_view();
+        let mut snapshot = frontier_snapshot_from_scratch(
+            &mut scratch,
+            scope_id,
             current_entry_idx,
-            current_parallel_root: current_parallel.unwrap_or(ScopeId::none()),
-            current_frontier: Self::frontier_kind_for_cursor(
-                &current_cursor,
-                scope_id,
-                current_is_controller,
-            ),
-            candidates: [FrontierCandidate::EMPTY; MAX_LANES],
-            candidate_len: 0,
-        };
+            current_parallel.unwrap_or(ScopeId::none()),
+            Self::frontier_kind_for_cursor(&self.cursor, scope_id, current_is_controller),
+        );
         self.for_each_active_offer_candidate(current_parallel, |candidate| {
-            if snapshot.candidate_len < MAX_LANES {
-                snapshot.candidates[snapshot.candidate_len] = candidate;
-                snapshot.candidate_len += 1;
-            }
+            let _ = snapshot.push_candidate(candidate);
             ControlFlow::<()>::Continue(())
         });
         if exhausted {
@@ -380,8 +648,8 @@ where
                 return FrontierDeferOutcome::Exhausted;
             };
             visited.record(candidate.scope_id);
-            if candidate.entry_idx != self.cursor.index() {
-                self.set_cursor(self.cursor.with_index(candidate.entry_idx));
+            if candidate.entry_idx as usize != self.cursor.index() {
+                self.set_cursor_index(candidate.entry_idx as usize);
             }
             return FrontierDeferOutcome::Yielded;
         }
@@ -389,8 +657,8 @@ where
             return FrontierDeferOutcome::Continue;
         };
         visited.record(candidate.scope_id);
-        if candidate.entry_idx != self.cursor.index() {
-            self.set_cursor(self.cursor.with_index(candidate.entry_idx));
+        if candidate.entry_idx as usize != self.cursor.index() {
+            self.set_cursor_index(candidate.entry_idx as usize);
         }
         FrontierDeferOutcome::Yielded
     }
@@ -435,43 +703,49 @@ where
         current_idx: usize,
     ) -> CurrentFrontierSelectionState {
         if let Some(info) = self.offer_entry_lane_state(scope_id, current_idx) {
-            let entry_state = self.frontier_state.offer_entry_state[current_idx];
-            let entry_parallel = self.offer_entry_parallel_root(current_idx);
-            let current_parallel = if !info.parallel_root.is_none()
-                && self.root_frontier_active_mask(info.parallel_root) != 0
-            {
-                Some(info.parallel_root)
-            } else {
-                entry_parallel
-            };
+            let entry_state = self
+                .offer_entry_state_snapshot(current_idx)
+                .unwrap_or_else(|| unreachable!("active offer entry must have a runtime snapshot"));
+            let summary =
+                self.compute_offer_entry_static_summary(entry_state.active_mask, current_idx);
+            let entry_parallel =
+                self.offer_entry_parallel_root_from_state(current_idx, entry_state);
+            let parallel_root = info.parallel_root;
+            let current_parallel =
+                if !parallel_root.is_none() && self.root_frontier_active_mask(parallel_root) != 0 {
+                    Some(parallel_root)
+                } else {
+                    entry_parallel
+                };
             let mut flags = 0u8;
-            if entry_state.summary.is_controller() {
+            if summary.is_controller() {
                 flags |= CurrentFrontierSelectionState::FLAG_CONTROLLER;
             }
-            if entry_state.summary.is_dynamic() {
+            if summary.is_dynamic() {
                 flags |= CurrentFrontierSelectionState::FLAG_DYNAMIC;
             }
             return CurrentFrontierSelectionState {
-                frontier: entry_state.frontier,
+                frontier: self.offer_entry_frontier(current_idx, entry_state),
                 parallel_root: current_parallel.unwrap_or(ScopeId::none()),
-                ready: entry_state.summary.static_ready(),
+                ready: summary.static_ready(),
                 has_progress_evidence: false,
                 flags,
             };
         }
-        let current_cursor = self.cursor.with_index(current_idx);
-        let current_is_controller = current_cursor.is_route_controller(scope_id);
+        let current_is_controller = self.cursor.is_route_controller(scope_id);
         let current_is_dynamic = current_is_controller
-            && current_cursor
+            && self
+                .cursor
                 .route_scope_controller_policy(scope_id)
                 .map(|(policy, _, _)| policy.is_dynamic())
                 .unwrap_or(false);
-        let static_facts = Self::frontier_static_facts(
-            &current_cursor,
+        let static_facts = Self::frontier_static_facts_at(
+            &self.cursor,
             &self.control_semantics(),
             scope_id,
             current_is_controller,
             current_is_dynamic,
+            current_idx,
         );
         let cursor_parallel = Self::parallel_scope_root(&self.cursor, scope_id);
         let cursor_parallel_has_offer = cursor_parallel
@@ -481,7 +755,10 @@ where
         let current_entry_parallel = if cursor_parallel_has_offer || !current_entry_has_offer {
             None
         } else {
-            self.offer_entry_parallel_root(current_idx)
+            self.offer_entry_state_snapshot(current_idx)
+                .and_then(|entry_state| {
+                    self.offer_entry_parallel_root_from_state(current_idx, entry_state)
+                })
         };
         let current_parallel = if cursor_parallel_has_offer {
             cursor_parallel
@@ -511,7 +788,7 @@ where
             && let Some(entry_idx) = self.route_scope_offer_entry_index(current_scope)
             && entry_idx != self.cursor.index()
         {
-            self.set_cursor(self.cursor.with_index(entry_idx));
+            self.set_cursor_index(entry_idx);
             self.sync_lane_offer_state();
             return self.align_cursor_to_selected_scope();
         }
@@ -550,15 +827,12 @@ where
         } else {
             self.global_frontier_observed_entries()
         };
-        if self
-            .cached_frontier_observed_entries(
-                current_parallel_root,
-                use_root_observed_entries,
-                observation_key,
-            )
-            .is_none()
-            && observed_entries.len != 0
-        {
+        let cached_entries = self.cached_frontier_observed_entries(
+            current_parallel_root,
+            use_root_observed_entries,
+            observation_key,
+        );
+        if cached_entries.is_none() && observed_entries.len() != 0 {
             self.refresh_frontier_observation_cache(
                 current_parallel_root,
                 use_root_observed_entries,
@@ -687,7 +961,7 @@ where
         };
         if let Some((_priority, entry_idx)) = selection {
             if entry_idx != self.cursor.index() {
-                self.set_cursor(self.cursor.with_index(entry_idx));
+                self.set_cursor_index(entry_idx);
             }
             return Ok(());
         }
@@ -700,7 +974,7 @@ where
         if !current_is_route_entry {
             if let Some(entry_idx) = reentry_ready_entry_idx.or(reentry_any_entry_idx) {
                 if entry_idx != self.cursor.index() {
-                    self.set_cursor(self.cursor.with_index(entry_idx));
+                    self.set_cursor_index(entry_idx);
                 }
                 return Ok(());
             }
@@ -714,13 +988,13 @@ where
         preferred_lane_idx: usize,
     ) -> bool {
         if let Some(idx) = self.cursor.index_for_lane_step(preferred_lane_idx) {
-            self.set_cursor(self.cursor.with_index(idx));
+            self.set_cursor_index(idx);
             return true;
         }
         let mut lane_idx = 0usize;
         while lane_idx < MAX_LANES {
             if let Some(idx) = self.cursor.index_for_lane_step(lane_idx) {
-                self.set_cursor(self.cursor.with_index(idx));
+                self.set_cursor_index(idx);
                 return true;
             }
             lane_idx += 1;
@@ -739,7 +1013,7 @@ where
         let cursor_parallel = Self::parallel_scope_root(&self.cursor, scope_id);
         let mut has_ready = false;
         self.for_each_active_offer_candidate(cursor_parallel, |candidate| {
-            has_ready |= candidate.ready;
+            has_ready |= candidate.ready();
             ControlFlow::<()>::Continue(())
         });
         has_ready

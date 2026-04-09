@@ -1,0 +1,432 @@
+use super::{route_control_kinds, scenario::ScenarioHarness};
+use hibana::g::advanced::CanonicalControl;
+use hibana::g::advanced::steps::{SendStep, SeqSteps, StepConcat, StepCons, StepNil};
+use hibana::g::{self, Msg, Role};
+use hibana::substrate::cap::GenericCapToken;
+
+type U8Send<const FROM: u8, const TO: u8, const LABEL: u8> =
+    StepCons<SendStep<Role<FROM>, Role<TO>, Msg<LABEL, u8>>, StepNil>;
+type U32Send<const FROM: u8, const TO: u8, const LABEL: u8> =
+    StepCons<SendStep<Role<FROM>, Role<TO>, Msg<LABEL, u32>>, StepNil>;
+type ControlSend<const LABEL: u8, K> = StepCons<
+    SendStep<Role<0>, Role<0>, Msg<LABEL, GenericCapToken<K>, CanonicalControl<K>>>,
+    StepNil,
+>;
+
+type Route1LeftKind = route_control_kinds::RouteControl<120, 0>;
+type Route1RightKind = route_control_kinds::RouteControl<121, 1>;
+type Route2LeftKind = route_control_kinds::RouteControl<122, 0>;
+type Route2RightKind = route_control_kinds::RouteControl<123, 1>;
+type Route3LeftKind = route_control_kinds::RouteControl<124, 0>;
+type Route3RightKind = route_control_kinds::RouteControl<125, 1>;
+type Route4LeftKind = route_control_kinds::RouteControl<126, 0>;
+type Route4RightKind = route_control_kinds::RouteControl<127, 1>;
+type Route5LeftKind = route_control_kinds::RouteControl<120, 0>;
+type Route5RightKind = route_control_kinds::RouteControl<121, 1>;
+type Route6LeftKind = route_control_kinds::RouteControl<122, 0>;
+type Route6RightKind = route_control_kinds::RouteControl<123, 1>;
+type Route7LeftKind = route_control_kinds::RouteControl<124, 0>;
+type Route7RightKind = route_control_kinds::RouteControl<125, 1>;
+type Route8LeftKind = route_control_kinds::RouteControl<126, 0>;
+type Route8RightKind = route_control_kinds::RouteControl<127, 1>;
+
+pub const ROUTE_SCOPE_COUNT: usize = 8;
+pub const EXPECTED_WORKER_BRANCH_LABELS: [u8; ROUTE_SCOPE_COUNT] = [81, 84, 85, 88, 89, 92, 93, 96];
+pub const ACK_LABELS: [u8; ROUTE_SCOPE_COUNT] = [97, 98, 99, 100, 101, 102, 103, 104];
+
+type PrefixA01 = SeqSteps<U8Send<0, 1, 1>, U8Send<1, 0, 2>>;
+type PrefixA02 = SeqSteps<PrefixA01, U8Send<0, 1, 3>>;
+pub type PrefixA = SeqSteps<PrefixA02, U8Send<1, 0, 4>>;
+
+type PrefixB01 = SeqSteps<U8Send<0, 1, 5>, U8Send<1, 0, 6>>;
+type PrefixB02 = SeqSteps<PrefixB01, U8Send<0, 1, 7>>;
+pub type PrefixB = SeqSteps<PrefixB02, U8Send<1, 0, 8>>;
+
+pub type Route1LeftArm = SeqSteps<ControlSend<120, Route1LeftKind>, U32Send<0, 1, 81>>;
+pub type Route1RightArm = SeqSteps<ControlSend<121, Route1RightKind>, U32Send<0, 1, 82>>;
+pub type Route1 = <Route1LeftArm as StepConcat<Route1RightArm>>::Output;
+pub const ROUTE1_LEFT: g::ProgramSource<Route1LeftArm> = {
+    let program = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<120, GenericCapToken<Route1LeftKind>, CanonicalControl<Route1LeftKind>>,
+        0,
+    >();
+    g::seq(program, g::send::<Role<0>, Role<1>, Msg<81, u32>, 0>())
+};
+pub const ROUTE1_RIGHT: g::ProgramSource<Route1RightArm> = {
+    let program = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<121, GenericCapToken<Route1RightKind>, CanonicalControl<Route1RightKind>>,
+        0,
+    >();
+    g::seq(program, g::send::<Role<0>, Role<1>, Msg<82, u32>, 0>())
+};
+pub const ROUTE1: g::ProgramSource<Route1> = g::route(ROUTE1_LEFT, ROUTE1_RIGHT);
+pub type Route1Segment = SeqSteps<Route1, U8Send<1, 0, 97>>;
+
+pub type Route2LeftArm = SeqSteps<ControlSend<122, Route2LeftKind>, U32Send<0, 1, 83>>;
+pub type Route2RightArm = SeqSteps<ControlSend<123, Route2RightKind>, U32Send<0, 1, 84>>;
+pub type Route2 = <Route2LeftArm as StepConcat<Route2RightArm>>::Output;
+pub const ROUTE2_LEFT: g::ProgramSource<Route2LeftArm> = {
+    let program = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<122, GenericCapToken<Route2LeftKind>, CanonicalControl<Route2LeftKind>>,
+        0,
+    >();
+    g::seq(program, g::send::<Role<0>, Role<1>, Msg<83, u32>, 0>())
+};
+pub const ROUTE2_RIGHT: g::ProgramSource<Route2RightArm> = {
+    let program = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<123, GenericCapToken<Route2RightKind>, CanonicalControl<Route2RightKind>>,
+        0,
+    >();
+    g::seq(program, g::send::<Role<0>, Role<1>, Msg<84, u32>, 0>())
+};
+pub const ROUTE2: g::ProgramSource<Route2> = g::route(ROUTE2_LEFT, ROUTE2_RIGHT);
+pub type Route2Segment = SeqSteps<Route2, U8Send<1, 0, 98>>;
+
+pub type Route3LeftArm = SeqSteps<ControlSend<124, Route3LeftKind>, U32Send<0, 1, 85>>;
+pub type Route3RightArm = SeqSteps<ControlSend<125, Route3RightKind>, U32Send<0, 1, 86>>;
+pub type Route3 = <Route3LeftArm as StepConcat<Route3RightArm>>::Output;
+pub const ROUTE3_LEFT: g::ProgramSource<Route3LeftArm> = {
+    let program = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<124, GenericCapToken<Route3LeftKind>, CanonicalControl<Route3LeftKind>>,
+        0,
+    >();
+    g::seq(program, g::send::<Role<0>, Role<1>, Msg<85, u32>, 0>())
+};
+pub const ROUTE3_RIGHT: g::ProgramSource<Route3RightArm> = {
+    let program = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<125, GenericCapToken<Route3RightKind>, CanonicalControl<Route3RightKind>>,
+        0,
+    >();
+    g::seq(program, g::send::<Role<0>, Role<1>, Msg<86, u32>, 0>())
+};
+pub const ROUTE3: g::ProgramSource<Route3> = g::route(ROUTE3_LEFT, ROUTE3_RIGHT);
+pub type Route3Segment = SeqSteps<Route3, U8Send<1, 0, 99>>;
+
+pub type Route4LeftArm = SeqSteps<ControlSend<126, Route4LeftKind>, U32Send<0, 1, 87>>;
+pub type Route4RightArm = SeqSteps<ControlSend<127, Route4RightKind>, U32Send<0, 1, 88>>;
+pub type Route4 = <Route4LeftArm as StepConcat<Route4RightArm>>::Output;
+pub const ROUTE4_LEFT: g::ProgramSource<Route4LeftArm> = {
+    let program = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<126, GenericCapToken<Route4LeftKind>, CanonicalControl<Route4LeftKind>>,
+        0,
+    >();
+    g::seq(program, g::send::<Role<0>, Role<1>, Msg<87, u32>, 0>())
+};
+pub const ROUTE4_RIGHT: g::ProgramSource<Route4RightArm> = {
+    let program = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<127, GenericCapToken<Route4RightKind>, CanonicalControl<Route4RightKind>>,
+        0,
+    >();
+    g::seq(program, g::send::<Role<0>, Role<1>, Msg<88, u32>, 0>())
+};
+pub const ROUTE4: g::ProgramSource<Route4> = g::route(ROUTE4_LEFT, ROUTE4_RIGHT);
+pub type Route4Segment = SeqSteps<Route4, U8Send<1, 0, 100>>;
+
+pub type Route5LeftArm = SeqSteps<ControlSend<120, Route5LeftKind>, U32Send<0, 1, 89>>;
+pub type Route5RightArm = SeqSteps<ControlSend<121, Route5RightKind>, U32Send<0, 1, 90>>;
+pub type Route5 = <Route5LeftArm as StepConcat<Route5RightArm>>::Output;
+pub const ROUTE5_LEFT: g::ProgramSource<Route5LeftArm> = {
+    let program = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<120, GenericCapToken<Route5LeftKind>, CanonicalControl<Route5LeftKind>>,
+        0,
+    >();
+    g::seq(program, g::send::<Role<0>, Role<1>, Msg<89, u32>, 0>())
+};
+pub const ROUTE5_RIGHT: g::ProgramSource<Route5RightArm> = {
+    let program = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<121, GenericCapToken<Route5RightKind>, CanonicalControl<Route5RightKind>>,
+        0,
+    >();
+    g::seq(program, g::send::<Role<0>, Role<1>, Msg<90, u32>, 0>())
+};
+pub const ROUTE5: g::ProgramSource<Route5> = g::route(ROUTE5_LEFT, ROUTE5_RIGHT);
+pub type Route5Segment = SeqSteps<Route5, U8Send<1, 0, 101>>;
+
+pub type Route6LeftArm = SeqSteps<ControlSend<122, Route6LeftKind>, U32Send<0, 1, 91>>;
+pub type Route6RightArm = SeqSteps<ControlSend<123, Route6RightKind>, U32Send<0, 1, 92>>;
+pub type Route6 = <Route6LeftArm as StepConcat<Route6RightArm>>::Output;
+pub const ROUTE6_LEFT: g::ProgramSource<Route6LeftArm> = {
+    let program = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<122, GenericCapToken<Route6LeftKind>, CanonicalControl<Route6LeftKind>>,
+        0,
+    >();
+    g::seq(program, g::send::<Role<0>, Role<1>, Msg<91, u32>, 0>())
+};
+pub const ROUTE6_RIGHT: g::ProgramSource<Route6RightArm> = {
+    let program = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<123, GenericCapToken<Route6RightKind>, CanonicalControl<Route6RightKind>>,
+        0,
+    >();
+    g::seq(program, g::send::<Role<0>, Role<1>, Msg<92, u32>, 0>())
+};
+pub const ROUTE6: g::ProgramSource<Route6> = g::route(ROUTE6_LEFT, ROUTE6_RIGHT);
+pub type Route6Segment = SeqSteps<Route6, U8Send<1, 0, 102>>;
+
+pub type Route7LeftArm = SeqSteps<ControlSend<124, Route7LeftKind>, U32Send<0, 1, 93>>;
+pub type Route7RightArm = SeqSteps<ControlSend<125, Route7RightKind>, U32Send<0, 1, 94>>;
+pub type Route7 = <Route7LeftArm as StepConcat<Route7RightArm>>::Output;
+pub const ROUTE7_LEFT: g::ProgramSource<Route7LeftArm> = {
+    let program = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<124, GenericCapToken<Route7LeftKind>, CanonicalControl<Route7LeftKind>>,
+        0,
+    >();
+    g::seq(program, g::send::<Role<0>, Role<1>, Msg<93, u32>, 0>())
+};
+pub const ROUTE7_RIGHT: g::ProgramSource<Route7RightArm> = {
+    let program = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<125, GenericCapToken<Route7RightKind>, CanonicalControl<Route7RightKind>>,
+        0,
+    >();
+    g::seq(program, g::send::<Role<0>, Role<1>, Msg<94, u32>, 0>())
+};
+pub const ROUTE7: g::ProgramSource<Route7> = g::route(ROUTE7_LEFT, ROUTE7_RIGHT);
+pub type Route7Segment = SeqSteps<Route7, U8Send<1, 0, 103>>;
+
+pub type Route8LeftArm = SeqSteps<ControlSend<126, Route8LeftKind>, U32Send<0, 1, 95>>;
+pub type Route8RightArm = SeqSteps<ControlSend<127, Route8RightKind>, U32Send<0, 1, 96>>;
+pub type Route8 = <Route8LeftArm as StepConcat<Route8RightArm>>::Output;
+pub const ROUTE8_LEFT: g::ProgramSource<Route8LeftArm> = {
+    let program = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<126, GenericCapToken<Route8LeftKind>, CanonicalControl<Route8LeftKind>>,
+        0,
+    >();
+    g::seq(program, g::send::<Role<0>, Role<1>, Msg<95, u32>, 0>())
+};
+pub const ROUTE8_RIGHT: g::ProgramSource<Route8RightArm> = {
+    let program = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<127, GenericCapToken<Route8RightKind>, CanonicalControl<Route8RightKind>>,
+        0,
+    >();
+    g::seq(program, g::send::<Role<0>, Role<1>, Msg<96, u32>, 0>())
+};
+pub const ROUTE8: g::ProgramSource<Route8> = g::route(ROUTE8_LEFT, ROUTE8_RIGHT);
+pub type Route8Segment = SeqSteps<Route8, U8Send<1, 0, 104>>;
+
+type SuffixA01 = SeqSteps<U8Send<0, 1, 105>, U8Send<1, 0, 106>>;
+type SuffixA02 = SeqSteps<SuffixA01, U8Send<0, 1, 107>>;
+pub type SuffixA = SeqSteps<SuffixA02, U8Send<1, 0, 108>>;
+
+type SuffixB01 = SeqSteps<U8Send<0, 1, 109>, U8Send<1, 0, 110>>;
+type SuffixB02 = SeqSteps<SuffixB01, U8Send<0, 1, 111>>;
+pub type SuffixB = SeqSteps<SuffixB02, U8Send<1, 0, 112>>;
+
+type RouteTail7 = SeqSteps<Route7Segment, Route8Segment>;
+type RouteTail6 = SeqSteps<Route6Segment, RouteTail7>;
+type RouteTail5 = SeqSteps<Route5Segment, RouteTail6>;
+type RouteTail4 = SeqSteps<Route4Segment, RouteTail5>;
+type RouteTail3 = SeqSteps<Route3Segment, RouteTail4>;
+type RouteTail2 = SeqSteps<Route2Segment, RouteTail3>;
+type RouteTail1 = SeqSteps<Route1Segment, RouteTail2>;
+type SuffixTail = SeqSteps<SuffixA, SuffixB>;
+type ProgramTailB = SeqSteps<PrefixB, SeqSteps<RouteTail1, SuffixTail>>;
+pub type ProgramSteps = SeqSteps<PrefixA, ProgramTailB>;
+
+const ROUTE1_SEGMENT_SOURCE: g::ProgramSource<Route1Segment> =
+    g::seq(ROUTE1, g::send::<Role<1>, Role<0>, Msg<97, u8>, 0>());
+const ROUTE2_SEGMENT_SOURCE: g::ProgramSource<Route2Segment> =
+    g::seq(ROUTE2, g::send::<Role<1>, Role<0>, Msg<98, u8>, 0>());
+const ROUTE3_SEGMENT_SOURCE: g::ProgramSource<Route3Segment> =
+    g::seq(ROUTE3, g::send::<Role<1>, Role<0>, Msg<99, u8>, 0>());
+const ROUTE4_SEGMENT_SOURCE: g::ProgramSource<Route4Segment> =
+    g::seq(ROUTE4, g::send::<Role<1>, Role<0>, Msg<100, u8>, 0>());
+const ROUTE5_SEGMENT_SOURCE: g::ProgramSource<Route5Segment> =
+    g::seq(ROUTE5, g::send::<Role<1>, Role<0>, Msg<101, u8>, 0>());
+const ROUTE6_SEGMENT_SOURCE: g::ProgramSource<Route6Segment> =
+    g::seq(ROUTE6, g::send::<Role<1>, Role<0>, Msg<102, u8>, 0>());
+const ROUTE7_SEGMENT_SOURCE: g::ProgramSource<Route7Segment> =
+    g::seq(ROUTE7, g::send::<Role<1>, Role<0>, Msg<103, u8>, 0>());
+const ROUTE8_SEGMENT_SOURCE: g::ProgramSource<Route8Segment> =
+    g::seq(ROUTE8, g::send::<Role<1>, Role<0>, Msg<104, u8>, 0>());
+
+const ROUTE_TAIL7_SOURCE: g::ProgramSource<RouteTail7> =
+    g::seq(ROUTE7_SEGMENT_SOURCE, ROUTE8_SEGMENT_SOURCE);
+const ROUTE_TAIL6_SOURCE: g::ProgramSource<RouteTail6> =
+    g::seq(ROUTE6_SEGMENT_SOURCE, ROUTE_TAIL7_SOURCE);
+const ROUTE_TAIL5_SOURCE: g::ProgramSource<RouteTail5> =
+    g::seq(ROUTE5_SEGMENT_SOURCE, ROUTE_TAIL6_SOURCE);
+const ROUTE_TAIL4_SOURCE: g::ProgramSource<RouteTail4> =
+    g::seq(ROUTE4_SEGMENT_SOURCE, ROUTE_TAIL5_SOURCE);
+const ROUTE_TAIL3_SOURCE: g::ProgramSource<RouteTail3> =
+    g::seq(ROUTE3_SEGMENT_SOURCE, ROUTE_TAIL4_SOURCE);
+const ROUTE_TAIL2_SOURCE: g::ProgramSource<RouteTail2> =
+    g::seq(ROUTE2_SEGMENT_SOURCE, ROUTE_TAIL3_SOURCE);
+const ROUTE_TAIL1_SOURCE: g::ProgramSource<RouteTail1> =
+    g::seq(ROUTE1_SEGMENT_SOURCE, ROUTE_TAIL2_SOURCE);
+
+pub const PROGRAM: g::ProgramSource<ProgramSteps> = g::seq(
+    prefix_a(),
+    g::seq(
+        prefix_b(),
+        g::seq(ROUTE_TAIL1_SOURCE, g::seq(suffix_a(), suffix_b())),
+    ),
+);
+
+const fn prefix_a() -> g::ProgramSource<PrefixA> {
+    let program = g::send::<Role<0>, Role<1>, Msg<1, u8>, 0>();
+    let program = g::seq(program, g::send::<Role<1>, Role<0>, Msg<2, u8>, 0>());
+    let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<3, u8>, 0>());
+    g::seq(program, g::send::<Role<1>, Role<0>, Msg<4, u8>, 0>())
+}
+
+const fn prefix_b() -> g::ProgramSource<PrefixB> {
+    let program = g::send::<Role<0>, Role<1>, Msg<5, u8>, 0>();
+    let program = g::seq(program, g::send::<Role<1>, Role<0>, Msg<6, u8>, 0>());
+    let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<7, u8>, 0>());
+    g::seq(program, g::send::<Role<1>, Role<0>, Msg<8, u8>, 0>())
+}
+
+const fn suffix_a() -> g::ProgramSource<SuffixA> {
+    let program = g::send::<Role<0>, Role<1>, Msg<105, u8>, 0>();
+    let program = g::seq(program, g::send::<Role<1>, Role<0>, Msg<106, u8>, 0>());
+    let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<107, u8>, 0>());
+    g::seq(program, g::send::<Role<1>, Role<0>, Msg<108, u8>, 0>())
+}
+
+const fn suffix_b() -> g::ProgramSource<SuffixB> {
+    let program = g::send::<Role<0>, Role<1>, Msg<109, u8>, 0>();
+    let program = g::seq(program, g::send::<Role<1>, Role<0>, Msg<110, u8>, 0>());
+    let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<111, u8>, 0>());
+    g::seq(program, g::send::<Role<1>, Role<0>, Msg<112, u8>, 0>())
+}
+
+#[inline(never)]
+pub fn run<H: ScenarioHarness>(
+    controller: &mut H::ControllerEndpoint<'_>,
+    worker: &mut H::WorkerEndpoint<'_>,
+) {
+    run_prefix::<H>(controller, worker);
+    run_routes::<H>(controller, worker);
+    run_suffix::<H>(controller, worker);
+}
+
+#[inline(never)]
+fn run_prefix<H: ScenarioHarness>(
+    controller: &mut H::ControllerEndpoint<'_>,
+    worker: &mut H::WorkerEndpoint<'_>,
+) {
+    H::controller_send_u8::<1>(controller, 1);
+    assert_eq!(H::worker_recv_u8::<1>(worker), 1);
+    H::worker_send_u8::<2>(worker, 2);
+    assert_eq!(H::controller_recv_u8::<2>(controller), 2);
+    H::controller_send_u8::<3>(controller, 3);
+    assert_eq!(H::worker_recv_u8::<3>(worker), 3);
+    H::worker_send_u8::<4>(worker, 4);
+    assert_eq!(H::controller_recv_u8::<4>(controller), 4);
+    H::controller_send_u8::<5>(controller, 5);
+    assert_eq!(H::worker_recv_u8::<5>(worker), 5);
+    H::worker_send_u8::<6>(worker, 6);
+    assert_eq!(H::controller_recv_u8::<6>(controller), 6);
+    H::controller_send_u8::<7>(controller, 7);
+    assert_eq!(H::worker_recv_u8::<7>(worker), 7);
+    H::worker_send_u8::<8>(worker, 8);
+    assert_eq!(H::controller_recv_u8::<8>(controller), 8);
+}
+
+#[inline(never)]
+fn run_routes<H: ScenarioHarness>(
+    controller: &mut H::ControllerEndpoint<'_>,
+    worker: &mut H::WorkerEndpoint<'_>,
+) {
+    H::controller_select::<120, Route1LeftKind>(controller);
+    H::controller_send_u32::<81>(controller, 0);
+    assert_eq!(H::worker_offer_decode_u32::<81>(worker), 0);
+    H::worker_send_u8::<97>(worker, 97);
+    assert_eq!(H::controller_recv_u8::<97>(controller), 97);
+
+    H::controller_select::<123, Route2RightKind>(controller);
+    H::controller_send_u32::<84>(controller, 0);
+    assert_eq!(H::worker_offer_decode_u32::<84>(worker), 0);
+    H::worker_send_u8::<98>(worker, 98);
+    assert_eq!(H::controller_recv_u8::<98>(controller), 98);
+
+    H::controller_select::<124, Route3LeftKind>(controller);
+    H::controller_send_u32::<85>(controller, 0);
+    assert_eq!(H::worker_offer_decode_u32::<85>(worker), 0);
+    H::worker_send_u8::<99>(worker, 99);
+    assert_eq!(H::controller_recv_u8::<99>(controller), 99);
+
+    H::controller_select::<127, Route4RightKind>(controller);
+    H::controller_send_u32::<88>(controller, 0);
+    assert_eq!(H::worker_offer_decode_u32::<88>(worker), 0);
+    H::worker_send_u8::<100>(worker, 100);
+    assert_eq!(H::controller_recv_u8::<100>(controller), 100);
+
+    H::controller_select::<120, Route5LeftKind>(controller);
+    H::controller_send_u32::<89>(controller, 0);
+    assert_eq!(H::worker_offer_decode_u32::<89>(worker), 0);
+    H::worker_send_u8::<101>(worker, 101);
+    assert_eq!(H::controller_recv_u8::<101>(controller), 101);
+
+    H::controller_select::<123, Route6RightKind>(controller);
+    H::controller_send_u32::<92>(controller, 0);
+    assert_eq!(H::worker_offer_decode_u32::<92>(worker), 0);
+    H::worker_send_u8::<102>(worker, 102);
+    assert_eq!(H::controller_recv_u8::<102>(controller), 102);
+
+    H::controller_select::<124, Route7LeftKind>(controller);
+    H::controller_send_u32::<93>(controller, 0);
+    assert_eq!(H::worker_offer_decode_u32::<93>(worker), 0);
+    H::worker_send_u8::<103>(worker, 103);
+    assert_eq!(H::controller_recv_u8::<103>(controller), 103);
+
+    H::controller_select::<127, Route8RightKind>(controller);
+    H::controller_send_u32::<96>(controller, 0);
+    assert_eq!(H::worker_offer_decode_u32::<96>(worker), 0);
+    H::worker_send_u8::<104>(worker, 104);
+    assert_eq!(H::controller_recv_u8::<104>(controller), 104);
+}
+
+#[inline(never)]
+fn run_suffix<H: ScenarioHarness>(
+    controller: &mut H::ControllerEndpoint<'_>,
+    worker: &mut H::WorkerEndpoint<'_>,
+) {
+    H::controller_send_u8::<105>(controller, 105);
+    assert_eq!(H::worker_recv_u8::<105>(worker), 105);
+    H::worker_send_u8::<106>(worker, 106);
+    assert_eq!(H::controller_recv_u8::<106>(controller), 106);
+    H::controller_send_u8::<107>(controller, 107);
+    assert_eq!(H::worker_recv_u8::<107>(worker), 107);
+    H::worker_send_u8::<108>(worker, 108);
+    assert_eq!(H::controller_recv_u8::<108>(controller), 108);
+    H::controller_send_u8::<109>(controller, 109);
+    assert_eq!(H::worker_recv_u8::<109>(worker), 109);
+    H::worker_send_u8::<110>(worker, 110);
+    assert_eq!(H::controller_recv_u8::<110>(controller), 110);
+    H::controller_send_u8::<111>(controller, 111);
+    assert_eq!(H::worker_recv_u8::<111>(worker), 111);
+    H::worker_send_u8::<112>(worker, 112);
+    assert_eq!(H::controller_recv_u8::<112>(controller), 112);
+}

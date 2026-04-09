@@ -5,7 +5,6 @@ use hibana::substrate::{
     policy::epf::Slot,
     transport::{TransportAlgorithm, TransportSnapshot},
 };
-use std::sync::{Mutex, OnceLock};
 
 const POLICY_COMMIT_ID: u16 = 0x0405;
 const POLICY_ROLLBACK_ID: u16 = 0x0406;
@@ -21,6 +20,8 @@ const POLICY_REPLAY_EVENT_EXT_ID: u16 = 0x040F;
 const POLICY_AUDIT_DEFER_ID: u16 = 0x0410;
 const ROUTE_DECISION_ID: u16 = 0x0221;
 const TRANSPORT_EVENT_ID: u16 = 0x0212;
+const REPLAY_LOG_CAPACITY: usize = 2048;
+const AUDIT_ROW_CAPACITY: usize = 128;
 
 fn raw_event(ts: u32, id: u16) -> TapEvent {
     TapEvent {
@@ -30,25 +31,71 @@ fn raw_event(ts: u32, id: u16) -> TapEvent {
     }
 }
 
-#[derive(Default)]
 struct ReplayLog {
-    events: Vec<TapEvent>,
+    events: [TapEvent; REPLAY_LOG_CAPACITY],
+    len: usize,
 }
 
 impl ReplayLog {
     fn push(&mut self, event: TapEvent) {
-        self.events.push(event);
+        assert!(
+            self.len < REPLAY_LOG_CAPACITY,
+            "replay log capacity exceeded"
+        );
+        self.events[self.len] = event;
+        self.len += 1;
     }
 
     fn head(&self) -> usize {
-        self.events.len()
+        self.len
     }
 
     fn events_since<'a>(&'a self, cursor: &mut usize) -> impl Iterator<Item = TapEvent> + 'a {
         let start = *cursor;
-        let end = self.events.len();
+        let end = self.len;
         *cursor = end;
         self.events[start..end].iter().copied()
+    }
+}
+
+impl Default for ReplayLog {
+    fn default() -> Self {
+        Self {
+            events: [TapEvent::zero(); REPLAY_LOG_CAPACITY],
+            len: 0,
+        }
+    }
+}
+
+struct AuditRows {
+    rows: [Option<AuditRow>; AUDIT_ROW_CAPACITY],
+    len: usize,
+}
+
+impl AuditRows {
+    fn new() -> Self {
+        Self {
+            rows: [None; AUDIT_ROW_CAPACITY],
+            len: 0,
+        }
+    }
+
+    fn push(&mut self, row: AuditRow) {
+        assert!(self.len < AUDIT_ROW_CAPACITY, "audit row capacity exceeded");
+        self.rows[self.len] = Some(row);
+        self.len += 1;
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn get(&self, idx: usize) -> Option<&AuditRow> {
+        if idx < self.len {
+            self.rows[idx].as_ref()
+        } else {
+            None
+        }
     }
 }
 
@@ -101,11 +148,6 @@ impl ReplayPending {
     fn clear(&mut self) {
         *self = Self::default();
     }
-}
-
-fn policy_replay_test_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 fn slot_tag(slot: Slot) -> u8 {
@@ -375,9 +417,9 @@ fn push_policy_audit_tuple(
     );
 }
 
-fn replay_audit_rows(log: &ReplayLog, cursor: &mut usize) -> Result<Vec<AuditRow>, &'static str> {
+fn replay_audit_rows(log: &ReplayLog, cursor: &mut usize) -> Result<AuditRows, &'static str> {
     let mut pending = ReplayPending::default();
-    let mut rows = Vec::new();
+    let mut rows = AuditRows::new();
 
     for event in log.events_since(cursor) {
         match event.id {
@@ -521,9 +563,6 @@ fn replay_audit_rows(log: &ReplayLog, cursor: &mut usize) -> Result<Vec<AuditRow
 
 #[test]
 fn replay_from_audit_log_tracks_digest_transitions() {
-    let _guard = policy_replay_test_lock()
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
     let mut log = ReplayLog::default();
     let mut cursor = log.head();
     let digest_v1 = 0x1020_3040;
@@ -561,9 +600,6 @@ fn replay_from_audit_log_tracks_digest_transitions() {
 
 #[test]
 fn public_policy_audit_tuple_roundtrips_logged_inputs() {
-    let _guard = policy_replay_test_lock()
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
     let mut log = ReplayLog::default();
     let mut cursor = log.head();
 
@@ -618,29 +654,28 @@ fn public_policy_audit_tuple_roundtrips_logged_inputs() {
     let rows = replay_audit_rows(&log, &mut cursor).expect("audit tuples must roundtrip");
     assert_eq!(rows.len(), 2);
 
-    assert_eq!(rows[0].digest, 0xAABB_CCDD);
-    assert_eq!(rows[0].slot, Slot::Route);
-    assert_eq!(rows[0].mode_tag, 1);
-    assert_eq!(rows[0].event, event_one);
-    assert_eq!(rows[0].policy_input, input_one);
-    assert_eq!(rows[0].transport_snapshot, transport_one);
-    assert_eq!(rows[0].verdict_meta, 0x0102_0000);
-    assert_eq!(rows[0].fuel_used, 5);
+    let first = rows.get(0).expect("first audit row");
+    assert_eq!(first.digest, 0xAABB_CCDD);
+    assert_eq!(first.slot, Slot::Route);
+    assert_eq!(first.mode_tag, 1);
+    assert_eq!(first.event, event_one);
+    assert_eq!(first.policy_input, input_one);
+    assert_eq!(first.transport_snapshot, transport_one);
+    assert_eq!(first.verdict_meta, 0x0102_0000);
+    assert_eq!(first.fuel_used, 5);
 
-    assert_eq!(rows[1].digest, 0x1122_3344);
-    assert_eq!(rows[1].slot, Slot::EndpointRx);
-    assert_eq!(rows[1].mode_tag, 0);
-    assert_eq!(rows[1].event, event_two);
-    assert_eq!(rows[1].policy_input, input_two);
-    assert_eq!(rows[1].transport_snapshot, transport_two);
-    assert_eq!(rows[1].reason, 7);
+    let second = rows.get(1).expect("second audit row");
+    assert_eq!(second.digest, 0x1122_3344);
+    assert_eq!(second.slot, Slot::EndpointRx);
+    assert_eq!(second.mode_tag, 0);
+    assert_eq!(second.event, event_two);
+    assert_eq!(second.policy_input, input_two);
+    assert_eq!(second.transport_snapshot, transport_two);
+    assert_eq!(second.reason, 7);
 }
 
 #[test]
 fn public_policy_audit_tuple_rejects_corruption() {
-    let _guard = policy_replay_test_lock()
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
     let mut log = ReplayLog::default();
     let mut cursor = log.head();
 

@@ -20,14 +20,29 @@ pub(crate) trait SessionKitFamily {
         Self: 'r,
         E: crate::control::cap::mint::EpochTable + 'r,
         Mint: crate::control::cap::mint::MintConfigMarker,
-        B: crate::binding::BindingSlot;
+        B: crate::binding::BindingSlot + 'r;
 
     type KernelRouteBranch<'r, const ROLE: u8, E, Mint, B>
     where
         Self: 'r,
         E: crate::control::cap::mint::EpochTable + 'r,
         Mint: crate::control::cap::mint::MintConfigMarker,
-        B: crate::binding::BindingSlot;
+        B: crate::binding::BindingSlot + 'r;
+
+    unsafe fn stash_route_branch_preview<'r, const ROLE: u8, Mint>(
+        kit: &'r Self,
+        slot: u8,
+        generation: u32,
+        branch: Self::KernelRouteBranch<
+            'r,
+            ROLE,
+            crate::control::cap::mint::EpochTbl,
+            Mint,
+            crate::binding::BindingHandle<'r>,
+        >,
+    ) where
+        Self: 'r,
+        Mint: crate::control::cap::mint::MintConfigMarker;
 }
 
 pub(crate) type KernelCursorEndpoint<'r, const ROLE: u8, K, E, Mint, B> =
@@ -57,7 +72,7 @@ where
         Self: 'r,
         E: crate::control::cap::mint::EpochTable + 'r,
         Mint: crate::control::cap::mint::MintConfigMarker,
-        B: crate::binding::BindingSlot;
+        B: crate::binding::BindingSlot + 'r;
 
     type KernelRouteBranch<'r, const ROLE: u8, E, Mint, B>
         = crate::endpoint::kernel::RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
@@ -65,5 +80,33 @@ where
         Self: 'r,
         E: crate::control::cap::mint::EpochTable + 'r,
         Mint: crate::control::cap::mint::MintConfigMarker,
-        B: crate::binding::BindingSlot;
+        B: crate::binding::BindingSlot + 'r;
+
+    #[inline]
+    unsafe fn stash_route_branch_preview<'r, const ROLE: u8, Mint>(
+        kit: &'r Self,
+        slot: u8,
+        generation: u32,
+        branch: Self::KernelRouteBranch<
+            'r,
+            ROLE,
+            crate::control::cap::mint::EpochTbl,
+            Mint,
+            crate::binding::BindingHandle<'r>,
+        >,
+    ) where
+        Self: 'r,
+        Mint: crate::control::cap::mint::MintConfigMarker,
+    {
+        let Some(endpoint) = (unsafe {
+            crate::substrate::public_endpoint_access::<ROLE, T, U, C, MAX_RV, Mint>(
+                kit, slot, generation,
+            )
+        }) else {
+            return;
+        };
+        unsafe {
+            (&mut *endpoint).stash_pending_branch_preview(branch);
+        }
+    }
 }

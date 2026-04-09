@@ -8,6 +8,7 @@
 //! the control and data planes.
 
 /// EPF dispatch glue for rendezvous integration.
+#[cfg(test)]
 pub(crate) mod dispatch;
 /// EPF host interface.
 pub(crate) mod host;
@@ -15,6 +16,7 @@ pub(crate) mod host;
 #[cfg(test)]
 pub(crate) mod loader;
 /// Opcode definitions.
+#[cfg(test)]
 pub(crate) mod ops;
 /// Slot-level policy contract (SNC).
 pub(crate) mod slot_contract;
@@ -23,14 +25,19 @@ pub(crate) mod verifier;
 /// VM execution engine.
 pub(crate) mod vm;
 use crate::observe::core::TapEvent;
+#[cfg(test)]
 use host::HostSlots;
+#[cfg(test)]
+use vm::VmAction;
+#[cfg(test)]
 use vm::VmCtx;
-use vm::{Slot, Trap, VmAction};
+use vm::{Slot, Trap};
 
+use crate::transport::TransportSnapshot;
+#[cfg(test)]
 use crate::{
     control::cap::mint::CapsMask,
     control::types::{Lane, SessionId},
-    transport::TransportSnapshot,
 };
 
 /// Abort outcome emitted by the policy VM (or by the host when mapping traps).
@@ -47,9 +54,17 @@ pub(crate) const ENGINE_FAIL_CLOSED: u16 = 0xFFFF;
 pub(crate) const ENGINE_LIVENESS_EXHAUSTED: u16 = 0xFFFE;
 
 /// Runtime policy mode.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PolicyMode {
     Shadow,
+    Enforce,
+}
+
+/// Runtime policy mode.
+#[cfg(not(test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PolicyMode {
     Enforce,
 }
 
@@ -62,11 +77,18 @@ pub(crate) enum PolicyVerdict {
 }
 
 #[inline]
+#[cfg(test)]
 pub(crate) const fn policy_mode_tag(mode: PolicyMode) -> u8 {
     match mode {
         PolicyMode::Shadow => 0,
         PolicyMode::Enforce => 1,
     }
+}
+
+#[inline]
+#[cfg(not(test))]
+pub(crate) const fn policy_mode_tag(_mode: PolicyMode) -> u8 {
+    1
 }
 
 #[inline]
@@ -264,6 +286,7 @@ pub(crate) const fn replay_transport_presence(snapshot: TransportSnapshot) -> u8
 }
 
 /// Unified action surface consumed by slot owners.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
     Proceed,
@@ -273,10 +296,18 @@ pub(crate) enum Action {
     Defer { retry_hint: u8 },
 }
 
+/// Unified action surface consumed by slot owners.
+#[cfg(not(test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Action {
+    Proceed,
+}
+
 impl Action {
     /// Convert the full action stream into emergency verdicts.
     ///
     /// Tap is observational and therefore normalises to `Proceed`.
+    #[cfg(test)]
     pub(crate) const fn verdict(self) -> PolicyVerdict {
         match self {
             Action::Proceed => PolicyVerdict::Proceed,
@@ -288,10 +319,20 @@ impl Action {
         }
     }
 
+    /// Convert the full action stream into emergency verdicts.
+    #[cfg(not(test))]
+    pub(crate) const fn verdict(self) -> PolicyVerdict {
+        let _ = self;
+        let _ = PolicyVerdict::RouteArm(0);
+        let _ = PolicyVerdict::Reject(ENGINE_FAIL_CLOSED);
+        PolicyVerdict::Proceed
+    }
+
     /// Apply runtime mode to policy action.
     ///
     /// Shadow mode never enforces policy decisions on the control/data path.
     /// Tap remains observable to preserve audit visibility.
+    #[cfg(test)]
     pub(crate) const fn with_mode(self, mode: PolicyMode) -> Self {
         match mode {
             PolicyMode::Enforce => self,
@@ -301,9 +342,66 @@ impl Action {
             },
         }
     }
+
+    #[cfg(test)]
+    pub(crate) const fn abort_info(self) -> Option<AbortInfo> {
+        match self {
+            Action::Abort(info) => Some(info),
+            _ => None,
+        }
+    }
+
+    #[cfg(not(test))]
+    pub(crate) const fn abort_info(self) -> Option<AbortInfo> {
+        let _ = self;
+        None
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn tap_payload(self) -> Option<(u16, u32, u32)> {
+        match self {
+            Action::Tap { id, arg0, arg1 } => Some((id, arg0, arg1)),
+            _ => None,
+        }
+    }
+
+    #[cfg(not(test))]
+    pub(crate) const fn tap_payload(self) -> Option<(u16, u32, u32)> {
+        let _ = self;
+        None
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn route_arm(self) -> Option<u8> {
+        match self {
+            Action::Route { arm } => Some(arm),
+            _ => None,
+        }
+    }
+
+    #[cfg(not(test))]
+    pub(crate) const fn route_arm(self) -> Option<u8> {
+        let _ = self;
+        None
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn defer_hint(self) -> Option<u8> {
+        match self {
+            Action::Defer { retry_hint } => Some(retry_hint),
+            _ => None,
+        }
+    }
+
+    #[cfg(not(test))]
+    pub(crate) const fn defer_hint(self) -> Option<u8> {
+        let _ = self;
+        None
+    }
 }
 
 /// Execute the VM with an opportunity to configure the [`VmCtx`] prior to dispatch.
+#[cfg(test)]
 pub(crate) fn run_with<F>(
     host_slots: &HostSlots<'_>,
     slot: Slot,
@@ -321,6 +419,7 @@ where
     action.with_mode(host_slots.policy_mode(slot))
 }
 
+#[cfg(test)]
 fn convert_action(vm_action: VmAction) -> Action {
     match vm_action {
         VmAction::Proceed => Action::Proceed,
@@ -351,9 +450,10 @@ mod tests {
     #[test]
     fn effect_syscall_is_fail_closed() {
         let code = [ops::instr::ACT_EFFECT, ops::effect::CHECKPOINT, 0x00];
-        let scratch = std::boxed::Box::leak(std::vec![0u8; 64].into_boxed_slice());
+        let mut scratch = [0u8; 64];
+        let scratch_len = scratch.len();
         let machine =
-            super::host::Machine::with_mem(&code, scratch, scratch.len(), 16).expect("machine");
+            super::host::Machine::with_mem(&code, &mut scratch, scratch_len, 16).expect("machine");
         let mut slots = HostSlots::new();
         slots.install(Slot::Rendezvous, machine).expect("install");
 

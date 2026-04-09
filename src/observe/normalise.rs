@@ -13,12 +13,7 @@ use crate::runtime::consts::{RING_BUFFER_SIZE, RING_EVENTS};
 use crate::transport::TransportAlgorithm;
 
 #[cfg(test)]
-use std::{
-    format,
-    string::{String, ToString},
-    vec,
-    vec::Vec,
-};
+use core::{mem::MaybeUninit, ops::Index, slice};
 
 /// Boundary events emitted by `Endpoint::reroute`.
 #[cfg(test)]
@@ -239,20 +234,81 @@ enum CapEventStage {
 
 /// Normalised capability lifecycle event (mint → claim → exhaust).
 #[cfg(test)]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CapEvent {
     kind_tag: u8,
-    kind: String,
     sid: u32,
     stage: CapEventStage,
     aux: u32,
 }
 
 #[cfg(test)]
-fn resource_kind_name(tag: u8) -> String {
+fn resource_kind_name(tag: u8) -> &'static str {
     match tag {
-        EndpointResource::TAG => EndpointResource::NAME.to_string(),
-        other => format!("Unknown({other})"),
+        EndpointResource::TAG => EndpointResource::NAME,
+        _ => "Unknown",
+    }
+}
+
+#[cfg(test)]
+impl CapEvent {
+    fn kind_name(&self) -> &'static str {
+        resource_kind_name(self.kind_tag)
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+struct FixedTrace<T: Copy, const N: usize> {
+    len: usize,
+    items: [MaybeUninit<T>; N],
+}
+
+#[cfg(test)]
+impl<T: Copy, const N: usize> FixedTrace<T, N> {
+    fn new() -> Self {
+        Self {
+            len: 0,
+            items: unsafe { MaybeUninit::<[MaybeUninit<T>; N]>::uninit().assume_init() },
+        }
+    }
+
+    fn push(&mut self, value: T) {
+        assert!(self.len < N, "fixed trace capacity exceeded");
+        self.items[self.len].write(value);
+        self.len += 1;
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn as_slice(&self) -> &[T] {
+        unsafe { slice::from_raw_parts(self.items.as_ptr() as *const T, self.len) }
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [T] {
+        unsafe { slice::from_raw_parts_mut(self.items.as_mut_ptr() as *mut T, self.len) }
+    }
+
+    fn iter(&self) -> slice::Iter<'_, T> {
+        self.as_slice().iter()
+    }
+}
+
+#[cfg(test)]
+impl<T: Copy + Ord, const N: usize> FixedTrace<T, N> {
+    fn sort_unstable(&mut self) {
+        self.as_mut_slice().sort_unstable();
+    }
+}
+
+#[cfg(test)]
+impl<T: Copy, const N: usize> Index<usize> for FixedTrace<T, N> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.as_slice()[index]
     }
 }
 
@@ -271,7 +327,6 @@ fn decode_cap_event(event: &TapEvent) -> Option<CapEvent> {
     let tag = (event.id - base) as u8;
     Some(CapEvent {
         kind_tag: tag,
-        kind: resource_kind_name(tag),
         sid: event.arg0,
         stage,
         aux: event.arg1,
@@ -281,8 +336,14 @@ fn decode_cap_event(event: &TapEvent) -> Option<CapEvent> {
 /// Extract capability lifecycle events from a tap trace slice.
 #[cfg(test)]
 #[must_use]
-fn cap_events(events: &[TapEvent]) -> Vec<CapEvent> {
-    events.iter().filter_map(decode_cap_event).collect()
+fn cap_events(events: &[TapEvent]) -> FixedTrace<CapEvent, RING_EVENTS> {
+    let mut out = FixedTrace::new();
+    for event in events {
+        if let Some(decoded) = decode_cap_event(event) {
+            out.push(decoded);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -357,10 +418,14 @@ impl EndpointEvent {
 
 /// Normalises the tap range `[start, end)` into delegation boundary events.
 #[cfg(test)]
-fn delegation_trace(storage: &[TapEvent], start: usize, end: usize) -> Vec<DelegationEvent> {
+fn delegation_trace(
+    storage: &[TapEvent],
+    start: usize,
+    end: usize,
+) -> FixedTrace<DelegationEvent, RING_EVENTS> {
     let capacity = storage.len();
     debug_assert!(capacity == RING_EVENTS || capacity == RING_BUFFER_SIZE);
-    let mut events = Vec::new();
+    let mut events = FixedTrace::new();
     let mut cursor = start;
     let mut current_sid: Option<u32> = None;
     while cursor < end {
@@ -428,10 +493,14 @@ fn delegation_trace(storage: &[TapEvent], start: usize, end: usize) -> Vec<Deleg
 /// Normalises the tap range `[start, end)` into endpoint events, decoding
 /// packed fields for easier comparison across seq/alt/par compositions.
 #[cfg(test)]
-fn endpoint_trace(storage: &[TapEvent], start: usize, end: usize) -> Vec<EndpointEvent> {
+fn endpoint_trace(
+    storage: &[TapEvent],
+    start: usize,
+    end: usize,
+) -> FixedTrace<EndpointEvent, RING_EVENTS> {
     let capacity = storage.len();
     debug_assert!(capacity == RING_EVENTS || capacity == RING_BUFFER_SIZE);
-    let mut events = Vec::new();
+    let mut events = FixedTrace::new();
     let mut cursor = start;
     while cursor < end {
         let raw = storage[cursor % capacity];
@@ -481,10 +550,14 @@ fn endpoint_trace(storage: &[TapEvent], start: usize, end: usize) -> Vec<Endpoin
 
 /// Collect transport telemetry events observed between `start` and `end`.
 #[cfg(test)]
-fn transport_trace(storage: &[TapEvent], start: usize, end: usize) -> Vec<TransportTapEvent> {
+fn transport_trace(
+    storage: &[TapEvent],
+    start: usize,
+    end: usize,
+) -> FixedTrace<TransportTapEvent, RING_EVENTS> {
     let capacity = storage.len();
     debug_assert!(capacity == RING_EVENTS || capacity == RING_BUFFER_SIZE);
-    let mut events = Vec::new();
+    let mut events = FixedTrace::new();
     let mut cursor = start;
     while cursor < end {
         let raw = storage[cursor % capacity];
@@ -502,10 +575,10 @@ fn transport_metrics_trace(
     storage: &[TapEvent],
     start: usize,
     end: usize,
-) -> Vec<TransportMetricsTapEvent> {
+) -> FixedTrace<TransportMetricsTapEvent, RING_EVENTS> {
     let capacity = storage.len();
     debug_assert!(capacity == RING_EVENTS || capacity == RING_BUFFER_SIZE);
-    let mut events = Vec::new();
+    let mut events = FixedTrace::new();
     let mut cursor = start;
     while cursor < end {
         let main = storage[cursor % capacity];
@@ -534,11 +607,42 @@ mod tests {
     use crate::transport::{
         TransportAlgorithm, TransportEvent, TransportEventKind, TransportSnapshot,
     };
+    use core::cell::UnsafeCell;
+    use std::thread_local;
+
+    thread_local! {
+        static NORMALISE_PRIMARY: UnsafeCell<[TapEvent; RING_EVENTS]> =
+            const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
+        static NORMALISE_SECONDARY: UnsafeCell<[TapEvent; RING_EVENTS]> =
+            const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
+    }
+
+    fn with_normalise_storage<R>(f: impl FnOnce(&'static mut [TapEvent; RING_EVENTS]) -> R) -> R {
+        NORMALISE_PRIMARY.with(|storage| {
+            let storage = unsafe { &mut *storage.get() };
+            storage.fill(TapEvent::zero());
+            f(storage)
+        })
+    }
+
+    fn with_normalise_storage_pair<R>(
+        f: impl FnOnce(&'static mut [TapEvent; RING_EVENTS], &'static mut [TapEvent; RING_EVENTS]) -> R,
+    ) -> R {
+        NORMALISE_PRIMARY.with(|left| {
+            NORMALISE_SECONDARY.with(|right| {
+                let left = unsafe { &mut *left.get() };
+                let right = unsafe { &mut *right.get() };
+                left.fill(TapEvent::zero());
+                right.fill(TapEvent::zero());
+                f(left, right)
+            })
+        })
+    }
 
     #[test]
     fn cap_events_decode_lifecycle_stages() {
         let sid = 42;
-        let events = vec![
+        let events = [
             events::RawEvent::new(1, crate::observe::cap_mint::<EndpointResource>())
                 .with_arg0(sid)
                 .with_arg1(0),
@@ -553,7 +657,7 @@ mod tests {
         let caps = cap_events(&events);
         assert_eq!(caps.len(), 3);
         assert_eq!(caps[0].stage, CapEventStage::Mint);
-        assert_eq!(caps[0].kind, "EndpointResource");
+        assert_eq!(caps[0].kind_name(), "EndpointResource");
         assert_eq!(caps[0].sid, sid);
         assert_eq!(caps[1].stage, CapEventStage::Claim);
         assert_eq!(caps[2].stage, CapEventStage::Exhaust);
@@ -561,268 +665,273 @@ mod tests {
 
     #[test]
     fn endpoint_trace_decodes_sends_and_recvs() {
-        let mut storage = [TapEvent::default(); RING_EVENTS];
-        storage[0] = events::EndpointSend::new(0, 9, events::EndpointSend::pack(1, 2, 3, 0xAA));
-        storage[1] = events::EndpointRecv::new(1, 9, events::EndpointRecv::pack(4, 5, 6, 0x55));
-        storage[2] =
-            events::EndpointControl::new(2, 9, events::EndpointControl::pack(7, 8, 9, 0x10));
+        with_normalise_storage(|storage| {
+            storage[0] = events::EndpointSend::new(0, 9, events::EndpointSend::pack(1, 2, 3, 0xAA));
+            storage[1] = events::EndpointRecv::new(1, 9, events::EndpointRecv::pack(4, 5, 6, 0x55));
+            storage[2] =
+                events::EndpointControl::new(2, 9, events::EndpointControl::pack(7, 8, 9, 0x10));
 
-        let events = endpoint_trace(&storage, 0, 3);
-        assert_eq!(events.len(), 3);
-        assert_eq!(
-            events[0],
-            EndpointEvent::Send {
-                sid: 9,
-                lane: 2,
-                role: 1,
-                label: 3,
-                flags: 0xAA,
-                scope: None,
-            }
-        );
-        assert_eq!(
-            events[1],
-            EndpointEvent::Recv {
-                sid: 9,
-                lane: 5,
-                role: 4,
-                label: 6,
-                flags: 0x55,
-                scope: None,
-            }
-        );
-        assert_eq!(
-            events[2],
-            EndpointEvent::Control {
-                sid: 9,
-                lane: 8,
-                role: 7,
-                label: 9,
-                flags: 0x10,
-                scope: None,
-            }
-        );
+            let events = endpoint_trace(storage, 0, 3);
+            assert_eq!(events.len(), 3);
+            assert_eq!(
+                events[0],
+                EndpointEvent::Send {
+                    sid: 9,
+                    lane: 2,
+                    role: 1,
+                    label: 3,
+                    flags: 0xAA,
+                    scope: None,
+                }
+            );
+            assert_eq!(
+                events[1],
+                EndpointEvent::Recv {
+                    sid: 9,
+                    lane: 5,
+                    role: 4,
+                    label: 6,
+                    flags: 0x55,
+                    scope: None,
+                }
+            );
+            assert_eq!(
+                events[2],
+                EndpointEvent::Control {
+                    sid: 9,
+                    lane: 8,
+                    role: 7,
+                    label: 9,
+                    flags: 0x10,
+                    scope: None,
+                }
+            );
+        });
     }
 
     #[test]
     fn route_decision_event_decodes() {
-        let mut storage = [TapEvent::default(); RING_EVENTS];
-        storage[0] = events::RouteDecision::with_causal(
-            0,
-            TapEvent::make_causal_key(4, 1),
-            900,
-            ((0x1234u32) << 16) | 0x7,
-        )
-        .with_arg2(0x8000_0000 | ((0x56u32) << 16) | 0x89);
+        with_normalise_storage(|storage| {
+            storage[0] = events::RouteDecision::with_causal(
+                0,
+                TapEvent::make_causal_key(4, 1),
+                900,
+                ((0x1234u32) << 16) | 0x7,
+            )
+            .with_arg2(0x8000_0000 | ((0x56u32) << 16) | 0x89);
 
-        let events = delegation_trace(&storage, 0, 1);
-        assert_eq!(events.len(), 1);
-        match events[0] {
-            DelegationEvent::RouteDecision {
-                sid,
-                lane,
-                scope,
-                arm,
-                decision,
-                range,
-                nest,
-            } => {
-                assert_eq!(sid, 900);
-                assert_eq!(lane, 4);
-                assert_eq!(scope, 0x1234);
-                assert_eq!(arm, 0x7);
-                assert_eq!(decision, 1);
-                assert_eq!(range, 0x56);
-                assert_eq!(nest, 0x89);
+            let events = delegation_trace(storage, 0, 1);
+            assert_eq!(events.len(), 1);
+            match events[0] {
+                DelegationEvent::RouteDecision {
+                    sid,
+                    lane,
+                    scope,
+                    arm,
+                    decision,
+                    range,
+                    nest,
+                } => {
+                    assert_eq!(sid, 900);
+                    assert_eq!(lane, 4);
+                    assert_eq!(scope, 0x1234);
+                    assert_eq!(arm, 0x7);
+                    assert_eq!(decision, 1);
+                    assert_eq!(range, 0x56);
+                    assert_eq!(nest, 0x89);
+                }
+                other => panic!("unexpected event: {other:?}"),
             }
-            other => panic!("unexpected event: {other:?}"),
-        }
+        });
     }
 
     #[test]
     fn transport_trace_decodes_ack_and_loss() {
-        let mut storage = [TapEvent::default(); RING_EVENTS];
-        let ack_event = TransportEvent::new_with_metadata(
-            TransportEventKind::Ack,
-            0xDEAD_BEEF,
-            0x0155,
-            0x0012,
-            2,
-            0x5A,
-        );
-        let loss_event = TransportEvent::new_with_metadata(
-            TransportEventKind::Loss,
-            0xFEED_FACE,
-            0x01FF,
-            0x0055,
-            1,
-            0x33,
-        );
-        let (ack_arg0, ack_arg1) = ack_event.encode_tap_args();
-        let (loss_arg0, loss_arg1) = loss_event.encode_tap_args();
-        storage[0] = events::TransportEvent::new(0, ack_arg0, ack_arg1);
-        storage[1] = events::TransportEvent::new(1, loss_arg0, loss_arg1);
+        with_normalise_storage(|storage| {
+            let ack_event = TransportEvent::new_with_metadata(
+                TransportEventKind::Ack,
+                0xDEAD_BEEF,
+                0x0155,
+                0x0012,
+                2,
+                0x5A,
+            );
+            let loss_event = TransportEvent::new_with_metadata(
+                TransportEventKind::Loss,
+                0xFEED_FACE,
+                0x01FF,
+                0x0055,
+                1,
+                0x33,
+            );
+            let (ack_arg0, ack_arg1) = ack_event.encode_tap_args();
+            let (loss_arg0, loss_arg1) = loss_event.encode_tap_args();
+            storage[0] = events::TransportEvent::new(0, ack_arg0, ack_arg1);
+            storage[1] = events::TransportEvent::new(1, loss_arg0, loss_arg1);
 
-        let events = transport_trace(&storage, 0, 2);
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0].kind, TransportTapEventKind::Ack);
-        assert_eq!(events[0].packet_number, 0xDEAD_BEEF);
-        assert_eq!(events[0].payload_len, 0x0155);
-        assert_eq!(events[0].retransmissions, 0x0012);
-        assert_eq!(events[0].pn_space, 2);
-        assert_eq!(events[0].cid_tag, 0x5A);
+            let events = transport_trace(storage, 0, 2);
+            assert_eq!(events.len(), 2);
+            assert_eq!(events[0].kind, TransportTapEventKind::Ack);
+            assert_eq!(events[0].packet_number, 0xDEAD_BEEF);
+            assert_eq!(events[0].payload_len, 0x0155);
+            assert_eq!(events[0].retransmissions, 0x0012);
+            assert_eq!(events[0].pn_space, 2);
+            assert_eq!(events[0].cid_tag, 0x5A);
 
-        assert_eq!(events[1].kind, TransportTapEventKind::Loss);
-        assert_eq!(events[1].packet_number, 0xFEED_FACE);
-        assert_eq!(events[1].payload_len, 0x01FF);
-        assert_eq!(events[1].retransmissions, 0x0055);
-        assert_eq!(events[1].pn_space, 1);
-        assert_eq!(events[1].cid_tag, 0x33);
+            assert_eq!(events[1].kind, TransportTapEventKind::Loss);
+            assert_eq!(events[1].packet_number, 0xFEED_FACE);
+            assert_eq!(events[1].payload_len, 0x01FF);
+            assert_eq!(events[1].retransmissions, 0x0055);
+            assert_eq!(events[1].pn_space, 1);
+            assert_eq!(events[1].cid_tag, 0x33);
+        });
     }
 
     #[test]
     fn transport_metrics_trace_decodes_snapshot() {
-        let mut storage = [TapEvent::default(); RING_EVENTS];
-        let snapshot = TransportSnapshot::new(Some(1500), Some(12))
-            .with_srtt(Some(3200))
-            .with_congestion_window(Some(64 * 1024))
-            .with_in_flight(Some(32 * 1024))
-            .with_retransmissions(Some(7))
-            .with_congestion_marks(Some(3))
-            .with_pacing_interval(Some(500))
-            .with_algorithm(Some(TransportAlgorithm::Cubic));
-        let payload = snapshot.encode_tap_metrics().expect("metrics encode");
-        let (arg0, arg1) = payload.primary;
-        storage[0] = events::TransportMetrics::new(0, arg0, arg1);
-        if let Some((ext0, ext1)) = payload.extension {
-            storage[1] = events::TransportMetricsExt::new(1, ext0, ext1);
-        }
+        with_normalise_storage(|storage| {
+            let snapshot = TransportSnapshot::new(Some(1500), Some(12))
+                .with_srtt(Some(3200))
+                .with_congestion_window(Some(64 * 1024))
+                .with_in_flight(Some(32 * 1024))
+                .with_retransmissions(Some(7))
+                .with_congestion_marks(Some(3))
+                .with_pacing_interval(Some(500))
+                .with_algorithm(Some(TransportAlgorithm::Cubic));
+            let payload = snapshot.encode_tap_metrics().expect("metrics encode");
+            let (arg0, arg1) = payload.primary;
+            storage[0] = events::TransportMetrics::new(0, arg0, arg1);
+            if let Some((ext0, ext1)) = payload.extension {
+                storage[1] = events::TransportMetricsExt::new(1, ext0, ext1);
+            }
 
-        let events = transport_metrics_trace(&storage, 0, 2);
-        assert_eq!(events.len(), 1);
-        let event = events[0];
-        assert_eq!(event.algorithm, TransportAlgorithm::Cubic);
-        assert_eq!(event.queue_depth, Some(12));
-        assert_eq!(event.srtt_us, Some(3200));
-        assert_eq!(event.congestion_window, Some(64 * 1024));
-        assert_eq!(event.in_flight_bytes, Some(32 * 1024));
-        assert_eq!(event.retransmissions, Some(7));
-        assert_eq!(event.congestion_marks, Some(3));
-        assert_eq!(event.pacing_interval_us, Some(500));
+            let events = transport_metrics_trace(storage, 0, 2);
+            assert_eq!(events.len(), 1);
+            let event = events[0];
+            assert_eq!(event.algorithm, TransportAlgorithm::Cubic);
+            assert_eq!(event.queue_depth, Some(12));
+            assert_eq!(event.srtt_us, Some(3200));
+            assert_eq!(event.congestion_window, Some(64 * 1024));
+            assert_eq!(event.in_flight_bytes, Some(32 * 1024));
+            assert_eq!(event.retransmissions, Some(7));
+            assert_eq!(event.congestion_marks, Some(3));
+            assert_eq!(event.pacing_interval_us, Some(500));
+        });
     }
 
     #[test]
     fn transport_metrics_trace_handles_missing_extension() {
-        let mut storage = [TapEvent::default(); RING_EVENTS];
-        let snapshot = TransportSnapshot::new(None, Some(4))
-            .with_srtt(Some(6400))
-            .with_congestion_window(Some(8 * 1024))
-            .with_in_flight(Some(4 * 1024))
-            .with_algorithm(Some(TransportAlgorithm::Reno));
-        let payload = snapshot.encode_tap_metrics().expect("metrics encode");
-        let (arg0, arg1) = payload.primary;
-        storage[0] = events::TransportMetrics::new(0, arg0, arg1);
+        with_normalise_storage(|storage| {
+            let snapshot = TransportSnapshot::new(None, Some(4))
+                .with_srtt(Some(6400))
+                .with_congestion_window(Some(8 * 1024))
+                .with_in_flight(Some(4 * 1024))
+                .with_algorithm(Some(TransportAlgorithm::Reno));
+            let payload = snapshot.encode_tap_metrics().expect("metrics encode");
+            let (arg0, arg1) = payload.primary;
+            storage[0] = events::TransportMetrics::new(0, arg0, arg1);
 
-        let events = transport_metrics_trace(&storage, 0, 1);
-        assert_eq!(events.len(), 1);
-        let event = events[0];
-        assert_eq!(event.algorithm, TransportAlgorithm::Reno);
-        assert_eq!(event.retransmissions, None);
-        assert_eq!(event.congestion_marks, None);
-        assert_eq!(event.pacing_interval_us, None);
+            let events = transport_metrics_trace(storage, 0, 1);
+            assert_eq!(events.len(), 1);
+            let event = events[0];
+            assert_eq!(event.algorithm, TransportAlgorithm::Reno);
+            assert_eq!(event.retransmissions, None);
+            assert_eq!(event.congestion_marks, None);
+            assert_eq!(event.pacing_interval_us, None);
+        });
     }
 
     #[test]
     fn endpoint_seq_events_preserve_order() {
-        let mut storage = [TapEvent::default(); RING_EVENTS];
-        for (idx, label) in [10u8, 11, 12].iter().enumerate() {
-            storage[idx] = events::EndpointSend::new(
-                idx as u32,
-                0x20,
-                events::EndpointSend::pack(0, 1, *label, 0),
-            );
-        }
+        with_normalise_storage(|storage| {
+            for (idx, label) in [10u8, 11, 12].iter().enumerate() {
+                storage[idx] = events::EndpointSend::new(
+                    idx as u32,
+                    0x20,
+                    events::EndpointSend::pack(0, 1, *label, 0),
+                );
+            }
 
-        let events = endpoint_trace(&storage, 0, 3);
-        let mut labels = events.iter().map(|event| event.label()).collect::<Vec<_>>();
-        assert_eq!(labels.as_slice(), &[10, 11, 12]);
+            let events = endpoint_trace(storage, 0, 3);
+            let mut labels = FixedTrace::<u8, RING_EVENTS>::new();
+            for event in events.iter() {
+                labels.push(event.label());
+            }
+            assert_eq!(labels.as_slice(), &[10, 11, 12]);
 
-        // Changing the grouping (simulate reassociation) should yield the
-        // same linear order, validating seq associativity at the tap level.
-        labels.sort();
-        assert_eq!(labels.as_slice(), &[10, 11, 12]);
+            labels.sort_unstable();
+            assert_eq!(labels.as_slice(), &[10, 11, 12]);
+        });
     }
 
     #[test]
     fn endpoint_alt_arms_remain_disjoint() {
-        let mut left = [TapEvent::default(); RING_EVENTS];
-        let mut right = [TapEvent::default(); RING_EVENTS];
+        with_normalise_storage_pair(|left, right| {
+            left[0] = events::EndpointSend::new(0, 0x30, events::EndpointSend::pack(2, 1, 0x1, 0));
+            right[0] = events::EndpointSend::new(0, 0x30, events::EndpointSend::pack(3, 1, 0x2, 0));
 
-        left[0] = events::EndpointSend::new(0, 0x30, events::EndpointSend::pack(2, 1, 0x1, 0));
-        right[0] = events::EndpointSend::new(0, 0x30, events::EndpointSend::pack(3, 1, 0x2, 0));
+            let left_events = endpoint_trace(left, 0, 1);
+            let right_events = endpoint_trace(right, 0, 1);
 
-        let left_events = endpoint_trace(&left, 0, 1);
-        let right_events = endpoint_trace(&right, 0, 1);
+            let mut combined = FixedTrace::<(u32, u8, u8, u8, u8), 2>::new();
+            for event in left_events.iter().chain(right_events.iter()) {
+                combined.push({
+                    let kind = match event {
+                        EndpointEvent::Send { .. } => 0u8,
+                        EndpointEvent::Recv { .. } => 1u8,
+                        EndpointEvent::Control { .. } => 2u8,
+                    };
+                    (event.sid(), event.lane(), event.role(), event.label(), kind)
+                });
+            }
+            combined.sort_unstable();
 
-        let mut combined = left_events
-            .iter()
-            .chain(right_events.iter())
-            .map(|event| {
-                let kind = match event {
-                    EndpointEvent::Send { .. } => 0u8,
-                    EndpointEvent::Recv { .. } => 1u8,
-                    EndpointEvent::Control { .. } => 2u8,
-                };
-                (event.sid(), event.lane(), event.role(), event.label(), kind)
-            })
-            .collect::<Vec<_>>();
-        combined.sort_unstable();
-
-        assert_eq!(combined.len(), 2);
-        assert!(combined[0].3 != combined[1].3);
+            assert_eq!(combined.len(), 2);
+            assert!(combined[0].3 != combined[1].3);
+        });
     }
 
     #[test]
     fn endpoint_par_traces_align_after_sorting() {
-        let mut seq_storage = [TapEvent::default(); RING_EVENTS];
-        let mut interleaved_storage = [TapEvent::default(); RING_EVENTS];
+        with_normalise_storage_pair(|seq_storage, interleaved_storage| {
+            for (idx, &(lane, label)) in [(1u8, 0x40u8), (1, 0x41), (2, 0x50), (2, 0x51)]
+                .iter()
+                .enumerate()
+            {
+                seq_storage[idx] = events::EndpointSend::new(
+                    idx as u32,
+                    0x44,
+                    events::EndpointSend::pack(0, lane, label, 0),
+                );
+            }
 
-        // Sequential order: left branch (lane 1) followed by right branch (lane 2).
-        for (idx, &(lane, label)) in [(1u8, 0x40u8), (1, 0x41), (2, 0x50), (2, 0x51)]
-            .iter()
-            .enumerate()
-        {
-            seq_storage[idx] = events::EndpointSend::new(
-                idx as u32,
-                0x44,
-                events::EndpointSend::pack(0, lane, label, 0),
-            );
-        }
+            for (idx, &(lane, label)) in [(1u8, 0x40u8), (2, 0x50), (1, 0x41), (2, 0x51)]
+                .iter()
+                .enumerate()
+            {
+                interleaved_storage[idx] = events::EndpointSend::new(
+                    idx as u32,
+                    0x44,
+                    events::EndpointSend::pack(0, lane, label, 0),
+                );
+            }
 
-        // Interleaved to model parallel interleaving.
-        for (idx, &(lane, label)) in [(1u8, 0x40u8), (2, 0x50), (1, 0x41), (2, 0x51)]
-            .iter()
-            .enumerate()
-        {
-            interleaved_storage[idx] = events::EndpointSend::new(
-                idx as u32,
-                0x44,
-                events::EndpointSend::pack(0, lane, label, 0),
-            );
-        }
+            let seq_events = endpoint_trace(seq_storage, 0, 4);
+            let interleaved_events = endpoint_trace(interleaved_storage, 0, 4);
 
-        let seq_events = endpoint_trace(&seq_storage, 0, 4);
-        let interleaved_events = endpoint_trace(&interleaved_storage, 0, 4);
+            let mut seq_keys = FixedTrace::<(u8, u32, u8, u8, u8, u8), RING_EVENTS>::new();
+            for event in seq_events.iter() {
+                seq_keys.push(event.sort_key());
+            }
+            let mut interleaved_keys = FixedTrace::<(u8, u32, u8, u8, u8, u8), RING_EVENTS>::new();
+            for event in interleaved_events.iter() {
+                interleaved_keys.push(event.sort_key());
+            }
 
-        let mut seq_keys: Vec<_> = seq_events.iter().map(EndpointEvent::sort_key).collect();
-        let mut interleaved_keys: Vec<_> = interleaved_events
-            .iter()
-            .map(EndpointEvent::sort_key)
-            .collect();
+            seq_keys.sort_unstable();
+            interleaved_keys.sort_unstable();
 
-        seq_keys.sort();
-        interleaved_keys.sort();
-
-        assert_eq!(seq_keys, interleaved_keys);
+            assert_eq!(seq_keys.as_slice(), interleaved_keys.as_slice());
+        });
     }
 }

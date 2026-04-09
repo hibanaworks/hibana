@@ -3,7 +3,7 @@ use crate::{
         mint::GenericCapToken,
         resource_kinds::{LoopBreakKind, LoopContinueKind},
     },
-    g::{self, Program},
+    g::{self, ProgramSource},
     global::{
         CanonicalControl,
         steps::{self, LoopBreakSteps, LoopDecisionSteps, SeqSteps, StepCons, StepNil},
@@ -137,7 +137,7 @@ impl<'a> WireDecode<'a> for TapBatch {
     }
 }
 
-const STREAM_SUBSCRIBE: Program<
+const STREAM_SUBSCRIBE: ProgramSource<
     StepCons<
         steps::SendStep<
             g::Role<ROLE_CONTROLLER>,
@@ -153,7 +153,7 @@ const STREAM_SUBSCRIBE: Program<
     0,
 >();
 
-const STREAM_LOOP_CONTINUE_PREFIX: Program<
+const STREAM_LOOP_CONTINUE_PREFIX: ProgramSource<
     StepCons<
         steps::SendStep<
             g::Role<ROLE_CLUSTER>,
@@ -178,7 +178,7 @@ const STREAM_LOOP_CONTINUE_PREFIX: Program<
 >()
 .policy::<STREAM_LOOP_POLICY_ID>();
 
-const STREAM_LOOP_CONTINUE_ARM: Program<
+const STREAM_LOOP_CONTINUE_ARM: ProgramSource<
     SeqSteps<
         StepCons<
             steps::SendStep<
@@ -211,7 +211,7 @@ const STREAM_LOOP_CONTINUE_ARM: Program<
     >(),
 );
 
-const STREAM_LOOP_BREAK_PREFIX: Program<
+const STREAM_LOOP_BREAK_PREFIX: ProgramSource<
     StepCons<
         steps::SendStep<
             g::Role<ROLE_CLUSTER>,
@@ -232,7 +232,7 @@ const STREAM_LOOP_BREAK_PREFIX: Program<
 >()
 .policy::<STREAM_LOOP_POLICY_ID>();
 
-const STREAM_LOOP_BREAK_ARM: Program<
+const STREAM_LOOP_BREAK_ARM: ProgramSource<
     LoopBreakSteps<
         g::Role<ROLE_CLUSTER>,
         g::Msg<LABEL_LOOP_BREAK, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
@@ -252,7 +252,7 @@ const STREAM_LOOP_BREAK_ARM: Program<
     0,
 >());
 
-const STREAM_LOOP_ROUTE: Program<
+const STREAM_LOOP_ROUTE: ProgramSource<
     LoopDecisionSteps<
         g::Role<ROLE_CLUSTER>,
         g::Msg<
@@ -316,5 +316,4 @@ pub type ProgramSteps = SeqSteps<
     >,
 >;
 
-pub const PROGRAM: Program<ProgramSteps> =
-    crate::g::advanced::compose::seq(STREAM_SUBSCRIBE, STREAM_LOOP_ROUTE);
+pub const PROGRAM: ProgramSource<ProgramSteps> = crate::g::seq(STREAM_SUBSCRIBE, STREAM_LOOP_ROUTE);

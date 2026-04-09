@@ -12,7 +12,7 @@ use crate::runtime::consts::LANES_MAX;
 ///
 /// Tracks which lane is assigned to each session and whether it's active.
 pub(super) struct AssocTable {
-    lane_to_sid: UnsafeCell<[Option<SessionId>; LANES_MAX as usize]>,
+    lane_to_sid: UnsafeCell<[SessionId; LANES_MAX as usize]>,
     ref_counts: UnsafeCell<[u8; LANES_MAX as usize]>,
     _no_send_sync: PhantomData<*mut ()>,
 }
@@ -26,9 +26,23 @@ impl Default for AssocTable {
 impl AssocTable {
     pub(super) const fn new() -> Self {
         Self {
-            lane_to_sid: UnsafeCell::new([None; LANES_MAX as usize]),
+            lane_to_sid: UnsafeCell::new([SessionId::new(0); LANES_MAX as usize]),
             ref_counts: UnsafeCell::new([0; LANES_MAX as usize]),
             _no_send_sync: PhantomData,
+        }
+    }
+
+    pub(super) unsafe fn init_empty(dst: *mut Self) {
+        unsafe {
+            let sid_ptr = core::ptr::addr_of_mut!((*dst).lane_to_sid).cast::<SessionId>();
+            let count_ptr = core::ptr::addr_of_mut!((*dst).ref_counts).cast::<u8>();
+            let mut idx = 0usize;
+            while idx < LANES_MAX as usize {
+                sid_ptr.add(idx).write(SessionId::new(0));
+                count_ptr.add(idx).write(0);
+                idx += 1;
+            }
+            core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
         }
     }
 
@@ -48,7 +62,7 @@ impl AssocTable {
                 counts[idx] == 0,
                 "register called on lane with active attachments"
             );
-            sids[idx] = Some(sid);
+            sids[idx] = sid;
             counts[idx] = 1;
         }
     }
@@ -62,18 +76,16 @@ impl AssocTable {
             let idx = Self::idx(lane);
             let sids = &mut *self.lane_to_sid.get();
             let counts = &mut *self.ref_counts.get();
-            match sids[idx] {
-                Some(existing) if existing == sid => {
-                    let current = counts[idx];
-                    if current == u8::MAX {
-                        return None;
-                    }
-                    let next = current + 1;
-                    counts[idx] = next;
-                    Some(next)
-                }
-                _ => None,
+            let current = counts[idx];
+            if current == 0 || sids[idx] != sid {
+                return None;
             }
+            if current == u8::MAX {
+                return None;
+            }
+            let next = current + 1;
+            counts[idx] = next;
+            Some(next)
         }
     }
 
@@ -87,34 +99,32 @@ impl AssocTable {
             let idx = Self::idx(lane);
             let sids = &mut *self.lane_to_sid.get();
             let counts = &mut *self.ref_counts.get();
-            match sids[idx] {
-                Some(existing) if existing == sid => {
-                    let current = counts[idx];
-                    debug_assert!(current > 0, "decrement on zero-count lane");
-                    let next = current - 1;
-                    counts[idx] = next;
-                    if next == 0 {
-                        sids[idx] = None;
-                    }
-                    Some(next)
-                }
-                _ => None,
+            let current = counts[idx];
+            if current == 0 || sids[idx] != sid {
+                return None;
             }
+            let next = current - 1;
+            counts[idx] = next;
+            if next == 0 {
+                sids[idx] = SessionId::new(0);
+            }
+            Some(next)
         }
     }
 
     /// Find lane for a session ID.
     ///
     /// # Performance
-    /// LANES_MAX is intentionally small (<=16) so a linear scan keeps the
+    /// LANES_MAX is intentionally small (<=8) so a linear scan keeps the
     /// implementation no_alloc-friendly. If the maximum increases in the
     /// future consider introducing a tiny sid→lane index.
     #[inline]
     pub(super) fn find_lane(&self, sid: SessionId) -> Option<Lane> {
         unsafe {
             let lanes = &*self.lane_to_sid.get();
-            for (idx, entry) in lanes.iter().enumerate() {
-                if entry.map(|stored| stored == sid).unwrap_or(false) {
+            let counts = &*self.ref_counts.get();
+            for (idx, stored_sid) in lanes.iter().enumerate() {
+                if counts[idx] != 0 && *stored_sid == sid {
                     return Some(Lane::new(idx as u32));
                 }
             }
@@ -131,6 +141,10 @@ impl AssocTable {
     /// Get session ID for a lane (if registered).
     #[inline]
     pub(super) fn get_sid(&self, lane: Lane) -> Option<SessionId> {
-        unsafe { (*self.lane_to_sid.get())[Self::idx(lane)] }
+        unsafe {
+            let idx = Self::idx(lane);
+            let counts = &*self.ref_counts.get();
+            (counts[idx] != 0).then_some((*self.lane_to_sid.get())[idx])
+        }
     }
 }

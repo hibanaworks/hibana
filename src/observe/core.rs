@@ -17,22 +17,16 @@
 #[cfg(test)]
 use core::slice;
 use core::{
+    cell::{Cell, UnsafeCell},
     marker::PhantomData,
     ptr,
-    sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
 };
 
-#[cfg(test)]
-use core::{
-    hint::spin_loop,
-    sync::atomic::{AtomicBool, AtomicU32, AtomicU64},
-};
 #[cfg(test)]
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
-    sync::Mutex,
-    thread,
+    thread, thread_local,
 };
 
 use crate::{
@@ -136,7 +130,7 @@ pub(crate) const TAP_BATCH_MAX_EVENTS: usize = 50;
 
 /// Single-producer ring buffer suited for DMA/SHM environments.
 struct RingBuffer<'a> {
-    head: AtomicUsize,
+    head: Cell<usize>,
     storage: *mut TapEvent,
     _marker: PhantomData<&'a mut [TapEvent]>,
     _no_send_sync: PhantomData<*mut ()>,
@@ -300,20 +294,22 @@ where
 }
 
 struct GlobalTap {
-    ring: AtomicPtr<TapRing<'static>>,
+    #[cfg(not(test))]
+    ring: UnsafeCell<*mut TapRing<'static>>,
 }
 
 impl GlobalTap {
     const fn new() -> Self {
         Self {
-            ring: AtomicPtr::new(ptr::null_mut()),
+            #[cfg(not(test))]
+            ring: UnsafeCell::new(ptr::null_mut()),
         }
     }
 
     #[cfg(test)]
     fn install(&self, ring: &'static TapRing<'static>) -> Option<&'static TapRing<'static>> {
         let ptr = ring as *const TapRing<'static> as *mut TapRing<'static>;
-        let previous = self.ring.swap(ptr, Ordering::AcqRel);
+        let previous = TEST_GLOBAL_TAP_RING.with(|slot| slot.replace(ptr));
         if previous.is_null() {
             None
         } else {
@@ -324,18 +320,21 @@ impl GlobalTap {
     #[cfg(test)]
     fn uninstall(&self, target: &'static TapRing<'static>) -> bool {
         let target_ptr = target as *const TapRing<'static> as *mut TapRing<'static>;
-        self.ring
-            .compare_exchange(
-                target_ptr,
-                ptr::null_mut(),
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_ok()
+        TEST_GLOBAL_TAP_RING.with(|slot| {
+            if slot.get() == target_ptr {
+                slot.set(ptr::null_mut());
+                true
+            } else {
+                false
+            }
+        })
     }
 
     fn with_ring<R>(&self, f: impl FnOnce(&TapRing<'static>) -> R) -> Option<R> {
-        let ptr = self.ring.load(Ordering::Acquire);
+        #[cfg(test)]
+        let ptr = TEST_GLOBAL_TAP_RING.with(Cell::get);
+        #[cfg(not(test))]
+        let ptr = unsafe { *self.ring.get() };
         if ptr.is_null() {
             None
         } else {
@@ -351,6 +350,16 @@ impl GlobalTap {
 }
 
 static GLOBAL_TAP: GlobalTap = GlobalTap::new();
+unsafe impl Sync for GlobalTap {}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_GLOBAL_TAP_RING: Cell<*mut TapRing<'static>> = const { Cell::new(ptr::null_mut()) };
+    static TS_CHECKER: Cell<Option<fn(u32)>> = const { Cell::new(None) };
+    static CHECKER_STATE: UnsafeCell<CheckerState> = const { UnsafeCell::new(CheckerState::new()) };
+    static RING_STORAGE: UnsafeCell<[TapEvent; RING_EVENTS]> =
+        const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
+}
 
 #[cfg(test)]
 pub(crate) fn install_ring(ring: &'static TapRing<'static>) -> Option<&'static TapRing<'static>> {
@@ -373,26 +382,40 @@ pub(crate) fn emit(ring: &TapRing<'_>, event: TapEvent) {
 }
 
 #[cfg(test)]
-static TS_CHECKER: Mutex<Option<fn(u32)>> = Mutex::new(None);
+struct CheckerState {
+    owner: Option<u64>,
+    last_ts: u32,
+    violation: bool,
+}
 
 #[cfg(test)]
-static CHECKER_LOCK: AtomicBool = AtomicBool::new(false);
-#[cfg(test)]
-static CHECKER_OWNER: AtomicU64 = AtomicU64::new(0);
-#[cfg(test)]
-static LAST_TS: AtomicU32 = AtomicU32::new(0);
-#[cfg(test)]
-static VIOLATION_FLAG: AtomicBool = AtomicBool::new(false);
+impl CheckerState {
+    const fn new() -> Self {
+        Self {
+            owner: None,
+            last_ts: 0,
+            violation: false,
+        }
+    }
+}
 
 #[cfg(test)]
 fn current_ts_checker() -> Option<fn(u32)> {
-    *TS_CHECKER.lock().expect("timestamp checker mutex poisoned")
+    TS_CHECKER.with(Cell::get)
 }
 
 #[cfg(test)]
 fn swap_ts_checker(new: Option<fn(u32)>) -> Option<fn(u32)> {
-    let mut checker = TS_CHECKER.lock().expect("timestamp checker mutex poisoned");
-    core::mem::replace(&mut *checker, new)
+    TS_CHECKER.with(|checker| {
+        let previous = checker.get();
+        checker.set(new);
+        previous
+    })
+}
+
+#[cfg(test)]
+fn with_checker_state<R>(f: impl FnOnce(&mut CheckerState) -> R) -> R {
+    CHECKER_STATE.with(|state| unsafe { f(&mut *state.get()) })
 }
 
 #[cfg(test)]
@@ -419,93 +442,103 @@ mod tests {
 
     impl CheckerGuard {
         fn acquire() -> Self {
-            while CHECKER_LOCK
-                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                .is_err()
-            {
-                spin_loop();
-            }
-            CHECKER_OWNER.store(current_thread_id_u64(), Ordering::Relaxed);
+            with_checker_state(|state| {
+                state.owner = Some(current_thread_id_u64());
+            });
             Self
         }
     }
 
     impl Drop for CheckerGuard {
         fn drop(&mut self) {
-            CHECKER_OWNER.store(0, Ordering::Relaxed);
-            CHECKER_LOCK.store(false, Ordering::Release);
+            with_checker_state(|state| {
+                state.owner = None;
+            });
         }
+    }
+
+    fn with_ring_storage<R>(f: impl FnOnce(&'static mut [TapEvent; RING_EVENTS]) -> R) -> R {
+        RING_STORAGE.with(|storage| {
+            let storage = unsafe { &mut *storage.get() };
+            storage.fill(TapEvent::zero());
+            f(storage)
+        })
     }
 
     #[test]
     fn head_wraps_without_losing_alignment() {
-        let mut storage = [TapEvent::default(); RING_EVENTS];
-        let ring = TapRing::from_storage(&mut storage);
-        // We are testing the Infra ring (default push goes to Infra if ID >= 0x0100)
-        // RawEvent::new(0, idx) -> ID is idx.
-        // If idx < 0x0100, it goes to User ring.
-        // We need to use IDs >= 0x0100 to test Infra ring wrapping.
+        with_ring_storage(|storage| {
+            let ring = TapRing::from_storage(storage);
+            // We are testing the Infra ring (default push goes to Infra if ID >= 0x0100)
+            // RawEvent::new(0, idx) -> ID is idx.
+            // If idx < 0x0100, it goes to User ring.
+            // We need to use IDs >= 0x0100 to test Infra ring wrapping.
 
-        // Mock GlobalTap to avoid null pointer deref in push if hooks are called?
-        // TapRing::push calls GLOBAL_TAP hooks.
-        // GLOBAL_TAP is static. It should be fine.
+            // Mock GlobalTap to avoid null pointer deref in push if hooks are called?
+            // TapRing::push calls GLOBAL_TAP hooks.
+            // GLOBAL_TAP is static. It should be fine.
 
-        // Use IDs >= 0x0100
-        let base_id = 0x0200;
+            // Use IDs >= 0x0100
+            let base_id = 0x0200;
 
-        // Set head on Infra ring
-        ring.infra.set_head_for_test(usize::MAX - 2);
+            // Set head on Infra ring
+            ring.infra.set_head_for_test(usize::MAX - 2);
 
-        for idx in 0..4 {
-            ring.push(
-                RawEvent::new(0, base_id + idx as u16)
-                    .with_arg0(idx as u32)
-                    .with_arg1(idx as u32),
-            );
-        }
+            for idx in 0..4 {
+                ring.push(
+                    RawEvent::new(0, base_id + idx as u16)
+                        .with_arg0(idx as u32)
+                        .with_arg1(idx as u32),
+                );
+            }
 
-        let expected = (usize::MAX - 2).wrapping_add(4);
-        assert_eq!(ring.head(), expected);
+            let expected = (usize::MAX - 2).wrapping_add(4);
+            assert_eq!(ring.head(), expected);
 
-        // The last two writes should have wrapped around to the start of the ring.
-        // Modulo is RING_BUFFER_SIZE
-        let first_index = (usize::MAX - 2) % RING_BUFFER_SIZE;
-        // Storage for Infra ring is the second half of the array
-        let infra_offset = RING_BUFFER_SIZE;
+            // The last two writes should have wrapped around to the start of the ring.
+            // Modulo is RING_BUFFER_SIZE
+            let first_index = (usize::MAX - 2) % RING_BUFFER_SIZE;
+            // Storage for Infra ring is the second half of the array
+            let infra_offset = RING_BUFFER_SIZE;
 
-        for offset in 0..4 {
-            let idx = (first_index + offset) % RING_BUFFER_SIZE;
-            // Check in the original storage array
-            assert_eq!(storage[infra_offset + idx].id, base_id + offset as u16);
-        }
+            for offset in 0..4 {
+                let idx = (first_index + offset) % RING_BUFFER_SIZE;
+                // Check in the original storage array
+                assert_eq!(storage[infra_offset + idx].id, base_id + offset as u16);
+            }
+        });
     }
 
     #[test]
     fn timestamp_checker_detects_non_monotonic_push() {
         let _guard = CheckerGuard::acquire();
         fn checker(ts: u32) {
-            let prev = LAST_TS.load(Ordering::Relaxed);
-            if ts < prev {
-                VIOLATION_FLAG.store(true, Ordering::Relaxed);
+            with_checker_state(|state| {
+                if ts < state.last_ts {
+                    state.violation = true;
+                }
+                state.last_ts = ts;
+            });
+        }
+
+        with_ring_storage(|storage| {
+            let ring = TapRing::from_storage(storage);
+
+            let previous = install_ts_checker(Some(checker));
+            with_checker_state(|state| {
+                state.last_ts = 0;
+                state.violation = false;
+            });
+            for ts in [1, 2, 3, 3, 5] {
+                ring.push(RawEvent::new(ts, 0).with_arg0(0).with_arg1(0));
             }
-            LAST_TS.store(ts, Ordering::Relaxed);
-        }
+            assert!(!with_checker_state(|state| state.violation));
 
-        let mut storage = [TapEvent::default(); RING_EVENTS];
-        let ring = TapRing::from_storage(&mut storage);
+            ring.push(RawEvent::new(4, 0).with_arg0(0).with_arg1(0));
+            assert!(with_checker_state(|state| state.violation));
 
-        let previous = install_ts_checker(Some(checker));
-        LAST_TS.store(0, Ordering::Relaxed);
-        VIOLATION_FLAG.store(false, Ordering::Relaxed);
-        for ts in [1, 2, 3, 3, 5] {
-            ring.push(RawEvent::new(ts, 0).with_arg0(0).with_arg1(0));
-        }
-        assert!(!VIOLATION_FLAG.load(Ordering::Relaxed));
-
-        ring.push(RawEvent::new(4, 0).with_arg0(0).with_arg1(0));
-        assert!(VIOLATION_FLAG.load(Ordering::Relaxed));
-
-        install_ts_checker(previous);
+            install_ts_checker(previous);
+        });
     }
 }
 
@@ -513,7 +546,7 @@ impl<'a> RingBuffer<'a> {
     fn new(storage: &'a mut [TapEvent]) -> Self {
         assert!(storage.len() >= RING_BUFFER_SIZE);
         Self {
-            head: AtomicUsize::new(0),
+            head: Cell::new(0),
             storage: storage.as_mut_ptr(),
             _marker: PhantomData,
             _no_send_sync: PhantomData,
@@ -529,16 +562,18 @@ impl<'a> RingBuffer<'a> {
     /// cleared before the storage is reclaimed.
     /// Append an observation.
     fn push(&self, event: TapEvent) {
-        let idx = self.head.fetch_add(1, Ordering::Relaxed) % RING_BUFFER_SIZE;
+        let head = self.head.get();
+        let idx = head % RING_BUFFER_SIZE;
+        self.head.set(head.wrapping_add(1));
         #[cfg(test)]
         {
             if let Some(checker) = current_ts_checker() {
-                let should_run = if CHECKER_LOCK.load(Ordering::Relaxed) {
-                    let owner = CHECKER_OWNER.load(Ordering::Relaxed);
-                    owner != 0 && owner == current_thread_id_u64()
-                } else {
-                    true
-                };
+                let should_run = with_checker_state(|state| {
+                    state
+                        .owner
+                        .map(|owner| owner == current_thread_id_u64())
+                        .unwrap_or(true)
+                });
                 if should_run {
                     checker(event.ts);
                 }
@@ -557,7 +592,7 @@ impl<'a> RingBuffer<'a> {
     /// Returns the number of events that have been pushed since initialisation.
     #[cfg(test)]
     fn head(&self) -> usize {
-        self.head.load(Ordering::Relaxed)
+        self.head.get()
     }
 
     #[cfg(test)]
@@ -584,7 +619,7 @@ impl<'a> RingBuffer<'a> {
 
     #[cfg(test)]
     fn set_head_for_test(&self, value: usize) {
-        self.head.store(value, Ordering::Relaxed);
+        self.head.set(value);
     }
 }
 

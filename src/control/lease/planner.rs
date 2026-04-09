@@ -358,12 +358,11 @@ const fn base_facets_for_tag(tag: u8) -> LeaseFacetNeeds {
 }
 
 #[inline(always)]
-pub(crate) const fn assert_program_covers_facets<const ROLE: u8, LocalSteps, Mint>(
-    program: &crate::g::advanced::RoleProgram<'static, ROLE, LocalSteps, Mint>,
+pub(crate) const fn assert_program_covers_facets<Steps>(
+    program: &crate::g::ProgramSource<Steps>,
     needs: LeaseFacetNeeds,
-) where
-    Mint: crate::control::cap::mint::MintConfigMarker,
-{
-    let budget = crate::global::compiled::CompiledProgram::budget_for_role_program(program);
+) {
+    let budget =
+        crate::global::compiled::LoweringSummary::scan_const(program.eff_list()).lease_budget();
     assert_budget_covers(budget, needs);
 }

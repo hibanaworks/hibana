@@ -68,12 +68,9 @@ surfaces above, it is lower layer and not part of the public contract.
 
 ## Cargo Features
 
-- `std` — Enables heap-backed lower-layer storage for large fixed-capacity
-  runtime tables (for example the endpoint cursor route/frontier/evidence
-  tables and the session-cluster control/resolver cores), plus
-  transport/testing utilities and observability normalisers. The app surface
-  (`hibana::g` + `Endpoint` localside core API) remains `no_alloc` oriented in
-  both modes.
+- `std` — Enables transport/testing utilities and observability normalisers.
+  The runtime remains slab-backed and `no_alloc` oriented in both modes; `std`
+  does not switch the core localside path to heap-backed ownership.
 
 ## App Surface
 
@@ -90,7 +87,7 @@ The app surface is intentionally narrow:
 | Define choreography | `hibana::g::{send, route, par, seq}` |
 | Mark dynamic authority points | `Program::policy::<POLICY_ID>()` |
 | Advance a localside endpoint | `flow().send()`, `offer()`, `recv()`, `decode()` |
-| Handle a chosen branch | `RouteBranch::{label, decode, into_endpoint}` |
+| Handle a chosen branch | `RouteBranch::{label, decode}` |
 
 The public language is fixed to:
 
@@ -98,7 +95,6 @@ The public language is fixed to:
 - `Program::policy::<POLICY_ID>()`
 - `RouteBranch::label()`
 - `RouteBranch::decode()`
-- `RouteBranch::into_endpoint()`
 - `flow().send()`
 - `offer()`
 - `recv()`
@@ -163,19 +159,18 @@ localside core API.
 ```rust
 use hibana::g;
 
-let (endpoint, outbound) = endpoint.flow::<g::Msg<1, u32>>()?.send(&7).await?;
-let (endpoint, inbound) = endpoint.recv::<g::Msg<2, u32>>().await?;
+let outbound = endpoint.flow::<g::Msg<1, u32>>()?.send(&7).await?;
+let inbound = endpoint.recv::<g::Msg<2, u32>>().await?;
 
 let branch = endpoint.offer().await?;
 match branch.label() {
     30 => {
-        let (endpoint, payload) = branch.decode::<g::Msg<30, [u8; 4]>>().await?;
-        let _ = (endpoint, payload, outbound, inbound);
+        let payload = branch.decode::<g::Msg<30, [u8; 4]>>().await?;
+        let _ = (payload, outbound, inbound);
     }
     31 => {
-        let endpoint = branch.into_endpoint();
-        let (endpoint, ()) = endpoint.flow::<g::Msg<31, ()>>()?.send(&()).await?;
-        let _ = endpoint;
+        drop(branch);
+        let () = endpoint.flow::<g::Msg<31, ()>>()?.send(&()).await?;
     }
     _ => unreachable!(),
 }
@@ -187,7 +182,7 @@ Use each localside API for one job:
 - `recv()` for deterministic receives
 - `offer()` when the next step is a route decision
 - `decode()` when the chosen arm begins with a receive
-- `into_endpoint()` when the chosen arm begins with a send
+- `drop(branch); endpoint.flow().send()` when the chosen arm begins with a send
 
 ### App Result and Error Types
 
@@ -204,7 +199,7 @@ The crate root keeps the app-facing result and error owners explicit:
 The public surface is small because guarantees move into the type system, not
 because guarantees were deleted.
 
-- projection stays typed through `RoleProgram<'prog, ROLE, LocalSteps, Mint>`
+- projection stays typed through `RoleProgram<'prog, ROLE, GlobalSteps, Mint>`
 - `g::route` rejects duplicate labels and controller mismatches before runtime
 - `g::par` rejects empty fragments and role/lane overlap before runtime
 - localside runtime is fail-closed for label and payload mismatches
@@ -246,7 +241,10 @@ hands app code a single endpoint that advances through the localside core API.
 - The driver follows `offer()`; it does not invent decisions on its own
 - Branch handling is just `match branch.label()`
 - Use `branch.decode()` when the chosen arm begins with a receive
-- Use `branch.into_endpoint().flow().send()` when the chosen arm begins with a send
+- Use `drop(branch); endpoint.flow().send()` when the chosen arm begins with a send
+- `flow()` and `offer()` are preview-only; endpoint progress happens only when
+  `send()` or `decode()` successfully consumes the preview, including policy
+  input, transport-event flush, and policy audit/replay observation
 - App code and generic driver logic do not call transport APIs directly
 
 ### Route Authority
@@ -297,8 +295,8 @@ stays an internal endpoint seam rather than a public authority source.
 
 Protocol implementors use the protocol-neutral SPI:
 
-- `hibana::g::advanced` owns typed projection, preserved composition, and
-  compile-time control-message typing
+- `hibana::g` owns choreography composition
+- `hibana::g::advanced` owns typed projection and compile-time control-message typing
 - `hibana::substrate` owns attach / enter / binding / resolver / policy /
   transport seams
 - the root app surface does not expose `SessionKit`, `BindingSlot`,
@@ -307,7 +305,6 @@ Protocol implementors use the protocol-neutral SPI:
   `hibana::substrate::policy::epf::{Header, Slot}`
 
 - `hibana::g::advanced::{project, RoleProgram, CanonicalControl, ExternalControl, MessageSpec, ControlMessage, ControlMessageKind}`
-- `hibana::g::advanced::compose::seq`
 - `hibana::substrate::SessionKit`
 - `hibana::substrate::{AttachError, CpError, EffIndex, Lane, RendezvousId, SessionId}`
 - `hibana::substrate::Transport`
@@ -328,41 +325,39 @@ is needed, keep it outside `hibana`'s public surface.
 
 ### 1. Compose `transport prefix -> appkit prefix -> user app`
 
-Use `hibana::g::advanced::compose::seq` to preserve segment boundaries in the
-generic substrate implementation.
+Use ordinary `hibana::g::seq`. There is no second composition surface for
+protocol implementors.
 
 ```rust
-let app_connection = hibana::g::advanced::compose::seq(APPKIT_PREFIX, APP);
-let full_connection = hibana::g::advanced::compose::seq(TRANSPORT_PREFIX, app_connection);
+let app_connection = hibana::g::seq(APPKIT_PREFIX, APP);
+let full_connection = hibana::g::seq(TRANSPORT_PREFIX, app_connection);
 ```
 
-Use `g::seq` only for app-facing choreography. Use
-`hibana::g::advanced::compose::seq` only in protocol-implementor code that is
-building the internal connection program.
+App code and protocol-implementor code both use the same `g::seq`. Segment
+boundaries stay explicit in the program value itself; there is no separate
+composition shim.
 
-### 2. Project Typed Locals
+### 2. Project a Typed Role Witness
 
-Projection stays typed. Do not erase `LocalSteps`.
+Projection stays typed, but protocol implementations do not need to spell the
+projected local typelist in public code. The canonical path is
+`ProgramSource<_>` -> `g::freeze(&SOURCE)` -> `project(&PROGRAM)`.
 
 ```rust
 use hibana::g;
 use hibana::g::advanced::{RoleProgram, project};
-use hibana::g::advanced::steps::{ProjectRole, SendStep, StepCons, StepNil};
 
-const APP: g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u32>, 0>, StepNil>> =
+const SOURCE: g::ProgramSource<_> =
     g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u32>, 0>();
+const PROGRAM: g::Program<_> = g::freeze(&SOURCE);
 
-static CLIENT: RoleProgram<
-    'static,
-    0,
-    <StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u32>, 0>, StepNil> as ProjectRole<
-        g::Role<0>,
-    >>::Output,
-> = project(&APP);
+let client: RoleProgram<'_, 0, _, _> = project(&PROGRAM);
 ```
 
-The exact projected `LocalSteps` type is part of the contract. Hiding it behind
-`StepNil`, an alias, or an unsafe cast would delete a compile-time guarantee.
+`RoleProgram` remains a typed compile-time witness, and the substrate recovers
+the role-local projection internally. Protocol code passes that witness to
+`SessionKit::enter(...)` and other substrate seams without spelling the
+projected local typelist in the canonical path.
 
 ## Control Message Surface
 
@@ -492,7 +487,7 @@ clock, config storage, projected program, and resolver state borrowed; add
 rendezvous once; then `enter()`.
 
 ```rust
-let mut tap_buf = [Default::default(); 2048];
+let mut tap_buf = [Default::default(); 128];
 let mut slab = [0u8; 64 * 1024];
 let clock = hibana::substrate::runtime::CounterClock::new();
 let config = hibana::substrate::runtime::Config::new(&mut tap_buf, &mut slab);
@@ -520,23 +515,30 @@ The same borrowed `RoleProgram` can be passed to `set_resolver()` and `enter()`,
 and the same borrowed resolver state can stay outside the cluster through
 `ResolverRef::from_state()`.
 
-If integration code really wants leaked std demo storage, that remains possible,
-but it is not the canonical path:
+The canonical substrate story stays borrowed and caller-provided even under
+`std`: lower-layer storage is slab-backed, not heap-backed, and app/protocol
+integration should provide stable buffers and clocks without `Box`, `Vec`, or
+stack-growth helpers.
 
 ```rust
-let tap_buf = Box::leak(Box::new([Default::default(); 2048]));
-let slab = Box::leak(vec![0u8; 64 * 1024].into_boxed_slice());
-let clock = Box::leak(Box::new(hibana::substrate::runtime::CounterClock::new()));
-let config = hibana::substrate::runtime::Config::new(tap_buf, slab);
+let mut tap_buf = [hibana::substrate::tap::TapEvent::empty(); 128];
+let mut slab = [0u8; 64 * 1024];
+let clock = hibana::substrate::runtime::CounterClock::new();
+
+let config = hibana::substrate::runtime::Config::new(&mut tap_buf, &mut slab);
 
 let cluster: hibana::substrate::SessionKit<
-    'static,
+    '_,
     MyTransport,
     hibana::substrate::runtime::DefaultLabelUniverse,
     hibana::substrate::runtime::CounterClock,
     4,
-> = hibana::substrate::SessionKit::new(clock);
+> = hibana::substrate::SessionKit::new(&clock);
 ```
+
+On embedded targets, these borrowed buffers still need stable storage owned by
+the integration layer. The canonical docs do not use `static mut`; keep any
+boot-storage `unsafe` private to the binary or BSP glue.
 
 `SessionKit::new(clock)` is always paired with a rendezvous config. The
 runtime config owner is `hibana::substrate::runtime::Config`, and the public
@@ -1001,11 +1003,15 @@ with the same localside core API as any other choreography:
 
 ```rust
 use hibana::g;
-use hibana::g::advanced::{compose, project};
+use hibana::g::advanced::project;
 
-let program = compose::seq(hibana::substrate::mgmt::request_reply::PREFIX, APP);
-let controller_program = project(&program); // typed controller-side projection
-let cluster_program = project(&program); // typed cluster-side projection
+const APP_SOURCE: g::ProgramSource<_> = APP;
+const SOURCE: g::ProgramSource<_> =
+    g::seq(hibana::substrate::mgmt::request_reply::PREFIX, APP_SOURCE);
+const PROGRAM: g::Program<_> = g::freeze(&SOURCE);
+
+let controller_program = project(&PROGRAM); // typed controller-side projection
+let cluster_program = project(&PROGRAM); // typed cluster-side projection
 
 let controller = cluster.enter(
     rv_id,
@@ -1024,18 +1030,46 @@ let _state = (controller, cluster_role);
 ```
 
 The request/reply prefix and observe stream prefix are ordinary choreography
-artifacts. Protocol implementors compose them with `hibana::g::advanced::compose::seq`,
-that is, ordinary `compose::seq`,
-project them with `project()`, attach them with `SessionKit::enter(...)`, and
-drive the resulting endpoints with `flow().send()`, `recv()`, `offer()`, and `decode()`
-just like any other attached session.
+artifacts. Protocol implementors compose `ProgramSource` values with ordinary
+`hibana::g::seq`, freeze them into a thin `Program`, project that token with
+`project()`, attach it with `SessionKit::enter(...)`, and drive the resulting
+endpoints with `flow().send()`, `recv()`, `offer()`, and `decode()` just like
+any other attached session.
 
 ## Validation
 
 Push-quality validation means more than "the examples compile". At minimum, the
 surface gates, protocol-neutrality, typed projection, and policy replay checks
 should stay green. CI is intentionally split between stable verification and a
-nightly rustdoc-JSON semantic surface lane.
+nightly rustdoc-JSON semantic surface lane. The canonical Pico gate is
+SRAM-first and route-heavy: it projects, attaches, and runs a huge localside
+sample to completion and reserves 96 KiB free on RP2040. The practical
+shape-matrix contract is tracked per `route_heavy`, `linear_heavy`, and
+`fanout_heavy` build:
+
+- `flash <= 768 KiB`
+- `static SRAM <= 48 KiB`
+- `kernel stack <= 24 KiB`
+- `peak SRAM <= 96 KiB`
+
+`check_pico_smoke.sh` reserves a `24 KiB` kernel stack in the Pico linker
+script, then combines target flash/static-SRAM bytes with a host-executed
+canonical runtime measurement on a `32 KiB` thread stack to report the existing
+hard-gated upper bounds (`kernel stack reserve`, `peak stack upper-bound`, and
+`peak SRAM upper-bound bytes`) plus shadow/report-only executed metrics
+(`measured peak stack bytes`, live slab usage, and `measured peak SRAM bytes`).
+The measured peak SRAM report subtracts the statically reserved Pico slab, then
+adds back the measured live slab bytes plus measured peak stack bytes so the
+Phase 0a instrumentation tracks executed runtime usage without weakening the
+current practical hard gate. `check_pico_size_matrix.sh` keeps the same budget
+class for linear-heavy and fanout-heavy huge choreography shapes and also prints
+the measured resident shape matrix:
+
+- route resident bytes
+- loop resident bytes
+- endpoint resident bytes
+- `CompiledProgramImage` header / persistent bytes
+- `CompiledRoleImage` header / persistent bytes
 
 ```bash
 # Stable hygiene and boundary gates
@@ -1049,6 +1083,9 @@ bash ./.github/scripts/check_resolver_context_surface.sh
 bash ./.github/scripts/check_warning_free.sh
 bash ./.github/scripts/check_direct_projection_binary.sh
 bash ./.github/scripts/check_no_std_build.sh
+bash ./.github/scripts/check_huge_choreography_budget.sh
+bash ./.github/scripts/check_pico_smoke.sh
+bash ./.github/scripts/check_pico_size_matrix.sh
 
 # Core builds
 cargo check --all-targets -p hibana

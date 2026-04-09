@@ -11,11 +11,12 @@ use super::authority::{
     route_policy_input_arg0, validate_route_decision_scope,
 };
 use super::evidence::{ScopeEvidence, ScopeLabelMeta, ScopeLoopMeta};
-use super::evidence_store::ScopeEvidenceStore;
 use super::frontier::*;
 use super::frontier_state::FrontierState;
 use super::inbox::BindingInbox;
 use super::lane_port;
+use super::lane_slots::LaneSlotArray;
+use super::layout::{EndpointArenaLayout, LeasedState};
 use super::offer::*;
 use super::route_state::RouteState;
 use crate::binding::{BindingSlot, NoBinding};
@@ -73,15 +74,13 @@ use crate::{
     },
 };
 
-#[cfg(feature = "std")]
-type PortStorage<'r, T, E> = std::boxed::Box<[Option<Port<'r, T, E>>; MAX_LANES]>;
-#[cfg(not(feature = "std"))]
-type PortStorage<'r, T, E> = [Option<Port<'r, T, E>>; MAX_LANES];
+type PortStorage<'r, T, E> = LaneSlotArray<Port<'r, T, E>>;
+type GuardStorage<'r, T, U, C> = LaneSlotArray<LaneGuard<'r, T, U, C>>;
 
-#[cfg(feature = "std")]
-type GuardStorage<'r, T, U, C> = std::boxed::Box<[Option<LaneGuard<'r, T, U, C>>; MAX_LANES]>;
-#[cfg(not(feature = "std"))]
-type GuardStorage<'r, T, U, C> = [Option<LaneGuard<'r, T, U, C>>; MAX_LANES];
+type StoredMint<Mint> = crate::control::cap::mint::MintConfig<
+    <Mint as MintConfigMarker>::Spec,
+    <Mint as MintConfigMarker>::Policy,
+>;
 
 #[cfg(test)]
 use super::authority::resolve_route_decision_handle_with_policy;
@@ -108,18 +107,18 @@ fn controller_arm_semantic_kind(
     arm: u8,
 ) -> Option<ControlSemanticKind> {
     let (entry, _label) = cursor.controller_arm_entry_by_arm(scope_id, arm)?;
-    let target_cursor = cursor.with_index(state_index_to_usize(entry));
-    target_cursor
-        .try_local_meta()
+    let entry_idx = state_index_to_usize(entry);
+    cursor
+        .try_local_meta_at(entry_idx)
         .and_then(|meta| loop_control_semantic_kind_from_resource(semantics, meta.resource))
         .or_else(|| {
-            target_cursor
-                .try_send_meta()
+            cursor
+                .try_send_meta_at(entry_idx)
                 .and_then(|meta| loop_control_semantic_kind_from_resource(semantics, meta.resource))
         })
         .or_else(|| {
-            target_cursor
-                .try_recv_meta()
+            cursor
+                .try_recv_meta_at(entry_idx)
                 .and_then(|meta| loop_control_semantic_kind_from_resource(semantics, meta.resource))
         })
 }
@@ -419,26 +418,24 @@ pub struct CursorEndpoint<
     /// For single-lane programs, only `ports[0]` is used.
     pub(super) ports: PortStorage<'r, T, E>,
     /// Multi-lane guard array. Each active lane has its own guard.
-    guards: GuardStorage<'r, T, U, C>,
+    pub(super) guards: GuardStorage<'r, T, U, C>,
     /// Primary lane index (first active lane, typically 0).
     pub(super) primary_lane: usize,
     pub(super) sid: SessionId,
-    _owner: Owner<'r, E0>,
-    _epoch: EndpointEpoch<'r, E>,
+    pub(super) _owner: Owner<'r, E0>,
+    pub(super) _epoch: EndpointEpoch<'r, E>,
     /// Phase-aware cursor for multi-lane parallel execution.
-    #[cfg(feature = "std")]
-    pub(super) cursor: std::boxed::Box<PhaseCursor>,
-    #[cfg(not(feature = "std"))]
     pub(super) cursor: PhaseCursor,
-    control_semantics: ControlSemanticsTable,
-    compiled_cache_lease: crate::control::cluster::core::CompiledCacheLease,
+    pub(super) public_slot: u8,
+    pub(super) public_generation: u32,
+    pub(super) public_slot_owned: bool,
     pub(super) control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
-    route_state: RouteState,
-    frontier_state: FrontierState,
-    binding_inbox: BindingInbox,
-    evidence_store: ScopeEvidenceStore,
-    liveness_policy: crate::runtime::config::LivenessPolicy,
-    mint: Mint,
+    pub(super) route_state: LeasedState<RouteState>,
+    pub(super) frontier_state: LeasedState<FrontierState>,
+    pub(super) binding_inbox: LeasedState<BindingInbox>,
+    pub(super) pending_branch_preview: Option<PendingBranchPreview>,
+    pub(super) liveness_policy: crate::runtime::config::LivenessPolicy,
+    pub(super) mint: StoredMint<Mint>,
     pub(super) binding: B,
 }
 
@@ -458,15 +455,247 @@ pub struct RouteBranch<
     Mint: MintConfigMarker,
 {
     pub(super) label: u8,
+    pub(super) cursor_index: StateIndex,
     pub(super) transport_payload_len: usize,
     pub(super) transport_payload_lane: u8,
-    pub(super) endpoint: CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    /// Channel selected by binding classification for the binding-backed recv path.
-    /// `None` means the payload is read from the transport directly.
     pub(super) binding_channel: Option<crate::binding::Channel>,
-    /// Branch metadata from offer() for decode() dispatch.
-    /// Eliminates label→arm inference in decode().
     pub(super) branch_meta: BranchMeta,
+    _cfg: core::marker::PhantomData<fn() -> (&'r T, U, C, E, Mint, B)>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct PendingBranchPreview {
+    pub(super) label: u8,
+    pub(super) cursor_index: StateIndex,
+    pub(super) transport_payload_len: usize,
+    pub(super) transport_payload_lane: u8,
+    pub(super) binding_channel: Option<crate::binding::Channel>,
+    pub(super) branch_meta: BranchMeta,
+}
+
+impl PendingBranchPreview {
+    #[inline]
+    pub(super) const fn from_branch<
+        'r,
+        const ROLE: u8,
+        T: Transport + 'r,
+        U,
+        C,
+        E: EpochTable,
+        const MAX_RV: usize,
+        Mint,
+        B: BindingSlot,
+    >(
+        branch: &RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    ) -> Self
+    where
+        U: LabelUniverse,
+        C: crate::runtime::config::Clock,
+        Mint: MintConfigMarker,
+    {
+        Self {
+            label: branch.label,
+            cursor_index: branch.cursor_index,
+            transport_payload_len: branch.transport_payload_len,
+            transport_payload_lane: branch.transport_payload_lane,
+            binding_channel: branch.binding_channel,
+            branch_meta: branch.branch_meta,
+        }
+    }
+
+    #[inline]
+    pub(super) fn matches_send_meta(self, meta: SendMeta) -> bool {
+        self.branch_meta.kind == BranchKind::ArmSendHint
+            && self.label == meta.label
+            && self.branch_meta.scope_id == meta.scope
+            && meta.route_arm == Some(self.branch_meta.selected_arm)
+    }
+
+    #[inline]
+    pub(super) fn into_branch<
+        'r,
+        const ROLE: u8,
+        T: Transport + 'r,
+        U,
+        C,
+        E: EpochTable,
+        const MAX_RV: usize,
+        Mint,
+        B: BindingSlot,
+    >(
+        self,
+    ) -> RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+    where
+        U: LabelUniverse,
+        C: crate::runtime::config::Clock,
+        Mint: MintConfigMarker,
+    {
+        RouteBranch {
+            label: self.label,
+            cursor_index: self.cursor_index,
+            transport_payload_len: self.transport_payload_len,
+            transport_payload_lane: self.transport_payload_lane,
+            binding_channel: self.binding_channel,
+            branch_meta: self.branch_meta,
+            _cfg: core::marker::PhantomData,
+        }
+    }
+}
+
+struct PreparedSendControl<K: ResourceKind> {
+    control_handling: ControlHandling,
+    minted_token: Option<CapFlowToken<K>>,
+}
+
+struct SendDispatchState<'r, K: ResourceKind> {
+    control_handling: ControlHandling,
+    control_outcome: ControlOutcome<'r, K>,
+    canonical_generic_token: Option<GenericCapToken<K>>,
+    dispatch_frame: Option<crate::control::handle::frame::ControlFrame<'r, K>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CursorEndpointStorageLayout {
+    header_bytes: usize,
+    header_align: usize,
+    port_slots_offset: usize,
+    port_slots_bytes: usize,
+    port_slots_align: usize,
+    guard_slots_offset: usize,
+    guard_slots_bytes: usize,
+    guard_slots_align: usize,
+    arena_offset: usize,
+    arena_bytes: usize,
+    arena_align: usize,
+    total_bytes: usize,
+    total_align: usize,
+}
+
+impl CursorEndpointStorageLayout {
+    #[inline(always)]
+    pub(crate) const fn header_bytes(self) -> usize {
+        self.header_bytes
+    }
+
+    #[inline(always)]
+    pub(crate) const fn port_slots_offset(self) -> usize {
+        self.port_slots_offset
+    }
+
+    #[inline(always)]
+    pub(crate) const fn port_slots_bytes(self) -> usize {
+        self.port_slots_bytes
+    }
+
+    #[inline(always)]
+    pub(crate) const fn guard_slots_offset(self) -> usize {
+        self.guard_slots_offset
+    }
+
+    #[inline(always)]
+    pub(crate) const fn guard_slots_bytes(self) -> usize {
+        self.guard_slots_bytes
+    }
+
+    #[inline(always)]
+    pub(crate) const fn arena_offset(self) -> usize {
+        self.arena_offset
+    }
+
+    #[inline(always)]
+    pub(crate) const fn arena_bytes(self) -> usize {
+        self.arena_bytes
+    }
+
+    #[inline(always)]
+    pub(crate) const fn arena_align(self) -> usize {
+        self.arena_align
+    }
+
+    #[inline(always)]
+    pub(crate) const fn total_bytes(self) -> usize {
+        self.total_bytes
+    }
+
+    #[inline(always)]
+    pub(crate) const fn total_align(self) -> usize {
+        self.total_align
+    }
+}
+
+#[inline(always)]
+const fn storage_align_up(value: usize, align: usize) -> usize {
+    let mask = align.saturating_sub(1);
+    (value + mask) & !mask
+}
+
+#[inline(always)]
+const fn storage_max(lhs: usize, rhs: usize) -> usize {
+    if lhs > rhs { lhs } else { rhs }
+}
+
+#[inline]
+pub(crate) fn cursor_endpoint_storage_layout<
+    'r,
+    const ROLE: u8,
+    T,
+    U,
+    C,
+    E,
+    const MAX_RV: usize,
+    Mint,
+    B,
+>(
+    arena_layout: &EndpointArenaLayout,
+    lane_slot_count: usize,
+) -> CursorEndpointStorageLayout
+where
+    T: Transport + 'r,
+    U: LabelUniverse + 'r,
+    C: crate::runtime::config::Clock + 'r,
+    E: EpochTable + 'r,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
+{
+    let header_bytes =
+        core::mem::size_of::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>();
+    let header_align =
+        core::mem::align_of::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>();
+    let port_slots_align = core::mem::align_of::<Option<Port<'r, T, E>>>();
+    let port_slots_bytes =
+        core::mem::size_of::<Option<Port<'r, T, E>>>().saturating_mul(lane_slot_count);
+    let port_slots_offset = storage_align_up(header_bytes, port_slots_align);
+    let guard_slots_align = core::mem::align_of::<Option<LaneGuard<'r, T, U, C>>>();
+    let guard_slots_bytes =
+        core::mem::size_of::<Option<LaneGuard<'r, T, U, C>>>().saturating_mul(lane_slot_count);
+    let guard_slots_offset =
+        storage_align_up(port_slots_offset + port_slots_bytes, guard_slots_align);
+    let arena_offset = storage_align_up(
+        guard_slots_offset + guard_slots_bytes,
+        arena_layout.header_align(),
+    );
+    let total_align = storage_max(
+        storage_max(
+            storage_max(header_align, port_slots_align),
+            guard_slots_align,
+        ),
+        arena_layout.header_align(),
+    );
+    CursorEndpointStorageLayout {
+        header_bytes,
+        header_align,
+        port_slots_offset,
+        port_slots_bytes,
+        port_slots_align,
+        guard_slots_offset,
+        guard_slots_bytes,
+        guard_slots_align,
+        arena_offset,
+        arena_bytes: arena_layout.total_bytes(),
+        arena_align: arena_layout.total_align(),
+        total_bytes: arena_offset + arena_layout.total_bytes(),
+        total_align,
+    }
 }
 
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
@@ -479,83 +708,45 @@ where
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn from_parts(
-        ports: PortStorage<'r, T, E>,
-        guards: GuardStorage<'r, T, U, C>,
-        primary_lane: usize,
-        sid: SessionId,
-        owner: Owner<'r, E0>,
-        epoch: EndpointEpoch<'r, E>,
-        cursor: PhaseCursor,
-        control_semantics: ControlSemanticsTable,
-        compiled_cache_lease: crate::control::cluster::core::CompiledCacheLease,
-        control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
-        mint: Mint,
-        binding: B,
-    ) -> Self {
-        let liveness_policy = control.liveness_policy();
-
-        #[cfg(feature = "std")]
-        let mut endpoint = Self {
-            ports,
-            guards,
-            primary_lane,
-            sid,
-            _owner: owner,
-            _epoch: epoch,
-            cursor: std::boxed::Box::new(cursor),
-            control_semantics,
-            compiled_cache_lease,
-            control,
-            route_state: RouteState::new(),
-            frontier_state: FrontierState::new(),
-            binding_inbox: BindingInbox::EMPTY,
-            evidence_store: ScopeEvidenceStore::new(),
-            liveness_policy,
-            mint,
-            binding,
-        };
-
-        #[cfg(not(feature = "std"))]
-        let mut endpoint = Self {
-            ports,
-            guards,
-            primary_lane,
-            sid,
-            _owner: owner,
-            _epoch: epoch,
-            cursor,
-            control_semantics,
-            compiled_cache_lease,
-            control,
-            route_state: RouteState::new(),
-            frontier_state: FrontierState::new(),
-            binding_inbox: BindingInbox::EMPTY,
-            evidence_store: ScopeEvidenceStore::new(),
-            liveness_policy,
-            mint,
-            binding,
-        };
-        endpoint.sync_lane_offer_state();
-        endpoint
+    #[inline(always)]
+    pub(super) fn set_cursor_index(&mut self, idx: usize) {
+        self.cursor.set_index(idx);
     }
 
-    #[inline(always)]
-    pub(super) fn set_cursor(&mut self, cursor: PhaseCursor) {
-        #[cfg(feature = "std")]
-        {
-            *self.cursor = cursor;
-        }
-        #[cfg(not(feature = "std"))]
-        {
-            self.cursor = cursor;
+    #[inline]
+    pub(crate) fn stash_pending_branch_preview(
+        &mut self,
+        branch: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    ) {
+        self.pending_branch_preview = Some(PendingBranchPreview::from_branch(&branch));
+    }
+
+    #[inline]
+    pub(super) fn take_pending_branch_preview(
+        &mut self,
+    ) -> Option<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
+        self.pending_branch_preview
+            .take()
+            .map(PendingBranchPreview::into_branch)
+    }
+
+    #[inline]
+    fn take_matching_pending_send_branch_preview(
+        &mut self,
+        meta: SendMeta,
+    ) -> Option<PendingBranchPreview> {
+        let preview = self.pending_branch_preview?;
+        if preview.matches_send_meta(meta) {
+            self.pending_branch_preview = None;
+            Some(preview)
+        } else {
+            None
         }
     }
 
     #[inline(always)]
     fn control_semantics(&self) -> ControlSemanticsTable {
-        self.control_semantics
+        self.cursor.control_semantics()
     }
 
     #[inline]
@@ -574,12 +765,12 @@ where
         label: u8,
         resource: Option<u8>,
     ) -> ControlSemanticKind {
-        self.control_semantics.semantic_for(label, resource)
+        self.control_semantics().semantic_for(label, resource)
     }
 
     #[inline]
     fn is_loop_semantic_label(&self, label: u8) -> bool {
-        self.control_semantics.is_loop_label(label)
+        self.control_semantics().is_loop_label(label)
     }
 
     #[inline]
@@ -780,11 +971,10 @@ where
                 .cursor
                 .follow_passive_observer_arm_for_scope(scope, selected_arm)?;
             let entry_idx = state_index_to_usize(entry);
-            let target_cursor = self.cursor.with_index(entry_idx);
-            if target_cursor.is_recv()
-                || target_cursor.is_send()
-                || target_cursor.is_local_action()
-                || target_cursor.is_jump()
+            if self.cursor.is_recv_at(entry_idx)
+                || self.cursor.is_send_at(entry_idx)
+                || self.cursor.is_local_action_at(entry_idx)
+                || self.cursor.is_jump_at(entry_idx)
             {
                 return Some(entry_idx);
             }
@@ -792,7 +982,7 @@ where
                 .cursor
                 .passive_arm_scope_by_arm(scope, selected_arm)
                 .or_else(|| {
-                    let node_scope = target_cursor.node_scope_id();
+                    let node_scope = self.cursor.node_scope_id_at(entry_idx);
                     (node_scope != scope && node_scope.kind() == ScopeKind::Route)
                         .then_some(node_scope)
                 })?;
@@ -940,6 +1130,64 @@ where
             child_scope = parent_scope;
         }
         node_scope
+    }
+
+    fn rebase_passive_descendant_scope(
+        &self,
+        stop_scope: ScopeId,
+        initial_scope: ScopeId,
+    ) -> ScopeId {
+        let mut target_scope = initial_scope;
+        let mut attempts = 0usize;
+        'rebase: while attempts < crate::eff::meta::MAX_EFF_NODES {
+            let mut child_scope = target_scope;
+            let mut depth = 0usize;
+            while depth < crate::eff::meta::MAX_EFF_NODES {
+                let Some(parent_scope) = self.cursor.scope_parent(child_scope) else {
+                    break 'rebase;
+                };
+                if parent_scope == stop_scope {
+                    break 'rebase;
+                }
+                if parent_scope.kind() == ScopeKind::Route
+                    && let Some(parent_arm) = self
+                        .selected_arm_for_scope(parent_scope)
+                        .or_else(|| self.preview_selected_arm_for_scope(parent_scope))
+                    && !self.scope_within_parent_arm(child_scope, parent_scope, parent_arm)
+                {
+                    if let Some(scope) = self
+                        .cursor
+                        .passive_arm_scope_by_arm(parent_scope, parent_arm)
+                        && scope != child_scope
+                    {
+                        target_scope = scope;
+                        attempts += 1;
+                        continue 'rebase;
+                    }
+                    if let Some(entry_idx) = self
+                        .preview_passive_materialization_index_for_selected_arm(
+                            parent_scope,
+                            parent_arm,
+                        )
+                    {
+                        let scope = self.cursor.node_scope_id_at(entry_idx);
+                        if scope.kind() == ScopeKind::Route
+                            && scope != parent_scope
+                            && scope != child_scope
+                        {
+                            target_scope = scope;
+                            attempts += 1;
+                            continue 'rebase;
+                        }
+                    }
+                    break 'rebase;
+                }
+                child_scope = parent_scope;
+                depth += 1;
+            }
+            break;
+        }
+        target_scope
     }
 
     fn ensure_current_route_arm_state(&mut self) -> RecvResult<Option<bool>> {
@@ -1094,7 +1342,7 @@ where
         let transport_metrics = port.transport().metrics().snapshot();
         let signals = self.policy_signals_for_slot(slot);
         let policy_input = signals.input;
-        let policy_digest = port.host_slots().active_digest(slot);
+        let policy_digest = port.policy_digest(slot);
         let event_hash = epf::hash_tap_event(&event);
         let signals_input_hash = epf::hash_policy_input(policy_input);
         let signals_attrs_hash = signals.attrs.hash32();
@@ -1102,7 +1350,7 @@ where
         let replay_transport = epf::replay_transport_inputs(transport_metrics);
         let replay_transport_presence = epf::replay_transport_presence(transport_metrics);
         let slot_id = epf::slot_tag(slot);
-        let mode_id = epf::policy_mode_tag(port.host_slots().policy_mode(slot));
+        let mode_id = epf::policy_mode_tag(port.policy_mode(slot));
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT,
             policy_digest,
@@ -1153,8 +1401,7 @@ where
             0,
             lane,
         );
-        let action = epf::run_with(
-            port.host_slots(),
+        let action = port.run_policy(
             slot,
             &event,
             port.caps_mask(),
@@ -1172,21 +1419,21 @@ where
             ids::POLICY_AUDIT_RESULT,
             verdict_meta,
             epf::verdict_reason(verdict) as u32,
-            port.host_slots().last_fuel_used(slot) as u32,
+            port.last_policy_fuel_used(slot) as u32,
             lane,
         );
         action
     }
 
     fn apply_send_policy(&self, action: Action, scope: ScopeId, lane: Lane) -> SendResult<()> {
-        if let Action::Tap { id, arg0, arg1 } = action {
+        if let Some((id, arg0, arg1)) = action.tap_payload() {
             self.emit_policy_event(id, arg0, arg1, scope, lane);
         }
 
         match action.verdict() {
             epf::PolicyVerdict::Proceed | epf::PolicyVerdict::RouteArm(_) => Ok(()),
             epf::PolicyVerdict::Reject(reason) => {
-                if let Action::Abort(info) = action {
+                if let Some(info) = action.abort_info() {
                     return Err(self.policy_abort_send(info, scope, lane));
                 }
                 self.emit_policy_event(policy_trap(), reason as u32, self.sid.raw(), scope, lane);
@@ -1224,14 +1471,14 @@ where
         scope: ScopeId,
         lane: Lane,
     ) -> RecvResult<()> {
-        if let Action::Tap { id, arg0, arg1 } = action {
+        if let Some((id, arg0, arg1)) = action.tap_payload() {
             self.emit_policy_event(id, arg0, arg1, scope, lane);
         }
 
         match action.verdict() {
             epf::PolicyVerdict::Proceed | epf::PolicyVerdict::RouteArm(_) => Ok(()),
             epf::PolicyVerdict::Reject(reason) => {
-                if let Action::Abort(info) = action {
+                if let Some(info) = action.abort_info() {
                     return Err(self.policy_abort_recv(info, scope, lane));
                 }
                 self.emit_policy_event(policy_trap(), reason as u32, self.sid.raw(), scope, lane);
@@ -1263,14 +1510,212 @@ where
         }
     }
 
-    /// Create a CapFlow for the current send transition.
-    ///
-    /// This is the primary entry point for sending messages. Returns a `CapFlow`
-    /// that must be consumed by calling `.send(arg).await`.
-    ///
-    /// Automatically handles routing: if the target label doesn't match the current
-    /// cursor position, attempts to advance to the correct branch.
-    pub(super) fn prepare_flow<M>(mut self) -> SendResult<(Self, SendMeta)>
+    #[inline]
+    fn preview_scope_region_at(&self, idx: usize) -> Option<crate::global::typestate::ScopeRegion> {
+        let scope_id = self.cursor.node_scope_id_at(idx);
+        if scope_id.is_none() {
+            None
+        } else {
+            self.cursor.scope_region_by_id(scope_id)
+        }
+    }
+
+    #[inline]
+    fn preview_is_at_controller_arm_entry(&self, scope_id: ScopeId, idx: usize) -> bool {
+        let mut arm = 0u8;
+        while arm <= 1 {
+            if self
+                .cursor
+                .controller_arm_entry_by_arm(scope_id, arm)
+                .map(|(entry, _)| state_index_to_usize(entry) == idx)
+                .unwrap_or(false)
+            {
+                return true;
+            }
+            if arm == 1 {
+                break;
+            }
+            arm += 1;
+        }
+        false
+    }
+
+    fn preview_follow_jumps_from(&self, mut idx: usize) -> SendResult<usize> {
+        let mut flow_iter = 0u32;
+        while self.cursor.is_jump_at(idx) {
+            if self.cursor.jump_reason_at(idx) == Some(JumpReason::PassiveObserverBranch) {
+                break;
+            }
+            idx = state_index_to_usize(self.cursor.typestate_node(idx).next());
+            flow_iter += 1;
+            if flow_iter > crate::eff::meta::MAX_EFF_NODES as u32 {
+                return Err(SendError::PhaseInvariant);
+            }
+        }
+        Ok(idx)
+    }
+
+    fn preview_find_arm_for_send_label_in_scope(
+        &self,
+        scope_id: ScopeId,
+        target_label: u8,
+    ) -> Option<u8> {
+        let mut arm = 0u8;
+        while arm <= 1 {
+            let Some(PassiveArmNavigation::WithinArm { entry }) = self
+                .cursor
+                .follow_passive_observer_arm_for_scope(scope_id, arm)
+            else {
+                if arm == 1 {
+                    break;
+                }
+                arm += 1;
+                continue;
+            };
+            let entry_idx = state_index_to_usize(entry);
+            let matches = self
+                .cursor
+                .try_send_meta_at(entry_idx)
+                .map(|meta| meta.label == target_label)
+                .unwrap_or(false)
+                || self
+                    .cursor
+                    .try_local_meta_at(entry_idx)
+                    .map(|meta| meta.label == target_label)
+                    .unwrap_or(false);
+            if matches {
+                return Some(arm);
+            }
+            if arm == 1 {
+                break;
+            }
+            arm += 1;
+        }
+        None
+    }
+
+    fn preview_follow_passive_observer_for_label(
+        &self,
+        idx: usize,
+        target_label: u8,
+    ) -> Option<usize> {
+        let scope_id = self.cursor.node_scope_id_at(idx);
+        let target_arm = self.preview_find_arm_for_send_label_in_scope(scope_id, target_label)?;
+        match self
+            .cursor
+            .follow_passive_observer_arm_for_scope(scope_id, target_arm)?
+        {
+            PassiveArmNavigation::WithinArm { entry } => Some(state_index_to_usize(entry)),
+        }
+    }
+
+    #[inline]
+    fn preview_route_arm_for(
+        &self,
+        lane: u8,
+        scope: ScopeId,
+        preview_route_arm: Option<(u8, ScopeId, u8)>,
+    ) -> Option<u8> {
+        if let Some((preview_lane, preview_scope, preview_arm)) = preview_route_arm
+            && preview_lane == lane
+            && preview_scope == scope
+        {
+            return Some(preview_arm);
+        }
+        self.route_arm_for(lane, scope)
+    }
+
+    fn preview_selected_arm_for_scope_with_route(
+        &self,
+        scope_id: ScopeId,
+        preview_route_arm: Option<(u8, ScopeId, u8)>,
+    ) -> Option<u8> {
+        if scope_id.is_none() {
+            return None;
+        }
+        let mut lane_idx = 0usize;
+        while lane_idx < MAX_LANES {
+            if let Some(arm) =
+                self.preview_route_arm_for(lane_idx as u8, scope_id, preview_route_arm)
+            {
+                return Some(arm);
+            }
+            lane_idx += 1;
+        }
+        let (offer_lanes, offer_lanes_len) = self.offer_lanes_for_scope(scope_id);
+        if offer_lanes_len == 0 {
+            return None;
+        }
+        let mut offer_lane_mask = 0u8;
+        let mut offer_lane_idx = 0usize;
+        while offer_lane_idx < offer_lanes_len {
+            let lane = offer_lanes[offer_lane_idx] as usize;
+            if lane < MAX_LANES {
+                offer_lane_mask |= 1u8 << lane;
+            }
+            offer_lane_idx += 1;
+        }
+        self.preview_scope_ack_token_non_consuming(
+            scope_id,
+            offer_lanes[0] as usize,
+            offer_lane_mask,
+        )
+        .map(|token| token.arm().as_u8())
+        .or_else(|| self.poll_arm_from_ready_mask(scope_id).map(Arm::as_u8))
+    }
+
+    #[inline]
+    fn preview_can_advance_route_scope(
+        &self,
+        scope_id: ScopeId,
+        target_label: u8,
+        preview_route_arm: Option<(u8, ScopeId, u8)>,
+    ) -> bool {
+        let lane_wire = self.lane_for_label_or_offer(scope_id, target_label);
+        self.preview_route_arm_for(lane_wire, scope_id, preview_route_arm)
+            .is_some()
+    }
+
+    #[inline]
+    fn preview_flow_start_index(&self, target_label: u8) -> usize {
+        if self
+            .cursor
+            .try_recv_meta()
+            .map(|meta| meta.label == target_label)
+            .unwrap_or(false)
+            || self
+                .cursor
+                .try_send_meta()
+                .map(|meta| meta.label == target_label)
+                .unwrap_or(false)
+            || self
+                .cursor
+                .try_local_meta()
+                .map(|meta| meta.label == target_label)
+                .unwrap_or(false)
+        {
+            return self.cursor.index();
+        }
+        if let Some(region) = self.cursor.scope_region()
+            && region.kind == ScopeKind::Route
+            && self.cursor.is_route_controller(region.scope_id)
+            && self
+                .cursor
+                .controller_arm_entry_for_label(region.scope_id, target_label)
+                .is_some()
+        {
+            return self.cursor.index();
+        }
+        if let Some((lane_idx, _)) = self.cursor.find_step_for_label(target_label)
+            && let Some(idx) = self.cursor.index_for_lane_step(lane_idx)
+        {
+            return idx;
+        }
+        self.cursor.index()
+    }
+
+    /// Preview the current send transition without mutating endpoint state.
+    pub(super) fn preview_flow_meta<M>(&mut self) -> SendResult<crate::endpoint::flow::SendPreview>
     where
         M: MessageSpec + SendableLabel,
         T: Transport + 'r,
@@ -1280,39 +1725,72 @@ where
         Mint: MintConfigMarker,
     {
         let target_label = <M as MessageSpec>::LABEL;
-        self.try_select_lane_for_label(target_label);
+        let mut idx = self.preview_flow_start_index(target_label);
+        let mut preview_route_arm: Option<(u8, ScopeId, u8)> = None;
 
-        // For Route scopes, handle cursor repositioning at controller arm entry points.
-        // This covers both linger (loops) and non-linger routes when the controller
-        // needs to select a different arm than the current cursor position.
-        if let Some(region) = self.cursor.scope_region() {
+        if let Some(region) = self.preview_scope_region_at(idx) {
             if region.kind == ScopeKind::Route {
-                // For linger scopes (loops), follow any pending Jump nodes first.
-                // LoopContinue jumps back to loop_start, then we reposition to the target arm.
-                if region.linger && self.cursor.is_jump() {
-                    self.set_cursor(
-                        self.cursor
-                            .try_follow_jumps()
-                            .map_err(|_| SendError::PhaseInvariant)?,
-                    );
+                let scope_id = region.scope_id;
+                let at_route_start = idx == region.start;
+                let unlabeled = !self.cursor.is_send_at(idx)
+                    && !self.cursor.is_recv_at(idx)
+                    && !self.cursor.is_local_action_at(idx);
+                let at_decision = at_route_start || unlabeled || self.cursor.is_jump_at(idx);
+
+                if region.linger && self.cursor.is_jump_at(idx) {
+                    idx = self.preview_follow_jumps_from(idx)?;
                 }
 
-                let scope_id = region.scope_id;
                 if self.cursor.is_route_controller(scope_id) {
-                    let at_route_start = self.cursor.index() == region.start;
-                    let at_arm_entry = self.cursor.is_at_controller_arm_entry(scope_id);
-                    let at_decision =
-                        at_arm_entry || at_route_start || self.cursor.label().is_none();
+                    let at_arm_entry = self.preview_is_at_controller_arm_entry(scope_id, idx);
+                    let at_decision = at_arm_entry || at_decision;
                     if at_decision {
-                        // Use O(1) controller_arm_entry registry lookup to reposition
-                        // cursor to the arm entry matching target_label.
                         if let Some(entry_idx) = self
                             .cursor
                             .controller_arm_entry_for_label(scope_id, target_label)
                         {
-                            self.set_cursor(
-                                self.cursor.with_index(state_index_to_usize(entry_idx)),
-                            );
+                            idx = state_index_to_usize(entry_idx);
+                        }
+                    }
+                } else if at_decision {
+                    let lane_wire = self.lane_for_label_or_offer(scope_id, target_label);
+                    let (offer_lanes, offer_lanes_len) = self.offer_lanes_for_scope(scope_id);
+                    let preview_arm = if offer_lanes_len == 0 {
+                        None
+                    } else {
+                        let mut offer_lane_mask = 0u8;
+                        let mut lane_idx = 0usize;
+                        while lane_idx < offer_lanes_len {
+                            let lane = offer_lanes[lane_idx] as usize;
+                            if lane < MAX_LANES {
+                                offer_lane_mask |= 1u8 << lane;
+                            }
+                            lane_idx += 1;
+                        }
+                        self.preview_scope_ack_token_non_consuming(
+                            scope_id,
+                            offer_lanes[0] as usize,
+                            offer_lane_mask,
+                        )
+                        .map(|token| token.arm().as_u8())
+                    };
+                    let selected_arm = preview_arm
+                        .or_else(|| {
+                            self.preview_selected_arm_for_scope_with_route(
+                                scope_id,
+                                preview_route_arm,
+                            )
+                        })
+                        .or_else(|| {
+                            self.preview_route_arm_for(lane_wire, scope_id, preview_route_arm)
+                        });
+                    if let Some(selected_arm) = selected_arm {
+                        preview_route_arm = Some((lane_wire, scope_id, selected_arm));
+                        if let Some(PassiveArmNavigation::WithinArm { entry }) = self
+                            .cursor
+                            .follow_passive_observer_arm_for_scope(scope_id, selected_arm)
+                        {
+                            idx = state_index_to_usize(entry);
                         }
                     }
                 }
@@ -1330,50 +1808,36 @@ where
                 return Err(SendError::PhaseInvariant);
             }
 
-            // Follow Jump nodes (LoopContinue, LoopBreak, RouteArmEnd are auto-followed).
-            // Only PassiveObserverBranch stops here.
-            if self.cursor.is_jump() {
-                self.set_cursor(
-                    self.cursor
-                        .try_follow_jumps()
-                        .map_err(|_| SendError::PhaseInvariant)?,
-                );
+            idx = self.preview_follow_jumps_from(idx)?;
+
+            if self.cursor.is_jump_at(idx)
+                && self.cursor.jump_reason_at(idx) == Some(JumpReason::PassiveObserverBranch)
+                && let Some(next_idx) =
+                    self.preview_follow_passive_observer_for_label(idx, target_label)
+            {
+                idx = next_idx;
+                continue;
             }
 
-            // Handle PassiveObserverBranch Jump: use structured arm navigation
-            // instead of scanning the entire scope for the target label.
-            if self.cursor.is_jump() {
-                if let Some(JumpReason::PassiveObserverBranch) = self.cursor.jump_reason() {
-                    // Find which arm contains the target label and follow the corresponding Jump
-                    if let Some(new_cursor) =
-                        self.cursor.follow_passive_observer_for_label(target_label)
-                    {
-                        self.set_cursor(new_cursor);
-                        continue;
-                    }
-                }
-            }
-
-            // Accept both Send and Local actions
-            if !self.cursor.is_send() && !self.cursor.is_local_action() {
-                if let Some(region) = self.cursor.scope_region() {
-                    if region.kind == ScopeKind::Route
-                        && self.can_advance_route_scope(region.scope_id, target_label)
-                    {
-                        if let Some(cursor) = self.cursor.advance_scope_if_kind(ScopeKind::Route) {
-                            self.set_cursor(cursor);
-                            continue;
-                        }
-                    }
+            if !self.cursor.is_send_at(idx) && !self.cursor.is_local_action_at(idx) {
+                if let Some(region) = self.preview_scope_region_at(idx)
+                    && region.kind == ScopeKind::Route
+                    && self.preview_can_advance_route_scope(
+                        region.scope_id,
+                        target_label,
+                        preview_route_arm,
+                    )
+                {
+                    idx = region.end;
+                    continue;
                 }
                 return Err(SendError::PhaseInvariant);
             }
 
-            // Get metadata: for Local actions, create SendMeta with peer=ROLE
-            let current_meta = if self.cursor.is_local_action() {
+            let current_meta = if self.cursor.is_local_action_at(idx) {
                 let local = self
                     .cursor
-                    .try_local_meta()
+                    .try_local_meta_at(idx)
                     .ok_or(SendError::PhaseInvariant)?;
                 SendMeta::new(
                     local.eff_index,
@@ -1390,26 +1854,27 @@ where
                 )
             } else {
                 self.cursor
-                    .try_send_meta()
+                    .try_send_meta_at(idx)
                     .ok_or(SendError::PhaseInvariant)?
             };
 
             if current_meta.label == target_label {
-                self.evaluate_dynamic_policy(&current_meta, target_label)?;
-                return Ok((self, current_meta));
+                return Ok(crate::endpoint::flow::SendPreview::new(
+                    current_meta,
+                    checked_state_index(idx).ok_or(SendError::PhaseInvariant)?,
+                ));
             }
 
-            // Label mismatch: try advancing past Route scope boundary.
-            // No O(n) seek_label scan - cursor must be at correct position.
-            if let Some(region) = self.cursor.scope_region() {
-                if region.kind == ScopeKind::Route
-                    && self.can_advance_route_scope(region.scope_id, target_label)
-                {
-                    if let Some(cursor) = self.cursor.advance_scope_if_kind(ScopeKind::Route) {
-                        self.set_cursor(cursor);
-                        continue;
-                    }
-                }
+            if let Some(region) = self.preview_scope_region_at(idx)
+                && region.kind == ScopeKind::Route
+                && self.preview_can_advance_route_scope(
+                    region.scope_id,
+                    target_label,
+                    preview_route_arm,
+                )
+            {
+                idx = region.end;
+                continue;
             }
 
             return Err(SendError::LabelMismatch {
@@ -1462,14 +1927,14 @@ where
         if let Some(trace) = self.scope_trace(scope_id) {
             event = event.with_arg2(trace.pack());
         }
-        let policy_digest = port.host_slots().active_digest(Slot::Route);
+        let policy_digest = port.policy_digest(Slot::Route);
         let event_hash = epf::hash_tap_event(&event);
         let signals_input_hash = epf::hash_policy_input(policy_input);
         let signals_attrs_hash = signals.attrs.hash32();
         let transport_snapshot_hash = epf::hash_transport_snapshot(transport_metrics);
         let replay_transport = epf::replay_transport_inputs(transport_metrics);
         let replay_transport_presence = epf::replay_transport_presence(transport_metrics);
-        let mode_id = epf::policy_mode_tag(port.host_slots().policy_mode(Slot::Route));
+        let mode_id = epf::policy_mode_tag(port.policy_mode(Slot::Route));
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT,
             policy_digest,
@@ -1526,8 +1991,7 @@ where
             0,
             port.lane(),
         );
-        let action = epf::run_with(
-            port.host_slots(),
+        let action = port.run_policy(
             Slot::Route,
             &event,
             port.caps_mask(),
@@ -1545,7 +2009,7 @@ where
             ids::POLICY_AUDIT_RESULT,
             verdict_meta,
             epf::verdict_reason(verdict) as u32,
-            port.host_slots().last_fuel_used(Slot::Route) as u32,
+            port.last_policy_fuel_used(Slot::Route) as u32,
             port.lane(),
         );
         route_policy_decision_from_action(action, policy_id)
@@ -1678,19 +2142,20 @@ where
         }
     }
 
-    /// Materialize recv metadata from a precomputed route-arm entry table.
+    /// Preview recv metadata from a precomputed route-arm entry table.
     fn select_cached_route_arm_recv_meta(
-        &mut self,
+        &self,
         materialization_meta: ScopeArmMaterializationMeta,
         target_arm: u8,
-    ) -> Option<RecvMeta> {
-        let idx = state_index_to_usize(materialization_meta.recv_entry(target_arm)?);
-        self.set_cursor(self.cursor.with_index(idx));
-        let mut meta = self.cursor.try_recv_meta()?;
-        if meta.route_arm.is_none() {
-            meta.route_arm = Some(target_arm);
-        }
-        Some(meta)
+    ) -> CachedRecvMeta {
+        let Some(recv_entry) = materialization_meta.recv_entry(target_arm) else {
+            return CachedRecvMeta::EMPTY;
+        };
+        let idx = state_index_to_usize(recv_entry);
+        let Some(meta) = self.cursor.try_recv_meta_at(idx) else {
+            return CachedRecvMeta::EMPTY;
+        };
+        Self::cached_recv_meta_from_recv(idx, meta, Some(target_arm))
     }
 
     #[inline]
@@ -1698,13 +2163,17 @@ where
         cursor_index: usize,
         mut meta: RecvMeta,
         route_arm: Option<u8>,
-    ) -> Option<CachedRecvMeta> {
-        let cursor_index = checked_state_index(cursor_index)?;
-        let next = checked_state_index(meta.next)?;
+    ) -> CachedRecvMeta {
+        let Some(cursor_index) = checked_state_index(cursor_index) else {
+            return CachedRecvMeta::EMPTY;
+        };
+        let Some(next) = checked_state_index(meta.next) else {
+            return CachedRecvMeta::EMPTY;
+        };
         if let Some(route_arm) = route_arm {
             meta.route_arm = Some(route_arm);
         }
-        Some(CachedRecvMeta {
+        CachedRecvMeta {
             cursor_index,
             eff_index: meta.eff_index,
             peer: meta.peer,
@@ -1719,7 +2188,7 @@ where
             policy: meta.policy,
             lane: meta.lane,
             flags: CachedRecvMeta::FLAG_RECV_STEP,
-        })
+        }
     }
 
     #[inline]
@@ -1728,15 +2197,21 @@ where
         scope_id: ScopeId,
         route_arm: u8,
         meta: SendMeta,
-    ) -> Option<CachedRecvMeta> {
-        Some(CachedRecvMeta {
-            cursor_index: checked_state_index(cursor_index)?,
+    ) -> CachedRecvMeta {
+        let Some(cursor_index) = checked_state_index(cursor_index) else {
+            return CachedRecvMeta::EMPTY;
+        };
+        let Some(next) = checked_state_index(meta.next) else {
+            return CachedRecvMeta::EMPTY;
+        };
+        CachedRecvMeta {
+            cursor_index,
             eff_index: meta.eff_index,
             peer: meta.peer,
             label: meta.label,
             resource: meta.resource,
             is_control: meta.is_control,
-            next: checked_state_index(meta.next)?,
+            next,
             scope: scope_id,
             route_arm,
             is_choice_determinant: false,
@@ -1744,7 +2219,37 @@ where
             policy: meta.policy(),
             lane: meta.lane,
             flags: 0,
-        })
+        }
+    }
+
+    #[inline]
+    fn cached_recv_meta_from_local(
+        cursor_index: usize,
+        route_arm: u8,
+        meta: crate::global::typestate::LocalMeta,
+    ) -> CachedRecvMeta {
+        let Some(cursor_index) = checked_state_index(cursor_index) else {
+            return CachedRecvMeta::EMPTY;
+        };
+        let Some(next) = checked_state_index(meta.next) else {
+            return CachedRecvMeta::EMPTY;
+        };
+        CachedRecvMeta {
+            cursor_index,
+            eff_index: meta.eff_index,
+            peer: ROLE,
+            label: meta.label,
+            resource: meta.resource,
+            is_control: meta.is_control,
+            next,
+            scope: meta.scope,
+            route_arm,
+            is_choice_determinant: false,
+            shot: meta.shot,
+            policy: meta.policy,
+            lane: meta.lane,
+            flags: 0,
+        }
     }
 
     #[inline]
@@ -1755,15 +2260,21 @@ where
         label: u8,
         next: usize,
         lane: u8,
-    ) -> Option<CachedRecvMeta> {
-        Some(CachedRecvMeta {
-            cursor_index: checked_state_index(cursor_index)?,
+    ) -> CachedRecvMeta {
+        let Some(cursor_index) = checked_state_index(cursor_index) else {
+            return CachedRecvMeta::EMPTY;
+        };
+        let Some(next) = checked_state_index(next) else {
+            return CachedRecvMeta::EMPTY;
+        };
+        CachedRecvMeta {
+            cursor_index,
             eff_index: EffIndex::ZERO,
             peer: ROLE,
             label,
             resource: None,
             is_control: true,
-            next: checked_state_index(next)?,
+            next,
             scope: scope_id,
             route_arm,
             is_choice_determinant: false,
@@ -1771,7 +2282,7 @@ where
             policy: PolicyMode::static_mode(),
             lane,
             flags: 0,
-        })
+        }
     }
 
     #[inline]
@@ -1787,7 +2298,6 @@ where
             return CachedRecvMeta::EMPTY;
         };
         Self::synthetic_cached_recv_meta(cursor_index, scope_id, route_arm, label, next, lane)
-            .unwrap_or(CachedRecvMeta::EMPTY)
     }
 
     fn compute_passive_arm_recv_meta(
@@ -1800,67 +2310,48 @@ where
         let Some(entry) = materialization_meta.passive_arm_entry(target_arm) else {
             return CachedRecvMeta::EMPTY;
         };
-        let target_cursor = self.cursor.with_index(state_index_to_usize(entry));
-        if let Some(recv_meta) = target_cursor.try_recv_meta() {
-            return Self::cached_recv_meta_from_recv(target_cursor.index(), recv_meta, None)
-                .unwrap_or(CachedRecvMeta::EMPTY);
+        let entry_idx = state_index_to_usize(entry);
+        if let Some(recv_meta) = self.cursor.try_recv_meta_at(entry_idx) {
+            return Self::cached_recv_meta_from_recv(entry_idx, recv_meta, None);
         }
-        if let Some(send_meta) = target_cursor.try_send_meta() {
-            return Self::cached_recv_meta_from_send(
-                target_cursor.index(),
-                scope_id,
-                target_arm,
-                send_meta,
-            )
-            .unwrap_or(CachedRecvMeta::EMPTY);
+        if let Some(send_meta) = self.cursor.try_send_meta_at(entry_idx) {
+            return Self::cached_recv_meta_from_send(entry_idx, scope_id, target_arm, send_meta);
         }
         let Some(region) = self.cursor.scope_region_by_id(scope_id) else {
             return CachedRecvMeta::EMPTY;
         };
-        if target_cursor.is_jump() {
-            let Some(scope_end) = target_cursor.jump_target() else {
+        if self.cursor.is_jump_at(entry_idx) {
+            let Some(scope_end) = self.cursor.jump_target_at(entry_idx) else {
                 return CachedRecvMeta::EMPTY;
             };
-            let scope_end_cursor = self.cursor.with_index(scope_end);
             if region.linger {
                 return self.synthetic_cached_recv_meta_for_arm(
                     scope_end, scope_id, target_arm, scope_end, offer_lane,
                 );
             }
-            if let Some(recv_meta) = scope_end_cursor.try_recv_meta() {
-                return Self::cached_recv_meta_from_recv(scope_end, recv_meta, None)
-                    .unwrap_or(CachedRecvMeta::EMPTY);
+            if let Some(recv_meta) = self.cursor.try_recv_meta_at(scope_end) {
+                return Self::cached_recv_meta_from_recv(scope_end, recv_meta, None);
             }
-            if let Some(send_meta) = scope_end_cursor.try_send_meta() {
-                return Self::cached_recv_meta_from_send(
-                    scope_end, scope_id, target_arm, send_meta,
-                )
-                .unwrap_or(CachedRecvMeta::EMPTY);
+            if let Some(send_meta) = self.cursor.try_send_meta_at(scope_end) {
+                return Self::cached_recv_meta_from_send(scope_end, scope_id, target_arm, send_meta);
             }
             return CachedRecvMeta::EMPTY;
         }
         if region.linger {
             return self.synthetic_cached_recv_meta_for_arm(
-                target_cursor.index(),
-                scope_id,
-                target_arm,
-                target_cursor.index(),
-                offer_lane,
+                entry_idx, scope_id, target_arm, entry_idx, offer_lane,
             );
         }
         if let Some(target_idx) =
             self.preview_passive_materialization_index_for_selected_arm(scope_id, target_arm)
         {
-            let target_cursor = self.cursor.with_index(target_idx);
-            if let Some(recv_meta) = target_cursor.try_recv_meta() {
-                return Self::cached_recv_meta_from_recv(target_idx, recv_meta, Some(target_arm))
-                    .unwrap_or(CachedRecvMeta::EMPTY);
+            if let Some(recv_meta) = self.cursor.try_recv_meta_at(target_idx) {
+                return Self::cached_recv_meta_from_recv(target_idx, recv_meta, Some(target_arm));
             }
-            if let Some(send_meta) = target_cursor.try_send_meta() {
+            if let Some(send_meta) = self.cursor.try_send_meta_at(target_idx) {
                 return Self::cached_recv_meta_from_send(
                     target_idx, scope_id, target_arm, send_meta,
-                )
-                .unwrap_or(CachedRecvMeta::EMPTY);
+                );
             }
         }
         CachedRecvMeta::EMPTY
@@ -1881,16 +2372,15 @@ where
 
     #[inline]
     fn selection_arm_has_recv(&self, selection: OfferScopeSelection, arm: u8) -> bool {
-        selection.materialization_meta.recv_entry(arm).is_some()
-            || selection.materialization_meta.controller_arm_is_recv(arm)
-            || selection
-                .materialization_meta
-                .arm_has_first_recv_dispatch(arm)
-            || selection
-                .passive_recv_meta
+        let materialization_meta = self.selection_materialization_meta(selection);
+        let passive_recv_meta = self.selection_passive_recv_meta(selection, materialization_meta);
+        materialization_meta.recv_entry(arm).is_some()
+            || materialization_meta.controller_arm_is_recv(arm)
+            || materialization_meta.arm_has_first_recv_dispatch(arm)
+            || passive_recv_meta
                 .get(arm as usize)
                 .copied()
-                .map(CachedRecvMeta::is_recv_step)
+                .map(|meta| meta.is_recv_step())
                 .unwrap_or(false)
     }
 
@@ -1901,42 +2391,29 @@ where
         is_route_controller: bool,
         arm: u8,
     ) -> bool {
+        let materialization_meta = self.selection_materialization_meta(selection);
         if is_route_controller && selection.at_route_offer_entry {
-            if selection
-                .materialization_meta
-                .controller_arm_entry(arm)
-                .is_some()
-            {
-                return selection
-                    .materialization_meta
-                    .controller_arm_requires_ready_evidence(arm);
+            if materialization_meta.controller_arm_entry(arm).is_some() {
+                return materialization_meta.controller_arm_requires_ready_evidence(arm);
             }
         }
-        if selection.at_route_offer_entry
-            && selection
-                .materialization_meta
-                .passive_arm_entry(arm)
-                .is_some()
-        {
-            if selection
-                .materialization_meta
-                .arm_has_first_recv_dispatch(arm)
-            {
+        if selection.at_route_offer_entry && materialization_meta.passive_arm_entry(arm).is_some() {
+            if materialization_meta.arm_has_first_recv_dispatch(arm) {
                 return !self
                     .selection_arm_dispatch_materializes_without_ready_evidence(selection, arm);
             }
             return false;
         }
-        let Some(passive_meta) = selection.passive_recv_meta.get(arm as usize).copied() else {
-            return selection.materialization_meta.recv_entry(arm).is_some();
+        let passive_recv_meta = self.selection_passive_recv_meta(selection, materialization_meta);
+        let Some(passive_meta) = passive_recv_meta.get(arm as usize).copied() else {
+            return materialization_meta.recv_entry(arm).is_some();
         };
         if passive_meta.is_recv_step() {
             if passive_meta.peer == ROLE {
                 return false;
             }
             if passive_meta.is_control {
-                if selection
-                    .materialization_meta
+                if materialization_meta
                     .controller_arm_entry(arm)
                     .map(|(_, label)| label)
                     == Some(passive_meta.label)
@@ -1953,7 +2430,7 @@ where
             }
             return true;
         }
-        selection.materialization_meta.recv_entry(arm).is_some()
+        materialization_meta.recv_entry(arm).is_some()
     }
 
     #[inline]
@@ -1962,22 +2439,22 @@ where
         selection: OfferScopeSelection,
         arm: u8,
     ) -> bool {
-        let Some(entry) = selection.materialization_meta.passive_arm_entry(arm) else {
+        let materialization_meta = self.selection_materialization_meta(selection);
+        let Some(entry) = materialization_meta.passive_arm_entry(arm) else {
             return false;
         };
-        let target_cursor = self.cursor.with_index(state_index_to_usize(entry));
-        if target_cursor.is_recv()
-            || target_cursor.is_send()
-            || target_cursor.is_local_action()
-            || target_cursor.is_jump()
+        let entry_idx = state_index_to_usize(entry);
+        if self.cursor.is_recv_at(entry_idx)
+            || self.cursor.is_send_at(entry_idx)
+            || self.cursor.is_local_action_at(entry_idx)
+            || self.cursor.is_jump_at(entry_idx)
         {
             return true;
         }
-        selection
-            .materialization_meta
+        materialization_meta
             .passive_arm_scope(arm)
             .or_else(|| {
-                let scope = target_cursor.node_scope_id();
+                let scope = self.cursor.node_scope_id_at(entry_idx);
                 (scope != selection.scope_id && scope.kind() == ScopeKind::Route).then_some(scope)
             })
             .filter(|scope| scope.kind() == ScopeKind::Route)
@@ -1993,7 +2470,9 @@ where
         arm: u8,
         label: u8,
     ) -> bool {
-        let Some(passive_meta) = selection.passive_recv_meta.get(arm as usize).copied() else {
+        let materialization_meta = self.selection_materialization_meta(selection);
+        let passive_recv_meta = self.selection_passive_recv_meta(selection, materialization_meta);
+        let Some(passive_meta) = passive_recv_meta.get(arm as usize).copied() else {
             return false;
         };
         passive_meta.is_recv_step()
@@ -2006,41 +2485,44 @@ where
                         .is_loop()))
     }
 
-    /// Materialize recv metadata from a precomputed first-recv dispatch table.
+    /// Preview recv metadata from a precomputed first-recv dispatch table.
     fn select_cached_dispatch_recv_meta(
-        &mut self,
+        &self,
         materialization_meta: ScopeArmMaterializationMeta,
         target_arm: u8,
         resolved_label_hint: Option<u8>,
-    ) -> Option<RecvMeta> {
-        let label = resolved_label_hint?;
-        let (dispatch_arm, target_idx) = materialization_meta.first_recv_target(label)?;
+    ) -> CachedRecvMeta {
+        let Some(label) = resolved_label_hint else {
+            return CachedRecvMeta::EMPTY;
+        };
+        let Some((dispatch_arm, target_idx)) = materialization_meta.first_recv_target(label) else {
+            return CachedRecvMeta::EMPTY;
+        };
         if dispatch_arm != ARM_SHARED && dispatch_arm != target_arm {
-            return None;
+            return CachedRecvMeta::EMPTY;
         }
-        let target_cursor = self.cursor.with_index(state_index_to_usize(target_idx));
-        self.set_cursor(target_cursor);
-        let mut meta = target_cursor.try_recv_meta()?;
-        if meta.route_arm.is_none() {
-            meta.route_arm = Some(if dispatch_arm == ARM_SHARED {
-                target_arm
-            } else {
-                dispatch_arm
-            });
-        }
-        Some(meta)
+        let target_idx = state_index_to_usize(target_idx);
+        let route_arm = if dispatch_arm == ARM_SHARED {
+            target_arm
+        } else {
+            dispatch_arm
+        };
+        let Some(meta) = self.cursor.try_recv_meta_at(target_idx) else {
+            return CachedRecvMeta::EMPTY;
+        };
+        Self::cached_recv_meta_from_recv(target_idx, meta, Some(route_arm))
     }
 
-    fn materialize_selected_arm_meta(
-        &mut self,
+    fn preview_selected_arm_meta(
+        &self,
         selection: OfferScopeSelection,
         selected_arm: u8,
         resolved_label_hint: Option<u8>,
-    ) -> RecvResult<RecvMeta> {
+    ) -> RecvResult<CachedRecvMeta> {
         let scope_id = selection.scope_id;
-        let selected_label_meta = selection.label_meta;
-        let materialization_meta = selection.materialization_meta;
-        let passive_recv_meta = selection.passive_recv_meta;
+        let selected_label_meta = self.selection_label_meta(selection);
+        let materialization_meta = self.selection_materialization_meta(selection);
+        let passive_recv_meta = self.selection_passive_recv_meta(selection, materialization_meta);
         let controller_arm_entry = if selection.at_route_offer_entry {
             materialization_meta.controller_arm_entry(selected_arm)
         } else {
@@ -2053,62 +2535,38 @@ where
                 resolved_label_hint,
             )
         } else {
-            None
+            CachedRecvMeta::EMPTY
         };
 
         let direct_meta = if let Some((arm_entry_idx, arm_entry_label)) = controller_arm_entry {
-            let target_cursor = self.cursor.with_index(state_index_to_usize(arm_entry_idx));
-            self.set_cursor(target_cursor);
-
-            if let Some(local_meta) = target_cursor.try_local_meta() {
-                Some(RecvMeta {
-                    eff_index: local_meta.eff_index,
-                    label: local_meta.label,
-                    peer: ROLE,
-                    resource: local_meta.resource,
-                    is_control: local_meta.is_control,
-                    next: local_meta.next,
-                    scope: local_meta.scope,
-                    route_arm: Some(selected_arm),
-                    is_choice_determinant: false,
-                    shot: local_meta.shot,
-                    policy: local_meta.policy,
-                    lane: local_meta.lane,
-                })
+            let arm_entry_idx = state_index_to_usize(arm_entry_idx);
+            if let Some(local_meta) = self.cursor.try_local_meta_at(arm_entry_idx) {
+                Self::cached_recv_meta_from_local(arm_entry_idx, selected_arm, local_meta)
             } else {
-                Some(RecvMeta {
-                    eff_index: EffIndex::ZERO,
-                    label: arm_entry_label,
-                    peer: ROLE,
-                    resource: None,
-                    is_control: true,
-                    next: target_cursor.index(),
-                    scope: scope_id,
-                    route_arm: Some(selected_arm),
-                    is_choice_determinant: false,
-                    shot: None,
-                    policy: crate::global::const_dsl::PolicyMode::static_mode(),
-                    lane: selection.offer_lane,
-                })
+                Self::synthetic_cached_recv_meta(
+                    arm_entry_idx,
+                    scope_id,
+                    selected_arm,
+                    arm_entry_label,
+                    arm_entry_idx,
+                    selection.offer_lane,
+                )
             }
-        } else if let Some(meta) = dispatch_meta {
-            Some(meta)
+        } else if !dispatch_meta.is_empty() {
+            dispatch_meta
         } else if selected_arm < materialization_meta.arm_count {
             self.select_cached_route_arm_recv_meta(materialization_meta, selected_arm)
         } else {
-            None
+            CachedRecvMeta::EMPTY
         };
 
-        let mut meta = if let Some(meta) = direct_meta {
-            meta
+        let mut meta = if !direct_meta.is_empty() {
+            direct_meta
         } else {
-            let (cursor_index, meta) = passive_recv_meta
+            passive_recv_meta
                 .get(selected_arm as usize)
                 .copied()
-                .and_then(CachedRecvMeta::recv_meta)
-                .ok_or(RecvError::PhaseInvariant)?;
-            self.set_cursor(self.cursor.with_index(cursor_index));
-            meta
+                .ok_or(RecvError::PhaseInvariant)?
         };
 
         if self.selection_arm_has_recv(selection, selected_arm)
@@ -2132,12 +2590,11 @@ where
         }
         let scope_id = selection.scope_id;
         let selected_arm = resolved.selected_arm;
-        let Some(nested_scope) = selection
-            .materialization_meta
-            .passive_arm_scope(selected_arm)
-        else {
+        let materialization_meta = self.selection_materialization_meta(selection);
+        let Some(nested_scope) = materialization_meta.passive_arm_scope(selected_arm) else {
             return Ok(false);
         };
+        let nested_scope = self.rebase_passive_descendant_scope(scope_id, nested_scope);
         if nested_scope == scope_id || nested_scope.kind() != ScopeKind::Route {
             return Ok(false);
         }
@@ -2166,7 +2623,7 @@ where
             let target_index = self
                 .route_scope_materialization_index(target_scope)
                 .ok_or(RecvError::PhaseInvariant)?;
-            self.set_cursor(self.cursor.with_index(target_index));
+            self.set_cursor_index(target_index);
             break;
         }
         self.align_cursor_to_selected_scope()?;
@@ -2291,11 +2748,10 @@ where
             .ok_or(RecvError::PhaseInvariant)?;
 
         // Navigate to arm0_entry to get the node's metadata
-        let arm0_cursor = self.cursor.with_index(state_index_to_usize(arm0_entry));
-
         // The arm entry node should be a Local (self-send) node with a policy annotation.
-        let local_meta = arm0_cursor
-            .try_local_meta()
+        let local_meta = self
+            .cursor
+            .try_local_meta_at(state_index_to_usize(arm0_entry))
             .ok_or(RecvError::PhaseInvariant)?;
 
         let policy = local_meta.policy;
@@ -2389,18 +2845,118 @@ where
             _ => SendError::PhaseInvariant,
         }
     }
-    pub(crate) async fn send_with_meta<M>(
-        mut self,
-        meta: &SendMeta,
+
+    #[inline]
+    fn commit_send_after_emit(
+        &mut self,
+        preview_cursor_index: Option<StateIndex>,
+        meta: SendMeta,
+    ) -> SendResult<()> {
+        self.commit_send_preview(preview_cursor_index, meta)?;
+        self.commit_send_progress(meta);
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn commit_send_preview(
+        &mut self,
+        preview_cursor_index: Option<StateIndex>,
+        meta: SendMeta,
+    ) -> SendResult<()> {
+        if let Some(preview) = self.take_matching_pending_send_branch_preview(meta) {
+            self.commit_pending_branch_preview(preview)
+                .map_err(|_| SendError::PhaseInvariant)?;
+        }
+        if let Some(preview_cursor_index) = preview_cursor_index {
+            self.set_cursor_index(state_index_to_usize(preview_cursor_index));
+        }
+        self.cursor
+            .try_advance_past_jumps_in_place()
+            .map_err(|_| SendError::PhaseInvariant)
+    }
+
+    #[inline(never)]
+    fn commit_send_progress(&mut self, meta: SendMeta) {
+        let lane_idx = meta.lane as usize;
+        self.advance_lane_cursor(lane_idx, meta.eff_index);
+        self.maybe_skip_remaining_route_arm(meta.scope, meta.lane, meta.route_arm, meta.eff_index);
+        self.settle_scope_after_action(meta.scope, meta.route_arm, Some(meta.eff_index), meta.lane);
+        self.maybe_advance_phase();
+    }
+
+    pub(crate) fn send_with_preview_in_place<'a, M>(
+        &'a mut self,
+        preview: crate::endpoint::flow::SendPreview,
+        payload: Option<&'a <M as MessageSpec>::Payload>,
+    ) -> impl core::future::Future<
+        Output = SendResult<
+            ControlOutcome<
+                'r,
+                <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind,
+            >,
+        >,
+    > + 'a
+    where
+        M: MessageSpec + SendableLabel + 'a,
+        M::Payload: WireEncode,
+        M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
+        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
+    {
+        let (meta, cursor_index) = preview.into_parts();
+        self.send_with_meta_and_cursor_in_place::<M>(meta, Some(cursor_index), payload)
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn send_with_meta_in_place<M>(
+        &mut self,
+        meta: SendMeta,
         payload: Option<&<M as MessageSpec>::Payload>,
-    ) -> SendResult<(
-        Self,
+    ) -> SendResult<
         ControlOutcome<'r, <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>,
-    )>
+    >
     where
         M: MessageSpec + SendableLabel,
         M::Payload: WireEncode,
         M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
+        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
+    {
+        self.send_with_meta_and_cursor_in_place::<M>(meta, None, payload)
+            .await
+    }
+
+    async fn send_with_meta_and_cursor_in_place<M>(
+        &mut self,
+        meta: SendMeta,
+        preview_cursor_index: Option<StateIndex>,
+        payload: Option<&<M as MessageSpec>::Payload>,
+    ) -> SendResult<
+        ControlOutcome<'r, <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>,
+    >
+    where
+        M: MessageSpec + SendableLabel,
+        M::Payload: WireEncode,
+        M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
+        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
+    {
+        let prepared = self.prepare_send_control::<M>(meta)?;
+        let dispatch_state = self
+            .emit_send_transport::<M>(meta, payload, prepared)
+            .await?;
+        self.finish_send_after_transport::<M>(meta, preview_cursor_index, dispatch_state)
+    }
+
+    #[inline(never)]
+    fn prepare_send_control<M>(
+        &mut self,
+        meta: SendMeta,
+    ) -> SendResult<
+        PreparedSendControl<<<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>,
+    >
+    where
+        M: MessageSpec + SendableLabel,
+        M::Payload: WireEncode,
+        M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
+        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
     {
         let control_handling = <M::ControlKind as ControlPayloadKind>::HANDLING;
         let expects_control = !matches!(control_handling, ControlHandling::None);
@@ -2408,43 +2964,23 @@ where
             return Err(SendError::PhaseInvariant);
         }
 
-        let mut control_outcome = ControlOutcome::<
-            'r,
-            <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind,
-        >::None;
-        let mut canonical_generic_token: Option<
-            GenericCapToken<<<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>,
-        > = None;
+        self.evaluate_dynamic_policy(&meta, <M as MessageSpec>::LABEL)?;
 
+        let lane = Lane::new(meta.lane as u32);
         let policy_action = self.eval_endpoint_policy(
             Slot::EndpointTx,
             ids::ENDPOINT_SEND,
             self.sid.raw(),
-            Self::endpoint_policy_args(
-                Lane::new(meta.lane as u32),
-                meta.label,
-                FrameFlags::empty(),
-            ),
-            Lane::new(meta.lane as u32),
+            Self::endpoint_policy_args(lane, meta.label, FrameFlags::empty()),
+            lane,
         );
-        self.apply_send_policy(policy_action, meta.scope, Lane::new(meta.lane as u32))?;
+        self.apply_send_policy(policy_action, meta.scope, lane)?;
 
-        let cluster_ref = self.control.cluster();
-        let rv_id = self.rendezvous_id();
-        let sid_raw = self.sid.raw();
-        let lane_wire = self.port_for_lane(meta.lane as usize).lane().as_wire();
-        let scope_trace = self.scope_trace(meta.scope);
-        let logical_meta =
-            TapFrameMeta::new(sid_raw, lane_wire, ROLE, meta.label, FrameFlags::empty());
-
-        // Auto-mint tokens for both Canonical and External control handling.
-        // Canonical: token is used internally, not transmitted over wire.
-        // External: token is minted AND transmitted over wire (cross-role).
         let minted_token = if matches!(
             control_handling,
             ControlHandling::Canonical | ControlHandling::External
         ) {
-            let token_result = <M::ControlKind as CanonicalTokenProvider<
+            <M::ControlKind as CanonicalTokenProvider<
                 'r,
                 ROLE,
                 T,
@@ -2455,24 +2991,55 @@ where
                 MAX_RV,
                 M,
                 B,
-            >>::into_token(&self, meta);
-            token_result?
+            >>::into_token(&self, &meta)?
         } else {
             None
         };
 
+        Ok(PreparedSendControl {
+            control_handling,
+            minted_token,
+        })
+    }
+
+    async fn emit_send_transport<M>(
+        &mut self,
+        meta: SendMeta,
+        payload: Option<&<M as MessageSpec>::Payload>,
+        prepared: PreparedSendControl<
+            <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind,
+        >,
+    ) -> SendResult<
+        SendDispatchState<
+            'r,
+            <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind,
+        >,
+    >
+    where
+        M: MessageSpec + SendableLabel,
+        M::Payload: WireEncode,
+        M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
+        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
+    {
+        let mut control_outcome = ControlOutcome::<
+            'r,
+            <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind,
+        >::None;
+        let mut canonical_generic_token: Option<
+            GenericCapToken<<<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>,
+        > = None;
         let mut dispatch_frame = None;
+        let mut minted_token = prepared.minted_token;
         {
-            // Use lane-specific port for multi-lane parallel execution
             let port = self.port_for_lane(meta.lane as usize);
             let payload_view = lane_port::staged_payload(port, |scratch| {
-                let len = match control_handling {
+                let len = match prepared.control_handling {
                     ControlHandling::None => {
                         let data = payload.ok_or(SendError::PhaseInvariant)?;
                         data.encode_into(scratch).map_err(SendError::Codec)?
                     }
                     ControlHandling::Canonical => {
-                        let token = minted_token.ok_or(SendError::PhaseInvariant)?;
+                        let token = minted_token.take().ok_or(SendError::PhaseInvariant)?;
                         let frame = token.into_frame();
                         let bytes = *frame.bytes();
                         scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
@@ -2481,7 +3048,7 @@ where
                         CAP_TOKEN_LEN
                     }
                     ControlHandling::External => {
-                        if let Some(token) = minted_token {
+                        if let Some(token) = minted_token.take() {
                             let frame = token.into_frame();
                             let bytes = *frame.bytes();
                             scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
@@ -2520,20 +3087,42 @@ where
             }
         }
 
-        // Advance typestate cursor (delegates to RoleTypestate).
-        // Use try_advance_past_jumps to follow any Jump nodes (explicit control flow).
-        self.set_cursor(
-            self.cursor
-                .try_advance_past_jumps()
-                .map_err(|_| SendError::PhaseInvariant)?,
+        Ok(SendDispatchState {
+            control_handling: prepared.control_handling,
+            control_outcome,
+            canonical_generic_token,
+            dispatch_frame,
+        })
+    }
+
+    #[inline(never)]
+    fn finish_send_after_transport<M>(
+        &mut self,
+        meta: SendMeta,
+        preview_cursor_index: Option<StateIndex>,
+        mut dispatch_state: SendDispatchState<
+            'r,
+            <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind,
+        >,
+    ) -> SendResult<
+        ControlOutcome<'r, <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>,
+    >
+    where
+        M: MessageSpec + SendableLabel,
+        M::Payload: WireEncode,
+        M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
+    {
+        self.commit_send_after_emit(preview_cursor_index, meta)?;
+
+        let lane_wire = self.port_for_lane(meta.lane as usize).lane().as_wire();
+        let logical_meta = TapFrameMeta::new(
+            self.sid.raw(),
+            lane_wire,
+            ROLE,
+            meta.label,
+            FrameFlags::empty(),
         );
-
-        let lane_idx = meta.lane as usize;
-        self.advance_lane_cursor(lane_idx, meta.eff_index);
-        self.maybe_skip_remaining_route_arm(meta.scope, meta.lane, meta.route_arm, meta.eff_index);
-        self.settle_scope_after_action(meta.scope, meta.route_arm, Some(meta.eff_index), meta.lane);
-        self.maybe_advance_phase();
-
+        let scope_trace = self.scope_trace(meta.scope);
         let event_id = if meta.is_control {
             ids::ENDPOINT_CONTROL
         } else {
@@ -2541,21 +3130,21 @@ where
         };
         self.emit_endpoint_event(event_id, logical_meta, scope_trace, meta.lane);
 
-        if let Some(frame) = dispatch_frame {
-            let cluster = cluster_ref.ok_or(SendError::PhaseInvariant)?;
-            match cluster.dispatch_typed_control_frame(rv_id, frame, None) {
+        if let Some(frame) = dispatch_state.dispatch_frame {
+            let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
+            match cluster.dispatch_typed_control_frame(self.rendezvous_id(), frame, None) {
                 Ok(result) => {
-                    if matches!(control_handling, ControlHandling::Canonical) {
+                    if matches!(dispatch_state.control_handling, ControlHandling::Canonical) {
                         let registered = result.ok_or(SendError::PhaseInvariant)?;
-                        control_outcome = ControlOutcome::Canonical(registered);
+                        dispatch_state.control_outcome = ControlOutcome::Canonical(registered);
                     }
                 }
                 Err(err) => match err {
                     CpError::Authorisation {
                         effect: CpEffect::SpliceAck,
                     } => {
-                        if let Some(token) = canonical_generic_token.take() {
-                            control_outcome = ControlOutcome::Canonical(
+                        if let Some(token) = dispatch_state.canonical_generic_token.take() {
+                            dispatch_state.control_outcome = ControlOutcome::Canonical(
                                 CapRegisteredToken::from_bytes(token.into_bytes()),
                             );
                         }
@@ -2563,11 +3152,11 @@ where
                     _ => return Err(SendError::PhaseInvariant),
                 },
             }
-        } else if matches!(control_handling, ControlHandling::Canonical) {
+        } else if matches!(dispatch_state.control_handling, ControlHandling::Canonical) {
             return Err(SendError::PhaseInvariant);
         }
 
-        Ok((self, control_outcome))
+        Ok(dispatch_state.control_outcome)
     }
 
     fn record_loop_decision(
@@ -2616,9 +3205,8 @@ where
         // O(1) entry: offer() must be called at a Route decision point.
         // Use the node's scope directly (no parent traversal).
         let node_scope = self.current_offer_scope_id();
-        let region = match self.cursor.scope_region_by_id(node_scope) {
-            Some(region) => region,
-            None => return Err(RecvError::PhaseInvariant),
+        let Some(region) = self.cursor.scope_region_by_id(node_scope) else {
+            return Err(RecvError::PhaseInvariant);
         };
         if region.kind != ScopeKind::Route {
             return Err(RecvError::PhaseInvariant);
@@ -2636,52 +3224,35 @@ where
         }
         let current_idx = self.cursor.index();
         let cached_entry_state = self
-            .frontier_state
-            .offer_entry_state
-            .get(current_idx)
-            .copied()
-            .filter(|state| state.active_mask != 0 && state.scope_id == scope_id);
-        // Route hints are offer-scoped; hints are consumed per-offer via take_scope_hint().
-        let (offer_lanes, offer_lane_mask, offer_lanes_len, label_meta, materialization_meta) =
-            if let Some(entry_state) = cached_entry_state {
-                (
-                    entry_state.offer_lanes,
-                    entry_state.offer_lane_mask,
-                    entry_state.offer_lanes_len as usize,
-                    entry_state.label_meta,
-                    entry_state.materialization_meta,
-                )
-            } else {
-                let (offer_lanes, offer_lanes_len) = self.offer_lanes_for_scope(scope_id);
-                if offer_lanes_len == 0 {
-                    return Err(RecvError::PhaseInvariant);
+            .offer_entry_state_snapshot(current_idx)
+            .filter(|state| {
+                state.active_mask != 0 && self.offer_entry_scope_id(current_idx, *state) == scope_id
+            });
+        // Route hints are offer-scoped; preview only inspects them here.
+        let (offer_lanes, offer_lanes_len) = self.offer_lanes_for_scope(scope_id);
+        if offer_lanes_len == 0 {
+            return Err(RecvError::PhaseInvariant);
+        }
+        let offer_lane_mask = if let Some(entry_state) = cached_entry_state {
+            self.offer_entry_offer_lane_mask(current_idx, entry_state)
+        } else {
+            let mut offer_lane_mask = 0u8;
+            let mut offer_lane_idx = 0usize;
+            while offer_lane_idx < offer_lanes_len {
+                let lane = offer_lanes[offer_lane_idx] as usize;
+                if lane < MAX_LANES {
+                    offer_lane_mask |= 1u8 << lane;
                 }
-                let mut offer_lane_mask = 0u8;
-                let mut offer_lane_idx = 0usize;
-                while offer_lane_idx < offer_lanes_len {
-                    let lane = offer_lanes[offer_lane_idx] as usize;
-                    if lane < MAX_LANES {
-                        offer_lane_mask |= 1u8 << lane;
-                    }
-                    offer_lane_idx += 1;
-                }
-                let offer_lane = offer_lanes[0];
-                let offer_lane_idx = offer_lane as usize;
-                (
-                    offer_lanes,
-                    offer_lane_mask,
-                    offer_lanes_len,
-                    self.offer_scope_label_meta(scope_id, offer_lane_idx),
-                    self.offer_scope_materialization_meta(scope_id, offer_lane_idx),
-                )
-            };
+                offer_lane_idx += 1;
+            }
+            offer_lane_mask
+        };
+        let offer_lanes_len = offer_lanes_len as u8;
         if offer_lanes_len == 0 {
             return Err(RecvError::PhaseInvariant);
         }
         let offer_lane = offer_lanes[0];
-        let offer_lane_idx = offer_lane as usize;
-        let passive_recv_meta =
-            self.compute_scope_passive_recv_meta(materialization_meta, scope_id, offer_lane);
+        let offer_lane_idx = offer_lane;
         let at_route_offer_entry = self
             .cursor
             .route_scope_offer_entry(scope_id)
@@ -2695,9 +3266,6 @@ where
             offer_lanes_len,
             offer_lane,
             offer_lane_idx,
-            label_meta,
-            materialization_meta,
-            passive_recv_meta,
             at_route_offer_entry,
         })
     }
@@ -2706,7 +3274,7 @@ where
     // precomputed route metadata and late binding demux state. This stage must
     // not perform arm arbitration.
     pub(super) fn materialize_branch(
-        mut self,
+        &mut self,
         selection: OfferScopeSelection,
         resolved: ResolvedRouteDecision,
         is_route_controller: bool,
@@ -2715,56 +3283,15 @@ where
         transport_payload_lane: u8,
     ) -> RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
         let scope_id = selection.scope_id;
-        let offer_lanes = selection.offer_lanes;
-        let offer_lanes_len = selection.offer_lanes_len;
-        let offer_lane = selection.offer_lane;
         let route_token = resolved.route_token;
         let selected_arm = resolved.selected_arm;
         let resolved_label_hint = resolved.resolved_label_hint;
         let binding_channel: Option<crate::binding::Channel> = None;
-        if !is_route_controller {
-            self.propagate_recvless_parent_route_decision(scope_id, selected_arm);
-        }
-        let broadcast_controller_route_decision =
-            is_route_controller && matches!(route_token.source(), RouteDecisionSource::Ack);
-        if broadcast_controller_route_decision {
-            let decision_source = route_token.source();
-            let mut lane_idx = 0usize;
-            while lane_idx < offer_lanes_len {
-                let lane = offer_lanes[lane_idx];
-                self.record_route_decision_for_lane(lane as usize, scope_id, selected_arm);
-                self.emit_route_decision(scope_id, selected_arm, decision_source, lane);
-                lane_idx += 1;
-            }
-        } else if matches!(route_token.source(), RouteDecisionSource::Poll) {
-            self.emit_route_decision(
-                scope_id,
-                selected_arm,
-                RouteDecisionSource::Poll,
-                offer_lane,
-            );
-        }
-
-        let meta =
-            self.materialize_selected_arm_meta(selection, selected_arm, resolved_label_hint)?;
-
-        self.skip_unselected_arm_lanes(scope_id, selected_arm, meta.lane);
-
-        let policy_action = self.eval_endpoint_policy(
-            Slot::EndpointRx,
-            ids::ENDPOINT_RECV,
-            self.sid.raw(),
-            Self::endpoint_policy_args(
-                Lane::new(meta.lane as u32),
-                meta.label,
-                FrameFlags::empty(),
-            ),
-            Lane::new(meta.lane as u32),
-        );
-        self.apply_recv_policy(policy_action, meta.scope, Lane::new(meta.lane as u32))?;
+        let preview_meta =
+            self.preview_selected_arm_meta(selection, selected_arm, resolved_label_hint)?;
+        let (_cursor_index, meta) = preview_meta.recv_meta().ok_or(RecvError::PhaseInvariant)?;
 
         let lane_wire = meta.lane;
-        self.set_route_arm(lane_wire, scope_id, selected_arm)?;
 
         // Determine BranchKind before late binding resolution so wire-bound
         // branches can decide whether to wait for one additional ingress turn.
@@ -2800,7 +3327,7 @@ where
 
         // Late binding channel resolution: for wire recv branches, prefer
         // binding ingress even when transport payload bytes were staged earlier.
-        let label_meta = selection.label_meta;
+        let label_meta = self.selection_label_meta(selection);
         let binding_channel = if transport_payload_len == 0
             || matches!(branch_kind, BranchKind::WireRecv)
         {
@@ -2846,11 +3373,6 @@ where
             lane_port::requeue_recv(port);
             transport_payload_len = 0;
         }
-        if self.selection_arm_has_recv(selection, selected_arm) {
-            // Ready-arm evidence is one-shot per successful materialization.
-            // Do not consume it before defer paths complete.
-            self.consume_scope_ready_arm(scope_id, selected_arm);
-        }
         let branch_progress_eff = self
             .cursor
             .scope_lane_last_eff_for_arm(scope_id, selected_arm, lane_wire)
@@ -2862,26 +3384,105 @@ where
             lane_wire,
             eff_index: branch_progress_eff,
             kind: branch_kind,
+            route_source: route_token.source(),
         };
-
-        // Scope evidence is one-shot per offer.
-        // Once a branch is selected, do not carry hint/ack into the next offer.
-        self.clear_scope_evidence(scope_id);
-        if lane_wire == 5 {
-            // Route hints on this lane are one-shot and must not leak into
-            // subsequent offers after branch materialization.
-            let port = self.port_for_lane(lane_wire as usize);
-            port.clear_route_hints();
-        }
-
         Ok(RouteBranch {
             label: meta.label,
+            cursor_index: preview_meta.cursor_index,
             transport_payload_len,
             transport_payload_lane,
-            endpoint: self,
             binding_channel,
             branch_meta,
+            _cfg: core::marker::PhantomData,
         })
+    }
+
+    fn commit_pending_branch_preview(
+        &mut self,
+        preview: PendingBranchPreview,
+    ) -> RecvResult<Option<RecvMeta>> {
+        let scope_id = preview.branch_meta.scope_id;
+        let selected_arm = preview.branch_meta.selected_arm;
+        let lane_wire = preview.branch_meta.lane_wire;
+        let is_route_controller = self.cursor.is_route_controller(scope_id);
+        if !is_route_controller {
+            self.propagate_recvless_parent_route_decision(scope_id, selected_arm);
+        }
+
+        match preview.branch_meta.route_source {
+            RouteDecisionSource::Ack if is_route_controller => {
+                let (offer_lanes, offer_lanes_len) = self.offer_lanes_for_scope(scope_id);
+                if offer_lanes_len == 0 {
+                    let lane = lane_wire;
+                    self.record_route_decision_for_lane(lane as usize, scope_id, selected_arm);
+                    self.emit_route_decision(
+                        scope_id,
+                        selected_arm,
+                        RouteDecisionSource::Ack,
+                        lane,
+                    );
+                } else {
+                    let mut lane_idx = 0usize;
+                    while lane_idx < offer_lanes_len {
+                        let lane = offer_lanes[lane_idx];
+                        self.record_route_decision_for_lane(lane as usize, scope_id, selected_arm);
+                        self.emit_route_decision(
+                            scope_id,
+                            selected_arm,
+                            RouteDecisionSource::Ack,
+                            lane,
+                        );
+                        lane_idx += 1;
+                    }
+                }
+            }
+            RouteDecisionSource::Poll => {
+                self.emit_route_decision(
+                    scope_id,
+                    selected_arm,
+                    RouteDecisionSource::Poll,
+                    self.offer_lane_for_scope(scope_id),
+                );
+            }
+            _ => {}
+        }
+
+        self.skip_unselected_arm_lanes(scope_id, selected_arm, lane_wire);
+        self.set_route_arm(lane_wire, scope_id, selected_arm)?;
+        self.set_cursor_index(state_index_to_usize(preview.cursor_index));
+
+        let meta = if preview.branch_meta.kind == BranchKind::WireRecv {
+            let mut meta = self
+                .cursor
+                .try_recv_meta()
+                .ok_or(RecvError::PhaseInvariant)?;
+            if meta.route_arm.is_none() {
+                meta.route_arm = Some(selected_arm);
+            }
+            if meta.label != preview.label {
+                meta.label = preview.label;
+            }
+            Some(meta)
+        } else {
+            None
+        };
+
+        if self.arm_has_recv(scope_id, selected_arm) {
+            self.consume_scope_ready_arm(scope_id, selected_arm);
+        }
+        self.clear_scope_evidence(scope_id);
+        if lane_wire == 5 {
+            self.port_for_lane(lane_wire as usize).clear_route_hints();
+        }
+
+        Ok(meta)
+    }
+
+    pub(in crate::endpoint::kernel) fn commit_branch_preview(
+        &mut self,
+        branch: &RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    ) -> RecvResult<Option<RecvMeta>> {
+        self.commit_pending_branch_preview(PendingBranchPreview::from_branch(branch))
     }
 
     // Stage 2 of the offer kernel: resolve arm authority in fixed order
@@ -2901,30 +3502,26 @@ where
         let frontier_parallel_root = selection.frontier_parallel_root;
         let offer_lanes = selection.offer_lanes;
         let offer_lane_mask = selection.offer_lane_mask;
-        let offer_lanes_len = selection.offer_lanes_len;
+        let offer_lanes_len = selection.offer_lanes_len as usize;
         let offer_lane = selection.offer_lane;
-        let offer_lane_idx = selection.offer_lane_idx;
-        let label_meta = selection.label_meta;
+        let offer_lane_idx = selection.offer_lane_idx as usize;
         let at_route_offer_entry = selection.at_route_offer_entry;
 
         let mut resolved_label_hint = self
-            .take_scope_hint(scope_id)
+            .peek_scope_hint(scope_id)
             .and_then(ScopeHint::new)
             .map(ScopeHint::label);
         if *transport_payload_len != 0
             && let Some(label) = resolved_label_hint
         {
+            let label_meta = self.selection_label_meta(selection);
             self.mark_scope_ready_arm_from_label(scope_id, label, label_meta);
         }
 
         let mut liveness = OfferLivenessState::new(self.liveness_policy);
         let mut liveness_exhausted = false;
 
-        let mut route_token = if is_route_controller {
-            self.take_scope_ack(scope_id)
-        } else {
-            self.peek_scope_ack(scope_id)
-        };
+        let mut route_token = self.peek_scope_ack(scope_id);
         if route_token.is_none() && is_route_controller && is_dynamic_route_scope {
             let is_self_send_route = !Self::scope_has_controller_arm_entry(&self.cursor, scope_id);
             loop {
@@ -2978,12 +3575,14 @@ where
                 let staged_payload_for_offer_lane =
                     *transport_payload_len != 0 && *transport_payload_lane == offer_lane;
                 if !staged_payload_for_offer_lane {
+                    let label_meta = self.selection_label_meta(selection);
+                    let materialization_meta = self.selection_materialization_meta(selection);
                     self.cache_binding_classification_for_offer(
                         scope_id,
                         offer_lane_idx,
                         offer_lane_mask,
                         label_meta,
-                        selection.materialization_meta,
+                        materialization_meta,
                         binding_classification,
                     );
 
@@ -3013,7 +3612,7 @@ where
                     }
 
                     if let Some(label) = self
-                        .take_scope_hint(scope_id)
+                        .peek_scope_hint(scope_id)
                         .and_then(ScopeHint::new)
                         .map(ScopeHint::label)
                     {
@@ -3243,7 +3842,10 @@ where
 
         let mut route_token = route_token.ok_or(RecvError::PhaseInvariant)?;
         if let Some(classification) = binding_classification.as_ref()
-            && let Some(binding_arm) = Self::scope_label_to_arm(label_meta, classification.label)
+            && let Some(binding_arm) = {
+                let label_meta = self.selection_label_meta(selection);
+                Self::scope_label_to_arm(label_meta, classification.label)
+            }
             && binding_arm == route_token.arm().as_u8()
         {
             // Binding classification is demux-only. Once Ack/Resolver/Poll has
@@ -3626,9 +4228,7 @@ where
                                     if let Some(parent_arm) = self.route_arm_for(lane_wire, parent)
                                     {
                                         if parent_arm == 0 {
-                                            self.set_cursor(
-                                                self.cursor.with_index(parent_region.start),
-                                            );
+                                            self.set_cursor_index(parent_region.start);
                                             break;
                                         }
                                     }
@@ -3637,9 +4237,7 @@ where
 
                                 if should_advance {
                                     self.clear_descendant_route_state_for_lane(lane_wire, parent);
-                                    if let Some(cursor) = self.cursor.advance_scope_by_id(parent) {
-                                        self.set_cursor(cursor);
-                                    }
+                                    if self.cursor.advance_scope_by_id_in_place(parent) {}
                                     self.pop_route_arm(lane_wire, parent);
                                     current_scope = parent;
                                 } else {
@@ -3650,7 +4248,7 @@ where
                             }
                         }
                     } else {
-                        self.set_cursor(self.cursor.with_index(reg.start));
+                        self.set_cursor_index(reg.start);
                     }
                 }
                 if !is_break_arm {
@@ -3771,6 +4369,19 @@ where
             .expect("port not acquired for lane")
     }
 
+    #[inline]
+    pub(super) fn frontier_scratch_view(&self) -> FrontierScratchView {
+        let port = self.port_for_lane(self.primary_lane);
+        let scratch_ptr = lane_port::frontier_scratch_ptr(port);
+        let layout = self.cursor.frontier_scratch_layout();
+        frontier_scratch_view_from_storage(
+            scratch_ptr,
+            layout,
+            self.cursor.logical_lane_count(),
+            self.cursor.max_frontier_entries(),
+        )
+    }
+
     pub(super) fn loop_index(scope: ScopeId) -> Option<u8> {
         u8::try_from(scope.ordinal()).ok()
     }
@@ -3882,8 +4493,8 @@ where
         else {
             return false;
         };
-        let target_cursor = self.cursor.with_index(state_index_to_usize(entry));
-        let Some(recv_meta) = target_cursor.try_recv_meta() else {
+        let entry_idx = state_index_to_usize(entry);
+        let Some(recv_meta) = self.cursor.try_recv_meta_at(entry_idx) else {
             return false;
         };
         if !recv_meta.is_control || recv_meta.label != label {
@@ -4320,7 +4931,17 @@ where
         scope_id: ScopeId,
         is_controller: bool,
     ) -> FrontierKind {
-        if cursor.jump_reason() == Some(JumpReason::PassiveObserverBranch) {
+        Self::frontier_kind_for_index(cursor, scope_id, is_controller, cursor.index())
+    }
+
+    #[inline]
+    fn frontier_kind_for_index(
+        cursor: &PhaseCursor,
+        scope_id: ScopeId,
+        is_controller: bool,
+        idx: usize,
+    ) -> FrontierKind {
+        if cursor.jump_reason_at(idx) == Some(JumpReason::PassiveObserverBranch) {
             return FrontierKind::PassiveObserver;
         }
         let has_controller_entry = cursor.controller_arm_entry_by_arm(scope_id, 0).is_some()
@@ -4345,8 +4966,18 @@ where
         semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
     ) -> ScopeLoopMeta {
+        Self::scope_loop_meta_at(cursor, semantics, scope_id, cursor.index())
+    }
+
+    #[inline]
+    fn scope_loop_meta_at(
+        cursor: &PhaseCursor,
+        semantics: &ControlSemanticsTable,
+        scope_id: ScopeId,
+        idx: usize,
+    ) -> ScopeLoopMeta {
         let mut flags = 0u8;
-        if cursor.typestate_node(cursor.index()).loop_scope().is_some() {
+        if cursor.node_loop_scope(idx).is_some() {
             flags |= ScopeLoopMeta::FLAG_SCOPE_ACTIVE;
         }
         if cursor
@@ -4375,6 +5006,17 @@ where
         scope_id: ScopeId,
         loop_meta: ScopeLoopMeta,
     ) -> ScopeLabelMeta {
+        Self::scope_label_meta_at(cursor, semantics, scope_id, loop_meta, cursor.index())
+    }
+
+    #[inline]
+    fn scope_label_meta_at(
+        cursor: &PhaseCursor,
+        semantics: &ControlSemanticsTable,
+        scope_id: ScopeId,
+        loop_meta: ScopeLoopMeta,
+        idx: usize,
+    ) -> ScopeLabelMeta {
         let is_controller = cursor.is_route_controller(scope_id);
         let mut meta = ScopeLabelMeta {
             #[cfg(test)]
@@ -4382,12 +5024,11 @@ where
             loop_meta,
             ..ScopeLabelMeta::EMPTY
         };
-        if let Some(recv_meta) = cursor.try_recv_meta()
+        if let Some(recv_meta) = cursor.try_recv_meta_at(idx)
             && recv_meta.scope == scope_id
         {
             meta.recv_label = recv_meta.label;
             meta.flags |= ScopeLabelMeta::FLAG_CURRENT_RECV_LABEL;
-            meta.record_hint_label(recv_meta.label);
             if let Some(arm) = recv_meta.route_arm {
                 meta.recv_arm = arm;
                 meta.flags |= ScopeLabelMeta::FLAG_CURRENT_RECV_ARM;
@@ -4408,20 +5049,16 @@ where
         if let Some((_, label)) = cursor.controller_arm_entry_by_arm(scope_id, 0) {
             meta.controller_labels[0] = label;
             meta.flags |= ScopeLabelMeta::FLAG_CONTROLLER_ARM0;
-            if is_controller {
-                meta.record_arm_label(0, label);
-            } else {
-                meta.record_dispatch_arm_label(0, label);
+            meta.record_arm_label(0, label);
+            if !is_controller {
                 meta.clear_evidence_arm_label(0, label);
             }
         }
         if let Some((_, label)) = cursor.controller_arm_entry_by_arm(scope_id, 1) {
             meta.controller_labels[1] = label;
             meta.flags |= ScopeLabelMeta::FLAG_CONTROLLER_ARM1;
-            if is_controller {
-                meta.record_arm_label(1, label);
-            } else {
-                meta.record_dispatch_arm_label(1, label);
+            meta.record_arm_label(1, label);
+            if !is_controller {
                 meta.clear_evidence_arm_label(1, label);
             }
         }
@@ -4446,14 +5083,25 @@ where
     #[inline]
     fn offer_scope_label_meta(&self, scope_id: ScopeId, offer_lane_idx: usize) -> ScopeLabelMeta {
         if offer_lane_idx < MAX_LANES {
-            let info = self.route_state.lane_offer_state[offer_lane_idx];
+            let info = self.route_state.lane_offer_state(offer_lane_idx);
             if info.scope == scope_id {
-                if let Some(cached) =
-                    self.offer_entry_label_meta(scope_id, state_index_to_usize(info.entry))
-                {
+                let entry_idx = state_index_to_usize(info.entry);
+                if let Some(cached) = self.offer_entry_label_meta(scope_id, entry_idx) {
                     return cached;
                 }
-                return info.label_meta;
+                let loop_meta = Self::scope_loop_meta_at(
+                    &self.cursor,
+                    &self.control_semantics(),
+                    scope_id,
+                    entry_idx,
+                );
+                return Self::scope_label_meta_at(
+                    &self.cursor,
+                    &self.control_semantics(),
+                    scope_id,
+                    loop_meta,
+                    entry_idx,
+                );
             }
         }
         if let Some(offer_entry) = self.cursor.route_scope_offer_entry(scope_id) {
@@ -4465,6 +5113,19 @@ where
             if let Some(cached) = self.offer_entry_label_meta(scope_id, entry_idx) {
                 return cached;
             }
+            let loop_meta = Self::scope_loop_meta_at(
+                &self.cursor,
+                &self.control_semantics(),
+                scope_id,
+                entry_idx,
+            );
+            return Self::scope_label_meta_at(
+                &self.cursor,
+                &self.control_semantics(),
+                scope_id,
+                loop_meta,
+                entry_idx,
+            );
         }
         let loop_meta = Self::scope_loop_meta(&self.cursor, &self.control_semantics(), scope_id);
         Self::scope_label_meta(&self.cursor, &self.control_semantics(), scope_id, loop_meta)
@@ -4477,7 +5138,7 @@ where
         offer_lane_idx: usize,
     ) -> ScopeArmMaterializationMeta {
         if offer_lane_idx < MAX_LANES {
-            let info = self.route_state.lane_offer_state[offer_lane_idx];
+            let info = self.route_state.lane_offer_state(offer_lane_idx);
             if info.scope == scope_id {
                 if let Some(cached) = self
                     .offer_entry_materialization_meta(scope_id, state_index_to_usize(info.entry))
@@ -4500,22 +5161,50 @@ where
     }
 
     #[inline]
-    fn frontier_static_facts(
+    pub(in crate::endpoint::kernel) fn selection_label_meta(
+        &self,
+        selection: OfferScopeSelection,
+    ) -> ScopeLabelMeta {
+        self.offer_scope_label_meta(selection.scope_id, selection.offer_lane_idx as usize)
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn selection_materialization_meta(
+        &self,
+        selection: OfferScopeSelection,
+    ) -> ScopeArmMaterializationMeta {
+        self.offer_scope_materialization_meta(selection.scope_id, selection.offer_lane_idx as usize)
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn selection_passive_recv_meta(
+        &self,
+        selection: OfferScopeSelection,
+        materialization_meta: ScopeArmMaterializationMeta,
+    ) -> [CachedRecvMeta; 2] {
+        self.compute_scope_passive_recv_meta(
+            materialization_meta,
+            selection.scope_id,
+            selection.offer_lane,
+        )
+    }
+
+    fn frontier_static_facts_at(
         cursor: &PhaseCursor,
         semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
         is_controller: bool,
         is_dynamic: bool,
+        idx: usize,
     ) -> FrontierStaticFacts {
-        let loop_meta = Self::scope_loop_meta(cursor, semantics, scope_id);
+        let loop_meta = Self::scope_loop_meta_at(cursor, semantics, scope_id, idx);
         let controller_local_ready =
             is_controller && Self::scope_has_controller_arm_entry(cursor, scope_id);
-        let cursor_ready = cursor.is_recv()
-            || cursor.try_recv_meta().is_some()
-            || cursor.try_local_meta().is_some();
+        let cursor_ready = cursor.is_recv_at(idx)
+            || cursor.try_recv_meta_at(idx).is_some()
+            || cursor.try_local_meta_at(idx).is_some();
         FrontierStaticFacts {
-            frontier: Self::frontier_kind_for_cursor(cursor, scope_id, is_controller),
-            loop_meta,
+            frontier: Self::frontier_kind_for_index(cursor, scope_id, is_controller, idx),
             ready: loop_meta.recvless_ready()
                 || controller_local_ready
                 || is_dynamic
@@ -4596,7 +5285,7 @@ where
         if guard.is_empty() {
             return false;
         }
-        let Some(selected) = self.selected_arm_for_scope(guard.scope) else {
+        let Some(selected) = self.selected_arm_for_scope(guard.scope()) else {
             return false;
         };
         selected != guard.arm
@@ -4635,8 +5324,14 @@ where
                 drop(g);
             }
         }
-        if let Some(cluster) = self.control.cluster() {
-            cluster.release_compiled_cache_lease(self.compiled_cache_lease);
+        if self.public_generation != 0
+            && let Some(cluster) = self.control.cluster()
+        {
+            if self.public_slot_owned {
+                cluster
+                    .release_public_endpoint_slot_owned(self.public_slot, self.public_generation);
+            }
+            self.public_generation = 0;
         }
     }
 }
@@ -4663,7 +5358,7 @@ where
     {
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
         cluster
-            .canonical_session_token::<K, Mint>(
+            .canonical_session_token::<K, StoredMint<Mint>>(
                 self.rendezvous_id(),
                 self.sid,
                 lane,
@@ -4687,7 +5382,7 @@ where
     {
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
         cluster
-            .canonical_token_with_handle::<K, Mint>(
+            .canonical_token_with_handle::<K, StoredMint<Mint>>(
                 self.rendezvous_id(),
                 self.sid,
                 lane,

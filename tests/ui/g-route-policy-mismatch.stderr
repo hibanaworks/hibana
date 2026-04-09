@@ -1,26 +1,50 @@
 error[E0080]: evaluation panicked: route scope recorded conflicting controller policy annotations
-  --> tests/ui/g-route-policy-mismatch.rs:95:5
+  --> tests/ui/g-route-policy-mismatch.rs:95:14
    |
-95 | > = project(&ROUTE);
-   |     ^^^^^^^^^^^^^^^ evaluation of `CONTROLLER` failed inside this call
+95 | > = project(&g::freeze(&ROUTE));
+   |              ^^^^^^^^^^^^^^^^^ evaluation of `CONTROLLER` failed inside this call
    |
-note: inside `project::<0, StepCons<SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<5>, GenericCapToken<UnitControl<149, 5, 7, 1024>>, CanonicalControl<UnitControl<149, 5, 7, 1024>>>>, StepCons<SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<6>, GenericCapToken<UnitControl<150, 6, 7, 1024>>, CanonicalControl<UnitControl<150, 6, 7, 1024>>>>, StepNil>>, MintConfig>`
-  --> src/global/role_program.rs
+note: inside `freeze::<StepCons<SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<5>, GenericCapToken<UnitControl<149, 5, 7, 1024>>, CanonicalControl<UnitControl<149, 5, 7, 1024>>>>, StepCons<SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<6>, GenericCapToken<UnitControl<150, 6, 7, 1024>>, CanonicalControl<UnitControl<150, 6, 7, 1024>>>>, StepNil>>>`
+  --> src/global/program.rs
    |
-   |     let stamp = ProjectionSeal::<ROLE>::validate_and_stamp::<Steps, Mint>(program);
-   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_and_stamp::<StepCons<SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<5>, GenericCapToken<UnitControl<149, 5, 7, 1024>>, CanonicalControl<UnitControl<149, 5, 7, 1024>>>>, StepCons<SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<6>, GenericCapToken<UnitControl<150, 6, 7, 1024>>, CanonicalControl<UnitControl<150, 6, 7, 1024>>>>, StepNil>>, MintConfig>`
+   |     validate_all_roles(&summary);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::compiled::seal::validate_all_roles`
   --> src/global/compiled/seal.rs
    |
-   |         let typestate = RoleTypestate::<ROLE>::from_summary(&summary);
-   |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::typestate::emit::<impl hibana::global::typestate::builder::RoleTypestate<0>>::from_summary`
-  --> src/global/typestate/emit.rs
+   |     ProjectionSeal::<0>::validate_compiled_layout(summary.view());
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_compiled_layout`
+  --> src/global/compiled/seal.rs
    |
-   |         super::emit_walk::build_role_typestate::<ROLE>(view, view.as_slice())
-   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::typestate::emit_walk::build_role_typestate::<0>`
-  --> src/global/typestate/emit_walk.rs
+   |         Self::validate_route_projection_guarantees(view);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_route_projection_guarantees`
+  --> src/global/compiled/seal.rs
    |
-   |                         panic!("route scope recorded conflicting controller policy annotations");
-   |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+   | /                 Self::validate_route_scope(
+   | |                     view,
+   | |                     scope_markers,
+   | |                     marker.scope_id,
+   | |                     marker.controller_role,
+   | |                     marker.linger,
+   | |                 );
+   | |_________________^
+note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_route_scope`
+  --> src/global/compiled/seal.rs
+   |
+   | /         Self::validate_route_policy_consistency(
+   | |             view, scope_id, arm0_start, arm0_end, arm1_start, arm1_end,
+   | |         );
+   | |_________^
+note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_route_policy_consistency`
+  --> src/global/compiled/seal.rs
+   |
+   |                     panic!("route scope recorded conflicting controller policy annotations");
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+
+note: erroneous constant encountered
+  --> tests/ui/g-route-policy-mismatch.rs:95:13
+   |
+95 | > = project(&g::freeze(&ROUTE));
+   |             ^^^^^^^^^^^^^^^^^^

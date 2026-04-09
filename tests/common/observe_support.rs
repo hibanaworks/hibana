@@ -10,6 +10,8 @@ pub(crate) const POLICY_EFFECT_ID: u16 = 0x0403;
 pub(crate) const POLICY_RA_OK_ID: u16 = 0x0404;
 pub(crate) const POLICY_COMMIT_ID: u16 = 0x0405;
 pub(crate) const POLICY_ROLLBACK_ID: u16 = 0x0406;
+const POLICY_TRACE_CAPACITY: usize = 2048;
+const POLICY_LANE_TABLE_CAPACITY: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PolicyEventKind {
@@ -28,7 +30,7 @@ pub(crate) enum PolicyEventDomain {
     Epf,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PolicyLaneRecord {
     pub(crate) kind: PolicyEventKind,
     pub(crate) policy_id: u16,
@@ -44,9 +46,42 @@ struct LaneAssociation {
     sid: u32,
 }
 
-fn ensure_lane_capacity(table: &mut Vec<Option<LaneAssociation>>, lane: usize) {
-    if lane >= table.len() {
-        table.resize(lane + 1, None);
+pub(crate) struct PolicyLaneTrace {
+    records: [Option<PolicyLaneRecord>; POLICY_TRACE_CAPACITY],
+    len: usize,
+}
+
+impl PolicyLaneTrace {
+    fn new() -> Self {
+        Self {
+            records: [None; POLICY_TRACE_CAPACITY],
+            len: 0,
+        }
+    }
+
+    fn push(&mut self, record: PolicyLaneRecord) {
+        assert!(
+            self.len < POLICY_TRACE_CAPACITY,
+            "policy lane trace capacity exceeded"
+        );
+        self.records[self.len] = Some(record);
+        self.len += 1;
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
+
+    pub(crate) fn get(&self, idx: usize) -> Option<&PolicyLaneRecord> {
+        if idx < self.len {
+            self.records[idx].as_ref()
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &PolicyLaneRecord> {
+        self.records[..self.len].iter().filter_map(Option::as_ref)
     }
 }
 
@@ -117,10 +152,10 @@ pub(crate) fn policy_lane_trace(
     storage: &[TapEvent],
     start: usize,
     end: usize,
-) -> (Vec<PolicyLaneRecord>, usize) {
-    let mut records = Vec::new();
+) -> (PolicyLaneTrace, usize) {
+    let mut records = PolicyLaneTrace::new();
     let mut local_action_failures = 0usize;
-    let mut lane_table: Vec<Option<LaneAssociation>> = Vec::new();
+    let mut lane_table = [None; POLICY_LANE_TABLE_CAPACITY];
     let capacity = storage.len();
     let mut cursor = start;
 
@@ -129,7 +164,12 @@ pub(crate) fn policy_lane_trace(
 
         if let Some((lane, assoc)) = decode_lane_event(raw) {
             let lane_idx = lane as usize;
-            ensure_lane_capacity(&mut lane_table, lane_idx);
+            assert!(
+                lane_idx < POLICY_LANE_TABLE_CAPACITY,
+                "policy lane {} exceeds fixed lane table capacity {}",
+                lane_idx,
+                POLICY_LANE_TABLE_CAPACITY
+            );
             lane_table[lane_idx] = assoc;
         }
 

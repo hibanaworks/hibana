@@ -73,10 +73,7 @@ fn root_visible_surface_stays_minimal() {
     );
     assert!(
         g_ws.contains("pub use crate::global::advanced;")
-            && (g_ws.contains("pub use crate::global::program::Program;")
-                || g_ws.contains(
-                    "pub use crate::global::{Msg, Program, Role, par, route, send, seq};"
-                ))
+            && g_ws.contains("pub use crate::global::program::{Program, ProgramSource, freeze};")
             && g_ws.contains("pub use crate::global::{Msg, Role, par, route, send, seq};"),
         "hibana::g root must stay on the canonical app primitives"
     );

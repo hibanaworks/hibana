@@ -12,64 +12,42 @@ use core::{
 use super::tables::{LoopDisposition, LoopTable, RouteTable, VmCapsTable};
 use crate::{
     control::cap::mint::CapsMask,
-    control::types::{Lane, RendezvousId},
-    eff,
-    epf::host::HostSlots,
+    control::types::{Lane, RendezvousId, SessionId},
+    endpoint::kernel::FrontierScratchLayout,
+    epf::{Action, PolicyMode, host::HostSlots, vm::Slot, vm::VmCtx},
     global::const_dsl::ScopeId,
-    observe::core::{TapRing, emit},
+    observe::core::{TapEvent, TapRing, emit},
     runtime::config::Clock,
     transport::{Transport, TransportEvent, TransportEventKind, TransportMetrics},
 };
 
-// Drain hints defensively: transport hint queues may be sized to MAX_EFF_NODES.
-const ROUTE_HINT_SLOTS: usize = eff::meta::MAX_EFF_NODES;
+// Hint queues only need to cover the tracked label universe.
+const ROUTE_HINT_SLOTS: usize = u128::BITS as usize;
 
 #[derive(Clone, Copy)]
 struct RouteHintQueue {
-    len: u16,
     present_mask: u128,
-    buf: [u8; ROUTE_HINT_SLOTS],
 }
 
 impl RouteHintQueue {
+    #[cfg(test)]
     const fn new() -> Self {
-        Self {
-            len: 0,
-            present_mask: 0,
-            buf: [0; ROUTE_HINT_SLOTS],
-        }
+        Self { present_mask: 0 }
     }
 
-    #[inline]
-    const fn label_bit(label: u8) -> u128 {
-        if label < u128::BITS as u8 {
-            1u128 << label
-        } else {
-            0
-        }
+    const fn from_mask(present_mask: u128) -> Self {
+        Self { present_mask }
     }
 
     fn push(&mut self, label: u8) -> bool {
-        if label == 0 {
+        if label == 0 || label >= u128::BITS as u8 {
             return false;
         }
-        let label_bit = Self::label_bit(label);
-        if (self.present_mask & label_bit) != 0 {
+        let bit = 1u128 << label;
+        if (self.present_mask & bit) != 0 {
             return false;
         }
-        let len = self.len as usize;
-        let cap = ROUTE_HINT_SLOTS;
-        if len >= cap {
-            let dropped = self.buf[0];
-            self.present_mask &= !Self::label_bit(dropped);
-            self.buf.copy_within(1..cap, 0);
-            self.buf[cap - 1] = label;
-            self.present_mask |= label_bit;
-            return true;
-        }
-        self.buf[len] = label;
-        self.len += 1;
-        self.present_mask |= label_bit;
+        self.present_mask |= bit;
         true
     }
 
@@ -77,19 +55,14 @@ impl RouteHintQueue {
     where
         F: FnMut(u8) -> bool,
     {
-        let len = self.len as usize;
-        let mut idx = 0usize;
-        while idx < len {
-            let label = self.buf[idx];
+        let mut remaining = self.present_mask;
+        while remaining != 0 {
+            let label = remaining.trailing_zeros() as u8;
             if matches(label) {
-                if idx + 1 < len {
-                    self.buf.copy_within((idx + 1)..len, idx);
-                }
-                self.len -= 1;
-                self.present_mask &= !Self::label_bit(label);
+                self.present_mask &= !(1u128 << label);
                 return Some(label);
             }
-            idx += 1;
+            remaining &= remaining - 1;
         }
         None
     }
@@ -99,13 +72,13 @@ impl RouteHintQueue {
     where
         F: FnMut(u8) -> bool,
     {
-        let len = self.len as usize;
-        let mut idx = 0usize;
-        while idx < len {
-            if matches(self.buf[idx]) {
+        let mut remaining = self.present_mask;
+        while remaining != 0 {
+            let label = remaining.trailing_zeros() as u8;
+            if matches(label) {
                 return true;
             }
-            idx += 1;
+            remaining &= remaining - 1;
         }
         false
     }
@@ -116,7 +89,7 @@ impl RouteHintQueue {
     }
 
     fn take_from_label_mask(&mut self, label_mask: u128) -> Option<u8> {
-        self.take_matching(|label| (Self::label_bit(label) & label_mask) != 0)
+        self.take_matching(|label| (label_mask & (1u128 << label)) != 0)
     }
 
     fn drain_from_transport<'a, T: Transport>(&mut self, transport: &'a T, rx: &'a T::Rx<'a>) {
@@ -135,7 +108,6 @@ impl RouteHintQueue {
 
     #[inline]
     fn clear(&mut self) {
-        self.len = 0;
         self.present_mask = 0;
     }
 }
@@ -154,12 +126,19 @@ pub(crate) struct Port<
     transport: &'r T,
     tx: UnsafeCell<T::Tx<'r>>,
     rx: UnsafeCell<T::Rx<'r>>,
-    scratch: *mut [u8],
+    slab: *mut [u8],
+    image_frontier: *const u32,
+    scratch_reserved_bytes: *const u32,
+    endpoint_leases: *const super::core::EndpointLeaseSlot,
+    endpoint_lease_capacity: u8,
     scratch_marker: PhantomData<&'r mut [u8]>,
+    #[cfg(test)]
     host_slots: *const HostSlots<'static>,
+    #[cfg(test)]
     host_slots_marker: PhantomData<&'r HostSlots<'r>>,
     pub lane: Lane,
     role: u8,
+    role_count: u8,
     rv_id: RendezvousId,
     _no_send_sync: PhantomData<*mut ()>,
     tap: *const TapRing<'static>,
@@ -171,17 +150,32 @@ pub(crate) struct Port<
     routes_marker: PhantomData<&'r RouteTable>,
     vm_caps: *const VmCapsTable,
     vm_caps_marker: PhantomData<&'r VmCapsTable>,
-    route_hints: UnsafeCell<RouteHintQueue>,
     _epoch: PhantomData<E>,
 }
 
 impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T, E> {
+    #[inline(always)]
+    const fn align_up(value: usize, align: usize) -> usize {
+        let mask = align.saturating_sub(1);
+        (value + mask) & !mask
+    }
+
+    #[inline(always)]
+    const fn frontier_scratch_align() -> usize {
+        FrontierScratchLayout::new(0).total_align()
+    }
+
     #[inline]
     fn sync_pending_route_hint_lane_masks(&self, before: u128, after: u128) {
         if before != after {
             self.route_table()
                 .update_pending_hint_lane_masks(self.lane, before, after);
         }
+    }
+
+    #[inline]
+    fn route_hints_from_table(&self) -> RouteHintQueue {
+        RouteHintQueue::from_mask(self.route_table().pending_hint_labels_for_lane(self.lane))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -193,9 +187,14 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         loops: &'tap LoopTable,
         routes: &'tap RouteTable,
         host_slots: &'tap HostSlots<'tap>,
-        scratch: *mut [u8],
+        slab: *mut [u8],
+        image_frontier: *const u32,
+        scratch_reserved_bytes: *const u32,
+        endpoint_leases: *const super::core::EndpointLeaseSlot,
+        endpoint_lease_capacity: u8,
         lane: Lane,
         role: u8,
+        role_count: u8,
         rv_id: RendezvousId,
         tx: T::Tx<'r>,
         rx: T::Rx<'r>,
@@ -203,6 +202,8 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     where
         'tap: 'r,
     {
+        #[cfg(not(test))]
+        let _ = host_slots;
         #[cfg(all(not(test), not(feature = "std")))]
         {
             let _ = tap;
@@ -212,12 +213,19 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
             transport,
             tx: UnsafeCell::new(tx),
             rx: UnsafeCell::new(rx),
-            scratch,
+            slab,
+            image_frontier,
+            scratch_reserved_bytes,
+            endpoint_leases,
+            endpoint_lease_capacity,
             scratch_marker: PhantomData,
+            #[cfg(test)]
             host_slots: (host_slots as *const HostSlots<'tap>).cast::<HostSlots<'static>>(),
+            #[cfg(test)]
             host_slots_marker: PhantomData,
             lane,
             role,
+            role_count,
             rv_id,
             _no_send_sync: PhantomData,
             tap: (tap as *const TapRing<'tap>).cast::<TapRing<'static>>(),
@@ -229,9 +237,31 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
             routes_marker: PhantomData,
             vm_caps: vm_caps as *const VmCapsTable,
             vm_caps_marker: PhantomData,
-            route_hints: UnsafeCell::new(RouteHintQueue::new()),
             _epoch: PhantomData,
         }
+    }
+
+    #[inline]
+    fn slab_ptr_and_len(&self) -> (*mut u8, usize) {
+        unsafe {
+            let slab = &mut *self.slab;
+            (slab.as_mut_ptr(), slab.len())
+        }
+    }
+
+    #[inline]
+    fn endpoint_storage_floor(&self) -> usize {
+        let (_, slab_len) = self.slab_ptr_and_len();
+        let mut floor = slab_len;
+        let mut idx = 0usize;
+        while idx < self.endpoint_lease_capacity as usize {
+            let slot = unsafe { &*self.endpoint_leases.add(idx) };
+            if slot.occupied && (slot.offset as usize) < floor {
+                floor = slot.offset as usize;
+            }
+            idx += 1;
+        }
+        floor
     }
 
     pub(crate) fn transport(&self) -> &'r T {
@@ -267,7 +297,8 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
 
     #[inline]
     pub(crate) fn record_route_decision(&self, scope: ScopeId, arm: u8) -> u16 {
-        self.route_table().record(self.lane, self.role, scope, arm)
+        self.route_table()
+            .record_with_role_count(self.lane, self.role_count, self.role, scope, arm)
     }
 
     #[inline]
@@ -277,26 +308,30 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         role: u8,
         cx: &mut Context<'_>,
     ) -> Poll<u8> {
-        self.route_table().poll(self.lane, role, scope, cx)
+        self.route_table()
+            .poll_with_role_count(self.lane, self.role_count, role, scope, cx)
     }
 
     #[inline]
     pub(crate) fn ack_route_decision(&self, scope: ScopeId, role: u8) -> Option<u8> {
-        self.route_table().acknowledge(self.lane, role, scope)
+        self.route_table()
+            .acknowledge_with_role_count(self.lane, self.role_count, role, scope)
     }
 
     #[inline]
     pub(crate) fn peek_route_decision(&self, scope: ScopeId, role: u8) -> Option<u8> {
-        self.route_table().peek(self.lane, role, scope)
+        self.route_table()
+            .peek_with_role_count(self.lane, self.role_count, role, scope)
     }
 
     #[inline]
     pub(crate) fn pending_route_decision_lane_mask(&self, scope: ScopeId, role: u8) -> u16 {
-        self.route_table().pending_lane_mask(role, scope)
+        self.route_table()
+            .pending_lane_mask_with_role_count(self.role_count, role, scope)
     }
 
     #[inline]
-    pub(crate) fn route_change_epoch(&self) -> u32 {
+    pub(crate) fn route_change_epoch(&self) -> u16 {
         self.route_table().change_epoch()
     }
 
@@ -306,30 +341,30 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     where
         F: FnMut(u8) -> bool,
     {
-        let hints = unsafe { &mut *self.route_hints.get() };
+        let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
         let rx = unsafe { &*self.rx.get() };
-        hints.drain_from_transport(self.transport, rx);
+        hints.drain_from_transport(self.transport(), rx);
         self.sync_pending_route_hint_lane_masks(before, hints.present_mask);
         hints.has_matching(matches)
     }
 
     #[inline]
     pub(crate) fn has_route_hint_for_label_mask(&self, label_mask: u128) -> bool {
-        let hints = unsafe { &mut *self.route_hints.get() };
+        let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
         let rx = unsafe { &*self.rx.get() };
-        hints.drain_from_transport(self.transport, rx);
+        hints.drain_from_transport(self.transport(), rx);
         self.sync_pending_route_hint_lane_masks(before, hints.present_mask);
         hints.has_any_label_in_mask(label_mask)
     }
 
     #[inline]
     pub(crate) fn pending_route_hint_lane_mask_for_label_mask(&self, label_mask: u128) -> u16 {
-        let hints = unsafe { &mut *self.route_hints.get() };
+        let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
         let rx = unsafe { &*self.rx.get() };
-        hints.drain_from_transport(self.transport, rx);
+        hints.drain_from_transport(self.transport(), rx);
         self.sync_pending_route_hint_lane_masks(before, hints.present_mask);
         self.route_table()
             .pending_hint_lane_mask_for_labels(label_mask)
@@ -337,10 +372,10 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
 
     #[inline]
     pub(crate) fn take_route_hint_for_label_mask(&self, label_mask: u128) -> Option<u8> {
-        let hints = unsafe { &mut *self.route_hints.get() };
+        let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
         let rx = unsafe { &*self.rx.get() };
-        hints.drain_from_transport(self.transport, rx);
+        hints.drain_from_transport(self.transport(), rx);
         let taken = hints.take_from_label_mask(label_mask);
         self.sync_pending_route_hint_lane_masks(before, hints.present_mask);
         taken
@@ -348,7 +383,7 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
 
     #[inline]
     pub(crate) fn clear_route_hints(&self) {
-        let hints = unsafe { &mut *self.route_hints.get() };
+        let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
         hints.clear();
         self.sync_pending_route_hint_lane_masks(before, hints.present_mask);
@@ -366,12 +401,134 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
 
     #[inline]
     pub(crate) fn scratch_ptr(&self) -> *mut [u8] {
-        self.scratch
+        let (ptr, _) = self.slab_ptr_and_len();
+        let base = unsafe { *self.image_frontier } as usize;
+        let reserved = unsafe { *self.scratch_reserved_bytes } as usize;
+        let start = base.saturating_add(reserved);
+        let end = self.endpoint_storage_floor();
+        let len = end.saturating_sub(start);
+        unsafe { core::ptr::slice_from_raw_parts_mut(ptr.add(start), len) }
     }
 
     #[inline]
+    pub(crate) fn frontier_scratch_ptr(&self) -> *mut [u8] {
+        let (ptr, _) = self.slab_ptr_and_len();
+        let start = unsafe { *self.image_frontier } as usize;
+        let reserved = unsafe { *self.scratch_reserved_bytes } as usize;
+        let lease_floor = self.endpoint_storage_floor();
+        let end = if reserved == 0 {
+            lease_floor
+        } else {
+            core::cmp::min(start.saturating_add(reserved), lease_floor)
+        };
+        let scratch_start =
+            core::cmp::min(Self::align_up(start, Self::frontier_scratch_align()), end);
+        let len = end.saturating_sub(scratch_start);
+        unsafe { core::ptr::slice_from_raw_parts_mut(ptr.add(scratch_start), len) }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn scratch_ledger_parts(
+        &self,
+    ) -> (
+        *mut [u8],
+        *const u32,
+        *const u32,
+        *const super::core::EndpointLeaseSlot,
+        u8,
+    ) {
+        (
+            self.slab,
+            self.image_frontier,
+            self.scratch_reserved_bytes,
+            self.endpoint_leases,
+            self.endpoint_lease_capacity,
+        )
+    }
+
+    #[inline]
+    #[cfg(test)]
     pub(crate) fn host_slots(&self) -> &HostSlots<'r> {
         unsafe { &*self.host_slots.cast::<HostSlots<'r>>() }
+    }
+
+    #[inline]
+    pub(crate) fn policy_digest(&self, slot: Slot) -> u32 {
+        #[cfg(test)]
+        {
+            self.host_slots().active_digest(slot)
+        }
+        #[cfg(not(test))]
+        {
+            let _ = slot;
+            0
+        }
+    }
+
+    #[inline]
+    pub(crate) fn policy_mode(&self, slot: Slot) -> PolicyMode {
+        #[cfg(test)]
+        {
+            self.host_slots().policy_mode(slot)
+        }
+        #[cfg(not(test))]
+        {
+            let _ = slot;
+            PolicyMode::Enforce
+        }
+    }
+
+    #[inline]
+    pub(crate) fn last_policy_fuel_used(&self, slot: Slot) -> u16 {
+        #[cfg(test)]
+        {
+            self.host_slots().last_fuel_used(slot)
+        }
+        #[cfg(not(test))]
+        {
+            let _ = slot;
+            0
+        }
+    }
+
+    #[inline]
+    pub(crate) fn run_policy<F>(
+        &self,
+        slot: Slot,
+        event: &TapEvent,
+        caps: CapsMask,
+        session: Option<SessionId>,
+        lane: Option<Lane>,
+        configure: F,
+    ) -> Action
+    where
+        F: FnOnce(&mut VmCtx<'_>),
+    {
+        #[cfg(test)]
+        {
+            return crate::epf::run_with(
+                self.host_slots(),
+                slot,
+                event,
+                caps,
+                session,
+                lane,
+                configure,
+            );
+        }
+        #[cfg(not(test))]
+        {
+            let mut ctx = VmCtx::new(slot, event, caps);
+            if let Some(session) = session {
+                ctx.set_session(session);
+            }
+            if let Some(lane) = lane {
+                ctx.set_lane(lane);
+            }
+            configure(&mut ctx);
+            Action::Proceed
+        }
     }
 
     #[inline]

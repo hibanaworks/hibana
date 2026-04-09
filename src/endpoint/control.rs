@@ -30,7 +30,6 @@ where
     E: crate::control::cap::mint::EpochTable,
 {
     cluster: Option<NonNull<crate::control::cluster::core::SessionCluster<'rv, T, U, C, MAX_RV>>>,
-    liveness_policy: crate::runtime::config::LivenessPolicy,
     _marker: core::marker::PhantomData<E>,
 }
 
@@ -88,12 +87,11 @@ where
     pub(crate) fn new(
         _lane: Lane,
         cluster: Option<&'rv crate::control::cluster::core::SessionCluster<'rv, T, U, C, MAX_RV>>,
-        liveness_policy: crate::runtime::config::LivenessPolicy,
+        _liveness_policy: crate::runtime::config::LivenessPolicy,
         _resolver: Option<()>,
     ) -> Self {
         Self {
             cluster: cluster.map(NonNull::from),
-            liveness_policy,
             _marker: core::marker::PhantomData,
         }
     }
@@ -103,10 +101,5 @@ where
         &self,
     ) -> Option<&'rv crate::control::cluster::core::SessionCluster<'rv, T, U, C, MAX_RV>> {
         self.cluster.map(|ptr| unsafe { ptr.as_ref() })
-    }
-
-    #[inline]
-    pub(crate) fn liveness_policy(&self) -> crate::runtime::config::LivenessPolicy {
-        self.liveness_policy
     }
 }

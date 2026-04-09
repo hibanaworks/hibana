@@ -6,11 +6,7 @@
 //! keeps just enough structure to support endpoint scaffolding while leaving
 //! clear extension points.
 
-use core::{
-    marker::PhantomData,
-    ops::Range,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use core::{cell::Cell, marker::PhantomData, ops::Range};
 
 use super::{
     association::AssocTable,
@@ -22,11 +18,10 @@ use super::{
     port::Port,
     slots::SlotArena,
     splice::{DistributedSpliceTable, PendingSplice, SpliceStateTable},
-    tables::{
-        AckTable, CheckpointTable, FenceTable, GenTable, LoopTable, PolicyTable, RouteTable,
-        VmCapsTable,
-    },
+    tables::{CheckpointTable, GenTable, LoopTable, PolicyTable, RouteTable, VmCapsTable},
 };
+#[cfg(test)]
+use crate::runtime::consts::LANES_MAX;
 use crate::{
     control::{
         automaton::txn::{NoopTap, Txn},
@@ -45,7 +40,9 @@ use crate::{
     eff::EffIndex,
     endpoint::affine::LaneGuard,
     epf::host::HostSlots,
-    global::const_dsl::{ControlMarker, ControlScopeKind, PolicyMode},
+    global::compiled::{CompiledProgramImage, CompiledRoleImage, LoweringSummary, ProgramStamp},
+    global::const_dsl::{ControlScopeKind, PolicyMode},
+    global::typestate::RoleCompileScratch,
     observe::core::{TapEvent, TapRing, emit},
     observe::{
         events::{DelegBegin, DelegSplice, LaneRelease, RawEvent, RollbackOk},
@@ -60,6 +57,136 @@ const ENDPOINT_TAG: u8 = 0;
 use super::splice::LocalSpliceInvariant;
 use crate::control::automaton::distributed::{SpliceAck, SpliceIntent};
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ProgramImageSlot {
+    stamp: ProgramStamp,
+    offset: u32,
+    len: u32,
+    pins: u16,
+    occupied: bool,
+}
+
+impl ProgramImageSlot {
+    const EMPTY: Self = Self {
+        stamp: ProgramStamp::EMPTY,
+        offset: 0,
+        len: 0,
+        pins: 0,
+        occupied: false,
+    };
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RoleImageSlot {
+    stamp: ProgramStamp,
+    role: u8,
+    offset: u32,
+    len: u32,
+    pins: u16,
+    occupied: bool,
+}
+
+impl RoleImageSlot {
+    const EMPTY: Self = Self {
+        stamp: ProgramStamp::EMPTY,
+        role: u8::MAX,
+        offset: 0,
+        len: 0,
+        pins: 0,
+        occupied: false,
+    };
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct EndpointResidentBudget {
+    pub(crate) route_frame_slots: u16,
+    pub(crate) loop_slots: u16,
+    pub(crate) cap_entries: u16,
+    pub(crate) route_lane_slots: u8,
+}
+
+impl EndpointResidentBudget {
+    pub(crate) const ZERO: Self = Self {
+        route_frame_slots: 0,
+        loop_slots: 0,
+        cap_entries: 0,
+        route_lane_slots: 0,
+    };
+
+    #[inline]
+    pub(crate) const fn with_route_storage(
+        route_frame_slots: usize,
+        route_lane_slots: usize,
+        loop_slots: usize,
+        cap_entries: usize,
+    ) -> Self {
+        Self {
+            route_frame_slots: if route_frame_slots > u16::MAX as usize {
+                u16::MAX
+            } else {
+                route_frame_slots as u16
+            },
+            loop_slots: if loop_slots > u16::MAX as usize {
+                u16::MAX
+            } else {
+                loop_slots as u16
+            },
+            cap_entries: if cap_entries > u16::MAX as usize {
+                u16::MAX
+            } else {
+                cap_entries as u16
+            },
+            route_lane_slots: if route_lane_slots > u8::MAX as usize {
+                u8::MAX
+            } else {
+                route_lane_slots as u8
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct EndpointLeaseSlot {
+    pub(crate) public_slot: u8,
+    pub(crate) generation: u32,
+    pub(crate) offset: u32,
+    pub(crate) len: u32,
+    pub(crate) resident_budget: EndpointResidentBudget,
+    pub(crate) program_image_slot: u8,
+    pub(crate) role_image_slot: u8,
+    pub(crate) occupied: bool,
+}
+
+impl EndpointLeaseSlot {
+    const EMPTY: Self = Self {
+        public_slot: u8::MAX,
+        generation: 0,
+        offset: 0,
+        len: 0,
+        resident_budget: EndpointResidentBudget::ZERO,
+        program_image_slot: u8::MAX,
+        role_image_slot: u8::MAX,
+        occupied: false,
+    };
+}
+
+const FREE_REGION_CAPACITY: usize = 16;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FreeRegion {
+    offset: u32,
+    len: u32,
+    occupied: bool,
+}
+
+impl FreeRegion {
+    const EMPTY: Self = Self {
+        offset: 0,
+        len: 0,
+        occupied: false,
+    };
+}
 
 pub(crate) struct Rendezvous<
     'rv,
@@ -76,17 +203,24 @@ pub(crate) struct Rendezvous<
     tap: TapRing<'cfg>,
     slab: *mut [u8],
     slab_marker: PhantomData<&'cfg mut [u8]>,
+    image_frontier: u32,
+    scratch_reserved_bytes: u32,
+    program_images: *mut ProgramImageSlot,
+    role_images: *mut RoleImageSlot,
+    endpoint_leases: *mut EndpointLeaseSlot,
+    image_slot_capacity: u8,
+    endpoint_lease_capacity: u8,
+    runtime_frontier: u32,
+    free_regions: [FreeRegion; FREE_REGION_CAPACITY],
     lane_range: Range<u32>,
     universe_marker: PhantomData<U>,
     transport: T,
     r#gen: GenTable,
-    fences: FenceTable,
-    acks: AckTable,
     assoc: AssocTable,
     checkpoints: CheckpointTable,
     splice: SpliceStateTable,
     distributed_splice: DistributedSpliceTable,
-    cap_nonce: AtomicU64,
+    cap_nonce: Cell<u32>,
     caps: CapTable,
     loops: LoopTable,
     routes: RouteTable,
@@ -96,16 +230,16 @@ pub(crate) struct Rendezvous<
     host_slots: HostSlots<'cfg>,
     clock: C,
     liveness_policy: crate::runtime::config::LivenessPolicy,
-    /// Counter for generating unique RV IDs
-    _next_rv_id: core::cell::Cell<u32>,
     _epoch_marker: PhantomData<E>,
 }
 
 /// Affine bundle exposing slot storage access.
+#[cfg(test)]
 pub(crate) struct SlotBundle<'rv> {
     arena: &'rv mut SlotArena,
 }
 
+#[cfg(test)]
 impl<'rv> SlotBundle<'rv> {
     #[inline]
     fn new(arena: &'rv mut SlotArena) -> Self {
@@ -181,6 +315,1513 @@ impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap
 where
     'cfg: 'rv,
 {
+    #[inline(always)]
+    const fn align_up(value: usize, align: usize) -> usize {
+        let mask = align.saturating_sub(1);
+        (value + mask) & !mask
+    }
+
+    #[inline(always)]
+    const fn frontier_scratch_guard_bytes(
+        layout: crate::endpoint::kernel::FrontierScratchLayout,
+    ) -> usize {
+        layout
+            .total_bytes()
+            .saturating_add(layout.total_align().saturating_sub(1))
+    }
+
+    #[inline(always)]
+    const fn align_down(value: usize, align: usize) -> usize {
+        let mask = align.saturating_sub(1);
+        value & !mask
+    }
+
+    #[inline(always)]
+    pub(crate) fn program_image_guard_bytes(&self) -> usize {
+        let (slab_ptr, _) = self.slab_ptr_and_len();
+        let base = slab_ptr as usize;
+        let start = Self::align_up(
+            base + self.image_frontier as usize,
+            CompiledProgramImage::persistent_align(),
+        )
+        .saturating_sub(base);
+        start + CompiledProgramImage::max_persistent_bytes() - self.image_frontier as usize
+    }
+
+    #[inline(always)]
+    pub(crate) fn role_image_guard_bytes(&self, bytes: usize) -> usize {
+        let (slab_ptr, _) = self.slab_ptr_and_len();
+        let base = slab_ptr as usize;
+        let start = Self::align_up(
+            base + self.image_frontier as usize,
+            CompiledRoleImage::persistent_align(),
+        )
+        .saturating_sub(base);
+        start + bytes - self.image_frontier as usize
+    }
+
+    #[inline(always)]
+    pub(crate) fn program_and_role_image_guard_bytes(&self, role_image_bytes: usize) -> usize {
+        let (slab_ptr, _) = self.slab_ptr_and_len();
+        let base = slab_ptr as usize;
+        let program_end = Self::align_up(
+            base + self.image_frontier as usize,
+            CompiledProgramImage::persistent_align(),
+        ) + CompiledProgramImage::max_persistent_bytes();
+        let role_end =
+            Self::align_up(program_end, CompiledRoleImage::persistent_align()) + role_image_bytes;
+        role_end - self.image_frontier as usize - base
+    }
+
+    #[inline]
+    pub(crate) fn slab_ptr_and_len(&self) -> (*mut u8, usize) {
+        unsafe {
+            let slab = &mut *self.slab;
+            (slab.as_mut_ptr(), slab.len())
+        }
+    }
+
+    #[inline]
+    fn endpoint_storage_floor(&self) -> usize {
+        let (_, slab_len) = self.slab_ptr_and_len();
+        let mut floor = slab_len;
+        let mut idx = 0usize;
+        while idx < self.endpoint_lease_capacity as usize {
+            let slot = unsafe { &*self.endpoint_leases.add(idx) };
+            if slot.occupied && (slot.offset as usize) < floor {
+                floor = slot.offset as usize;
+            }
+            idx += 1;
+        }
+        floor
+    }
+
+    #[inline]
+    pub(crate) fn scratch_storage_ptr_and_len(&self) -> (*mut u8, usize) {
+        let (ptr, _) = self.slab_ptr_and_len();
+        let start = self.image_frontier as usize;
+        let end = self.endpoint_storage_floor();
+        let len = end.saturating_sub(start);
+        unsafe { (ptr.add(start), len) }
+    }
+
+    #[inline]
+    fn endpoint_lease_floor(&self) -> usize {
+        self.image_frontier as usize + self.scratch_reserved_bytes as usize
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn update_runtime_frontier(&mut self) {
+        let frontier = self
+            .image_frontier
+            .saturating_add(self.scratch_reserved_bytes);
+        if frontier > self.runtime_frontier {
+            self.runtime_frontier = frontier;
+        }
+    }
+
+    #[inline]
+    fn set_image_frontier(&mut self, frontier: u32) {
+        self.image_frontier = frontier;
+        #[cfg(test)]
+        self.update_runtime_frontier();
+    }
+
+    #[inline]
+    fn set_scratch_reserved_bytes(&mut self, reserved: u32) {
+        self.scratch_reserved_bytes = reserved;
+        #[cfg(test)]
+        self.update_runtime_frontier();
+    }
+
+    #[inline]
+    fn reserve_scratch_reserved_bytes(&mut self, reserved: u32) {
+        if reserved > self.scratch_reserved_bytes {
+            self.scratch_reserved_bytes = reserved;
+            #[cfg(test)]
+            self.update_runtime_frontier();
+        }
+    }
+
+    #[cfg(all(test, feature = "std"))]
+    #[inline]
+    pub(crate) fn runtime_sidecar_high_water_bytes(&self) -> usize {
+        self.runtime_frontier as usize
+    }
+
+    #[cfg(all(test, feature = "std"))]
+    #[inline]
+    pub(crate) fn live_endpoint_storage_bytes(&self) -> usize {
+        let mut bytes = 0usize;
+        let mut idx = 0usize;
+        while idx < self.endpoint_lease_capacity as usize {
+            let slot = unsafe { &*self.endpoint_leases.add(idx) };
+            if slot.occupied {
+                bytes = bytes.saturating_add(slot.len as usize);
+            }
+            idx += 1;
+        }
+        bytes
+    }
+
+    #[inline]
+    fn free_region_empty_slots(&self) -> usize {
+        let mut empty = 0usize;
+        let mut idx = 0usize;
+        while idx < FREE_REGION_CAPACITY {
+            if !self.free_regions[idx].occupied {
+                empty += 1;
+            }
+            idx += 1;
+        }
+        empty
+    }
+
+    #[inline]
+    fn first_empty_free_region_slot(&self) -> Option<usize> {
+        let mut idx = 0usize;
+        while idx < FREE_REGION_CAPACITY {
+            if !self.free_regions[idx].occupied {
+                return Some(idx);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    #[inline]
+    fn clear_free_region(&mut self, idx: usize) {
+        if idx < FREE_REGION_CAPACITY {
+            self.free_regions[idx] = FreeRegion::EMPTY;
+        }
+    }
+
+    fn release_persistent_region(&mut self, offset: u32, len: u32) {
+        if len == 0 {
+            return;
+        }
+        let mut start = offset;
+        let mut end = offset.saturating_add(len);
+        let mut idx = 0usize;
+        while idx < FREE_REGION_CAPACITY {
+            let region = self.free_regions[idx];
+            if !region.occupied {
+                idx += 1;
+                continue;
+            }
+            let region_start = region.offset;
+            let region_end = region.offset.saturating_add(region.len);
+            if region_end < start || region_start > end {
+                idx += 1;
+                continue;
+            }
+            start = core::cmp::min(start, region_start);
+            end = core::cmp::max(end, region_end);
+            self.clear_free_region(idx);
+            idx = 0;
+        }
+
+        if end == self.image_frontier {
+            self.set_image_frontier(start);
+            loop {
+                let mut trimmed = false;
+                let mut free_idx = 0usize;
+                while free_idx < FREE_REGION_CAPACITY {
+                    let region = self.free_regions[free_idx];
+                    if region.occupied
+                        && region.offset.saturating_add(region.len) == self.image_frontier
+                    {
+                        self.set_image_frontier(region.offset);
+                        self.clear_free_region(free_idx);
+                        trimmed = true;
+                        break;
+                    }
+                    free_idx += 1;
+                }
+                if !trimmed {
+                    break;
+                }
+            }
+            return;
+        }
+
+        if let Some(idx) = self.first_empty_free_region_slot() {
+            self.free_regions[idx] = FreeRegion {
+                offset: start,
+                len: end.saturating_sub(start),
+                occupied: true,
+            };
+        }
+    }
+
+    unsafe fn allocate_from_free_regions(
+        &mut self,
+        bytes: usize,
+        align: usize,
+    ) -> Option<(*mut u8, u32)> {
+        let (slab_ptr, _) = self.slab_ptr_and_len();
+        let base = slab_ptr as usize;
+        let mut idx = 0usize;
+        while idx < FREE_REGION_CAPACITY {
+            let region = self.free_regions[idx];
+            if !region.occupied {
+                idx += 1;
+                continue;
+            }
+            let region_start = region.offset as usize;
+            let region_end = region.offset as usize + region.len as usize;
+            let alloc_start = Self::align_up(base + region_start, align).checked_sub(base)?;
+            let alloc_end = alloc_start.checked_add(bytes)?;
+            if alloc_end > region_end {
+                idx += 1;
+                continue;
+            }
+            let prefix_len = alloc_start.saturating_sub(region_start);
+            let suffix_len = region_end.saturating_sub(alloc_end);
+            let fragments = usize::from(prefix_len != 0) + usize::from(suffix_len != 0);
+            if self.free_region_empty_slots() + 1 < fragments {
+                idx += 1;
+                continue;
+            }
+            self.clear_free_region(idx);
+            if prefix_len != 0 {
+                self.release_persistent_region(region.offset, prefix_len as u32);
+            }
+            if suffix_len != 0 {
+                self.release_persistent_region(alloc_end as u32, suffix_len as u32);
+            }
+            return Some((unsafe { slab_ptr.add(alloc_start) }, alloc_start as u32));
+        }
+        None
+    }
+
+    #[inline]
+    unsafe fn allocate_persistent_sidecar_bytes(
+        &mut self,
+        bytes: usize,
+        align: usize,
+    ) -> Option<(*mut u8, u32)> {
+        if let Some(region) = unsafe { self.allocate_from_free_regions(bytes, align) } {
+            return Some(region);
+        }
+        let (slab_ptr, _) = self.slab_ptr_and_len();
+        let base = slab_ptr as usize;
+        let start = Self::align_up(base + self.image_frontier as usize, align).checked_sub(base)?;
+        let end = start.checked_add(bytes)?;
+        if end > self.endpoint_storage_floor() {
+            return None;
+        }
+        self.set_image_frontier(end as u32);
+        Some((unsafe { slab_ptr.add(start) }, start as u32))
+    }
+
+    #[inline]
+    unsafe fn allocate_persistent_image_bytes(
+        &mut self,
+        bytes: usize,
+        align: usize,
+    ) -> Option<(*mut u8, u32)> {
+        unsafe { self.allocate_persistent_sidecar_bytes(bytes, align) }
+    }
+
+    #[inline]
+    pub(crate) fn allocate_external_persistent_sidecar_bytes(
+        &mut self,
+        bytes: usize,
+        align: usize,
+    ) -> Option<(*mut u8, usize)> {
+        let prior_frontier = self.image_frontier;
+        let (ptr, offset) = unsafe { self.allocate_persistent_sidecar_bytes(bytes, align) }?;
+        let reclaim_delta = if offset > prior_frontier {
+            offset.saturating_sub(prior_frontier) as usize
+        } else {
+            0
+        };
+        Some((ptr, reclaim_delta))
+    }
+
+    #[inline]
+    fn reclaim_offset_for_payload(&self, ptr: *mut u8, reclaim_delta: usize) -> u32 {
+        let (slab_ptr, _) = self.slab_ptr_and_len();
+        let base = slab_ptr.addr();
+        let payload_start = ptr.addr().saturating_sub(base);
+        let reclaim_start = payload_start.checked_sub(reclaim_delta).unwrap();
+        u32::try_from(reclaim_start).unwrap()
+    }
+
+    #[inline]
+    fn free_bound_persistent_region(&mut self, reclaim_offset: u32, ptr: *mut u8, bytes: usize) {
+        if ptr.is_null() || bytes == 0 {
+            return;
+        }
+        let (slab_ptr, _) = self.slab_ptr_and_len();
+        let base = slab_ptr.addr();
+        let payload_start = ptr.addr().saturating_sub(base);
+        let reclaim_start = reclaim_offset as usize;
+        let payload_end = payload_start.checked_add(bytes).unwrap();
+        let release_len = payload_end.checked_sub(reclaim_start).unwrap();
+        let release_len = u32::try_from(release_len).unwrap();
+        self.release_persistent_region(reclaim_offset, release_len);
+    }
+
+    #[inline]
+    fn first_free_program_image_slot(&self) -> Option<usize> {
+        let mut idx = 0usize;
+        while idx < self.image_slot_capacity as usize {
+            let slot = unsafe { &*self.program_images.add(idx) };
+            if !slot.occupied {
+                return Some(idx);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    #[inline]
+    fn first_reusable_program_image_slot(&self, min_len: usize) -> Option<usize> {
+        let mut idx = 0usize;
+        while idx < self.image_slot_capacity as usize {
+            let slot = unsafe { &*self.program_images.add(idx) };
+            if slot.occupied && slot.pins == 0 && slot.len as usize >= min_len {
+                return Some(idx);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    #[inline]
+    fn first_unpinned_program_image_slot(&self) -> Option<usize> {
+        let mut idx = 0usize;
+        while idx < self.image_slot_capacity as usize {
+            let slot = unsafe { &*self.program_images.add(idx) };
+            if slot.occupied && slot.pins == 0 {
+                return Some(idx);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    #[inline]
+    fn program_image_slot_index(&self, stamp: ProgramStamp) -> Option<usize> {
+        let mut idx = 0usize;
+        while idx < self.image_slot_capacity as usize {
+            let slot = unsafe { &*self.program_images.add(idx) };
+            if slot.occupied && slot.stamp == stamp {
+                return Some(idx);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    #[inline]
+    unsafe fn program_image_from_slot(
+        &self,
+        slot: &ProgramImageSlot,
+    ) -> *const CompiledProgramImage {
+        let (slab_ptr, _) = self.slab_ptr_and_len();
+        unsafe {
+            slab_ptr
+                .add(slot.offset as usize)
+                .cast::<CompiledProgramImage>()
+        }
+    }
+
+    #[inline]
+    pub(crate) fn free_external_persistent_sidecar_bytes(
+        &mut self,
+        ptr: *mut u8,
+        bytes: usize,
+        reclaim_delta: usize,
+    ) {
+        if ptr.is_null() || bytes == 0 {
+            return;
+        }
+        let reclaim_offset = self.reclaim_offset_for_payload(ptr, reclaim_delta);
+        self.free_bound_persistent_region(reclaim_offset, ptr, bytes);
+    }
+
+    #[inline]
+    fn pin_program_image(&mut self, stamp: ProgramStamp) -> Option<u8> {
+        let idx = self.program_image_slot_index(stamp)?;
+        let slot = unsafe { &mut *self.program_images.add(idx) };
+        slot.pins = slot.pins.saturating_add(1);
+        Some(idx as u8)
+    }
+
+    #[inline]
+    fn unpin_program_image_slot(&mut self, idx: usize) {
+        if idx >= self.image_slot_capacity as usize {
+            return;
+        }
+        let slot = unsafe { &mut *self.program_images.add(idx) };
+        if slot.occupied && slot.pins != 0 {
+            slot.pins -= 1;
+        }
+    }
+
+    #[inline]
+    fn resident_route_frame_slots_floor(&self) -> usize {
+        let mut required = 0usize;
+        let mut idx = 0usize;
+        while idx < self.endpoint_lease_capacity as usize {
+            let slot = unsafe { &*self.endpoint_leases.add(idx) };
+            if slot.occupied {
+                required =
+                    core::cmp::max(required, slot.resident_budget.route_frame_slots as usize);
+            }
+            idx += 1;
+        }
+        required
+    }
+
+    #[inline]
+    fn resident_route_lane_slots_floor(&self) -> usize {
+        let mut required = 0usize;
+        let mut idx = 0usize;
+        while idx < self.endpoint_lease_capacity as usize {
+            let slot = unsafe { &*self.endpoint_leases.add(idx) };
+            if slot.occupied {
+                required = core::cmp::max(required, slot.resident_budget.route_lane_slots as usize);
+            }
+            idx += 1;
+        }
+        required
+    }
+
+    fn resident_loop_slots_floor(&self) -> usize {
+        let mut required = 0usize;
+        let mut idx = 0usize;
+        while idx < self.endpoint_lease_capacity as usize {
+            let slot = unsafe { &*self.endpoint_leases.add(idx) };
+            if slot.occupied {
+                required = core::cmp::max(required, slot.resident_budget.loop_slots as usize);
+            }
+            idx += 1;
+        }
+        required
+    }
+
+    #[inline]
+    fn resident_cap_entries_floor(&self) -> usize {
+        let mut required = self.caps.live_count();
+        let mut idx = 0usize;
+        while idx < self.endpoint_lease_capacity as usize {
+            let slot = unsafe { &*self.endpoint_leases.add(idx) };
+            if slot.occupied {
+                required = required.saturating_add(slot.resident_budget.cap_entries as usize);
+            }
+            idx += 1;
+        }
+        required
+    }
+
+    fn recompute_scratch_reserved_bytes(&mut self) {
+        let (slab_ptr, _) = self.slab_ptr_and_len();
+        let mut reserved = 0u32;
+        let mut idx = 0usize;
+        while idx < self.image_slot_capacity as usize {
+            let slot = unsafe { &*self.role_images.add(idx) };
+            if slot.occupied {
+                let role_ptr = unsafe {
+                    slab_ptr
+                        .add(slot.offset as usize)
+                        .cast::<CompiledRoleImage>()
+                };
+                let bytes = Self::frontier_scratch_guard_bytes(unsafe {
+                    (*role_ptr).frontier_scratch_layout()
+                }) as u32;
+                if bytes > reserved {
+                    reserved = bytes;
+                }
+            }
+            idx += 1;
+        }
+        self.set_scratch_reserved_bytes(reserved);
+    }
+
+    fn ensure_route_table_capacity(
+        &mut self,
+        required_frame_slots: usize,
+        required_lane_slots: usize,
+    ) -> Option<()> {
+        if required_frame_slots == 0
+            || (self.routes.route_slots() >= required_frame_slots
+                && self.routes.lane_slots() >= required_lane_slots)
+        {
+            return Some(());
+        }
+        let prior_frontier = self.image_frontier;
+        let (storage, storage_offset) = unsafe {
+            self.allocate_persistent_sidecar_bytes(
+                RouteTable::storage_bytes(required_frame_slots, required_lane_slots),
+                RouteTable::storage_align(),
+            )
+        }?;
+        let reclaim_delta = storage_offset.saturating_sub(prior_frontier) as usize;
+        let old_ptr = self.routes.storage_ptr();
+        let old_bytes = self.routes.storage_bytes_current();
+        let old_reclaim_offset =
+            self.reclaim_offset_for_payload(old_ptr, self.routes.storage_reclaim_delta());
+        if self.routes.route_slots() == 0 {
+            unsafe {
+                self.routes.bind_from_storage_with_layout(
+                    storage,
+                    required_frame_slots,
+                    required_lane_slots,
+                    reclaim_delta,
+                );
+            }
+        } else {
+            unsafe {
+                self.routes.migrate_from_storage(
+                    storage,
+                    required_frame_slots,
+                    required_lane_slots,
+                );
+                self.routes.rebind_from_storage(
+                    storage,
+                    required_frame_slots,
+                    required_lane_slots,
+                    reclaim_delta,
+                );
+            }
+            self.free_bound_persistent_region(old_reclaim_offset, old_ptr, old_bytes);
+        }
+        Some(())
+    }
+
+    fn ensure_loop_table_capacity(&mut self, required_slots: usize) -> Option<()> {
+        if required_slots == 0 || self.loops.loop_slots() >= required_slots {
+            return Some(());
+        }
+        let prior_frontier = self.image_frontier;
+        let (storage, storage_offset) = unsafe {
+            self.allocate_persistent_sidecar_bytes(
+                LoopTable::storage_bytes(required_slots),
+                LoopTable::storage_align(),
+            )
+        }?;
+        let reclaim_delta = storage_offset.saturating_sub(prior_frontier) as usize;
+        let old_ptr = self.loops.storage_ptr();
+        let old_bytes = self.loops.storage_bytes_current();
+        let old_reclaim_offset =
+            self.reclaim_offset_for_payload(old_ptr, self.loops.storage_reclaim_delta());
+        if self.loops.loop_slots() == 0 {
+            unsafe {
+                self.loops.bind_from_storage(storage, required_slots, reclaim_delta);
+            }
+        } else {
+            unsafe {
+                self.loops.migrate_from_storage(storage, required_slots);
+                self.loops
+                    .rebind_from_storage(storage, required_slots, reclaim_delta);
+            }
+            self.free_bound_persistent_region(old_reclaim_offset, old_ptr, old_bytes);
+        }
+        Some(())
+    }
+
+    fn ensure_cap_table_capacity(&mut self, required_entries: usize) -> Option<()> {
+        if required_entries == 0 || self.caps.capacity() >= required_entries {
+            return Some(());
+        }
+        let prior_frontier = self.image_frontier;
+        let (storage, storage_offset) = unsafe {
+            self.allocate_persistent_sidecar_bytes(
+                CapTable::storage_bytes(required_entries),
+                CapTable::storage_align(),
+            )
+        }?;
+        let reclaim_delta = storage_offset.saturating_sub(prior_frontier) as usize;
+        let old_ptr = self.caps.storage_ptr();
+        let old_bytes = self.caps.storage_bytes_current();
+        let old_reclaim_offset =
+            self.reclaim_offset_for_payload(old_ptr, self.caps.storage_reclaim_delta());
+        if self.caps.capacity() == 0 {
+            unsafe {
+                self.caps
+                    .bind_from_storage(storage, required_entries, reclaim_delta);
+            }
+        } else {
+            let migrated = unsafe { self.caps.migrate_from_storage(storage, required_entries) };
+            if !migrated {
+                self.free_bound_persistent_region(
+                    storage_offset.saturating_sub(reclaim_delta as u32),
+                    storage,
+                    CapTable::storage_bytes(required_entries),
+                );
+                return None;
+            }
+            unsafe {
+                self.caps
+                    .rebind_from_storage(storage, required_entries, reclaim_delta);
+            }
+            self.free_bound_persistent_region(old_reclaim_offset, old_ptr, old_bytes);
+        }
+        Some(())
+    }
+
+    fn ensure_splice_table_storage(&mut self) -> Option<()> {
+        if self.splice.is_bound() {
+            return Some(());
+        }
+        let (storage, _) = unsafe {
+            self.allocate_persistent_sidecar_bytes(
+                SpliceStateTable::storage_bytes(),
+                SpliceStateTable::storage_align(),
+            )
+        }?;
+        unsafe {
+            self.splice.bind_from_storage(storage);
+        }
+        Some(())
+    }
+
+    fn ensure_distributed_splice_storage(&mut self) -> Option<()> {
+        if self.distributed_splice.is_bound() {
+            return Some(());
+        }
+        let (storage, _) = unsafe {
+            self.allocate_persistent_sidecar_bytes(
+                DistributedSpliceTable::storage_bytes(),
+                DistributedSpliceTable::storage_align(),
+            )
+        }?;
+        unsafe {
+            self.distributed_splice.bind_from_storage(storage);
+        }
+        Some(())
+    }
+
+    pub(crate) fn ensure_splice_control_storage(&mut self) -> Option<()> {
+        self.ensure_splice_table_storage()?;
+        self.ensure_distributed_splice_storage()?;
+        Some(())
+    }
+
+    pub(crate) fn prepare_splice_control_scope(&mut self, lane: Lane) -> Option<()> {
+        self.ensure_splice_control_storage()?;
+        self.initialise_control_scope(lane, ControlScopeKind::Splice);
+        Some(())
+    }
+
+    fn ensure_policy_table_storage(&mut self) -> Option<()> {
+        if self.policies.is_bound() {
+            return Some(());
+        }
+        let (storage, _) = unsafe {
+            self.allocate_persistent_sidecar_bytes(
+                PolicyTable::storage_bytes(),
+                PolicyTable::storage_align(),
+            )
+        }?;
+        unsafe {
+            self.policies.bind_from_storage(storage);
+        }
+        Some(())
+    }
+
+    #[cfg(test)]
+    fn ensure_slot_arena_storage(&mut self) -> Option<()> {
+        if !self.slot_arena.slots_ptr().is_null() {
+            return Some(());
+        }
+        let (storage, _) = unsafe {
+            self.allocate_persistent_sidecar_bytes(
+                SlotArena::storage_bytes(),
+                SlotArena::storage_align(),
+            )
+        }?;
+        unsafe {
+            self.slot_arena.bind_from_storage(storage);
+        }
+        Some(())
+    }
+
+    pub(crate) fn ensure_endpoint_resident_budget(
+        &mut self,
+        budget: EndpointResidentBudget,
+    ) -> Option<()> {
+        let route_frame_slots = core::cmp::max(
+            self.resident_route_frame_slots_floor(),
+            budget.route_frame_slots as usize,
+        );
+        let route_lane_slots = core::cmp::max(
+            self.resident_route_lane_slots_floor(),
+            budget.route_lane_slots as usize,
+        );
+        let loop_slots =
+            core::cmp::max(self.resident_loop_slots_floor(), budget.loop_slots as usize);
+        let cap_entries = core::cmp::max(
+            self.resident_cap_entries_floor(),
+            budget.cap_entries as usize,
+        );
+        self.ensure_route_table_capacity(route_frame_slots, route_lane_slots)?;
+        self.ensure_loop_table_capacity(loop_slots)?;
+        self.ensure_cap_table_capacity(cap_entries)?;
+        Some(())
+    }
+
+    #[inline]
+    pub(crate) fn record_endpoint_resident_budget(
+        &mut self,
+        public_slot: u8,
+        generation: u32,
+        budget: EndpointResidentBudget,
+    ) {
+        let mut idx = 0usize;
+        while idx < self.endpoint_lease_capacity as usize {
+            let slot = unsafe { &mut *self.endpoint_leases.add(idx) };
+            if slot.occupied && slot.public_slot == public_slot && slot.generation == generation {
+                slot.resident_budget = budget;
+                return;
+            }
+            idx += 1;
+        }
+    }
+
+    fn trim_resident_headers_to_live_budget(&mut self) {
+        if self.resident_route_frame_slots_floor() == 0 && self.routes.route_slots() != 0 {
+            self.free_bound_persistent_region(
+                self.reclaim_offset_for_payload(
+                    self.routes.storage_ptr(),
+                    self.routes.storage_reclaim_delta(),
+                ),
+                self.routes.storage_ptr(),
+                self.routes.storage_bytes_current(),
+            );
+            self.routes = RouteTable::empty();
+        }
+        if self.resident_loop_slots_floor() == 0 && self.loops.loop_slots() != 0 {
+            self.free_bound_persistent_region(
+                self.reclaim_offset_for_payload(
+                    self.loops.storage_ptr(),
+                    self.loops.storage_reclaim_delta(),
+                ),
+                self.loops.storage_ptr(),
+                self.loops.storage_bytes_current(),
+            );
+            self.loops = LoopTable::empty();
+        }
+        if self.resident_cap_entries_floor() == 0 && self.caps.capacity() != 0 {
+            self.free_bound_persistent_region(
+                self.reclaim_offset_for_payload(
+                    self.caps.storage_ptr(),
+                    self.caps.storage_reclaim_delta(),
+                ),
+                self.caps.storage_ptr(),
+                self.caps.storage_bytes_current(),
+            );
+            self.caps = CapTable::empty();
+        }
+    }
+
+    #[inline]
+    fn first_free_role_image_slot(&self) -> Option<usize> {
+        let mut idx = 0usize;
+        while idx < self.image_slot_capacity as usize {
+            let slot = unsafe { &*self.role_images.add(idx) };
+            if !slot.occupied {
+                return Some(idx);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    #[inline]
+    fn first_reusable_role_image_slot(&self, min_len: usize) -> Option<usize> {
+        let mut idx = 0usize;
+        while idx < self.image_slot_capacity as usize {
+            let slot = unsafe { &*self.role_images.add(idx) };
+            if slot.occupied && slot.pins == 0 && slot.len as usize >= min_len {
+                return Some(idx);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    #[inline]
+    fn first_unpinned_role_image_slot(&self) -> Option<usize> {
+        let mut idx = 0usize;
+        while idx < self.image_slot_capacity as usize {
+            let slot = unsafe { &*self.role_images.add(idx) };
+            if slot.occupied && slot.pins == 0 {
+                return Some(idx);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    #[inline]
+    fn role_image_slot_index<const ROLE: u8>(&self, stamp: ProgramStamp) -> Option<usize> {
+        let mut idx = 0usize;
+        while idx < self.image_slot_capacity as usize {
+            let slot = unsafe { &*self.role_images.add(idx) };
+            if slot.occupied && slot.stamp == stamp && slot.role == ROLE {
+                return Some(idx);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    #[inline]
+    fn pin_role_image<const ROLE: u8>(&mut self, stamp: ProgramStamp) -> Option<u8> {
+        let idx = self.role_image_slot_index::<ROLE>(stamp)?;
+        let slot = unsafe { &mut *self.role_images.add(idx) };
+        slot.pins = slot.pins.saturating_add(1);
+        Some(idx as u8)
+    }
+
+    #[inline]
+    fn unpin_role_image_slot(&mut self, idx: usize) {
+        if idx >= self.image_slot_capacity as usize {
+            return;
+        }
+        let slot = unsafe { &mut *self.role_images.add(idx) };
+        if slot.occupied && slot.pins != 0 {
+            slot.pins -= 1;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn pin_endpoint_images<const ROLE: u8>(
+        &mut self,
+        public_slot: u8,
+        generation: u32,
+        stamp: ProgramStamp,
+    ) -> bool {
+        let Some(program_image_slot) = self.pin_program_image(stamp) else {
+            return false;
+        };
+        let Some(role_image_slot) = self.pin_role_image::<ROLE>(stamp) else {
+            self.unpin_program_image_slot(program_image_slot as usize);
+            return false;
+        };
+        if !self.record_endpoint_image_slots(
+            public_slot,
+            generation,
+            program_image_slot,
+            role_image_slot,
+        ) {
+            self.unpin_program_image_slot(program_image_slot as usize);
+            self.unpin_role_image_slot(role_image_slot as usize);
+            return false;
+        }
+        true
+    }
+
+    #[inline]
+    pub(crate) fn record_endpoint_image_slots(
+        &mut self,
+        public_slot: u8,
+        generation: u32,
+        program_image_slot: u8,
+        role_image_slot: u8,
+    ) -> bool {
+        let mut idx = 0usize;
+        while idx < self.endpoint_lease_capacity as usize {
+            let slot = unsafe { &mut *self.endpoint_leases.add(idx) };
+            if slot.occupied && slot.public_slot == public_slot && slot.generation == generation {
+                slot.program_image_slot = program_image_slot;
+                slot.role_image_slot = role_image_slot;
+                return true;
+            }
+            idx += 1;
+        }
+        false
+    }
+
+    #[inline(never)]
+    pub(crate) unsafe fn materialize_program_image_from_summary(
+        &mut self,
+        stamp: ProgramStamp,
+        summary: &LoweringSummary,
+    ) -> Option<*const CompiledProgramImage> {
+        if let Some(idx) = self.program_image_slot_index(stamp) {
+            let slot = unsafe { &*self.program_images.add(idx) };
+            return Some(unsafe { self.program_image_from_slot(slot) });
+        }
+        let Some(insert_idx) = self.first_free_program_image_slot() else {
+            return unsafe { self.recycle_program_image_from_summary(stamp, summary) };
+        };
+        let counts = CompiledProgramImage::counts(summary);
+        let bytes = CompiledProgramImage::persistent_bytes_for_counts(counts);
+        let (ptr, offset) = unsafe {
+            self.allocate_persistent_image_bytes(bytes, CompiledProgramImage::persistent_align())
+        }?;
+        unsafe {
+            CompiledProgramImage::init_from_summary(ptr.cast::<CompiledProgramImage>(), summary);
+        }
+        let slot = unsafe { &mut *self.program_images.add(insert_idx) };
+        *slot = ProgramImageSlot {
+            stamp,
+            offset,
+            len: bytes as u32,
+            pins: 0,
+            occupied: true,
+        };
+        Some(ptr.cast::<CompiledProgramImage>())
+    }
+
+    #[cold]
+    #[inline(never)]
+    unsafe fn recycle_program_image_from_summary(
+        &mut self,
+        stamp: ProgramStamp,
+        summary: &LoweringSummary,
+    ) -> Option<*const CompiledProgramImage> {
+        let counts = CompiledProgramImage::counts(summary);
+        let bytes = CompiledProgramImage::persistent_bytes_for_counts(counts);
+        if let Some(insert_idx) = self.first_reusable_program_image_slot(bytes) {
+            let slot = unsafe { &mut *self.program_images.add(insert_idx) };
+            let ptr = unsafe {
+                self.slab_ptr_and_len()
+                    .0
+                    .add(slot.offset as usize)
+                    .cast::<CompiledProgramImage>()
+            };
+            unsafe {
+                CompiledProgramImage::init_from_summary(ptr, summary);
+            }
+            slot.stamp = stamp;
+            slot.occupied = true;
+            debug_assert_eq!(slot.pins, 0);
+            return Some(ptr.cast_const());
+        }
+        let insert_idx = self.first_unpinned_program_image_slot()?;
+        let (ptr, offset, reserved_len, released_region) = {
+            let slot = unsafe { &*self.program_images.add(insert_idx) };
+            let offset = slot.offset;
+            if slot.len as usize >= bytes {
+                let ptr = unsafe {
+                    self.slab_ptr_and_len()
+                        .0
+                        .add(offset as usize)
+                        .cast::<CompiledProgramImage>()
+                };
+                (ptr.cast::<u8>(), offset, slot.len, None)
+            } else {
+                let (ptr, offset) = unsafe {
+                    self.allocate_persistent_image_bytes(
+                        bytes,
+                        CompiledProgramImage::persistent_align(),
+                    )
+                }?;
+                (ptr, offset, bytes as u32, Some((slot.offset, slot.len)))
+            }
+        };
+        unsafe {
+            CompiledProgramImage::init_from_summary(ptr.cast::<CompiledProgramImage>(), summary);
+        }
+        if let Some((old_offset, old_len)) = released_region {
+            self.release_persistent_region(old_offset, old_len);
+        }
+        let slot = unsafe { &mut *self.program_images.add(insert_idx) };
+        *slot = ProgramImageSlot {
+            stamp,
+            offset,
+            len: reserved_len,
+            pins: 0,
+            occupied: true,
+        };
+        Some(ptr.cast::<CompiledProgramImage>())
+    }
+
+    #[inline]
+    pub(crate) fn has_program_image(&self, stamp: ProgramStamp) -> bool {
+        self.program_image_slot_index(stamp).is_some()
+    }
+
+    #[inline]
+    pub(crate) fn program_image(&self, stamp: ProgramStamp) -> Option<*const CompiledProgramImage> {
+        let idx = self.program_image_slot_index(stamp)?;
+        let slot = unsafe { &*self.program_images.add(idx) };
+        Some(unsafe { self.program_image_from_slot(slot) })
+    }
+
+    #[inline(never)]
+    unsafe fn pinned_role_image_from_slot<const ROLE: u8>(
+        &mut self,
+        slot: &RoleImageSlot,
+    ) -> *const CompiledRoleImage {
+        let (slab_ptr, _) = self.slab_ptr_and_len();
+        let role_ptr = unsafe {
+            slab_ptr
+                .add(slot.offset as usize)
+                .cast::<CompiledRoleImage>()
+        };
+        let reserved =
+            Self::frontier_scratch_guard_bytes(unsafe { (*role_ptr).frontier_scratch_layout() })
+                as u32;
+        self.reserve_scratch_reserved_bytes(reserved);
+        let _ = ROLE;
+        role_ptr
+    }
+
+    #[cfg(test)]
+    #[inline(never)]
+    unsafe fn materialize_new_role_image_from_summary<const ROLE: u8>(
+        &mut self,
+        insert_idx: usize,
+        stamp: ProgramStamp,
+        summary: &LoweringSummary,
+        scratch: &mut RoleCompileScratch,
+    ) -> Option<*const CompiledRoleImage> {
+        let scope_count = summary.stamp().scope_count();
+        let eff_count = summary.view().as_slice().len();
+        let bytes =
+            CompiledRoleImage::persistent_bytes_for_counts(scope_count, scope_count, eff_count);
+        let (ptr, offset) = unsafe {
+            self.allocate_persistent_image_bytes(bytes, CompiledRoleImage::persistent_align())
+        }?;
+        unsafe {
+            CompiledRoleImage::init_from_summary::<ROLE>(
+                ptr.cast::<CompiledRoleImage>(),
+                summary,
+                scratch,
+            );
+        }
+        let reserved = Self::frontier_scratch_guard_bytes(unsafe {
+            (*ptr.cast::<CompiledRoleImage>()).frontier_scratch_layout()
+        }) as u32;
+        self.reserve_scratch_reserved_bytes(reserved);
+        let slot = unsafe { &mut *self.role_images.add(insert_idx) };
+        debug_assert!(!slot.occupied);
+        *slot = RoleImageSlot {
+            stamp,
+            role: ROLE,
+            offset,
+            len: bytes as u32,
+            pins: 0,
+            occupied: true,
+        };
+        Some(ptr.cast::<CompiledRoleImage>())
+    }
+
+    #[inline(never)]
+    unsafe fn materialize_new_role_image_from_summary_for_program<const ROLE: u8, GlobalSteps>(
+        &mut self,
+        insert_idx: usize,
+        stamp: ProgramStamp,
+        summary: &LoweringSummary,
+        scratch: &mut RoleCompileScratch,
+        passive_linger_route_scope_count: usize,
+        route_scope_count: usize,
+        parallel_enter_count: usize,
+    ) -> Option<*const CompiledRoleImage>
+    where
+        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
+        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
+            crate::global::steps::StepCount,
+    {
+        let bytes = CompiledRoleImage::persistent_bytes_for_program::<ROLE, GlobalSteps>(
+            summary.stamp().scope_count(),
+            passive_linger_route_scope_count,
+            route_scope_count,
+            parallel_enter_count,
+            summary.view().as_slice().len(),
+        );
+        let (ptr, offset) = unsafe {
+            self.allocate_persistent_image_bytes(bytes, CompiledRoleImage::persistent_align())
+        }?;
+        unsafe {
+            CompiledRoleImage::init_from_summary_for_program::<ROLE, GlobalSteps>(
+                ptr.cast::<CompiledRoleImage>(),
+                summary,
+                scratch,
+                passive_linger_route_scope_count,
+                route_scope_count,
+                parallel_enter_count,
+            );
+        }
+        let reserved = Self::frontier_scratch_guard_bytes(unsafe {
+            (*ptr.cast::<CompiledRoleImage>()).frontier_scratch_layout()
+        }) as u32;
+        self.reserve_scratch_reserved_bytes(reserved);
+        let slot = unsafe { &mut *self.role_images.add(insert_idx) };
+        debug_assert!(!slot.occupied);
+        *slot = RoleImageSlot {
+            stamp,
+            role: ROLE,
+            offset,
+            len: bytes as u32,
+            pins: 0,
+            occupied: true,
+        };
+        Some(ptr.cast::<CompiledRoleImage>())
+    }
+
+    #[cfg(test)]
+    #[inline(never)]
+    pub(crate) unsafe fn materialize_role_image_from_summary<const ROLE: u8>(
+        &mut self,
+        stamp: ProgramStamp,
+        summary: &LoweringSummary,
+        scratch: &mut RoleCompileScratch,
+    ) -> Option<*const CompiledRoleImage> {
+        if let Some(idx) = self.role_image_slot_index::<ROLE>(stamp) {
+            let slot = unsafe { &*self.role_images.add(idx) };
+            return Some(unsafe { self.pinned_role_image_from_slot::<ROLE>(slot) });
+        }
+        let Some(insert_idx) = self.first_free_role_image_slot() else {
+            return unsafe {
+                self.recycle_role_image_from_summary::<ROLE>(stamp, summary, scratch)
+            };
+        };
+        unsafe {
+            self.materialize_new_role_image_from_summary::<ROLE>(
+                insert_idx, stamp, summary, scratch,
+            )
+        }
+    }
+
+    #[inline(never)]
+    pub(crate) unsafe fn materialize_role_image_from_summary_for_program<
+        const ROLE: u8,
+        GlobalSteps,
+    >(
+        &mut self,
+        stamp: ProgramStamp,
+        summary: &LoweringSummary,
+        scratch: &mut RoleCompileScratch,
+        passive_linger_route_scope_count: usize,
+        route_scope_count: usize,
+        parallel_enter_count: usize,
+    ) -> Option<*const CompiledRoleImage>
+    where
+        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
+        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
+            crate::global::steps::StepCount,
+    {
+        if let Some(idx) = self.role_image_slot_index::<ROLE>(stamp) {
+            let slot = unsafe { &*self.role_images.add(idx) };
+            return Some(unsafe { self.pinned_role_image_from_slot::<ROLE>(slot) });
+        }
+        let Some(insert_idx) = self.first_free_role_image_slot() else {
+            return unsafe {
+                self.recycle_role_image_from_summary_for_program::<ROLE, GlobalSteps>(
+                    stamp,
+                    summary,
+                    scratch,
+                    passive_linger_route_scope_count,
+                    route_scope_count,
+                    parallel_enter_count,
+                )
+            };
+        };
+        unsafe {
+            self.materialize_new_role_image_from_summary_for_program::<ROLE, GlobalSteps>(
+                insert_idx,
+                stamp,
+                summary,
+                scratch,
+                passive_linger_route_scope_count,
+                route_scope_count,
+                parallel_enter_count,
+            )
+        }
+    }
+
+    #[cfg(test)]
+    #[cold]
+    #[inline(never)]
+    unsafe fn recycle_role_image_from_summary<const ROLE: u8>(
+        &mut self,
+        stamp: ProgramStamp,
+        summary: &LoweringSummary,
+        scratch: &mut RoleCompileScratch,
+    ) -> Option<*const CompiledRoleImage> {
+        let scope_count = summary.stamp().scope_count();
+        let eff_count = summary.view().as_slice().len();
+        let bytes =
+            CompiledRoleImage::persistent_bytes_for_counts(scope_count, scope_count, eff_count);
+        if let Some(insert_idx) = self.first_reusable_role_image_slot(bytes) {
+            let slot = unsafe { &mut *self.role_images.add(insert_idx) };
+            let ptr = unsafe {
+                self.slab_ptr_and_len()
+                    .0
+                    .add(slot.offset as usize)
+                    .cast::<CompiledRoleImage>()
+            };
+            unsafe {
+                CompiledRoleImage::init_from_summary::<ROLE>(ptr, summary, scratch);
+            }
+            let reserved =
+                Self::frontier_scratch_guard_bytes(unsafe { (*ptr).frontier_scratch_layout() })
+                    as u32;
+            self.reserve_scratch_reserved_bytes(reserved);
+            slot.stamp = stamp;
+            slot.role = ROLE;
+            slot.occupied = true;
+            debug_assert_eq!(slot.pins, 0);
+            return Some(ptr.cast_const());
+        }
+        let insert_idx = self.first_unpinned_role_image_slot()?;
+        let (ptr, offset, reserved_len, released_region) = {
+            let slot = unsafe { &*self.role_images.add(insert_idx) };
+            if (slot.len as usize) >= bytes {
+                let ptr = unsafe {
+                    self.slab_ptr_and_len()
+                        .0
+                        .add(slot.offset as usize)
+                        .cast::<CompiledRoleImage>()
+                };
+                (ptr.cast::<u8>(), slot.offset, slot.len, None)
+            } else {
+                let (ptr, offset) = unsafe {
+                    self.allocate_persistent_image_bytes(
+                        bytes,
+                        CompiledRoleImage::persistent_align(),
+                    )
+                }?;
+                (ptr, offset, bytes as u32, Some((slot.offset, slot.len)))
+            }
+        };
+        unsafe {
+            CompiledRoleImage::init_from_summary::<ROLE>(
+                ptr.cast::<CompiledRoleImage>(),
+                summary,
+                scratch,
+            );
+        }
+        let reserved = Self::frontier_scratch_guard_bytes(unsafe {
+            (*ptr.cast::<CompiledRoleImage>()).frontier_scratch_layout()
+        }) as u32;
+        self.reserve_scratch_reserved_bytes(reserved);
+        if let Some((old_offset, old_len)) = released_region {
+            self.release_persistent_region(old_offset, old_len);
+        }
+        let slot = unsafe { &mut *self.role_images.add(insert_idx) };
+        *slot = RoleImageSlot {
+            stamp,
+            role: ROLE,
+            offset,
+            len: reserved_len,
+            pins: 0,
+            occupied: true,
+        };
+        Some(ptr.cast::<CompiledRoleImage>())
+    }
+
+    #[cold]
+    #[inline(never)]
+    unsafe fn recycle_role_image_from_summary_for_program<const ROLE: u8, GlobalSteps>(
+        &mut self,
+        stamp: ProgramStamp,
+        summary: &LoweringSummary,
+        scratch: &mut RoleCompileScratch,
+        passive_linger_route_scope_count: usize,
+        route_scope_count: usize,
+        parallel_enter_count: usize,
+    ) -> Option<*const CompiledRoleImage>
+    where
+        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
+        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
+            crate::global::steps::StepCount,
+    {
+        let bytes = CompiledRoleImage::persistent_bytes_for_program::<ROLE, GlobalSteps>(
+            summary.stamp().scope_count(),
+            passive_linger_route_scope_count,
+            route_scope_count,
+            parallel_enter_count,
+            summary.view().as_slice().len(),
+        );
+        if let Some(insert_idx) = self.first_reusable_role_image_slot(bytes) {
+            let slot = unsafe { &mut *self.role_images.add(insert_idx) };
+            let ptr = unsafe {
+                self.slab_ptr_and_len()
+                    .0
+                    .add(slot.offset as usize)
+                    .cast::<CompiledRoleImage>()
+            };
+            unsafe {
+                CompiledRoleImage::init_from_summary_for_program::<ROLE, GlobalSteps>(
+                    ptr,
+                    summary,
+                    scratch,
+                    passive_linger_route_scope_count,
+                    route_scope_count,
+                    parallel_enter_count,
+                );
+            }
+            let reserved =
+                Self::frontier_scratch_guard_bytes(unsafe { (*ptr).frontier_scratch_layout() })
+                    as u32;
+            self.reserve_scratch_reserved_bytes(reserved);
+            slot.stamp = stamp;
+            slot.role = ROLE;
+            slot.occupied = true;
+            debug_assert_eq!(slot.pins, 0);
+            return Some(ptr.cast_const());
+        }
+        let insert_idx = self.first_unpinned_role_image_slot()?;
+        let (ptr, offset, reserved_len, released_region) = {
+            let slot = unsafe { &*self.role_images.add(insert_idx) };
+            if (slot.len as usize) >= bytes {
+                let ptr = unsafe {
+                    self.slab_ptr_and_len()
+                        .0
+                        .add(slot.offset as usize)
+                        .cast::<CompiledRoleImage>()
+                };
+                (ptr.cast::<u8>(), slot.offset, slot.len, None)
+            } else {
+                let (ptr, offset) = unsafe {
+                    self.allocate_persistent_image_bytes(
+                        bytes,
+                        CompiledRoleImage::persistent_align(),
+                    )
+                }?;
+                (ptr, offset, bytes as u32, Some((slot.offset, slot.len)))
+            }
+        };
+        unsafe {
+            CompiledRoleImage::init_from_summary_for_program::<ROLE, GlobalSteps>(
+                ptr.cast::<CompiledRoleImage>(),
+                summary,
+                scratch,
+                passive_linger_route_scope_count,
+                route_scope_count,
+                parallel_enter_count,
+            );
+        }
+        let reserved = Self::frontier_scratch_guard_bytes(unsafe {
+            (*ptr.cast::<CompiledRoleImage>()).frontier_scratch_layout()
+        }) as u32;
+        self.reserve_scratch_reserved_bytes(reserved);
+        if let Some((old_offset, old_len)) = released_region {
+            self.release_persistent_region(old_offset, old_len);
+        }
+        let slot = unsafe { &mut *self.role_images.add(insert_idx) };
+        *slot = RoleImageSlot {
+            stamp,
+            role: ROLE,
+            offset,
+            len: reserved_len,
+            pins: 0,
+            occupied: true,
+        };
+        Some(ptr.cast::<CompiledRoleImage>())
+    }
+
+    #[inline]
+    pub(crate) fn has_role_image<const ROLE: u8>(&self, stamp: ProgramStamp) -> bool {
+        self.role_image_slot_index::<ROLE>(stamp).is_some()
+    }
+
+    #[inline]
+    pub(crate) fn role_image<const ROLE: u8>(
+        &self,
+        stamp: ProgramStamp,
+    ) -> Option<*const CompiledRoleImage> {
+        let (slab_ptr, _) = self.slab_ptr_and_len();
+        let idx = self.role_image_slot_index::<ROLE>(stamp)?;
+        let slot = unsafe { &*self.role_images.add(idx) };
+        Some(unsafe {
+            slab_ptr
+                .add(slot.offset as usize)
+                .cast::<CompiledRoleImage>()
+        })
+    }
+
+    #[inline]
+    pub(crate) unsafe fn allocate_endpoint_lease(
+        &mut self,
+        public_slot: u8,
+        generation: u32,
+        bytes: usize,
+        align: usize,
+    ) -> Option<(usize, usize)> {
+        let (slab_ptr, slab_len) = self.slab_ptr_and_len();
+        let base = slab_ptr as usize;
+        let floor = self.endpoint_lease_floor();
+        let mut candidate_end = slab_len;
+
+        loop {
+            let mut best_idx = None;
+            let mut best_offset = 0usize;
+            let mut idx = 0usize;
+            while idx < self.endpoint_lease_capacity as usize {
+                let slot = unsafe { &*self.endpoint_leases.add(idx) };
+                let offset = slot.offset as usize;
+                if slot.occupied && offset < candidate_end && offset >= best_offset {
+                    best_offset = offset;
+                    best_idx = Some(idx);
+                }
+                idx += 1;
+            }
+
+            let gap_start = match best_idx {
+                Some(idx) => {
+                    let slot = unsafe { &*self.endpoint_leases.add(idx) };
+                    slot.offset as usize + slot.len as usize
+                }
+                None => floor,
+            };
+            let gap_end = candidate_end;
+            if gap_end >= bytes {
+                let offset = Self::align_down(base + gap_end - bytes, align).saturating_sub(base);
+                if offset >= gap_start && offset >= floor {
+                    let mut insert_idx = 0usize;
+                    while insert_idx < self.endpoint_lease_capacity as usize {
+                        let slot = unsafe { &mut *self.endpoint_leases.add(insert_idx) };
+                        if !slot.occupied {
+                            *slot = EndpointLeaseSlot {
+                                public_slot,
+                                generation,
+                                offset: offset as u32,
+                                len: bytes as u32,
+                                resident_budget: EndpointResidentBudget::ZERO,
+                                program_image_slot: u8::MAX,
+                                role_image_slot: u8::MAX,
+                                occupied: true,
+                            };
+                            let _ = slab_ptr;
+                            return Some((offset, bytes));
+                        }
+                        insert_idx += 1;
+                    }
+                    return None;
+                }
+            }
+
+            let Some(idx) = best_idx else {
+                break;
+            };
+            candidate_end = unsafe { (*self.endpoint_leases.add(idx)).offset as usize };
+        }
+        None
+    }
+
+    #[inline]
+    pub(crate) fn release_endpoint_lease(&mut self, public_slot: u8, generation: u32) {
+        let mut idx = 0usize;
+        while idx < self.endpoint_lease_capacity as usize {
+            let slot = unsafe { &mut *self.endpoint_leases.add(idx) };
+            if slot.occupied && slot.public_slot == public_slot && slot.generation == generation {
+                if slot.program_image_slot != u8::MAX {
+                    self.unpin_program_image_slot(slot.program_image_slot as usize);
+                }
+                if slot.role_image_slot != u8::MAX {
+                    self.unpin_role_image_slot(slot.role_image_slot as usize);
+                }
+                *slot = EndpointLeaseSlot::EMPTY;
+                self.trim_resident_headers_to_live_budget();
+                self.recompute_scratch_reserved_bytes();
+                return;
+            }
+            idx += 1;
+        }
+    }
+
     #[inline]
     pub(crate) fn shorten<'short>(&'short self) -> &'short Rendezvous<'short, 'cfg, T, U, C, E>
     where
@@ -190,21 +1831,26 @@ where
         unsafe { &*ptr.cast::<Rendezvous<'short, 'cfg, T, U, C, E>>() }
     }
 
+    #[cfg(test)]
     #[inline]
     pub(crate) fn slot_bundle<'short>(&'short mut self) -> SlotBundle<'short>
     where
         'cfg: 'short,
     {
+        let _ = self.ensure_slot_arena_storage();
         SlotBundle::new(&mut self.slot_arena)
     }
 
     pub(crate) fn register_policy(
-        &self,
+        &mut self,
         lane: Lane,
         eff_index: EffIndex,
         tag: u8,
         policy: PolicyMode,
     ) -> Result<(), CpError> {
+        if policy.is_dynamic() && self.ensure_policy_table_storage().is_none() {
+            return Err(CpError::ResourceExhausted);
+        }
         self.policies
             .register(lane, eff_index, tag, policy)
             .map_err(|_| CpError::ResourceExhausted)
@@ -216,6 +1862,84 @@ where
 
     pub(crate) fn reset_policy(&self, lane: Lane) {
         self.policies.reset_lane(lane);
+    }
+
+    #[inline]
+    fn policy_digest(&self, slot: crate::epf::vm::Slot) -> u32 {
+        #[cfg(test)]
+        {
+            self.host_slots.active_digest(slot)
+        }
+        #[cfg(not(test))]
+        {
+            let _ = slot;
+            0
+        }
+    }
+
+    #[inline]
+    fn policy_mode(&self, slot: crate::epf::vm::Slot) -> crate::epf::PolicyMode {
+        #[cfg(test)]
+        {
+            self.host_slots.policy_mode(slot)
+        }
+        #[cfg(not(test))]
+        {
+            let _ = slot;
+            crate::epf::PolicyMode::Enforce
+        }
+    }
+
+    #[inline]
+    fn last_policy_fuel_used(&self, slot: crate::epf::vm::Slot) -> u16 {
+        #[cfg(test)]
+        {
+            self.host_slots.last_fuel_used(slot)
+        }
+        #[cfg(not(test))]
+        {
+            let _ = slot;
+            0
+        }
+    }
+
+    #[inline]
+    fn run_policy<F>(
+        &self,
+        slot: crate::epf::vm::Slot,
+        event: &crate::observe::core::TapEvent,
+        caps: CapsMask,
+        session: Option<SessionId>,
+        lane: Option<Lane>,
+        configure: F,
+    ) -> crate::epf::Action
+    where
+        F: FnOnce(&mut crate::epf::vm::VmCtx<'_>),
+    {
+        #[cfg(test)]
+        {
+            return crate::epf::run_with(
+                &self.host_slots,
+                slot,
+                event,
+                caps,
+                session,
+                lane,
+                configure,
+            );
+        }
+        #[cfg(not(test))]
+        {
+            let mut ctx = crate::epf::vm::VmCtx::new(slot, event, caps);
+            if let Some(session) = session {
+                ctx.set_session(session);
+            }
+            if let Some(lane) = lane {
+                ctx.set_lane(lane);
+            }
+            configure(&mut ctx);
+            crate::epf::Action::Proceed
+        }
     }
 
     fn prepare_distributed_splice_operands(
@@ -313,27 +2037,16 @@ where
         sid: Option<SessionId>,
         lane: Option<Lane>,
     ) -> Result<(), CpError> {
-        match action {
-            crate::epf::Action::Proceed => Ok(()),
-            crate::epf::Action::Abort(info) => {
-                self.handle_policy_abort(info, sid, lane);
-                Err(CpError::PolicyAbort {
-                    reason: info.reason,
-                })
-            }
-            crate::epf::Action::Tap { id, arg0, arg1 } => {
-                self.emit_policy_event(id, lane, arg0, arg1);
-                Ok(())
-            }
-            crate::epf::Action::Route { .. } => {
-                // Route decisions are only meaningful for Slot::Route; ignore here.
-                Ok(())
-            }
-            crate::epf::Action::Defer { .. } => {
-                // Defer is a route re-evaluation signal; non-route slots treat it as proceed.
-                Ok(())
-            }
+        if let Some(info) = action.abort_info() {
+            self.handle_policy_abort(info, sid, lane);
+            return Err(CpError::PolicyAbort {
+                reason: info.reason,
+            });
         }
+        if let Some((id, arg0, arg1)) = action.tap_payload() {
+            self.emit_policy_event(id, lane, arg0, arg1);
+        }
+        Ok(())
     }
 
     fn handle_policy_abort(
@@ -367,10 +2080,16 @@ where
                 let lane = envelope.lane.ok_or(CpError::Splice(
                     crate::control::cluster::error::SpliceError::InvalidLane,
                 ))?;
-                let generation_input = envelope.generation.ok_or(CpError::Splice(
-                    crate::control::cluster::error::SpliceError::GenerationMismatch,
-                ))?;
-                let fences = envelope.fences;
+                let (generation_input, fences) = if let Some(operands) = envelope.splice {
+                    (operands.new_gen, Some((operands.seq_tx, operands.seq_rx)))
+                } else {
+                    (
+                        envelope.generation.ok_or(CpError::Splice(
+                            crate::control::cluster::error::SpliceError::GenerationMismatch,
+                        ))?,
+                        None,
+                    )
+                };
                 let sid = SessionId::new(sid.raw());
                 let lane = Lane::new(lane.raw());
                 let generation = Generation(generation_input.raw());
@@ -381,7 +2100,7 @@ where
                 let sid = envelope.sid.ok_or(CpError::Splice(
                     crate::control::cluster::error::SpliceError::InvalidSession,
                 ))?;
-                let Some(intent) = envelope.intent else {
+                let Some(operands) = envelope.splice else {
                     let lane = envelope.lane.ok_or(CpError::Splice(
                         crate::control::cluster::error::SpliceError::InvalidLane,
                     ))?;
@@ -405,9 +2124,8 @@ where
                         }
                     };
                 };
-                let ack_expected = envelope.ack.ok_or(CpError::Splice(
-                    crate::control::cluster::error::SpliceError::InvalidState,
-                ))?;
+                let intent = operands.intent(sid);
+                let ack_expected = operands.ack(sid);
 
                 let ack_result = self
                     .process_splice_intent(&intent)
@@ -588,11 +2306,6 @@ where
                     .begin(ctx.lane, pending)
                     .map_err(EffectError::Splice)?;
 
-                if let Some((tx, rx)) = ctx.fences {
-                    self.fences.record_tx(ctx.lane, tx);
-                    self.fences.record_rx(ctx.lane, rx);
-                }
-
                 let packed = ((ctx.lane.as_wire() as u32) & 0xFF) | ((target.0 as u32) << 16);
                 self.emit_effect(effect, ctx.sid, packed);
                 Ok(EffectResult::Generation(target))
@@ -638,11 +2351,6 @@ where
 
                 let mut tap = NoopTap;
                 let _closed = state.commit(&mut tap);
-
-                if let Some((tx, rx)) = fences {
-                    self.fences.record_tx(ctx.lane, tx);
-                    self.fences.record_rx(ctx.lane, rx);
-                }
 
                 let packed = ((ctx.lane.as_wire() as u32) & 0xFF) | ((target.0 as u32) << 16);
                 self.emit_effect(effect, ctx.sid, packed);
@@ -728,13 +2436,11 @@ where
                 Ok(EffectResult::Generation(generation))
             }
             CpEffect::CancelBegin => {
-                self.acks.record_cancel_begin(ctx.lane);
                 self.emit_effect(effect, ctx.sid, ctx.lane.as_wire() as u32);
                 Ok(EffectResult::None)
             }
             CpEffect::CancelAck => {
                 let generation = ctx.generation.ok_or(EffectError::MissingGeneration)?;
-                self.acks.record_cancel_ack(ctx.lane, generation);
                 self.emit_effect(effect, ctx.sid, generation.0 as u32);
                 Ok(EffectResult::None)
             }
@@ -802,24 +2508,313 @@ impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock>
 where
     'cfg: 'rv,
 {
+    const IMAGE_BANK_EXPANSION_TAIL_FLOOR: usize = 4 * 1024;
+
     #[inline]
-    pub(crate) fn allocate_id() -> RendezvousId {
-        static GLOBAL_RV_COUNTER: core::sync::atomic::AtomicU32 =
-            core::sync::atomic::AtomicU32::new(1);
-        RendezvousId::new(
-            GLOBAL_RV_COUNTER.fetch_add(1, core::sync::atomic::Ordering::Relaxed) as u16,
-        )
+    const fn recommended_image_slot_capacity(endpoint_slots: usize) -> usize {
+        if endpoint_slots == 0 {
+            0
+        } else {
+            let doubled = endpoint_slots.saturating_mul(2);
+            let widened = if doubled < 4 { 4 } else { doubled };
+            if widened > u8::MAX as usize {
+                u8::MAX as usize
+            } else {
+                widened
+            }
+        }
+    }
+
+    unsafe fn init_runtime_metadata_with_image_slots(
+        slab: &mut [u8],
+        endpoint_slots: usize,
+        image_slots: usize,
+    ) -> Option<(
+        *mut ProgramImageSlot,
+        *mut RoleImageSlot,
+        *mut EndpointLeaseSlot,
+        u32,
+        u8,
+        u8,
+    )> {
+        let base = slab.as_mut_ptr() as usize;
+        let len = slab.len();
+
+        let program_offset = Self::align_up(base, core::mem::align_of::<ProgramImageSlot>());
+        let program_bytes = image_slots.checked_mul(core::mem::size_of::<ProgramImageSlot>())?;
+        let role_offset = Self::align_up(
+            program_offset.checked_add(program_bytes)?,
+            core::mem::align_of::<RoleImageSlot>(),
+        );
+        let role_bytes = image_slots.checked_mul(core::mem::size_of::<RoleImageSlot>())?;
+        let lease_offset = Self::align_up(
+            role_offset.checked_add(role_bytes)?,
+            core::mem::align_of::<EndpointLeaseSlot>(),
+        );
+        let lease_bytes = endpoint_slots.checked_mul(core::mem::size_of::<EndpointLeaseSlot>())?;
+        let frontier = lease_offset.checked_add(lease_bytes)?.wrapping_sub(base);
+        if frontier > len {
+            return None;
+        }
+
+        let program_ptr = program_offset as *mut ProgramImageSlot;
+        let role_ptr = role_offset as *mut RoleImageSlot;
+        let lease_ptr = lease_offset as *mut EndpointLeaseSlot;
+
+        let mut idx = 0usize;
+        while idx < image_slots {
+            unsafe {
+                program_ptr.add(idx).write(ProgramImageSlot::EMPTY);
+                role_ptr.add(idx).write(RoleImageSlot::EMPTY);
+            }
+            idx += 1;
+        }
+
+        idx = 0;
+        while idx < endpoint_slots {
+            unsafe {
+                lease_ptr.add(idx).write(EndpointLeaseSlot::EMPTY);
+            }
+            idx += 1;
+        }
+
+        Some((
+            program_ptr,
+            role_ptr,
+            lease_ptr,
+            frontier as u32,
+            image_slots.min(u8::MAX as usize) as u8,
+            endpoint_slots.min(u8::MAX as usize) as u8,
+        ))
+    }
+
+    #[cfg(test)]
+    unsafe fn init_runtime_metadata(
+        slab: &mut [u8],
+        endpoint_slots: usize,
+    ) -> Option<(
+        *mut ProgramImageSlot,
+        *mut RoleImageSlot,
+        *mut EndpointLeaseSlot,
+        u32,
+        u8,
+        u8,
+    )> {
+        unsafe {
+            Self::init_runtime_metadata_with_image_slots(slab, endpoint_slots, endpoint_slots)
+        }
+    }
+
+    unsafe fn init_runtime_metadata_for_public_path(
+        slab: &mut [u8],
+        endpoint_slots: usize,
+    ) -> Option<(
+        *mut ProgramImageSlot,
+        *mut RoleImageSlot,
+        *mut EndpointLeaseSlot,
+        u32,
+        u8,
+        u8,
+    )> {
+        let baseline = unsafe {
+            Self::init_runtime_metadata_with_image_slots(slab, endpoint_slots, endpoint_slots)
+        }?;
+        if slab.len().saturating_sub(baseline.3 as usize) < Self::IMAGE_BANK_EXPANSION_TAIL_FLOOR {
+            return Some(baseline);
+        }
+
+        let desired = Self::recommended_image_slot_capacity(endpoint_slots);
+        let mut image_slots = desired;
+        loop {
+            if let Some(layout) = unsafe {
+                Self::init_runtime_metadata_with_image_slots(slab, endpoint_slots, image_slots)
+            } {
+                if slab.len().saturating_sub(layout.3 as usize)
+                    >= Self::IMAGE_BANK_EXPANSION_TAIL_FLOOR
+                {
+                    return Some(layout);
+                }
+            }
+            if image_slots == endpoint_slots {
+                return Some(baseline);
+            }
+            image_slots -= 1;
+            if image_slots < endpoint_slots {
+                image_slots = endpoint_slots;
+            }
+        }
+    }
+
+    unsafe fn carve_resident_storage(slab: &mut [u8]) -> Option<(*mut Self, &mut [u8])> {
+        let base = slab.as_mut_ptr() as usize;
+        let len = slab.len();
+        let header_offset = Self::align_up(base, core::mem::align_of::<Self>());
+        let header_end = header_offset.checked_add(core::mem::size_of::<Self>())?;
+        let runtime_offset = header_end.wrapping_sub(base);
+        if runtime_offset > len {
+            return None;
+        }
+        let runtime_ptr = unsafe { slab.as_mut_ptr().add(runtime_offset) };
+        let runtime_len = len - runtime_offset;
+        let runtime_slab = unsafe { core::slice::from_raw_parts_mut(runtime_ptr, runtime_len) };
+        Some((header_offset as *mut Self, runtime_slab))
+    }
+
+    #[cfg(test)]
+    unsafe fn init_from_parts(
+        dst: *mut Self,
+        rv_id: RendezvousId,
+        tap_buf: &'cfg mut [crate::observe::core::TapEvent; crate::runtime::consts::RING_EVENTS],
+        slab: &mut [u8],
+        lane_range: core::ops::Range<u8>,
+        clock: C,
+        liveness_policy: crate::runtime::config::LivenessPolicy,
+        transport: T,
+        endpoint_slots: usize,
+    ) {
+        let (
+            program_images,
+            role_images,
+            endpoint_leases,
+            image_frontier,
+            image_slot_capacity,
+            endpoint_lease_capacity,
+        ) = unsafe {
+            Self::init_runtime_metadata(slab, endpoint_slots).unwrap_or((
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                slab.len() as u32,
+                0,
+                0,
+            ))
+        };
+
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).brand_marker).write(PhantomData);
+            core::ptr::addr_of_mut!((*dst).id).write(rv_id);
+            core::ptr::addr_of_mut!((*dst).tap).write(TapRing::from_storage(tap_buf));
+            core::ptr::addr_of_mut!((*dst).slab).write(slab as *mut [u8]);
+            core::ptr::addr_of_mut!((*dst).slab_marker).write(PhantomData);
+            core::ptr::addr_of_mut!((*dst).image_frontier).write(image_frontier);
+            core::ptr::addr_of_mut!((*dst).scratch_reserved_bytes).write(0);
+            core::ptr::addr_of_mut!((*dst).program_images).write(program_images);
+            core::ptr::addr_of_mut!((*dst).role_images).write(role_images);
+            core::ptr::addr_of_mut!((*dst).endpoint_leases).write(endpoint_leases);
+            core::ptr::addr_of_mut!((*dst).image_slot_capacity).write(image_slot_capacity);
+            core::ptr::addr_of_mut!((*dst).endpoint_lease_capacity).write(endpoint_lease_capacity);
+            core::ptr::addr_of_mut!((*dst).runtime_frontier).write(image_frontier);
+            core::ptr::addr_of_mut!((*dst).free_regions)
+                .write([FreeRegion::EMPTY; FREE_REGION_CAPACITY]);
+            core::ptr::addr_of_mut!((*dst).lane_range)
+                .write((lane_range.start as u32)..(lane_range.end as u32));
+            core::ptr::addr_of_mut!((*dst).universe_marker).write(PhantomData);
+            core::ptr::addr_of_mut!((*dst).transport).write(transport);
+            GenTable::init_empty(core::ptr::addr_of_mut!((*dst).r#gen));
+            AssocTable::init_empty(core::ptr::addr_of_mut!((*dst).assoc));
+            CheckpointTable::init_empty(core::ptr::addr_of_mut!((*dst).checkpoints));
+            SpliceStateTable::init_empty(core::ptr::addr_of_mut!((*dst).splice));
+            DistributedSpliceTable::init_empty(core::ptr::addr_of_mut!((*dst).distributed_splice));
+            core::ptr::addr_of_mut!((*dst).cap_nonce).write(Cell::new(0));
+            CapTable::init_empty(core::ptr::addr_of_mut!((*dst).caps));
+            LoopTable::init_empty(core::ptr::addr_of_mut!((*dst).loops));
+            RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
+            PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
+            VmCapsTable::init_empty(core::ptr::addr_of_mut!((*dst).vm_caps));
+            SlotArena::init_empty(core::ptr::addr_of_mut!((*dst).slot_arena));
+            HostSlots::init_empty(core::ptr::addr_of_mut!((*dst).host_slots));
+            core::ptr::addr_of_mut!((*dst).clock).write(clock);
+            core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
+            core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
+        }
+    }
+
+    /// Materialize a rendezvous directly into the borrowed slab prefix.
+    ///
+    /// # Safety
+    /// The returned pointer is valid for as long as the borrowed slab storage lives.
+    pub(crate) unsafe fn init_in_slab(
+        rv_id: RendezvousId,
+        config: Config<'cfg, U, C>,
+        transport: T,
+        endpoint_slots: usize,
+    ) -> Option<*mut Self> {
+        let ConfigParts {
+            tap_buf,
+            slab,
+            lane_range,
+            clock,
+            liveness_policy,
+        } = config.into_parts();
+        let (dst, runtime_slab) = unsafe { Self::carve_resident_storage(slab) }?;
+        let (
+            program_images,
+            role_images,
+            endpoint_leases,
+            image_frontier,
+            image_slot_capacity,
+            endpoint_lease_capacity,
+        ) = unsafe {
+            Self::init_runtime_metadata_for_public_path(runtime_slab, endpoint_slots).unwrap_or((
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                runtime_slab.len() as u32,
+                0,
+                0,
+            ))
+        };
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).brand_marker).write(PhantomData);
+            core::ptr::addr_of_mut!((*dst).id).write(rv_id);
+            core::ptr::addr_of_mut!((*dst).tap).write(TapRing::from_storage(tap_buf));
+            core::ptr::addr_of_mut!((*dst).slab).write(runtime_slab as *mut [u8]);
+            core::ptr::addr_of_mut!((*dst).slab_marker).write(PhantomData);
+            core::ptr::addr_of_mut!((*dst).image_frontier).write(image_frontier);
+            core::ptr::addr_of_mut!((*dst).scratch_reserved_bytes).write(0);
+            core::ptr::addr_of_mut!((*dst).program_images).write(program_images);
+            core::ptr::addr_of_mut!((*dst).role_images).write(role_images);
+            core::ptr::addr_of_mut!((*dst).endpoint_leases).write(endpoint_leases);
+            core::ptr::addr_of_mut!((*dst).image_slot_capacity).write(image_slot_capacity);
+            core::ptr::addr_of_mut!((*dst).endpoint_lease_capacity).write(endpoint_lease_capacity);
+            core::ptr::addr_of_mut!((*dst).runtime_frontier).write(image_frontier);
+            core::ptr::addr_of_mut!((*dst).free_regions)
+                .write([FreeRegion::EMPTY; FREE_REGION_CAPACITY]);
+            core::ptr::addr_of_mut!((*dst).lane_range)
+                .write((lane_range.start as u32)..(lane_range.end as u32));
+            core::ptr::addr_of_mut!((*dst).universe_marker).write(PhantomData);
+            core::ptr::addr_of_mut!((*dst).transport).write(transport);
+            GenTable::init_empty(core::ptr::addr_of_mut!((*dst).r#gen));
+            AssocTable::init_empty(core::ptr::addr_of_mut!((*dst).assoc));
+            CheckpointTable::init_empty(core::ptr::addr_of_mut!((*dst).checkpoints));
+            SpliceStateTable::init_empty(core::ptr::addr_of_mut!((*dst).splice));
+            DistributedSpliceTable::init_empty(core::ptr::addr_of_mut!((*dst).distributed_splice));
+            core::ptr::addr_of_mut!((*dst).cap_nonce).write(Cell::new(0));
+            CapTable::init_empty(core::ptr::addr_of_mut!((*dst).caps));
+            LoopTable::init_empty(core::ptr::addr_of_mut!((*dst).loops));
+            RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
+            PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
+            VmCapsTable::init_empty(core::ptr::addr_of_mut!((*dst).vm_caps));
+            SlotArena::init_empty(core::ptr::addr_of_mut!((*dst).slot_arena));
+            HostSlots::init_empty(core::ptr::addr_of_mut!((*dst).host_slots));
+            core::ptr::addr_of_mut!((*dst).clock).write(clock);
+            core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
+            core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
+        }
+        Some(dst)
     }
 
     /// Write a rendezvous directly into the destination slot.
     ///
     /// # Safety
     /// `dst` must point to valid, writable storage for `Self`.
+    #[cfg(test)]
     pub(crate) unsafe fn init_from_config(
         dst: *mut Self,
         rv_id: RendezvousId,
         config: Config<'cfg, U, C>,
         transport: T,
+        endpoint_slots: usize,
     ) {
         let ConfigParts {
             tap_buf,
@@ -828,61 +2823,19 @@ where
             clock,
             liveness_policy,
         } = config.into_parts();
-
         unsafe {
-            core::ptr::addr_of_mut!((*dst).brand_marker).write(PhantomData);
-            core::ptr::addr_of_mut!((*dst).id).write(rv_id);
-            core::ptr::addr_of_mut!((*dst).tap).write(TapRing::from_storage(tap_buf));
-            core::ptr::addr_of_mut!((*dst).slab).write(slab as *mut [u8]);
-            core::ptr::addr_of_mut!((*dst).slab_marker).write(PhantomData);
-            core::ptr::addr_of_mut!((*dst).lane_range)
-                .write((lane_range.start as u32)..(lane_range.end as u32));
-            core::ptr::addr_of_mut!((*dst).universe_marker).write(PhantomData);
-            core::ptr::addr_of_mut!((*dst).transport).write(transport);
-            core::ptr::addr_of_mut!((*dst).r#gen).write(GenTable::new());
-            core::ptr::addr_of_mut!((*dst).fences).write(FenceTable::new());
-            core::ptr::addr_of_mut!((*dst).acks).write(AckTable::new());
-            core::ptr::addr_of_mut!((*dst).assoc).write(AssocTable::new());
-            core::ptr::addr_of_mut!((*dst).checkpoints).write(CheckpointTable::new());
-            core::ptr::addr_of_mut!((*dst).splice).write(SpliceStateTable::new());
-            core::ptr::addr_of_mut!((*dst).distributed_splice).write(DistributedSpliceTable::new());
-            core::ptr::addr_of_mut!((*dst).cap_nonce).write(AtomicU64::new(0));
-            core::ptr::addr_of_mut!((*dst).caps).write(CapTable::new());
-            LoopTable::init_empty(core::ptr::addr_of_mut!((*dst).loops));
-            RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
-            core::ptr::addr_of_mut!((*dst).policies).write(PolicyTable::new());
-            core::ptr::addr_of_mut!((*dst).vm_caps).write(VmCapsTable::new());
-            core::ptr::addr_of_mut!((*dst).slot_arena).write(SlotArena::new());
-            core::ptr::addr_of_mut!((*dst).host_slots).write(HostSlots::new());
-            core::ptr::addr_of_mut!((*dst).clock).write(clock);
-            core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
-            core::ptr::addr_of_mut!((*dst)._next_rv_id)
-                .write(core::cell::Cell::new(u32::from(rv_id.raw()) + 1000));
-            core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
+            Self::init_from_parts(
+                dst,
+                rv_id,
+                tap_buf,
+                slab,
+                lane_range,
+                clock,
+                liveness_policy,
+                transport,
+                endpoint_slots,
+            );
         }
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn with_test_rendezvous_from_config<'cfg, T, U, C, R>(
-    config: Config<'cfg, U, C>,
-    transport: T,
-    f: impl FnOnce(&mut Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>) -> R,
-) -> R
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-{
-    let rv_id =
-        Rendezvous::<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>::allocate_id();
-    let mut rendezvous = std::boxed::Box::<
-        Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>,
-    >::new_uninit();
-    unsafe {
-        Rendezvous::init_from_config(rendezvous.as_mut_ptr(), rv_id, config, transport);
-        let mut rendezvous = rendezvous.assume_init();
-        f(rendezvous.as_mut())
     }
 }
 
@@ -891,17 +2844,15 @@ impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap
 where
     'cfg: 'rv,
 {
-    pub(crate) fn initialise_control_marker(&self, lane: Lane, marker: &ControlMarker) {
-        match marker.scope_kind {
+    pub(crate) fn initialise_control_scope(&self, lane: Lane, scope_kind: ControlScopeKind) {
+        match scope_kind {
             ControlScopeKind::Loop => {
                 self.loops.reset_lane(lane);
             }
             ControlScopeKind::Checkpoint => {
                 self.checkpoints.reset_lane(lane);
             }
-            ControlScopeKind::Cancel => {
-                self.acks.reset_lane(lane);
-            }
+            ControlScopeKind::Cancel => {}
             ControlScopeKind::Splice => {
                 self.splice.reset_lane(lane);
             }
@@ -966,8 +2917,6 @@ where
 
     fn reset_lane_state(&self, lane: Lane) {
         self.r#gen.reset_lane(lane);
-        self.fences.reset_lane(lane);
-        self.acks.reset_lane(lane);
         self.checkpoints.reset_lane(lane);
         self.splice.reset_lane(lane);
         self.caps.purge_lane(lane);
@@ -1086,6 +3035,8 @@ where
     lane: Lane,
     /// Role for the port.
     role: u8,
+    /// Number of global roles participating in the attached program.
+    role_count: u8,
     /// Rendezvous brand for typed owner construction.
     brand: crate::control::brand::Guard<'cfg>,
 }
@@ -1103,6 +3054,7 @@ where
         sid: SessionId,
         lane: Lane,
         role: u8,
+        role_count: u8,
         brand: crate::control::brand::Guard<'cfg>,
     ) -> Self {
         Self {
@@ -1110,6 +3062,7 @@ where
             sid,
             lane,
             role,
+            role_count,
             brand,
         }
     }
@@ -1134,7 +3087,7 @@ where
             // is alive, so the rendezvous cannot move or be aliased here.
             let rv: &'cfg Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl> =
                 unsafe { &*rv_ptr };
-            rv.acquire_port(self.sid, self.lane, self.role)?
+            rv.acquire_port(self.sid, self.lane, self.role, self.role_count)?
         };
         guard.detach_lease();
         Ok((port, guard, self.brand))
@@ -1199,6 +3152,7 @@ where
         sid: SessionId,
         lane: Lane,
         role: u8,
+        role_count: u8,
     ) -> Result<Port<'a, T, crate::control::cap::mint::EpochTbl>, RendezvousError>
     where
         'rv: 'a,
@@ -1235,26 +3189,27 @@ where
             );
 
             self.r#gen.reset_lane(lane);
-            self.fences.reset_lane(lane);
-            self.acks.reset_lane(lane);
             self.checkpoints.reset_lane(lane);
             self.loops.reset_lane(lane);
             self.routes.reset_lane(lane);
         }
-        let tap = self.tap();
-        let clock_ref: &dyn Clock = &self.clock;
         let (tx, rx) = self.transport.open(role, sid.raw());
         Ok(Port::new(
             &self.transport,
-            tap,
-            clock_ref,
+            self.tap(),
+            &self.clock,
             &self.vm_caps,
             &self.loops,
             &self.routes,
             &self.host_slots,
             self.slab,
+            core::ptr::addr_of!(self.image_frontier),
+            core::ptr::addr_of!(self.scratch_reserved_bytes),
+            self.endpoint_leases.cast_const(),
+            self.endpoint_lease_capacity,
             lane,
             role,
+            role_count,
             self.id,
             tx,
             rx,
@@ -1267,8 +3222,9 @@ where
 
     #[inline]
     pub(crate) fn next_nonce_seed(&self) -> NonceSeed {
-        let ordinal = self.cap_nonce.fetch_add(1, Ordering::Relaxed);
-        NonceSeed::counter(ordinal)
+        let ordinal = self.cap_nonce.get();
+        self.cap_nonce.set(ordinal.wrapping_add(1));
+        NonceSeed::counter(ordinal as u64)
     }
 
     pub(crate) fn mint_cap<K: ResourceKind>(
@@ -1295,18 +3251,15 @@ where
         );
 
         let handle_bytes = K::encode_handle(&handle);
-        let caps_mask = K::caps_mask(&handle);
         K::zeroize(&mut handle);
 
         let entry = CapEntry {
             sid,
-            lane,
+            lane_raw: lane.as_wire(),
             kind_tag,
-            shot,
+            shot_state: shot.as_u8(),
             role: dest_role,
-            consumed: false,
             nonce,
-            caps_mask,
             handle: handle_bytes,
         };
         self.caps
@@ -1873,18 +3826,14 @@ where
         let transport_metrics = self.transport.metrics().snapshot();
         let policy_input =
             crate::epf::slot_contract::slot_default_input(crate::epf::vm::Slot::Rendezvous);
-        let policy_digest = self
-            .host_slots
-            .active_digest(crate::epf::vm::Slot::Rendezvous);
+        let policy_digest = self.policy_digest(crate::epf::vm::Slot::Rendezvous);
         let event_hash = crate::epf::hash_tap_event(&policy_event);
         let signals_input_hash = crate::epf::hash_policy_input(policy_input);
         let transport_snapshot_hash = crate::epf::hash_transport_snapshot(transport_metrics);
         let replay_transport = crate::epf::replay_transport_inputs(transport_metrics);
         let replay_transport_presence = crate::epf::replay_transport_presence(transport_metrics);
-        let mode_id = crate::epf::policy_mode_tag(
-            self.host_slots
-                .policy_mode(crate::epf::vm::Slot::Rendezvous),
-        );
+        let mode_id =
+            crate::epf::policy_mode_tag(self.policy_mode(crate::epf::vm::Slot::Rendezvous));
         self.emit_policy_event_with_arg2(
             ids::POLICY_AUDIT,
             lane_opt,
@@ -1942,8 +3891,7 @@ where
             replay_transport_presence as u32,
             0,
         );
-        let action = crate::epf::run_with(
-            &self.host_slots,
+        let action = self.run_policy(
             crate::epf::vm::Slot::Rendezvous,
             &policy_event,
             caps_mask,
@@ -1963,8 +3911,7 @@ where
             lane_opt,
             verdict_meta,
             crate::epf::verdict_reason(verdict) as u32,
-            self.host_slots
-                .last_fuel_used(crate::epf::vm::Slot::Rendezvous) as u32,
+            self.last_policy_fuel_used(crate::epf::vm::Slot::Rendezvous) as u32,
         );
 
         self.apply_policy_action(action, sid_opt, lane_opt)?;
@@ -1999,11 +3946,19 @@ mod epf_tests {
         control::cap::mint::CapsMask,
         control::cluster::core::{CpCommand, EffectRunner},
         control::types::{Lane, SessionId},
+        g::{self, Msg, Role},
+        global::{compiled::LoweringSummary, typestate::RoleCompileScratch},
         observe::core::TapEvent,
         runtime::{config::Config, consts::RING_EVENTS},
         transport::{Transport, TransportError, wire::Payload},
     };
-    use core::future::{Ready, ready};
+    use core::{
+        cell::UnsafeCell,
+        future::{Ready, ready},
+        mem::MaybeUninit,
+        ptr,
+    };
+    use std::thread_local;
 
     struct DummyTransport;
 
@@ -2061,12 +4016,116 @@ mod epf_tests {
         fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
     }
 
+    type TestRendezvous = Rendezvous<
+        'static,
+        'static,
+        DummyTransport,
+        crate::runtime::consts::DefaultLabelUniverse,
+        crate::runtime::config::CounterClock,
+        crate::control::cap::mint::EpochTbl,
+    >;
+
+    thread_local! {
+        static EPF_TEST_TAP: UnsafeCell<[TapEvent; RING_EVENTS]> =
+            const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
+        static EPF_TEST_SLAB: UnsafeCell<[u8; 256]> =
+            const { UnsafeCell::new([0u8; 256]) };
+        static EPF_TEST_RENDEZVOUS: UnsafeCell<MaybeUninit<TestRendezvous>> =
+            const { UnsafeCell::new(MaybeUninit::uninit()) };
+        static IMAGE_TEST_SLAB: UnsafeCell<[u8; 32768]> =
+            const { UnsafeCell::new([0u8; 32768]) };
+        static IMAGE_TEST_RENDEZVOUS: UnsafeCell<MaybeUninit<TestRendezvous>> =
+            const { UnsafeCell::new(MaybeUninit::uninit()) };
+    }
+
+    fn with_epf_test_rendezvous<R>(f: impl FnOnce(&mut TestRendezvous) -> R) -> R {
+        EPF_TEST_TAP.with(|tap| {
+            EPF_TEST_SLAB.with(|slab| {
+                EPF_TEST_RENDEZVOUS.with(|rendezvous| unsafe {
+                    let tap = &mut *tap.get();
+                    tap.fill(TapEvent::zero());
+                    let slab = &mut *slab.get();
+                    slab.fill(0);
+                    let config = Config::new(tap, slab);
+                    let ptr = (*rendezvous.get()).as_mut_ptr();
+                    let rv_id = RendezvousId::new(1);
+                    TestRendezvous::init_from_config(ptr, rv_id, config, DummyTransport, 0);
+                    let result = f(&mut *ptr);
+                    ptr::drop_in_place(ptr);
+                    result
+                })
+            })
+        })
+    }
+
+    fn with_image_test_rendezvous_slots<R>(
+        endpoint_slots: usize,
+        f: impl FnOnce(&mut TestRendezvous) -> R,
+    ) -> R {
+        EPF_TEST_TAP.with(|tap| {
+            IMAGE_TEST_SLAB.with(|slab| {
+                IMAGE_TEST_RENDEZVOUS.with(|rendezvous| unsafe {
+                    let tap = &mut *tap.get();
+                    tap.fill(TapEvent::zero());
+                    let slab = &mut *slab.get();
+                    slab.fill(0);
+                    let config = Config::new(tap, slab);
+                    let ptr = (*rendezvous.get()).as_mut_ptr();
+                    let rv_id = RendezvousId::new(2);
+                    TestRendezvous::init_from_config(
+                        ptr,
+                        rv_id,
+                        config,
+                        DummyTransport,
+                        endpoint_slots,
+                    );
+                    let result = f(&mut *ptr);
+                    ptr::drop_in_place(ptr);
+                    result
+                })
+            })
+        })
+    }
+
+    fn with_image_test_rendezvous<R>(f: impl FnOnce(&mut TestRendezvous) -> R) -> R {
+        with_image_test_rendezvous_slots(0, f)
+    }
+
+    fn with_image_test_rendezvous_public_slots<R>(
+        endpoint_slots: usize,
+        f: impl FnOnce(&mut TestRendezvous) -> R,
+    ) -> R {
+        EPF_TEST_TAP.with(|tap| {
+            IMAGE_TEST_SLAB.with(|slab| unsafe {
+                let tap = &mut *tap.get();
+                tap.fill(TapEvent::zero());
+                let slab = &mut *slab.get();
+                slab.fill(0);
+                let config = Config::new(tap, slab);
+                let rv_id = RendezvousId::new(3);
+                let ptr =
+                    TestRendezvous::init_in_slab(rv_id, config, DummyTransport, endpoint_slots)
+                        .expect("public path rendezvous must fit the shared slab");
+                let result = f(&mut *ptr);
+                ptr::drop_in_place(ptr);
+                result
+            })
+        })
+    }
+
+    fn route_summary() -> LoweringSummary {
+        let program = g::send::<Role<0>, Role<1>, Msg<11, u32>, 0>();
+        LoweringSummary::scan_const(program.eff_list())
+    }
+
+    fn route_summary_alt() -> LoweringSummary {
+        let program = g::send::<Role<0>, Role<1>, Msg<12, u32>, 0>();
+        LoweringSummary::scan_const(program.eff_list())
+    }
+
     #[test]
     fn run_effect_requires_authorised_caps() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 256];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        with_test_rendezvous_from_config(config, DummyTransport, |rendezvous| {
+        with_epf_test_rendezvous(|rendezvous| {
             let sid = SessionId::new(1);
             let lane = Lane::new(0);
 
@@ -2087,10 +4146,7 @@ mod epf_tests {
 
     #[test]
     fn run_effect_allows_when_caps_present() {
-        let mut tap_buf = [TapEvent::default(); RING_EVENTS];
-        let mut slab = [0u8; 256];
-        let config = Config::new(&mut tap_buf, &mut slab);
-        with_test_rendezvous_from_config(config, DummyTransport, |rendezvous| {
+        with_epf_test_rendezvous(|rendezvous| {
             let sid = SessionId::new(2);
             let lane = Lane::new(1);
 
@@ -2099,6 +4155,364 @@ mod epf_tests {
             let result = EffectRunner::run_effect(rendezvous, envelope);
 
             assert!(matches!(result, Err(CpError::Checkpoint(_))));
+        });
+    }
+
+    #[test]
+    fn program_image_slot_exhaustion_does_not_leak_slab_frontier() {
+        let summary = route_summary();
+        let stamp = summary.stamp();
+        with_image_test_rendezvous(|rendezvous| unsafe {
+            let initial_frontier = rendezvous.image_frontier;
+            let initial_floor = rendezvous.endpoint_lease_floor();
+
+            assert!(
+                rendezvous
+                    .materialize_program_image_from_summary(stamp, &summary)
+                    .is_none(),
+                "slot exhaustion should reject materialization"
+            );
+            assert_eq!(
+                rendezvous.image_frontier, initial_frontier,
+                "program image slot exhaustion must not advance the slab frontier"
+            );
+            assert_eq!(
+                rendezvous.endpoint_lease_floor(),
+                initial_floor,
+                "program image slot exhaustion must not shrink endpoint lease capacity"
+            );
+
+            assert!(
+                rendezvous
+                    .materialize_program_image_from_summary(stamp, &summary)
+                    .is_none(),
+                "repeated slot exhaustion should keep rejecting materialization"
+            );
+            assert_eq!(
+                rendezvous.image_frontier, initial_frontier,
+                "repeated failures must leave the slab frontier unchanged"
+            );
+            assert_eq!(
+                rendezvous.endpoint_lease_floor(),
+                initial_floor,
+                "repeated failures must not change the endpoint lease floor"
+            );
+        });
+    }
+
+    #[test]
+    fn role_image_slot_exhaustion_does_not_leak_slab_or_scratch_budget() {
+        let summary = route_summary();
+        let stamp = summary.stamp();
+        with_image_test_rendezvous(|rendezvous| unsafe {
+            let initial_frontier = rendezvous.image_frontier;
+            let initial_scratch = rendezvous.scratch_reserved_bytes;
+            let initial_floor = rendezvous.endpoint_lease_floor();
+
+            let mut scratch = RoleCompileScratch::new();
+            assert!(
+                rendezvous
+                    .materialize_role_image_from_summary::<0>(stamp, &summary, &mut scratch)
+                    .is_none(),
+                "slot exhaustion should reject role image materialization"
+            );
+            assert_eq!(
+                rendezvous.image_frontier, initial_frontier,
+                "role image slot exhaustion must not advance the slab frontier"
+            );
+            assert_eq!(
+                rendezvous.scratch_reserved_bytes, initial_scratch,
+                "role image slot exhaustion must not reserve scratch from an untracked image"
+            );
+            assert_eq!(
+                rendezvous.endpoint_lease_floor(),
+                initial_floor,
+                "role image slot exhaustion must not shrink endpoint lease capacity"
+            );
+
+            let mut scratch = RoleCompileScratch::new();
+            assert!(
+                rendezvous
+                    .materialize_role_image_from_summary::<0>(stamp, &summary, &mut scratch)
+                    .is_none(),
+                "repeated slot exhaustion should keep rejecting role image materialization"
+            );
+            assert_eq!(
+                rendezvous.image_frontier, initial_frontier,
+                "repeated role-image failures must leave the slab frontier unchanged"
+            );
+            assert_eq!(
+                rendezvous.scratch_reserved_bytes, initial_scratch,
+                "repeated role-image failures must not change scratch reservation"
+            );
+            assert_eq!(
+                rendezvous.endpoint_lease_floor(),
+                initial_floor,
+                "repeated role-image failures must not change the endpoint lease floor"
+            );
+        });
+    }
+
+    #[test]
+    fn route_table_capacity_stays_tied_to_lane_frame_depth() {
+        with_image_test_rendezvous(|rendezvous| {
+            rendezvous
+                .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
+                    2, 3, 0, 0,
+                ))
+                .expect("route resident budget should bind route storage");
+            assert_eq!(
+                rendezvous.routes.route_slots(),
+                2,
+                "route ledger lane-frame storage must stay tied to route depth"
+            );
+            assert_eq!(
+                rendezvous.routes.lane_slots(),
+                3,
+                "route ledger lane storage must stay tied to the live lane span"
+            );
+        });
+    }
+
+    #[test]
+    fn splice_tables_bind_only_for_splice_control_scope() {
+        with_image_test_rendezvous(|rendezvous| {
+            assert!(!rendezvous.splice.is_bound());
+            assert!(!rendezvous.distributed_splice.is_bound());
+
+            rendezvous.initialise_control_scope(Lane::new(0), ControlScopeKind::Loop);
+            assert!(
+                !rendezvous.splice.is_bound() && !rendezvous.distributed_splice.is_bound(),
+                "non-splice control scopes must not bind splice storage"
+            );
+
+            rendezvous
+                .prepare_splice_control_scope(Lane::new(0))
+                .expect("splice control scope should bind splice storage");
+            assert!(rendezvous.splice.is_bound());
+            assert!(rendezvous.distributed_splice.is_bound());
+        });
+    }
+
+    #[test]
+    fn trim_resident_headers_reclaims_frontier_when_no_images_remain_above_sidecars() {
+        with_image_test_rendezvous(|rendezvous| {
+            let initial_frontier = rendezvous.image_frontier;
+            rendezvous
+                .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
+                    2,
+                    LANES_MAX as usize,
+                    3,
+                    8,
+                ))
+                .expect("resident sidecars should bind");
+            assert!(
+                rendezvous.image_frontier > initial_frontier,
+                "resident sidecars must consume persistent bytes before trimming"
+            );
+
+            rendezvous.trim_resident_headers_to_live_budget();
+
+            assert_eq!(
+                rendezvous.image_frontier, initial_frontier,
+                "trimming empty resident headers must return the frontier when nothing remains above them"
+            );
+            assert_eq!(rendezvous.routes.route_slots(), 0);
+            assert_eq!(rendezvous.loops.loop_slots(), 0);
+            assert_eq!(rendezvous.caps.capacity(), 0);
+        });
+    }
+
+    #[test]
+    fn resident_sidecars_reuse_freed_regions_before_growing_frontier_again() {
+        let summary = route_summary();
+        with_image_test_rendezvous_slots(1, |rendezvous| unsafe {
+            rendezvous
+                .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
+                    2,
+                    LANES_MAX as usize,
+                    3,
+                    8,
+                ))
+                .expect("resident sidecars should bind");
+            let frontier_after_sidecars = rendezvous.image_frontier;
+
+            rendezvous
+                .materialize_program_image_from_summary(summary.stamp(), &summary)
+                .expect("program image should materialize above the sidecar section");
+            let frontier_after_image = rendezvous.image_frontier;
+            assert!(
+                frontier_after_image > frontier_after_sidecars,
+                "program image must sit above the resident sidecars to validate reuse"
+            );
+
+            rendezvous.trim_resident_headers_to_live_budget();
+            assert_eq!(
+                rendezvous.image_frontier, frontier_after_image,
+                "freeing sidecars below a live image should not move the frontier immediately"
+            );
+
+            rendezvous
+                .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
+                    2,
+                    LANES_MAX as usize,
+                    3,
+                    8,
+                ))
+                .expect("resident sidecars should rebind from freed regions");
+            assert_eq!(
+                rendezvous.image_frontier, frontier_after_image,
+                "rebinding resident sidecars must reuse freed regions instead of growing the frontier"
+            );
+        });
+    }
+
+    #[test]
+    fn external_sidecar_free_reclaims_frontier_alignment_padding() {
+        with_image_test_rendezvous(|rendezvous| {
+            let initial_frontier = rendezvous.image_frontier;
+            let align = core::mem::align_of::<u128>();
+            let head_bytes = if (initial_frontier as usize + 1) % align == 0 {
+                2
+            } else {
+                1
+            };
+
+            let (head_ptr, head_reclaim_delta) = rendezvous
+                .allocate_external_persistent_sidecar_bytes(head_bytes, 1)
+                .expect("unaligned external sidecar should bind");
+            let frontier_after_head = rendezvous.image_frontier;
+
+            let (aligned_ptr, aligned_reclaim_delta) = rendezvous
+                .allocate_external_persistent_sidecar_bytes(8, align)
+                .expect("aligned external sidecar should bind");
+            assert!(
+                aligned_reclaim_delta > 0,
+                "aligned external sidecar must record reclaimed prefix padding when frontier is unaligned"
+            );
+
+            rendezvous.free_external_persistent_sidecar_bytes(aligned_ptr, 8, aligned_reclaim_delta);
+            assert_eq!(
+                rendezvous.image_frontier, frontier_after_head,
+                "freeing the top external sidecar must reclaim its alignment padding back to the previous frontier"
+            );
+
+            rendezvous.free_external_persistent_sidecar_bytes(
+                head_ptr,
+                head_bytes,
+                head_reclaim_delta,
+            );
+            assert_eq!(
+                rendezvous.image_frontier, initial_frontier,
+                "freeing all external sidecars must return the frontier to its starting point"
+            );
+        });
+    }
+
+    #[test]
+    fn program_image_slot_reuses_unpinned_storage_without_frontier_growth() {
+        let summary_a = route_summary();
+        let summary_b = route_summary_alt();
+        with_image_test_rendezvous_slots(1, |rendezvous| unsafe {
+            let image_a = rendezvous
+                .materialize_program_image_from_summary(summary_a.stamp(), &summary_a)
+                .expect("materialize first program image");
+            let first_frontier = rendezvous.image_frontier;
+            let program_slot = rendezvous
+                .pin_program_image(summary_a.stamp())
+                .expect("pin first program image");
+            rendezvous.unpin_program_image_slot(program_slot as usize);
+
+            let image_b = rendezvous
+                .materialize_program_image_from_summary(summary_b.stamp(), &summary_b)
+                .expect("reuse program image slot");
+            assert_eq!(
+                rendezvous.image_frontier, first_frontier,
+                "reusing an unpinned program image slot must not advance the persistent frontier"
+            );
+            assert_eq!(
+                image_a as usize, image_b as usize,
+                "reused program image slot must keep using the same storage when the replacement fits"
+            );
+        });
+    }
+
+    #[test]
+    fn releasing_endpoint_lease_unpins_compiled_images_for_reuse() {
+        let summary_a = route_summary();
+        let summary_b = route_summary_alt();
+        with_image_test_rendezvous_slots(1, |rendezvous| unsafe {
+            let image_a = rendezvous
+                .materialize_program_image_from_summary(summary_a.stamp(), &summary_a)
+                .expect("materialize first program image");
+            let mut scratch = RoleCompileScratch::new();
+            rendezvous
+                .materialize_role_image_from_summary::<0>(
+                    summary_a.stamp(),
+                    &summary_a,
+                    &mut scratch,
+                )
+                .expect("materialize first role image");
+            rendezvous
+                .allocate_endpoint_lease(7, 1, 1, 1)
+                .expect("lease endpoint slot");
+            assert!(
+                rendezvous.pin_endpoint_images::<0>(7, 1, summary_a.stamp()),
+                "active endpoint must pin compiled images"
+            );
+            let frontier_after_first = rendezvous.image_frontier;
+
+            assert!(
+                rendezvous
+                    .materialize_program_image_from_summary(summary_b.stamp(), &summary_b)
+                    .is_none(),
+                "pinned image slot must not be reusable while the endpoint is live"
+            );
+            rendezvous.release_endpoint_lease(7, 1);
+
+            let image_b = rendezvous
+                .materialize_program_image_from_summary(summary_b.stamp(), &summary_b)
+                .expect("released endpoint must make image slot reusable");
+            assert_eq!(
+                rendezvous.image_frontier, frontier_after_first,
+                "released endpoint must let the image bank reuse in-place storage"
+            );
+            assert_eq!(
+                image_a as usize, image_b as usize,
+                "released endpoint must hand the same program-image storage back to the bank"
+            );
+        });
+    }
+
+    #[test]
+    fn public_path_image_bank_is_wider_than_endpoint_lease_capacity() {
+        let summary_a = route_summary();
+        let summary_b = route_summary_alt();
+        with_image_test_rendezvous_public_slots(1, |rendezvous| unsafe {
+            assert_eq!(
+                rendezvous.endpoint_lease_capacity, 1,
+                "public-path lease budget should keep the requested endpoint slot count"
+            );
+            assert!(
+                rendezvous.image_slot_capacity > rendezvous.endpoint_lease_capacity,
+                "public-path image bank must decouple compiled image capacity from endpoint leases"
+            );
+
+            rendezvous
+                .materialize_program_image_from_summary(summary_a.stamp(), &summary_a)
+                .expect("materialize first program image");
+            let pinned = rendezvous
+                .pin_program_image(summary_a.stamp())
+                .expect("pin first program image");
+
+            assert!(
+                rendezvous
+                    .materialize_program_image_from_summary(summary_b.stamp(), &summary_b)
+                    .is_some(),
+                "a pinned program image must not block a second compiled image on the public path"
+            );
+
+            rendezvous.unpin_program_image_slot(pinned as usize);
         });
     }
 }

@@ -1,0 +1,33 @@
+use hibana::g;
+use hibana::g::advanced::{RoleProgram, project};
+use hibana::substrate::cap::advanced::MintConfig;
+
+fn main() {
+    let program = g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>();
+    let program = g::seq(program, g::send::<g::Role<1>, g::Role<0>, g::Msg<2, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<0>, g::Role<1>, g::Msg<3, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<1>, g::Role<0>, g::Msg<4, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<0>, g::Role<1>, g::Msg<5, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<1>, g::Role<0>, g::Msg<6, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<0>, g::Role<1>, g::Msg<7, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<1>, g::Role<0>, g::Msg<8, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<0>, g::Role<1>, g::Msg<9, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<1>, g::Role<0>, g::Msg<10, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<0>, g::Role<1>, g::Msg<11, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<1>, g::Role<0>, g::Msg<12, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<0>, g::Role<1>, g::Msg<13, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<1>, g::Role<0>, g::Msg<14, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<0>, g::Role<1>, g::Msg<15, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<1>, g::Role<0>, g::Msg<16, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<0>, g::Role<1>, g::Msg<17, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<1>, g::Role<0>, g::Msg<18, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<0>, g::Role<1>, g::Msg<19, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<1>, g::Role<0>, g::Msg<20, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<0>, g::Role<1>, g::Msg<21, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<1>, g::Role<0>, g::Msg<22, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<0>, g::Role<1>, g::Msg<23, u8>, 0>());
+    let program = g::seq(program, g::send::<g::Role<1>, g::Role<0>, g::Msg<24, u8>, 0>());
+
+    let _client: RoleProgram<'_, 0, _, MintConfig> = project(&program);
+    let _server: RoleProgram<'_, 1, _, MintConfig> = project(&program);
+}

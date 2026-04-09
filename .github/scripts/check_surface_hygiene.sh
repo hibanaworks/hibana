@@ -6,6 +6,11 @@ cd "${ROOT_DIR}"
 
 FAILED=0
 
+if [[ -e "src/sync.rs" ]]; then
+  echo "boundary deny pattern detected: runtime sync shim" >&2
+  FAILED=1
+fi
+
 check_absent() {
   local pattern="$1"
   local label="$2"
@@ -45,6 +50,21 @@ check_absent_multiline() {
     FAILED=1
   fi
 }
+
+check_absent \
+  "mod[[:space:]]+sync;|crate::sync" \
+  "runtime fake-sync shim reintroduced" \
+  src/lib.rs src/substrate.rs src/endpoint.rs src/rendezvous/core.rs src/epf/host.rs src/observe/core.rs
+
+check_absent \
+  "Atomic(Bool|U8|U16|U32|U64|Usize|Ptr)" \
+  "production runtime atomics reintroduced" \
+  src/rendezvous/core.rs src/epf/host.rs src/observe/core.rs
+
+check_absent \
+  "Atomic(Bool|U8|U16|U32|U64|Usize|Ptr)" \
+  "test/runtime atomics reintroduced" \
+  src tests
 
 PURE_SYNONYM_ALIASES="$(
   rg -n "^(pub\\(crate\\)[[:space:]]+)?type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*[A-Za-z0-9_]+;" \
@@ -126,6 +146,17 @@ if [[ -n "${TEST_FIXTURE_PURE_ENDPOINT_ALIASES}" ]]; then
   FAILED=1
 fi
 
+TEST_FIXTURE_TYPED_HANDLE_STATIC_SLOTS="$(
+  (
+    rg -n -U "StaticSlot<[^\\n;]*(Endpoint<|RouteBranch<)" tests || true
+  ) | rg -v "tests/(substrate_surface|public_surface_guards)\\.rs:" || true
+)"
+if [[ -n "${TEST_FIXTURE_TYPED_HANDLE_STATIC_SLOTS}" ]]; then
+  echo "${TEST_FIXTURE_TYPED_HANDLE_STATIC_SLOTS}" >&2
+  echo "boundary deny pattern detected: typed handle static slot" >&2
+  FAILED=1
+fi
+
 TEST_FIXTURE_PURE_CLUSTER_ALIASES="$(
   rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*SessionCluster<" \
     tests || true
@@ -183,6 +214,16 @@ README_STEP_PROJECTION_ALIASES="$(
 if [[ -n "${README_STEP_PROJECTION_ALIASES}" ]]; then
   echo "${README_STEP_PROJECTION_ALIASES}" >&2
   echo "boundary deny pattern detected: README step/projection alias" >&2
+  FAILED=1
+fi
+
+README_OLD_PROJECTED_LOCAL_WALKTHROUGH="$(
+  rg -n -U '(The exact projected `LocalSteps` type is part of the contract\.|Do not erase `LocalSteps`\.|use hibana::g::advanced::steps::\{ProjectRole, SendStep, StepCons, StepNil\};|as[[:space:]]+ProjectRole<)' \
+    README.md || true
+)"
+if [[ -n "${README_OLD_PROJECTED_LOCAL_WALKTHROUGH}" ]]; then
+  echo "${README_OLD_PROJECTED_LOCAL_WALKTHROUGH}" >&2
+  echo "boundary deny pattern detected: README old projected-local walkthrough" >&2
   FAILED=1
 fi
 
@@ -246,6 +287,20 @@ STACK_BACKED_TAP_STORAGE_SHIM="$(
 if [[ -n "${STACK_BACKED_TAP_STORAGE_SHIM}" ]]; then
   echo "${STACK_BACKED_TAP_STORAGE_SHIM}" >&2
   echo "boundary deny pattern detected: stack-backed tap storage shim" >&2
+  FAILED=1
+fi
+
+STACK_TUNING_HELPER_SHIM="$(
+  rg -n -g '!tests/huge_choreography_runtime.rs' "stack_size\\(" src tests || true
+)"
+if [[ -n "${STACK_TUNING_HELPER_SHIM}" ]]; then
+  echo "${STACK_TUNING_HELPER_SHIM}" >&2
+  echo "boundary deny pattern detected: explicit stack tuning helper" >&2
+  FAILED=1
+fi
+
+if [[ -e tests/support/large_stack_sync.rs || -e tests/support/large_stack_async.rs ]]; then
+  echo "boundary deny pattern detected: deleted large-stack support module restored" >&2
   FAILED=1
 fi
 
@@ -600,7 +655,7 @@ fi
 
 OFFER_BLOCK="$(
   awk '
-    /pub async fn offer\(self\) -> RecvResult<RouteBranch/ { in_block=1 }
+    /pub async fn offer\(/ { in_block=1 }
     in_block {
       print
       if ($0 ~ /^    }$/) { exit }
@@ -723,7 +778,7 @@ if ! rg -n "mod evidence_store;|mod frontier_state;|mod route_state;" src/endpoi
 fi
 
 for required in \
-  "src/endpoint/kernel/evidence_store.rs:pub\\(super\\) struct ScopeEvidenceStore" \
+  "src/endpoint/kernel/evidence_store.rs:pub\\(super\\) struct ScopeEvidenceTable" \
   "src/endpoint/kernel/frontier_state.rs:pub\\(super\\) struct FrontierState" \
   "src/endpoint/kernel/route_state.rs:pub\\(super\\) struct RouteState"
 do
@@ -761,6 +816,10 @@ if [[ -n "${HIDDEN_SRC_FILES}" ]]; then
   echo "boundary deny pattern detected: underscore source escape hatch" >&2
   FAILED=1
 fi
+
+check_absent "MaybeUninit<ErasedPublicEndpointKernel" \
+  "inline public endpoint kernel storage" \
+  src/control/cluster/core.rs
 
 if [[ "${FAILED}" -ne 0 ]]; then
   exit 1

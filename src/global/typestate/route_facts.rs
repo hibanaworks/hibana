@@ -1,8 +1,7 @@
 //! Route fact helpers derived during typestate lowering.
 
 use super::facts::{
-    JumpReason, LocalAction, LocalNode, MAX_STATES, RouteRecvIndex, StateIndex,
-    state_index_to_usize,
+    JumpReason, LocalAction, LocalNode, MAX_STATES, StateIndex, state_index_to_usize,
 };
 use crate::{
     eff,
@@ -12,19 +11,6 @@ use crate::{
 pub(super) const MAX_PREFIX_ACTIONS: usize = eff::meta::MAX_EFF_NODES;
 pub(super) const PREFIX_KIND_SEND: u8 = 0;
 pub(super) const PREFIX_KIND_LOCAL: u8 = 1;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct RouteRecvNode {
-    pub state: StateIndex,
-    pub next: RouteRecvIndex,
-}
-
-impl RouteRecvNode {
-    pub(super) const EMPTY: Self = Self {
-        state: StateIndex::ZERO,
-        next: RouteRecvIndex::MAX,
-    };
-}
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct PrefixAction {
@@ -43,22 +29,11 @@ impl PrefixAction {
     };
 }
 
-/// Two route policies are considered the same if they share policy_id and scope.
-pub(super) const fn route_policy_differs(existing: PolicyMode, new_policy: PolicyMode) -> bool {
-    match (existing, new_policy) {
-        (
-            PolicyMode::Dynamic {
-                policy_id: existing_policy,
-                scope: existing_scope,
-                ..
-            },
-            PolicyMode::Dynamic {
-                policy_id: new_policy,
-                scope: new_scope,
-                ..
-            },
-        ) => existing_policy != new_policy || existing_scope.raw() != new_scope.raw(),
-        _ => true,
+/// Route-scope controller policy storage is keyed by the dynamic policy id.
+pub(super) const fn route_policy_differs(existing_policy_id: u16, new_policy: PolicyMode) -> bool {
+    match new_policy.dynamic_policy_id() {
+        Some(new_policy_id) => existing_policy_id != new_policy_id,
+        None => true,
     }
 }
 
@@ -135,8 +110,9 @@ const fn jump_reason_eq(left: JumpReason, right: JumpReason) -> bool {
     )
 }
 
-pub(super) const fn arm_sequences_equal(
-    nodes: &[LocalNode; MAX_STATES],
+#[inline(never)]
+pub(super) fn arm_sequences_equal(
+    nodes: &[LocalNode],
     scope_end: StateIndex,
     arm0_entry: StateIndex,
     arm1_entry: StateIndex,
@@ -201,8 +177,9 @@ pub(super) const fn arm_sequences_equal(
     false
 }
 
-pub(super) const fn continuations_equivalent(
-    nodes: &[LocalNode; MAX_STATES],
+#[inline(never)]
+pub(super) fn continuations_equivalent(
+    nodes: &[LocalNode],
     scope_end: StateIndex,
     left_entry: StateIndex,
     right_entry: StateIndex,
@@ -213,8 +190,9 @@ pub(super) const fn continuations_equivalent(
     arm_sequences_equal(nodes, scope_end, left_entry, right_entry)
 }
 
-pub(super) const fn arm_common_prefix_end(
-    nodes: &[LocalNode; MAX_STATES],
+#[inline(never)]
+pub(super) fn arm_common_prefix_end(
+    nodes: &[LocalNode],
     scope: ScopeId,
     scope_end: StateIndex,
     arm0_entry: StateIndex,
@@ -225,16 +203,11 @@ pub(super) const fn arm_common_prefix_end(
     }
     let end = state_index_to_usize(scope_end);
     let scope_raw = scope.raw();
-    let mut worklist = [(StateIndex::MAX, StateIndex::MAX); MAX_PREFIX_ACTIONS];
-    worklist[0] = (arm0_entry, arm1_entry);
-    let mut work_len = 1usize;
+    let mut idx0 = arm0_entry;
+    let mut idx1 = arm1_entry;
     let mut prefix_len = 0usize;
-    let mut end0 = arm0_entry;
-    let mut end1 = arm1_entry;
 
-    while work_len > 0 {
-        work_len -= 1;
-        let (mut idx0, mut idx1) = worklist[work_len];
+    loop {
         let mut idx0_us = state_index_to_usize(idx0);
         let mut idx1_us = state_index_to_usize(idx1);
 
@@ -266,38 +239,28 @@ pub(super) const fn arm_common_prefix_end(
         let at_end0 = idx0_us >= end;
         let at_end1 = idx1_us >= end;
         if at_end0 || at_end1 {
-            end0 = if at_end0 { scope_end } else { idx0 };
-            end1 = if at_end1 { scope_end } else { idx1 };
-            continue;
+            return (
+                if at_end0 { scope_end } else { idx0 },
+                if at_end1 { scope_end } else { idx1 },
+                prefix_len,
+            );
         }
 
         let node0 = nodes[idx0_us];
         let node1 = nodes[idx1_us];
         if node0.scope().raw() != scope_raw || node1.scope().raw() != scope_raw {
-            end0 = idx0;
-            end1 = idx1;
-            continue;
+            return (idx0, idx1, prefix_len);
         }
         if !actions_equivalent(node0.action(), node1.action(), node0.next(), node1.next()) {
-            end0 = idx0;
-            end1 = idx1;
-            continue;
+            return (idx0, idx1, prefix_len);
         }
 
         let next0 = node0.next();
         let next1 = node1.next();
-        end0 = if next0.is_max() { scope_end } else { next0 };
-        end1 = if next1.is_max() { scope_end } else { next1 };
         prefix_len += 1;
-
-        if work_len >= worklist.len() {
-            panic!("prefix merge worklist overflow");
-        }
-        worklist[work_len] = (end0, end1);
-        work_len += 1;
+        idx0 = if next0.is_max() { scope_end } else { next0 };
+        idx1 = if next1.is_max() { scope_end } else { next1 };
     }
-
-    (end0, end1, prefix_len)
 }
 
 pub(super) const fn prefix_action_eq(left: PrefixAction, right: PrefixAction) -> bool {

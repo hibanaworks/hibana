@@ -1,12 +1,26 @@
 #![cfg(feature = "std")]
 mod common;
+#[path = "support/local_only.rs"]
+mod local_only_support;
+#[path = "support/placement.rs"]
+mod placement_support;
 #[path = "support/route_control_kinds.rs"]
 mod route_control_kinds;
 #[path = "support/runtime.rs"]
 mod runtime_support;
+#[path = "support/tls_mut.rs"]
+mod tls_mut_support;
+#[path = "support/tls_ref.rs"]
+mod tls_ref_support;
 
-use common::{RecvFuture, TestRx, TestTransport, TestTransportError, TestTransportMetrics, TestTx};
-use hibana::g::advanced::steps::{ProjectRole, SendStep, SeqSteps, StepConcat, StepCons, StepNil};
+use common::{
+    RecvFuture, SendFuture, TestRx, TestTransport, TestTransportError, TestTransportMetrics, TestTx,
+};
+use core::{
+    cell::{Cell, UnsafeCell},
+    mem::MaybeUninit,
+};
+use hibana::g::advanced::steps::{SendStep, SeqSteps, StepConcat, StepCons, StepNil};
 use hibana::g::advanced::{CanonicalControl, MessageSpec, RoleProgram, project};
 use hibana::g::{self, Msg, Role};
 use hibana::substrate::{
@@ -20,18 +34,65 @@ use hibana::substrate::{
     runtime::{Config, CounterClock, DefaultLabelUniverse},
     transport::Outgoing,
 };
-use runtime_support::{leak_clock, leak_slab, leak_tap_storage};
+use local_only_support::LocalCell;
+use placement_support::write_value;
+use runtime_support::with_fixture;
+use tls_mut_support::with_tls_mut;
+use tls_ref_support::with_tls_ref;
 
 const LABEL_ROUTE_DECISION: u8 = 57;
 type RouteRightKind = route_control_kinds::RouteControl<70, 0>;
+const POLICY_AUDIT_EXT_ID: u16 = 0x0408;
+const SLOT_TAG_ENDPOINT_RX: u32 = 1;
+const SLOT_TAG_ROUTE: u32 = 4;
 
-use std::collections::{BTreeMap, VecDeque};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-
 const ROUTE_POLICY_ID: u16 = 900;
+type TestKit = SessionKit<'static, FlowTransport, DefaultLabelUniverse, CounterClock, 2>;
+type ControllerEndpoint = hibana::Endpoint<'static, 0, TestKit>;
+type WorkerEndpoint = hibana::Endpoint<'static, 1, TestKit>;
 
-const LEFT_ARM: g::Program<
+std::thread_local! {
+    static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
+    static FLOW_SHARED_SLOT: UnsafeCell<MaybeUninit<FlowBindingShared>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
+    static CONTROLLER_BINDING_SLOT: UnsafeCell<MaybeUninit<FlowBinding>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
+    static WORKER_BINDING_SLOT: UnsafeCell<MaybeUninit<FlowBinding>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
+    static CONTROLLER_ENDPOINT_SLOT: UnsafeCell<MaybeUninit<ControllerEndpoint>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
+    static WORKER_ENDPOINT_SLOT: UnsafeCell<MaybeUninit<WorkerEndpoint>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
+    static ROUTE_RESOLVER_CALLS: Cell<usize> = const { Cell::new(0) };
+}
+
+fn reset_route_resolver_calls() {
+    ROUTE_RESOLVER_CALLS.with(|count| count.set(0));
+}
+
+fn route_resolver_calls() -> usize {
+    ROUTE_RESOLVER_CALLS.with(Cell::get)
+}
+
+fn count_policy_audit_ext_for_slot(
+    tap_buf: &[hibana::substrate::mgmt::tap::TapEvent],
+    slot_tag: u32,
+) -> usize {
+    tap_buf
+        .iter()
+        .filter(|event| event.id == POLICY_AUDIT_EXT_ID && (event.arg2 >> 24) == slot_tag)
+        .count()
+}
+
+const LEFT_ARM: g::ProgramSource<
     SeqSteps<
         StepCons<
             SendStep<
@@ -62,7 +123,7 @@ const LEFT_ARM: g::Program<
     g::send::<Role<0>, Role<1>, Msg<71, u32>, 0>(),
 );
 
-const RIGHT_ARM: g::Program<
+const RIGHT_ARM: g::ProgramSource<
     SeqSteps<
         StepCons<
             SendStep<
@@ -85,7 +146,7 @@ const RIGHT_ARM: g::Program<
     g::send::<Role<0>, Role<1>, Msg<72, u32>, 0>(),
 );
 
-const ROUTE: g::Program<
+const ROUTE: g::ProgramSource<
     <SeqSteps<
         StepCons<
             SendStep<
@@ -115,7 +176,7 @@ const ROUTE: g::Program<
     >>::Output,
 > = g::route(LEFT_ARM, RIGHT_ARM);
 
-const PROGRAM: g::Program<
+const PROGRAM: g::ProgramSource<
     SeqSteps<
         <SeqSteps<
             StepCons<
@@ -151,7 +212,7 @@ const PROGRAM: g::Program<
 static CONTROLLER_PROGRAM: RoleProgram<
     'static,
     0,
-    <SeqSteps<
+    SeqSteps<
         <SeqSteps<
             StepCons<
                 SendStep<
@@ -180,13 +241,13 @@ static CONTROLLER_PROGRAM: RoleProgram<
             >,
         >>::Output,
         StepCons<SendStep<Role<0>, Role<1>, Msg<73, u32>>, StepNil>,
-    > as ProjectRole<Role<0>>>::Output,
-> = project(&PROGRAM);
+    >,
+> = project(&g::freeze(&PROGRAM));
 
 static WORKER_PROGRAM: RoleProgram<
     'static,
     1,
-    <SeqSteps<
+    SeqSteps<
         <SeqSteps<
             StepCons<
                 SendStep<
@@ -215,8 +276,8 @@ static WORKER_PROGRAM: RoleProgram<
             >,
         >>::Output,
         StepCons<SendStep<Role<0>, Role<1>, Msg<73, u32>>, StepNil>,
-    > as ProjectRole<Role<1>>>::Output,
-> = project(&PROGRAM);
+    >,
+> = project(&g::freeze(&PROGRAM));
 
 #[derive(Clone, Copy)]
 struct PendingInbound {
@@ -224,54 +285,154 @@ struct PendingInbound {
     classification: IncomingClassification,
 }
 
+const FLOW_ROLE_SLOTS: usize = 2;
+const FLOW_MAX_PENDING_PER_ROLE: usize = 4;
+const FLOW_MAX_PAYLOADS: usize = 4;
+const FLOW_MAX_PAYLOAD_LEN: usize = 8;
+
+#[derive(Clone, Copy, Default)]
+struct StoredPayload {
+    active: bool,
+    channel: u64,
+    len: usize,
+    bytes: [u8; FLOW_MAX_PAYLOAD_LEN],
+}
+
 #[derive(Default)]
-struct FlowBindingShared {
+struct FlowBindingSharedState {
     next_channel: u64,
-    incoming: BTreeMap<u8, VecDeque<PendingInbound>>,
-    payloads: BTreeMap<u64, Vec<u8>>,
+    drain_calls: usize,
+    incoming: [[Option<PendingInbound>; FLOW_MAX_PENDING_PER_ROLE]; FLOW_ROLE_SLOTS],
+    payloads: [StoredPayload; FLOW_MAX_PAYLOADS],
 }
 
-#[derive(Clone)]
-struct FlowBinding {
-    role: u8,
-    shared: Arc<Mutex<FlowBindingShared>>,
-}
-
-impl FlowBinding {
-    fn new(role: u8, shared: Arc<Mutex<FlowBindingShared>>) -> Self {
-        Self { role, shared }
+impl FlowBindingSharedState {
+    fn clear(&mut self) {
+        *self = Self::default();
     }
-}
 
-impl BindingSlot for FlowBinding {
-    fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IncomingClassification> {
-        let mut shared = self.shared.lock().expect("flow binding lock");
-        let queue = shared.incoming.entry(self.role).or_default();
+    fn push_incoming(&mut self, role: u8, pending: PendingInbound) {
+        let queue = self
+            .incoming
+            .get_mut(role as usize)
+            .expect("role queue must exist");
         let mut idx = 0usize;
         while idx < queue.len() {
-            if let Some(entry) = queue.get(idx)
+            if queue[idx].is_none() {
+                queue[idx] = Some(pending);
+                return;
+            }
+            idx += 1;
+        }
+        panic!("incoming queue exhausted");
+    }
+
+    fn take_incoming_for_lane(
+        &mut self,
+        role: u8,
+        logical_lane: u8,
+    ) -> Option<IncomingClassification> {
+        let queue = self.incoming.get_mut(role as usize)?;
+        let mut idx = 0usize;
+        while idx < queue.len() {
+            if let Some(entry) = queue[idx]
                 && entry.lane == logical_lane
             {
-                return queue.remove(idx).map(|pending| pending.classification);
+                let classification = entry.classification;
+                let mut tail = idx;
+                while tail + 1 < queue.len() {
+                    queue[tail] = queue[tail + 1];
+                    tail += 1;
+                }
+                queue[queue.len() - 1] = None;
+                return Some(classification);
             }
             idx += 1;
         }
         None
     }
 
-    fn on_recv(&mut self, channel: Channel, buf: &mut [u8]) -> Result<usize, TransportOpsError> {
-        let mut shared = self.shared.lock().expect("flow binding lock");
-        let Some(payload) = shared.payloads.remove(&channel.raw()) else {
-            return Err(TransportOpsError::ChannelNotFound);
-        };
-        if payload.len() > buf.len() {
-            return Err(TransportOpsError::WriteFailed {
-                expected: payload.len(),
-                actual: buf.len(),
-            });
+    fn store_payload(&mut self, channel: u64, payload: &[u8]) {
+        assert!(
+            payload.len() <= FLOW_MAX_PAYLOAD_LEN,
+            "payload exceeds fixed test storage"
+        );
+        let mut idx = 0usize;
+        while idx < self.payloads.len() {
+            let slot = &mut self.payloads[idx];
+            if !slot.active {
+                slot.active = true;
+                slot.channel = channel;
+                slot.len = payload.len();
+                slot.bytes[..payload.len()].copy_from_slice(payload);
+                return;
+            }
+            idx += 1;
         }
-        buf[..payload.len()].copy_from_slice(payload.as_slice());
-        Ok(payload.len())
+        panic!("payload slots exhausted");
+    }
+
+    fn take_payload(&mut self, channel: u64, buf: &mut [u8]) -> Result<usize, TransportOpsError> {
+        let mut idx = 0usize;
+        while idx < self.payloads.len() {
+            let slot = &mut self.payloads[idx];
+            if slot.active && slot.channel == channel {
+                if slot.len > buf.len() {
+                    return Err(TransportOpsError::WriteFailed {
+                        expected: slot.len,
+                        actual: buf.len(),
+                    });
+                }
+                buf[..slot.len].copy_from_slice(&slot.bytes[..slot.len]);
+                let len = slot.len;
+                *slot = StoredPayload::default();
+                return Ok(len);
+            }
+            idx += 1;
+        }
+        Err(TransportOpsError::ChannelNotFound)
+    }
+}
+
+struct FlowBindingShared {
+    state: LocalCell<FlowBindingSharedState>,
+}
+
+impl FlowBindingShared {
+    fn new() -> Self {
+        Self {
+            state: LocalCell::new(FlowBindingSharedState::default()),
+        }
+    }
+
+    fn reset(&self) {
+        self.state.with_mut(FlowBindingSharedState::clear);
+    }
+}
+
+#[derive(Clone)]
+struct FlowBinding {
+    role: u8,
+    shared: &'static FlowBindingShared,
+}
+
+impl FlowBinding {
+    fn new(role: u8, shared: &'static FlowBindingShared) -> Self {
+        Self { role, shared }
+    }
+}
+
+impl BindingSlot for FlowBinding {
+    fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IncomingClassification> {
+        self.shared
+            .state
+            .with_mut(|state| state.take_incoming_for_lane(self.role, logical_lane))
+    }
+
+    fn on_recv(&mut self, channel: Channel, buf: &mut [u8]) -> Result<usize, TransportOpsError> {
+        self.shared
+            .state
+            .with_mut(|state| state.take_payload(channel.raw(), buf))
     }
 
     fn policy_signals_provider(&self) -> Option<&dyn PolicySignalsProvider> {
@@ -282,11 +443,31 @@ impl BindingSlot for FlowBinding {
 #[derive(Clone)]
 struct FlowTransport {
     inner: TestTransport,
-    shared: Arc<Mutex<FlowBindingShared>>,
+    shared: &'static FlowBindingShared,
+}
+
+enum FlowSendFuture<'a> {
+    Inner(SendFuture<'a>),
+    Ready,
+}
+
+impl core::future::Future for FlowSendFuture<'_> {
+    type Output = Result<(), TestTransportError>;
+
+    fn poll(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let this = self.get_mut();
+        match this {
+            Self::Inner(inner) => Pin::new(inner).poll(cx),
+            Self::Ready => std::task::Poll::Ready(Ok(())),
+        }
+    }
 }
 
 impl FlowTransport {
-    fn new(shared: Arc<Mutex<FlowBindingShared>>) -> Self {
+    fn new(shared: &'static FlowBindingShared) -> Self {
         Self {
             inner: TestTransport::default(),
             shared,
@@ -301,11 +482,11 @@ impl Transport for FlowTransport {
     where
         Self: 'a;
     type Rx<'a>
-        = TestRx
+        = TestRx<'a>
     where
         Self: 'a;
     type Send<'a>
-        = Pin<Box<dyn std::future::Future<Output = Result<(), Self::Error>> + 'a>>
+        = FlowSendFuture<'a>
     where
         Self: 'a;
     type Recv<'a>
@@ -325,29 +506,27 @@ impl Transport for FlowTransport {
         if outgoing.meta.direction == hibana::substrate::transport::LocalDirection::Send
             && outgoing.meta.label == <Msg<71, u32> as MessageSpec>::LABEL
         {
-            let mut shared = self.shared.lock().expect("flow binding lock");
-            let channel = Channel::new(shared.next_channel);
-            shared.next_channel += 1;
-            shared
-                .payloads
-                .insert(channel.raw(), outgoing.payload.as_bytes().to_vec());
-            let classification = IncomingClassification {
-                label: outgoing.meta.label,
-                instance: 0,
-                has_fin: false,
-                channel,
-            };
-            shared
-                .incoming
-                .entry(outgoing.meta.peer)
-                .or_default()
-                .push_back(PendingInbound {
-                    lane: outgoing.meta.lane,
-                    classification,
-                });
-            return Box::pin(std::future::ready(Ok(())));
+            self.shared.state.with_mut(|shared| {
+                let channel = Channel::new(shared.next_channel);
+                shared.next_channel += 1;
+                shared.store_payload(channel.raw(), outgoing.payload.as_bytes());
+                let classification = IncomingClassification {
+                    label: outgoing.meta.label,
+                    instance: 0,
+                    has_fin: false,
+                    channel,
+                };
+                shared.push_incoming(
+                    outgoing.meta.peer,
+                    PendingInbound {
+                        lane: outgoing.meta.lane,
+                        classification,
+                    },
+                );
+            });
+            return FlowSendFuture::Ready;
         }
-        self.inner.send(tx, outgoing)
+        FlowSendFuture::Inner(self.inner.send(tx, outgoing))
     }
 
     fn recv<'a>(&'a self, rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
@@ -359,6 +538,9 @@ impl Transport for FlowTransport {
     }
 
     fn drain_events(&self, emit: &mut dyn FnMut(hibana::substrate::transport::TransportEvent)) {
+        self.shared
+            .state
+            .with_mut(|state| state.drain_calls = state.drain_calls.wrapping_add(1));
         self.inner.drain_events(emit)
     }
 
@@ -375,8 +557,8 @@ impl Transport for FlowTransport {
     }
 }
 
-fn register_route_resolvers_for_program<const ROLE: u8, Steps, T>(
-    cluster: &SessionKit<'static, T, DefaultLabelUniverse, CounterClock, 4>,
+fn register_route_resolvers_for_program<const ROLE: u8, Steps, T, const MAX_RV: usize>(
+    cluster: &SessionKit<'_, T, DefaultLabelUniverse, CounterClock, MAX_RV>,
     rv_id: RendezvousId,
     program: &RoleProgram<'static, ROLE, Steps>,
 ) where
@@ -392,158 +574,846 @@ fn register_route_resolvers_for_program<const ROLE: u8, Steps, T>(
 }
 
 fn always_left_route_resolver(_ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
+    ROUTE_RESOLVER_CALLS.with(|count| count.set(count.get().wrapping_add(1)));
     Ok(DynamicResolution::RouteArm { arm: 0 })
 }
 
-#[tokio::test]
-async fn offer_decode_binding_consumes_classification_once() {
-    let tap_buf = leak_tap_storage();
-    let slab = leak_slab(2048);
-    let config = Config::new(tap_buf, slab);
-    let shared = Arc::new(Mutex::new(FlowBindingShared::default()));
-    let transport = FlowTransport::new(Arc::clone(&shared));
+#[test]
+fn flow_preview_is_policy_free_until_send_consumes_it() {
+    with_fixture(|clock, tap_buf, slab| {
+        reset_route_resolver_calls();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let tap_ptr = tap_buf.as_ptr();
+                let tap_len = tap_buf.len();
+                let tap_events = || unsafe { core::slice::from_raw_parts(tap_ptr, tap_len) };
+                let config = Config::new(tap_buf, slab);
+                with_tls_mut(
+                    &FLOW_SHARED_SLOT,
+                    |ptr: *mut FlowBindingShared| unsafe { ptr.write(FlowBindingShared::new()) },
+                    |shared| {
+                        shared.reset();
+                        let shared_ref: &'static FlowBindingShared = shared;
+                        let transport = FlowTransport::new(shared_ref);
+                        let rv_id = cluster
+                            .add_rendezvous_from_config(config, transport.clone())
+                            .expect("register rv");
 
-    let cluster: &mut SessionKit<'static, FlowTransport, DefaultLabelUniverse, CounterClock, 4> =
-        Box::leak(Box::new(SessionKit::new(leak_clock())));
-    let rv_id = cluster
-        .add_rendezvous_from_config(config, transport.clone())
-        .expect("register rv");
+                        register_route_resolvers_for_program(&cluster, rv_id, &CONTROLLER_PROGRAM);
 
-    register_route_resolvers_for_program(&*cluster, rv_id, &CONTROLLER_PROGRAM);
-    register_route_resolvers_for_program(&*cluster, rv_id, &WORKER_PROGRAM);
+                        let sid = SessionId::new(900);
+                        with_tls_mut(
+                            &CONTROLLER_BINDING_SLOT,
+                            |ptr: *mut FlowBinding| unsafe {
+                                ptr.write(FlowBinding::new(0, shared_ref))
+                            },
+                            |controller_binding| {
+                                with_tls_mut(
+                                    &CONTROLLER_ENDPOINT_SLOT,
+                                    |ptr| unsafe {
+                                        write_value(
+                                            ptr,
+                                            cluster
+                                                .enter(
+                                                    rv_id,
+                                                    sid,
+                                                    &CONTROLLER_PROGRAM,
+                                                    controller_binding,
+                                                )
+                                                .expect("attach controller"),
+                                        );
+                                    },
+                                    |controller| {
+                                        let route_policy_calls_before = route_resolver_calls();
+                                        let drain_calls_before =
+                                            shared_ref.state.with(|state| state.drain_calls);
+                                        let route_audit_before = count_policy_audit_ext_for_slot(
+                                            tap_events(),
+                                            SLOT_TAG_ROUTE,
+                                        );
 
-    let sid = SessionId::new(901);
-    let controller_binding = FlowBinding::new(0, Arc::clone(&shared));
-    let worker_binding = FlowBinding::new(1, Arc::clone(&shared));
+                                        let flow = controller
+                                            .flow::<Msg<
+                                                { LABEL_ROUTE_DECISION },
+                                                GenericCapToken<RouteDecisionKind>,
+                                                CanonicalControl<RouteDecisionKind>,
+                                            >>()
+                                            .expect("route control preview");
+                                        drop(flow);
 
-    let mut controller = cluster
-        .enter::<0, _, _, _>(rv_id, sid, &CONTROLLER_PROGRAM, controller_binding)
-        .expect("attach controller");
-    let worker = cluster
-        .enter::<1, _, _, _>(rv_id, sid, &WORKER_PROGRAM, worker_binding)
-        .expect("attach worker");
+                                        assert_eq!(
+                                            route_resolver_calls(),
+                                            route_policy_calls_before,
+                                            "dropping flow preview must not invoke route resolver",
+                                        );
+                                        assert_eq!(
+                                            shared_ref.state.with(|state| state.drain_calls),
+                                            drain_calls_before,
+                                            "dropping flow preview must not flush transport events",
+                                        );
+                                        assert_eq!(
+                                            count_policy_audit_ext_for_slot(
+                                                tap_events(),
+                                                SLOT_TAG_ROUTE,
+                                            ),
+                                            route_audit_before,
+                                            "dropping flow preview must not emit route-slot policy audit",
+                                        );
 
-    let (controller_after_control, outcome) = controller
-        .flow::<Msg<
-            { LABEL_ROUTE_DECISION },
-            GenericCapToken<RouteDecisionKind>,
-            CanonicalControl<RouteDecisionKind>,
-        >>()
-        .expect("control flow")
-        .send(())
-        .await
-        .expect("send route control");
-    assert!(outcome.is_canonical());
-    controller = controller_after_control;
-
-    let (controller_after_data, _outcome) = controller
-        .flow::<Msg<71, u32>>()
-        .expect("left data flow")
-        .send(&4444)
-        .await
-        .expect("send left data");
-    controller = controller_after_data;
-
-    let worker_branch = worker.offer().await.expect("offer left arm");
-    assert_eq!(worker_branch.label(), <Msg<71, u32> as MessageSpec>::LABEL);
-    let (worker_after_data, data_value) = worker_branch
-        .decode::<Msg<71, u32>>()
-        .await
-        .expect("decode left data");
-    assert_eq!(data_value, 4444);
-
-    let (_controller_after_tail, _outcome) = controller
-        .flow::<Msg<73, u32>>()
-        .expect("tail flow")
-        .send(&55)
-        .await
-        .expect("send tail");
-
-    let (_worker_after_tail, tail) = worker_after_data
-        .recv::<Msg<73, u32>>()
-        .await
-        .expect("recv tail after offer/decode");
-    assert_eq!(tail, 55);
+                                        futures::executor::block_on(async {
+                                            let outcome = controller
+                                                .flow::<Msg<
+                                                    { LABEL_ROUTE_DECISION },
+                                                    GenericCapToken<RouteDecisionKind>,
+                                                    CanonicalControl<RouteDecisionKind>,
+                                                >>()
+                                                .expect("route control preview for send")
+                                                .send(())
+                                                .await
+                                                .expect("send route control");
+                                            assert!(outcome.is_canonical());
+                                        });
+                                    },
+                                )
+                            },
+                        )
+                    },
+                );
+            },
+        );
+    });
 }
 
-#[tokio::test]
-async fn dynamic_route_passive_ignores_non_authoritative_binding_classification() {
-    let tap_buf = leak_tap_storage();
-    let slab = leak_slab(2048);
-    let config = Config::new(tap_buf, slab);
-    let shared = Arc::new(Mutex::new(FlowBindingShared::default()));
-    let transport = FlowTransport::new(Arc::clone(&shared));
+#[test]
+fn offer_decode_binding_consumes_classification_once() {
+    with_fixture(|clock, tap_buf, slab| {
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let config = Config::new(tap_buf, slab);
+                with_tls_mut(
+                    &FLOW_SHARED_SLOT,
+                    |ptr: *mut FlowBindingShared| unsafe { ptr.write(FlowBindingShared::new()) },
+                    |shared| {
+                        shared.reset();
+                        let shared_ref: &'static FlowBindingShared = shared;
+                        let transport = FlowTransport::new(shared_ref);
+                        let rv_id = cluster
+                            .add_rendezvous_from_config(config, transport.clone())
+                            .expect("register rv");
 
-    let cluster: &mut SessionKit<'static, FlowTransport, DefaultLabelUniverse, CounterClock, 4> =
-        Box::leak(Box::new(SessionKit::new(leak_clock())));
-    let rv_id = cluster
-        .add_rendezvous_from_config(config, transport.clone())
-        .expect("register rv");
+                        register_route_resolvers_for_program(&cluster, rv_id, &CONTROLLER_PROGRAM);
+                        register_route_resolvers_for_program(&cluster, rv_id, &WORKER_PROGRAM);
 
-    register_route_resolvers_for_program(&*cluster, rv_id, &CONTROLLER_PROGRAM);
-    register_route_resolvers_for_program(&*cluster, rv_id, &WORKER_PROGRAM);
+                        let sid = SessionId::new(901);
+                        with_tls_mut(
+                            &CONTROLLER_BINDING_SLOT,
+                            |ptr: *mut FlowBinding| unsafe {
+                                ptr.write(FlowBinding::new(0, shared_ref))
+                            },
+                            |controller_binding| {
+                                with_tls_mut(
+                                    &WORKER_BINDING_SLOT,
+                                    |ptr: *mut FlowBinding| unsafe {
+                                        ptr.write(FlowBinding::new(1, shared_ref))
+                                    },
+                                    |worker_binding| {
+                                        with_tls_mut(
+                                            &CONTROLLER_ENDPOINT_SLOT,
+                                            |ptr| unsafe {
+                                                write_value(
+                                                    ptr,
+                                                    cluster
+                                                        .enter(
+                                                            rv_id,
+                                                            sid,
+                                                            &CONTROLLER_PROGRAM,
+                                                            controller_binding,
+                                                        )
+                                                        .expect("attach controller"),
+                                                );
+                                            },
+                                            |controller| {
+                                                with_tls_mut(
+                                                    &WORKER_ENDPOINT_SLOT,
+                                                    |ptr| unsafe {
+                                                        write_value(
+                                                            ptr,
+                                                            cluster
+                                                                .enter(
+                                                                    rv_id,
+                                                                    sid,
+                                                                    &WORKER_PROGRAM,
+                                                                    worker_binding,
+                                                                )
+                                                                .expect("attach worker"),
+                                                        );
+                                                    },
+                                                    |worker| {
+                                                        futures::executor::block_on(async move {
+                                                            let outcome = controller
+                                                                .flow::<Msg<
+                                                                    { LABEL_ROUTE_DECISION },
+                                                                    GenericCapToken<
+                                                                        RouteDecisionKind,
+                                                                    >,
+                                                                    CanonicalControl<
+                                                                        RouteDecisionKind,
+                                                                    >,
+                                                                >>(
+                                                                )
+                                                                .expect("control flow")
+                                                                .send(())
+                                                                .await
+                                                                .expect("send route control");
+                                                            assert!(outcome.is_canonical());
 
-    let sid = SessionId::new(902);
-    let controller_binding = FlowBinding::new(0, Arc::clone(&shared));
-    let worker_binding = FlowBinding::new(1, Arc::clone(&shared));
+                                                            let _outcome = controller
+                                                                .flow::<Msg<71, u32>>()
+                                                                .expect("left data flow")
+                                                                .send(&4444)
+                                                                .await
+                                                                .expect("send left data");
 
-    let mut controller = cluster
-        .enter::<0, _, _, _>(rv_id, sid, &CONTROLLER_PROGRAM, controller_binding)
-        .expect("attach controller");
-    let worker = cluster
-        .enter::<1, _, _, _>(rv_id, sid, &WORKER_PROGRAM, worker_binding)
-        .expect("attach worker");
+                                                            let worker_branch = worker
+                                                                .offer()
+                                                                .await
+                                                                .expect("offer left arm");
+                                                            assert_eq!(
+                                                                worker_branch.label(),
+                                                                <Msg<71, u32> as MessageSpec>::LABEL
+                                                            );
+                                                            let data_value = worker_branch
+                                                                .decode::<Msg<71, u32>>()
+                                                                .await
+                                                                .expect("decode left data");
+                                                            assert_eq!(data_value, 4444);
 
-    {
-        let mut guard = shared.lock().expect("flow binding lock");
-        guard
-            .incoming
-            .entry(1)
-            .or_default()
-            .push_back(PendingInbound {
-                lane: 0,
-                classification: IncomingClassification {
-                    label: <Msg<72, u32> as MessageSpec>::LABEL,
-                    instance: 0,
-                    has_fin: false,
-                    channel: Channel::new(999),
-                },
-            });
-    }
+                                                            let _outcome = controller
+                                                                .flow::<Msg<73, u32>>()
+                                                                .expect("tail flow")
+                                                                .send(&55)
+                                                                .await
+                                                                .expect("send tail");
 
-    let (controller_after_control, outcome) = controller
-        .flow::<Msg<
-            { LABEL_ROUTE_DECISION },
-            GenericCapToken<RouteDecisionKind>,
-            CanonicalControl<RouteDecisionKind>,
-        >>()
-        .expect("control flow")
-        .send(())
-        .await
-        .expect("send route control");
-    assert!(outcome.is_canonical());
-    controller = controller_after_control;
+                                                            let tail = worker
+                                                                .recv::<Msg<73, u32>>()
+                                                                .await
+                                                                .expect(
+                                                                    "recv tail after offer/decode",
+                                                                );
+                                                            assert_eq!(tail, 55);
+                                                        })
+                                                    },
+                                                )
+                                            },
+                                        )
+                                    },
+                                )
+                            },
+                        )
+                    },
+                );
+            },
+        );
+    });
+}
 
-    let (controller_after_data, _outcome) = controller
-        .flow::<Msg<71, u32>>()
-        .expect("left data flow")
-        .send(&7777)
-        .await
-        .expect("send left data");
-    controller = controller_after_data;
+#[test]
+fn drop_public_preview_branch_preserves_offer_progression() {
+    with_fixture(|clock, tap_buf, slab| {
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let tap_ptr = tap_buf.as_ptr();
+                let tap_len = tap_buf.len();
+                let tap_events = || unsafe { core::slice::from_raw_parts(tap_ptr, tap_len) };
+                let config = Config::new(tap_buf, slab);
+                with_tls_mut(
+                    &FLOW_SHARED_SLOT,
+                    |ptr: *mut FlowBindingShared| unsafe { ptr.write(FlowBindingShared::new()) },
+                    |shared| {
+                        shared.reset();
+                        let shared_ref: &'static FlowBindingShared = shared;
+                        let transport = FlowTransport::new(shared_ref);
+                        let rv_id = cluster
+                            .add_rendezvous_from_config(config, transport.clone())
+                            .expect("register rv");
 
-    let worker_branch = worker.offer().await.expect("offer left arm");
-    assert_eq!(worker_branch.label(), <Msg<71, u32> as MessageSpec>::LABEL);
-    let (_worker_after_data, value) = worker_branch
-        .decode::<Msg<71, u32>>()
-        .await
-        .expect("decode left data");
-    assert_eq!(value, 7777);
+                        register_route_resolvers_for_program(&cluster, rv_id, &CONTROLLER_PROGRAM);
+                        register_route_resolvers_for_program(&cluster, rv_id, &WORKER_PROGRAM);
 
-    let (_controller_after_tail, _outcome) = controller
-        .flow::<Msg<73, u32>>()
-        .expect("tail flow")
-        .send(&1)
-        .await
-        .expect("send tail");
+                        let sid = SessionId::new(903);
+                        with_tls_mut(
+                            &CONTROLLER_BINDING_SLOT,
+                            |ptr: *mut FlowBinding| unsafe {
+                                ptr.write(FlowBinding::new(0, shared_ref))
+                            },
+                            |controller_binding| {
+                                with_tls_mut(
+                                    &WORKER_BINDING_SLOT,
+                                    |ptr: *mut FlowBinding| unsafe {
+                                        ptr.write(FlowBinding::new(1, shared_ref))
+                                    },
+                                    |worker_binding| {
+                                        with_tls_mut(
+                                            &CONTROLLER_ENDPOINT_SLOT,
+                                            |ptr| unsafe {
+                                                write_value(
+                                                    ptr,
+                                                    cluster
+                                                        .enter(
+                                                            rv_id,
+                                                            sid,
+                                                            &CONTROLLER_PROGRAM,
+                                                            controller_binding,
+                                                        )
+                                                        .expect("attach controller"),
+                                                );
+                                            },
+                                            |controller| {
+                                                with_tls_mut(
+                                                    &WORKER_ENDPOINT_SLOT,
+                                                    |ptr| unsafe {
+                                                        write_value(
+                                                            ptr,
+                                                            cluster
+                                                                .enter(
+                                                                    rv_id,
+                                                                    sid,
+                                                                    &WORKER_PROGRAM,
+                                                                    worker_binding,
+                                                                )
+                                                                .expect("attach worker"),
+                                                        );
+                                                    },
+                                                    |worker| {
+                                                        futures::executor::block_on(async move {
+                                                            let outcome = controller
+                                                                .flow::<Msg<
+                                                                    { LABEL_ROUTE_DECISION },
+                                                                    GenericCapToken<
+                                                                        RouteDecisionKind,
+                                                                    >,
+                                                                    CanonicalControl<
+                                                                        RouteDecisionKind,
+                                                                    >,
+                                                                >>(
+                                                                )
+                                                                .expect("control flow")
+                                                                .send(())
+                                                                .await
+                                                                .expect("send route control");
+                                                            assert!(outcome.is_canonical());
+
+                                                            let _outcome = controller
+                                                                .flow::<Msg<71, u32>>()
+                                                                .expect("left data flow")
+                                                                .send(&4444)
+                                                                .await
+                                                                .expect("send left data");
+
+                                                            let endpoint_rx_audit_before =
+                                                                count_policy_audit_ext_for_slot(
+                                                                    tap_events(),
+                                                                    SLOT_TAG_ENDPOINT_RX,
+                                                                );
+                                                            let drain_calls_before = shared_ref
+                                                                .state
+                                                                .with(|state| state.drain_calls);
+
+                                                            let worker_branch = worker
+                                                                .offer()
+                                                                .await
+                                                                .expect("offer left arm");
+                                                            assert_eq!(
+                                                                worker_branch.label(),
+                                                                <Msg<71, u32> as MessageSpec>::LABEL
+                                                            );
+                                                            assert_eq!(
+                                                                count_policy_audit_ext_for_slot(
+                                                                    tap_events(),
+                                                                    SLOT_TAG_ENDPOINT_RX,
+                                                                ),
+                                                                endpoint_rx_audit_before,
+                                                                "offer preview must not emit EndpointRx policy audit",
+                                                            );
+                                                            assert_eq!(
+                                                                shared_ref
+                                                                    .state
+                                                                    .with(|state| state.drain_calls),
+                                                                drain_calls_before,
+                                                                "offer preview must not flush transport events for EndpointRx policy",
+                                                            );
+                                                            drop(worker_branch);
+                                                            assert_eq!(
+                                                                count_policy_audit_ext_for_slot(
+                                                                    tap_events(),
+                                                                    SLOT_TAG_ENDPOINT_RX,
+                                                                ),
+                                                                endpoint_rx_audit_before,
+                                                                "dropping preview branch must not emit EndpointRx policy audit",
+                                                            );
+                                                            assert_eq!(
+                                                                shared_ref
+                                                                    .state
+                                                                    .with(|state| state.drain_calls),
+                                                                drain_calls_before,
+                                                                "dropping preview branch must not flush transport events",
+                                                            );
+
+                                                            let worker_branch = worker
+                                                                .offer()
+                                                                .await
+                                                                .expect(
+                                                                    "re-offer left arm after dropped preview",
+                                                                );
+                                                            assert_eq!(
+                                                                worker_branch.label(),
+                                                                <Msg<71, u32> as MessageSpec>::LABEL
+                                                            );
+                                                            assert_eq!(
+                                                                count_policy_audit_ext_for_slot(
+                                                                    tap_events(),
+                                                                    SLOT_TAG_ENDPOINT_RX,
+                                                                ),
+                                                                endpoint_rx_audit_before,
+                                                                "re-offer preview must stay policy-free until decode",
+                                                            );
+                                                            let data_value = worker_branch
+                                                                .decode::<Msg<71, u32>>()
+                                                                .await
+                                                                .expect(
+                                                                    "decode left data after dropped preview",
+                                                                );
+                                                            assert_eq!(data_value, 4444);
+                                                            assert_eq!(
+                                                                count_policy_audit_ext_for_slot(
+                                                                    tap_events(),
+                                                                    SLOT_TAG_ENDPOINT_RX,
+                                                                ),
+                                                                endpoint_rx_audit_before + 1,
+                                                                "decode consume path must emit EndpointRx policy audit once",
+                                                            );
+                                                            assert!(
+                                                                shared_ref
+                                                                    .state
+                                                                    .with(|state| state.drain_calls)
+                                                                    > drain_calls_before,
+                                                                "decode consume path must own transport-event flushing",
+                                                            );
+
+                                                            let _outcome = controller
+                                                                .flow::<Msg<73, u32>>()
+                                                                .expect("tail flow")
+                                                                .send(&55)
+                                                                .await
+                                                                .expect("send tail");
+
+                                                            let tail = worker
+                                                                .recv::<Msg<73, u32>>()
+                                                                .await
+                                                                .expect(
+                                                                    "recv tail after dropped preview branch",
+                                                                );
+                                                            assert_eq!(tail, 55);
+                                                        })
+                                                    },
+                                                )
+                                            },
+                                        )
+                                    },
+                                )
+                            },
+                        )
+                    },
+                );
+            },
+        );
+    });
+}
+
+#[test]
+fn codec_error_in_public_decode_preserves_preview_branch() {
+    with_fixture(|clock, tap_buf, slab| {
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let tap_ptr = tap_buf.as_ptr();
+                let tap_len = tap_buf.len();
+                let tap_events = || unsafe { core::slice::from_raw_parts(tap_ptr, tap_len) };
+                let config = Config::new(tap_buf, slab);
+                with_tls_mut(
+                    &FLOW_SHARED_SLOT,
+                    |ptr: *mut FlowBindingShared| unsafe { ptr.write(FlowBindingShared::new()) },
+                    |shared| {
+                        shared.reset();
+                        let shared_ref: &'static FlowBindingShared = shared;
+                        let transport = FlowTransport::new(shared_ref);
+                        let rv_id = cluster
+                            .add_rendezvous_from_config(config, transport.clone())
+                            .expect("register rv");
+
+                        register_route_resolvers_for_program(&cluster, rv_id, &CONTROLLER_PROGRAM);
+                        register_route_resolvers_for_program(&cluster, rv_id, &WORKER_PROGRAM);
+
+                        let sid = SessionId::new(904);
+                        with_tls_mut(
+                            &CONTROLLER_BINDING_SLOT,
+                            |ptr: *mut FlowBinding| unsafe {
+                                ptr.write(FlowBinding::new(0, shared_ref))
+                            },
+                            |controller_binding| {
+                                with_tls_mut(
+                                    &WORKER_BINDING_SLOT,
+                                    |ptr: *mut FlowBinding| unsafe {
+                                        ptr.write(FlowBinding::new(1, shared_ref))
+                                    },
+                                    |worker_binding| {
+                                        with_tls_mut(
+                                            &CONTROLLER_ENDPOINT_SLOT,
+                                            |ptr| unsafe {
+                                                write_value(
+                                                    ptr,
+                                                    cluster
+                                                        .enter(
+                                                            rv_id,
+                                                            sid,
+                                                            &CONTROLLER_PROGRAM,
+                                                            controller_binding,
+                                                        )
+                                                        .expect("attach controller"),
+                                                );
+                                            },
+                                            |controller| {
+                                                with_tls_mut(
+                                                    &WORKER_ENDPOINT_SLOT,
+                                                    |ptr| unsafe {
+                                                        write_value(
+                                                            ptr,
+                                                            cluster
+                                                                .enter(
+                                                                    rv_id,
+                                                                    sid,
+                                                                    &WORKER_PROGRAM,
+                                                                    worker_binding,
+                                                                )
+                                                                .expect("attach worker"),
+                                                        );
+                                                    },
+                                                    |worker| {
+                                                        futures::executor::block_on(async move {
+                                                            let outcome = controller
+                                                                .flow::<Msg<
+                                                                    { LABEL_ROUTE_DECISION },
+                                                                    GenericCapToken<
+                                                                        RouteDecisionKind,
+                                                                    >,
+                                                                    CanonicalControl<
+                                                                        RouteDecisionKind,
+                                                                    >,
+                                                                >>(
+                                                                )
+                                                                .expect("control flow")
+                                                                .send(())
+                                                                .await
+                                                                .expect("send route control");
+                                                            assert!(outcome.is_canonical());
+
+                                                            let _outcome = controller
+                                                                .flow::<Msg<71, u32>>()
+                                                                .expect("left data flow")
+                                                                .send(&4444)
+                                                                .await
+                                                                .expect("send left data");
+
+                                                            let endpoint_rx_audit_before =
+                                                                count_policy_audit_ext_for_slot(
+                                                                    tap_events(),
+                                                                    SLOT_TAG_ENDPOINT_RX,
+                                                                );
+                                                            let drain_calls_before = shared_ref
+                                                                .state
+                                                                .with(|state| state.drain_calls);
+
+                                                            let worker_branch = worker
+                                                                .offer()
+                                                                .await
+                                                                .expect("offer left arm");
+                                                            assert_eq!(
+                                                                worker_branch.label(),
+                                                                <Msg<71, u32> as MessageSpec>::LABEL
+                                                            );
+                                                            assert_eq!(
+                                                                count_policy_audit_ext_for_slot(
+                                                                    tap_events(),
+                                                                    SLOT_TAG_ENDPOINT_RX,
+                                                                ),
+                                                                endpoint_rx_audit_before,
+                                                                "offer preview must not emit EndpointRx policy audit",
+                                                            );
+                                                            assert_eq!(
+                                                                shared_ref
+                                                                    .state
+                                                                    .with(|state| state.drain_calls),
+                                                                drain_calls_before,
+                                                                "offer preview must not flush transport events",
+                                                            );
+                                                            let err = worker_branch
+                                                                .decode::<Msg<71, u64>>()
+                                                                .await
+                                                                .expect_err(
+                                                                    "codec mismatch must fail without consuming preview",
+                                                                );
+                                                            assert!(
+                                                                matches!(
+                                                                    err,
+                                                                    hibana::RecvError::Codec(_)
+                                                                ),
+                                                                "expected codec error, got {err:?}"
+                                                            );
+                                                            assert_eq!(
+                                                                count_policy_audit_ext_for_slot(
+                                                                    tap_events(),
+                                                                    SLOT_TAG_ENDPOINT_RX,
+                                                                ),
+                                                                endpoint_rx_audit_before,
+                                                                "codec error must not emit EndpointRx policy audit",
+                                                            );
+                                                            assert_eq!(
+                                                                shared_ref
+                                                                    .state
+                                                                    .with(|state| state.drain_calls),
+                                                                drain_calls_before,
+                                                                "codec error must not flush transport events for EndpointRx policy",
+                                                            );
+
+                                                            let worker_branch = worker
+                                                                .offer()
+                                                                .await
+                                                                .expect(
+                                                                    "re-offer left arm after codec error",
+                                                                );
+                                                            assert_eq!(
+                                                                worker_branch.label(),
+                                                                <Msg<71, u32> as MessageSpec>::LABEL
+                                                            );
+                                                            assert_eq!(
+                                                                count_policy_audit_ext_for_slot(
+                                                                    tap_events(),
+                                                                    SLOT_TAG_ENDPOINT_RX,
+                                                                ),
+                                                                endpoint_rx_audit_before,
+                                                                "re-offer after codec error must still be preview-only",
+                                                            );
+                                                            let data_value = worker_branch
+                                                                .decode::<Msg<71, u32>>()
+                                                                .await
+                                                                .expect(
+                                                                    "decode left data after codec error",
+                                                                );
+                                                            assert_eq!(data_value, 4444);
+                                                            assert_eq!(
+                                                                count_policy_audit_ext_for_slot(
+                                                                    tap_events(),
+                                                                    SLOT_TAG_ENDPOINT_RX,
+                                                                ),
+                                                                endpoint_rx_audit_before + 1,
+                                                                "successful decode must emit EndpointRx policy audit once",
+                                                            );
+                                                            assert!(
+                                                                shared_ref
+                                                                    .state
+                                                                    .with(|state| state.drain_calls)
+                                                                    > drain_calls_before,
+                                                                "successful decode must own transport-event flushing",
+                                                            );
+
+                                                            let _outcome = controller
+                                                                .flow::<Msg<73, u32>>()
+                                                                .expect("tail flow")
+                                                                .send(&55)
+                                                                .await
+                                                                .expect("send tail");
+
+                                                            let tail = worker
+                                                                .recv::<Msg<73, u32>>()
+                                                                .await
+                                                                .expect(
+                                                                    "recv tail after codec-error retry",
+                                                                );
+                                                            assert_eq!(tail, 55);
+                                                        })
+                                                    },
+                                                )
+                                            },
+                                        )
+                                    },
+                                )
+                            },
+                        )
+                    },
+                );
+            },
+        );
+    });
+}
+
+#[test]
+fn dynamic_route_passive_ignores_non_authoritative_binding_classification() {
+    with_fixture(|clock, tap_buf, slab| {
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let config = Config::new(tap_buf, slab);
+                with_tls_mut(
+                    &FLOW_SHARED_SLOT,
+                    |ptr: *mut FlowBindingShared| unsafe { ptr.write(FlowBindingShared::new()) },
+                    |shared| {
+                        shared.reset();
+                        let shared_ref: &'static FlowBindingShared = shared;
+                        let transport = FlowTransport::new(shared_ref);
+                        let rv_id = cluster
+                            .add_rendezvous_from_config(config, transport.clone())
+                            .expect("register rv");
+
+                        register_route_resolvers_for_program(&cluster, rv_id, &CONTROLLER_PROGRAM);
+                        register_route_resolvers_for_program(&cluster, rv_id, &WORKER_PROGRAM);
+
+                        let sid = SessionId::new(902);
+                        with_tls_mut(
+                            &CONTROLLER_BINDING_SLOT,
+                            |ptr: *mut FlowBinding| unsafe {
+                                ptr.write(FlowBinding::new(0, shared_ref))
+                            },
+                            |controller_binding| {
+                                with_tls_mut(
+                                    &WORKER_BINDING_SLOT,
+                                    |ptr: *mut FlowBinding| unsafe {
+                                        ptr.write(FlowBinding::new(1, shared_ref))
+                                    },
+                                    |worker_binding| {
+                                        with_tls_mut(
+                                            &CONTROLLER_ENDPOINT_SLOT,
+                                            |ptr| unsafe {
+                                                write_value(
+                                                    ptr,
+                                                    cluster
+                                                        .enter(
+                                                            rv_id,
+                                                            sid,
+                                                            &CONTROLLER_PROGRAM,
+                                                            controller_binding,
+                                                        )
+                                                        .expect("attach controller"),
+                                                );
+                                            },
+                                            |controller| {
+                                                with_tls_mut(
+                                                    &WORKER_ENDPOINT_SLOT,
+                                                    |ptr| unsafe {
+                                                        write_value(
+                                                            ptr,
+                                                            cluster
+                                                                .enter(
+                                                                    rv_id,
+                                                                    sid,
+                                                                    &WORKER_PROGRAM,
+                                                                    worker_binding,
+                                                                )
+                                                                .expect("attach worker"),
+                                                        );
+                                                    },
+                                                    |worker| {
+                                                        futures::executor::block_on(async move {
+                                                            shared_ref.state.with_mut(|guard| {
+                                                                guard.push_incoming(
+                                                                    1,
+                                                                    PendingInbound {
+                                                                        lane: 0,
+                                                                        classification:
+                                                                            IncomingClassification {
+                                                                                label: <Msg<72, u32> as MessageSpec>::LABEL,
+                                                                                instance: 0,
+                                                                                has_fin: false,
+                                                                                channel: Channel::new(999),
+                                                                            },
+                                                                    },
+                                                                );
+                                                            });
+
+                                                            let outcome = controller
+                                                                .flow::<Msg<
+                                                                    { LABEL_ROUTE_DECISION },
+                                                                    GenericCapToken<
+                                                                        RouteDecisionKind,
+                                                                    >,
+                                                                    CanonicalControl<
+                                                                        RouteDecisionKind,
+                                                                    >,
+                                                                >>(
+                                                                )
+                                                                .expect("control flow")
+                                                                .send(())
+                                                                .await
+                                                                .expect("send route control");
+                                                            assert!(outcome.is_canonical());
+
+                                                            let _outcome = controller
+                                                                .flow::<Msg<71, u32>>()
+                                                                .expect("left data flow")
+                                                                .send(&7777)
+                                                                .await
+                                                                .expect("send left data");
+
+                                                            let worker_branch = worker
+                                                                .offer()
+                                                                .await
+                                                                .expect("offer left arm");
+                                                            assert_eq!(
+                                                                worker_branch.label(),
+                                                                <Msg<71, u32> as MessageSpec>::LABEL
+                                                            );
+                                                            let value = worker_branch
+                                                                .decode::<Msg<71, u32>>()
+                                                                .await
+                                                                .expect("decode left data");
+                                                            assert_eq!(value, 7777);
+
+                                                            let _outcome = controller
+                                                                .flow::<Msg<73, u32>>()
+                                                                .expect("tail flow")
+                                                                .send(&1)
+                                                                .await
+                                                                .expect("send tail");
+                                                        })
+                                                    },
+                                                )
+                                            },
+                                        )
+                                    },
+                                )
+                            },
+                        )
+                    },
+                );
+            },
+        );
+    });
 }

@@ -40,6 +40,12 @@ pub struct ScopeId {
     raw: u64,
 }
 
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CompactScopeId {
+    raw: u32,
+}
+
 impl Default for ScopeId {
     fn default() -> Self {
         ScopeId::none()
@@ -246,10 +252,114 @@ impl ScopeId {
     }
 }
 
+impl CompactScopeId {
+    const NONE_RAW: u32 = u32::MAX;
+    const KIND_BITS: u32 = 3;
+    const ORDINAL_BITS: u32 = 9;
+
+    const NEST_SHIFT: u32 = 0;
+    const RANGE_SHIFT: u32 = Self::NEST_SHIFT + Self::ORDINAL_BITS;
+    const LOCAL_SHIFT: u32 = Self::RANGE_SHIFT + Self::ORDINAL_BITS;
+    const KIND_SHIFT: u32 = Self::LOCAL_SHIFT + Self::ORDINAL_BITS;
+
+    const KIND_MASK: u32 = (1 << Self::KIND_BITS) - 1;
+    const ORDINAL_MASK: u32 = (1 << Self::ORDINAL_BITS) - 1;
+
+    pub(crate) const fn none() -> Self {
+        Self {
+            raw: Self::NONE_RAW,
+        }
+    }
+
+    pub(crate) const fn is_none(self) -> bool {
+        self.raw == Self::NONE_RAW
+    }
+
+    pub(crate) const fn from_scope_id(scope: ScopeId) -> Self {
+        if scope.is_none() {
+            return Self::none();
+        }
+        let local = scope.local_ordinal() as u32;
+        let range = scope.range_ordinal() as u32;
+        let nest = scope.nest_ordinal() as u32;
+        if local > Self::ORDINAL_MASK || range > Self::ORDINAL_MASK || nest > Self::ORDINAL_MASK {
+            panic!("compact scope ordinal overflow");
+        }
+        Self {
+            raw: ((scope.kind() as u32) << Self::KIND_SHIFT)
+                | (local << Self::LOCAL_SHIFT)
+                | (range << Self::RANGE_SHIFT)
+                | (nest << Self::NEST_SHIFT),
+        }
+    }
+
+    pub(crate) const fn to_scope_id(self) -> ScopeId {
+        if self.is_none() {
+            ScopeId::none()
+        } else {
+            ScopeId::compose(
+                self.kind(),
+                self.local_ordinal(),
+                self.range_ordinal(),
+                self.nest_ordinal(),
+            )
+        }
+    }
+
+    pub(crate) const fn raw(self) -> u64 {
+        self.to_scope_id().raw()
+    }
+
+    pub(crate) const fn canonical(self) -> ScopeId {
+        if self.is_none() {
+            ScopeId::none()
+        } else {
+            ScopeId::compose(self.kind(), self.local_ordinal(), 0, 0)
+        }
+    }
+
+    pub(crate) const fn kind(self) -> ScopeKind {
+        if self.is_none() {
+            return ScopeKind::Generic;
+        }
+        match ((self.raw >> Self::KIND_SHIFT) & Self::KIND_MASK) as u8 {
+            0 => ScopeKind::Generic,
+            1 => ScopeKind::Route,
+            2 => ScopeKind::Loop,
+            3 => ScopeKind::Parallel,
+            _ => ScopeKind::Generic,
+        }
+    }
+
+    pub(crate) const fn local_ordinal(self) -> u16 {
+        if self.is_none() {
+            return 0;
+        }
+        ((self.raw >> Self::LOCAL_SHIFT) & Self::ORDINAL_MASK) as u16
+    }
+
+    pub(crate) const fn range_ordinal(self) -> u16 {
+        if self.is_none() {
+            return 0;
+        }
+        ((self.raw >> Self::RANGE_SHIFT) & Self::ORDINAL_MASK) as u16
+    }
+
+    pub(crate) const fn nest_ordinal(self) -> u16 {
+        if self.is_none() {
+            return 0;
+        }
+        ((self.raw >> Self::NEST_SHIFT) & Self::ORDINAL_MASK) as u16
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PolicyMode {
     Static,
-    Dynamic { policy_id: u16, scope: ScopeId },
+    Dynamic {
+        policy_id: u16,
+        scope: CompactScopeId,
+    },
 }
 
 impl PolicyMode {
@@ -270,11 +380,11 @@ impl PolicyMode {
     /// ```ignore
     /// // Define a route with dynamic policy annotation
     /// const MY_POLICY_ID: u16 = 0x1234;
-    /// const MY_ROUTE: Program<Steps> =
+    /// const MY_ROUTE: ProgramSource<Steps> =
     ///     g::route(arm1.policy::<MY_POLICY_ID>(), arm2.policy::<MY_POLICY_ID>());
     ///
     /// // Register resolver before use
-    /// let controller = hibana::g::advanced::project(&MY_ROUTE);
+    /// let controller = hibana::g::advanced::project(&g::freeze(&MY_ROUTE));
     /// struct RouteState {
     ///     preferred_arm: u8,
     /// }
@@ -302,7 +412,7 @@ impl PolicyMode {
     pub(crate) const fn dynamic(policy_id: u16) -> Self {
         Self::Dynamic {
             policy_id,
-            scope: ScopeId::none(),
+            scope: CompactScopeId::none(),
         }
     }
 
@@ -323,14 +433,17 @@ impl PolicyMode {
 
     pub(crate) const fn scope(self) -> ScopeId {
         match self {
-            Self::Dynamic { scope, .. } => scope,
+            Self::Dynamic { scope, .. } => scope.to_scope_id(),
             _ => ScopeId::none(),
         }
     }
 
     pub(crate) const fn with_scope(self, scope: ScopeId) -> Self {
         match self {
-            Self::Dynamic { policy_id, .. } => Self::Dynamic { policy_id, scope },
+            Self::Dynamic { policy_id, .. } => Self::Dynamic {
+                policy_id,
+                scope: CompactScopeId::from_scope_id(scope),
+            },
             other => other,
         }
     }
@@ -382,12 +495,19 @@ impl ScopeMarker {
 
 #[derive(Clone, Copy)]
 pub struct ControlMarker {
-    pub offset: usize,
+    pub offset: u16,
     pub scope_kind: ControlScopeKind,
     pub tap_id: u16,
 }
 
 impl ControlMarker {
+    const fn encode_offset(offset: usize) -> u16 {
+        if offset > u16::MAX as usize {
+            panic!("control marker offset overflow");
+        }
+        offset as u16
+    }
+
     pub const fn empty() -> Self {
         Self {
             offset: 0,
@@ -566,7 +686,11 @@ impl EffList {
         let mut ctrl_idx = 0;
         while ctrl_idx < other.control_marker_len {
             let marker = other.control_markers[ctrl_idx];
-            self = self.push_control_marker(base + marker.offset, marker.scope_kind, marker.tap_id);
+            self = self.push_control_marker(
+                base + marker.offset as usize,
+                marker.scope_kind,
+                marker.tap_id,
+            );
             ctrl_idx += 1;
         }
         let mut policy_idx = 0;
@@ -694,7 +818,7 @@ impl EffList {
             panic!("EffList control marker capacity exceeded");
         }
         self.control_markers[self.control_marker_len] = ControlMarker {
-            offset,
+            offset: ControlMarker::encode_offset(offset),
             scope_kind,
             tap_id,
         };
@@ -1011,11 +1135,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{EffList, ScopeKind};
+    use core::mem::size_of;
+
+    use super::{CompactScopeId, ControlMarker, EffList, ScopeId, ScopeKind};
     use crate::g;
     use crate::g::advanced::steps::{
-        LoopBreakSteps, LoopContinueSteps, LoopDecisionSteps, ProjectRole, SendStep, StepCons,
-        StepNil,
+        LoopBreakSteps, LoopContinueSteps, LoopDecisionSteps, SendStep, StepCons, StepNil,
     };
     use crate::g::advanced::{CanonicalControl, project};
     use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
@@ -1023,10 +1148,33 @@ mod tests {
     use crate::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
 
     const LOOP_POLICY_ID: u16 = 120;
-    const LOOP_BODY: g::Program<
+
+    #[test]
+    fn control_marker_stays_compact() {
+        assert!(
+            size_of::<ControlMarker>() <= 8,
+            "ControlMarker regressed to a wide offset layout: {} bytes",
+            size_of::<ControlMarker>()
+        );
+    }
+
+    #[test]
+    fn compact_scope_id_roundtrips_scope_id() {
+        let scope = ScopeId::compose(ScopeKind::Route, 256, 255, 254);
+        let compact = CompactScopeId::from_scope_id(scope);
+        assert_eq!(compact.to_scope_id(), scope);
+        assert_eq!(CompactScopeId::none().to_scope_id(), ScopeId::none());
+        assert!(
+            size_of::<CompactScopeId>() <= 4,
+            "CompactScopeId regressed beyond its packed u32 storage: {} bytes",
+            size_of::<CompactScopeId>()
+        );
+    }
+
+    const LOOP_BODY: g::ProgramSource<
         StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u32>>, StepNil>,
     > = g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u32>, 0>();
-    const LOOP_BREAK_ARM: g::Program<
+    const LOOP_BREAK_ARM: g::ProgramSource<
         LoopBreakSteps<
             g::Role<0>,
             g::Msg<
@@ -1047,7 +1195,7 @@ mod tests {
         0,
     >()
     .policy::<LOOP_POLICY_ID>();
-    const LOOP_CONTINUE_ARM: g::Program<
+    const LOOP_CONTINUE_ARM: g::ProgramSource<
         LoopContinueSteps<
             g::Role<0>,
             g::Msg<
@@ -1071,7 +1219,7 @@ mod tests {
         .policy::<LOOP_POLICY_ID>(),
         LOOP_BODY,
     );
-    const LOOP_DECISION: g::Program<
+    const LOOP_DECISION: g::ProgramSource<
         LoopDecisionSteps<
             g::Role<0>,
             g::Msg<
@@ -1091,7 +1239,7 @@ mod tests {
     static SENDER_PROGRAM: crate::g::advanced::RoleProgram<
         'static,
         0,
-        <LoopDecisionSteps<
+        LoopDecisionSteps<
             g::Role<0>,
             g::Msg<
                 { LABEL_LOOP_CONTINUE },
@@ -1105,8 +1253,8 @@ mod tests {
             >,
             StepNil,
             StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u32>>, StepNil>,
-        > as ProjectRole<g::Role<0>>>::Output,
-    > = project(&LOOP_DECISION);
+        >,
+    > = project(&g::freeze(&LOOP_DECISION));
 
     #[test]
     fn policy_scope_stays_internal() {

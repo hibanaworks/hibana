@@ -3,10 +3,16 @@
 //! All control operations (lane open, splice, delegate, cancel, fence, commit, abort)
 //! are projected into this enum. Composite operations are expressed through effect composition.
 
+#[cfg(test)]
 use core::{mem::MaybeUninit, ptr};
 
-use crate::eff::EffIndex;
-use crate::global::const_dsl::{ControlMarker, ControlScopeKind, PolicyMode, ScopeMarker};
+use crate::{
+    eff::EffIndex,
+    global::{
+        compiled::DynamicPolicySite,
+        const_dsl::{ControlScopeKind, PolicyMode},
+    },
+};
 
 /// Control-plane effect primitive.
 ///
@@ -151,27 +157,137 @@ impl CpEffect {
 ///
 /// Note: This is distinct from `control::cluster::CpCommand`, which wraps
 /// individual effect executions with their runtime operands.
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub(crate) struct EffectEnvelope {
     /// Sequence of control-plane effects to execute.
+    #[cfg(test)]
     cp_effects: [core::mem::MaybeUninit<CpEffect>; Self::MAX_CP_EFFECTS],
+    #[cfg(test)]
     cp_effects_len: usize,
 
     /// Tap events to emit during execution.
+    #[cfg(test)]
     tap_events: [core::mem::MaybeUninit<u16>; Self::MAX_TAP_EVENTS],
+    #[cfg(test)]
     tap_events_len: usize,
 
     /// Resource descriptors associated with control operations.
+    #[cfg(test)]
     resources: [core::mem::MaybeUninit<ResourceDescriptor>; Self::MAX_RESOURCES],
+    #[cfg(test)]
     resources_len: usize,
+}
 
-    /// Scope markers captured during const projection.
-    scopes: [core::mem::MaybeUninit<ScopeMarker>; Self::MAX_SCOPES],
-    scopes_len: usize,
+#[derive(Clone, Copy)]
+struct ControlScopeIter {
+    mask: u8,
+    next: u8,
+}
 
-    /// Control markers captured during const projection.
-    controls: [core::mem::MaybeUninit<ControlMarker>; Self::MAX_CONTROLS],
-    controls_len: usize,
+impl ControlScopeIter {
+    #[inline(always)]
+    const fn new(mask: u8) -> Self {
+        Self { mask, next: 0 }
+    }
+}
+
+impl Iterator for ControlScopeIter {
+    type Item = ControlScopeKind;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.next < 7 {
+            let bit = 1u8 << self.next;
+            let scope_kind = match self.next {
+                0 => ControlScopeKind::Loop,
+                1 => ControlScopeKind::Checkpoint,
+                2 => ControlScopeKind::Cancel,
+                3 => ControlScopeKind::Splice,
+                4 => ControlScopeKind::Reroute,
+                5 => ControlScopeKind::Policy,
+                6 => ControlScopeKind::Route,
+                _ => unreachable!(),
+            };
+            self.next += 1;
+            if self.mask & bit != 0 {
+                return Some(scope_kind);
+            }
+        }
+        None
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct EffectEnvelopeRef<'a> {
+    #[cfg(test)]
+    cp_effects: &'a [CpEffect],
+    #[cfg(test)]
+    tap_events: &'a [u16],
+    resources: &'a [ResourceDescriptor],
+    dynamic_policy_sites: &'a [DynamicPolicySite],
+    control_scope_mask: u8,
+}
+
+impl<'a> EffectEnvelopeRef<'a> {
+    #[inline(always)]
+    pub(crate) const fn new(
+        #[cfg(test)] cp_effects: &'a [CpEffect],
+        #[cfg(not(test))] _cp_effects: &'a [CpEffect],
+        #[cfg(test)] tap_events: &'a [u16],
+        #[cfg(not(test))] _tap_events: &'a [u16],
+        resources: &'a [ResourceDescriptor],
+        dynamic_policy_sites: &'a [DynamicPolicySite],
+        control_scope_mask: u8,
+    ) -> Self {
+        Self {
+            #[cfg(test)]
+            cp_effects,
+            #[cfg(test)]
+            tap_events,
+            resources,
+            dynamic_policy_sites,
+            control_scope_mask,
+        }
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.cp_effects.is_empty()
+            && self.tap_events.is_empty()
+            && self.resources.is_empty()
+            && self.dynamic_policy_sites.is_empty()
+            && self.control_scope_mask == 0
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) fn cp_effects(&self) -> impl Iterator<Item = &CpEffect> {
+        let _ = self.tap_events.len();
+        self.cp_effects.iter()
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) fn tap_events(&self) -> impl Iterator<Item = u16> + '_ {
+        self.tap_events.iter().copied()
+    }
+
+    #[inline(always)]
+    pub(crate) fn resources(&self) -> impl Iterator<Item = &ResourceDescriptor> {
+        self.resources.iter()
+    }
+
+    #[inline(always)]
+    pub(crate) fn resource_policy(&self, descriptor: &ResourceDescriptor) -> PolicyMode {
+        descriptor.policy(self.dynamic_policy_sites)
+    }
+
+    #[inline(always)]
+    pub(crate) fn control_scopes(&self) -> impl Iterator<Item = ControlScopeKind> {
+        ControlScopeIter::new(self.control_scope_mask)
+    }
 }
 
 /// Metadata describing a control resource discovered during projection.
@@ -179,19 +295,27 @@ pub(crate) struct EffectEnvelope {
 pub(crate) struct ResourceDescriptor {
     /// Effect index associated with the control atom.
     eff_index: EffIndex,
+    /// Dynamic-policy site index, or [`Self::STATIC_POLICY_SITE`] for static policy.
+    policy_site: u16,
     /// Label associated with the control message.
     label: u8,
     /// Resource kind tag (maps to [`crate::control::cap::resource_kinds`]).
     tag: u8,
-    /// Scope assigned to the resource (loop/checkpoint/cancel/...).
-    scope: ControlScopeKind,
-    /// Shot discipline mandated for the capability token.
-    shot: crate::control::cap::mint::CapShot,
-    /// Policy mode attached to this control point.
-    policy: PolicyMode,
 }
 
 impl ResourceDescriptor {
+    pub(crate) const STATIC_POLICY_SITE: u16 = u16::MAX;
+
+    #[inline(always)]
+    pub(crate) const fn new(eff_index: EffIndex, label: u8, tag: u8, policy_site: u16) -> Self {
+        Self {
+            eff_index,
+            policy_site,
+            label,
+            tag,
+        }
+    }
+
     #[inline(always)]
     pub(crate) const fn eff_index(&self) -> EffIndex {
         self.eff_index
@@ -209,11 +333,16 @@ impl ResourceDescriptor {
     }
 
     #[inline(always)]
-    pub(crate) const fn policy(&self) -> PolicyMode {
-        self.policy
+    pub(crate) fn policy(&self, dynamic_policy_sites: &[DynamicPolicySite]) -> PolicyMode {
+        if self.policy_site == Self::STATIC_POLICY_SITE {
+            PolicyMode::Static
+        } else {
+            dynamic_policy_sites[self.policy_site as usize].policy()
+        }
     }
 }
 
+#[cfg(test)]
 impl EffectEnvelope {
     /// Maximum number of control-plane effects per projection.
     /// Conservative upper bound based on typical protocol complexity.
@@ -225,38 +354,66 @@ impl EffectEnvelope {
     /// Maximum number of resource handles per projection.
     pub(crate) const MAX_RESOURCES: usize = 128;
 
-    /// Maximum number of scope markers mirrored from the program.
-    pub(crate) const MAX_SCOPES: usize = crate::eff::meta::MAX_EFF_NODES;
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) fn as_ref(&self) -> EffectEnvelopeRef<'_> {
+        self.as_ref_with_controls(0, &[])
+    }
 
-    /// Maximum number of control markers mirrored from the program.
-    pub(crate) const MAX_CONTROLS: usize = crate::eff::meta::MAX_EFF_NODES;
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) fn as_ref_with_controls<'a>(
+        &'a self,
+        control_scope_mask: u8,
+        dynamic_policy_sites: &'a [DynamicPolicySite],
+    ) -> EffectEnvelopeRef<'a> {
+        EffectEnvelopeRef::new(
+            unsafe {
+                core::slice::from_raw_parts(
+                    self.cp_effects.as_ptr().cast::<CpEffect>(),
+                    self.cp_effects_len,
+                )
+            },
+            unsafe {
+                core::slice::from_raw_parts(
+                    self.tap_events.as_ptr().cast::<u16>(),
+                    self.tap_events_len,
+                )
+            },
+            unsafe {
+                core::slice::from_raw_parts(
+                    self.resources.as_ptr().cast::<ResourceDescriptor>(),
+                    self.resources_len,
+                )
+            },
+            dynamic_policy_sites,
+            control_scope_mask,
+        )
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    unsafe fn zero_maybe_uninit_array<T, const N: usize>(dst: *mut [MaybeUninit<T>; N]) {
+        unsafe {
+            core::ptr::write_bytes(
+                dst.cast::<u8>(),
+                0,
+                core::mem::size_of::<[MaybeUninit<T>; N]>(),
+            );
+        }
+    }
 
     /// Create an empty projection.
+    #[cfg(test)]
+    #[inline(never)]
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
         unsafe {
-            ptr::addr_of_mut!((*dst).cp_effects).write(
-                MaybeUninit::<[MaybeUninit<CpEffect>; Self::MAX_CP_EFFECTS]>::uninit()
-                    .assume_init(),
-            );
+            Self::zero_maybe_uninit_array(ptr::addr_of_mut!((*dst).cp_effects));
             ptr::addr_of_mut!((*dst).cp_effects_len).write(0);
-            ptr::addr_of_mut!((*dst).tap_events).write(
-                MaybeUninit::<[MaybeUninit<u16>; Self::MAX_TAP_EVENTS]>::uninit().assume_init(),
-            );
+            Self::zero_maybe_uninit_array(ptr::addr_of_mut!((*dst).tap_events));
             ptr::addr_of_mut!((*dst).tap_events_len).write(0);
-            ptr::addr_of_mut!((*dst).resources).write(
-                MaybeUninit::<[MaybeUninit<ResourceDescriptor>; Self::MAX_RESOURCES]>::uninit()
-                    .assume_init(),
-            );
+            Self::zero_maybe_uninit_array(ptr::addr_of_mut!((*dst).resources));
             ptr::addr_of_mut!((*dst).resources_len).write(0);
-            ptr::addr_of_mut!((*dst).scopes).write(
-                MaybeUninit::<[MaybeUninit<ScopeMarker>; Self::MAX_SCOPES]>::uninit().assume_init(),
-            );
-            ptr::addr_of_mut!((*dst).scopes_len).write(0);
-            ptr::addr_of_mut!((*dst).controls).write(
-                MaybeUninit::<[MaybeUninit<ControlMarker>; Self::MAX_CONTROLS]>::uninit()
-                    .assume_init(),
-            );
-            ptr::addr_of_mut!((*dst).controls_len).write(0);
         }
     }
 
@@ -273,10 +430,11 @@ impl EffectEnvelope {
     /// Check if this projection has any effects to execute.
     #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
-        self.cp_effects_len == 0 && self.tap_events_len == 0 && self.resources_len == 0
+        self.as_ref().is_empty()
     }
 
     /// Push a control-plane effect.
+    #[cfg(test)]
     pub(crate) const fn push_cp_effect(&mut self, effect: CpEffect) {
         if self.cp_effects_len >= Self::MAX_CP_EFFECTS {
             panic!("EffectEnvelope: MAX_CP_EFFECTS exceeded");
@@ -286,6 +444,7 @@ impl EffectEnvelope {
     }
 
     /// Push a tap event ID.
+    #[cfg(test)]
     pub(crate) const fn push_tap_event(&mut self, event_id: u16) {
         if self.tap_events_len >= Self::MAX_TAP_EVENTS {
             panic!("EffectEnvelope: MAX_TAP_EVENTS exceeded");
@@ -295,48 +454,28 @@ impl EffectEnvelope {
     }
 
     /// Push a resource descriptor.
+    #[cfg(test)]
     pub(crate) const fn push_resource(
         &mut self,
         eff_index: EffIndex,
         label: u8,
-        scope: ControlScopeKind,
         kind_tag: u8,
-        shot: crate::control::cap::mint::CapShot,
-        policy: PolicyMode,
+        policy_site: u16,
     ) {
         if self.resources_len >= Self::MAX_RESOURCES {
             panic!("EffectEnvelope: MAX_RESOURCES exceeded");
         }
-        self.resources[self.resources_len] = core::mem::MaybeUninit::new(ResourceDescriptor {
+        self.resources[self.resources_len] = core::mem::MaybeUninit::new(ResourceDescriptor::new(
             eff_index,
             label,
-            tag: kind_tag,
-            scope,
-            shot,
-            policy,
-        });
+            kind_tag,
+            policy_site,
+        ));
         self.resources_len += 1;
     }
 
-    /// Push a control marker mirrored from the program.
-    pub(crate) const fn push_control_marker(&mut self, marker: ControlMarker) {
-        if self.controls_len >= Self::MAX_CONTROLS {
-            panic!("EffectEnvelope: MAX_CONTROLS exceeded");
-        }
-        self.controls[self.controls_len] = core::mem::MaybeUninit::new(marker);
-        self.controls_len += 1;
-    }
-
-    /// Push a scope marker mirrored from the program.
-    pub(crate) const fn push_scope_marker(&mut self, marker: ScopeMarker) {
-        if self.scopes_len >= Self::MAX_SCOPES {
-            panic!("EffectEnvelope: MAX_SCOPES exceeded");
-        }
-        self.scopes[self.scopes_len] = core::mem::MaybeUninit::new(marker);
-        self.scopes_len += 1;
-    }
-
     /// Iterate over control-plane effects.
+    #[cfg(test)]
     pub(crate) fn cp_effects(&self) -> impl Iterator<Item = &CpEffect> {
         (0..self.cp_effects_len).map(move |i| unsafe { self.cp_effects[i].assume_init_ref() })
     }
@@ -348,22 +487,29 @@ impl EffectEnvelope {
     }
 
     /// Iterate over resource handles.
+    #[cfg(test)]
     pub(crate) fn resources(&self) -> impl Iterator<Item = &ResourceDescriptor> {
         (0..self.resources_len).map(move |i| unsafe { self.resources[i].assume_init_ref() })
-    }
-
-    /// Iterate over control markers.
-    pub(crate) fn controls(&self) -> impl Iterator<Item = &ControlMarker> {
-        (0..self.controls_len).map(move |i| unsafe { self.controls[i].assume_init_ref() })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use core::mem::size_of;
+
     use super::*;
     use crate::global::CanonicalControl;
     use crate::global::compiled::{CompiledProgram, LoweringSummary};
     use crate::global::const_dsl::EffList;
+
+    #[test]
+    fn resource_descriptor_stays_compact() {
+        assert!(
+            size_of::<ResourceDescriptor>() <= 8,
+            "ResourceDescriptor regressed to a wide unused-field layout: {} bytes",
+            size_of::<ResourceDescriptor>()
+        );
+    }
 
     #[test]
     fn test_effect_properties() {

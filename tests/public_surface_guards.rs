@@ -23,6 +23,7 @@ fn endpoint_kernel_source() -> String {
         include_str!("../src/endpoint/kernel/authority.rs"),
         include_str!("../src/endpoint/kernel/control.rs"),
         include_str!("../src/endpoint/kernel/core.rs"),
+        include_str!("../src/endpoint/kernel/endpoint_init.rs"),
         include_str!("../src/endpoint/kernel/frontier_observation.rs"),
         include_str!("../src/endpoint/kernel/frontier_select.rs"),
         include_str!("../src/endpoint/kernel/offer_refresh.rs"),
@@ -81,6 +82,51 @@ fn endpoint_public_api_allowlist() -> &'static str {
 }
 
 #[test]
+fn sync_shim_does_not_return() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sync_path = manifest_dir.join("src/sync.rs");
+    assert!(
+        !sync_path.exists(),
+        "runtime fake-atomic shim must stay deleted: {}",
+        sync_path.display()
+    );
+
+    let lib_src = include_str!("../src/lib.rs");
+    let substrate_src = include_str!("../src/substrate.rs");
+    let endpoint_src = include_str!("../src/endpoint.rs");
+    let runtime_locality_src = [
+        include_str!("../src/rendezvous/core.rs"),
+        include_str!("../src/epf/host.rs"),
+        include_str!("../src/observe/core.rs"),
+    ]
+    .join("\n");
+
+    assert!(
+        !lib_src.contains("mod sync;"),
+        "crate root must not wire the deleted sync shim back in"
+    );
+    assert!(
+        substrate_src.contains("LocalOnly")
+            && endpoint_src.contains("LocalOnly")
+            && runtime_locality_src.contains("Cell<"),
+        "runtime owners must stay local-only and cell-backed"
+    );
+    for forbidden in [
+        String::from("crate::sync"),
+        ["Atom", "icBool"].concat(),
+        ["Atom", "icU16"].concat(),
+        ["Atom", "icU32"].concat(),
+        ["Atom", "icUsize"].concat(),
+        ["Atom", "icPtr"].concat(),
+    ] {
+        assert!(
+            !runtime_locality_src.contains(&forbidden),
+            "production runtime must not reintroduce fake sync or atomics: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn ambient_stack_tuning_does_not_return() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let crate_cargo_config = manifest_dir.join(".cargo/config.toml");
@@ -111,7 +157,6 @@ fn ambient_stack_tuning_does_not_return() {
     for forbidden in [
         concat!("RUST_MIN_", "STACK"),
         concat!("HIBANA_TEST_", "STACK"),
-        concat!("stack_", "size("),
         concat!("GRAPH_MAX_", "NODES"),
         concat!("GRAPH_MAX_", "CHILDREN"),
         "Rendezvous::from_config(",
@@ -454,16 +499,25 @@ fn offer_kernel_stays_three_stage_and_fail_closed() {
     let kernel_src = endpoint_kernel_source();
     let offer_src = include_str!("../src/endpoint/kernel/offer.rs");
     let cursor_src = include_str!("../src/endpoint/kernel/core.rs");
-    let offer_body = impl_body(
-        offer_src,
-        "pub async fn offer(self) -> RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>",
-    );
+    let decode_src = include_str!("../src/endpoint/kernel/decode.rs");
+    let offer_body = impl_body(offer_src, "pub async fn offer(");
     let select_scope_body = impl_body(
         cursor_src,
         "fn select_scope(&mut self) -> RecvResult<OfferScopeSelection>",
     );
     let resolve_token_body = impl_body(cursor_src, "async fn resolve_token(");
     let materialize_branch_body = impl_body(cursor_src, "fn materialize_branch(");
+    let preview_flow_meta_body = impl_body(
+        cursor_src,
+        "pub(super) fn preview_flow_meta<M>(&mut self) -> SendResult<crate::endpoint::flow::SendPreview>",
+    );
+    let send_with_meta_body = impl_body(
+        cursor_src,
+        "async fn send_with_meta_and_cursor_in_place<M>(",
+    );
+    let prepare_send_control_body = impl_body(cursor_src, "fn prepare_send_control<M>(");
+    let decode_branch_body = impl_body(decode_src, "pub async fn decode_branch<M>(");
+    let apply_branch_recv_policy_body = impl_body(decode_src, "fn apply_branch_recv_policy(");
 
     let select_idx = offer_body
         .find("let selection = self_endpoint.select_scope()?;")
@@ -527,18 +581,42 @@ fn offer_kernel_stays_three_stage_and_fail_closed() {
     }
 
     assert!(
-        materialize_branch_body.contains("self.materialize_selected_arm_meta("),
+        materialize_branch_body.contains("self.preview_selected_arm_meta("),
         "materialize_branch must remain the owner of branch metadata materialization"
+    );
+    assert!(
+        !preview_flow_meta_body.contains("evaluate_dynamic_policy("),
+        "preview_flow_meta must stay policy-free and preview-only"
+    );
+    assert!(
+        !send_with_meta_body.contains("evaluate_dynamic_policy("),
+        "send orchestration must keep dynamic policy inside the consume-preparation helper"
+    );
+    assert!(
+        prepare_send_control_body.contains("evaluate_dynamic_policy("),
+        "send consume preparation must own dynamic policy evaluation"
     );
     for forbidden in [
         "take_scope_ack(",
         "peek_scope_ack(",
         "prepare_route_decision_from_resolver",
         "on_frontier_defer(",
+        "eval_endpoint_policy(",
+        "apply_recv_policy(",
     ] {
         assert!(
             !materialize_branch_body.contains(forbidden),
             "materialize_branch must not perform authority selection or defer logic: {forbidden}"
+        );
+    }
+    assert!(
+        decode_branch_body.contains("apply_branch_recv_policy("),
+        "decode_branch must delegate recv policy consumption to the consume path helper",
+    );
+    for required in ["eval_endpoint_policy(", "apply_recv_policy("] {
+        assert!(
+            apply_branch_recv_policy_body.contains(required),
+            "decode consume helper must own recv policy consumption: {required}"
         );
     }
 }
@@ -588,6 +666,34 @@ fn route_branch_does_not_expose_scope_coordinate_getters() {
         !impl_body.contains("pub fn scope_region("),
         "RouteBranch must not expose scope_region getter"
     );
+}
+
+#[test]
+fn endpoint_app_surface_stays_on_canonical_localside_helpers() {
+    let endpoint_src = include_str!("../src/endpoint.rs");
+    let allowlist = endpoint_public_api_allowlist();
+
+    for forbidden in ["pub async fn recv_direct", "pub async fn send_direct"] {
+        assert!(
+            !endpoint_src.contains(forbidden),
+            "Endpoint facade must not regrow direct localside helpers: {forbidden}"
+        );
+        assert!(
+            !allowlist.contains(forbidden),
+            "endpoint public API allowlist must not keep deleted direct localside helpers: {forbidden}"
+        );
+    }
+
+    for required in [
+        "pub fn flow<'e, M>(",
+        "pub async fn recv<M>(",
+        "pub async fn offer<'e>(",
+    ] {
+        assert!(
+            endpoint_src.contains(required),
+            "Endpoint facade must stay on the canonical localside core API: {required}"
+        );
+    }
 }
 
 #[test]
@@ -739,9 +845,10 @@ fn role_program_does_not_own_policy_marker_metadata_iterators() {
         );
     }
     assert!(
-        cluster_core_src.contains("self.with_compiled_program(program, |compiled|")
+        cluster_core_src
+            .contains("self.with_transient_compiled_program(rv_id, program, |compiled|")
             && cluster_core_src.contains(".dynamic_policy_sites_for(POLICY)"),
-        "cluster owner must consume cached compiled-program facts instead of rescanning policy markers"
+        "cluster owner must consume transient compiled-program facts instead of rescanning policy markers"
     );
     assert!(
         !cluster_core_src.contains(".policies()") && !compiled_program_src.contains(".policies()"),
@@ -755,21 +862,22 @@ fn role_program_does_not_own_policy_marker_metadata_iterators() {
 }
 
 #[test]
-fn projection_seal_stamps_without_materializing_runtime_compiled_owners() {
-    let seal_src = include_str!("../src/global/compiled/seal.rs");
+fn frozen_program_stamps_without_materializing_runtime_compiled_owners() {
+    let program_src = include_str!("../src/global/program.rs");
 
     assert!(
-        seal_src.contains("LoweringSummary::scan_const(program.eff_list())"),
-        "ProjectionSeal must validate through the unified lowering driver"
+        program_src.contains("let summary = LoweringSummary::scan_const(source.eff_list());"),
+        "freeze() must validate through the unified lowering driver"
     );
     for required in [
         "summary.validate_projection_program();",
-        "let typestate = RoleTypestate::<ROLE>::from_summary(&summary);",
-        "typestate.validate_compiled_layout();",
+        "validate_all_roles(&summary);",
+        "stamp: LoweringSummary::scan_const(&eff).stamp(),",
+        "self.source.stamp()",
     ] {
         assert!(
-            seal_src.contains(required),
-            "ProjectionSeal must revalidate projection capacities without materializing runtime owners: {required}"
+            program_src.contains(required),
+            "freeze() must stamp and validate without materializing runtime owners: {required}"
         );
     }
     for forbidden in [
@@ -781,14 +889,14 @@ fn projection_seal_stamps_without_materializing_runtime_compiled_owners() {
         "CompiledRole::validate_summary(",
     ] {
         assert!(
-            !seal_src.contains(forbidden),
-            "ProjectionSeal must not materialize runtime compiled owners during projection: {forbidden}"
+            !program_src.contains(forbidden),
+            "freeze() must not materialize runtime compiled owners during stamping: {forbidden}"
         );
     }
 }
 
 #[test]
-fn runtime_compiled_cache_materializes_lowering_owners_in_place() {
+fn runtime_compiled_materialization_stays_transient_and_cacheless() {
     let cluster_core_src = include_str!("../src/control/cluster/core.rs");
     let cluster_core_src = cluster_core_src
         .split("\nmod tests {")
@@ -797,33 +905,67 @@ fn runtime_compiled_cache_materializes_lowering_owners_in_place() {
     let cluster_core_ws = compact_ws(&cluster_core_src);
 
     for required in [
-        "ProgramCacheEntry::init_from_projection_input(",
-        "CompiledProgram::init_from_summary(",
-        "RoleCacheEntry::init_from_summary::<ROLE>(",
-        "CompiledRole::init_from_summary::<ROLE>(",
-        "LoweringSummary::init_scan(",
+        ".with_summary_from_storage(storage, len, |summary|",
+        ".with_lowering_scratch_from_storage(storage, len, |summary, scratch|",
     ] {
         assert!(
-            cluster_core_src.contains(required),
-            "runtime cache materialization must build compiled owners directly in their resident slots: {required}"
+            cluster_core_ws.contains(required),
+            "runtime transient materialization must hand raw scratch storage to RoleProgram-owned image materialization: {required}"
         );
     }
-
     for forbidden in [
-        "let compiled = CompiledProgram::from_summary(",
-        "let compiled = CompiledRole::from_summary::<ROLE>(",
-        "let entry = ProgramCacheEntry {",
-        "let entry = RoleCacheEntry {",
+        "struct TransientCompileScratch<'a> {",
+        "fn transient_compile_scratch(",
+        "program.ensure_program_image_from_summary(",
+        "program.ensure_images_from_summary(",
+        "scratch.init_summary(",
+        "scratch.summary()",
+        "scratch.role_compile_scratch()",
     ] {
         assert!(
             !cluster_core_src.contains(forbidden),
-            "runtime cache materialization must avoid by-value compiled owner temporaries: {forbidden}"
+            "cluster owner must not rebuild lowering summaries directly once RoleProgram owns image materialization: {forbidden}"
+        );
+    }
+    let role_program_src = include_str!("../src/global/role_program.rs");
+    let role_program_runtime_src = role_program_src
+        .split("\n#[cfg(test)]\nmod tests {")
+        .next()
+        .expect("role program runtime section");
+    assert!(
+        !role_program_runtime_src.contains("CompiledProgram::init_from_summary(")
+            && !role_program_runtime_src.contains("CompiledRole::init_from_summary::<ROLE>("),
+        "RoleProgram must stay a thin witness and must not own compiled image storage or materialization"
+    );
+
+    for forbidden in [
+        "MAX_COMPILED_PROGRAMS",
+        "MAX_COMPILED_ROLES",
+        "compiled_programs:",
+        "compiled_roles:",
+        "ProgramCacheEntry",
+        "RoleCacheEntry",
+        "CompiledCacheLease",
+        "acquire_compiled_cache(",
+        "with_pinned_compiled_program(",
+        "with_pinned_compiled_role(",
+        "release_compiled_cache_lease(",
+    ] {
+        assert!(
+            !cluster_core_src.contains(forbidden),
+            "runtime compiled cache must be gone from the cluster owner: {forbidden}"
         );
     }
 
     assert!(
-        cluster_core_ws.contains("let mut compiled = MaybeUninit::<CompiledProgram>::uninit();"),
-        "read-only transient compiled-program access may use a local MaybeUninit owner when residency is impossible"
+        !cluster_core_ws.contains("transient_compiled:TransientCompileScratch")
+            && !cluster_core_ws.contains("transient_compiled: TransientCompileScratch")
+            && !cluster_core_ws.contains("endpoint_compiled:[PublicEndpointCompiledCell;MAX_RV]")
+            && !cluster_core_ws.contains("endpoint_compiled: [PublicEndpointCompiledCell; MAX_RV]")
+            && !cluster_core_src.contains("struct PublicEndpointCompiledCell")
+            && !cluster_core_src.contains("transient_delegation_graph")
+            && !cluster_core_src.contains("transient_splice_graph"),
+        "ControlCore must keep transient lowering scratch only; compiled endpoint and graph caches must stay gone"
     );
 }
 
@@ -868,7 +1010,7 @@ fn compiled_authority_completion_stays_summary_backed() {
         "RoleProgram must not keep a dead direct compiled-role helper"
     );
     for required in [
-        "fn compile_role_boxed<const ROLE: u8, LocalSteps>(",
+        "fn with_compiled_role_in_slot<const ROLE: u8, GlobalSteps, R>(",
         "let summary = LoweringSummary::scan_const(program.lowering_input());",
         "CompiledRole::init_from_summary::<ROLE>(",
     ] {
@@ -936,8 +1078,8 @@ fn role_program_projection_metadata_stays_internal() {
         "pub(crate) const fn local_len(&self) -> usize {",
         "pub(crate) const fn step_meta(&'static self, idx: usize) -> LocalStep {",
         "pub(crate) const fn step_graph(&'static self) -> &'static RoleTypestate<ROLE> {",
-        "impl<'prog, const ROLE: u8, LocalSteps, Mint> core::ops::Deref",
-        "impl<'prog, const ROLE: u8, LocalSteps, Mint> AsRef<[LocalStep]>",
+        "impl<'prog, const ROLE: u8, GlobalSteps, Mint> core::ops::Deref",
+        "impl<'prog, const ROLE: u8, GlobalSteps, Mint> AsRef<[LocalStep]>",
     ] {
         assert!(
             !role_program_src.contains(forbidden),
@@ -972,24 +1114,153 @@ fn role_program_projection_metadata_stays_internal() {
         "RoleProgram must not keep a dead direct compiled-role convenience helper"
     );
 
-    assert!(
-        role_program_ws.contains(
-            "pub struct RoleProgram<'prog, const ROLE: u8, LocalSteps, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, mint: Mint, stamp: ProgramStamp, _local_steps: core::marker::PhantomData<LocalSteps>, }"
-        ),
-        "RoleProgram must stay thin and store only eff list, mint, stamp, and typed witness"
-    );
+    for forbidden in [
+        "#[derive(Clone, Copy)]",
+        "#[derive(Clone,Copy)]",
+        "impl Clone for RoleProgram",
+        "impl Copy for RoleProgram",
+        "program_image_init: Cell<bool>",
+        "program_image: UnsafeCell<MaybeUninit<CompiledProgram>>",
+        "role_image_init: Cell<bool>",
+        "role_image: UnsafeCell<MaybeUninit<CompiledRole>>",
+        "impl<'prog, const ROLE: u8, GlobalSteps, Mint> Drop for RoleProgram",
+    ] {
+        assert!(
+            !role_program_src.contains(forbidden),
+            "RoleProgram must stay thin and avoid inline compiled-image ownership: {forbidden}"
+        );
+    }
+    for required in [
+        "pub(crate) unsafe fn with_summary_from_storage<R>(",
+        "pub(crate) unsafe fn with_lowering_scratch_from_storage<R>(",
+    ] {
+        assert!(
+            role_program_src.contains(required),
+            "RoleProgram must expose raw-storage lowering helpers instead of owning compiled images: {required}"
+        );
+    }
     assert!(
         !role_program_ws.contains("LocalSteps = steps::StepNil"),
         "RoleProgram must not hide typed projection behind a StepNil default"
     );
     for forbidden in [
-        "pub struct RoleProgram<'prog, const ROLE: u8, LocalSteps, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, local_steps:",
-        "pub struct RoleProgram<'prog, const ROLE: u8, LocalSteps, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, mint: Mint, phases:",
-        "pub struct RoleProgram<'prog, const ROLE: u8, LocalSteps, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, mint: Mint, typestate:",
+        "pub struct RoleProgram<'prog, const ROLE: u8, GlobalSteps, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, global_steps:",
+        "pub struct RoleProgram<'prog, const ROLE: u8, GlobalSteps, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, mint: Mint, phases:",
+        "pub struct RoleProgram<'prog, const ROLE: u8, GlobalSteps, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, mint: Mint, typestate:",
     ] {
         assert!(
             !role_program_ws.contains(forbidden),
             "RoleProgram must stay thin and avoid storing materialized projection metadata: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
+    let builder_src = include_str!("../src/global/typestate/builder.rs");
+    let compiled_role_src = include_str!("../src/global/compiled/role.rs");
+    let cursor_src = include_str!("../src/global/typestate/cursor.rs");
+    let role_program_src = include_str!("../src/global/role_program.rs");
+    let registry_src = include_str!("../src/global/typestate/registry.rs");
+
+    for required in [
+        "pub struct RoleTypestate<const ROLE: u8> {",
+        "pub(super) len: u16,",
+    ] {
+        assert!(
+            builder_src.contains(required),
+            "role typestate owner should keep compact internal bounds: {required}"
+        );
+    }
+
+    for required in [
+        "pub(crate) struct LaneSteps {",
+        "pub start: u16,",
+        "pub len: u16,",
+        "pub(crate) struct Phase {",
+        "pub min_start: u16,",
+        "pub(crate) struct ProjectedRoleLayout {",
+        "local_steps: [LocalStep; MAX_STEPS],",
+        "phases: [Phase; MAX_PHASES],",
+    ] {
+        assert!(
+            role_program_src.contains(required),
+            "projected role layout should keep compact internal bounds: {required}"
+        );
+    }
+
+    for forbidden in ["local_len: u16,", "phase_len: u8,"] {
+        assert!(
+            !role_program_src.contains(forbidden),
+            "projected role layout should derive sentinel-backed lengths: {forbidden}"
+        );
+    }
+
+    for required in [
+        "pub(crate) struct ScopeRecord {",
+        "pub start: StateIndex,",
+        "pub end: StateIndex,",
+        "pub route_recv: [StateIndex; 2],",
+        "pub(crate) const fn route_recv_count(&self) -> u8 {",
+        "pub(super) struct ScopeRegistry {",
+        "pub(super) records: *const ScopeRecord,",
+        "pub(super) len: u16,",
+        "pub(super) slots_by_scope: *const u16,",
+    ] {
+        assert!(
+            registry_src.contains(required),
+            "typestate registry should keep compact internal bounds: {required}"
+        );
+    }
+
+    for forbidden in [
+        "pub(super) ordinal_index: [u16; SCOPE_ORDINAL_INDEX_CAPACITY],",
+        "ordinal_index: [SCOPE_ORDINAL_INDEX_EMPTY; SCOPE_ORDINAL_INDEX_CAPACITY],",
+    ] {
+        assert!(
+            !registry_src.contains(forbidden),
+            "typestate registry must not regress to whole-space ordinal indexing: {forbidden}"
+        );
+    }
+
+    for required in [
+        "self.typestate()\n            .first_recv_dispatch_target_for_label(scope_id, label)",
+        "self.typestate()\n            .controller_arm_entry_for_label(scope_id, label)",
+        "self.typestate().controller_arm_entry_by_arm(scope_id, arm)",
+    ] {
+        assert!(
+            compiled_role_src.contains(required) || cursor_src.contains(required),
+            "compiled role and phase cursor must keep controller/dispatch facts in compact shared facts: {required}"
+        );
+    }
+}
+
+#[test]
+fn control_semantics_table_stays_fixed_and_stateless() {
+    let compiled_program_src = include_str!("../src/global/compiled/program.rs");
+
+    for required in [
+        "pub(crate) struct ControlSemanticsTable {}",
+        "LABEL_LOOP_CONTINUE => ControlSemanticKind::LoopContinue,",
+        "LABEL_LOOP_BREAK => ControlSemanticKind::LoopBreak,",
+        "Some(RouteDecisionKind::TAG) => ControlSemanticKind::RouteArm,",
+    ] {
+        assert!(
+            compiled_program_src.contains(required),
+            "compiled control semantics must stay fixed and exact: {required}"
+        );
+    }
+
+    for forbidden in [
+        "packed: [u64; 16],",
+        "const fn label_slot(label: u8) -> (usize, usize) {",
+        "by_label: [ControlSemanticKind; 256]",
+        "by_resource_tag: [ControlSemanticKind; 256]",
+        "with_resource_tag(",
+    ] {
+        assert!(
+            !compiled_program_src.contains(forbidden),
+            "compiled control semantics must not return to dense per-label/resource arrays or packed nibble tables: {forbidden}"
         );
     }
 }
@@ -1012,34 +1283,37 @@ fn role_typestate_scope_atlas_helpers_stay_deleted() {
 }
 
 #[test]
-fn advanced_compose_seq_is_not_an_alias_shim() {
+fn seq_is_the_only_public_composition_constructor() {
     let global_src = include_str!("../src/global.rs");
     let program_src = include_str!("../src/global/program.rs");
     let steps_src = include_str!("../src/global/steps.rs");
 
     assert!(
-        global_src.contains("pub use super::super::program::seq;"),
-        "g::advanced::compose must expose only the preserved composition constructor"
+        !global_src.contains("pub mod compose {"),
+        "g::advanced must not regrow a second composition namespace"
     );
     assert!(
-        !global_src.contains("seq_preserving as seq"),
-        "g::advanced::compose::seq must not be implemented as an alias shim"
+        !global_src.contains("advanced::compose")
+            && !global_src.contains("pub use super::super::program::seq;"),
+        "public choreography composition must stay on g::seq only"
     );
     assert!(
         !global_src.contains("pub use super::super::program::{empty, seq};")
-            && !global_src.contains("pub use super::super::program::empty;"),
-        "g::advanced::compose must not regrow a second zero-fragment builder surface"
+            && !global_src.contains("pub use super::super::program::empty;")
+            && !global_src.contains("pub use super::super::program::seq;"),
+        "g::advanced must not regrow a second zero-fragment or seq builder surface"
     );
     assert!(
         program_src.contains("pub const fn seq<LeftSteps, RightSteps>("),
-        "program.rs must define the canonical preserved composition constructor as seq"
+        "program.rs must define the canonical composition constructor as seq"
     );
     assert!(
-        steps_src.contains("pub const PROGRAM: Program<Self> = Program::<Self>::empty();"),
+        steps_src
+            .contains("pub const PROGRAM: ProgramSource<Self> = ProgramSource::<Self>::empty();"),
         "StepNil must own the canonical zero-fragment program witness"
     );
     assert!(
-        !program_src.contains("pub const fn empty() -> Program<StepNil> {"),
+        !program_src.contains("pub const fn empty() -> ProgramSource<StepNil> {"),
         "program.rs must not expose a second public zero-fragment builder at module scope"
     );
     assert!(
@@ -1135,6 +1409,16 @@ fn docs_do_not_keep_project_turbofish_shims() {
         !readme_src.contains("project::<"),
         "README must not keep project::<...> turbofish shims"
     );
+    for forbidden in [
+        "The exact projected `LocalSteps` type is part of the contract.",
+        "Do not erase `LocalSteps`.",
+        "use hibana::g::advanced::steps::{ProjectRole, SendStep, StepCons, StepNil};",
+    ] {
+        assert!(
+            !readme_src.contains(forbidden),
+            "README must not keep the old projected-local walkthrough: {forbidden}"
+        );
+    }
     assert!(
         !app_path.contains("g::advanced"),
         "README app-facing path must not surface g::advanced before the SPI section"
@@ -1152,7 +1436,7 @@ fn docs_do_not_keep_project_turbofish_shims() {
 
 #[test]
 fn hibana_tests_do_not_depend_on_workspace_files() {
-    fn collect_rs_files(root: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    fn visit_rs_files(root: &std::path::Path, f: &mut impl FnMut(&std::path::Path)) {
         for entry in std::fs::read_dir(root)
             .unwrap_or_else(|err| panic!("read_dir {} failed: {}", root.display(), err))
         {
@@ -1160,16 +1444,14 @@ fn hibana_tests_do_not_depend_on_workspace_files() {
                 .unwrap_or_else(|err| panic!("read_dir entry {} failed: {}", root.display(), err));
             let path = entry.path();
             if path.is_dir() {
-                collect_rs_files(&path, files);
+                visit_rs_files(&path, f);
             } else if path.extension().is_some_and(|ext| ext == "rs") {
-                files.push(path);
+                f(&path);
             }
         }
     }
 
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests");
-    let mut files: Vec<std::path::PathBuf> = Vec::new();
-    collect_rs_files(&root, &mut files);
     let forbidden = [
         ["..", "/..", "/api-sketch.md"].concat(),
         ["..", "/api-sketch.md"].concat(),
@@ -1179,7 +1461,7 @@ fn hibana_tests_do_not_depend_on_workspace_files() {
         ["include_bytes!(\"", "..", "/..", "/"].concat(),
     ];
 
-    for path in files {
+    visit_rs_files(&root, &mut |path| {
         let body = std::fs::read_to_string(&path)
             .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err));
         for forbidden in &forbidden {
@@ -1189,7 +1471,7 @@ fn hibana_tests_do_not_depend_on_workspace_files() {
                 path.display()
             );
         }
-    }
+    });
 }
 
 #[test]
@@ -1198,7 +1480,7 @@ fn regression_fixtures_do_not_hide_canonical_owners_behind_synonyms() {
         ("nested_loop_route.rs", "type Steps = Decision;"),
         (
             "nested_loop_route.rs",
-            "const PROGRAM: g::Program<Decision> = DECISION;",
+            "const PROGRAM: g::ProgramSource<Decision> = DECISION;",
         ),
         ("nested_loop_route.rs", "type TickSteps = StepCons<"),
         (
@@ -1223,7 +1505,7 @@ fn regression_fixtures_do_not_hide_canonical_owners_behind_synonyms() {
         ),
         (
             "route_dynamic_control.rs",
-            "const OUTER_LOOP_BREAK_ARM: g::Program<LoopBrkSteps> = LOOP_BREAK_ARM;",
+            "const OUTER_LOOP_BREAK_ARM: g::ProgramSource<LoopBrkSteps> = LOOP_BREAK_ARM;",
         ),
         ("route_dynamic_control.rs", "type LeftSteps = StepCons<"),
         (
@@ -1357,11 +1639,11 @@ fn regression_fixtures_do_not_hide_canonical_owners_behind_synonyms() {
         ("ui/g-route-unprojectable.rs", "const LABEL: u8 = LABEL;"),
         (
             "cancel_rollback.rs",
-            "type CancelProgram = g::Program<CancelSteps>;",
+            "type CancelProgram = g::ProgramSource<CancelSteps>;",
         ),
         (
             "cancel_rollback.rs",
-            "type CheckpointProgram = g::Program<CheckpointSteps>;",
+            "type CheckpointProgram = g::ProgramSource<CheckpointSteps>;",
         ),
         (
             "offer_decode_binding_regression.rs",
@@ -1550,7 +1832,7 @@ fn route_projection_regression_fixtures_keep_canonical_inputs_live() {
     );
     assert!(
         route_policy_mismatch.contains("const CONTROLLER: RoleProgram<")
-            && route_policy_mismatch.contains("> = project(&ROUTE);"),
+            && route_policy_mismatch.contains("> = project(&g::freeze(&ROUTE));"),
         "g-route-policy-mismatch must force controller projection through a typed const RoleProgram"
     );
     assert!(
@@ -1569,7 +1851,7 @@ fn route_projection_regression_fixtures_keep_canonical_inputs_live() {
     );
     assert!(
         route_unprojectable.contains("static PASSIVE_PROGRAM: RoleProgram<")
-            && route_unprojectable.contains("> = project(&ROUTE);"),
+            && route_unprojectable.contains("> = project(&g::freeze(&ROUTE));"),
         "g-route-unprojectable must force passive projection through a typed static RoleProgram"
     );
     assert!(
@@ -1829,11 +2111,11 @@ fn public_seq_preserves_segment_boundary() {
     let program_src = include_str!("../src/global/program.rs");
 
     assert!(
-        global_src.contains(") -> Program<SeqSteps<LeftSteps, RightSteps>> {"),
+        global_src.contains(") -> ProgramSource<SeqSteps<LeftSteps, RightSteps>> {"),
         "public g::seq must preserve segment boundaries with SeqSteps"
     );
     assert!(
-        program_src.contains(") -> Program<SeqSteps<LeftSteps, RightSteps>> {"),
+        program_src.contains(") -> ProgramSource<SeqSteps<LeftSteps, RightSteps>> {"),
         "program::seq must build preserved SeqSteps witnesses"
     );
     assert!(
@@ -1842,7 +2124,7 @@ fn public_seq_preserves_segment_boundary() {
     );
     assert!(
         global_src.contains(
-            ") -> Program<SeqSteps<LeftSteps, RightSteps>> {\n    program::seq(left, right)\n}"
+            ") -> ProgramSource<SeqSteps<LeftSteps, RightSteps>> {\n    program::seq(left, right)\n}"
         ),
         "public g::seq must delegate to the preserved program::seq constructor directly"
     );
@@ -2079,25 +2361,31 @@ fn resolver_context_surface_stays_accessor_only() {
         !cluster_core_compact.contains("pub fn new( rv_id: RendezvousId, session: Option<SessionId>, lane: Lane, eff_index: EffIndex, tag: u8, metrics: TransportSnapshot, scope_id: ScopeId, scope_trace: Option<ScopeTrace>, input: [u32; 4], attrs: crate::transport::context::PolicyAttrs, ) -> Self"),
         "ResolverContext must not expose a public constructor"
     );
-    let public_methods: Vec<_> = resolver_impl
-        .lines()
-        .map(str::trim_start)
-        .filter(|line| {
-            line.starts_with("pub fn ")
-                || line.starts_with("pub const fn ")
-                || line.starts_with("pub async fn ")
-                || line.starts_with("pub unsafe fn ")
-        })
-        .map(|line| {
-            line.split("fn ")
-                .nth(1)
-                .and_then(|rest| rest.split('(').next())
-                .expect("ResolverContext public method name")
-        })
-        .collect();
+    let mut public_methods = [""; 4];
+    let mut public_method_len = 0usize;
+    for line in resolver_impl.lines().map(str::trim_start) {
+        if !(line.starts_with("pub fn ")
+            || line.starts_with("pub const fn ")
+            || line.starts_with("pub async fn ")
+            || line.starts_with("pub unsafe fn "))
+        {
+            continue;
+        }
+        let method = line
+            .split("fn ")
+            .nth(1)
+            .and_then(|rest| rest.split('(').next())
+            .expect("ResolverContext public method name");
+        assert!(
+            public_method_len < public_methods.len(),
+            "ResolverContext must keep a tiny public method surface"
+        );
+        public_methods[public_method_len] = method;
+        public_method_len += 1;
+    }
     assert_eq!(
-        public_methods,
-        vec!["attr", "input"],
+        &public_methods[..public_method_len],
+        ["attr", "input"],
         "ResolverContext must keep exactly the canonical attr()/input() public accessors"
     );
     for required in ["pub fn attr(", "pub fn input(&self, idx: u8) -> u32"] {
@@ -2190,7 +2478,7 @@ fn private_owners_do_not_keep_internal_helpers_public() {
     for required in [
         "pub(crate) struct CapEntry {",
         "pub(crate) struct CapTable {",
-        "pub(crate) const fn new() -> Self {",
+        "pub(crate) fn new() -> Self {",
     ] {
         assert!(
             capability_src.contains(required),
@@ -2216,7 +2504,7 @@ fn private_owners_do_not_keep_internal_helpers_public() {
         "pub(crate) struct ResourceDescriptor {",
         "pub(crate) fn cp_effects(&self) -> impl Iterator<Item = &CpEffect> {",
         "pub(crate) fn resources(&self) -> impl Iterator<Item = &ResourceDescriptor> {",
-        "pub(crate) fn controls(&self) -> impl Iterator<Item = &ControlMarker> {",
+        "pub(crate) fn control_scopes(&self) -> impl Iterator<Item = ControlScopeKind> {",
     ] {
         assert!(
             effects_src.contains(required),
@@ -2321,19 +2609,17 @@ fn private_owners_do_not_keep_internal_helpers_public() {
             "observe ring lower-layer helpers must not stay public: {forbidden}"
         );
     }
-    for forbidden in [
-        "transmute::<usize, fn(u32)>",
-        "static TS_CHECKER: AtomicUsize",
-    ] {
+    let legacy_atomic_ts_checker = ["static TS_CHECKER: ", "Atom", "icUsize"].concat();
+    for forbidden in ["transmute::<usize, fn(u32)>", &legacy_atomic_ts_checker] {
         assert!(
             !observe_core_src.contains(forbidden),
             "observe timestamp checker must not hide function pointers behind integer transmute shims: {forbidden}"
         );
     }
     for required in [
-        "static TS_CHECKER: Mutex<Option<fn(u32)>> = Mutex::new(None);",
-        "*TS_CHECKER.lock().expect(\"timestamp checker mutex poisoned\")",
-        "core::mem::replace(&mut *checker, new)",
+        "static TS_CHECKER: Cell<Option<fn(u32)>> = const { Cell::new(None) };",
+        "TS_CHECKER.with(Cell::get)",
+        "checker.set(new);",
     ] {
         assert!(
             observe_core_src.contains(required),
@@ -2569,7 +2855,6 @@ fn private_owners_do_not_keep_internal_helpers_public() {
     for forbidden in [
         "pub enum LocalAction {",
         "pub struct LocalNode {",
-        "pub struct ScopeEntry {",
         "pub struct ScopeRegion {",
         "pub struct ScopeRecord {",
         "pub struct RecvMeta {",
@@ -2605,7 +2890,6 @@ fn private_owners_do_not_keep_internal_helpers_public() {
     for required in [
         "pub(crate) enum LocalAction {",
         "pub(crate) struct LocalNode {",
-        "pub(crate) struct ScopeEntry {",
         "pub(crate) struct ScopeRegion {",
         "pub(crate) struct ScopeRecord {",
         "pub struct SendMeta {",
@@ -2859,8 +3143,8 @@ fn state_index_keeps_canonical_newtype_owner() {
         "canonical state index newtype must remain explicit"
     );
     assert!(
-        typestate_src.contains("pub(crate) struct RouteRecvIndex(u16);"),
-        "route recv list indices must keep their canonical newtype owner"
+        !typestate_src.contains("pub(crate) struct RouteRecvIndex(u16);"),
+        "route recv lookup must stay inline to RouteScopeRecord instead of reviving list indices"
     );
     for forbidden in [
         "pub struct RouteRecvIndex(u16);",
@@ -3027,7 +3311,7 @@ fn endpoint_transport_and_mgmt_lower_layers_stay_non_public() {
     );
 
     assert!(
-        flow_src.contains("pub(crate) async fn send<'a, A>("),
+        flow_src.contains("pub(crate) fn send<'a, A>("),
         "CapFlow::send must stay crate-private"
     );
     assert!(
@@ -3043,7 +3327,7 @@ fn endpoint_transport_and_mgmt_lower_layers_stay_non_public() {
         "endpoint lower layers must spell the canonical control resource owner directly"
     );
     assert!(
-        flow_src.matches("pub async fn send<'a, A>(").count() == 1,
+        flow_src.matches("pub fn send<'a, A>(").count() == 1,
         "public flow facade should keep exactly one public send entrypoint"
     );
     assert!(
@@ -3090,6 +3374,176 @@ fn endpoint_transport_and_mgmt_lower_layers_stay_non_public() {
         assert!(
             compact_ws(observe_core_src).contains(&compact_ws(required)),
             "tap-event builders for crate-private owners should stay crate-private: {required}"
+        );
+    }
+}
+
+#[test]
+fn repo_does_not_reintroduce_stack_tuning_helpers() {
+    let cluster_core_src = include_str!("../src/control/cluster/core.rs");
+    let typestate_src = include_str!("../src/global/typestate.rs");
+    let compiled_role_src = include_str!("../src/global/compiled/role.rs");
+    let core_offer_tests_src = include_str!("../src/endpoint/kernel/core_offer_tests.rs");
+    let stack_size_call = concat!("stack_size", "(");
+
+    for (owner, body) in [
+        ("control/cluster/core.rs", cluster_core_src),
+        ("global/typestate.rs", typestate_src),
+        ("global/compiled/role.rs", compiled_role_src),
+        ("endpoint/kernel/core_offer_tests.rs", core_offer_tests_src),
+    ] {
+        assert!(
+            !body.contains(stack_size_call),
+            "{owner} must not reintroduce explicit stack tuning"
+        );
+    }
+
+    for deleted in [
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/support/large_stack_sync.rs"),
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/support/large_stack_async.rs"),
+    ] {
+        assert!(
+            !deleted.exists(),
+            "deleted large-stack support module must stay absent: {}",
+            deleted.display()
+        );
+    }
+}
+
+#[test]
+fn endpoint_kernel_state_stays_no_alloc() {
+    for (owner, body) in [
+        (
+            "endpoint/kernel/route_state.rs",
+            include_str!("../src/endpoint/kernel/route_state.rs"),
+        ),
+        (
+            "endpoint/kernel/frontier_state.rs",
+            include_str!("../src/endpoint/kernel/frontier_state.rs"),
+        ),
+        (
+            "endpoint/kernel/evidence_store.rs",
+            include_str!("../src/endpoint/kernel/evidence_store.rs"),
+        ),
+    ] {
+        assert!(
+            !body.contains("std::boxed::Box") && !body.contains("Box::") && !body.contains("vec!["),
+            "{owner} must stay no-alloc and must not reintroduce boxed state owners"
+        );
+    }
+}
+
+#[test]
+fn endpoint_kernel_storage_stays_actual_scope_bounded() {
+    let frontier_state_src = include_str!("../src/endpoint/kernel/frontier_state.rs");
+    let frontier_src = include_str!("../src/endpoint/kernel/frontier.rs");
+    let compiled_role_src = include_str!("../src/global/compiled/role.rs");
+    let rendezvous_tables_src = include_str!("../src/rendezvous/tables.rs");
+
+    for forbidden in [
+        "root_frontier_slot_by_ordinal",
+        "slot_by_entry: [u8; MAX_STATES]",
+        "ScopeId::ORDINAL_CAPACITY as usize * 2",
+        "ScopeId::ORDINAL_CAPACITY as usize * MAX_FIRST_RECV_DISPATCH",
+        "slot_by_ordinal:",
+        "ROUTE_SCOPE_ORDINAL_CAPACITY",
+        "last_seen: [u16; ROLE_SLOTS]",
+        "const LOOP_SLOTS: usize = eff::meta::MAX_EFF_NODES;",
+        "buffered_label_lane_masks: [u8; 128]",
+    ] {
+        assert!(
+            !frontier_state_src.contains(forbidden)
+                && !frontier_src.contains(forbidden)
+                && !compiled_role_src.contains(forbidden)
+                && !include_str!("../src/endpoint/kernel/inbox.rs").contains(forbidden),
+            "endpoint runtime storage must stay bounded by actual compiled facts, not ordinal-space reserves: {forbidden}"
+        );
+        assert!(
+            !rendezvous_tables_src.contains(forbidden),
+            "rendezvous route storage must stay bounded by active scopes, not ordinal-space reserves: {forbidden}"
+        );
+    }
+
+    for forbidden in [
+        "frontier_offer_entry_slots: step_len as u16",
+        "frontier_observed_entry_slots: step_len as u16",
+        "scope_evidence_slots: route_scope_count as u16",
+    ] {
+        assert!(
+            !compiled_role_src.contains(forbidden),
+            "compiled endpoint storage budget must stay aligned with sparse runtime owners: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn typestate_nodes_stay_packed_and_sentinel_backed() {
+    let facts_src = include_str!("../src/global/typestate/facts.rs");
+    let facts_ws = compact_ws(facts_src);
+    let cursor_src = include_str!("../src/global/typestate/cursor.rs");
+
+    for required in [
+        "scope: CompactScopeId,",
+        "route_arm_raw: u8,",
+        "flags: u8,",
+        "const ROUTE_ARM_NONE: u8 = u8::MAX;",
+        "const FLAG_CHOICE_DETERMINANT: u8 = 1 << 0;",
+    ] {
+        assert!(
+            facts_src.contains(required),
+            "typestate nodes should keep packed sentinel-backed resident fields: {required}"
+        );
+    }
+
+    for forbidden in [
+        "loop_scope: CompactScopeId,",
+        "const fn encode_loop_scope(loop_scope: Option<ScopeId>) -> CompactScopeId {",
+        "pub(crate) const fn loop_scope(&self) -> Option<ScopeId> {",
+    ] {
+        assert!(
+            !facts_src.contains(forbidden),
+            "typestate nodes should derive loop scope from ancestry instead of storing it: {forbidden}"
+        );
+    }
+
+    for required in [
+        "pub(crate) fn enclosing_loop_scope(&self, scope_id: ScopeId) -> Option<ScopeId> {",
+        "pub(crate) fn node_loop_scope(&self, index: usize) -> Option<ScopeId> {",
+    ] {
+        assert!(
+            cursor_src.contains(required),
+            "cursor should recover loop scope from scope ancestry: {required}"
+        );
+    }
+
+    assert!(
+        !facts_ws.contains(
+            "pub(crate) struct LocalNode { action: LocalAction, next: StateIndex, scope: ScopeId, route_arm: Option<u8>,"
+        ),
+        "typestate nodes must not regress to wide Option-backed resident fields"
+    );
+}
+
+#[test]
+fn public_endpoint_cells_stay_metadata_only() {
+    let cluster_core_src = include_str!("../src/control/cluster/core.rs");
+
+    assert!(
+        cluster_core_src.contains("struct PublicEndpointCell {")
+            && cluster_core_src.contains("rv_raw: core::cell::Cell<u32>,")
+            && cluster_core_src.contains("storage_offset: core::cell::Cell<u32>,")
+            && cluster_core_src.contains("storage_len: core::cell::Cell<u32>,"),
+        "PublicEndpointCell must stay a small metadata owner"
+    );
+    for forbidden in [
+        "MaybeUninit<ErasedPublicEndpointKernel",
+        "storage: core::cell::UnsafeCell<MaybeUninit<ErasedPublicEndpointKernel",
+    ] {
+        assert!(
+            !cluster_core_src.contains(forbidden),
+            "PublicEndpointCell must not inline endpoint kernels again: {forbidden}"
         );
     }
 }
@@ -3203,9 +3657,9 @@ fn hidden_attach_path_uses_canonical_attach_endpoint_name() {
 
     assert!(
         cluster_core_src.contains(
-            "pub(crate) fn attach_endpoint<'lease, 'prog, const ROLE: u8, LocalSteps, Mint, B>("
+            "pub(crate) unsafe fn attach_endpoint_into<'r, const ROLE: u8, GlobalSteps, Mint, B>("
         ),
-        "cluster lower layer must expose the canonical attach_endpoint helper"
+        "cluster lower layer must expose the canonical in-place attach_endpoint_into helper"
     );
     assert!(
         !cluster_core_src.contains("attach_cursor"),
@@ -3226,6 +3680,7 @@ fn endpoint_kernel_split_and_lane_port_unsafe_boundary_hold() {
     let endpoint_src = include_str!("../src/endpoint.rs");
     let kernel_mod_src = include_str!("../src/endpoint/kernel/mod.rs");
     let kernel_core_src = include_str!("../src/endpoint/kernel/core.rs");
+    let endpoint_init_src = include_str!("../src/endpoint/kernel/endpoint_init.rs");
     let lane_port_src = include_str!("../src/endpoint/kernel/lane_port.rs");
     let authority_src = include_str!("../src/endpoint/kernel/authority.rs");
     let control_src = include_str!("../src/endpoint/kernel/control.rs");
@@ -3253,6 +3708,7 @@ fn endpoint_kernel_split_and_lane_port_unsafe_boundary_hold() {
             && kernel_mod_src.contains("mod authority;")
             && kernel_mod_src.contains("mod evidence;")
             && kernel_mod_src.contains("mod evidence_store;")
+            && kernel_mod_src.contains("mod endpoint_init;")
             && kernel_mod_src.contains("mod frontier;")
             && kernel_mod_src.contains("mod frontier_state;")
             && kernel_mod_src.contains("mod inbox;")
@@ -3276,6 +3732,7 @@ fn endpoint_kernel_split_and_lane_port_unsafe_boundary_hold() {
         "production endpoint kernel core must keep unsafe concentrated out of core.rs"
     );
     for (path, src) in [
+        ("endpoint_init.rs", endpoint_init_src),
         ("authority.rs", authority_src),
         ("control.rs", control_src),
         ("decode.rs", decode_src),
@@ -3289,10 +3746,25 @@ fn endpoint_kernel_split_and_lane_port_unsafe_boundary_hold() {
         ("send.rs", send_src),
         ("evidence_store.rs", evidence_store_src),
     ] {
-        assert!(
-            !src.contains("unsafe"),
-            "endpoint kernel module {path} must not own production unsafe outside lane_port.rs"
-        );
+        if matches!(
+            path,
+            "endpoint_init.rs"
+                | "frontier.rs"
+                | "frontier_state.rs"
+                | "inbox.rs"
+                | "route_state.rs"
+                | "evidence_store.rs"
+        ) {
+            assert!(
+                src.contains("unsafe {") || src.contains("unsafe fn "),
+                "endpoint kernel module {path} must remain an explicit in-place init unsafe owner"
+            );
+        } else {
+            assert!(
+                !src.contains("unsafe"),
+                "endpoint kernel module {path} must not own production unsafe outside lane_port.rs and explicit init owners"
+            );
+        }
     }
     assert!(
         lane_port_src.contains("unsafe {"),
@@ -3303,6 +3775,7 @@ fn endpoint_kernel_split_and_lane_port_unsafe_boundary_hold() {
 #[test]
 fn endpoint_kernel_owner_split_stays_explicit() {
     let kernel_core_src = include_str!("../src/endpoint/kernel/core.rs");
+    let kernel_mod_src = include_str!("../src/endpoint/kernel/mod.rs");
     let kernel_core_offer_tests_src = include_str!("../src/endpoint/kernel/core_offer_tests.rs");
     let evidence_src = include_str!("../src/endpoint/kernel/evidence.rs");
     let evidence_store_src = include_str!("../src/endpoint/kernel/evidence_store.rs");
@@ -3311,6 +3784,7 @@ fn endpoint_kernel_owner_split_stays_explicit() {
     let frontier_src = include_str!("../src/endpoint/kernel/frontier.rs");
     let frontier_state_src = include_str!("../src/endpoint/kernel/frontier_state.rs");
     let inbox_src = include_str!("../src/endpoint/kernel/inbox.rs");
+    let layout_src = include_str!("../src/endpoint/kernel/layout.rs");
     let offer_src = include_str!("../src/endpoint/kernel/offer.rs");
     let offer_refresh_src = include_str!("../src/endpoint/kernel/offer_refresh.rs");
     let route_state_src = include_str!("../src/endpoint/kernel/route_state.rs");
@@ -3384,6 +3858,10 @@ fn endpoint_kernel_owner_split_stays_explicit() {
             "core.rs must keep split logic owners as private child modules: {required}"
         );
     }
+    assert!(
+        kernel_mod_src.contains("mod endpoint_init;"),
+        "kernel/mod.rs must keep endpoint_init.rs as the explicit in-place init owner"
+    );
     for required in [
         "struct TestBinding {",
         "struct LaneAwareTestBinding {",
@@ -3408,7 +3886,8 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         );
     }
     for required in [
-        "pub(super) struct ScopeEvidenceStore {",
+        "pub(super) struct ScopeEvidenceSlot {",
+        "pub(super) struct ScopeEvidenceTable {",
         "pub(super) fn generation(",
         "pub(super) fn record_ack(",
         "pub(super) fn record_hint(",
@@ -3421,19 +3900,75 @@ fn endpoint_kernel_owner_split_stays_explicit() {
             "evidence_store.rs must remain the canonical mutable owner for scope evidence lifecycle: {required}"
         );
     }
+    for forbidden in [
+        "scope_evidence: [ScopeEvidence; crate::eff::meta::MAX_EFF_NODES]",
+        "scope_evidence_generations: [u32; crate::eff::meta::MAX_EFF_NODES]",
+        "scope_evidence_slots: [ScopeEvidenceSlot; crate::eff::meta::MAX_EFF_NODES]",
+        "while idx < crate::eff::meta::MAX_EFF_NODES",
+    ] {
+        assert!(
+            !evidence_store_src.contains(forbidden),
+            "evidence store must not regress to dense effect-space reserve owners: {forbidden}"
+        );
+    }
 
     for required in [
+        "pub(super) struct ActiveEntrySlot {",
         "pub(super) struct ActiveEntrySet {",
         "pub(super) struct ObservedEntrySet {",
+        "pub(super) struct FrontierObservationMetaSlot {",
+        "pub(super) struct FrontierObservationSlot {",
+        "pub(super) slots: EntryBuffer<ActiveEntrySlot>,",
+        "pub(super) slots: EntryBuffer<FrontierObservationSlot>,",
+        "pub(crate) struct FrontierScratchLayout {",
+        "pub(super) struct FrontierScratchView {",
         "pub(super) struct FrontierSnapshot {",
         "pub(super) struct OfferEntryState {",
+        "pub(super) struct OfferEntryTable {",
+        "slots: EntryBuffer<OfferEntrySlot>,",
         "pub(super) struct OfferEntryObservedState {",
         "pub(super) struct FrontierCandidate {",
         "pub(super) struct RootFrontierState {",
+        "global_active_entry_slots: FrontierScratchSection,",
+        "cached_observation_key_slots: FrontierScratchSection,",
+        "#[cfg(test)]\n    pub(super) lane_idx: u8,",
+        "#[cfg(test)]\n    pub(super) scope_id: ScopeId,",
+        "#[cfg(test)]\n    pub(super) summary: OfferEntryStaticSummary,",
+        "#[cfg(test)]\n    pub(super) offer_lane_mask: u8,",
+        "#[cfg(test)]\n    pub(super) selection_meta: CurrentScopeSelectionMeta,",
+        "#[cfg(test)]\n    pub(super) label_meta: ScopeLabelMeta,",
+        "#[cfg(test)]\n    pub(super) materialization_meta: ScopeArmMaterializationMeta,",
+        "#[cfg(test)]\n    pub(super) scope_id: ScopeId,",
+        "#[cfg(test)]\n    pub(super) observed: OfferEntryObservedState,",
+        "#[cfg(test)]\n    pub(super) frontier_mask: u8,",
     ] {
         assert!(
             frontier_src.contains(required),
             "frontier.rs must remain the canonical owner for frontier state: {required}"
+        );
+    }
+    for forbidden in [
+        "candidates: [FrontierCandidate; MAX_LANES]",
+        "slots: [ScopeId; MAX_LANES]",
+    ] {
+        assert!(
+            !frontier_src.contains(forbidden),
+            "frontier snapshot/visit scratch owners must stay pointer-backed instead of fixed MAX_LANES arrays: {forbidden}"
+        );
+    }
+    for forbidden in [
+        "-> [u8; MAX_LANES]",
+        "[0; MAX_LANES]",
+        "[0u8; MAX_LANES]",
+        "[ScopeId::none(); MAX_LANES]",
+    ] {
+        assert!(
+            !frontier_observation_src.contains(forbidden),
+            "frontier observation hot path must stay off stack-local fixed MAX_LANES scratch arrays: {forbidden}"
+        );
+        assert!(
+            !offer_refresh_src.contains(forbidden),
+            "offer refresh hot path must write into borrowed scratch instead of returning fixed MAX_LANES arrays: {forbidden}"
         );
     }
     for required in [
@@ -3445,13 +3980,42 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         "fn detach_lane_from_root_frontier(",
         "fn set_offer_entry_state(",
         "root_frontier_state:",
-        "offer_entry_state:",
-        "global_active_entries:",
+        "offer_entry_state: OfferEntryTable",
         "global_frontier_observed:",
+        "global_frontier_scratch_initialized:",
     ] {
         assert!(
             frontier_state_src.contains(required),
             "frontier_state.rs must remain the canonical mutable owner for frontier tables: {required}"
+        );
+    }
+    for forbidden in [
+        "pub(super) global_active_entries:",
+        "pub(super) global_frontier_observed_key:",
+        "frontier_global_active_slots:",
+        "frontier_global_observed_key_slots:",
+    ] {
+        assert!(
+            !frontier_state_src.contains(forbidden) && !layout_src.contains(forbidden),
+            "global frontier resident owners must stay out of endpoint arena and FrontierState header: {forbidden}"
+        );
+    }
+    for forbidden in ["pending_branch_nonce", "pending_branch:"] {
+        assert!(
+            !frontier_state_src.contains(forbidden),
+            "frontier_state.rs must not regress to resident pending-branch precommit state: {forbidden}"
+        );
+    }
+    for forbidden in [
+        "offer_entry_state: [OfferEntryState; crate::global::typestate::MAX_STATES]",
+        "while entry_idx < crate::global::typestate::MAX_STATES",
+        "slot_by_entry: [u8; MAX_STATES]",
+        "pub(super) offer_lanes: [u8; MAX_LANES],",
+        "pub(super) offer_lanes_len: u8,",
+    ] {
+        assert!(
+            !frontier_state_src.contains(forbidden) && !frontier_src.contains(forbidden),
+            "frontier owners must not regress to dense state-space reserve tables: {forbidden}"
         );
     }
     for required in [
@@ -3462,9 +4026,17 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         "fn clear_lane_offer_state(",
         "fn set_lane_offer_state(",
         "lane_route_arms:",
+        "lane_offer_states:",
+        "scope_evidence: ScopeEvidenceTable,",
         "lane_linger_counts:",
-        "lane_offer_state:",
-        "pub(super) fn new() -> Self",
+        "pub(super) unsafe fn init_empty(",
+        "route_arm_storage: *mut RouteArmState,",
+        "lane_offer_state_storage: *mut LaneOfferState,",
+        "scope_evidence_slots: *mut ScopeEvidenceSlot,",
+        "lane_dense_by_lane: &[u8; MAX_LANES],",
+        "active_lane_count: usize,",
+        "max_route_stack_depth: usize,",
+        "route_scope_count: usize,",
     ] {
         assert!(
             route_state_src.contains(required),
@@ -3578,7 +4150,8 @@ fn typestate_builder_stays_a_facade_and_emit_owns_lowering_walk() {
 
     for required in [
         "pub struct RoleTypestate<const ROLE: u8> {",
-        "pub(crate) type RoleTypestateValue = RoleTypestate<0>;",
+        "pub(crate) struct RoleTypestateValue {",
+        "pub(super) nodes: *const LocalNode,",
     ] {
         assert!(
             builder_src.contains(required),
@@ -3600,8 +4173,9 @@ fn typestate_builder_stays_a_facade_and_emit_owns_lowering_walk() {
     }
     for required in [
         "pub(crate) struct RoleCompileScratch {",
-        "pub(crate) const fn from_summary(summary: &LoweringSummary) -> Self {",
-        "super::emit_walk::build_role_typestate::<ROLE>(view, view.as_slice())",
+        "pub(crate) unsafe fn init_value_from_summary_for_role(",
+        "super::emit_walk::init_role_typestate_value(",
+        "fn passive_arm_scope_by_arm_for_scope_registry(",
     ] {
         assert!(
             emit_src.contains(required),
@@ -3610,10 +4184,11 @@ fn typestate_builder_stays_a_facade_and_emit_owns_lowering_walk() {
     }
 
     for required in [
-        "pub(super) const fn build_role_typestate<const ROLE: u8>(",
+        "pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(",
+        "role: u8,",
         "const MAX_LINGER_ARM_TRACK: usize =",
         "jump_backpatch_indices",
-        "route_recv_nodes",
+        "route_entry.route_recv[arm as usize] = current_state;",
         "route_passive_arm_start",
     ] {
         assert!(
@@ -3623,8 +4198,8 @@ fn typestate_builder_stays_a_facade_and_emit_owns_lowering_walk() {
     }
 
     for required in [
-        "pub(super) const fn alloc_scope_entry(",
-        "pub(super) const fn finalize_scope_registry(",
+        "pub(super) const fn alloc_scope_record(",
+        "pub(super) unsafe fn init_scope_registry(",
     ] {
         assert!(
             emit_scope_src.contains(required),
@@ -3637,7 +4212,8 @@ fn typestate_builder_stays_a_facade_and_emit_owns_lowering_walk() {
         "pub(super) const fn find_loop_entry_state(",
         "pub(super) const fn store_loop_entry_if_absent(",
         "pub(super) const fn parallel_phase_eff_range(",
-        "pub(super) const fn phase_route_arm_for_record<const ROLE: u8>(",
+        "pub(super) const fn phase_route_entry_for_arm(",
+        "pub(super) const fn phase_route_arm_for_record(",
     ] {
         assert!(
             emit_route_src.contains(required),
@@ -3646,7 +4222,7 @@ fn typestate_builder_stays_a_facade_and_emit_owns_lowering_walk() {
     }
 
     for required in [
-        "pub(crate) struct ScopeEntry {",
+        "pub(crate) struct ScopeRecord {",
         "pub(super) struct ScopeRegistry {",
     ] {
         assert!(
@@ -3655,9 +4231,16 @@ fn typestate_builder_stays_a_facade_and_emit_owns_lowering_walk() {
         );
     }
 
+    for forbidden in ["pub passive_arm_scope: [u16; 2],"] {
+        assert!(
+            !registry_src.contains(forbidden),
+            "ScopeRecord must derive passive nested route scopes from arm_entry instead of storing dedicated links: {forbidden}"
+        );
+    }
+
     for required in [
-        "pub(super) struct RouteRecvNode {",
         "pub(super) struct PrefixAction {",
+        "pub(super) const fn route_policy_differs(",
     ] {
         assert!(
             route_facts_src.contains(required),
@@ -3667,29 +4250,68 @@ fn typestate_builder_stays_a_facade_and_emit_owns_lowering_walk() {
 }
 
 #[test]
-fn phase_cursor_uses_stable_compiled_pointer_without_copy_fields() {
+fn phase_cursor_owns_private_machine_facts_without_cache_lease_backpointers() {
     let cursor_src = include_str!("../src/global/typestate/cursor.rs");
+    let layout_src = include_str!("../src/endpoint/kernel/layout.rs");
+    let endpoint_init_src = include_str!("../src/endpoint/kernel/endpoint_init.rs");
 
     assert!(
-        cursor_src.contains("pub(crate) struct PhaseCursor {")
-            && cursor_src.contains("compiled: NonNull<CompiledRole>,")
-            && cursor_src.contains("idx: usize,")
-            && cursor_src.contains("phase_index: usize,")
-            && cursor_src.contains("lane_cursors: [usize; MAX_LANES],")
-            && cursor_src.contains("label_lane_mask: [u8; 256],"),
-        "PhaseCursor must remain a thin compiled pointer plus mutable runtime state"
+        cursor_src.contains("struct PhaseCursorMachine {")
+            && cursor_src.contains("pub(crate) struct PhaseCursorState {")
+            && cursor_src.contains("pub(crate) struct PhaseCursor {")
+            && cursor_src.contains("machine: PhaseCursorMachine,")
+            && cursor_src.contains("state: *mut PhaseCursorState,")
+            && cursor_src.contains("compiled_role: *const CompiledRoleImage,")
+            && cursor_src.contains("control_semantics: *const ControlSemanticsTable,")
+            && cursor_src.contains("idx: u16,")
+            && cursor_src.contains("phase_index: u8,")
+            && cursor_src.contains("lane_cursors: [u16; MAX_LANES],")
+            && cursor_src.contains("current_step_labels: [u8; MAX_LANES],")
+            && cursor_src.contains("labeled_lane_mask: u8,")
+            && layout_src.contains("phase_cursor_state: EndpointArenaSection,")
+            && endpoint_init_src
+                .contains("section_ptr::<crate::global::typestate::PhaseCursorState>(")
+            && endpoint_init_src.contains("arena_layout.phase_cursor_state(),"),
+        "PhaseCursor must keep shared machine facts in the header and mutable cursor state in the leased arena"
     );
     for forbidden in [
-        "typestate: &'a RoleTypestateValue",
-        "phases: &'a [Phase]",
-        "local_steps: &'a [LocalStep]",
-        "eff_index_to_step: &'a [u16;",
-        "step_index_to_state: &'a [StateIndex;",
-        "from_machine(",
+        "Arc<PhaseCursorMachine>",
+        "Arc::<PhaseCursorMachine>",
+        "from_pinned_role_ptr(",
+        "CompiledCacheLease",
+        "layout: ProjectedRoleLayout,",
+        "pub(crate) struct PhaseCursorImage {",
+        "struct PhaseCursorLayout {",
+        "image: *const PhaseCursorImage,",
+        "label_lane_mask: [u8; 256],",
+        "struct PhaseCursorMachine {\n    role: u8,",
+        "struct PhaseCursorMachine {\n    role:",
+        "struct PhaseCursorMachine {\n    typestate: RoleTypestateValue,",
     ] {
         assert!(
             !cursor_src.contains(forbidden),
-            "PhaseCursor must not keep copied compiled metadata or machine adapters: {forbidden}"
+            "PhaseCursor must not re-inline compiled machine facts after attach: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn endpoint_kernel_reads_control_semantics_from_shared_compiled_facts() {
+    let cursor_src = include_str!("../src/global/typestate/cursor.rs");
+    let endpoint_core_src = include_str!("../src/endpoint/kernel/core.rs");
+    let endpoint_init_src = include_str!("../src/endpoint/kernel/endpoint_init.rs");
+
+    assert!(
+        cursor_src.contains("control_semantics: *const ControlSemanticsTable,"),
+        "PhaseCursorMachine must keep control semantics behind shared compiled facts"
+    );
+    for forbidden in [
+        "pub(super) control_semantics: ControlSemanticsTable,",
+        "::core::ptr::addr_of_mut!((*dst).control_semantics).write(",
+    ] {
+        assert!(
+            !endpoint_core_src.contains(forbidden) && !endpoint_init_src.contains(forbidden),
+            "CursorEndpoint must not re-inline control semantics after attach: {forbidden}"
         );
     }
 }
@@ -3908,8 +4530,6 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         "pub struct GenTable {",
         "pub struct LoopTable {",
         "pub struct RouteTable {",
-        "pub struct FenceTable {",
-        "pub struct AckTable {",
         "pub struct PolicyTable {",
         "pub struct VmCapsTable {",
         "pub struct CheckpointTable {",
@@ -3939,8 +4559,6 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         "pub(crate) struct GenTable {",
         "pub(crate) struct LoopTable {",
         "pub(crate) struct RouteTable {",
-        "pub(crate) struct FenceTable {",
-        "pub(crate) struct AckTable {",
         "pub(crate) struct PolicyTable {",
         "pub(crate) struct VmCapsTable {",
         "pub(crate) struct CheckpointTable {",
@@ -3968,7 +4586,7 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
     for forbidden in [
         "pub fn from_config(config: Config<'cfg, U, C>, transport: T) -> Self {",
         "pub fn with_test_rendezvous_from_config<'cfg, T, U, C, R>(",
-        "pub fn initialise_control_marker(&self, lane: Lane, marker: &ControlMarker) {",
+        "pub fn initialise_control_scope(&self, lane: Lane, scope_kind: ControlScopeKind) {",
         "pub fn is_session_registered(&self, sid: SessionId) -> bool {",
         "pub fn release_lane(&self, lane: Lane) -> Option<SessionId> {",
         "pub fn into_port_guard(",
@@ -3996,8 +4614,7 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         );
     }
     for required in [
-        "pub(crate) fn with_test_rendezvous_from_config<'cfg, T, U, C, R>(",
-        "pub(crate) fn initialise_control_marker(&self, lane: Lane, marker: &ControlMarker) {",
+        "pub(crate) fn initialise_control_scope(&self, lane: Lane, scope_kind: ControlScopeKind) {",
         "pub(crate) fn is_session_registered(&self, sid: SessionId) -> bool {",
         "pub(crate) fn release_lane(&self, lane: Lane) -> Option<SessionId> {",
         "pub(crate) fn into_port_guard(",
@@ -4258,7 +4875,7 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         "pub(crate) trait LeaseGraphBundleExt<",
         "pub(crate) trait LeaseFacet: Copy + Default {",
         "pub(crate) trait LeaseChildStorage<Id: Copy>: Copy {",
-        "pub(crate) struct InlineLeaseChildStorage<Id: Copy, const CAPACITY: usize> {",
+        "pub(crate) struct InlineLeaseChildStorage<Id: Copy + Default, const CAPACITY: usize> {",
         "pub(crate) trait LeaseSpec: Sized {",
         "pub(crate) trait LeaseNodeStorage<'graph, S: LeaseSpec> {",
         "pub(crate) struct InlineLeaseNodeStorage<'graph, S: LeaseSpec, const CAPACITY: usize> {",
@@ -4401,7 +5018,7 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
     assert!(
         substrate_src.contains("pub mod request_reply {")
             && substrate_src.contains("pub mod observe_stream {")
-            && substrate_src.contains("pub const PREFIX: crate::g::Program<PrefixSteps> =")
+            && substrate_src.contains("pub const PREFIX: crate::g::ProgramSource<PrefixSteps> =")
             && substrate_src.contains("ROLE_CLUSTER,")
             && substrate_src.contains("ROLE_CONTROLLER,"),
         "substrate mgmt must stay on the canonical payload-plus-prefix surface"
@@ -4533,8 +5150,8 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         );
     }
     for required in [
-        "const LOAD_BEGIN: Program<",
-        "pub const PROGRAM: Program<ProgramSteps> =",
+        "const LOAD_BEGIN: ProgramSource<",
+        "pub const PROGRAM: ProgramSource<ProgramSteps> =",
         "LoopDecisionSteps<",
         "LABEL_LOOP_CONTINUE,",
         "LABEL_LOOP_BREAK,",
@@ -4551,17 +5168,17 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
     }
     for required in [
         "pub struct TapBatch {",
-        "pub const PROGRAM: Program<ProgramSteps> =",
-        "const STREAM_SUBSCRIBE: Program<",
-        "const STREAM_LOOP_ROUTE: Program<",
+        "pub const PROGRAM: ProgramSource<ProgramSteps> =",
+        "const STREAM_SUBSCRIBE: ProgramSource<",
+        "const STREAM_LOOP_ROUTE: ProgramSource<",
         "LABEL_OBSERVE_SUBSCRIBE,",
         "LABEL_OBSERVE_STREAM_END,",
         "LABEL_OBSERVE_BATCH,",
-        "crate::g::advanced::compose::seq(STREAM_SUBSCRIBE, STREAM_LOOP_ROUTE);",
+        "crate::g::seq(STREAM_SUBSCRIBE, STREAM_LOOP_ROUTE);",
     ] {
         assert!(
             mgmt_observe_stream_src.contains(required),
-            "observe-stream management owner must keep preserved composition on direct canonical witnesses: {required}"
+            "observe-stream management owner must keep direct canonical g::seq witnesses: {required}"
         );
     }
 }
@@ -4583,6 +5200,10 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
     let boundary_gate = include_str!("../.github/scripts/check_boundary_contracts.sh");
     let direct_projection_gate =
         include_str!("../.github/scripts/check_direct_projection_binary.sh");
+    let cluster_core = include_str!("../src/control/cluster/core.rs");
+    let pico_smoke_gate = include_str!("../.github/scripts/check_pico_smoke.sh");
+    let pico_size_matrix_gate = include_str!("../.github/scripts/check_pico_size_matrix.sh");
+    let huge_budget_gate = include_str!("../.github/scripts/check_huge_choreography_budget.sh");
 
     for required in [
         "bash ./.github/scripts/check_hibana_public_api.sh",
@@ -4592,6 +5213,8 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
         "bash ./.github/scripts/check_boundary_contracts.sh",
         "bash ./.github/scripts/check_warning_free.sh",
         "bash ./.github/scripts/check_direct_projection_binary.sh",
+        "bash ./.github/scripts/check_huge_choreography_budget.sh",
+        "bash ./.github/scripts/check_pico_size_matrix.sh",
         "cargo check --all-targets -p hibana",
         "cargo test -p hibana --features std",
         "cargo test -p hibana --test ui --features std",
@@ -4615,7 +5238,10 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
         "./.github/scripts/check_surface_hygiene.sh",
         "./.github/scripts/check_warning_free.sh",
         "./.github/scripts/check_direct_projection_binary.sh",
+        "./.github/scripts/check_huge_choreography_budget.sh",
         "./.github/scripts/check_no_std_build.sh",
+        "./.github/scripts/check_pico_smoke.sh",
+        "./.github/scripts/check_pico_size_matrix.sh",
         "cargo check --all-targets -p hibana",
         "cargo test -p hibana --features std",
         "cargo test -p hibana --test ui --features std",
@@ -4659,6 +5285,122 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
         assert!(
             direct_projection_gate.contains(required),
             "direct projection binary gate must keep the canonical typed-projection regression owner: {required}"
+        );
+    }
+
+    for required in [
+        "SMOKE_TARGET_DIR=\"$ROOT/target/pico_smoke\"",
+        "SRAM_BUDGET=$((168 * 1024))",
+        "PRACTICAL_FLASH_BUDGET=$((768 * 1024))",
+        "PRACTICAL_STATIC_SRAM_BUDGET=$((48 * 1024))",
+        "PRACTICAL_KERNEL_STACK_BUDGET=$((24 * 1024))",
+        "PRACTICAL_PEAK_SRAM_BUDGET=$((96 * 1024))",
+        "pico smoke practical contract exceeded for",
+        "pico smoke kernel stack reserve bytes:",
+        "pico smoke peak stack upper-bound bytes:",
+        "pico smoke peak sram upper-bound bytes:",
+        "pico smoke measured sidecar/scratch high-water bytes:",
+        "pico smoke measured live slab bytes:",
+        "pico smoke measured peak stack bytes:",
+        "pico smoke measured peak sram bytes:",
+    ] {
+        assert!(
+            pico_smoke_gate.contains(required),
+            "pico smoke gate must keep the SRAM-first canonical settings: {required}"
+        );
+    }
+
+    for forbidden in [
+        "internal/pico_smoke/target",
+        "HIBANA_PICO_ENFORCE_PRACTICAL_CONTRACT",
+        "report-only",
+    ] {
+        assert!(
+            !pico_smoke_gate.contains(forbidden),
+            "pico smoke gate must not write nested target artefacts into the repo: {forbidden}"
+        );
+    }
+
+    for required in [
+        "run_shape route_heavy",
+        "run_shape linear_heavy \"linear-heavy\"",
+        "run_shape fanout_heavy \"fanout-heavy\"",
+        "== resident size matrix ==",
+        "huge_shape_matrix_resident_bytes_stay_measured_and_local",
+    ] {
+        assert!(
+            pico_size_matrix_gate.contains(required),
+            "pico size matrix gate must keep the fixed huge choreography shape matrix: {required}"
+        );
+    }
+
+    for required in [
+        "timeout_seconds = 180",
+        "huge_choreography_compile",
+        "huge_choreography_runtime",
+        "huge_choreography_resident",
+    ] {
+        assert!(
+            huge_budget_gate.contains(required),
+            "huge choreography budget gate must keep the canonical timeout-bounded compile checks: {required}"
+        );
+    }
+
+    for required in [
+        "resident-shape name={name}",
+        "compiled_program_header_bytes: size_of::<CompiledProgramImage>()",
+        "compiled_role_header_bytes: size_of::<CompiledRoleImage>()",
+        "RouteTable::storage_bytes(",
+        "LoopTable::storage_bytes(",
+        "let endpoint_layout = compiled_role.endpoint_arena_layout_for_binding(false);",
+        "public_endpoint_storage_requirement(compiled_role, false);",
+        "endpoint_bytes: endpoint_layout.total_bytes(),",
+        "huge_shape_matrix_resident_bytes_stay_measured_and_local",
+    ] {
+        assert!(
+            cluster_core.contains(required),
+            "cluster core must keep the local resident measurement owner: {required}"
+        );
+    }
+}
+
+#[test]
+fn huge_runtime_storage_story_stays_concrete() {
+    let pico_smoke_src = include_str!("../internal/pico_smoke/src/main.rs");
+    let huge_runtime_src = include_str!("../tests/huge_choreography_runtime.rs");
+
+    for source in [pico_smoke_src, huge_runtime_src] {
+        assert!(
+            !source.contains("unsafe impl<T> Sync"),
+            "huge choreography support must not reintroduce blanket generic Sync shims"
+        );
+        assert!(
+            !source.contains("struct StaticCell"),
+            "huge choreography support must not reintroduce the generic StaticCell pattern"
+        );
+    }
+
+    for forbidden in [
+        "init_empty(",
+        "MaybeUninit<HugeKit>",
+        "with_runtime_kit_ref(",
+    ] {
+        assert!(
+            !huge_runtime_src.contains(forbidden),
+            "huge choreography runtime must stay on the public canonical path: {forbidden}"
+        );
+    }
+
+    for required in [
+        "let kit = HugeKit::new(clock);",
+        "project(program);",
+        ".add_rendezvous_from_config(",
+        ".enter(rv_id, sid, &controller_program, NoBinding)",
+        ".enter(rv_id, sid, &worker_program, NoBinding)",
+    ] {
+        assert!(
+            huge_runtime_src.contains(required),
+            "huge choreography runtime must keep the public canonical path visible: {required}"
         );
     }
 }

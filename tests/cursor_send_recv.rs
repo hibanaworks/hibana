@@ -1,87 +1,91 @@
 mod common;
 #[path = "support/runtime.rs"]
 mod runtime_support;
+#[path = "support/tls_ref.rs"]
+mod tls_ref_support;
+
+use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 use common::TestTransport;
 use hibana::{
-    g::advanced::steps::{ProjectRole, SendStep, StepCons, StepNil},
+    g::advanced::steps::{SendStep, StepCons, StepNil},
     g::advanced::{RoleProgram, project},
     g::{self, Msg, Role},
-    substrate::{SessionId, SessionKit, binding::NoBinding, runtime::Config},
+    substrate::{
+        SessionId, SessionKit,
+        binding::NoBinding,
+        runtime::{Config, CounterClock},
+    },
 };
-use runtime_support::{leak_slab, leak_tap_storage};
+use runtime_support::with_fixture;
+use tls_ref_support::with_tls_ref;
 
-const PROGRAM: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil>> =
+const PROGRAM: g::ProgramSource<StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil>> =
     g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
 
 static ORIGIN_PROGRAM: RoleProgram<
     'static,
     0,
-    <StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil> as ProjectRole<Role<0>>>::Output,
-> = project(&PROGRAM);
+    StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil>,
+> = project(&g::freeze(&PROGRAM));
 static TARGET_PROGRAM: RoleProgram<
     'static,
     1,
-    <StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil> as ProjectRole<Role<1>>>::Output,
-> = project(&PROGRAM);
+    StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil>,
+> = project(&g::freeze(&PROGRAM));
+type TestKit = SessionKit<
+    'static,
+    TestTransport,
+    hibana::substrate::runtime::DefaultLabelUniverse,
+    CounterClock,
+    2,
+>;
+
+std::thread_local! {
+    static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
+        UnsafeCell::new(MaybeUninit::uninit())
+    };
+}
 
 fn transport_queue_is_empty(transport: &TestTransport) -> bool {
-    transport
-        .state
-        .lock()
-        .expect("state lock")
-        .queues
-        .values()
-        .all(|queue| queue.is_empty())
+    transport.queue_is_empty()
 }
 
 #[test]
 fn cursor_send_and_recv_roundtrip() {
-    let tap_buf = leak_tap_storage();
-    let slab = leak_slab(1024);
-    let config = Config::new(tap_buf, slab);
-    let transport = TestTransport::default();
-    let cluster: &mut SessionKit<
-        'static,
-        TestTransport,
-        hibana::substrate::runtime::DefaultLabelUniverse,
-        hibana::substrate::runtime::CounterClock,
-        4,
-    > = Box::leak(Box::new(SessionKit::new(runtime_support::leak_clock())));
-    let rv_id = cluster
-        .add_rendezvous_from_config(config, transport.clone())
-        .expect("register rendezvous");
-
-    let sid = SessionId::new(1);
-
-    // Attach both endpoints FIRST so they're both registered
-    let origin_endpoint = cluster
-        .enter::<0, _, _, _>(rv_id, sid, &ORIGIN_PROGRAM, NoBinding)
-        .expect("origin endpoint");
-    let target_endpoint = cluster
-        .enter::<1, _, _, _>(rv_id, sid, &TARGET_PROGRAM, NoBinding)
-        .expect("target endpoint");
-
-    // Now run send/recv concurrently
-    let (send_result, recv_result) = futures::executor::block_on(async {
-        futures::join!(
-            async {
-                origin_endpoint
-                    .flow::<Msg<1, u32>>()
-                    .unwrap()
-                    .send(&42)
-                    .await
+    with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
             },
-            target_endpoint.recv::<Msg<1, u32>>()
-        )
+            |cluster| {
+                let rv_id = cluster
+                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(1);
+                let mut origin_endpoint = cluster
+                    .enter(rv_id, sid, &ORIGIN_PROGRAM, NoBinding)
+                    .expect("origin endpoint");
+                let mut target_endpoint = cluster
+                    .enter(rv_id, sid, &TARGET_PROGRAM, NoBinding)
+                    .expect("target endpoint");
+
+                let outcome = futures::executor::block_on(
+                    origin_endpoint
+                        .flow::<Msg<1, u32>>()
+                        .expect("send flow")
+                        .send(&42),
+                )
+                .expect("send succeeds");
+                assert!(outcome.is_none());
+                let payload = futures::executor::block_on(target_endpoint.recv::<Msg<1, u32>>())
+                    .expect("recv succeeds");
+                assert_eq!(payload, 42u32);
+                assert!(transport_queue_is_empty(&transport));
+            },
+        );
     });
-
-    let (origin_endpoint, outcome) = send_result.expect("send succeeds");
-    assert!(outcome.is_none());
-    let (target_endpoint, payload) = recv_result.expect("recv succeeds");
-    assert_eq!(payload, 42u32);
-    assert!(transport_queue_is_empty(&transport));
-
-    drop(origin_endpoint);
-    drop(target_endpoint);
 }

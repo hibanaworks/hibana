@@ -29,14 +29,15 @@
 //!
 //! // A protocol crate composes transport/appkit prefixes internally and returns
 //! // an attached endpoint. From there, stay on localside core API only.
-//! let (endpoint, _) = endpoint.flow::<g::Msg<1, u32>>()?.send(&42).await?;
+//! let _send = endpoint.flow::<g::Msg<1, u32>>()?.send(&42).await?;
 //! let received = endpoint.recv::<g::Msg<2, ()>>().await?;
-//! let () = received.1;
+//! let () = received;
 //! ```
 //!
-//! Protocol implementors use [`g::advanced`] and [`substrate`] to project
-//! programs and enter attached endpoints. That lower-level flow is documented in
-//! `README.md`; it is not the primary app-author path.
+//! Protocol implementors use [`g::advanced`] and [`substrate`] to compose
+//! [`g::ProgramSource`] values, freeze them into a thin [`g::Program`], project
+//! that token, and enter attached endpoints. That lower-level flow is
+//! documented in `README.md`; it is not the primary app-author path.
 //!
 //! Run the verification flow documented in `AGENTS.md` after integrating a
 //! protocol to ensure rendezvous and localside invariants stay intact. The same
@@ -53,6 +54,9 @@
 //! - **No polling**: rendezvous control integrates with arbitrary async runtimes
 //!   supplied by the embedding environment; the crate itself does not ship a
 //!   scheduler.
+//! - **Local-only runtime**: attached runtime owners are intentionally
+//!   `!Send`/`!Sync`; `hibana` assumes single-core, non-ISR, non-reentrant
+//!   execution with owner-centralized mutation.
 //! - **Observability by construction**: every control decision (loop continue,
 //!   cancel pair, checkpoint/rollback, splice) is annotated in the synthesized
 //!   effect list so the runtime can seed tap events deterministically.
@@ -62,11 +66,10 @@
 //!
 //! # Cargo Features
 //!
-//! - `std` — Enables heap-backed lower-layer storage for large fixed-capacity
-//!   runtime tables (for example the endpoint cursor route-state arrays and the
-//!   session-cluster control/resolver cores), plus transport/testing utilities
-//!   and observability normalisers. The app surface (`hibana::g` + `Endpoint`
-//!   localside core API) remains `no_alloc` oriented in both modes.
+//! - `std` — Enables transport/testing utilities and observability
+//!   normalisers. The runtime remains slab-backed and `no_alloc` oriented in
+//!   both modes; `std` does not switch the core localside path to heap-backed
+//!   ownership.
 
 #[cfg(test)]
 extern crate std;
@@ -86,6 +89,8 @@ mod control;
 mod runtime;
 
 mod transport;
+
+mod local;
 
 /// Session endpoints (affine-typed consuming futures)
 mod endpoint;

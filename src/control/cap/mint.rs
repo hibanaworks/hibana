@@ -69,7 +69,7 @@
 //! ## Custom Resource Example
 //!
 //! ```rust,ignore
-//! use core::sync::atomic::{AtomicUsize, Ordering};
+//! use core::cell::Cell;
 //! use hibana::substrate::cap::{CapError, GenericCapToken, ResourceKind};
 //! use hibana::substrate::wire::WireDecode;
 //!
@@ -78,7 +78,9 @@
 //!     id: u32,
 //! }
 //!
-//! static LAST_ZEROIZED: AtomicUsize = AtomicUsize::new(0);
+//! thread_local! {
+//!     static LAST_ZEROIZED: Cell<usize> = const { Cell::new(0) };
+//! }
 //!
 //! struct PageResource;
 //!

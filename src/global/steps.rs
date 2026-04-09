@@ -8,7 +8,7 @@
 use core::marker::PhantomData;
 
 use super::const_dsl;
-use super::program::Program;
+use super::program::ProgramSource;
 use crate::global::{KnownRole, MessageSpec, Role, RoleMarker, SendableLabel};
 
 // =============================================================================
@@ -196,7 +196,7 @@ impl Default for StepNil {
 
 impl StepNil {
     /// Canonical zero-fragment program witness for substrate-side composition.
-    pub const PROGRAM: Program<Self> = Program::<Self>::empty();
+    pub const PROGRAM: ProgramSource<Self> = ProgramSource::<Self>::empty();
 
     pub const fn new() -> Self {
         Self
@@ -402,11 +402,19 @@ where
 
 /// Project a global typelist to the local steps for `Local`.
 pub trait ProjectRole<Local> {
-    type Output;
+    type Output: StepCount;
+}
+
+pub trait StepCount {
+    const LEN: usize;
 }
 
 impl<Local> ProjectRole<Local> for StepNil {
     type Output = StepNil;
+}
+
+impl StepCount for StepNil {
+    const LEN: usize = 0;
 }
 
 impl<Local, From, To, Msg, const LANE: u8, Tail> ProjectRole<Local>
@@ -433,6 +441,14 @@ where
         To,
         Msg,
     >>::Output: StepConcat<<Tail as ProjectRole<Local>>::Output>,
+    <<() as SelectLocal<
+        <From as RoleEq<Local>>::Output,
+        <To as RoleEq<Local>>::Output,
+        Local,
+        From,
+        To,
+        Msg,
+    >>::Output as StepConcat<<Tail as ProjectRole<Local>>::Output>>::Output: StepCount,
 {
     type Output = <<() as SelectLocal<
         <From as RoleEq<Local>>::Output,
@@ -444,13 +460,31 @@ where
     >>::Output as StepConcat<<Tail as ProjectRole<Local>>::Output>>::Output;
 }
 
+impl<Head, Tail> StepCount for StepCons<Head, Tail>
+where
+    Tail: StepCount,
+{
+    const LEN: usize = 1 + Tail::LEN;
+}
+
 impl<Local, Left, Right> ProjectRole<Local> for SeqSteps<Left, Right>
 where
     Left: ProjectRole<Local>,
     Right: ProjectRole<Local>,
     <Left as ProjectRole<Local>>::Output: StepConcat<<Right as ProjectRole<Local>>::Output>,
+    <<Left as ProjectRole<Local>>::Output as StepConcat<
+        <Right as ProjectRole<Local>>::Output,
+    >>::Output: StepCount,
 {
     type Output = <<Left as ProjectRole<Local>>::Output as StepConcat<
         <Right as ProjectRole<Local>>::Output,
     >>::Output;
+}
+
+impl<Left, Right> StepCount for SeqSteps<Left, Right>
+where
+    Left: StepCount,
+    Right: StepCount,
+{
+    const LEN: usize = Left::LEN + Right::LEN;
 }

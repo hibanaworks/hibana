@@ -10,7 +10,15 @@ mod seal;
 
 pub(crate) use self::{
     driver::{LoweringSummary, LoweringView, ProgramStamp},
-    program::{CompiledProgram, ControlSemanticKind, ControlSemanticsTable},
+    program::{
+        CompiledProgramImage, ControlSemanticKind, ControlSemanticsTable, DynamicPolicySite,
+    },
+    role::CompiledRoleImage,
+    seal::validate_all_roles,
+};
+
+#[cfg(test)]
+pub(crate) use self::{
+    program::{CompiledProgram, MAX_COMPILED_PROGRAM_RESOURCES},
     role::CompiledRole,
-    seal::ProjectionSeal,
 };

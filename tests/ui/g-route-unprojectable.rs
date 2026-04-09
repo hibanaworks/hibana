@@ -10,12 +10,12 @@ mod control_kinds;
 use hibana::substrate::cap::GenericCapToken;
 use hibana::g::{self};
 use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
-use hibana::g::advanced::steps::{ProjectRole, SendStep, SeqSteps, StepConcat, StepCons, StepNil};
+use hibana::g::advanced::steps::{SendStep, SeqSteps, StepConcat, StepCons, StepNil};
 
 type RouteArm100Kind = control_kinds::RouteControl<100, 0>;
 type RouteArm101Kind = control_kinds::RouteControl<101, 0>;
 
-const ARM0: g::Program<
+const ARM0: g::ProgramSource<
     SeqSteps<
         StepCons<
             SendStep<
@@ -43,7 +43,7 @@ const ARM0: g::Program<
     ),
 );
 
-const ARM1: g::Program<
+const ARM1: g::ProgramSource<
     SeqSteps<
         StepCons<
             SendStep<
@@ -78,7 +78,7 @@ const ARM1: g::Program<
 );
 
 // No dynamic policy here -> unprojectable for Passive.
-const ROUTE: g::Program<
+const ROUTE: g::ProgramSource<
     <SeqSteps<
         StepCons<
             SendStep<
@@ -117,7 +117,7 @@ const ROUTE: g::Program<
 static PASSIVE_PROGRAM: RoleProgram<
     'static,
     1,
-    <<SeqSteps<
+    <SeqSteps<
         StepCons<
             SendStep<
                 g::Role<0>,
@@ -148,8 +148,8 @@ static PASSIVE_PROGRAM: RoleProgram<
                 >,
             >,
         >,
-    >>::Output as ProjectRole<g::Role<1>>>::Output,
-> = project(&ROUTE);
+    >>::Output,
+> = project(&g::freeze(&ROUTE));
 
 fn main() {
     let _ = &PASSIVE_PROGRAM;

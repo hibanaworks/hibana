@@ -49,6 +49,8 @@
 //! graph.commit();
 //! ```
 
+use core::mem::MaybeUninit;
+
 /// LeaseFacet is a zero-sized marker that carries behaviour for commit/rollback
 /// while delegating state storage to an explicit context object.
 pub(crate) trait LeaseFacet: Copy + Default {
@@ -74,11 +76,11 @@ pub(crate) trait LeaseChildStorage<Id: Copy>: Copy {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct InlineLeaseChildStorage<Id: Copy, const CAPACITY: usize> {
-    slots: [Option<Id>; CAPACITY],
+pub(crate) struct InlineLeaseChildStorage<Id: Copy + Default, const CAPACITY: usize> {
+    slots: [Id; CAPACITY],
 }
 
-impl<Id: Copy, const CAPACITY: usize> LeaseChildStorage<Id>
+impl<Id: Copy + Default, const CAPACITY: usize> LeaseChildStorage<Id>
     for InlineLeaseChildStorage<Id, CAPACITY>
 {
     const CAPACITY: usize = CAPACITY;
@@ -86,18 +88,18 @@ impl<Id: Copy, const CAPACITY: usize> LeaseChildStorage<Id>
     #[inline]
     fn empty() -> Self {
         Self {
-            slots: [None; CAPACITY],
+            slots: [Id::default(); CAPACITY],
         }
     }
 
     #[inline]
     fn get(&self, idx: usize) -> Option<Id> {
-        self.slots.get(idx).copied().flatten()
+        self.slots.get(idx).copied()
     }
 
     #[inline]
     fn set(&mut self, idx: usize, id: Id) {
-        self.slots[idx] = Some(id);
+        self.slots[idx] = id;
     }
 }
 
@@ -179,15 +181,21 @@ impl<'graph, S: LeaseSpec> NodeData<'graph, S> {
 pub(crate) trait LeaseNodeStorage<'graph, S: LeaseSpec> {
     const CAPACITY: usize;
 
+    #[cfg(test)]
     fn empty() -> Self;
+    unsafe fn init_empty(dst: *mut Self);
 
-    fn as_slice(&self) -> &[Option<NodeData<'graph, S>>];
+    unsafe fn write(&mut self, idx: usize, node: NodeData<'graph, S>);
 
-    fn as_mut_slice(&mut self) -> &mut [Option<NodeData<'graph, S>>];
+    unsafe fn read(&mut self, idx: usize) -> NodeData<'graph, S>;
+
+    fn get(&self, idx: usize) -> Option<&NodeData<'graph, S>>;
+
+    fn get_mut(&mut self, idx: usize) -> Option<&mut NodeData<'graph, S>>;
 }
 
 pub(crate) struct InlineLeaseNodeStorage<'graph, S: LeaseSpec, const CAPACITY: usize> {
-    slots: [Option<NodeData<'graph, S>>; CAPACITY],
+    slots: [MaybeUninit<NodeData<'graph, S>>; CAPACITY],
 }
 
 impl<'graph, S: LeaseSpec, const CAPACITY: usize> LeaseNodeStorage<'graph, S>
@@ -196,20 +204,56 @@ impl<'graph, S: LeaseSpec, const CAPACITY: usize> LeaseNodeStorage<'graph, S>
     const CAPACITY: usize = CAPACITY;
 
     #[inline]
+    #[cfg(test)]
     fn empty() -> Self {
-        Self {
-            slots: core::array::from_fn(|_| None),
+        let mut storage = MaybeUninit::<Self>::uninit();
+        unsafe {
+            Self::init_empty(storage.as_mut_ptr());
+            storage.assume_init()
         }
     }
 
     #[inline]
-    fn as_slice(&self) -> &[Option<NodeData<'graph, S>>] {
-        &self.slots
+    unsafe fn init_empty(dst: *mut Self) {
+        unsafe {
+            let slots =
+                core::ptr::addr_of_mut!((*dst).slots).cast::<MaybeUninit<NodeData<'graph, S>>>();
+            let mut i = 0;
+            while i < CAPACITY {
+                slots.add(i).write(MaybeUninit::uninit());
+                i += 1;
+            }
+        }
     }
 
     #[inline]
-    fn as_mut_slice(&mut self) -> &mut [Option<NodeData<'graph, S>>] {
-        &mut self.slots
+    unsafe fn write(&mut self, idx: usize, node: NodeData<'graph, S>) {
+        debug_assert!(idx < CAPACITY, "lease graph node index out of bounds");
+        unsafe {
+            self.slots.get_unchecked_mut(idx).write(node);
+        }
+    }
+
+    #[inline]
+    unsafe fn read(&mut self, idx: usize) -> NodeData<'graph, S> {
+        debug_assert!(idx < CAPACITY, "lease graph node index out of bounds");
+        unsafe { self.slots.get_unchecked(idx).assume_init_read() }
+    }
+
+    #[inline]
+    fn get(&self, idx: usize) -> Option<&NodeData<'graph, S>> {
+        if idx >= CAPACITY {
+            return None;
+        }
+        Some(unsafe { self.slots.get_unchecked(idx).assume_init_ref() })
+    }
+
+    #[inline]
+    fn get_mut(&mut self, idx: usize) -> Option<&mut NodeData<'graph, S>> {
+        if idx >= CAPACITY {
+            return None;
+        }
+        Some(unsafe { self.slots.get_unchecked_mut(idx).assume_init_mut() })
     }
 }
 
@@ -311,7 +355,39 @@ pub(crate) struct LeaseGraph<'graph, S: LeaseSpec + 'graph> {
 }
 
 impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
+    /// Initialize a new `LeaseGraph` directly into destination storage.
+    ///
+    /// # Safety
+    /// `dst` must point to valid, writable memory for `Self`.
+    pub(crate) unsafe fn init_new(
+        dst: *mut Self,
+        root_id: S::NodeId,
+        root_facet: S::Facet,
+        root_context: <<S as LeaseSpec>::Facet as LeaseFacet>::Context<'graph>,
+    ) {
+        debug_assert!(S::MAX_NODES > 0, "LeaseGraph requires MAX_NODES > 0");
+        debug_assert!(S::MAX_CHILDREN > 0, "LeaseGraph requires MAX_CHILDREN > 0");
+        debug_assert!(
+            S::MAX_NODES == <S::NodeStorage<'graph> as LeaseNodeStorage<'graph, S>>::CAPACITY,
+            "LeaseGraph node storage must match LeaseSpec capacity"
+        );
+        debug_assert!(
+            S::MAX_CHILDREN == <S::ChildStorage as LeaseChildStorage<S::NodeId>>::CAPACITY,
+            "LeaseGraph child storage must match LeaseSpec capacity"
+        );
+
+        unsafe {
+            S::NodeStorage::init_empty(core::ptr::addr_of_mut!((*dst).nodes));
+            core::ptr::addr_of_mut!((*dst).node_count).write(1);
+            core::ptr::addr_of_mut!((*dst).root_id).write(root_id);
+            core::ptr::addr_of_mut!((*dst).state).write(GraphState::Active);
+            let nodes = &mut *core::ptr::addr_of_mut!((*dst).nodes);
+            nodes.write(0, NodeData::new(root_id, root_facet, root_context));
+        }
+    }
+
     /// Create a new `LeaseGraph` starting with the root node.
+    #[cfg(test)]
     pub(crate) fn new(
         root_id: S::NodeId,
         root_facet: S::Facet,
@@ -329,7 +405,9 @@ impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
         );
 
         let mut nodes = S::NodeStorage::empty();
-        nodes.as_mut_slice()[0] = Some(NodeData::new(root_id, root_facet, root_context));
+        unsafe {
+            nodes.write(0, NodeData::new(root_id, root_facet, root_context));
+        }
 
         Self {
             nodes,
@@ -346,9 +424,41 @@ impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
 
     /// Find the position of a node by identifier.
     fn find_node(&self, id: S::NodeId) -> Option<usize> {
-        self.nodes.as_slice()[..self.node_count]
-            .iter()
-            .position(|node| node.as_ref().map(|n| n.id) == Some(id))
+        let mut idx = 0usize;
+        while idx < self.node_count {
+            let node = self
+                .nodes
+                .get(idx)
+                .expect("active lease graph stores a dense initialized prefix");
+            if node.id == id {
+                return Some(idx);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    fn find_node_with_taken_mask(&self, id: S::NodeId, taken_mask: usize) -> Option<usize> {
+        debug_assert!(
+            S::MAX_NODES <= usize::BITS as usize,
+            "lease graph traversal mask must cover all node slots"
+        );
+        let mut idx = 0usize;
+        while idx < self.node_count {
+            if (taken_mask & (1usize << idx)) != 0 {
+                idx += 1;
+                continue;
+            }
+            let node = self
+                .nodes
+                .get(idx)
+                .expect("active lease graph stores a dense initialized prefix");
+            if node.id == id {
+                return Some(idx);
+            }
+            idx += 1;
+        }
+        None
     }
 
     /// Obtain a mutable handle for the facet/context associated with `id`.
@@ -363,7 +473,7 @@ impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
         }
 
         let idx = self.find_node(id)?;
-        let node = self.nodes.as_mut_slice()[idx].as_mut()?;
+        let node = self.nodes.get_mut(idx)?;
         Some(FacetHandle {
             facet: node.facet,
             context: &mut node.context,
@@ -375,7 +485,7 @@ impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
     #[cfg(test)]
     pub(crate) fn children(&self, id: S::NodeId) -> Option<ChildIter<'_, 'graph, S>> {
         let idx = self.find_node(id)?;
-        let node = self.nodes.as_slice()[idx].as_ref()?;
+        let node = self.nodes.get(idx)?;
         Some(ChildIter::new(node))
     }
 
@@ -428,9 +538,14 @@ impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
 
         // Attach the child to its parent.
         {
-            let nodes = self.nodes.as_mut_slice();
-            nodes[parent_idx].as_mut().unwrap().add_child(child_id)?;
-            nodes[self.node_count] = Some(NodeData::new(child_id, child_facet, child_context));
+            self.nodes
+                .get_mut(parent_idx)
+                .expect("active lease graph stores a dense initialized prefix")
+                .add_child(child_id)?;
+            unsafe {
+                self.nodes
+                    .write(self.node_count, NodeData::new(child_id, child_facet, child_context));
+            }
         }
         self.node_count += 1;
 
@@ -460,7 +575,7 @@ impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
         let mut current = self.root_id;
         for &next_id in &path[1..] {
             let idx = self.find_node(current)?;
-            let node = self.nodes.as_slice()[idx].as_ref()?;
+            let node = self.nodes.get(idx)?;
 
             // Ensure the parent lists `next_id` as a child.
             let mut found = false;
@@ -480,7 +595,7 @@ impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
 
         // Return the facet belonging to the final node.
         let idx = self.find_node(current)?;
-        let node = self.nodes.as_mut_slice()[idx].as_mut()?;
+        let node = self.nodes.get_mut(idx)?;
         Some(FacetHandle {
             facet: node.facet,
             context: &mut node.context,
@@ -495,36 +610,34 @@ impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
             return;
         }
         self.state = GraphState::Committed;
-        self.commit_node_recursive(self.root_id);
-        // All nodes released; reset the counter.
+        let mut taken_mask = 0usize;
+        self.commit_node_recursive(self.root_id, &mut taken_mask);
         self.node_count = 0;
     }
 
-    fn commit_node_recursive(&mut self, id: S::NodeId) {
-        let idx = match self.find_node(id) {
+    fn commit_node_recursive(&mut self, id: S::NodeId, taken_mask: &mut usize) {
+        let idx = match self.find_node_with_taken_mask(id, *taken_mask) {
             Some(i) => i,
             None => return,
         };
 
-        // SAFETY: during commit/rollback `nodes[idx]` is guaranteed to be `Some`.
-        let mut node = match self.nodes.as_mut_slice()[idx].take() {
-            Some(node) => node,
-            None => return,
-        };
-
-        // Commit children first.
+        let node = self
+            .nodes
+            .get(idx)
+            .expect("active lease graph stores a dense initialized prefix");
         let children = node.children;
         let child_count = node.child_count;
 
         let mut child_idx = 0usize;
         while child_idx < child_count {
             if let Some(child_id) = children.get(child_idx) {
-                self.commit_node_recursive(child_id);
+                self.commit_node_recursive(child_id, taken_mask);
             }
             child_idx += 1;
         }
 
-        // Commit the node itself (drop the facet).
+        *taken_mask |= 1usize << idx;
+        let mut node = unsafe { self.nodes.read(idx) };
         node.facet.on_commit(&mut node.context);
     }
 
@@ -536,35 +649,34 @@ impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
             return;
         }
         self.state = GraphState::RolledBack;
-        self.rollback_node_recursive(self.root_id);
-        // All nodes released; reset the counter.
+        let mut taken_mask = 0usize;
+        self.rollback_node_recursive(self.root_id, &mut taken_mask);
         self.node_count = 0;
     }
 
-    fn rollback_node_recursive(&mut self, id: S::NodeId) {
-        let idx = match self.find_node(id) {
+    fn rollback_node_recursive(&mut self, id: S::NodeId, taken_mask: &mut usize) {
+        let idx = match self.find_node_with_taken_mask(id, *taken_mask) {
             Some(i) => i,
             None => return,
         };
 
-        let mut node = match self.nodes.as_mut_slice()[idx].take() {
-            Some(node) => node,
-            None => return,
-        };
-
-        // Roll back children first.
+        let node = self
+            .nodes
+            .get(idx)
+            .expect("active lease graph stores a dense initialized prefix");
         let children = node.children;
         let child_count = node.child_count;
 
         let mut child_idx = 0usize;
         while child_idx < child_count {
             if let Some(child_id) = children.get(child_idx) {
-                self.rollback_node_recursive(child_id);
+                self.rollback_node_recursive(child_id, taken_mask);
             }
             child_idx += 1;
         }
 
-        // Roll back the node itself (drop the facet).
+        *taken_mask |= 1usize << idx;
+        let mut node = unsafe { self.nodes.read(idx) };
         node.facet.on_rollback(&mut node.context);
     }
 }
@@ -573,19 +685,46 @@ impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
 mod tests {
     use super::*;
     use std::cell::RefCell;
-    use std::vec::Vec;
+
+    #[derive(Default)]
+    struct TestLog {
+        entries: [Option<&'static str>; 8],
+        len: usize,
+    }
+
+    impl TestLog {
+        fn push(&mut self, label: &'static str) {
+            assert!(self.len < self.entries.len(), "test log capacity exceeded");
+            self.entries[self.len] = Some(label);
+            self.len += 1;
+        }
+
+        fn as_slice(&self) -> [&'static str; 2] {
+            let mut out = [""; 2];
+            let mut idx = 0usize;
+            while idx < out.len() && idx < self.len {
+                out[idx] = self.entries[idx].expect("occupied test log entry");
+                idx += 1;
+            }
+            out
+        }
+
+        fn is_empty(&self) -> bool {
+            self.len == 0
+        }
+    }
 
     #[derive(Clone, Copy, Default)]
     struct TestFacet;
 
     struct TestContext<'ctx> {
-        log: &'ctx RefCell<Vec<&'static str>>,
+        log: &'ctx RefCell<TestLog>,
         label: &'static str,
         value: u32,
     }
 
     impl<'ctx> TestContext<'ctx> {
-        fn new(log: &'ctx RefCell<Vec<&'static str>>, label: &'static str, value: u32) -> Self {
+        fn new(log: &'ctx RefCell<TestLog>, label: &'static str, value: u32) -> Self {
             Self { log, label, value }
         }
     }
@@ -617,7 +756,7 @@ mod tests {
 
     #[test]
     fn handle_updates_context() {
-        let log = RefCell::new(Vec::new());
+        let log = RefCell::new(TestLog::default());
         let mut graph =
             LeaseGraph::<TestSpec>::new(0, TestFacet, TestContext::new(&log, "root", 1));
         graph
@@ -635,7 +774,7 @@ mod tests {
 
     #[test]
     fn commit_traverses_in_reverse_order() {
-        let log = RefCell::new(Vec::new());
+        let log = RefCell::new(TestLog::default());
         let mut graph =
             LeaseGraph::<TestSpec>::new(0, TestFacet, TestContext::new(&log, "commit_root", 0));
         graph
@@ -644,12 +783,12 @@ mod tests {
 
         graph.commit();
 
-        assert_eq!(log.borrow().as_slice(), &["commit_child", "commit_root"]);
+        assert_eq!(log.borrow().as_slice(), ["commit_child", "commit_root"]);
     }
 
     #[test]
     fn rollback_traverses_in_reverse_order() {
-        let log = RefCell::new(Vec::new());
+        let log = RefCell::new(TestLog::default());
         let mut graph =
             LeaseGraph::<TestSpec>::new(0, TestFacet, TestContext::new(&log, "rollback_root", 0));
         graph
@@ -658,15 +797,12 @@ mod tests {
 
         graph.rollback();
 
-        assert_eq!(
-            log.borrow().as_slice(),
-            &["rollback_child", "rollback_root"]
-        );
+        assert_eq!(log.borrow().as_slice(), ["rollback_child", "rollback_root"]);
     }
 
     #[test]
     fn navigate_accesses_descendants() {
-        let log = RefCell::new(Vec::new());
+        let log = RefCell::new(TestLog::default());
         let mut graph =
             LeaseGraph::<TestSpec>::new(0, TestFacet, TestContext::new(&log, "root", 1));
         graph
@@ -682,7 +818,7 @@ mod tests {
 
     #[test]
     fn children_iterator_exposes_inserted_ids() {
-        let log = RefCell::new(Vec::new());
+        let log = RefCell::new(TestLog::default());
         let mut graph =
             LeaseGraph::<TestSpec>::new(5, TestFacet, TestContext::new(&log, "root", 0));
 

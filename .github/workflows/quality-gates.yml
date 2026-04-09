@@ -31,6 +31,12 @@ jobs:
         run: ./.github/scripts/check_direct_projection_binary.sh
       - name: no_std build gate
         run: ./.github/scripts/check_no_std_build.sh
+      - name: Huge choreography compile budget gate
+        run: ./.github/scripts/check_huge_choreography_budget.sh
+      - name: Pico size matrix gate
+        run: ./.github/scripts/check_pico_size_matrix.sh
+      - name: Pico smoke gate
+        run: ./.github/scripts/check_pico_smoke.sh
       - name: Cargo check
         run: cargo check --all-targets -p hibana
       - name: Cargo test std

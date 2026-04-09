@@ -22,7 +22,7 @@ pub(crate) fn policy_check_summary(
     let (records, _) = policy_lane_trace(storage, start, end);
     let mut summary = PolicyCheckSummary::default();
     summary.policy_lane_total = records.len() as u32;
-    for record in records {
+    for record in records.iter() {
         match record.kind {
             PolicyEventKind::Abort => summary.policy_abort += 1,
             PolicyEventKind::Commit => summary.policy_commit += 1,

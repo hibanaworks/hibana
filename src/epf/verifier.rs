@@ -80,12 +80,14 @@ pub(crate) enum VerifyError {
 }
 
 /// Fully verified bytecode image (header + code slice).
+#[cfg(test)]
 #[derive(Clone, Copy)]
 pub(crate) struct VerifiedImage<'a> {
     pub(crate) header: Header,
     pub(crate) code: &'a [u8],
 }
 
+#[cfg(test)]
 impl<'a> core::fmt::Debug for VerifiedImage<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("VerifiedImage")
@@ -95,6 +97,7 @@ impl<'a> core::fmt::Debug for VerifiedImage<'a> {
     }
 }
 
+#[cfg(test)]
 impl<'a> VerifiedImage<'a> {
     pub(crate) const MAX_CODE_LEN: usize = 2048;
 

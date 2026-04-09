@@ -1,8 +1,35 @@
-error[E0271]: type mismatch resolving `<StepCons<LocalSend<Role<1>, Message<LabelMarker<7>, u16>>, StepNil> as StepConcat<StepNil>>::Output == StepCons<LocalSend<Role<1>, Message<LabelMarker<7>, u8>>, StepNil>`
-  --> tests/ui/g-typelist-local-payload-mismatch.rs:14:5
+error[E0308]: mismatched types
+  --> tests/ui/g-typelist-local-payload-mismatch.rs:16:13
    |
-14 | > = project(&PROGRAM);
-   |     ^^^^^^^^^^^^^^^^^ expected `u8`, found `u16`
+16 | > = project(&PROGRAM_TOKEN);
+   |     ------- ^^^^^^^^^^^^^^ expected `LocalSend<Role<1>, Message<..., u8>>`, found `SendStep<Role<0>, Role<1>, ...>`
+   |     |
+   |     arguments to this function are incorrect
    |
-   = note: expected struct `StepCons<LocalSend<Role<1>, hibana::global::Message<hibana::global::LabelMarker<7>, u8>>, StepNil>`
-              found struct `StepCons<LocalSend<Role<1>, hibana::global::Message<hibana::global::LabelMarker<7>, u16>>, StepNil>`
+   = note: expected reference `&Program<StepCons<LocalSend<Role<1>, hibana::global::Message<hibana::global::LabelMarker<7>, u8>>, StepNil>>`
+              found reference `&Program<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<7>, u16>>, StepNil>>`
+note: function defined here
+  --> src/global/role_program.rs
+   |
+   | pub const fn project<'prog, const ROLE: u8, Steps, Mint>(
+   |              ^^^^^^^
+
+error[E0277]: the trait bound `StepCons<LocalSend<Role<1>, hibana::global::Message<hibana::global::LabelMarker<7>, u8>>, StepNil>: ProjectRole<Role<0>>` is not satisfied
+  --> tests/ui/g-typelist-local-payload-mismatch.rs:16:13
+   |
+16 | > = project(&PROGRAM_TOKEN);
+   |     ------- ^^^^^^^^^^^^^^ unsatisfied trait bound
+   |     |
+   |     required by a bound introduced by this call
+   |
+   = help: the trait `ProjectRole<Role<0>>` is not implemented for `StepCons<LocalSend<Role<1>, hibana::global::Message<hibana::global::LabelMarker<7>, u8>>, StepNil>`
+           but it is implemented for `StepCons<SendStep<_, _, _, _>, _>`
+   = help: for that trait implementation, expected `SendStep<_, _, _, _>`, found `LocalSend<Role<1>, hibana::global::Message<hibana::global::LabelMarker<7>, u8>>`
+note: required by a bound in `project`
+  --> src/global/role_program.rs
+   |
+   | pub const fn project<'prog, const ROLE: u8, Steps, Mint>(
+   |              ------- required by a bound in this function
+...
+   |     Steps: ProjectRole<Role<ROLE>>,
+   |            ^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `project`

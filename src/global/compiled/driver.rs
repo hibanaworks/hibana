@@ -1,18 +1,30 @@
-use core::{mem::MaybeUninit, ptr};
+use core::ptr;
 
 use crate::{
-    control::{
-        cluster::effects::{CpEffect, EffectEnvelope},
-        lease::planner::LeaseGraphBudget,
-    },
+    control::{cluster::effects::CpEffect, lease::planner::LeaseGraphBudget},
     eff::{EffKind, EffStruct},
     global::{
         ControlLabelSpec,
-        const_dsl::{ControlMarker, EffList, PolicyMode, ScopeMarker},
+        const_dsl::{ControlMarker, EffList, PolicyMode, ScopeEvent, ScopeId, ScopeMarker},
     },
 };
 
+use super::program::{
+    CompiledProgramCounts, MAX_COMPILED_PROGRAM_CONTROLS, MAX_COMPILED_PROGRAM_CP_EFFECTS,
+    MAX_COMPILED_PROGRAM_RESOURCES, MAX_COMPILED_PROGRAM_SCOPES, MAX_COMPILED_PROGRAM_TAP_EVENTS,
+    control_scope_mask_bit,
+};
+
 const MAX_LOWERING_NODES: usize = crate::eff::meta::MAX_EFF_NODES;
+const CONTROL_SPEC_MASK_BYTES: usize = (MAX_LOWERING_NODES + 7) / 8;
+const EMPTY_CONTROL_SPEC: ControlLabelSpec = ControlLabelSpec {
+    label: 0,
+    resource_tag: 0,
+    scope_kind: crate::global::const_dsl::ControlScopeKind::None,
+    tap_id: 0,
+    shot: crate::control::cap::mint::CapShot::One,
+    handling: crate::global::ControlHandling::None,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ProgramStamp {
@@ -21,12 +33,25 @@ pub(crate) struct ProgramStamp {
     len: u16,
     scope_budget: u16,
     scope_markers_len: u16,
+    scope_count: u16,
     control_markers_len: u16,
     policy_markers_len: u16,
     control_specs_len: u16,
 }
 
 impl ProgramStamp {
+    pub(crate) const EMPTY: Self = Self {
+        lane0: 0,
+        lane1: 0,
+        len: 0,
+        scope_budget: 0,
+        scope_markers_len: 0,
+        scope_count: 0,
+        control_markers_len: 0,
+        policy_markers_len: 0,
+        control_specs_len: 0,
+    };
+
     const SEED0: u64 = 0xcbf2_9ce4_8422_2325;
     const SEED1: u64 = 0x8422_2325_cbf2_9ce4;
     const PRIME0: u64 = 0x0000_0100_0000_01b3;
@@ -62,12 +87,12 @@ impl ProgramStamp {
 
     #[inline(always)]
     const fn mix_policy(mut state: u64, policy: PolicyMode) -> u64 {
-        match policy {
-            PolicyMode::Static => Self::mix_u64(state, 0),
-            PolicyMode::Dynamic { policy_id, scope } => {
+        match policy.dynamic_policy_id() {
+            None => Self::mix_u64(state, 0),
+            Some(policy_id) => {
                 state = Self::mix_u64(state, 1);
                 state = Self::mix_u64(state, policy_id as u64);
-                Self::mix_u64(state, scope.raw())
+                Self::mix_u64(state, policy.scope().raw())
             }
         }
     }
@@ -81,6 +106,11 @@ impl ProgramStamp {
         state = Self::mix_u64(state, spec.shot as u64);
         Self::mix_u64(state, spec.handling as u64)
     }
+
+    #[inline(always)]
+    pub(crate) const fn scope_count(&self) -> usize {
+        self.scope_count as usize
+    }
 }
 
 #[derive(Clone)]
@@ -91,8 +121,13 @@ pub(crate) struct LoweringSummary {
     scope_marker_len: usize,
     control_markers: [ControlMarker; MAX_LOWERING_NODES],
     control_marker_len: usize,
-    policies: [Option<PolicyMode>; MAX_LOWERING_NODES],
-    control_specs: [Option<ControlLabelSpec>; MAX_LOWERING_NODES],
+    policies: [PolicyMode; MAX_LOWERING_NODES],
+    control_specs: [ControlLabelSpec; MAX_LOWERING_NODES],
+    control_spec_present: [u8; CONTROL_SPEC_MASK_BYTES],
+    lease_budget: LeaseGraphBudget,
+    compiled_program_counts: CompiledProgramCounts,
+    role_count: u8,
+    control_scope_mask: u8,
     stamp: ProgramStamp,
 }
 
@@ -100,12 +135,22 @@ pub(crate) struct LoweringSummary {
 pub(crate) struct LoweringView<'a> {
     nodes: &'a [EffStruct],
     scope_markers: &'a [ScopeMarker],
-    control_markers: &'a [ControlMarker],
-    policies: &'a [Option<PolicyMode>; MAX_LOWERING_NODES],
-    control_specs: &'a [Option<ControlLabelSpec>; MAX_LOWERING_NODES],
+    policies: &'a [PolicyMode; MAX_LOWERING_NODES],
+    control_specs: &'a [ControlLabelSpec; MAX_LOWERING_NODES],
+    control_spec_present: &'a [u8; CONTROL_SPEC_MASK_BYTES],
 }
 
 impl<'a> LoweringView<'a> {
+    #[inline(always)]
+    const fn control_spec_present_at(&self, offset: usize) -> bool {
+        if offset >= MAX_LOWERING_NODES {
+            return false;
+        }
+        let byte = offset / 8;
+        let bit = offset & 7;
+        (self.control_spec_present[byte] & (1u8 << bit)) != 0
+    }
+
     #[inline(always)]
     pub(crate) const fn as_slice(&self) -> &'a [EffStruct] {
         self.nodes
@@ -117,14 +162,14 @@ impl<'a> LoweringView<'a> {
     }
 
     #[inline(always)]
-    pub(crate) const fn control_markers(&self) -> &'a [ControlMarker] {
-        self.control_markers
-    }
-
-    #[inline(always)]
     pub(crate) const fn policy_at(&self, offset: usize) -> Option<PolicyMode> {
         if offset < MAX_LOWERING_NODES {
-            self.policies[offset]
+            let policy = self.policies[offset];
+            if policy.is_static() {
+                None
+            } else {
+                Some(policy)
+            }
         } else {
             None
         }
@@ -132,8 +177,8 @@ impl<'a> LoweringView<'a> {
 
     #[inline(always)]
     pub(crate) const fn control_spec_at(&self, offset: usize) -> Option<ControlLabelSpec> {
-        if offset < MAX_LOWERING_NODES {
-            self.control_specs[offset]
+        if offset < self.nodes.len() && self.control_spec_present_at(offset) {
+            Some(self.control_specs[offset])
         } else {
             None
         }
@@ -141,6 +186,7 @@ impl<'a> LoweringView<'a> {
 
     pub(crate) const fn first_dynamic_policy_in_range(
         &self,
+        scope_id: ScopeId,
         scope_start: usize,
         scope_end: usize,
     ) -> Option<(PolicyMode, usize, u8)> {
@@ -153,6 +199,7 @@ impl<'a> LoweringView<'a> {
         while idx < scope_end && idx < self.nodes.len() {
             if let Some(policy) = self.policy_at(idx)
                 && policy.is_dynamic()
+                && Self::policy_belongs_to_route_scope(scope_id, policy.scope())
                 && idx < best_offset
             {
                 best_offset = idx;
@@ -177,96 +224,24 @@ impl<'a> LoweringView<'a> {
         }
     }
 
-    pub(crate) const fn lease_budget(&self) -> LeaseGraphBudget {
-        let mut lease_budget = LeaseGraphBudget::new();
-        let nodes = self.as_slice();
-        let mut offset = 0usize;
-        while offset < nodes.len() {
-            let node = nodes[offset];
-            if matches!(node.kind, EffKind::Atom) {
-                let atom = node.atom_data();
-                let policy = match self.policy_at(offset) {
-                    Some(policy) => policy,
-                    None => PolicyMode::Static,
-                };
-                lease_budget = lease_budget.include_atom(atom.label, atom.resource, policy);
-            }
-            offset += 1;
+    #[inline(always)]
+    const fn policy_belongs_to_route_scope(route_scope: ScopeId, policy_scope: ScopeId) -> bool {
+        if policy_scope.is_none() {
+            return true;
         }
-        lease_budget
-    }
-
-    pub(crate) const fn validate_projection_program(&self) {
-        let mut resource_count = 0usize;
-        let mut dynamic_policy_sites = 0usize;
-        let mut cp_effect_count = 0usize;
-        let mut tap_event_count = 0usize;
-        let nodes = self.as_slice();
-        let mut offset = 0usize;
-        while offset < nodes.len() {
-            let node = nodes[offset];
-            if matches!(node.kind, EffKind::Atom) {
-                let atom = node.atom_data();
-                let policy = match self.policy_at(offset) {
-                    Some(policy) => policy,
-                    None => PolicyMode::Static,
-                };
-                if atom.is_control {
-                    if let Some(tag) = atom.resource {
-                        resource_count += 1;
-                        if resource_count > EffectEnvelope::MAX_RESOURCES {
-                            panic!("EffectEnvelope: MAX_RESOURCES exceeded");
-                        }
-                        if CpEffect::from_resource_tag(tag).is_some() {
-                            cp_effect_count += 1;
-                            if cp_effect_count > EffectEnvelope::MAX_CP_EFFECTS {
-                                panic!("EffectEnvelope: MAX_CP_EFFECTS exceeded");
-                            }
-                        }
-                    }
-                } else if !policy.is_static() && !matches!(policy, PolicyMode::Dynamic { .. }) {
-                    panic!("static policy attached to non-control atom");
-                }
-
-                tap_event_count += 1;
-                if tap_event_count > EffectEnvelope::MAX_TAP_EVENTS {
-                    panic!("EffectEnvelope: MAX_TAP_EVENTS exceeded");
-                }
-
-                if policy.is_dynamic() {
-                    dynamic_policy_sites += 1;
-                    if dynamic_policy_sites > MAX_LOWERING_NODES {
-                        panic!("CompiledProgram: MAX_DYNAMIC_POLICY_SITES exceeded");
-                    }
-                }
-            }
-            offset += 1;
+        if matches!(
+            policy_scope.kind(),
+            crate::global::const_dsl::ScopeKind::Route
+        ) {
+            policy_scope.raw() == route_scope.raw()
+        } else {
+            true
         }
-
-        let mut control_idx = 0usize;
-        while control_idx < self.control_markers().len() {
-            let marker = self.control_markers()[control_idx];
-            if marker.tap_id != 0 {
-                tap_event_count += 1;
-                if tap_event_count > EffectEnvelope::MAX_TAP_EVENTS {
-                    panic!("EffectEnvelope: MAX_TAP_EVENTS exceeded");
-                }
-            }
-            control_idx += 1;
-        }
-
-        if self.scope_markers().len() > EffectEnvelope::MAX_SCOPES {
-            panic!("EffectEnvelope: MAX_SCOPES exceeded");
-        }
-        if self.control_markers().len() > EffectEnvelope::MAX_CONTROLS {
-            panic!("EffectEnvelope: MAX_CONTROLS exceeded");
-        }
-
-        self.lease_budget().validate();
     }
 }
 
 impl LoweringSummary {
+    #[cfg(test)]
     #[inline(always)]
     fn scope_marker_eq(
         lhs: crate::global::const_dsl::ScopeMarker,
@@ -280,6 +255,7 @@ impl LoweringSummary {
             && lhs.controller_role == rhs.controller_role
     }
 
+    #[cfg(test)]
     #[inline(always)]
     fn control_marker_eq(
         lhs: crate::global::const_dsl::ControlMarker,
@@ -290,6 +266,7 @@ impl LoweringSummary {
             && lhs.tap_id == rhs.tap_id
     }
 
+    #[cfg(test)]
     #[inline(always)]
     fn eff_struct_eq(lhs: EffStruct, rhs: EffStruct) -> bool {
         if lhs.kind != rhs.kind {
@@ -301,39 +278,58 @@ impl LoweringSummary {
         }
     }
 
-    const fn scan_impl(eff_list: &EffList) -> Self {
-        let mut nodes = [EffStruct::pure(); MAX_LOWERING_NODES];
-        let mut scope_markers = [ScopeMarker::empty(); MAX_LOWERING_NODES];
-        let mut control_markers = [ControlMarker::empty(); MAX_LOWERING_NODES];
-        let mut policies = [None; MAX_LOWERING_NODES];
-        let mut control_specs = [None; MAX_LOWERING_NODES];
-
-        let mut lane0 = ProgramStamp::SEED0;
-        let mut lane1 = ProgramStamp::SEED1;
+    const fn scan_into(summary: &mut Self, eff_list: &EffList) {
+        let mut lane0 = ProgramStamp::mix_u64(ProgramStamp::SEED0, eff_list.len() as u64);
+        let mut lane1 = ProgramStamp::mix_u64(ProgramStamp::SEED1, eff_list.scope_budget() as u64);
+        let mut scope_count = 0u16;
         let mut policy_markers_len = 0u16;
         let mut control_specs_len = 0u16;
-
-        lane0 = ProgramStamp::mix_u64(lane0, eff_list.len() as u64);
-        lane1 = ProgramStamp::mix_u64(lane1, eff_list.scope_budget() as u64);
-
+        let mut role_count = 0usize;
+        let mut lease_budget = LeaseGraphBudget::new();
         let src_nodes = eff_list.as_slice();
         let mut idx = 0usize;
         while idx < src_nodes.len() {
             let node = src_nodes[idx];
-            nodes[idx] = node;
+            summary.nodes[idx] = node;
             lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
             lane1 = ProgramStamp::mix_eff_struct(lane1, node);
             if let Some((policy, _scope)) = eff_list.policy_with_scope(idx) {
-                policies[idx] = Some(policy);
+                summary.policies[idx] = policy;
                 policy_markers_len = policy_markers_len.saturating_add(1);
                 lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
                 lane1 = ProgramStamp::mix_policy(lane1, policy);
             }
             if let Some(spec) = eff_list.control_spec_at(idx) {
-                control_specs[idx] = Some(spec);
+                summary.control_specs[idx] = spec;
+                summary.control_spec_present[idx / 8] |= 1u8 << (idx & 7);
                 control_specs_len = control_specs_len.saturating_add(1);
                 lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
                 lane1 = ProgramStamp::mix_control_spec(lane1, spec);
+            }
+            if matches!(node.kind, EffKind::Atom) {
+                let atom = node.atom_data();
+                let policy = summary.policies[idx];
+                if atom.from as usize + 1 > role_count {
+                    role_count = atom.from as usize + 1;
+                }
+                if atom.to as usize + 1 > role_count {
+                    role_count = atom.to as usize + 1;
+                }
+                lease_budget = lease_budget.include_atom(atom.label, atom.resource, policy);
+                summary.compiled_program_counts.tap_events += 1;
+                if atom.is_control {
+                    if let Some(tag) = atom.resource {
+                        summary.compiled_program_counts.resources += 1;
+                        if CpEffect::from_resource_tag(tag).is_some() {
+                            summary.compiled_program_counts.cp_effects += 1;
+                        }
+                    }
+                } else if !policy.is_static() && !matches!(policy, PolicyMode::Dynamic { .. }) {
+                    panic!("static policy attached to non-control atom");
+                }
+                if policy.is_dynamic() {
+                    summary.compiled_program_counts.dynamic_policy_sites += 1;
+                }
             }
             idx += 1;
         }
@@ -342,7 +338,10 @@ impl LoweringSummary {
         let mut scope_idx = 0usize;
         while scope_idx < src_scope_markers.len() {
             let marker = src_scope_markers[scope_idx];
-            scope_markers[scope_idx] = marker;
+            summary.scope_markers[scope_idx] = marker;
+            if matches!(marker.event, ScopeEvent::Enter) {
+                scope_count = scope_count.saturating_add(1);
+            }
             lane0 = ProgramStamp::mix_u64(lane0, scope_idx as u64);
             lane0 = ProgramStamp::mix_u64(lane0, marker.offset as u64);
             lane0 = ProgramStamp::mix_u64(lane0, marker.scope_id.raw());
@@ -356,41 +355,89 @@ impl LoweringSummary {
                     None => u8::MAX as u64,
                 },
             );
+            if let Some(controller_role) = marker.controller_role
+                && controller_role as usize + 1 > role_count
+            {
+                role_count = controller_role as usize + 1;
+            }
             scope_idx += 1;
         }
 
         let src_control_markers = eff_list.control_markers();
+        summary.compiled_program_counts.controls = src_control_markers.len();
         let mut control_idx = 0usize;
         while control_idx < src_control_markers.len() {
             let marker = src_control_markers[control_idx];
-            control_markers[control_idx] = marker;
+            summary.control_markers[control_idx] = marker;
+            summary.control_scope_mask |= control_scope_mask_bit(marker.scope_kind);
             lane0 = ProgramStamp::mix_u64(lane0, control_idx as u64);
             lane0 = ProgramStamp::mix_u64(lane0, marker.offset as u64);
             lane1 = ProgramStamp::mix_u64(lane1, marker.scope_kind as u64);
             lane1 = ProgramStamp::mix_u64(lane1, marker.tap_id as u64);
+            if marker.tap_id != 0 {
+                summary.compiled_program_counts.tap_events += 1;
+            }
             control_idx += 1;
         }
+        lease_budget.validate();
 
-        Self {
-            nodes,
+        summary.lease_budget = lease_budget;
+        summary.role_count = if role_count > u8::MAX as usize {
+            u8::MAX
+        } else {
+            role_count as u8
+        };
+        summary.stamp = ProgramStamp {
+            lane0,
+            lane1,
+            len: eff_list.len() as u16,
+            scope_budget: eff_list.scope_budget(),
+            scope_markers_len: src_scope_markers.len() as u16,
+            scope_count,
+            control_markers_len: src_control_markers.len() as u16,
+            policy_markers_len,
+            control_specs_len,
+        };
+    }
+
+    const fn scan_impl(eff_list: &EffList) -> Self {
+        let src_nodes = eff_list.as_slice();
+        let src_scope_markers = eff_list.scope_markers();
+        let src_control_markers = eff_list.control_markers();
+        let mut summary = Self {
+            nodes: [EffStruct::pure(); MAX_LOWERING_NODES],
             len: src_nodes.len(),
-            scope_markers,
+            scope_markers: [ScopeMarker::empty(); MAX_LOWERING_NODES],
             scope_marker_len: src_scope_markers.len(),
-            control_markers,
+            control_markers: [ControlMarker::empty(); MAX_LOWERING_NODES],
             control_marker_len: src_control_markers.len(),
-            policies,
-            control_specs,
+            policies: [PolicyMode::Static; MAX_LOWERING_NODES],
+            control_specs: [EMPTY_CONTROL_SPEC; MAX_LOWERING_NODES],
+            control_spec_present: [0u8; CONTROL_SPEC_MASK_BYTES],
+            lease_budget: LeaseGraphBudget::new(),
+            compiled_program_counts: CompiledProgramCounts {
+                cp_effects: 0,
+                tap_events: 0,
+                resources: 0,
+                controls: 0,
+                dynamic_policy_sites: 0,
+            },
+            role_count: 0,
+            control_scope_mask: 0,
             stamp: ProgramStamp {
-                lane0,
-                lane1,
+                lane0: ProgramStamp::SEED0,
+                lane1: ProgramStamp::SEED1,
                 len: eff_list.len() as u16,
                 scope_budget: eff_list.scope_budget(),
                 scope_markers_len: src_scope_markers.len() as u16,
+                scope_count: 0,
                 control_markers_len: src_control_markers.len() as u16,
-                policy_markers_len,
-                control_specs_len,
+                policy_markers_len: 0,
+                control_specs_len: 0,
             },
-        }
+        };
+        Self::scan_into(&mut summary, eff_list);
+        summary
     }
 
     #[inline(always)]
@@ -405,11 +452,30 @@ impl LoweringSummary {
             scope_markers: unsafe {
                 core::slice::from_raw_parts(self.scope_markers.as_ptr(), self.scope_marker_len)
             },
-            control_markers: unsafe {
-                core::slice::from_raw_parts(self.control_markers.as_ptr(), self.control_marker_len)
-            },
             policies: &self.policies,
             control_specs: &self.control_specs,
+            control_spec_present: &self.control_spec_present,
+        }
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    const fn control_spec_present_at(&self, offset: usize) -> bool {
+        if offset >= MAX_LOWERING_NODES {
+            return false;
+        }
+        let byte = offset / 8;
+        let bit = offset & 7;
+        (self.control_spec_present[byte] & (1u8 << bit)) != 0
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    const fn control_spec_at(&self, offset: usize) -> Option<ControlLabelSpec> {
+        if offset < self.len && self.control_spec_present_at(offset) {
+            Some(self.control_specs[offset])
+        } else {
+            None
         }
     }
 
@@ -420,14 +486,53 @@ impl LoweringSummary {
 
     #[inline(always)]
     pub(crate) const fn lease_budget(&self) -> LeaseGraphBudget {
-        self.view().lease_budget()
+        self.lease_budget
+    }
+
+    #[inline(always)]
+    pub(crate) const fn compiled_program_counts(&self) -> CompiledProgramCounts {
+        self.compiled_program_counts
+    }
+
+    #[inline(always)]
+    pub(crate) const fn compiled_program_role_count(&self) -> usize {
+        self.role_count as usize
+    }
+
+    #[inline(always)]
+    pub(crate) const fn control_markers(&self) -> &[ControlMarker] {
+        unsafe { core::slice::from_raw_parts(self.control_markers.as_ptr(), self.control_marker_len) }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn compiled_program_control_scope_mask(&self) -> u8 {
+        self.control_scope_mask
     }
 
     #[inline(always)]
     pub(crate) const fn validate_projection_program(&self) {
-        self.view().validate_projection_program();
+        if self.compiled_program_counts.resources > MAX_COMPILED_PROGRAM_RESOURCES {
+            panic!("CompiledProgram: MAX_RESOURCES exceeded");
+        }
+        if self.compiled_program_counts.cp_effects > MAX_COMPILED_PROGRAM_CP_EFFECTS {
+            panic!("CompiledProgram: MAX_CP_EFFECTS exceeded");
+        }
+        if self.compiled_program_counts.tap_events > MAX_COMPILED_PROGRAM_TAP_EVENTS {
+            panic!("CompiledProgram: MAX_TAP_EVENTS exceeded");
+        }
+        if self.compiled_program_counts.dynamic_policy_sites > MAX_LOWERING_NODES {
+            panic!("CompiledProgram: MAX_DYNAMIC_POLICY_SITES exceeded");
+        }
+        if self.control_markers().len() > MAX_COMPILED_PROGRAM_CONTROLS {
+            panic!("CompiledProgram: MAX_CONTROLS exceeded");
+        }
+        if self.scope_marker_len > MAX_COMPILED_PROGRAM_SCOPES {
+            panic!("CompiledProgram: MAX_SCOPES exceeded");
+        }
+        self.lease_budget.validate();
     }
 
+    #[cfg(test)]
     pub(crate) fn equivalent_eff_list(&self, eff_list: &EffList) -> bool {
         if self.len != eff_list.len()
             || self.scope_marker_len != eff_list.scope_markers().len()
@@ -442,10 +547,15 @@ impl LoweringSummary {
             if !Self::eff_struct_eq(self.nodes[idx], nodes[idx]) {
                 return false;
             }
-            if self.policies[idx] != eff_list.policy_with_scope(idx).map(|(policy, _)| policy) {
+            if self.policies[idx]
+                != eff_list
+                    .policy_with_scope(idx)
+                    .map(|(policy, _)| policy)
+                    .unwrap_or(PolicyMode::Static)
+            {
                 return false;
             }
-            if self.control_specs[idx] != eff_list.control_spec_at(idx) {
+            if self.control_spec_at(idx) != eff_list.control_spec_at(idx) {
                 return false;
             }
             idx += 1;
@@ -498,112 +608,50 @@ mod runtime_scan_counter {
 }
 
 impl LoweringSummary {
+    #[inline(always)]
+    unsafe fn init_array_copy<T: Copy, const N: usize>(dst: *mut [T; N], value: T) {
+        let ptr = dst.cast::<T>();
+        let mut idx = 0usize;
+        while idx < N {
+            unsafe {
+                ptr.add(idx).write(value);
+            }
+            idx += 1;
+        }
+    }
+
+    #[inline(never)]
     pub(crate) unsafe fn init_scan(dst: *mut Self, eff_list: &EffList) {
         #[cfg(test)]
         runtime_scan_counter::bump();
 
         unsafe {
-            ptr::addr_of_mut!((*dst).nodes).write([EffStruct::pure(); MAX_LOWERING_NODES]);
+            Self::init_array_copy(ptr::addr_of_mut!((*dst).nodes), EffStruct::pure());
             ptr::addr_of_mut!((*dst).len).write(eff_list.len());
-            ptr::addr_of_mut!((*dst).scope_markers)
-                .write([ScopeMarker::empty(); MAX_LOWERING_NODES]);
-            ptr::addr_of_mut!((*dst).scope_marker_len).write(eff_list.scope_markers().len());
-            ptr::addr_of_mut!((*dst).control_markers)
-                .write([ControlMarker::empty(); MAX_LOWERING_NODES]);
-            ptr::addr_of_mut!((*dst).control_marker_len).write(eff_list.control_markers().len());
-            ptr::addr_of_mut!((*dst).policies).write([None; MAX_LOWERING_NODES]);
-            ptr::addr_of_mut!((*dst).control_specs).write([None; MAX_LOWERING_NODES]);
-        }
-
-        let nodes = unsafe { &mut *ptr::addr_of_mut!((*dst).nodes) };
-        let scope_markers = unsafe { &mut *ptr::addr_of_mut!((*dst).scope_markers) };
-        let control_markers = unsafe { &mut *ptr::addr_of_mut!((*dst).control_markers) };
-        let policies = unsafe { &mut *ptr::addr_of_mut!((*dst).policies) };
-        let control_specs = unsafe { &mut *ptr::addr_of_mut!((*dst).control_specs) };
-
-        let mut lane0 = ProgramStamp::SEED0;
-        let mut lane1 = ProgramStamp::SEED1;
-        let mut policy_markers_len = 0u16;
-        let mut control_specs_len = 0u16;
-
-        lane0 = ProgramStamp::mix_u64(lane0, eff_list.len() as u64);
-        lane1 = ProgramStamp::mix_u64(lane1, eff_list.scope_budget() as u64);
-
-        let src_nodes = eff_list.as_slice();
-        let mut idx = 0usize;
-        while idx < src_nodes.len() {
-            let node = src_nodes[idx];
-            nodes[idx] = node;
-            lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
-            lane1 = ProgramStamp::mix_eff_struct(lane1, node);
-            if let Some((policy, _scope)) = eff_list.policy_with_scope(idx) {
-                policies[idx] = Some(policy);
-                policy_markers_len = policy_markers_len.saturating_add(1);
-                lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
-                lane1 = ProgramStamp::mix_policy(lane1, policy);
-            }
-            if let Some(spec) = eff_list.control_spec_at(idx) {
-                control_specs[idx] = Some(spec);
-                control_specs_len = control_specs_len.saturating_add(1);
-                lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
-                lane1 = ProgramStamp::mix_control_spec(lane1, spec);
-            }
-            idx += 1;
-        }
-
-        let src_scope_markers = eff_list.scope_markers();
-        let mut scope_idx = 0usize;
-        while scope_idx < src_scope_markers.len() {
-            let marker = src_scope_markers[scope_idx];
-            scope_markers[scope_idx] = marker;
-            lane0 = ProgramStamp::mix_u64(lane0, scope_idx as u64);
-            lane0 = ProgramStamp::mix_u64(lane0, marker.offset as u64);
-            lane0 = ProgramStamp::mix_u64(lane0, marker.scope_id.raw());
-            lane0 = ProgramStamp::mix_u64(lane0, marker.scope_kind as u64);
-            lane1 = ProgramStamp::mix_u64(lane1, marker.event as u64);
-            lane1 = ProgramStamp::mix_u64(lane1, marker.linger as u64);
-            lane1 = ProgramStamp::mix_u64(
-                lane1,
-                match marker.controller_role {
-                    Some(role) => role as u64,
-                    None => u8::MAX as u64,
-                },
+            Self::init_array_copy(
+                ptr::addr_of_mut!((*dst).scope_markers),
+                ScopeMarker::empty(),
             );
-            scope_idx += 1;
-        }
-
-        let src_control_markers = eff_list.control_markers();
-        let mut control_idx = 0usize;
-        while control_idx < src_control_markers.len() {
-            let marker = src_control_markers[control_idx];
-            control_markers[control_idx] = marker;
-            lane0 = ProgramStamp::mix_u64(lane0, control_idx as u64);
-            lane0 = ProgramStamp::mix_u64(lane0, marker.offset as u64);
-            lane1 = ProgramStamp::mix_u64(lane1, marker.scope_kind as u64);
-            lane1 = ProgramStamp::mix_u64(lane1, marker.tap_id as u64);
-            control_idx += 1;
-        }
-
-        unsafe {
-            ptr::addr_of_mut!((*dst).stamp).write(ProgramStamp {
-                lane0,
-                lane1,
-                len: eff_list.len() as u16,
-                scope_budget: eff_list.scope_budget(),
-                scope_markers_len: src_scope_markers.len() as u16,
-                control_markers_len: src_control_markers.len() as u16,
-                policy_markers_len,
-                control_specs_len,
+            ptr::addr_of_mut!((*dst).scope_marker_len).write(eff_list.scope_markers().len());
+            Self::init_array_copy(
+                ptr::addr_of_mut!((*dst).control_markers),
+                ControlMarker::empty(),
+            );
+            ptr::addr_of_mut!((*dst).control_marker_len).write(eff_list.control_markers().len());
+            Self::init_array_copy(ptr::addr_of_mut!((*dst).policies), PolicyMode::Static);
+            Self::init_array_copy(ptr::addr_of_mut!((*dst).control_specs), EMPTY_CONTROL_SPEC);
+            Self::init_array_copy(ptr::addr_of_mut!((*dst).control_spec_present), 0u8);
+            ptr::addr_of_mut!((*dst).lease_budget).write(LeaseGraphBudget::new());
+            ptr::addr_of_mut!((*dst).compiled_program_counts).write(CompiledProgramCounts {
+                cp_effects: 0,
+                tap_events: 0,
+                resources: 0,
+                controls: 0,
+                dynamic_policy_sites: 0,
             });
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn scan(eff_list: &EffList) -> Self {
-        let mut summary = MaybeUninit::<Self>::uninit();
-        unsafe {
-            Self::init_scan(summary.as_mut_ptr(), eff_list);
-            summary.assume_init()
+            ptr::addr_of_mut!((*dst).role_count).write(0);
+            ptr::addr_of_mut!((*dst).control_scope_mask).write(0);
+            Self::scan_into(&mut *dst, eff_list);
         }
     }
 

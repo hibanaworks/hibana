@@ -152,16 +152,23 @@ pub(super) fn route_policy_decision_from_action(
     action: Action,
     policy_id: u16,
 ) -> RoutePolicyDecision {
-    match action {
-        Action::Route { arm } if arm <= 1 => RoutePolicyDecision::RouteArm(arm),
-        Action::Route { .. } => RoutePolicyDecision::Abort(policy_id),
-        Action::Abort(AbortInfo { reason, .. }) => RoutePolicyDecision::Abort(reason),
-        Action::Defer { retry_hint } => RoutePolicyDecision::Defer {
+    if let Some(arm) = action.route_arm() {
+        return if arm <= 1 {
+            RoutePolicyDecision::RouteArm(arm)
+        } else {
+            RoutePolicyDecision::Abort(policy_id)
+        };
+    }
+    if let Some(AbortInfo { reason, .. }) = action.abort_info() {
+        return RoutePolicyDecision::Abort(reason);
+    }
+    if let Some(retry_hint) = action.defer_hint() {
+        return RoutePolicyDecision::Defer {
             retry_hint,
             source: DeferSource::Epf,
-        },
-        Action::Proceed | Action::Tap { .. } => RoutePolicyDecision::DelegateResolver,
+        };
     }
+    RoutePolicyDecision::DelegateResolver
 }
 
 #[inline]

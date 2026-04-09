@@ -5,6 +5,7 @@
 //! provides decoding/encoding utilities and `TapEvent` extraction helpers
 //! in a no_std compatible manner.
 
+#[cfg(test)]
 use crate::observe::core::TapEvent;
 
 /// Structured scope trace (range/nest ordinals) attached to tap events.
@@ -36,6 +37,7 @@ impl ScopeTrace {
 
     /// Decode a packed `u32` produced by [`ScopeTrace::pack`].
     #[inline]
+    #[cfg(test)]
     pub(crate) const fn decode(packed: u32) -> Option<Self> {
         if (packed & 0x8000_0000) == 0 {
             None
@@ -49,6 +51,7 @@ impl ScopeTrace {
 
 /// Extract the scope trace encoded in a tap event's `arg2` field.
 #[inline]
+#[cfg(test)]
 pub(crate) fn tap_scope(event: &TapEvent) -> Option<ScopeTrace> {
     ScopeTrace::decode(event.arg2)
 }

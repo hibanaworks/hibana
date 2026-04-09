@@ -6,7 +6,7 @@
 //!
 //! ## Architecture
 //!
-//! - **effects**: Atomic control-plane operations (Open, SpliceBegin, Commit, Checkpoint, etc.)
+//! - **effects**: Primitive control-plane operations (Open, SpliceBegin, Commit, Checkpoint, etc.)
 //!   - 13 primitive effects covering all control operations
 //!   - Idempotency, generation bump, and history modification properties
 //! - **error**: Unified error handling (`CpError`, `SpliceError`, `CancelError`, etc.)

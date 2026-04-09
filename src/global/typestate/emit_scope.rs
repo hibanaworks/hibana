@@ -1,99 +1,116 @@
 use super::{
-    facts::{
-        MAX_STATES, RouteRecvIndex, SCOPE_ORDINAL_INDEX_CAPACITY, SCOPE_ORDINAL_INDEX_EMPTY,
-        StateIndex,
-    },
-    registry::{ScopeEntry, ScopeRegistry},
-    route_facts::RouteRecvNode,
+    facts::StateIndex,
+    registry::{RouteScopeRecord, SCOPE_LINK_NONE, ScopeRecord, ScopeRegistry},
 };
-use crate::{
-    eff,
-    global::const_dsl::{ScopeId, ScopeKind},
-};
+use crate::global::const_dsl::{CompactScopeId, ScopeId, ScopeKind};
 
-pub(super) const fn alloc_scope_entry(
-    scope_entries: &mut [ScopeEntry; eff::meta::MAX_EFF_NODES],
-    scope_entries_len: &mut usize,
-    scope_entry_index_by_ordinal: &mut [u16; SCOPE_ORDINAL_INDEX_CAPACITY],
+#[inline(never)]
+pub(super) const fn alloc_scope_record(
+    scope_records: &mut [ScopeRecord],
+    scope_records_len: &mut usize,
     scope_range_counter: &mut u16,
     scope: ScopeId,
     scope_kind: ScopeKind,
     linger: bool,
-    parent_scope: ScopeId,
+    parent_entry: u16,
     nest: usize,
 ) -> (usize, bool) {
-    let ordinal = scope.local_ordinal() as usize;
-    if ordinal >= SCOPE_ORDINAL_INDEX_CAPACITY {
-        panic!("scope ordinal exceeds typestate capacity");
-    }
-    match scope_entry_index_by_ordinal[ordinal] {
-        SCOPE_ORDINAL_INDEX_EMPTY => {
-            if *scope_entries_len >= eff::meta::MAX_EFF_NODES {
-                panic!("structured scope metadata overflow");
-            }
-            if *scope_range_counter == u16::MAX {
-                panic!("scope range ordinal overflow");
-            }
-            scope_entry_index_by_ordinal[ordinal] = *scope_entries_len as u16;
-            let idx = *scope_entries_len;
-            scope_entries[idx] = ScopeEntry::EMPTY;
-            scope_entries[idx].scope_id = scope;
-            scope_entries[idx].kind = scope_kind;
-            scope_entries[idx].linger = linger;
-            scope_entries[idx].parent = parent_scope;
-            scope_entries[idx].range = *scope_range_counter;
-            scope_entries[idx].nest = nest as u16;
-            *scope_range_counter = scope_range_counter.wrapping_add(1);
-            *scope_entries_len += 1;
-            (idx, true)
+    let target_raw = scope.canonical().raw();
+    let mut idx = 0usize;
+    while idx < *scope_records_len {
+        let record = &scope_records[idx];
+        if record.scope_id.canonical().raw() == target_raw {
+            return (idx, false);
         }
-        existing => (existing as usize, false),
+        idx += 1;
     }
+
+    if *scope_records_len >= scope_records.len() {
+        panic!("structured scope metadata overflow");
+    }
+    if *scope_range_counter == u16::MAX {
+        panic!("scope range ordinal overflow");
+    }
+    let idx = *scope_records_len;
+    scope_records[idx] = ScopeRecord::EMPTY;
+    scope_records[idx].scope_id = CompactScopeId::from_scope_id(scope);
+    scope_records[idx].kind = scope_kind;
+    scope_records[idx].start = StateIndex::MAX;
+    scope_records[idx].end = StateIndex::MAX;
+    scope_records[idx].linger = linger;
+    scope_records[idx].parent = if parent_entry == SCOPE_LINK_NONE {
+        SCOPE_LINK_NONE
+    } else {
+        parent_entry
+    };
+    scope_records[idx].range = *scope_range_counter;
+    scope_records[idx].nest = nest as u16;
+    *scope_range_counter = scope_range_counter.wrapping_add(1);
+    *scope_records_len += 1;
+    (idx, true)
 }
 
-pub(super) const fn finalize_scope_registry(
-    scope_entries: &mut [ScopeEntry; eff::meta::MAX_EFF_NODES],
-    scope_entries_len: usize,
-    route_recv_nodes: &[RouteRecvNode; MAX_STATES],
-    route_recv_nodes_len: usize,
-) -> ScopeRegistry {
-    let mut route_recv_flat = [StateIndex::MAX; MAX_STATES];
-    let mut route_recv_flat_len = 0usize;
-    let mut entry_idx = 0usize;
-    while entry_idx < scope_entries_len {
-        if scope_entries[entry_idx].route_recv_len > 0 {
-            scope_entries[entry_idx].route_recv_offset =
-                RouteRecvIndex::from_usize(route_recv_flat_len);
-            let mut remaining = scope_entries[entry_idx].route_recv_len;
-            let mut cursor = scope_entries[entry_idx].route_recv_head;
-            while remaining > 0 {
-                if cursor.is_max() {
-                    panic!("route recv list truncated");
-                }
-                if route_recv_flat_len >= MAX_STATES {
-                    panic!("route recv table overflow");
-                }
-                let node = route_recv_nodes[cursor.as_usize()];
-                route_recv_flat[route_recv_flat_len] = node.state;
-                route_recv_flat_len += 1;
-                cursor = node.next;
-                remaining -= 1;
+pub(super) unsafe fn init_scope_registry(
+    dst: *mut ScopeRegistry,
+    scope_records: *mut ScopeRecord,
+    slots_by_scope: *mut u16,
+    route_dense_by_slot: *mut u16,
+    route_records: *mut RouteScopeRecord,
+    route_scope_cap: usize,
+    route_records_sparse: *mut RouteScopeRecord,
+    scope_records_len: usize,
+) {
+    let mut route_scope_len = 0usize;
+    let mut slot_idx = 0usize;
+    while slot_idx < scope_records_len {
+        let record = unsafe { &*scope_records.add(slot_idx) };
+        if record.kind == ScopeKind::Route {
+            if route_scope_len >= route_scope_cap {
+                panic!("route scope registry overflow");
             }
+            unsafe {
+                route_dense_by_slot
+                    .add(slot_idx)
+                    .write(route_scope_len as u16);
+                route_records
+                    .add(route_scope_len)
+                    .write(*route_records_sparse.add(slot_idx));
+            }
+            route_scope_len += 1;
         } else {
-            scope_entries[entry_idx].route_recv_offset =
-                RouteRecvIndex::from_usize(route_recv_flat_len);
+            unsafe { route_dense_by_slot.add(slot_idx).write(u16::MAX) };
         }
-        entry_idx += 1;
+        slot_idx += 1;
     }
 
-    if route_recv_flat_len > route_recv_nodes_len {
-        panic!("route recv registry length exceeded recorded route recv nodes");
+    let mut insert_idx = 0usize;
+    while insert_idx < scope_records_len {
+        let target_raw = unsafe { (*scope_records.add(insert_idx)).scope_id.canonical().raw() };
+        let mut slot = insert_idx;
+        while slot > 0 {
+            let prev = unsafe { *slots_by_scope.add(slot - 1) };
+            let prev_raw = unsafe {
+                (*scope_records.add(prev as usize))
+                    .scope_id
+                    .canonical()
+                    .raw()
+            };
+            if prev_raw <= target_raw {
+                break;
+            }
+            unsafe { slots_by_scope.add(slot).write(prev) };
+            slot -= 1;
+        }
+        unsafe { slots_by_scope.add(slot).write(insert_idx as u16) };
+        insert_idx += 1;
     }
 
-    ScopeRegistry::from_scope_entries(
-        *scope_entries,
-        scope_entries_len,
-        route_recv_flat,
-        route_recv_flat_len,
-    )
+    unsafe {
+        core::ptr::addr_of_mut!((*dst).records).write(scope_records);
+        core::ptr::addr_of_mut!((*dst).len).write(scope_records_len as u16);
+        core::ptr::addr_of_mut!((*dst).slots_by_scope).write(slots_by_scope);
+        core::ptr::addr_of_mut!((*dst).route_dense_by_slot).write(route_dense_by_slot);
+        core::ptr::addr_of_mut!((*dst).route_records).write(route_records);
+        core::ptr::addr_of_mut!((*dst).route_scope_len).write(route_scope_len as u16);
+    }
 }

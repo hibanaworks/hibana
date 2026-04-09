@@ -3,10 +3,109 @@
 use serde_json::{Map, Value};
 use std::{
     env, fs,
+    mem::MaybeUninit,
     path::{Path, PathBuf},
+    slice,
 };
 
 type JsonMap = Map<String, Value>;
+type LineBuf = FixedList<String, 1024>;
+type ItemBuf<'a> = FixedList<&'a Value, 1024>;
+
+#[derive(Debug)]
+struct FixedList<T, const N: usize> {
+    len: usize,
+    items: [MaybeUninit<T>; N],
+}
+
+impl<T, const N: usize> FixedList<T, N> {
+    fn new() -> Self {
+        Self {
+            len: 0,
+            items: unsafe { MaybeUninit::<[MaybeUninit<T>; N]>::uninit().assume_init() },
+        }
+    }
+
+    fn push(&mut self, value: T) {
+        assert!(self.len < N, "fixed list capacity exceeded");
+        self.items[self.len].write(value);
+        self.len += 1;
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    fn as_slice(&self) -> &[T] {
+        unsafe { slice::from_raw_parts(self.items.as_ptr() as *const T, self.len) }
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [T] {
+        unsafe { slice::from_raw_parts_mut(self.items.as_mut_ptr() as *mut T, self.len) }
+    }
+
+    fn iter(&self) -> slice::Iter<'_, T> {
+        self.as_slice().iter()
+    }
+}
+
+impl<T, const N: usize> Drop for FixedList<T, N> {
+    fn drop(&mut self) {
+        for idx in 0..self.len {
+            unsafe { self.items[idx].assume_init_drop() };
+        }
+    }
+}
+
+impl<T, const N: usize> std::ops::Index<usize> for FixedList<T, N> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.as_slice()[index]
+    }
+}
+
+fn collect_fixed<T, const N: usize>(iter: impl IntoIterator<Item = T>) -> FixedList<T, N> {
+    let mut out = FixedList::new();
+    for item in iter {
+        out.push(item);
+    }
+    out
+}
+
+fn join_display<T>(
+    iter: impl IntoIterator<Item = T>,
+    sep: &str,
+    mut render: impl FnMut(T) -> String,
+) -> String {
+    let mut out = String::new();
+    let mut first = true;
+    for item in iter {
+        if !first {
+            out.push_str(sep);
+        }
+        first = false;
+        out.push_str(&render(item));
+    }
+    out
+}
+
+fn join_strs<'a>(iter: impl IntoIterator<Item = &'a str>, sep: &str) -> String {
+    let mut out = String::new();
+    let mut first = true;
+    for item in iter {
+        if !first {
+            out.push_str(sep);
+        }
+        first = false;
+        out.push_str(item);
+    }
+    out
+}
 
 #[test]
 fn semantic_public_api_matches_allowlists() {
@@ -26,13 +125,11 @@ fn semantic_public_api_matches_allowlists() {
         .get(&root_id)
         .expect("rustdoc JSON must contain the crate root item");
 
-    let root_items = module_item_ids(root)
-        .iter()
-        .map(|id| get_item(index, id))
-        .collect::<Vec<_>>();
+    let root_items: ItemBuf<'_> =
+        collect_fixed(module_item_ids(root).iter().map(|id| get_item(index, id)));
     assert_snapshot(
         &manifest_dir.join(".github/allowlists/lib-public-api.txt"),
-        &render_root_surface(&root_items),
+        &render_root_surface(root_items.as_slice()),
         "crate root",
     );
 
@@ -41,13 +138,14 @@ fn semantic_public_api_matches_allowlists() {
         .copied()
         .find(|item| item["name"].as_str() == Some("g"))
         .expect("crate root must expose g");
-    let g_items = module_item_ids(g_module)
-        .iter()
-        .map(|id| get_item(index, id))
-        .collect::<Vec<_>>();
+    let g_items: ItemBuf<'_> = collect_fixed(
+        module_item_ids(g_module)
+            .iter()
+            .map(|id| get_item(index, id)),
+    );
     assert_snapshot(
         &manifest_dir.join(".github/allowlists/g-public-api.txt"),
-        &render_g_surface(&g_items),
+        &render_g_surface(g_items.as_slice()),
         "g surface",
     );
 
@@ -73,34 +171,37 @@ fn load_rustdoc_json(path: &Path) -> Value {
         .unwrap_or_else(|err| panic!("failed to parse rustdoc JSON at {}: {err}", path.display()))
 }
 
-fn assert_snapshot(path: &Path, actual: &[String], label: &str) {
+fn assert_snapshot(path: &Path, actual: &LineBuf, label: &str) {
     let expected = fs::read_to_string(path)
         .unwrap_or_else(|err| panic!("failed to read allowlist {}: {err}", path.display()));
-    let expected_lines = expected
-        .lines()
-        .map(normalize_ws)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>();
-    let actual_lines = actual
-        .iter()
-        .map(|line| normalize_ws(line))
-        .collect::<Vec<_>>();
+    let expected_lines: FixedList<String, 1024> = collect_fixed(
+        expected
+            .lines()
+            .map(normalize_ws)
+            .filter(|line| !line.is_empty()),
+    );
+    let actual_lines: FixedList<String, 1024> =
+        collect_fixed(actual.iter().map(|line| normalize_ws(line)));
 
-    if expected_lines != actual_lines {
+    if expected_lines.as_slice() != actual_lines.as_slice() {
         panic!(
             "semantic public API mismatch for {label}\nexpected:\n{}\nactual:\n{}",
-            expected_lines.join("\n"),
-            actual_lines.join("\n")
+            join_display(expected_lines.iter(), "\n", |line| line.clone()),
+            join_display(actual_lines.iter(), "\n", |line| line.clone())
         );
     }
 }
 
 fn normalize_ws(input: impl AsRef<str>) -> String {
-    let mut normalized = input
-        .as_ref()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let mut normalized = String::new();
+    let mut first = true;
+    for part in input.as_ref().split_whitespace() {
+        if !first {
+            normalized.push(' ');
+        }
+        first = false;
+        normalized.push_str(part);
+    }
 
     for (from, to) in [
         ("< ", "<"),
@@ -154,15 +255,15 @@ fn module_item_ids(item: &Value) -> &[Value] {
         .expect("module item must expose a module item list")
 }
 
-fn render_root_surface(items: &[&Value]) -> Vec<String> {
+fn render_root_surface(items: &[&Value]) -> LineBuf {
     render_items(items, SurfaceMode::Root)
 }
 
-fn render_g_surface(items: &[&Value]) -> Vec<String> {
-    let mut rendered = Vec::new();
-    let mut ordered = items.to_vec();
-    ordered.sort_by_key(|item| span_key(item));
-    for item in ordered {
+fn render_g_surface(items: &[&Value]) -> LineBuf {
+    let mut rendered = LineBuf::new();
+    let mut ordered: ItemBuf<'_> = collect_fixed(items.iter().copied());
+    ordered.as_mut_slice().sort_by_key(|item| span_key(item));
+    for item in ordered.iter() {
         let use_item = &item["inner"]["use"];
         let name = use_item["name"]
             .as_str()
@@ -172,21 +273,19 @@ fn render_g_surface(items: &[&Value]) -> Vec<String> {
     rendered
 }
 
-fn render_file_surface(index: &JsonMap, filename: &str) -> Vec<String> {
+fn render_file_surface(index: &JsonMap, filename: &str) -> LineBuf {
     let module_name = Path::new(filename)
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or_default();
-    let mut items = index
-        .values()
-        .filter(|item| item["visibility"].as_str() == Some("public"))
-        .filter(|item| span_filename(item) == Some(filename))
-        .filter(|item| {
-            !(item["inner"].get("module").is_some() && item["name"].as_str() == Some(module_name))
-        })
-        .collect::<Vec<_>>();
-    items.sort_by_key(|item| span_key(item));
-    render_items(&items, SurfaceMode::File(filename))
+    let mut items: ItemBuf<'_> = collect_fixed(index.values().filter(|item| {
+        item["visibility"].as_str() == Some("public")
+            && span_filename(item) == Some(filename)
+            && !(item["inner"].get("module").is_some()
+                && item["name"].as_str() == Some(module_name))
+    }));
+    items.as_mut_slice().sort_by_key(|item| span_key(item));
+    render_items(items.as_slice(), SurfaceMode::File(filename))
 }
 
 #[derive(Clone, Copy)]
@@ -195,14 +294,14 @@ enum SurfaceMode<'a> {
     File(&'a str),
 }
 
-fn render_items(items: &[&Value], mode: SurfaceMode<'_>) -> Vec<String> {
-    let mut rendered = Vec::new();
+fn render_items(items: &[&Value], mode: SurfaceMode<'_>) -> LineBuf {
+    let mut rendered = LineBuf::new();
     let mut idx = 0usize;
     while idx < items.len() {
         let item = items[idx];
         if item["inner"].get("use").is_some() {
             let prefix = use_prefix(item).unwrap_or_default();
-            let mut group = vec![item];
+            let mut group: ItemBuf<'_> = collect_fixed([item]);
             idx += 1;
             while idx < items.len()
                 && items[idx]["inner"].get("use").is_some()
@@ -211,7 +310,7 @@ fn render_items(items: &[&Value], mode: SurfaceMode<'_>) -> Vec<String> {
                 group.push(items[idx]);
                 idx += 1;
             }
-            rendered.push(render_use_group(&group, mode));
+            rendered.push(render_use_group(group.as_slice(), mode));
             continue;
         }
         if let Some(line) = render_item(item, mode) {
@@ -293,13 +392,14 @@ fn render_function(name: &str, item: &Value) -> String {
         prefix.push_str(" unsafe");
     }
 
-    let inputs = sig["inputs"]
-        .as_array()
-        .expect("function sig must expose inputs")
-        .iter()
-        .map(render_input)
-        .collect::<Vec<_>>()
-        .join(", ");
+    let inputs = join_display(
+        sig["inputs"]
+            .as_array()
+            .expect("function sig must expose inputs")
+            .iter(),
+        ", ",
+        render_input,
+    );
     let output = if sig["output"].is_null() {
         String::new()
     } else {
@@ -367,11 +467,7 @@ fn render_generics(item: &Value) -> String {
         return String::new();
     }
 
-    let rendered = params
-        .iter()
-        .map(render_generic_param)
-        .collect::<Vec<_>>()
-        .join(", ");
+    let rendered = join_display(params.iter(), ", ", render_generic_param);
     format!("<{}>", rendered)
 }
 
@@ -421,34 +517,32 @@ fn render_where_clause(item: &Value) -> String {
         return String::new();
     }
 
-    let rendered = predicates
-        .iter()
-        .map(render_where_predicate)
-        .collect::<Vec<_>>()
-        .join(", ");
+    let rendered = join_display(predicates.iter(), ", ", render_where_predicate);
     format!(" where {},", rendered)
 }
 
 fn render_where_predicate(predicate: &Value) -> String {
     if let Some(bound) = predicate.get("bound_predicate") {
-        let bounds = bound["bounds"]
-            .as_array()
-            .expect("bound predicate must expose bounds")
-            .iter()
-            .map(render_bound)
-            .collect::<Vec<_>>()
-            .join(" + ");
+        let bounds = join_display(
+            bound["bounds"]
+                .as_array()
+                .expect("bound predicate must expose bounds")
+                .iter(),
+            " + ",
+            render_bound,
+        );
         return format!("{}: {}", render_type(&bound["type"]), bounds);
     }
     if let Some(region) = predicate.get("region_predicate") {
         let lifetime = region["lifetime"].as_str().unwrap_or("'_");
-        let bounds = region["bounds"]
-            .as_array()
-            .expect("region predicate must expose bounds")
-            .iter()
-            .filter_map(Value::as_str)
-            .collect::<Vec<_>>()
-            .join(" + ");
+        let bounds = join_strs(
+            region["bounds"]
+                .as_array()
+                .expect("region predicate must expose bounds")
+                .iter()
+                .filter_map(Value::as_str),
+            " + ",
+        );
         return format!("{lifetime}: {bounds}");
     }
     panic!("unsupported where predicate: {predicate:?}");
@@ -493,10 +587,7 @@ fn render_type(ty: &Value) -> String {
         return render_resolved_path(resolved);
     }
     if let Some(tuple) = ty.get("tuple").and_then(Value::as_array) {
-        return format!(
-            "({})",
-            tuple.iter().map(render_type).collect::<Vec<_>>().join(", ")
-        );
+        return format!("({})", join_display(tuple.iter(), ", ", render_type));
     }
     if let Some(slice) = ty.get("slice") {
         return format!("[{}]", render_type(slice));
@@ -509,16 +600,20 @@ fn render_type(ty: &Value) -> String {
         );
     }
     if let Some(dyn_trait) = ty.get("dyn_trait") {
-        let mut parts = dyn_trait["traits"]
-            .as_array()
-            .expect("dyn trait must expose traits")
-            .iter()
-            .map(render_path)
-            .collect::<Vec<_>>();
+        let mut parts: FixedList<String, 32> = collect_fixed(
+            dyn_trait["traits"]
+                .as_array()
+                .expect("dyn trait must expose traits")
+                .iter()
+                .map(render_path),
+        );
         if let Some(lifetime) = dyn_trait.get("lifetime").and_then(Value::as_str) {
             parts.push(lifetime.to_owned());
         }
-        return format!("dyn {}", parts.join(" + "));
+        return format!(
+            "dyn {}",
+            join_display(parts.iter(), " + ", |part| part.clone())
+        );
     }
     if let Some(raw_pointer) = ty.get("raw_pointer") {
         let mutable = if raw_pointer["is_mutable"].as_bool().unwrap_or(false) {
@@ -550,13 +645,14 @@ fn render_type(ty: &Value) -> String {
     }
     if let Some(fn_ptr) = ty.get("function_pointer") {
         let decl = &fn_ptr["sig"];
-        let inputs = decl["inputs"]
-            .as_array()
-            .expect("function pointer inputs must be present")
-            .iter()
-            .map(render_type)
-            .collect::<Vec<_>>()
-            .join(", ");
+        let inputs = join_display(
+            decl["inputs"]
+                .as_array()
+                .expect("function pointer inputs must be present")
+                .iter(),
+            ", ",
+            render_type,
+        );
         let output = if decl["output"].is_null() {
             String::new()
         } else {
@@ -592,23 +688,25 @@ fn render_args(args: &Value) -> String {
         return String::new();
     }
     if let Some(angle) = args.get("angle_bracketed") {
-        let rendered = angle["args"]
-            .as_array()
-            .expect("angle bracketed args must be an array")
-            .iter()
-            .map(render_generic_arg)
-            .collect::<Vec<_>>()
-            .join(", ");
+        let rendered = join_display(
+            angle["args"]
+                .as_array()
+                .expect("angle bracketed args must be an array")
+                .iter(),
+            ", ",
+            render_generic_arg,
+        );
         return format!("<{}>", rendered);
     }
     if let Some(parenthesized) = args.get("parenthesized") {
-        let inputs = parenthesized["inputs"]
-            .as_array()
-            .expect("parenthesized args must expose inputs")
-            .iter()
-            .map(render_type)
-            .collect::<Vec<_>>()
-            .join(", ");
+        let inputs = join_display(
+            parenthesized["inputs"]
+                .as_array()
+                .expect("parenthesized args must expose inputs")
+                .iter(),
+            ", ",
+            render_type,
+        );
         let output = if parenthesized["output"].is_null() {
             String::new()
         } else {
@@ -642,56 +740,43 @@ fn render_generic_arg(arg: &Value) -> String {
 }
 
 fn render_use_group(group: &[&Value], mode: SurfaceMode<'_>) -> String {
-    let mut entries = group
-        .iter()
-        .map(|item| {
+    let mut entries: FixedList<((u64, usize, u64), String, String), 128> =
+        collect_fixed(group.iter().map(|item| {
             let use_item = &item["inner"]["use"];
             (
                 use_sort_key(item),
                 use_item["name"].as_str().unwrap_or_default().to_owned(),
                 use_item["source"].as_str().unwrap_or_default().to_owned(),
             )
-        })
-        .collect::<Vec<_>>();
-    entries.sort_by_key(|entry| entry.0);
+        }));
+    entries.as_mut_slice().sort_by_key(|entry| entry.0);
 
-    let names = entries
-        .iter()
-        .map(|entry| entry.1.as_str())
-        .collect::<Vec<_>>();
+    let names: FixedList<&str, 128> = collect_fixed(entries.iter().map(|entry| entry.1.as_str()));
     let prefix = use_prefix(group[0]).unwrap_or_default();
 
-    if prefix == "crate::epf::verifier" && names == ["Header"] {
+    if prefix == "crate::epf::verifier" && names.as_slice() == ["Header"] {
         return "pub use Header;".to_owned();
     }
-    if prefix == "crate::epf::vm" && names == ["Slot"] {
+    if prefix == "crate::epf::vm" && names.as_slice() == ["Slot"] {
         return "pub use Slot;".to_owned();
     }
     if prefix == "crate::control::types"
         && names.len() == 2
-        && names.contains(&"One")
-        && names.contains(&"Many")
+        && names.iter().any(|name| *name == "One")
+        && names.iter().any(|name| *name == "Many")
     {
         return "pub use {One, Many};".to_owned();
     }
 
     if matches!(mode, SurfaceMode::Root | SurfaceMode::File("src/lib.rs")) {
         if entries.len() > 1 {
-            let grouped = entries
-                .iter()
-                .map(|entry| entry.1.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
+            let grouped = join_strs(entries.iter().map(|entry| entry.1.as_str()), ", ");
             return format!("pub use {}::{{{}}};", prefix, grouped);
         }
     }
 
     if matches!(mode, SurfaceMode::File("src/g.rs")) {
-        let grouped = entries
-            .iter()
-            .map(|entry| entry.1.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let grouped = join_strs(entries.iter().map(|entry| entry.1.as_str()), ", ");
         if entries.len() == 1 {
             return format!("pub use {};", grouped);
         }
@@ -699,11 +784,7 @@ fn render_use_group(group: &[&Value], mode: SurfaceMode<'_>) -> String {
     }
 
     if entries.len() > 1 {
-        let grouped = entries
-            .iter()
-            .map(|entry| entry.1.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let grouped = join_strs(entries.iter().map(|entry| entry.1.as_str()), ", ");
         return format!("pub use {}::{{{}}};", prefix, grouped);
     }
 
@@ -795,7 +876,7 @@ fn assert_no_forbidden_public_args(index: &JsonMap) {
         "src/runtime/config.rs",
     ];
 
-    let mut violations = Vec::new();
+    let mut violations: FixedList<String, 256> = FixedList::new();
 
     for item in index.values() {
         if item["visibility"].as_str() != Some("public") {
@@ -827,7 +908,7 @@ fn assert_no_forbidden_public_args(index: &JsonMap) {
     assert!(
         violations.is_empty(),
         "semantic public API contains forbidden bool/stringly args:\n{}",
-        violations.join("\n")
+        join_display(violations.iter(), "\n", |line| line.clone())
     );
 }
 

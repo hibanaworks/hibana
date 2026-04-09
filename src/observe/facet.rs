@@ -1,9 +1,7 @@
 #[cfg(test)]
 use crate::control::lease::planner::{LeaseFacetNeeds, LeaseGraphBudget, policy_requirements};
 #[cfg(test)]
-use crate::global::compiled::CompiledProgram;
-#[cfg(test)]
-use std::vec::Vec;
+use crate::global::compiled::{CompiledProgram, MAX_COMPILED_PROGRAM_RESOURCES};
 
 /// Per-atom breakdown of facet requirements derived from policy markers.
 #[cfg(test)]
@@ -18,6 +16,14 @@ struct AtomFacetDetail {
 
 #[cfg(test)]
 impl AtomFacetDetail {
+    const EMPTY: Self = Self {
+        label: 0,
+        resource_tag: None,
+        needs: LeaseFacetNeeds::new(),
+        delegation_children: 0,
+        splice_children: 0,
+    };
+
     /// Returns true when this atom contributes any facet demand.
     #[inline]
     fn requires_facets(&self) -> bool {
@@ -30,7 +36,8 @@ impl AtomFacetDetail {
 #[derive(Clone, Debug)]
 struct ProgramFacetReport {
     budget: LeaseGraphBudget,
-    atoms: Vec<AtomFacetDetail>,
+    atoms: [AtomFacetDetail; MAX_COMPILED_PROGRAM_RESOURCES],
+    atoms_len: usize,
 }
 
 #[cfg(test)]
@@ -38,37 +45,38 @@ impl ProgramFacetReport {
     /// Borrow the collected atom details.
     #[inline]
     fn atoms(&self) -> &[AtomFacetDetail] {
-        &self.atoms
+        &self.atoms[..self.atoms_len]
     }
 }
 
 /// Produce a facet report from compiled program facts.
 #[cfg(test)]
 fn compiled_report(compiled: &CompiledProgram) -> ProgramFacetReport {
-    let mut atoms = Vec::new();
+    let mut atoms = [AtomFacetDetail::EMPTY; MAX_COMPILED_PROGRAM_RESOURCES];
+    let mut atoms_len = 0usize;
     let mut budget = LeaseGraphBudget::new();
+    let effect_envelope = compiled.effect_envelope();
 
-    for descriptor in compiled.effect_envelope().resources() {
-        budget = budget.include_atom(
-            descriptor.label(),
-            Some(descriptor.tag()),
-            descriptor.policy(),
-        );
-        let requirements = policy_requirements(
-            Some(descriptor.tag()),
-            descriptor.label(),
-            descriptor.policy(),
-        );
-        atoms.push(AtomFacetDetail {
+    for descriptor in effect_envelope.resources() {
+        let policy = effect_envelope.resource_policy(descriptor);
+        budget = budget.include_atom(descriptor.label(), Some(descriptor.tag()), policy);
+        let requirements = policy_requirements(Some(descriptor.tag()), descriptor.label(), policy);
+        assert!(atoms_len < atoms.len(), "facet atom capacity exceeded");
+        atoms[atoms_len] = AtomFacetDetail {
             label: descriptor.label(),
             resource_tag: Some(descriptor.tag()),
             needs: requirements.facets,
             delegation_children: requirements.delegation_children,
             splice_children: requirements.splice_children,
-        });
+        };
+        atoms_len += 1;
     }
 
-    ProgramFacetReport { budget, atoms }
+    ProgramFacetReport {
+        budget,
+        atoms,
+        atoms_len,
+    }
 }
 
 #[cfg(test)]
@@ -94,8 +102,8 @@ mod tests {
                     (LABEL_MGMT_LOAD_COMMIT, Some(LoadCommitKind::TAG)),
                 ];
 
-                assert_eq!(collect_atom_keys(&controller), expected);
-                assert_eq!(collect_atom_keys(&cluster), expected);
+                assert_eq!(&collect_atom_keys(&controller), expected);
+                assert_eq!(&collect_atom_keys(&cluster), expected);
             },
         );
     }
@@ -129,16 +137,19 @@ mod tests {
         }
     }
 
-    fn collect_atom_keys(report: &ProgramFacetReport) -> Vec<(u8, Option<u8>)> {
-        let mut keys = Vec::new();
+    fn collect_atom_keys(report: &ProgramFacetReport) -> [(u8, Option<u8>); 2] {
+        let mut keys = [(0, None); 2];
+        let mut len = 0usize;
         for key in report
             .atoms()
             .iter()
             .filter(|atom| atom.requires_facets())
             .map(|atom| (atom.label, atom.resource_tag))
         {
-            if !keys.contains(&key) {
-                keys.push(key);
+            if !keys[..len].contains(&key) {
+                assert!(len < keys.len(), "facet key capacity exceeded");
+                keys[len] = key;
+                len += 1;
             }
         }
         keys

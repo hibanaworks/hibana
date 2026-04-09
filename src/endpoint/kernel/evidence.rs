@@ -84,7 +84,6 @@ pub(super) struct ScopeLabelMeta {
     pub(super) recv_label: u8,
     pub(super) recv_arm: u8,
     pub(super) controller_labels: [u8; 2],
-    pub(super) hint_label_mask: u128,
     pub(super) arm_label_masks: [u128; 2],
     pub(super) evidence_arm_label_masks: [u128; 2],
     pub(super) flags: u8,
@@ -104,7 +103,6 @@ impl ScopeLabelMeta {
         recv_label: 0,
         recv_arm: 0,
         controller_labels: [0; 2],
-        hint_label_mask: 0,
         arm_label_masks: [0; 2],
         evidence_arm_label_masks: [0; 2],
         flags: 0,
@@ -148,7 +146,7 @@ impl ScopeLabelMeta {
 
     #[inline]
     pub(super) fn matches_hint_label(self, label: u8) -> bool {
-        (self.hint_label_mask & Self::label_bit(label)) != 0
+        (self.hint_label_mask() & Self::label_bit(label)) != 0
     }
 
     #[inline]
@@ -234,7 +232,7 @@ impl ScopeLabelMeta {
     pub(super) fn preferred_binding_label_mask(self, preferred_arm: Option<u8>) -> u128 {
         preferred_arm
             .map(|arm| self.binding_demux_label_mask_for_arm(arm))
-            .unwrap_or(self.hint_label_mask)
+            .unwrap_or_else(|| self.hint_label_mask())
     }
 
     #[inline]
@@ -252,23 +250,24 @@ impl ScopeLabelMeta {
     }
 
     #[inline]
-    pub(super) fn record_hint_label(&mut self, label: u8) {
-        self.hint_label_mask |= Self::label_bit(label);
+    pub(super) fn hint_label_mask(self) -> u128 {
+        let mut mask = self.arm_label_masks[0] | self.arm_label_masks[1];
+        if (self.flags & Self::FLAG_CURRENT_RECV_LABEL) != 0 {
+            mask |= Self::label_bit(self.recv_label);
+        }
+        mask
     }
 
     #[inline]
     pub(super) fn record_arm_label(&mut self, arm: u8, label: u8) {
-        self.record_hint_label(label);
         if (arm as usize) < self.arm_label_masks.len() {
-            let bit = Self::label_bit(label);
-            self.arm_label_masks[arm as usize] |= bit;
-            self.evidence_arm_label_masks[arm as usize] |= bit;
+            self.arm_label_masks[arm as usize] |= Self::label_bit(label);
+            self.evidence_arm_label_masks[arm as usize] |= Self::label_bit(label);
         }
     }
 
     #[inline]
     pub(super) fn record_dispatch_arm_label(&mut self, arm: u8, label: u8) {
-        self.record_hint_label(label);
         if (arm as usize) < self.arm_label_masks.len() {
             self.arm_label_masks[arm as usize] |= Self::label_bit(label);
         }

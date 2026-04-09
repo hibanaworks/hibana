@@ -15,7 +15,7 @@
 //! - **Const-friendly control** — the control layer stays allocation free and
 //!   is ready for `no_std`.
 
-use core::marker::PhantomData;
+use core::{marker::PhantomData, ptr, ptr::NonNull};
 
 use crate::control::types::{Lane, RendezvousId, SessionId};
 use crate::rendezvous::core::Rendezvous;
@@ -73,7 +73,6 @@ where
     ///
     /// # Safety
     /// `dst` must point to valid, writable memory for `Self`.
-    #[cfg(any(test, feature = "std"))]
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
         unsafe {
             ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).entries));
@@ -141,6 +140,20 @@ where
     U: LabelUniverse,
     C: Clock,
 {
+    fn next_available_rendezvous_id(&self) -> Option<RendezvousId> {
+        let mut raw = 1u16;
+        loop {
+            let id = RendezvousId::new(raw);
+            if !self.entries.contains_key(&id) {
+                return Some(id);
+            }
+            raw = raw.wrapping_add(1);
+            if raw == 0 {
+                return None;
+            }
+        }
+    }
+
     /// Register a local rendezvous by constructing it directly inside the
     /// fixed-capacity owner slot instead of materialising a large temporary on
     /// the caller stack first.
@@ -148,28 +161,26 @@ where
         &mut self,
         config: crate::runtime::config::Config<'cfg, U, C>,
         transport: T,
+        endpoint_slots: usize,
     ) -> Result<RendezvousId, RegisterRendezvousError> {
-        let id =
-            Rendezvous::<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>::allocate_id();
-        if self.entries.contains_key(&id) {
-            return Err(RegisterRendezvousError::Duplicate(id));
-        }
         if self.entries.is_full() {
             return Err(RegisterRendezvousError::CapacityExceeded);
         }
+        let id = self
+            .next_available_rendezvous_id()
+            .ok_or(RegisterRendezvousError::CapacityExceeded)?;
 
-        self.entries
-            .push_with(|slot| unsafe {
-                let entry = slot.as_mut_ptr();
-                core::ptr::addr_of_mut!((*entry).0).write(id);
-                RendezvousEntry::init_from_config(
-                    core::ptr::addr_of_mut!((*entry).1),
-                    id,
-                    config,
-                    transport,
-                );
-            })
-            .map_err(|()| RegisterRendezvousError::CapacityExceeded)?;
+        self.entries.try_push_with(|slot| unsafe {
+            let entry = slot.as_mut_ptr();
+            core::ptr::addr_of_mut!((*entry).0).write(id);
+            RendezvousEntry::init_from_config(
+                core::ptr::addr_of_mut!((*entry).1),
+                id,
+                config,
+                transport,
+                endpoint_slots,
+            )
+        })?;
         Ok(id)
     }
 }
@@ -179,8 +190,8 @@ where
 pub(crate) enum RegisterRendezvousError {
     /// Attempted to register more rendezvous than the fixed capacity allows.
     CapacityExceeded,
-    /// The rendezvous identifier is already present in the table.
-    Duplicate(RendezvousId),
+    /// Borrowed runtime storage cannot fit the rendezvous resident header.
+    StorageExhausted,
 }
 
 /// Leasing failures.
@@ -200,8 +211,9 @@ where
     C: Clock,
     E: crate::control::cap::mint::EpochTable,
 {
-    rendezvous: Rendezvous<'cfg, 'cfg, T, U, C, E>,
+    rendezvous: NonNull<Rendezvous<'cfg, 'cfg, T, U, C, E>>,
     active: bool,
+    _marker: PhantomData<&'cfg mut Rendezvous<'cfg, 'cfg, T, U, C, E>>,
 }
 
 impl<'cfg, T, U, C, E> RendezvousEntry<'cfg, T, U, C, E>
@@ -227,7 +239,7 @@ where
         if self.active {
             None
         } else {
-            Some(&self.rendezvous)
+            Some(unsafe { self.rendezvous.as_ref() })
         }
     }
 
@@ -235,12 +247,12 @@ where
         if self.active {
             None
         } else {
-            Some(&mut self.rendezvous)
+            Some(unsafe { self.rendezvous.as_mut() })
         }
     }
 
     fn rendezvous(&mut self) -> &mut Rendezvous<'cfg, 'cfg, T, U, C, E> {
-        &mut self.rendezvous
+        unsafe { self.rendezvous.as_mut() }
     }
 }
 
@@ -255,15 +267,31 @@ where
         rv_id: RendezvousId,
         config: crate::runtime::config::Config<'cfg, U, C>,
         transport: T,
-    ) {
+        endpoint_slots: usize,
+    ) -> Result<(), RegisterRendezvousError> {
+        let rendezvous = unsafe {
+            Rendezvous::init_in_slab(rv_id, config, transport, endpoint_slots)
+                .ok_or(RegisterRendezvousError::StorageExhausted)?
+        };
         unsafe {
-            Rendezvous::init_from_config(
-                core::ptr::addr_of_mut!((*dst).rendezvous),
-                rv_id,
-                config,
-                transport,
-            );
+            core::ptr::addr_of_mut!((*dst).rendezvous).write(NonNull::new_unchecked(rendezvous));
             core::ptr::addr_of_mut!((*dst).active).write(false);
+            core::ptr::addr_of_mut!((*dst)._marker).write(PhantomData);
+        }
+        Ok(())
+    }
+}
+
+impl<'cfg, T, U, C, E> Drop for RendezvousEntry<'cfg, T, U, C, E>
+where
+    T: Transport,
+    U: LabelUniverse,
+    C: Clock,
+    E: crate::control::cap::mint::EpochTable,
+{
+    fn drop(&mut self) {
+        unsafe {
+            ptr::drop_in_place(self.rendezvous.as_ptr());
         }
     }
 }

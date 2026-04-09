@@ -244,6 +244,72 @@ pub trait BindingSlot {
     fn policy_signals_provider(&self) -> Option<&dyn PolicySignalsProvider>;
 }
 
+pub(crate) enum BindingHandle<'a> {
+    None(NoBinding),
+    Borrowed(&'a mut dyn BindingSlot),
+}
+
+impl BindingHandle<'_> {
+    #[inline(always)]
+    pub(crate) const fn uses_binding_storage(&self) -> bool {
+        matches!(self, Self::Borrowed(_))
+    }
+}
+
+pub(crate) trait BindingArg<'a> {
+    fn into_binding_handle(self) -> BindingHandle<'a>;
+}
+
+impl<'a> BindingArg<'a> for BindingHandle<'a> {
+    #[inline(always)]
+    fn into_binding_handle(self) -> BindingHandle<'a> {
+        self
+    }
+}
+
+impl<'a> BindingArg<'a> for NoBinding {
+    #[inline(always)]
+    fn into_binding_handle(self) -> BindingHandle<'a> {
+        BindingHandle::None(self)
+    }
+}
+
+impl<'a, B> BindingArg<'a> for &'a mut B
+where
+    B: BindingSlot + 'a,
+{
+    #[inline(always)]
+    fn into_binding_handle(self) -> BindingHandle<'a> {
+        BindingHandle::Borrowed(self)
+    }
+}
+
+impl BindingSlot for BindingHandle<'_> {
+    #[inline(always)]
+    fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IncomingClassification> {
+        match self {
+            Self::None(binding) => binding.poll_incoming_for_lane(logical_lane),
+            Self::Borrowed(binding) => binding.poll_incoming_for_lane(logical_lane),
+        }
+    }
+
+    #[inline(always)]
+    fn on_recv(&mut self, channel: Channel, buf: &mut [u8]) -> Result<usize, TransportOpsError> {
+        match self {
+            Self::None(binding) => binding.on_recv(channel, buf),
+            Self::Borrowed(binding) => binding.on_recv(channel, buf),
+        }
+    }
+
+    #[inline(always)]
+    fn policy_signals_provider(&self) -> Option<&dyn PolicySignalsProvider> {
+        match self {
+            Self::None(binding) => binding.policy_signals_provider(),
+            Self::Borrowed(binding) => binding.policy_signals_provider(),
+        }
+    }
+}
+
 // =============================================================================
 // NoBinding: Zero-cost default binding
 // =============================================================================

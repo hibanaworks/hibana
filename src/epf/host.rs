@@ -1,23 +1,27 @@
 //! Host integration for executing EPF VM policies without global state.
 
-use core::{
-    array,
-    hint::spin_loop,
-    sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering},
-};
+#[cfg(not(test))]
+use core::marker::PhantomData;
+#[cfg(test)]
+use core::{array, cell::Cell};
 
+#[cfg(test)]
+use crate::rendezvous::slots::{SLOT_COUNT, slot_index};
+#[cfg(test)]
 use crate::{
     control::cap::mint::CapsMask,
     control::types::{Lane, SessionId},
     observe::core::TapEvent,
-    rendezvous::slots::{SLOT_COUNT, slot_index},
 };
 
 #[cfg(test)]
 use super::verifier::{Header, compute_hash};
+#[cfg(test)]
+use super::vm::Vm;
+#[cfg(test)]
 use super::{
     PolicyMode,
-    vm::{Slot, Vm, VmAction, VmCtx},
+    vm::{Slot, VmAction, VmCtx},
 };
 
 /// Errors surfaced by the policy host registry.
@@ -32,6 +36,7 @@ pub(crate) enum HostError {
 }
 
 /// Registered policy machine (bytecode + scratch + fuel budget).
+#[cfg(test)]
 pub(crate) struct Machine<'arena> {
     code: &'arena [u8],
     mem_ptr: *mut u8,
@@ -39,13 +44,10 @@ pub(crate) struct Machine<'arena> {
     fuel_max: u16,
     #[cfg(test)]
     digest: u32,
-    fuel: AtomicU16,
-    lock: AtomicBool,
+    fuel: Cell<u16>,
 }
 
-unsafe impl Send for Machine<'_> {}
-unsafe impl Sync for Machine<'_> {}
-
+#[cfg(test)]
 impl<'arena> Machine<'arena> {
     /// Construct a new machine with an explicit memory length.
     #[cfg(test)]
@@ -77,23 +79,8 @@ impl<'arena> Machine<'arena> {
             mem_len,
             fuel_max,
             digest: compute_hash(code),
-            fuel: AtomicU16::new(fuel_max),
-            lock: AtomicBool::new(false),
+            fuel: Cell::new(fuel_max),
         })
-    }
-
-    fn acquire(&self) {
-        while self
-            .lock
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            spin_loop();
-        }
-    }
-
-    fn release(&self) {
-        self.lock.store(false, Ordering::Release);
     }
 
     #[inline]
@@ -103,9 +90,7 @@ impl<'arena> Machine<'arena> {
     }
 
     fn execute(&self, ctx: &mut VmCtx<'_>) -> VmAction {
-        self.acquire();
-
-        let remaining = self.fuel.load(Ordering::Acquire);
+        let remaining = self.fuel.get();
         let initial_fuel = if remaining == 0 {
             self.fuel_max
         } else {
@@ -117,13 +102,12 @@ impl<'arena> Machine<'arena> {
         let mem_slice = unsafe { core::slice::from_raw_parts_mut(self.mem_ptr, mem_len) };
         let mut vm = Vm::new(self.code, mem_slice, initial_fuel);
         let action = vm.execute(ctx);
-        self.fuel.store(vm.fuel, Ordering::Release);
-
-        self.release();
+        self.fuel.set(vm.fuel);
         action
     }
 }
 
+#[cfg(test)]
 impl core::fmt::Debug for Machine<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut debug = f.debug_struct("Machine");
@@ -136,12 +120,22 @@ impl core::fmt::Debug for Machine<'_> {
     }
 }
 
-/// In-memory registry of machines backed by a slot arena.
+/// In-memory EPF slot registry.
+///
+/// Production builds keep only the lifetime witness because the current
+/// management/install path is test-only. Test builds retain the full slot-backed
+/// machine registry and audit state.
 pub(crate) struct HostSlots<'arena> {
+    #[cfg(test)]
     machines: [Option<Machine<'arena>>; SLOT_COUNT],
-    policy_modes: [AtomicU8; SLOT_COUNT],
-    active_digests: [AtomicU32; SLOT_COUNT],
-    last_fuel_used: [AtomicU16; SLOT_COUNT],
+    #[cfg(test)]
+    policy_modes: [Cell<u8>; SLOT_COUNT],
+    #[cfg(test)]
+    active_digests: [Cell<u32>; SLOT_COUNT],
+    #[cfg(test)]
+    last_fuel_used: [Cell<u16>; SLOT_COUNT],
+    #[cfg(not(test))]
+    _arena: PhantomData<&'arena ()>,
 }
 
 impl<'arena> Default for HostSlots<'arena> {
@@ -151,7 +145,9 @@ impl<'arena> Default for HostSlots<'arena> {
 }
 
 impl<'arena> HostSlots<'arena> {
+    #[cfg(test)]
     const MODE_SHADOW: u8 = 0;
+    #[cfg(test)]
     const MODE_ENFORCE: u8 = 1;
 
     #[inline]
@@ -164,6 +160,7 @@ impl<'arena> HostSlots<'arena> {
     }
 
     #[inline]
+    #[cfg(test)]
     const fn decode_mode(raw: u8) -> PolicyMode {
         match raw {
             Self::MODE_SHADOW => PolicyMode::Shadow,
@@ -172,15 +169,55 @@ impl<'arena> HostSlots<'arena> {
     }
 
     pub(crate) fn new() -> Self {
-        Self {
-            machines: array::from_fn(|_| None),
-            policy_modes: array::from_fn(|_| AtomicU8::new(Self::MODE_ENFORCE)),
-            active_digests: array::from_fn(|_| AtomicU32::new(0)),
-            last_fuel_used: array::from_fn(|_| AtomicU16::new(0)),
+        #[cfg(test)]
+        {
+            Self {
+                machines: array::from_fn(|_| None),
+                policy_modes: array::from_fn(|_| Cell::new(Self::MODE_ENFORCE)),
+                active_digests: array::from_fn(|_| Cell::new(0)),
+                last_fuel_used: array::from_fn(|_| Cell::new(0)),
+            }
+        }
+        #[cfg(not(test))]
+        {
+            Self {
+                _arena: PhantomData,
+            }
+        }
+    }
+
+    pub(crate) unsafe fn init_empty(dst: *mut Self) {
+        unsafe {
+            #[cfg(test)]
+            {
+                let machines_ptr =
+                    core::ptr::addr_of_mut!((*dst).machines).cast::<Option<Machine<'arena>>>();
+                let policy_modes_ptr =
+                    core::ptr::addr_of_mut!((*dst).policy_modes).cast::<Cell<u8>>();
+                let active_digests_ptr =
+                    core::ptr::addr_of_mut!((*dst).active_digests).cast::<Cell<u32>>();
+                let last_fuel_used_ptr =
+                    core::ptr::addr_of_mut!((*dst).last_fuel_used).cast::<Cell<u16>>();
+                let mut idx = 0usize;
+                while idx < SLOT_COUNT {
+                    machines_ptr.add(idx).write(None);
+                    policy_modes_ptr
+                        .add(idx)
+                        .write(Cell::new(Self::MODE_ENFORCE));
+                    active_digests_ptr.add(idx).write(Cell::new(0));
+                    last_fuel_used_ptr.add(idx).write(Cell::new(0));
+                    idx += 1;
+                }
+            }
+            #[cfg(not(test))]
+            {
+                core::ptr::addr_of_mut!((*dst)._arena).write(PhantomData);
+            }
         }
     }
 
     #[inline]
+    #[cfg(test)]
     fn index(slot: Slot) -> usize {
         slot_index(slot)
     }
@@ -195,7 +232,7 @@ impl<'arena> HostSlots<'arena> {
         if self.machines[idx].is_some() {
             return Err(HostError::SlotOccupied);
         }
-        self.active_digests[idx].store(machine.digest(), Ordering::Release);
+        self.active_digests[idx].set(machine.digest());
         self.machines[idx] = Some(machine);
         Ok(())
     }
@@ -207,33 +244,37 @@ impl<'arena> HostSlots<'arena> {
             return Err(HostError::SlotEmpty);
         }
         self.machines[idx] = None;
-        self.active_digests[idx].store(0, Ordering::Release);
-        self.last_fuel_used[idx].store(0, Ordering::Release);
+        self.active_digests[idx].set(0);
+        self.last_fuel_used[idx].set(0);
         Ok(())
     }
 
     #[inline]
     #[cfg(test)]
     pub(crate) fn set_policy_mode(&self, slot: Slot, mode: PolicyMode) {
-        self.policy_modes[Self::index(slot)].store(Self::encode_mode(mode), Ordering::Release);
+        self.policy_modes[Self::index(slot)].set(Self::encode_mode(mode));
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn policy_mode(&self, slot: Slot) -> PolicyMode {
-        let raw = self.policy_modes[Self::index(slot)].load(Ordering::Acquire);
+        let raw = self.policy_modes[Self::index(slot)].get();
         Self::decode_mode(raw)
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn active_digest(&self, slot: Slot) -> u32 {
-        self.active_digests[Self::index(slot)].load(Ordering::Acquire)
+        self.active_digests[Self::index(slot)].get()
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn last_fuel_used(&self, slot: Slot) -> u16 {
-        self.last_fuel_used[Self::index(slot)].load(Ordering::Acquire)
+        self.last_fuel_used[Self::index(slot)].get()
     }
 
+    #[cfg(test)]
     pub(crate) fn execute_with<F>(
         &self,
         slot: Slot,
@@ -257,20 +298,20 @@ impl<'arena> HostSlots<'arena> {
 
         match &self.machines[Self::index(slot)] {
             Some(machine) => {
-                let remaining_before = machine.fuel.load(Ordering::Acquire);
+                let remaining_before = machine.fuel.get();
                 let initial_fuel = if remaining_before == 0 {
                     machine.fuel_max
                 } else {
                     remaining_before
                 };
                 let action = machine.execute(&mut ctx);
-                let remaining_after = machine.fuel.load(Ordering::Acquire);
+                let remaining_after = machine.fuel.get();
                 let used = initial_fuel.saturating_sub(remaining_after);
-                self.last_fuel_used[Self::index(slot)].store(used, Ordering::Release);
+                self.last_fuel_used[Self::index(slot)].set(used);
                 action
             }
             None => {
-                self.last_fuel_used[Self::index(slot)].store(0, Ordering::Release);
+                self.last_fuel_used[Self::index(slot)].set(0);
                 VmAction::Proceed
             }
         }
@@ -282,18 +323,16 @@ mod tests {
     use super::*;
     use crate::{epf::ops, observe::core::TapEvent};
 
-    use std::boxed::Box;
-    use std::vec;
-
-    fn setup_machine(code: &'static [u8]) -> Machine<'static> {
-        let scratch = Box::leak(vec![0u8; 64].into_boxed_slice());
-        Machine::with_mem(code, scratch, scratch.len(), 8).expect("machine")
+    fn setup_machine<'a>(code: &'a [u8], scratch: &'a mut [u8; 64]) -> Machine<'a> {
+        let len = scratch.len();
+        Machine::with_mem(code, scratch, len, 8).expect("machine")
     }
 
     #[test]
     fn host_returns_effect_directive() {
         static CODE: [u8; 3] = [ops::instr::ACT_EFFECT, ops::effect::CHECKPOINT, 0x00];
-        let machine = setup_machine(&CODE);
+        let mut scratch = [0u8; 64];
+        let machine = setup_machine(&CODE, &mut scratch);
         let mut slots = HostSlots::new();
         slots.install(Slot::Rendezvous, machine).expect("install");
 
@@ -314,7 +353,8 @@ mod tests {
     #[test]
     fn shadow_mode_suppresses_enforcement() {
         static CODE: [u8; 3] = [ops::instr::ACT_ABORT, 0x34, 0x12];
-        let machine = setup_machine(&CODE);
+        let mut scratch = [0u8; 64];
+        let machine = setup_machine(&CODE, &mut scratch);
         let mut slots = HostSlots::new();
         slots.install(Slot::Route, machine).expect("install");
 

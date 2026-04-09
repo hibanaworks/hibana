@@ -35,7 +35,6 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
     ///
     /// # Safety
     /// `dst` must point to valid, writable memory for `Self`.
-    #[cfg(any(test, feature = "std"))]
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
         unsafe {
             core::ptr::addr_of_mut!((*dst).len).write(0);
@@ -89,20 +88,16 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
         Ok(())
     }
 
-    /// Append a freshly initialised entry in place.
-    ///
-    /// This is the lower-layer constructor used when the caller needs to
-    /// materialise the `(K, V)` pair directly into backing storage instead of
-    /// first building a large temporary on the caller stack.
-    pub(crate) fn push_with(
+    /// Append a freshly initialised entry in place, committing the slot only on success.
+    pub(crate) fn try_push_with<E>(
         &mut self,
-        init: impl FnOnce(&mut MaybeUninit<(K, V)>),
-    ) -> Result<(), ()> {
-        if self.is_full() {
-            return Err(());
-        }
-
-        init(&mut self.entries[self.len]);
+        init: impl FnOnce(&mut MaybeUninit<(K, V)>) -> Result<(), E>,
+    ) -> Result<(), E> {
+        debug_assert!(
+            !self.is_full(),
+            "try_push_with must not be called on a full ArrayMap"
+        );
+        init(&mut self.entries[self.len])?;
         self.len += 1;
         Ok(())
     }
@@ -140,56 +135,6 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
         } else {
             None
         }
-    }
-
-    /// Return the first initialized slot index matching `pred`.
-    pub(crate) fn position(&self, mut pred: impl FnMut(&K, &V) -> bool) -> Option<usize> {
-        for i in 0..self.len {
-            // SAFETY: entries[0..len] are initialized
-            let (k, v) = unsafe { self.entries[i].assume_init_ref() };
-            if pred(k, v) {
-                return Some(i);
-            }
-        }
-        None
-    }
-
-    /// Borrow the entry stored at `idx`.
-    pub(crate) fn get_at(&self, idx: usize) -> Option<(&K, &V)> {
-        if idx >= self.len {
-            return None;
-        }
-        // SAFETY: entries[idx] is initialized (idx < len)
-        let (k, v) = unsafe { self.entries[idx].assume_init_ref() };
-        Some((k, v))
-    }
-
-    /// Mutably borrow the entry stored at `idx`.
-    pub(crate) fn get_mut_at(&mut self, idx: usize) -> Option<(&K, &mut V)> {
-        if idx >= self.len {
-            return None;
-        }
-        // SAFETY: entries[idx] is initialized (idx < len)
-        let (k, v) = unsafe { self.entries[idx].assume_init_mut() };
-        Some((&*k, v))
-    }
-
-    /// Replace the initialized slot at `idx` in place.
-    pub(crate) fn replace_at_with(
-        &mut self,
-        idx: usize,
-        init: impl FnOnce(&mut MaybeUninit<(K, V)>),
-    ) -> Result<(), ()> {
-        if idx >= self.len {
-            return Err(());
-        }
-
-        // SAFETY: entries[idx] is initialized (idx < len)
-        unsafe {
-            self.entries[idx].assume_init_drop();
-        }
-        init(&mut self.entries[idx]);
-        Ok(())
     }
 
     /// Remove a key-value pair.
