@@ -58,6 +58,66 @@ use super::splice::LocalSpliceInvariant;
 use crate::control::automaton::distributed::{SpliceAck, SpliceIntent};
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct EndpointLeaseId(u16);
+
+impl EndpointLeaseId {
+    pub(crate) const ZERO: Self = Self(0);
+    pub(crate) const MAX: Self = Self(u16::MAX);
+}
+
+impl From<u8> for EndpointLeaseId {
+    #[inline]
+    fn from(value: u8) -> Self {
+        Self(value.into())
+    }
+}
+
+impl From<u16> for EndpointLeaseId {
+    #[inline]
+    fn from(value: u16) -> Self {
+        Self(value)
+    }
+}
+
+impl From<EndpointLeaseId> for u16 {
+    #[inline]
+    fn from(value: EndpointLeaseId) -> Self {
+        value.0
+    }
+}
+
+impl From<EndpointLeaseId> for u32 {
+    #[inline]
+    fn from(value: EndpointLeaseId) -> Self {
+        value.0.into()
+    }
+}
+
+impl From<EndpointLeaseId> for usize {
+    #[inline]
+    fn from(value: EndpointLeaseId) -> Self {
+        value.0.into()
+    }
+}
+
+impl TryFrom<usize> for EndpointLeaseId {
+    type Error = core::num::TryFromIntError;
+
+    #[inline]
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        u16::try_from(value).map(Self)
+    }
+}
+
+impl core::fmt::Display for EndpointLeaseId {
+    #[inline]
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ProgramImageSlot {
     stamp: ProgramStamp,
@@ -148,7 +208,6 @@ impl EndpointResidentBudget {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EndpointLeaseSlot {
-    pub(crate) public_slot: u8,
     pub(crate) generation: u32,
     pub(crate) offset: u32,
     pub(crate) len: u32,
@@ -160,7 +219,6 @@ pub(crate) struct EndpointLeaseSlot {
 
 impl EndpointLeaseSlot {
     const EMPTY: Self = Self {
-        public_slot: u8::MAX,
         generation: 0,
         offset: 0,
         len: 0,
@@ -209,7 +267,7 @@ pub(crate) struct Rendezvous<
     role_images: *mut RoleImageSlot,
     endpoint_leases: *mut EndpointLeaseSlot,
     image_slot_capacity: u8,
-    endpoint_lease_capacity: u8,
+    endpoint_lease_capacity: EndpointLeaseId,
     runtime_frontier: u32,
     free_regions: [FreeRegion; FREE_REGION_CAPACITY],
     lane_range: Range<u32>,
@@ -386,9 +444,9 @@ where
         let (_, slab_len) = self.slab_ptr_and_len();
         let mut floor = slab_len;
         let mut idx = 0usize;
-        while idx < self.endpoint_lease_capacity as usize {
+        while idx < usize::from(self.endpoint_lease_capacity) {
             let slot = unsafe { &*self.endpoint_leases.add(idx) };
-            if slot.occupied && (slot.offset as usize) < floor {
+            if slot.occupied && slot.len != 0 && (slot.offset as usize) < floor {
                 floor = slot.offset as usize;
             }
             idx += 1;
@@ -455,7 +513,7 @@ where
     pub(crate) fn live_endpoint_storage_bytes(&self) -> usize {
         let mut bytes = 0usize;
         let mut idx = 0usize;
-        while idx < self.endpoint_lease_capacity as usize {
+        while idx < usize::from(self.endpoint_lease_capacity) {
             let slot = unsafe { &*self.endpoint_leases.add(idx) };
             if slot.occupied {
                 bytes = bytes.saturating_add(slot.len as usize);
@@ -764,10 +822,64 @@ where
     }
 
     #[inline]
+    fn endpoint_lease(&self, lease_slot: EndpointLeaseId, generation: u32) -> Option<&EndpointLeaseSlot> {
+        let idx = usize::from(lease_slot);
+        if idx >= usize::from(self.endpoint_lease_capacity) {
+            return None;
+        }
+        let slot = unsafe { &*self.endpoint_leases.add(idx) };
+        if slot.occupied && slot.generation == generation {
+            Some(slot)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn endpoint_lease_mut(
+        &mut self,
+        lease_slot: EndpointLeaseId,
+        generation: u32,
+    ) -> Option<&mut EndpointLeaseSlot> {
+        let idx = usize::from(lease_slot);
+        if idx >= usize::from(self.endpoint_lease_capacity) {
+            return None;
+        }
+        let slot = unsafe { &mut *self.endpoint_leases.add(idx) };
+        if slot.occupied && slot.generation == generation {
+            Some(slot)
+        } else {
+            None
+        }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn endpoint_lease_capacity(&self) -> EndpointLeaseId {
+        self.endpoint_lease_capacity
+    }
+
+    #[inline]
+    fn next_endpoint_lease_generation(slot: &mut EndpointLeaseSlot) -> u32 {
+        let next = slot.generation.wrapping_add(1);
+        if next == 0 { 1 } else { next }
+    }
+
+    #[inline]
+    pub(crate) fn endpoint_lease_storage(
+        &self,
+        lease_slot: EndpointLeaseId,
+        generation: u32,
+    ) -> Option<(usize, usize)> {
+        let slot = self.endpoint_lease(lease_slot, generation)?;
+        Some((slot.offset as usize, slot.len as usize))
+    }
+
+    #[inline]
     fn resident_route_frame_slots_floor(&self) -> usize {
         let mut required = 0usize;
         let mut idx = 0usize;
-        while idx < self.endpoint_lease_capacity as usize {
+        while idx < usize::from(self.endpoint_lease_capacity) {
             let slot = unsafe { &*self.endpoint_leases.add(idx) };
             if slot.occupied {
                 required =
@@ -782,7 +894,7 @@ where
     fn resident_route_lane_slots_floor(&self) -> usize {
         let mut required = 0usize;
         let mut idx = 0usize;
-        while idx < self.endpoint_lease_capacity as usize {
+        while idx < usize::from(self.endpoint_lease_capacity) {
             let slot = unsafe { &*self.endpoint_leases.add(idx) };
             if slot.occupied {
                 required = core::cmp::max(required, slot.resident_budget.route_lane_slots as usize);
@@ -795,7 +907,7 @@ where
     fn resident_loop_slots_floor(&self) -> usize {
         let mut required = 0usize;
         let mut idx = 0usize;
-        while idx < self.endpoint_lease_capacity as usize {
+        while idx < usize::from(self.endpoint_lease_capacity) {
             let slot = unsafe { &*self.endpoint_leases.add(idx) };
             if slot.occupied {
                 required = core::cmp::max(required, slot.resident_budget.loop_slots as usize);
@@ -809,7 +921,7 @@ where
     fn resident_cap_entries_floor(&self) -> usize {
         let mut required = self.caps.live_count();
         let mut idx = 0usize;
-        while idx < self.endpoint_lease_capacity as usize {
+        while idx < usize::from(self.endpoint_lease_capacity) {
             let slot = unsafe { &*self.endpoint_leases.add(idx) };
             if slot.occupied {
                 required = required.saturating_add(slot.resident_budget.cap_entries as usize);
@@ -1066,21 +1178,16 @@ where
         Some(())
     }
 
+    #[cfg(test)]
     #[inline]
     pub(crate) fn record_endpoint_resident_budget(
         &mut self,
-        public_slot: u8,
+        lease_slot: EndpointLeaseId,
         generation: u32,
         budget: EndpointResidentBudget,
     ) {
-        let mut idx = 0usize;
-        while idx < self.endpoint_lease_capacity as usize {
-            let slot = unsafe { &mut *self.endpoint_leases.add(idx) };
-            if slot.occupied && slot.public_slot == public_slot && slot.generation == generation {
-                slot.resident_budget = budget;
-                return;
-            }
-            idx += 1;
+        if let Some(slot) = self.endpoint_lease_mut(lease_slot, generation) {
+            slot.resident_budget = budget;
         }
     }
 
@@ -1194,7 +1301,7 @@ where
     #[inline]
     pub(crate) fn pin_endpoint_images<const ROLE: u8>(
         &mut self,
-        public_slot: u8,
+        lease_slot: EndpointLeaseId,
         generation: u32,
         stamp: ProgramStamp,
     ) -> bool {
@@ -1206,7 +1313,7 @@ where
             return false;
         };
         if !self.record_endpoint_image_slots(
-            public_slot,
+            lease_slot,
             generation,
             program_image_slot,
             role_image_slot,
@@ -1221,20 +1328,15 @@ where
     #[inline]
     pub(crate) fn record_endpoint_image_slots(
         &mut self,
-        public_slot: u8,
+        lease_slot: EndpointLeaseId,
         generation: u32,
         program_image_slot: u8,
         role_image_slot: u8,
     ) -> bool {
-        let mut idx = 0usize;
-        while idx < self.endpoint_lease_capacity as usize {
-            let slot = unsafe { &mut *self.endpoint_leases.add(idx) };
-            if slot.occupied && slot.public_slot == public_slot && slot.generation == generation {
-                slot.program_image_slot = program_image_slot;
-                slot.role_image_slot = role_image_slot;
-                return true;
-            }
-            idx += 1;
+        if let Some(slot) = self.endpoint_lease_mut(lease_slot, generation) {
+            slot.program_image_slot = program_image_slot;
+            slot.role_image_slot = role_image_slot;
+            return true;
         }
         false
     }
@@ -1735,11 +1837,10 @@ where
     #[inline]
     pub(crate) unsafe fn allocate_endpoint_lease(
         &mut self,
-        public_slot: u8,
-        generation: u32,
         bytes: usize,
         align: usize,
-    ) -> Option<(usize, usize)> {
+        resident_budget: EndpointResidentBudget,
+    ) -> Option<(EndpointLeaseId, u32, usize, usize)> {
         let (slab_ptr, slab_len) = self.slab_ptr_and_len();
         let base = slab_ptr as usize;
         let floor = self.endpoint_lease_floor();
@@ -1749,7 +1850,7 @@ where
             let mut best_idx = None;
             let mut best_offset = 0usize;
             let mut idx = 0usize;
-            while idx < self.endpoint_lease_capacity as usize {
+            while idx < usize::from(self.endpoint_lease_capacity) {
                 let slot = unsafe { &*self.endpoint_leases.add(idx) };
                 let offset = slot.offset as usize;
                 if slot.occupied && offset < candidate_end && offset >= best_offset {
@@ -1771,21 +1872,26 @@ where
                 let offset = Self::align_down(base + gap_end - bytes, align).saturating_sub(base);
                 if offset >= gap_start && offset >= floor {
                     let mut insert_idx = 0usize;
-                    while insert_idx < self.endpoint_lease_capacity as usize {
+                    while insert_idx < usize::from(self.endpoint_lease_capacity) {
                         let slot = unsafe { &mut *self.endpoint_leases.add(insert_idx) };
                         if !slot.occupied {
+                            let generation = Self::next_endpoint_lease_generation(slot);
                             *slot = EndpointLeaseSlot {
-                                public_slot,
                                 generation,
                                 offset: offset as u32,
                                 len: bytes as u32,
-                                resident_budget: EndpointResidentBudget::ZERO,
+                                resident_budget,
                                 program_image_slot: u8::MAX,
                                 role_image_slot: u8::MAX,
                                 occupied: true,
                             };
                             let _ = slab_ptr;
-                            return Some((offset, bytes));
+                            return Some((
+                                EndpointLeaseId::try_from(insert_idx).ok()?,
+                                generation,
+                                offset,
+                                bytes,
+                            ));
                         }
                         insert_idx += 1;
                     }
@@ -1801,25 +1907,41 @@ where
         None
     }
 
+    #[cfg(test)]
     #[inline]
-    pub(crate) fn release_endpoint_lease(&mut self, public_slot: u8, generation: u32) {
-        let mut idx = 0usize;
-        while idx < self.endpoint_lease_capacity as usize {
-            let slot = unsafe { &mut *self.endpoint_leases.add(idx) };
-            if slot.occupied && slot.public_slot == public_slot && slot.generation == generation {
-                if slot.program_image_slot != u8::MAX {
-                    self.unpin_program_image_slot(slot.program_image_slot as usize);
-                }
-                if slot.role_image_slot != u8::MAX {
-                    self.unpin_role_image_slot(slot.role_image_slot as usize);
-                }
-                *slot = EndpointLeaseSlot::EMPTY;
-                self.trim_resident_headers_to_live_budget();
-                self.recompute_scratch_reserved_bytes();
-                return;
-            }
-            idx += 1;
+    pub(crate) fn reserve_endpoint_lease(
+        &mut self,
+        resident_budget: EndpointResidentBudget,
+    ) -> Option<(EndpointLeaseId, u32)> {
+        unsafe {
+            self.allocate_endpoint_lease(1, 1, resident_budget)
+                .map(|(slot, generation, _, _)| (slot, generation))
         }
+    }
+
+    #[inline]
+    pub(crate) fn release_endpoint_lease(&mut self, lease_slot: EndpointLeaseId, generation: u32) {
+        let idx = usize::from(lease_slot);
+        if idx >= usize::from(self.endpoint_lease_capacity) {
+            return;
+        }
+        let slot = unsafe { &mut *self.endpoint_leases.add(idx) };
+        if !slot.occupied || slot.generation != generation {
+            return;
+        }
+        if slot.program_image_slot != u8::MAX {
+            self.unpin_program_image_slot(slot.program_image_slot as usize);
+        }
+        if slot.role_image_slot != u8::MAX {
+            self.unpin_role_image_slot(slot.role_image_slot as usize);
+        }
+        let generation = slot.generation;
+        *slot = EndpointLeaseSlot {
+            generation,
+            ..EndpointLeaseSlot::EMPTY
+        };
+        self.trim_resident_headers_to_live_budget();
+        self.recompute_scratch_reserved_bytes();
     }
 
     #[inline]
@@ -2509,6 +2631,26 @@ where
     'cfg: 'rv,
 {
     const IMAGE_BANK_EXPANSION_TAIL_FLOOR: usize = 4 * 1024;
+    const PUBLIC_ENDPOINT_ATTACH_TAIL_FLOOR: usize = {
+        let arena_layout = crate::endpoint::kernel::EndpointArenaLayout::new(
+            crate::global::role_program::MAX_LANES,
+            crate::global::role_program::MAX_LANES,
+            crate::endpoint::kernel::MAX_ROUTE_ARM_STACK,
+            crate::eff::meta::MAX_EFF_NODES,
+            crate::global::role_program::MAX_LANES,
+        );
+        crate::endpoint::kernel::cursor_endpoint_storage_layout::<
+            0,
+            T,
+            U,
+            C,
+            crate::control::cap::mint::EpochTbl,
+            1,
+            crate::control::cap::mint::MintConfig,
+            crate::binding::BindingHandle<'cfg>,
+        >(&arena_layout, crate::global::role_program::MAX_LANES)
+        .total_bytes()
+    };
 
     #[inline]
     const fn recommended_image_slot_capacity(endpoint_slots: usize) -> usize {
@@ -2525,18 +2667,11 @@ where
         }
     }
 
-    unsafe fn init_runtime_metadata_with_image_slots(
+    fn runtime_metadata_layout_with_image_slots(
         slab: &mut [u8],
         endpoint_slots: usize,
         image_slots: usize,
-    ) -> Option<(
-        *mut ProgramImageSlot,
-        *mut RoleImageSlot,
-        *mut EndpointLeaseSlot,
-        u32,
-        u8,
-        u8,
-    )> {
+    ) -> Option<(usize, usize, usize, u32, usize, EndpointLeaseId)> {
         let base = slab.as_mut_ptr() as usize;
         let len = slab.len();
 
@@ -2552,14 +2687,48 @@ where
             core::mem::align_of::<EndpointLeaseSlot>(),
         );
         let lease_bytes = endpoint_slots.checked_mul(core::mem::size_of::<EndpointLeaseSlot>())?;
-        let frontier = lease_offset.checked_add(lease_bytes)?.wrapping_sub(base);
+        let program_offset = program_offset.wrapping_sub(base);
+        let role_offset = role_offset.wrapping_sub(base);
+        let lease_offset = lease_offset.wrapping_sub(base);
+        let frontier = lease_offset.checked_add(lease_bytes)?;
         if frontier > len {
             return None;
         }
 
-        let program_ptr = program_offset as *mut ProgramImageSlot;
-        let role_ptr = role_offset as *mut RoleImageSlot;
-        let lease_ptr = lease_offset as *mut EndpointLeaseSlot;
+        Some((
+            program_offset,
+            role_offset,
+            lease_offset,
+            frontier as u32,
+            image_slots,
+            EndpointLeaseId::try_from(endpoint_slots).ok()?,
+        ))
+    }
+
+    unsafe fn init_runtime_metadata_with_image_slots(
+        slab: &mut [u8],
+        endpoint_slots: usize,
+        image_slots: usize,
+    ) -> Option<(
+        *mut ProgramImageSlot,
+        *mut RoleImageSlot,
+        *mut EndpointLeaseSlot,
+        u32,
+        u8,
+        EndpointLeaseId,
+    )> {
+        let (
+            program_offset,
+            role_offset,
+            lease_offset,
+            frontier,
+            image_slots,
+            endpoint_lease_capacity,
+        ) = Self::runtime_metadata_layout_with_image_slots(slab, endpoint_slots, image_slots)?;
+        let base = slab.as_mut_ptr();
+        let program_ptr = unsafe { base.add(program_offset).cast::<ProgramImageSlot>() };
+        let role_ptr = unsafe { base.add(role_offset).cast::<RoleImageSlot>() };
+        let lease_ptr = unsafe { base.add(lease_offset).cast::<EndpointLeaseSlot>() };
 
         let mut idx = 0usize;
         while idx < image_slots {
@@ -2582,9 +2751,9 @@ where
             program_ptr,
             role_ptr,
             lease_ptr,
-            frontier as u32,
+            frontier,
             image_slots.min(u8::MAX as usize) as u8,
-            endpoint_slots.min(u8::MAX as usize) as u8,
+            endpoint_lease_capacity,
         ))
     }
 
@@ -2598,27 +2767,19 @@ where
         *mut EndpointLeaseSlot,
         u32,
         u8,
-        u8,
+        EndpointLeaseId,
     )> {
         unsafe {
             Self::init_runtime_metadata_with_image_slots(slab, endpoint_slots, endpoint_slots)
         }
     }
 
-    unsafe fn init_runtime_metadata_for_public_path(
+    fn runtime_metadata_layout_for_public_path(
         slab: &mut [u8],
         endpoint_slots: usize,
-    ) -> Option<(
-        *mut ProgramImageSlot,
-        *mut RoleImageSlot,
-        *mut EndpointLeaseSlot,
-        u32,
-        u8,
-        u8,
-    )> {
-        let baseline = unsafe {
-            Self::init_runtime_metadata_with_image_slots(slab, endpoint_slots, endpoint_slots)
-        }?;
+    ) -> Option<(usize, usize, usize, u32, usize, EndpointLeaseId)> {
+        let baseline =
+            Self::runtime_metadata_layout_with_image_slots(slab, endpoint_slots, endpoint_slots)?;
         if slab.len().saturating_sub(baseline.3 as usize) < Self::IMAGE_BANK_EXPANSION_TAIL_FLOOR {
             return Some(baseline);
         }
@@ -2626,9 +2787,9 @@ where
         let desired = Self::recommended_image_slot_capacity(endpoint_slots);
         let mut image_slots = desired;
         loop {
-            if let Some(layout) = unsafe {
-                Self::init_runtime_metadata_with_image_slots(slab, endpoint_slots, image_slots)
-            } {
+            if let Some(layout) =
+                Self::runtime_metadata_layout_with_image_slots(slab, endpoint_slots, image_slots)
+            {
                 if slab.len().saturating_sub(layout.3 as usize)
                     >= Self::IMAGE_BANK_EXPANSION_TAIL_FLOOR
                 {
@@ -2642,6 +2803,76 @@ where
             if image_slots < endpoint_slots {
                 image_slots = endpoint_slots;
             }
+        }
+    }
+
+    #[cfg(test)]
+    unsafe fn init_runtime_metadata_for_public_path(
+        slab: &mut [u8],
+        endpoint_slots: usize,
+    ) -> Option<(
+        *mut ProgramImageSlot,
+        *mut RoleImageSlot,
+        *mut EndpointLeaseSlot,
+        u32,
+        u8,
+        EndpointLeaseId,
+    )> {
+        let (_, _, _, _, image_slots, endpoint_lease_capacity) =
+            Self::runtime_metadata_layout_for_public_path(slab, endpoint_slots)?;
+        unsafe {
+            Self::init_runtime_metadata_with_image_slots(
+                slab,
+                usize::from(endpoint_lease_capacity),
+                image_slots,
+            )
+        }
+    }
+
+    unsafe fn init_runtime_metadata_for_public_path_auto(
+        slab: &mut [u8],
+    ) -> Option<(
+        *mut ProgramImageSlot,
+        *mut RoleImageSlot,
+        *mut EndpointLeaseSlot,
+        u32,
+        u8,
+        EndpointLeaseId,
+    )> {
+        let required_tail = Self::IMAGE_BANK_EXPANSION_TAIL_FLOOR
+            .saturating_add(Self::PUBLIC_ENDPOINT_ATTACH_TAIL_FLOOR);
+        let baseline = Self::runtime_metadata_layout_for_public_path(slab, 0)?;
+        let mut best = baseline;
+        let per_endpoint_bytes = core::mem::size_of::<ProgramImageSlot>()
+            .saturating_add(core::mem::size_of::<RoleImageSlot>())
+            .saturating_add(core::mem::size_of::<EndpointLeaseSlot>());
+        let per_endpoint_bytes = core::cmp::max(per_endpoint_bytes, 1);
+        let mut low = 1usize;
+        let mut high =
+            core::cmp::min(usize::from(EndpointLeaseId::MAX), slab.len() / per_endpoint_bytes);
+        while low <= high {
+            let mid = low + (high - low) / 2;
+            if let Some(layout) = Self::runtime_metadata_layout_for_public_path(slab, mid) {
+                if slab.len().saturating_sub(layout.3 as usize) >= required_tail {
+                    best = layout;
+                    low = mid.saturating_add(1);
+                } else if mid == 0 {
+                    break;
+                } else {
+                    high = mid - 1;
+                }
+            } else if mid == 0 {
+                break;
+            } else {
+                high = mid - 1;
+            }
+        }
+        unsafe {
+            Self::init_runtime_metadata_with_image_slots(
+                slab,
+                usize::from(best.5),
+                best.4,
+            )
         }
     }
 
@@ -2686,7 +2917,7 @@ where
                 core::ptr::null_mut(),
                 slab.len() as u32,
                 0,
-                0,
+                EndpointLeaseId::ZERO,
             ))
         };
 
@@ -2733,6 +2964,7 @@ where
     ///
     /// # Safety
     /// The returned pointer is valid for as long as the borrowed slab storage lives.
+    #[cfg(test)]
     pub(crate) unsafe fn init_in_slab(
         rv_id: RendezvousId,
         config: Config<'cfg, U, C>,
@@ -2761,7 +2993,7 @@ where
                 core::ptr::null_mut(),
                 runtime_slab.len() as u32,
                 0,
-                0,
+                EndpointLeaseId::ZERO,
             ))
         };
         unsafe {
@@ -2780,6 +3012,80 @@ where
             core::ptr::addr_of_mut!((*dst).runtime_frontier).write(image_frontier);
             core::ptr::addr_of_mut!((*dst).free_regions)
                 .write([FreeRegion::EMPTY; FREE_REGION_CAPACITY]);
+            core::ptr::addr_of_mut!((*dst).lane_range)
+                .write((lane_range.start as u32)..(lane_range.end as u32));
+            core::ptr::addr_of_mut!((*dst).universe_marker).write(PhantomData);
+            core::ptr::addr_of_mut!((*dst).transport).write(transport);
+            GenTable::init_empty(core::ptr::addr_of_mut!((*dst).r#gen));
+            AssocTable::init_empty(core::ptr::addr_of_mut!((*dst).assoc));
+            CheckpointTable::init_empty(core::ptr::addr_of_mut!((*dst).checkpoints));
+            SpliceStateTable::init_empty(core::ptr::addr_of_mut!((*dst).splice));
+            DistributedSpliceTable::init_empty(core::ptr::addr_of_mut!((*dst).distributed_splice));
+            core::ptr::addr_of_mut!((*dst).cap_nonce).write(Cell::new(0));
+            CapTable::init_empty(core::ptr::addr_of_mut!((*dst).caps));
+            LoopTable::init_empty(core::ptr::addr_of_mut!((*dst).loops));
+            RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
+            PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
+            VmCapsTable::init_empty(core::ptr::addr_of_mut!((*dst).vm_caps));
+            SlotArena::init_empty(core::ptr::addr_of_mut!((*dst).slot_arena));
+            HostSlots::init_empty(core::ptr::addr_of_mut!((*dst).host_slots));
+            core::ptr::addr_of_mut!((*dst).clock).write(clock);
+            core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
+            core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
+        }
+        Some(dst)
+    }
+
+    /// Materialize a rendezvous directly into the borrowed slab prefix using a
+    /// public-path endpoint capacity derived from the runtime slab owner.
+    ///
+    /// # Safety
+    /// The returned pointer is valid for as long as the borrowed slab storage lives.
+    pub(crate) unsafe fn init_in_slab_auto(
+        rv_id: RendezvousId,
+        config: Config<'cfg, U, C>,
+        transport: T,
+    ) -> Option<*mut Self> {
+        let ConfigParts {
+            tap_buf,
+            slab,
+            lane_range,
+            clock,
+            liveness_policy,
+        } = config.into_parts();
+        let (dst, runtime_slab) = unsafe { Self::carve_resident_storage(slab) }?;
+        let (
+            program_images,
+            role_images,
+            endpoint_leases,
+            image_frontier,
+            image_slot_capacity,
+            endpoint_lease_capacity,
+        ) = unsafe {
+            Self::init_runtime_metadata_for_public_path_auto(runtime_slab).unwrap_or((
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                runtime_slab.len() as u32,
+                0,
+                EndpointLeaseId::ZERO,
+            ))
+        };
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).brand_marker).write(PhantomData);
+            core::ptr::addr_of_mut!((*dst).id).write(rv_id);
+            core::ptr::addr_of_mut!((*dst).tap).write(TapRing::from_storage(tap_buf));
+            core::ptr::addr_of_mut!((*dst).slab).write(runtime_slab as *mut [u8]);
+            core::ptr::addr_of_mut!((*dst).slab_marker).write(PhantomData);
+            core::ptr::addr_of_mut!((*dst).image_frontier).write(image_frontier);
+            core::ptr::addr_of_mut!((*dst).scratch_reserved_bytes).write(0);
+            core::ptr::addr_of_mut!((*dst).program_images).write(program_images);
+            core::ptr::addr_of_mut!((*dst).role_images).write(role_images);
+            core::ptr::addr_of_mut!((*dst).endpoint_leases).write(endpoint_leases);
+            core::ptr::addr_of_mut!((*dst).image_slot_capacity).write(image_slot_capacity);
+            core::ptr::addr_of_mut!((*dst).endpoint_lease_capacity).write(endpoint_lease_capacity);
+            core::ptr::addr_of_mut!((*dst).runtime_frontier).write(image_frontier);
+            core::ptr::addr_of_mut!((*dst).free_regions).write([FreeRegion::EMPTY; FREE_REGION_CAPACITY]);
             core::ptr::addr_of_mut!((*dst).lane_range)
                 .write((lane_range.start as u32)..(lane_range.end as u32));
             core::ptr::addr_of_mut!((*dst).universe_marker).write(PhantomData);
@@ -4453,11 +4759,11 @@ mod epf_tests {
                     &mut scratch,
                 )
                 .expect("materialize first role image");
-            rendezvous
-                .allocate_endpoint_lease(7, 1, 1, 1)
+            let (lease_slot, generation, _, _) = rendezvous
+                .allocate_endpoint_lease(7, 1, EndpointResidentBudget::ZERO)
                 .expect("lease endpoint slot");
             assert!(
-                rendezvous.pin_endpoint_images::<0>(7, 1, summary_a.stamp()),
+                rendezvous.pin_endpoint_images::<0>(lease_slot, generation, summary_a.stamp()),
                 "active endpoint must pin compiled images"
             );
             let frontier_after_first = rendezvous.image_frontier;
@@ -4468,7 +4774,7 @@ mod epf_tests {
                     .is_none(),
                 "pinned image slot must not be reusable while the endpoint is live"
             );
-            rendezvous.release_endpoint_lease(7, 1);
+            rendezvous.release_endpoint_lease(lease_slot, generation);
 
             let image_b = rendezvous
                 .materialize_program_image_from_summary(summary_b.stamp(), &summary_b)
@@ -4490,11 +4796,13 @@ mod epf_tests {
         let summary_b = route_summary_alt();
         with_image_test_rendezvous_public_slots(1, |rendezvous| unsafe {
             assert_eq!(
-                rendezvous.endpoint_lease_capacity, 1,
+                rendezvous.endpoint_lease_capacity,
+                EndpointLeaseId::from(1u8),
                 "public-path lease budget should keep the requested endpoint slot count"
             );
             assert!(
-                rendezvous.image_slot_capacity > rendezvous.endpoint_lease_capacity,
+                EndpointLeaseId::from(rendezvous.image_slot_capacity)
+                    > rendezvous.endpoint_lease_capacity,
                 "public-path image bank must decouple compiled image capacity from endpoint leases"
             );
 

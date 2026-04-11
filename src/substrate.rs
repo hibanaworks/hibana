@@ -23,7 +23,7 @@ pub(crate) unsafe fn public_endpoint_access<
     Mint,
 >(
     kit: &'r SessionKit<'cfg, T, U, C, MAX_RV>,
-    slot: u8,
+    handle: crate::endpoint::carrier::PackedEndpointHandle,
     generation: u32,
 ) -> Option<
     *mut crate::endpoint::carrier::KernelCursorEndpoint<
@@ -42,9 +42,11 @@ where
     Mint: control::cap::mint::MintConfigMarker,
     'cfg: 'r,
 {
+    let rv = handle.rendezvous();
+    let slot = handle.slot();
     unsafe {
         kit.inner
-            .public_endpoint_ptr::<ROLE, Mint>(slot, generation)
+            .public_endpoint_ptr::<ROLE, Mint>(rv, slot, generation)
             .map(|ptr| {
                 ptr.cast::<crate::endpoint::carrier::KernelCursorEndpoint<
                     'r,
@@ -55,21 +57,6 @@ where
                     crate::binding::BindingHandle<'r>,
                 >>()
             })
-    }
-}
-
-fn public_endpoint_release<'r, 'cfg, T, U, C, const MAX_RV: usize>(
-    kit: &'r SessionKit<'cfg, T, U, C, MAX_RV>,
-    slot: u8,
-    generation: u32,
-) where
-    T: crate::transport::Transport + 'cfg,
-    U: crate::runtime::consts::LabelUniverse + 'cfg,
-    C: crate::runtime::config::Clock + 'cfg,
-    'cfg: 'r,
-{
-    unsafe {
-        kit.inner.release_public_endpoint_slot(slot, generation);
     }
 }
 
@@ -158,13 +145,12 @@ where
         'cfg: 'r,
     {
         let (slot, generation) = self.inner.enter(rv, sid, program, binding)?;
-        Ok(crate::endpoint::Endpoint::from_handle(
-            self,
-            slot,
-            generation,
-            public_endpoint_access::<ROLE, T, U, C, MAX_RV, Mint>,
-            public_endpoint_release::<T, U, C, MAX_RV>,
-        ))
+        let handle = crate::endpoint::carrier::PackedEndpointHandle::new(rv, slot);
+        let endpoint = unsafe {
+            public_endpoint_access::<ROLE, T, U, C, MAX_RV, Mint>(self, handle, generation)
+                .expect("public endpoint must stay addressable immediately after attach")
+        };
+        Ok(crate::endpoint::Endpoint::from_ptr(endpoint))
     }
 
     #[inline]

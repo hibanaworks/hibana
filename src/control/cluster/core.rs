@@ -74,7 +74,6 @@ type ErasedPublicEndpointKernel<'cfg, T, U, C, const MAX_RV: usize> =
         crate::control::cap::mint::MintConfig,
         crate::binding::BindingHandle<'cfg>,
     >;
-type PublicEndpointDropFn = unsafe fn(*mut ());
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PublicEndpointStorageLayout {
@@ -115,7 +114,7 @@ use crate::global::{
     const_dsl::{PolicyMode, ScopeId},
 };
 use crate::observe::scope::ScopeTrace;
-use crate::rendezvous::core::{LaneLease, Rendezvous};
+use crate::rendezvous::core::{EndpointLeaseId, LaneLease, Rendezvous};
 use crate::rendezvous::error::RendezvousError;
 use crate::transport::context::{self, ContextValue};
 use crate::transport::{TransportAlgorithm, TransportSnapshot};
@@ -1480,9 +1479,6 @@ where
 
     /// Number of active lane leases (affine witness count).
     active_leases: core::cell::Cell<u32>,
-
-    /// Session-owned public endpoint cells backing thin-handle `Endpoint`.
-    endpoint_cells: [PublicEndpointCell; MAX_RV],
 }
 
 impl<'cfg, T, U, C, E, const MAX_RV: usize> ControlCore<'cfg, T, U, C, E, MAX_RV>
@@ -1502,9 +1498,6 @@ where
             let mut slot = 0usize;
             while slot < MAX_RV {
                 ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).cached_operands[slot]));
-                PublicEndpointCell::init_empty(core::ptr::addr_of_mut!(
-                    (*dst).endpoint_cells[slot]
-                ));
                 slot += 1;
             }
         }
@@ -1679,32 +1672,6 @@ impl<'cfg, const MAX_RV: usize> ResolverCore<'cfg, MAX_RV> {
     }
 }
 
-struct PublicEndpointCell {
-    generation: core::cell::Cell<u32>,
-    occupied: core::cell::Cell<bool>,
-    rv_raw: core::cell::Cell<u32>,
-    storage_offset: core::cell::Cell<u32>,
-    storage_len: core::cell::Cell<u32>,
-    drop_fn: core::cell::Cell<Option<PublicEndpointDropFn>>,
-}
-
-unsafe impl Sync for PublicEndpointCell {}
-
-impl PublicEndpointCell {
-    const EMPTY_RV_RAW: u32 = 0;
-
-    unsafe fn init_empty(dst: *mut Self) {
-        unsafe {
-            core::ptr::addr_of_mut!((*dst).generation).write(core::cell::Cell::new(0));
-            core::ptr::addr_of_mut!((*dst).occupied).write(core::cell::Cell::new(false));
-            core::ptr::addr_of_mut!((*dst).rv_raw).write(core::cell::Cell::new(Self::EMPTY_RV_RAW));
-            core::ptr::addr_of_mut!((*dst).storage_offset).write(core::cell::Cell::new(0));
-            core::ptr::addr_of_mut!((*dst).storage_len).write(core::cell::Cell::new(0));
-            core::ptr::addr_of_mut!((*dst).drop_fn).write(core::cell::Cell::new(None));
-        }
-    }
-}
-
 /// SessionCluster - Distributed control-plane coordinator with interior mutability.
 ///
 /// Uses `UnsafeCell` to allow `&self` methods while maintaining mutable internal state.
@@ -1797,11 +1764,6 @@ where
         unsafe { f(&mut *self.resolvers_ptr()) }
     }
 
-    #[inline]
-    fn public_endpoint_cell(&self, slot: u8) -> Option<&PublicEndpointCell> {
-        unsafe { (&(*self.control_ref_ptr()).endpoint_cells).get(slot as usize) }
-    }
-
     unsafe fn transient_graph_storage_ptr<Spec>(
         core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
         rv_id: RendezvousId,
@@ -1854,13 +1816,13 @@ where
 
     #[cfg(test)]
     fn allocate_test_endpoint_arena(
-        slot: u8,
+        slot: EndpointLeaseId,
         required_bytes: usize,
         required_align: usize,
     ) -> Option<*mut u8> {
         let mut result = None;
         TEST_ENDPOINT_ARENA_POOL.with(|storage| unsafe {
-            let slot_idx = slot as usize;
+            let slot_idx = usize::from(slot);
             if slot_idx >= TEST_ENDPOINT_ARENA_SLOTS {
                 return;
             }
@@ -1878,7 +1840,7 @@ where
 
     #[cfg(test)]
     fn materialize_test_compiled_images<'prog, const ROLE: u8, GlobalSteps, Mint>(
-        slot: u8,
+        slot: EndpointLeaseId,
         program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, GlobalSteps, Mint>,
     ) -> Option<(*const CompiledProgramImage, *const CompiledRoleImage)>
     where
@@ -1887,7 +1849,7 @@ where
         <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
             crate::global::steps::StepCount,
     {
-        let slot_idx = slot as usize;
+        let slot_idx = usize::from(slot);
         if slot_idx >= TEST_ENDPOINT_ARENA_SLOTS {
             return None;
         }
@@ -1930,14 +1892,6 @@ where
             });
         });
         result
-    }
-
-    #[inline]
-    fn next_public_endpoint_generation(cell: &PublicEndpointCell) -> u32 {
-        let next = cell.generation.get().wrapping_add(1);
-        let generation = if next == 0 { 1 } else { next };
-        cell.generation.set(generation);
-        generation
     }
 
     #[inline(always)]
@@ -1998,12 +1952,10 @@ where
     fn allocate_storage_for_rv(
         &self,
         rv_id: RendezvousId,
-        slot: u8,
-        generation: u32,
         required_bytes: usize,
         required_align: usize,
         resident_budget: crate::rendezvous::core::EndpointResidentBudget,
-    ) -> Option<(*mut u8, usize)> {
+    ) -> Option<(EndpointLeaseId, u32, *mut u8)> {
         let mut result = None;
         self.with_control_mut(|core| {
             let Some(rv) = core.locals.get_mut(&rv_id) else {
@@ -2015,8 +1967,8 @@ where
             {
                 return;
             }
-            let Some((offset, _len)) = (unsafe {
-                rv.allocate_endpoint_lease(slot, generation, required_bytes, required_align)
+            let Some((slot, generation, offset, _len)) = (unsafe {
+                rv.allocate_endpoint_lease(required_bytes, required_align, resident_budget)
             }) else {
                 return;
             };
@@ -2025,8 +1977,7 @@ where
                 rv.release_endpoint_lease(slot, generation);
                 return;
             }
-            rv.record_endpoint_resident_budget(slot, generation, resident_budget);
-            result = Some((unsafe { slab_ptr.add(offset) }, offset));
+            result = Some((slot, generation, unsafe { slab_ptr.add(offset) }));
         });
         result
     }
@@ -2034,14 +1985,13 @@ where
     fn allocate_public_endpoint_storage_for_rv<'r, const ROLE: u8, Mint>(
         &self,
         rv_id: RendezvousId,
-        slot: u8,
-        generation: u32,
         required_bytes: usize,
         required_align: usize,
         resident_budget: crate::rendezvous::core::EndpointResidentBudget,
     ) -> Option<(
+        EndpointLeaseId,
+        u32,
         *mut PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>,
-        usize,
     )>
     where
         Mint: crate::control::cap::mint::MintConfigMarker,
@@ -2049,16 +1999,15 @@ where
     {
         self.allocate_storage_for_rv(
             rv_id,
-            slot,
-            generation,
             required_bytes,
             required_align,
             resident_budget,
         )
-        .map(|(ptr, offset)| {
+        .map(|(slot, generation, ptr)| {
             (
+                slot,
+                generation,
                 ptr.cast::<PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>>(),
-                offset,
             )
         })
     }
@@ -2067,7 +2016,7 @@ where
     fn pin_compiled_images_for_public_endpoint<const ROLE: u8>(
         &self,
         rv_id: RendezvousId,
-        slot: u8,
+        slot: EndpointLeaseId,
         generation: u32,
         stamp: crate::global::compiled::ProgramStamp,
     ) -> Result<(), AttachError> {
@@ -2080,48 +2029,23 @@ where
         if pinned {
             Ok(())
         } else {
-            self.with_control_mut(|core| {
-                if let Some(rv) = core.locals.get_mut(&rv_id) {
-                    rv.release_endpoint_lease(slot, generation);
-                }
-            });
             Err(AttachError::Control(CpError::ResourceExhausted))
         }
     }
 
-    fn public_endpoint_storage_raw_ptr(&self, slot: u8) -> Option<*mut ()> {
-        let cell = self.public_endpoint_cell(slot)?;
-        let rv_raw = cell.rv_raw.get();
-        if rv_raw == PublicEndpointCell::EMPTY_RV_RAW {
-            return None;
-        }
-        let rv = self.get_local(&RendezvousId::new(rv_raw as u16))?;
+    fn public_endpoint_storage_raw_ptr(
+        &self,
+        rv_id: RendezvousId,
+        slot: EndpointLeaseId,
+        generation: u32,
+    ) -> Option<*mut ()> {
+        let rv = self.get_local(&rv_id)?;
         let (slab_ptr, slab_len) = rv.slab_ptr_and_len();
-        let offset = cell.storage_offset.get() as usize;
-        let len = cell.storage_len.get() as usize;
+        let (offset, len) = rv.endpoint_lease_storage(slot, generation)?;
         if len == 0 || offset + len > slab_len {
             return None;
         }
         Some(unsafe { slab_ptr.add(offset).cast() })
-    }
-
-    fn acquire_public_endpoint_slot(&self) -> Result<(u8, u32), AttachError> {
-        self.with_control_mut(|core| {
-            let mut slot = 0usize;
-            while slot < MAX_RV {
-                let cell = &core.endpoint_cells[slot];
-                if !cell.occupied.get() {
-                    cell.occupied.set(true);
-                    cell.rv_raw.set(PublicEndpointCell::EMPTY_RV_RAW);
-                    cell.storage_offset.set(0);
-                    cell.storage_len.set(0);
-                    cell.drop_fn.set(None);
-                    return Ok((slot as u8, Self::next_public_endpoint_generation(cell)));
-                }
-                slot += 1;
-            }
-            Err(AttachError::Control(CpError::ResourceExhausted))
-        })
     }
 
     fn ensure_program_image<const ROLE: u8, GlobalSteps, Mint>(
@@ -2238,74 +2162,53 @@ where
 
     unsafe fn public_endpoint_storage_ptr<'r, const ROLE: u8, Mint>(
         &self,
-        slot: u8,
-    ) -> Option<*mut PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>>
-    where
-        Mint: crate::control::cap::mint::MintConfigMarker,
-        'cfg: 'r,
-    {
-        self.public_endpoint_storage_raw_ptr(slot)
-            .map(|ptr| ptr.cast::<PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>>())
-    }
-
-    pub(crate) unsafe fn public_endpoint_ptr<'r, const ROLE: u8, Mint>(
-        &self,
-        slot: u8,
+        rv_id: RendezvousId,
+        slot: EndpointLeaseId,
         generation: u32,
     ) -> Option<*mut PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>>
     where
         Mint: crate::control::cap::mint::MintConfigMarker,
         'cfg: 'r,
     {
-        let cell = self.public_endpoint_cell(slot)?;
-        if !cell.occupied.get() || cell.generation.get() != generation {
-            return None;
-        }
-        let ptr = unsafe { self.public_endpoint_storage_ptr::<ROLE, Mint>(slot) };
-        ptr
+        self.public_endpoint_storage_raw_ptr(rv_id, slot, generation)
+            .map(|ptr| ptr.cast::<PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>>())
     }
 
-    pub(crate) unsafe fn release_public_endpoint_slot(&self, slot: u8, generation: u32) {
-        let Some(cell) = self.public_endpoint_cell(slot) else {
-            return;
-        };
-        if !cell.occupied.get() || cell.generation.get() != generation {
-            return;
-        }
-        if let Some(drop_fn) = cell.drop_fn.replace(None)
-            && let Some(ptr) = self.public_endpoint_storage_raw_ptr(slot)
-        {
-            unsafe { drop_fn(ptr) };
-        }
-        let rv_raw = cell.rv_raw.get();
-        if rv_raw != PublicEndpointCell::EMPTY_RV_RAW {
-            self.with_control_mut(|core| {
-                if let Some(rv) = core.locals.get_mut(&RendezvousId::new(rv_raw as u16)) {
-                    rv.release_endpoint_lease(slot, generation);
-                }
-            });
-        }
-        cell.rv_raw.set(PublicEndpointCell::EMPTY_RV_RAW);
-        cell.storage_offset.set(0);
-        cell.storage_len.set(0);
-        cell.occupied.set(false);
+    pub(crate) unsafe fn public_endpoint_ptr<'r, const ROLE: u8, Mint>(
+        &self,
+        rv_id: RendezvousId,
+        slot: EndpointLeaseId,
+        generation: u32,
+    ) -> Option<*mut PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>>
+    where
+        Mint: crate::control::cap::mint::MintConfigMarker,
+        'cfg: 'r,
+    {
+        unsafe { self.public_endpoint_storage_ptr::<ROLE, Mint>(rv_id, slot, generation) }
+    }
+
+    pub(crate) unsafe fn release_public_endpoint_slot(
+        &self,
+        rv_id: RendezvousId,
+        slot: EndpointLeaseId,
+        generation: u32,
+    ) {
+        self.with_control_mut(|core| {
+            if let Some(rv) = core.locals.get_mut(&rv_id) {
+                rv.release_endpoint_lease(slot, generation);
+            }
+        });
     }
 
     #[inline]
-    pub(crate) fn release_public_endpoint_slot_owned(&self, slot: u8, generation: u32) {
+    pub(crate) fn release_public_endpoint_slot_owned(
+        &self,
+        rv_id: RendezvousId,
+        slot: EndpointLeaseId,
+        generation: u32,
+    ) {
         unsafe {
-            self.release_public_endpoint_slot(slot, generation);
-        }
-    }
-
-    unsafe fn drop_public_endpoint_value<const ROLE: u8, Mint>(ptr: *mut ())
-    where
-        Mint: crate::control::cap::mint::MintConfigMarker,
-    {
-        unsafe {
-            core::ptr::drop_in_place(
-                ptr.cast::<PublicEndpointKernel<'cfg, ROLE, T, U, C, MAX_RV, Mint>>(),
-            );
+            self.release_public_endpoint_slot(rv_id, slot, generation);
         }
     }
 
@@ -2369,6 +2272,24 @@ where
     ///
     /// Public callers should use this entrypoint instead of constructing
     /// rendezvous internals directly.
+    #[cfg(not(test))]
+    pub(crate) fn add_rendezvous_from_config(
+        &self,
+        config: crate::runtime::config::Config<'cfg, U, C>,
+        transport: T,
+    ) -> Result<RendezvousId, CpError> {
+        self.with_control_mut(|core| {
+            match core.locals.register_local_from_config_auto(config, transport) {
+                Ok(id) => Ok(id),
+                Err(
+                    RegisterRendezvousError::CapacityExceeded
+                    | RegisterRendezvousError::StorageExhausted,
+                ) => Err(CpError::ResourceExhausted),
+            }
+        })
+    }
+
+    #[cfg(test)]
     pub(crate) fn add_rendezvous_from_config(
         &self,
         config: crate::runtime::config::Config<'cfg, U, C>,
@@ -2379,6 +2300,23 @@ where
                 .locals
                 .register_local_from_config(config, transport, MAX_RV)
             {
+                Ok(id) => Ok(id),
+                Err(
+                    RegisterRendezvousError::CapacityExceeded
+                    | RegisterRendezvousError::StorageExhausted,
+                ) => Err(CpError::ResourceExhausted),
+            }
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn add_rendezvous_from_config_auto(
+        &self,
+        config: crate::runtime::config::Config<'cfg, U, C>,
+        transport: T,
+    ) -> Result<RendezvousId, CpError> {
+        self.with_control_mut(|core| {
+            match core.locals.register_local_from_config_auto(config, transport) {
                 Ok(id) => Ok(id),
                 Err(
                     RegisterRendezvousError::CapacityExceeded
@@ -3804,7 +3742,7 @@ where
         sid: SessionId,
         compiled_program: &CompiledProgramImage,
         compiled_role: *const CompiledRoleImage,
-        public_slot: u8,
+        public_slot: EndpointLeaseId,
         public_generation: u32,
         public_slot_owned: bool,
         mint: Mint,
@@ -3883,6 +3821,7 @@ where
                 epoch,
                 compiled_role as *const CompiledRoleImage,
                 compiled_program.control_semantics() as *const ControlSemanticsTable,
+                rv_id,
                 public_slot,
                 public_generation,
                 public_slot_owned,
@@ -3935,7 +3874,7 @@ where
         sid: SessionId,
         program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
         binding: crate::binding::BindingHandle<'r>,
-    ) -> Result<(u8, u32), AttachError>
+    ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
         Mint: crate::control::cap::mint::MintConfigMarker,
         GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
@@ -3953,7 +3892,7 @@ where
         sid: SessionId,
         program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
         binding: crate::binding::BindingHandle<'r>,
-    ) -> Result<(u8, u32), AttachError>
+    ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
         Mint: crate::control::cap::mint::MintConfigMarker,
         GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
@@ -3961,63 +3900,62 @@ where
             crate::global::steps::StepCount,
         'cfg: 'r,
     {
-        let (slot, generation) = self.acquire_public_endpoint_slot()?;
-        let init_result = match self.ensure_compiled_images(rv_id, program) {
+        match self.ensure_compiled_images(rv_id, program) {
             Ok((compiled_program, compiled_role)) => unsafe {
                 let binding_enabled = binding.uses_binding_storage();
                 let storage_layout =
                     Self::public_endpoint_storage_requirement(&*compiled_role, binding_enabled);
                 let resident_budget =
                     Self::public_endpoint_resident_budget(&*compiled_role, program);
-                if let Some((dst, offset)) = self
+                let (slot, generation, dst) = match self
                     .allocate_public_endpoint_storage_for_rv::<ROLE, Mint>(
                         rv_id,
-                        slot,
-                        generation,
                         storage_layout.total_bytes,
                         storage_layout.total_align,
                         resident_budget,
-                    )
-                {
-                    let arena_storage = dst.cast::<u8>().add(storage_layout.arena_offset);
-                    self.init_endpoint_with_compiled_into::<ROLE, Mint, crate::binding::BindingHandle<'r>>(
-                        dst,
-                        arena_storage,
-                        rv_id,
-                        sid,
-                        &*compiled_program,
-                        compiled_role,
-                        slot,
-                        generation,
-                        false,
-                        program.mint_config(),
-                        binding_enabled,
-                        binding,
-                    )?;
-                    self.pin_compiled_images_for_public_endpoint::<ROLE>(
-                        rv_id,
-                        slot,
-                        generation,
-                        program.stamp(),
-                    )?;
-                    if let Some(cell) = self.public_endpoint_cell(slot) {
-                        cell.rv_raw.set(rv_id.raw() as u32);
-                        cell.storage_offset.set(offset as u32);
-                        cell.storage_len.set(storage_layout.total_bytes as u32);
-                        cell.drop_fn
-                            .set(Some(Self::drop_public_endpoint_value::<ROLE, Mint>));
-                    }
-                    Ok(())
-                } else {
-                    Err(AttachError::Control(CpError::ResourceExhausted))
+                    ) {
+                    Some(parts) => parts,
+                    None => return Err(AttachError::Control(CpError::ResourceExhausted)),
+                };
+                let arena_storage = dst.cast::<u8>().add(storage_layout.arena_offset);
+                if let Err(err) = self.init_endpoint_with_compiled_into::<
+                    ROLE,
+                    Mint,
+                    crate::binding::BindingHandle<'r>,
+                >(
+                    dst,
+                    arena_storage,
+                    rv_id,
+                    sid,
+                    &*compiled_program,
+                    compiled_role,
+                    slot,
+                    generation,
+                    true,
+                    program.mint_config(),
+                    binding_enabled,
+                    binding,
+                ) {
+                    self.with_control_mut(|core| {
+                        if let Some(rv) = core.locals.get_mut(&rv_id) {
+                            rv.release_endpoint_lease(slot, generation);
+                        }
+                    });
+                    return Err(err);
                 }
+                if let Err(err) = self.pin_compiled_images_for_public_endpoint::<ROLE>(
+                    rv_id,
+                    slot,
+                    generation,
+                    program.stamp(),
+                ) {
+                    core::ptr::drop_in_place(dst);
+                    return Err(err);
+                }
+                Ok((slot, generation))
             },
             Err(err) => Err(err),
-        };
-        if init_result.is_err() {
-            unsafe { self.release_public_endpoint_slot(slot, generation) };
         }
-        init_result.map(|_| (slot, generation))
     }
 
     #[cfg(test)]
@@ -4047,62 +3985,79 @@ where
         <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
             crate::global::steps::StepCount,
     {
-        let (slot, generation) = self.acquire_public_endpoint_slot()?;
-        let init_result = match Self::materialize_test_compiled_images(slot, program) {
-            Some((compiled_program, compiled_role)) => unsafe {
-                let binding_enabled = true;
-                let resident_budget =
-                    Self::public_endpoint_resident_budget(&*compiled_role, program);
-                let resident_ready = self.with_control_mut(|core| {
-                    let Some(rv) = core.locals.get_mut(&rv_id) else {
-                        return false;
-                    };
-                    if rv
-                        .ensure_endpoint_resident_budget(resident_budget)
-                        .is_none()
-                    {
-                        return false;
-                    }
-                    rv.record_endpoint_resident_budget(slot, generation, resident_budget);
-                    true
-                });
-                if !resident_ready {
-                    return Err(AttachError::Control(CpError::ResourceExhausted));
-                }
-                let arena_layout =
-                    (*compiled_role).endpoint_arena_layout_for_binding(binding_enabled);
-                let Some(arena_storage) = Self::allocate_test_endpoint_arena(
-                    slot,
-                    arena_layout.total_bytes(),
-                    arena_layout.total_align(),
-                ) else {
-                    return Err(AttachError::Control(CpError::ResourceExhausted));
-                };
-                self.init_endpoint_with_compiled_into::<ROLE, Mint, B>(
-                    dst,
-                    arena_storage,
-                    rv_id,
-                    sid,
-                    &*compiled_program,
-                    compiled_role,
-                    slot,
-                    generation,
-                    true,
-                    program.mint_config(),
-                    binding_enabled,
-                    binding,
-                )?;
-                Ok(())
-            },
-            None => Err(AttachError::Control(CpError::ResourceExhausted)),
+        let lease = self.with_control_mut(|core| {
+            let rv = core.locals.get_mut(&rv_id)?;
+            rv.reserve_endpoint_lease(crate::rendezvous::core::EndpointResidentBudget::ZERO)
+        });
+        let Some((slot, generation)) = lease else {
+            return Err(AttachError::Control(CpError::ResourceExhausted));
         };
-        if init_result.is_ok()
-            && let Some(cell) = self.public_endpoint_cell(slot)
-        {
-            cell.rv_raw.set(rv_id.raw() as u32);
+        let Some((compiled_program, compiled_role)) = Self::materialize_test_compiled_images(slot, program)
+        else {
+            self.with_control_mut(|core| {
+                if let Some(rv) = core.locals.get_mut(&rv_id) {
+                    rv.release_endpoint_lease(slot, generation);
+                }
+            });
+            return Err(AttachError::Control(CpError::ResourceExhausted));
+        };
+        let binding_enabled = true;
+        let resident_budget =
+            Self::public_endpoint_resident_budget(unsafe { &*compiled_role }, program);
+        let resident_ready = self.with_control_mut(|core| {
+            let Some(rv) = core.locals.get_mut(&rv_id) else {
+                return false;
+            };
+            if rv
+                .ensure_endpoint_resident_budget(resident_budget)
+                .is_none()
+            {
+                return false;
+            }
+            rv.record_endpoint_resident_budget(slot, generation, resident_budget);
+            true
+        });
+        if !resident_ready {
+            self.with_control_mut(|core| {
+                if let Some(rv) = core.locals.get_mut(&rv_id) {
+                    rv.release_endpoint_lease(slot, generation);
+                }
+            });
+            return Err(AttachError::Control(CpError::ResourceExhausted));
         }
+        let arena_layout = unsafe { (*compiled_role).endpoint_arena_layout_for_binding(binding_enabled) };
+        let Some(arena_storage) =
+            Self::allocate_test_endpoint_arena(slot, arena_layout.total_bytes(), arena_layout.total_align())
+        else {
+            self.with_control_mut(|core| {
+                if let Some(rv) = core.locals.get_mut(&rv_id) {
+                    rv.release_endpoint_lease(slot, generation);
+                }
+            });
+            return Err(AttachError::Control(CpError::ResourceExhausted));
+        };
+        let init_result = unsafe {
+            self.init_endpoint_with_compiled_into::<ROLE, Mint, B>(
+                dst,
+                arena_storage,
+                rv_id,
+                sid,
+                &*compiled_program,
+                compiled_role,
+                slot,
+                generation,
+                true,
+                program.mint_config(),
+                binding_enabled,
+                binding,
+            )
+        };
         if init_result.is_err() {
-            unsafe { self.release_public_endpoint_slot(slot, generation) };
+            self.with_control_mut(|core| {
+                if let Some(rv) = core.locals.get_mut(&rv_id) {
+                    rv.release_endpoint_lease(slot, generation);
+                }
+            });
         }
         init_result
     }
@@ -4114,7 +4069,7 @@ where
         sid: SessionId,
         program: &crate::g::advanced::RoleProgram<'_, ROLE, LocalSteps, Mint>,
         binding: crate::binding::BindingHandle<'r>,
-    ) -> Result<(u8, u32), AttachError>
+    ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
         Mint: crate::control::cap::mint::MintConfigMarker,
         LocalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
@@ -4132,7 +4087,7 @@ where
         sid: SessionId,
         program: &crate::g::advanced::RoleProgram<'_, ROLE, LocalSteps, Mint>,
         binding: crate::binding::BindingHandle<'r>,
-    ) -> Result<(u8, u32), AttachError>
+    ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
         Mint: crate::control::cap::mint::MintConfigMarker,
         LocalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
@@ -4566,7 +4521,7 @@ mod tests {
             DefaultLabelUniverse,
             CounterClock,
             4,
-        >::materialize_test_compiled_images(slot, &projected)
+        >::materialize_test_compiled_images(slot.into(), &projected)
         .expect("materialize huge choreography compiled image");
         let compiled_role = unsafe { &*compiled_role };
         let active_lane_count = compiled_role.active_lane_count();
@@ -4651,10 +4606,10 @@ mod tests {
     }
 
     #[test]
-    fn public_endpoint_cell_stays_small_and_metadata_only() {
+    fn public_endpoint_leases_stay_small_and_metadata_only() {
         assert!(
-            size_of::<PublicEndpointCell>() <= 6 * size_of::<usize>(),
-            "public endpoint cell must stay a small metadata owner"
+            size_of::<crate::rendezvous::core::EndpointLeaseSlot>() <= 6 * size_of::<usize>(),
+            "public endpoint lease must stay a small metadata owner"
         );
         let endpoint_storage_bytes = size_of::<
             ErasedPublicEndpointKernel<
@@ -4670,6 +4625,158 @@ mod tests {
             "shared cluster test slab must cover one leased public endpoint (required={}, cap={})",
             endpoint_storage_bytes,
             CLUSTER_TEST_SLAB_CAPACITY,
+        );
+    }
+
+    #[test]
+    fn same_rendezvous_multi_enter_is_not_limited_by_max_rv() {
+        run_on_transient_compiled_test_stack(
+            "same_rendezvous_multi_enter_is_not_limited_by_max_rv",
+            || {
+                with_cluster_fixture(|clock, config| {
+                    with_test_cluster_1(clock, |cluster| {
+                        let controller_program: crate::g::advanced::RoleProgram<
+                            '_,
+                            0,
+                            _,
+                            MintConfig,
+                        > = role_program::project(&LINEAR_HEAVY_PROGRAM);
+                        let worker_program: crate::g::advanced::RoleProgram<
+                            '_,
+                            1,
+                            _,
+                            MintConfig,
+                        > = role_program::project(&LINEAR_HEAVY_PROGRAM);
+                        let rv_id = cluster
+                            .add_rendezvous_from_config_auto(config, DummyTransport)
+                            .expect("register rendezvous");
+                        let lease_capacity = cluster
+                            .get_local(&rv_id)
+                            .expect("registered rendezvous")
+                            .endpoint_lease_capacity();
+                        assert!(
+                            lease_capacity > EndpointLeaseId::from(1u8),
+                            "public-path rendezvous must derive more than one endpoint lease even when MAX_RV=1 (capacity={lease_capacity})"
+                        );
+
+                        let first = cluster
+                            .enter(
+                                rv_id,
+                                SessionId::new(1),
+                                &controller_program,
+                                crate::binding::BindingHandle::None(crate::binding::NoBinding),
+                            )
+                            .expect("enter controller on single rendezvous");
+                        let second = cluster
+                            .enter(
+                                rv_id,
+                                SessionId::new(1),
+                                &worker_program,
+                                crate::binding::BindingHandle::None(crate::binding::NoBinding),
+                            )
+                            .expect("enter worker on same rendezvous");
+
+                        assert_ne!(
+                            first.0, second.0,
+                            "same-session controller/worker enters must keep distinct lease identities"
+                        );
+
+                        unsafe {
+                            let worker_endpoint = cluster
+                                .public_endpoint_ptr::<1, MintConfig>(rv_id, second.0, second.1)
+                                .expect("live worker endpoint");
+                            core::ptr::drop_in_place(worker_endpoint);
+                            cluster.release_public_endpoint_slot_owned(rv_id, second.0, second.1);
+                            drop_test_public_endpoint(cluster, rv_id, first);
+                        }
+                    });
+                });
+            },
+        );
+    }
+
+    #[test]
+    fn public_endpoint_slot_ids_do_not_truncate_above_u8() {
+        run_on_transient_compiled_test_stack(
+            "public_endpoint_slot_ids_do_not_truncate_above_u8",
+            || {
+                with_cluster_fixture(|clock, config| {
+                    with_test_cluster_1(clock, |cluster| {
+                        let rv_id = cluster
+                            .add_rendezvous_from_config_auto(config, DummyTransport)
+                            .expect("register rendezvous");
+                        let lease_capacity = cluster
+                            .get_local(&rv_id)
+                            .expect("registered rendezvous")
+                            .endpoint_lease_capacity();
+                        assert!(
+                            lease_capacity > EndpointLeaseId::from(u8::MAX),
+                            "public-path rendezvous must expose lease ids above u8 for this regression test (capacity={lease_capacity})"
+                        );
+
+                        let mut handles = [(
+                            EndpointLeaseId::ZERO,
+                            0u32,
+                            0usize,
+                            0usize,
+                        ); u8::MAX as usize + 2];
+                        cluster.with_control_mut(|core| {
+                            let rv = core.locals.get_mut(&rv_id).expect("registered rendezvous");
+                            for handle in &mut handles {
+                                *handle = unsafe {
+                                    rv.allocate_endpoint_lease(
+                                        1,
+                                        1,
+                                        crate::rendezvous::core::EndpointResidentBudget::ZERO,
+                                    )
+                                }
+                                .expect("lease across wide slot ids");
+                            }
+                        });
+
+                        assert_eq!(
+                            handles[u8::MAX as usize].0,
+                            EndpointLeaseId::from(u8::MAX),
+                            "slot 255 must remain addressable without narrowing"
+                        );
+                        assert_eq!(
+                            handles[u8::MAX as usize + 1].0,
+                            u16::from(EndpointLeaseId::from(u8::MAX)).saturating_add(1).into(),
+                            "slot 256 must survive without truncation"
+                        );
+
+                        let slot_255_storage = cluster
+                            .get_local(&rv_id)
+                            .expect("registered rendezvous")
+                            .endpoint_lease_storage(
+                                handles[u8::MAX as usize].0,
+                                handles[u8::MAX as usize].1,
+                            )
+                            .expect("slot 255 storage");
+                        let slot_256_storage = cluster
+                            .get_local(&rv_id)
+                            .expect("registered rendezvous")
+                            .endpoint_lease_storage(
+                                handles[u8::MAX as usize + 1].0,
+                                handles[u8::MAX as usize + 1].1,
+                            )
+                            .expect("slot 256 storage");
+                        assert_ne!(
+                            slot_255_storage.0, slot_256_storage.0,
+                            "distinct wide lease ids must resolve to distinct storage offsets"
+                        );
+                        assert_eq!(slot_255_storage.1, 1);
+                        assert_eq!(slot_256_storage.1, 1);
+
+                        cluster.with_control_mut(|core| {
+                            let rv = core.locals.get_mut(&rv_id).expect("registered rendezvous");
+                            for handle in handles.into_iter().rev() {
+                                rv.release_endpoint_lease(handle.0, handle.1);
+                            }
+                        });
+                    });
+                });
+            },
         );
     }
 
@@ -4999,6 +5106,8 @@ mod tests {
             const { UnsafeCell::new([0u8; CLUSTER_TEST_SLAB_CAPACITY]) };
         static CLUSTER_SLAB1: UnsafeCell<[u8; CLUSTER_TEST_SLAB_CAPACITY]> =
             const { UnsafeCell::new([0u8; CLUSTER_TEST_SLAB_CAPACITY]) };
+        static CLUSTER_SLOT_1: UnsafeCell<MaybeUninit<StaticTestCluster<1>>> =
+            const { UnsafeCell::new(MaybeUninit::uninit()) };
         static CLUSTER_SLOT_4: UnsafeCell<MaybeUninit<StaticTestCluster<4>>> =
             const { UnsafeCell::new(MaybeUninit::uninit()) };
         static CLUSTER_TEST_CLOCK: CounterClock = const { CounterClock::new() };
@@ -5085,6 +5194,35 @@ mod tests {
             core::ptr::drop_in_place(ptr);
             result
         })
+    }
+
+    fn with_test_cluster_1<R>(
+        clock: &'static CounterClock,
+        f: impl FnOnce(&'static StaticTestCluster<1>) -> R,
+    ) -> R {
+        CLUSTER_SLOT_1.with(|slot| unsafe {
+            let ptr = (*slot.get()).as_mut_ptr();
+            SessionCluster::init_empty(ptr, clock);
+            let result = f(&*ptr);
+            core::ptr::drop_in_place(ptr);
+            result
+        })
+    }
+
+    unsafe fn drop_test_public_endpoint<const MAX_RV: usize>(
+        cluster: &'static StaticTestCluster<MAX_RV>,
+        rv_id: RendezvousId,
+        handle: (crate::rendezvous::core::EndpointLeaseId, u32),
+    ) {
+        let endpoint = unsafe {
+            cluster
+                .public_endpoint_ptr::<0, MintConfig>(rv_id, handle.0, handle.1)
+                .expect("live public endpoint")
+        };
+        unsafe {
+            core::ptr::drop_in_place(endpoint);
+        }
+        cluster.release_public_endpoint_slot_owned(rv_id, handle.0, handle.1);
     }
 
     fn run_on_transient_compiled_test_stack<F>(name: &'static str, test: F)

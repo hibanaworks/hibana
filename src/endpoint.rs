@@ -26,20 +26,13 @@ type KernelEndpoint<'r, const ROLE: u8, K, Mint> =
     carrier::KernelCursorEndpoint<'r, ROLE, K, EpochTbl, Mint, EndpointBinding<'r>>;
 type KernelRouteBranch<'r, const ROLE: u8, K, Mint> =
     carrier::KernelRouteBranch<'r, ROLE, K, EpochTbl, Mint, EndpointBinding<'r>>;
-type EndpointAccessFn<'r, const ROLE: u8, K, Mint> =
-    unsafe fn(&'r K, u8, u32) -> Option<*mut KernelEndpoint<'r, ROLE, K, Mint>>;
-type EndpointReleaseFn<'r, K> = fn(&'r K, u8, u32);
 
 struct EndpointInner<'r, const ROLE: u8, K, Mint>
 where
     K: carrier::SessionKitFamily + 'r,
     Mint: MintConfigMarker,
 {
-    kit: &'r K,
-    slot: u8,
-    generation: u32,
-    access: EndpointAccessFn<'r, ROLE, K, Mint>,
-    release: EndpointReleaseFn<'r, K>,
+    endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>,
     _cfg: core::marker::PhantomData<EndpointCfg<'r, K, Mint>>,
     _local_only: crate::local::LocalOnly,
 }
@@ -62,9 +55,7 @@ where
     Mint: MintConfigMarker,
 {
     branch: Option<KernelRouteBranch<'r, ROLE, K, Mint>>,
-    kit: &'r K,
-    slot: u8,
-    generation: u32,
+    endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>,
     _borrow: core::marker::PhantomData<&'e mut EndpointCfg<'r, K, Mint>>,
     _local_only: crate::local::LocalOnly,
 }
@@ -75,27 +66,12 @@ where
     Mint: MintConfigMarker,
 {
     #[inline]
-    fn from_handle(
-        kit: &'r K,
-        slot: u8,
-        generation: u32,
-        access: EndpointAccessFn<'r, ROLE, K, Mint>,
-        release: EndpointReleaseFn<'r, K>,
-    ) -> Self {
+    fn from_ptr(endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>) -> Self {
         Self {
-            kit,
-            slot,
-            generation,
-            access,
-            release,
+            endpoint,
             _cfg: core::marker::PhantomData,
             _local_only: crate::local::LocalOnly::new(),
         }
-    }
-
-    #[inline]
-    fn endpoint_ptr(&self) -> Option<*mut KernelEndpoint<'r, ROLE, K, Mint>> {
-        unsafe { (self.access)(self.kit, self.slot, self.generation) }
     }
 }
 
@@ -106,15 +82,9 @@ where
     Mint: MintConfigMarker,
 {
     #[inline]
-    pub(crate) fn from_handle(
-        kit: &'r K,
-        slot: u8,
-        generation: u32,
-        access: EndpointAccessFn<'r, ROLE, K, Mint>,
-        release: EndpointReleaseFn<'r, K>,
-    ) -> Self {
+    pub(crate) fn from_ptr(endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>) -> Self {
         Self {
-            inner: EndpointInner::from_handle(kit, slot, generation, access, release),
+            inner: EndpointInner::from_ptr(endpoint),
         }
     }
 }
@@ -127,16 +97,12 @@ where
 {
     #[inline]
     pub(crate) fn from_parts(
-        kit: &'r K,
-        slot: u8,
-        generation: u32,
+        endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>,
         branch: KernelRouteBranch<'r, ROLE, K, Mint>,
     ) -> Self {
         Self {
             branch: Some(branch),
-            kit,
-            slot,
-            generation,
+            endpoint,
             _borrow: core::marker::PhantomData,
             _local_only: crate::local::LocalOnly::new(),
         }
@@ -149,7 +115,9 @@ where
     Mint: MintConfigMarker,
 {
     fn drop(&mut self) {
-        (self.inner.release)(self.inner.kit, self.inner.slot, self.inner.generation);
+        unsafe {
+            core::ptr::drop_in_place(self.inner.endpoint);
+        }
     }
 }
 
@@ -172,10 +140,9 @@ where
         M: crate::global::MessageSpec + crate::global::SendableLabel,
         'cfg: 'r,
     {
-        let endpoint = self.inner.endpoint_ptr().ok_or(SendError::PhaseInvariant)?;
         unsafe {
             Ok(flow::Flow::from_cap_flow(
-                (&mut *endpoint).flow_for_kit::<M>()?,
+                (&mut *self.inner.endpoint).flow_for_kit::<M>()?,
             ))
         }
     }
@@ -186,8 +153,7 @@ where
         M: crate::global::MessageSpec,
         M::Payload: crate::transport::wire::WireDecodeOwned,
     {
-        let endpoint = self.inner.endpoint_ptr().ok_or(RecvError::PhaseInvariant)?;
-        unsafe { (&mut *endpoint).recv_direct::<M>().await }
+        unsafe { (&mut *self.inner.endpoint).recv_direct::<M>().await }
     }
 
     #[inline]
@@ -196,14 +162,8 @@ where
     ) -> RecvResult<
         RouteBranch<'e, 'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
     > {
-        let endpoint = self.inner.endpoint_ptr().ok_or(RecvError::PhaseInvariant)?;
-        let branch = unsafe { (&mut *endpoint).offer().await? };
-        Ok(RouteBranch::from_parts(
-            self.inner.kit,
-            self.inner.slot,
-            self.inner.generation,
-            branch,
-        ))
+        let branch = unsafe { (&mut *self.inner.endpoint).offer().await? };
+        Ok(RouteBranch::from_parts(self.inner.endpoint, branch))
     }
 }
 
@@ -230,16 +190,8 @@ where
         M: crate::global::MessageSpec,
         M::Payload: crate::transport::wire::WireDecodeOwned,
     {
-        let endpoint = unsafe {
-            crate::substrate::public_endpoint_access::<ROLE, T, U, C, MAX_RV, Mint>(
-                self.kit,
-                self.slot,
-                self.generation,
-            )
-        }
-        .ok_or(RecvError::PhaseInvariant)?;
         let payload = unsafe {
-            (&mut *endpoint)
+            (&mut *self.endpoint)
                 .decode_branch::<M>(
                     self.branch
                         .as_mut()
@@ -262,12 +214,7 @@ where
             return;
         };
         unsafe {
-            K::stash_route_branch_preview::<ROLE, Mint>(
-                self.kit,
-                self.slot,
-                self.generation,
-                branch,
-            );
+            K::stash_route_branch_preview::<ROLE, Mint>(self.endpoint, branch);
         }
     }
 }

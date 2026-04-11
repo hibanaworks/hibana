@@ -2,9 +2,35 @@
 
 use core::marker::PhantomData;
 
+use crate::{
+    control::types::RendezvousId,
+    rendezvous::core::EndpointLeaseId,
+};
+
 pub(crate) struct SessionCfg<K>(pub(crate) PhantomData<fn() -> K>);
 
 pub(crate) struct EndpointCfg<K, Mint, B>(pub(crate) PhantomData<fn() -> (K, Mint, B)>);
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub(crate) struct PackedEndpointHandle(u32);
+
+impl PackedEndpointHandle {
+    #[inline]
+    pub(crate) fn new(rv: RendezvousId, slot: EndpointLeaseId) -> Self {
+        Self(((rv.raw() as u32) << 16) | (u16::from(slot) as u32))
+    }
+
+    #[inline]
+    pub(crate) fn rendezvous(self) -> RendezvousId {
+        RendezvousId::new((self.0 >> 16) as u16)
+    }
+
+    #[inline]
+    pub(crate) fn slot(self) -> EndpointLeaseId {
+        EndpointLeaseId::from(self.0 as u16)
+    }
+}
 
 pub(crate) trait SessionKitFamily {
     type Transport;
@@ -30,9 +56,13 @@ pub(crate) trait SessionKitFamily {
         B: crate::binding::BindingSlot + 'r;
 
     unsafe fn stash_route_branch_preview<'r, const ROLE: u8, Mint>(
-        kit: &'r Self,
-        slot: u8,
-        generation: u32,
+        endpoint: *mut Self::KernelCursorEndpoint<
+            'r,
+            ROLE,
+            crate::control::cap::mint::EpochTbl,
+            Mint,
+            crate::binding::BindingHandle<'r>,
+        >,
         branch: Self::KernelRouteBranch<
             'r,
             ROLE,
@@ -84,9 +114,13 @@ where
 
     #[inline]
     unsafe fn stash_route_branch_preview<'r, const ROLE: u8, Mint>(
-        kit: &'r Self,
-        slot: u8,
-        generation: u32,
+        endpoint: *mut Self::KernelCursorEndpoint<
+            'r,
+            ROLE,
+            crate::control::cap::mint::EpochTbl,
+            Mint,
+            crate::binding::BindingHandle<'r>,
+        >,
         branch: Self::KernelRouteBranch<
             'r,
             ROLE,
@@ -98,13 +132,6 @@ where
         Self: 'r,
         Mint: crate::control::cap::mint::MintConfigMarker,
     {
-        let Some(endpoint) = (unsafe {
-            crate::substrate::public_endpoint_access::<ROLE, T, U, C, MAX_RV, Mint>(
-                kit, slot, generation,
-            )
-        }) else {
-            return;
-        };
         unsafe {
             (&mut *endpoint).stash_pending_branch_preview(branch);
         }

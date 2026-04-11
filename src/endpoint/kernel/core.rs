@@ -61,6 +61,7 @@ use crate::{
         affine::LaneGuard,
         control::{ControlOutcome, SessionControlCtx},
     },
+    rendezvous::core::EndpointLeaseId,
     epf::{self, AbortInfo, Action, vm::Slot},
     observe::core::{TapEvent, emit},
     observe::scope::ScopeTrace,
@@ -426,7 +427,8 @@ pub struct CursorEndpoint<
     pub(super) _epoch: EndpointEpoch<'r, E>,
     /// Phase-aware cursor for multi-lane parallel execution.
     pub(super) cursor: PhaseCursor,
-    pub(super) public_slot: u8,
+    pub(super) public_rv: RendezvousId,
+    pub(super) public_slot: EndpointLeaseId,
     pub(super) public_generation: u32,
     pub(super) public_slot_owned: bool,
     pub(super) control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
@@ -635,7 +637,7 @@ const fn storage_max(lhs: usize, rhs: usize) -> usize {
 }
 
 #[inline]
-pub(crate) fn cursor_endpoint_storage_layout<
+pub(crate) const fn cursor_endpoint_storage_layout<
     'r,
     const ROLE: u8,
     T,
@@ -5329,7 +5331,11 @@ where
         {
             if self.public_slot_owned {
                 cluster
-                    .release_public_endpoint_slot_owned(self.public_slot, self.public_generation);
+                    .release_public_endpoint_slot_owned(
+                        self.public_rv,
+                        self.public_slot,
+                        self.public_generation,
+                    );
             }
             self.public_generation = 0;
         }

@@ -1,6 +1,6 @@
 use crate::binding::BindingSlot;
 use crate::control::cap::mint::{E0, EndpointEpoch, EpochTable, MintConfigMarker, Owner};
-use crate::control::types::SessionId;
+use crate::control::types::{RendezvousId, SessionId};
 use crate::endpoint::affine::LaneGuard;
 use crate::endpoint::control::SessionControlCtx;
 use crate::endpoint::kernel::frontier_state::FrontierState;
@@ -8,6 +8,7 @@ use crate::endpoint::kernel::inbox::BindingInbox;
 use crate::endpoint::kernel::route_state::RouteState;
 use crate::global::compiled::{CompiledRoleImage, ControlSemanticsTable};
 use crate::global::typestate::PhaseCursor;
+use crate::rendezvous::core::EndpointLeaseId;
 use crate::rendezvous::port::Port;
 use crate::runtime::consts::LabelUniverse;
 use crate::transport::Transport;
@@ -33,7 +34,8 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     sid: SessionId,
     owner: Owner<'r, E0>,
     epoch: EndpointEpoch<'r, E>,
-    public_slot: u8,
+    public_rv: RendezvousId,
+    public_slot: EndpointLeaseId,
     public_generation: u32,
     public_slot_owned: bool,
     liveness_policy: crate::runtime::config::LivenessPolicy,
@@ -67,6 +69,7 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
         ::core::ptr::addr_of_mut!((*dst).sid).write(sid);
         ::core::ptr::addr_of_mut!((*dst)._owner).write(owner);
         ::core::ptr::addr_of_mut!((*dst)._epoch).write(epoch);
+        ::core::ptr::addr_of_mut!((*dst).public_rv).write(public_rv);
         ::core::ptr::addr_of_mut!((*dst).public_slot).write(public_slot);
         ::core::ptr::addr_of_mut!((*dst).public_generation).write(public_generation);
         ::core::ptr::addr_of_mut!((*dst).public_slot_owned).write(public_slot_owned);
@@ -253,7 +256,8 @@ pub(crate) unsafe fn init_empty_from_compiled<
     epoch: EndpointEpoch<'r, E>,
     compiled_role: *const CompiledRoleImage,
     control_semantics: *const ControlSemanticsTable,
-    public_slot: u8,
+    public_rv: RendezvousId,
+    public_slot: EndpointLeaseId,
     public_generation: u32,
     public_slot_owned: bool,
     liveness_policy: crate::runtime::config::LivenessPolicy,
@@ -287,6 +291,7 @@ pub(crate) unsafe fn init_empty_from_compiled<
             sid,
             owner,
             epoch,
+            public_rv,
             public_slot,
             public_generation,
             public_slot_owned,

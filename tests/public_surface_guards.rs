@@ -3527,15 +3527,15 @@ fn typestate_nodes_stay_packed_and_sentinel_backed() {
 }
 
 #[test]
-fn public_endpoint_cells_stay_metadata_only() {
+fn public_endpoint_handles_route_through_rendezvous_endpoint_leases() {
     let cluster_core_src = include_str!("../src/control/cluster/core.rs");
 
     assert!(
-        cluster_core_src.contains("struct PublicEndpointCell {")
-            && cluster_core_src.contains("rv_raw: core::cell::Cell<u32>,")
-            && cluster_core_src.contains("storage_offset: core::cell::Cell<u32>,")
-            && cluster_core_src.contains("storage_len: core::cell::Cell<u32>,"),
-        "PublicEndpointCell must stay a small metadata owner"
+        !cluster_core_src.contains("struct PublicEndpointCell {")
+            && !cluster_core_src.contains("endpoint_cells:")
+            && cluster_core_src.contains("slot: EndpointLeaseId,")
+            && cluster_core_src.contains("release_public_endpoint_slot_owned("),
+        "public endpoint ownership must stay on rendezvous endpoint leases"
     );
     for forbidden in [
         "MaybeUninit<ErasedPublicEndpointKernel",
@@ -3543,7 +3543,7 @@ fn public_endpoint_cells_stay_metadata_only() {
     ] {
         assert!(
             !cluster_core_src.contains(forbidden),
-            "PublicEndpointCell must not inline endpoint kernels again: {forbidden}"
+            "rendezvous endpoint leases must not inline endpoint kernels again: {forbidden}"
         );
     }
 }

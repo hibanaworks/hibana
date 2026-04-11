@@ -157,6 +157,7 @@ where
     /// Register a local rendezvous by constructing it directly inside the
     /// fixed-capacity owner slot instead of materialising a large temporary on
     /// the caller stack first.
+    #[cfg(test)]
     pub(crate) fn register_local_from_config(
         &mut self,
         config: crate::runtime::config::Config<'cfg, U, C>,
@@ -179,6 +180,30 @@ where
                 config,
                 transport,
                 endpoint_slots,
+            )
+        })?;
+        Ok(id)
+    }
+
+    pub(crate) fn register_local_from_config_auto(
+        &mut self,
+        config: crate::runtime::config::Config<'cfg, U, C>,
+        transport: T,
+    ) -> Result<RendezvousId, RegisterRendezvousError> {
+        if self.entries.is_full() {
+            return Err(RegisterRendezvousError::CapacityExceeded);
+        }
+        let id = self
+            .next_available_rendezvous_id()
+            .ok_or(RegisterRendezvousError::CapacityExceeded)?;
+        self.entries.try_push_with(|slot| unsafe {
+            let entry = slot.as_mut_ptr();
+            core::ptr::addr_of_mut!((*entry).0).write(id);
+            RendezvousEntry::init_from_config_auto(
+                core::ptr::addr_of_mut!((*entry).1),
+                id,
+                config,
+                transport,
             )
         })?;
         Ok(id)
@@ -262,6 +287,7 @@ where
     U: LabelUniverse,
     C: Clock,
 {
+    #[cfg(test)]
     unsafe fn init_from_config(
         dst: *mut Self,
         rv_id: RendezvousId,
@@ -280,6 +306,25 @@ where
         }
         Ok(())
     }
+
+    unsafe fn init_from_config_auto(
+        dst: *mut Self,
+        rv_id: RendezvousId,
+        config: crate::runtime::config::Config<'cfg, U, C>,
+        transport: T,
+    ) -> Result<(), RegisterRendezvousError> {
+        let rendezvous = unsafe {
+            Rendezvous::init_in_slab_auto(rv_id, config, transport)
+                .ok_or(RegisterRendezvousError::StorageExhausted)?
+        };
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).rendezvous).write(NonNull::new_unchecked(rendezvous));
+            core::ptr::addr_of_mut!((*dst).active).write(false);
+            core::ptr::addr_of_mut!((*dst)._marker).write(PhantomData);
+        }
+        Ok(())
+    }
+
 }
 
 impl<'cfg, T, U, C, E> Drop for RendezvousEntry<'cfg, T, U, C, E>

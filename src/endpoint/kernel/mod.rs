@@ -95,6 +95,5 @@ pub(crate) use self::core::cursor_endpoint_storage_layout;
 pub(super) use self::core::*;
 pub(crate) use self::core::{CanonicalTokenProvider, CursorEndpoint, RouteBranch};
 pub(crate) use self::frontier::FrontierScratchLayout;
-#[cfg(test)]
 pub(crate) use self::frontier::MAX_ROUTE_ARM_STACK;
 pub(crate) use self::layout::EndpointArenaLayout;

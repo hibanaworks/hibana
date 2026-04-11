@@ -504,7 +504,7 @@ fn substrate_cluster_registration_avoids_rendezvous_stack_temporary() {
 
     assert!(
         cluster_core_ws
-            .contains("core .locals .register_local_from_config(config, transport, MAX_RV)"),
+            .contains("core.locals.register_local_from_config_auto(config, transport)"),
         "cluster rendezvous registration must construct directly inside the lease-core owner slot"
     );
     for forbidden in [

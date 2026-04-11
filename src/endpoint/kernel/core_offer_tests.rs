@@ -942,7 +942,7 @@ fn install_offer_hint_worker_lane_one<'r, B>(
         worker_image_frontier,
         worker_scratch_reserved_bytes,
         worker_endpoint_leases,
-        worker_endpoint_lease_capacity,
+        worker_endpoint_lease_capacity.into(),
         Lane::new(1),
         1,
         2,

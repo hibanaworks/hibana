@@ -130,7 +130,7 @@ pub(crate) struct Port<
     image_frontier: *const u32,
     scratch_reserved_bytes: *const u32,
     endpoint_leases: *const super::core::EndpointLeaseSlot,
-    endpoint_lease_capacity: u8,
+    endpoint_lease_capacity: super::core::EndpointLeaseId,
     scratch_marker: PhantomData<&'r mut [u8]>,
     #[cfg(test)]
     host_slots: *const HostSlots<'static>,
@@ -191,7 +191,7 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         image_frontier: *const u32,
         scratch_reserved_bytes: *const u32,
         endpoint_leases: *const super::core::EndpointLeaseSlot,
-        endpoint_lease_capacity: u8,
+        endpoint_lease_capacity: super::core::EndpointLeaseId,
         lane: Lane,
         role: u8,
         role_count: u8,
@@ -254,9 +254,9 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         let (_, slab_len) = self.slab_ptr_and_len();
         let mut floor = slab_len;
         let mut idx = 0usize;
-        while idx < self.endpoint_lease_capacity as usize {
+        while idx < usize::from(self.endpoint_lease_capacity) {
             let slot = unsafe { &*self.endpoint_leases.add(idx) };
-            if slot.occupied && (slot.offset as usize) < floor {
+            if slot.occupied && slot.len != 0 && (slot.offset as usize) < floor {
                 floor = slot.offset as usize;
             }
             idx += 1;
@@ -436,7 +436,7 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         *const u32,
         *const u32,
         *const super::core::EndpointLeaseSlot,
-        u8,
+        super::core::EndpointLeaseId,
     ) {
         (
             self.slab,
