@@ -1,16 +1,25 @@
 //! Crate-private lowering owners for the unified compiled pipeline.
 //!
-//! This module is intentionally internal. It gives lowering a single ownership
-//! layer without expanding the public API.
+//! This module is intentionally internal. It keeps the public-facing law small
+//! while grouping internal owners by phase: lowering validation, sealed runtime
+//! images, and transient materialization glue.
 
+#[path = "lowering/driver.rs"]
 mod driver;
+#[path = "images/image.rs"]
+mod image;
+#[path = "materialize/lease.rs"]
 mod lease;
+#[path = "images/program.rs"]
 mod program;
+#[path = "images/role.rs"]
 mod role;
+#[path = "lowering/seal.rs"]
 mod seal;
 
 pub(crate) use self::{
     driver::{LoweringSummary, LoweringView, ProgramStamp, RoleLoweringCounts},
+    image::{ProgramImage, RoleImageSlice},
     lease::{
         LoweringLeaseMode, init_compiled_program_image_from_summary,
         init_compiled_role_image_from_summary, with_lowering_lease,

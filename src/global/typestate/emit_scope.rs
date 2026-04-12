@@ -1,4 +1,5 @@
 use super::{
+    builder::encode_typestate_len,
     facts::StateIndex,
     registry::{RouteScopeRecord, SCOPE_LINK_NONE, ScopeRecord, ScopeRegistry},
 };
@@ -107,10 +108,27 @@ pub(super) unsafe fn init_scope_registry(
 
     unsafe {
         core::ptr::addr_of_mut!((*dst).records).write(scope_records);
-        core::ptr::addr_of_mut!((*dst).len).write(scope_records_len as u16);
+        core::ptr::addr_of_mut!((*dst).len).write(encode_typestate_len(scope_records_len));
         core::ptr::addr_of_mut!((*dst).slots_by_scope).write(slots_by_scope);
         core::ptr::addr_of_mut!((*dst).route_dense_by_slot).write(route_dense_by_slot);
         core::ptr::addr_of_mut!((*dst).route_records).write(route_records);
-        core::ptr::addr_of_mut!((*dst).route_scope_len).write(route_scope_len as u16);
+        core::ptr::addr_of_mut!((*dst).route_scope_len)
+            .write(encode_typestate_len(route_scope_len));
+        core::ptr::addr_of_mut!((*dst).frontier_entry_capacity_value).write(0);
+    }
+    let registry = unsafe { &*dst };
+    let frontier_entry_capacity = core::cmp::max(
+        core::cmp::min(
+            registry.derive_max_offer_entries(),
+            crate::global::role_program::MAX_LANES,
+        ),
+        usize::from(route_scope_len != 0),
+    );
+    if frontier_entry_capacity > u8::MAX as usize {
+        panic!("frontier entry capacity overflow");
+    }
+    unsafe {
+        core::ptr::addr_of_mut!((*dst).frontier_entry_capacity_value)
+            .write(frontier_entry_capacity as u8);
     }
 }

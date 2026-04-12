@@ -1,15 +1,22 @@
-//! Internal endpoint kernel split by responsibility.
+//! Internal endpoint kernel split by layer.
 
+#[path = "route_frontier/authority.rs"]
 mod authority;
 mod control;
 mod core;
 mod decode;
 pub(crate) mod endpoint_init;
+#[path = "route_frontier/evidence.rs"]
 mod evidence;
+#[path = "runtime/evidence_store.rs"]
 mod evidence_store;
+#[path = "runtime/frontier.rs"]
 mod frontier;
+#[path = "runtime/frontier_state.rs"]
 mod frontier_state;
+#[path = "runtime/inbox.rs"]
 mod inbox;
+#[path = "runtime/lane_port.rs"]
 mod lane_port;
 mod lane_slots {
     #[derive(Clone, Copy)]
@@ -83,10 +90,14 @@ mod lane_slots {
         }
     }
 }
+#[path = "runtime/layout.rs"]
 pub(crate) mod layout;
+#[path = "runtime/observe.rs"]
 mod observe;
+#[path = "route_frontier/offer.rs"]
 mod offer;
 mod recv;
+#[path = "runtime/route_state.rs"]
 mod route_state;
 mod send;
 

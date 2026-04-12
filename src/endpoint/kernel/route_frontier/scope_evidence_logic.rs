@@ -363,24 +363,6 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn recover_scope_evidence_conflict(
-        &mut self,
-        scope_id: ScopeId,
-        is_dynamic_scope: bool,
-        is_route_controller: bool,
-    ) -> bool {
-        if is_dynamic_scope {
-            self.clear_scope_evidence(scope_id);
-            return true;
-        }
-        if is_route_controller {
-            return false;
-        }
-        self.clear_scope_evidence(scope_id);
-        true
-    }
-
-    #[inline]
     pub(in crate::endpoint::kernel) fn can_advance_route_scope(
         &self,
         scope_id: ScopeId,
@@ -886,81 +868,6 @@ where
         self.port_for_lane(lane_idx)
             .record_route_decision(scope_id, arm);
         self.refresh_frontier_observation_cache_for_route_lane(lane_idx, previous_change_epoch);
-    }
-
-    pub(in crate::endpoint::kernel) fn ingest_binding_scope_evidence(
-        &mut self,
-        scope_id: ScopeId,
-        label: u8,
-        suppress_hint: bool,
-        label_meta: ScopeLabelMeta,
-    ) {
-        let hint_matches_scope = Self::hint_matches_scope(label_meta, label, false);
-        let exact_static_passive_arm =
-            self.static_passive_dispatch_arm_from_exact_label(scope_id, label, label_meta);
-        if !hint_matches_scope && exact_static_passive_arm.is_none() {
-            return;
-        }
-        if suppress_hint || !hint_matches_scope {
-            self.mark_scope_ready_arm_from_binding_label(scope_id, label, label_meta);
-            return;
-        }
-        self.record_scope_hint(scope_id, label);
-        self.mark_scope_ready_arm_from_binding_label(scope_id, label, label_meta);
-    }
-
-    pub(in crate::endpoint::kernel) fn ingest_scope_evidence_for_lane(
-        &mut self,
-        lane_idx: usize,
-        scope_id: ScopeId,
-        suppress_hint: bool,
-        label_meta: ScopeLabelMeta,
-    ) {
-        if suppress_hint {
-            if let Some(label) = self.take_hint_for_lane(lane_idx, false, label_meta) {
-                self.record_scope_hint_dynamic(scope_id, label);
-                self.mark_scope_ready_arm_from_label(scope_id, label, label_meta);
-            }
-
-            if let Some(arm) = self.ack_route_decision_for_lane(lane_idx, scope_id, ROLE) {
-                if let Some(arm) = Arm::new(arm) {
-                    self.record_scope_ack(scope_id, RouteDecisionToken::from_ack(arm));
-                }
-            }
-            return;
-        }
-        if let Some(arm) = self.ack_route_decision_for_lane(lane_idx, scope_id, ROLE) {
-            if let Some(arm) = Arm::new(arm) {
-                self.record_scope_ack(scope_id, RouteDecisionToken::from_ack(arm));
-            }
-        }
-        if let Some(label) = self.take_hint_for_lane(lane_idx, suppress_hint, label_meta) {
-            self.record_scope_hint(scope_id, label);
-        }
-    }
-
-    pub(in crate::endpoint::kernel) fn ingest_scope_evidence_for_offer(
-        &mut self,
-        scope_id: ScopeId,
-        summary_lane_idx: usize,
-        offer_lane_mask: u8,
-        suppress_hint: bool,
-        label_meta: ScopeLabelMeta,
-    ) {
-        if offer_lane_mask == 0 {
-            return;
-        }
-        let pending_ack_mask =
-            self.pending_scope_ack_lane_mask(summary_lane_idx, scope_id, offer_lane_mask);
-        let pending_hint_mask =
-            self.pending_scope_hint_lane_mask(summary_lane_idx, offer_lane_mask, label_meta);
-        let mut pending_evidence_mask = pending_ack_mask | pending_hint_mask;
-        if pending_evidence_mask == 0 {
-            return;
-        }
-        while let Some(lane_idx) = Self::next_lane_in_mask(&mut pending_evidence_mask) {
-            self.ingest_scope_evidence_for_lane(lane_idx, scope_id, suppress_hint, label_meta);
-        }
     }
 
     pub(in crate::endpoint::kernel) fn arm_has_recv(&self, scope_id: ScopeId, arm: u8) -> bool {

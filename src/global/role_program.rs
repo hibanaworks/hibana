@@ -373,6 +373,18 @@ pub struct ProgramWitness<Steps> {
 mod private {
     #[derive(Clone, Copy)]
     pub struct ProgramWitnessSeal;
+
+    pub trait RoleProgramViewSeal {}
+}
+
+pub(crate) trait RoleProgramView<'prog, const ROLE: u8, Mint>:
+    private::RoleProgramViewSeal
+where
+    Mint: MintConfigMarker,
+{
+    fn stamp(&self) -> ProgramStamp;
+    fn mint_config(&self) -> Mint;
+    fn lowering_input(&self) -> RoleLoweringInput<'prog>;
 }
 
 #[derive(Clone, Copy)]
@@ -497,6 +509,34 @@ where
     #[inline(always)]
     pub(crate) const fn mint_config(&self) -> Mint {
         self.mint
+    }
+}
+
+impl<'prog, const ROLE: u8, Witness, Mint> private::RoleProgramViewSeal
+    for RoleProgram<'prog, ROLE, Witness, Mint>
+where
+    Mint: MintConfigMarker,
+{
+}
+
+impl<'prog, const ROLE: u8, Witness, Mint> RoleProgramView<'prog, ROLE, Mint>
+    for RoleProgram<'prog, ROLE, Witness, Mint>
+where
+    Mint: MintConfigMarker,
+{
+    #[inline(always)]
+    fn stamp(&self) -> ProgramStamp {
+        RoleProgram::stamp(self)
+    }
+
+    #[inline(always)]
+    fn mint_config(&self) -> Mint {
+        RoleProgram::mint_config(self)
+    }
+
+    #[inline(always)]
+    fn lowering_input(&self) -> RoleLoweringInput<'prog> {
+        lowering_input(self)
     }
 }
 

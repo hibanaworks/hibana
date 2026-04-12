@@ -53,14 +53,6 @@ const fn encode_compact_count_u16(value: usize) -> u16 {
     value as u16
 }
 
-#[inline(always)]
-const fn encode_compact_count_u8(value: usize) -> u8 {
-    if value > u8::MAX as usize {
-        panic!("compiled role compact count overflow");
-    }
-    value as u8
-}
-
 /// Crate-private owner for lowered role-local facts.
 #[cfg(test)]
 #[derive(Clone, Debug)]
@@ -86,84 +78,11 @@ pub(crate) struct CompiledRoleImage {
     step_index_to_state: *const StateIndex,
     role: u8,
     role_facts: RoleResidentFacts,
-    route_facts: RouteResidentFacts,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct RouteResidentFacts {
-    compiled_frontier_entries: u8,
-    route_scope_count_value: u16,
-    max_route_stack_depth_value: u16,
-    max_loop_stack_depth_value: u16,
-}
-
-impl RouteResidentFacts {
-    const EMPTY: Self = Self {
-        compiled_frontier_entries: 0,
-        route_scope_count_value: 0,
-        max_route_stack_depth_value: 0,
-        max_loop_stack_depth_value: 0,
-    };
-
-    #[inline(always)]
-    const fn with_counts(
-        route_scope_count: usize,
-        max_route_stack_depth: usize,
-        max_loop_stack_depth: usize,
-        compiled_frontier_entries: usize,
-    ) -> Self {
-        Self {
-            compiled_frontier_entries: encode_compact_count_u8(compiled_frontier_entries),
-            route_scope_count_value: encode_compact_count_u16(route_scope_count),
-            max_route_stack_depth_value: encode_compact_count_u16(max_route_stack_depth),
-            max_loop_stack_depth_value: encode_compact_count_u16(max_loop_stack_depth),
-        }
-    }
-
-    #[inline(always)]
-    const fn route_scope_count(self) -> usize {
-        self.route_scope_count_value as usize
-    }
-
-    #[inline(always)]
-    const fn max_route_stack_depth(self) -> usize {
-        self.max_route_stack_depth_value as usize
-    }
-
-    #[inline(always)]
-    const fn max_loop_stack_depth(self) -> usize {
-        self.max_loop_stack_depth_value as usize
-    }
-
-    #[inline(always)]
-    const fn compiled_frontier_entry_capacity(self) -> usize {
-        self.compiled_frontier_entries as usize
-    }
-
-    #[inline(always)]
-    const fn scope_evidence_count(self) -> usize {
-        self.route_scope_count()
-    }
-
-    #[inline(always)]
-    const fn route_table_frame_slots(self) -> usize {
-        let floor = if self.route_scope_count() != 0 { 1 } else { 0 };
-        let depth = self.max_route_stack_depth();
-        if depth > floor { depth } else { floor }
-    }
-
-    #[inline(always)]
-    const fn loop_table_slots(self) -> usize {
-        self.max_loop_stack_depth()
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
 struct RoleResidentFacts {
     active_lane_mask_bits: u8,
-    active_lane_count_value: u8,
-    logical_lane_count_value: u8,
-    endpoint_lane_slot_count_value: u8,
     phase_len: u16,
     eff_index_to_step_len: u16,
     step_index_to_state_len: u16,
@@ -172,9 +91,6 @@ struct RoleResidentFacts {
 impl RoleResidentFacts {
     const EMPTY: Self = Self {
         active_lane_mask_bits: 0,
-        active_lane_count_value: 0,
-        logical_lane_count_value: 0,
-        endpoint_lane_slot_count_value: 0,
         phase_len: 0,
         eff_index_to_step_len: 0,
         step_index_to_state_len: 0,
@@ -183,21 +99,6 @@ impl RoleResidentFacts {
     #[inline(always)]
     const fn active_lane_mask(self) -> u8 {
         self.active_lane_mask_bits
-    }
-
-    #[inline(always)]
-    const fn active_lane_count(self) -> usize {
-        self.active_lane_count_value as usize
-    }
-
-    #[inline(always)]
-    const fn logical_lane_count(self) -> usize {
-        self.logical_lane_count_value as usize
-    }
-
-    #[inline(always)]
-    const fn endpoint_lane_slot_count(self) -> usize {
-        self.endpoint_lane_slot_count_value as usize
     }
 
     #[inline(always)]
@@ -1443,7 +1344,6 @@ impl CompiledRoleImage {
             ptr::addr_of_mut!((*dst).step_index_to_state).write(core::ptr::null());
             ptr::addr_of_mut!((*dst).role).write(role);
             ptr::addr_of_mut!((*dst).role_facts).write(RoleResidentFacts::EMPTY);
-            ptr::addr_of_mut!((*dst).route_facts).write(RouteResidentFacts::EMPTY);
         }
     }
 
@@ -1492,29 +1392,8 @@ impl CompiledRoleImage {
         }
         let active_lane_mask =
             build_active_lane_mask_from_phase_slice(&scratch.phases[..phase_len]);
-        let active_lane_count = active_lane_count_from_mask(active_lane_mask);
-        let logical_lane_count = Self::binding_lane_count(active_lane_count);
-        let endpoint_lane_slot_count = Self::endpoint_lane_slot_count_from_mask(active_lane_mask);
-        let route_scope_count = typed_typestate.route_scope_count();
-        let max_route_stack_depth = typed_typestate.max_route_stack_depth();
-        let max_loop_stack_depth = typed_typestate.max_loop_stack_depth();
-        let compiled_frontier_entries = core::cmp::max(
-            core::cmp::min(typed_typestate.max_offer_entries(), MAX_LANES),
-            usize::from(route_scope_count != 0),
-        );
         unsafe {
             (*dst).role_facts.active_lane_mask_bits = active_lane_mask;
-            (*dst).role_facts.active_lane_count_value = encode_compact_count_u8(active_lane_count);
-            (*dst).role_facts.logical_lane_count_value =
-                encode_compact_count_u8(logical_lane_count);
-            (*dst).role_facts.endpoint_lane_slot_count_value =
-                encode_compact_count_u8(endpoint_lane_slot_count);
-            ptr::addr_of_mut!((*dst).route_facts).write(RouteResidentFacts::with_counts(
-                route_scope_count,
-                max_route_stack_depth,
-                max_loop_stack_depth,
-                compiled_frontier_entries,
-            ));
             (*dst).role_facts.phase_len = encode_compact_count_u16(phase_len);
             core::ptr::copy_nonoverlapping(
                 scratch.phases.as_ptr(),
@@ -1709,28 +1588,29 @@ impl CompiledRoleImage {
 
     #[inline(always)]
     pub(crate) fn logical_lane_count(&self) -> usize {
-        self.role_facts.logical_lane_count()
+        Self::binding_lane_count(self.active_lane_count())
     }
 
     #[inline(always)]
     pub(crate) fn endpoint_lane_slot_count(&self) -> usize {
-        self.role_facts.endpoint_lane_slot_count()
+        Self::endpoint_lane_slot_count_from_mask(self.active_lane_mask())
     }
 
     #[inline(always)]
     pub(crate) fn max_route_stack_depth(&self) -> usize {
-        self.route_facts.max_route_stack_depth()
+        self.typestate_ref().max_route_stack_depth()
     }
 
     #[inline(always)]
-    #[cfg(test)]
     pub(crate) fn max_loop_stack_depth(&self) -> usize {
-        self.route_facts.max_loop_stack_depth()
+        self.typestate_ref().max_loop_stack_depth()
     }
 
     #[inline(always)]
     pub(crate) fn route_table_frame_slots(&self) -> usize {
-        self.route_facts.route_table_frame_slots()
+        let floor = usize::from(self.typestate_ref().route_scope_count() != 0);
+        let depth = self.max_route_stack_depth();
+        if depth > floor { depth } else { floor }
     }
 
     #[inline(always)]
@@ -1744,7 +1624,7 @@ impl CompiledRoleImage {
 
     #[inline(always)]
     pub(crate) fn loop_table_slots(&self) -> usize {
-        self.route_facts.loop_table_slots()
+        self.max_loop_stack_depth()
     }
 
     #[inline(always)]
@@ -1765,12 +1645,12 @@ impl CompiledRoleImage {
     #[inline(always)]
     #[cfg(test)]
     pub(crate) fn route_scope_count(&self) -> usize {
-        self.route_facts.route_scope_count()
+        self.typestate_ref().route_scope_count()
     }
 
     #[inline(always)]
     pub(crate) fn scope_evidence_count(&self) -> usize {
-        self.route_facts.scope_evidence_count()
+        self.typestate_ref().route_scope_count()
     }
 
     #[inline(always)]
@@ -1818,7 +1698,7 @@ impl CompiledRoleImage {
 
     #[inline(always)]
     pub(crate) fn active_lane_count(&self) -> usize {
-        self.role_facts.active_lane_count()
+        active_lane_count_from_mask(self.active_lane_mask())
     }
 
     #[inline(always)]
@@ -1828,7 +1708,7 @@ impl CompiledRoleImage {
 
     #[inline(always)]
     fn compiled_frontier_entry_capacity(&self) -> usize {
-        self.route_facts.compiled_frontier_entry_capacity()
+        self.typestate_ref().frontier_entry_capacity()
     }
 
     fn build_active_lane_dense_map_into(active_lane_mask: u8, dst: &mut [u8; MAX_LANES]) -> usize {

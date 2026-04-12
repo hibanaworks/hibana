@@ -443,8 +443,8 @@ impl RoleTypestateValue {
     }
 
     #[inline]
-    pub(crate) fn max_offer_entries(&self) -> usize {
-        self.scope_registry.max_offer_entries()
+    pub(crate) fn frontier_entry_capacity(&self) -> usize {
+        self.scope_registry.frontier_entry_capacity()
     }
 
     #[inline]

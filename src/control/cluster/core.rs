@@ -106,9 +106,11 @@ use crate::control::automaton::txn::{InAcked, InBegin, NoopTap};
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 use crate::eff::EffIndex;
 #[cfg(test)]
+use crate::global::compiled::CompiledProgramImage;
+#[cfg(test)]
 use crate::global::typestate::RoleCompileScratch;
 use crate::global::{
-    compiled::{CompiledProgramImage, CompiledRoleImage, ControlSemanticsTable},
+    compiled::{CompiledRoleImage, ProgramImage, RoleImageSlice},
     const_dsl::{PolicyMode, ScopeId},
 };
 use crate::observe::scope::ScopeTrace;
@@ -1847,18 +1849,19 @@ where
     }
 
     #[cfg(test)]
-    fn materialize_test_compiled_images<'prog, const ROLE: u8, Witness, Mint>(
+    fn materialize_test_role_image<'prog, const ROLE: u8, P, Mint>(
         slot: EndpointLeaseId,
-        program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, Witness, Mint>,
-    ) -> Option<(*const CompiledProgramImage, *const CompiledRoleImage)>
+        program: &P,
+    ) -> Option<RoleImageSlice<ROLE>>
     where
         Mint: MintConfigMarker,
+        P: crate::global::RoleProgramView<'prog, ROLE, Mint>,
     {
         let slot_idx = usize::from(slot);
         if slot_idx >= TEST_ENDPOINT_ARENA_SLOTS {
             return None;
         }
-        let lowering = crate::global::lowering_input(program);
+        let lowering = program.lowering_input();
         let summary = lowering.summary();
         let mut result = None;
         TEST_COMPILED_PROGRAM_POOL.with(|program_storage| {
@@ -1891,7 +1894,12 @@ where
                         lowering,
                         scratch_ptr,
                     );
-                    result = Some((program_ptr.cast_const(), role_ptr.cast_const()));
+                    let program_image =
+                        ProgramImage::from_raw(program.stamp(), program_ptr.cast_const());
+                    result = Some(RoleImageSlice::from_raw(
+                        program_image,
+                        role_ptr.cast_const(),
+                    ));
                 });
             });
         });
@@ -1905,11 +1913,11 @@ where
     }
 
     #[inline]
-    fn public_endpoint_storage_requirement(
-        compiled_role: &CompiledRoleImage,
+    fn public_endpoint_storage_requirement<const ROLE: u8>(
+        role_image: RoleImageSlice<ROLE>,
         binding_enabled: bool,
     ) -> PublicEndpointStorageLayout {
-        let arena_layout = compiled_role.endpoint_arena_layout_for_binding(binding_enabled);
+        let arena_layout = role_image.endpoint_arena_layout_for_binding(binding_enabled);
         let storage_layout = crate::endpoint::kernel::cursor_endpoint_storage_layout::<
             0,
             T,
@@ -1919,7 +1927,7 @@ where
             MAX_RV,
             crate::control::cap::mint::MintConfig,
             crate::binding::BindingHandle<'cfg>,
-        >(&arena_layout, compiled_role.endpoint_lane_slot_count());
+        >(&arena_layout, role_image.endpoint_lane_slot_count());
         PublicEndpointStorageLayout {
             total_bytes: storage_layout.total_bytes(),
             total_align: storage_layout.total_align(),
@@ -1938,13 +1946,9 @@ where
     }
 
     #[inline]
-    fn public_endpoint_resident_budget<const ROLE: u8, Witness, Mint>(
-        compiled_role: &CompiledRoleImage,
-        _program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
-    ) -> crate::rendezvous::core::EndpointResidentBudget
-    where
-        Mint: MintConfigMarker,
-    {
+    fn public_endpoint_resident_budget<const ROLE: u8>(
+        compiled_role: RoleImageSlice<ROLE>,
+    ) -> crate::rendezvous::core::EndpointResidentBudget {
         crate::rendezvous::core::EndpointResidentBudget::with_route_storage(
             compiled_role.route_table_frame_slots(),
             compiled_role.route_table_lane_slots(),
@@ -2017,13 +2021,13 @@ where
         rv_id: RendezvousId,
         slot: EndpointLeaseId,
         generation: u32,
-        stamp: crate::global::compiled::ProgramStamp,
+        program_image: ProgramImage,
     ) -> Result<(), AttachError> {
         let pinned = self.with_control_mut(|core| {
             let Some(rv) = core.locals.get_mut(&rv_id) else {
                 return false;
             };
-            rv.pin_endpoint_images::<ROLE>(slot, generation, stamp)
+            rv.pin_endpoint_images::<ROLE>(slot, generation, program_image.stamp())
         });
         if pinned {
             Ok(())
@@ -2047,13 +2051,14 @@ where
         Some(unsafe { slab_ptr.add(offset).cast() })
     }
 
-    fn ensure_program_image<const ROLE: u8, Witness, Mint>(
+    fn ensure_program_image<'prog, const ROLE: u8, P, Mint>(
         &self,
         rv_id: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
-    ) -> Result<*const CompiledProgramImage, AttachError>
+        program: &P,
+    ) -> Result<ProgramImage, AttachError>
     where
         Mint: MintConfigMarker,
+        P: crate::global::RoleProgramView<'prog, ROLE, Mint>,
     {
         let core = unsafe { &mut *self.control_ptr() };
         let rv = core
@@ -2061,9 +2066,9 @@ where
             .get_mut(&rv_id)
             .ok_or(AttachError::Control(CpError::ResourceExhausted))?;
         if let Some(existing) = rv.program_image(program.stamp()) {
-            return Ok(existing);
+            return Ok(unsafe { ProgramImage::from_raw(program.stamp(), existing) });
         }
-        let lowering = crate::global::lowering_input(program);
+        let lowering = program.lowering_input();
         let (mut storage, mut len) = rv.scratch_storage_ptr_and_len();
         let guard = rv.program_image_guard_bytes();
         if guard > len {
@@ -2081,17 +2086,19 @@ where
             )
         }
         .flatten()
+        .map(|compiled| unsafe { ProgramImage::from_raw(program.stamp(), compiled) })
         .ok_or(AttachError::Control(CpError::ResourceExhausted))
     }
 
     #[inline(never)]
-    fn ensure_compiled_images<const ROLE: u8, Witness, Mint>(
+    fn ensure_role_image_slice<'prog, const ROLE: u8, P, Mint>(
         &self,
         rv_id: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
-    ) -> Result<(*const CompiledProgramImage, *const CompiledRoleImage), AttachError>
+        program: &P,
+    ) -> Result<RoleImageSlice<ROLE>, AttachError>
     where
         Mint: MintConfigMarker,
+        P: crate::global::RoleProgramView<'prog, ROLE, Mint>,
     {
         let core = unsafe { &mut *self.control_ptr() };
         let rv = core
@@ -2102,9 +2109,10 @@ where
             rv.program_image(program.stamp()),
             rv.role_image::<ROLE>(program.stamp()),
         ) {
-            return Ok((program_image, role_image));
+            let program_image = unsafe { ProgramImage::from_raw(program.stamp(), program_image) };
+            return Ok(unsafe { RoleImageSlice::from_raw(program_image, role_image) });
         }
-        let lowering = crate::global::lowering_input(program);
+        let lowering = program.lowering_input();
         let (mut storage, mut len) = rv.scratch_storage_ptr_and_len();
         let has_program = rv.has_program_image(program.stamp());
         let has_role = rv.has_role_image::<ROLE>(program.stamp());
@@ -2154,7 +2162,8 @@ where
                             lowering.layout_input(),
                         )
                     }?;
-                    Some((program_image, role_image))
+                    let program_image = ProgramImage::from_raw(program.stamp(), program_image);
+                    Some(RoleImageSlice::from_raw(program_image, role_image))
                 },
             )
         }
@@ -2214,16 +2223,17 @@ where
         }
     }
 
-    fn with_transient_compiled_program<const ROLE: u8, Witness, Mint, F, R, E>(
+    fn with_transient_compiled_program<'prog, const ROLE: u8, P, Mint, F, R, E>(
         &self,
         rv_id: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
+        program: &P,
         f: F,
     ) -> Result<R, E>
     where
         Mint: MintConfigMarker,
         E: From<CpError>,
-        F: FnOnce(&CompiledProgramImage) -> Result<R, E>,
+        P: crate::global::RoleProgramView<'prog, ROLE, Mint>,
+        F: FnOnce(ProgramImage) -> Result<R, E>,
     {
         let compiled = self
             .ensure_program_image(rv_id, program)
@@ -2231,28 +2241,29 @@ where
                 AttachError::Control(cp) => E::from(cp),
                 AttachError::Rendezvous(_) => E::from(CpError::ResourceExhausted),
             })?;
-        unsafe { f(&*compiled) }
+        f(compiled)
     }
 
     #[cfg(test)]
-    fn with_transient_compiled_role<const ROLE: u8, Witness, Mint, F, R, E>(
+    fn with_transient_compiled_role<'prog, const ROLE: u8, P, Mint, F, R, E>(
         &self,
         rv_id: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
+        program: &P,
         f: F,
     ) -> Result<R, E>
     where
         Mint: MintConfigMarker,
         E: From<CpError>,
-        F: FnOnce(&CompiledProgramImage, &CompiledRoleImage) -> Result<R, E>,
+        P: crate::global::RoleProgramView<'prog, ROLE, Mint>,
+        F: FnOnce(RoleImageSlice<ROLE>) -> Result<R, E>,
     {
-        let (compiled_program, compiled_role) = self
-            .ensure_compiled_images(rv_id, program)
+        let role_image = self
+            .ensure_role_image_slice(rv_id, program)
             .map_err(|err| match err {
                 AttachError::Control(cp) => E::from(cp),
                 AttachError::Rendezvous(_) => E::from(CpError::ResourceExhausted),
             })?;
-        unsafe { f(&*compiled_program, &*compiled_role) }
+        f(role_image)
     }
 
     /// Add a local Rendezvous instance to the cluster (takes ownership).
@@ -3741,8 +3752,7 @@ where
         arena_storage: *mut u8,
         rv_id: RendezvousId,
         sid: SessionId,
-        compiled_program: &CompiledProgramImage,
-        compiled_role: *const CompiledRoleImage,
+        role_image: RoleImageSlice<ROLE>,
         public_slot: EndpointLeaseId,
         public_generation: u32,
         public_slot_owned: bool,
@@ -3756,10 +3766,10 @@ where
         Mint: crate::control::cap::mint::MintConfigMarker,
     {
         let cluster_ref: &'cfg Self = unsafe { &*(self as *const Self) };
-        let compiled_role = unsafe { &*compiled_role };
-        let effect_envelope = compiled_program.effect_envelope();
-        let role_count = core::cmp::min(compiled_program.role_count(), u8::MAX as usize) as u8;
-        let active_lane_mask = compiled_role.active_lane_mask() | 1;
+        let program_image = role_image.program();
+        let effect_envelope = program_image.effect_envelope();
+        let role_count = core::cmp::min(program_image.role_count(), u8::MAX as usize) as u8;
+        let active_lane_mask = role_image.active_lane_mask() | 1;
         let primary_lane_index = (0..crate::global::role_program::MAX_LANES)
             .find(|lane_idx| ((active_lane_mask >> lane_idx) & 1) != 0)
             .unwrap_or(0);
@@ -3820,8 +3830,8 @@ where
                 sid,
                 owner,
                 epoch,
-                compiled_role as *const CompiledRoleImage,
-                compiled_program.control_semantics() as *const ControlSemanticsTable,
+                role_image.compiled_ptr(),
+                program_image.control_semantics_ptr(),
                 rv_id,
                 public_slot,
                 public_generation,
@@ -3884,24 +3894,24 @@ where
     }
 
     #[inline]
-    fn attach_public_endpoint_inner<'r, const ROLE: u8, Witness, Mint>(
+    fn attach_public_endpoint_inner<'r, 'prog, const ROLE: u8, P, Mint>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
+        program: &P,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
         Mint: crate::control::cap::mint::MintConfigMarker,
+        P: crate::global::RoleProgramView<'prog, ROLE, Mint>,
         'cfg: 'r,
     {
-        match self.ensure_compiled_images(rv_id, program) {
-            Ok((compiled_program, compiled_role)) => unsafe {
+        match self.ensure_role_image_slice(rv_id, program) {
+            Ok(role_image) => unsafe {
                 let binding_enabled = binding.uses_binding_storage();
                 let storage_layout =
-                    Self::public_endpoint_storage_requirement(&*compiled_role, binding_enabled);
-                let resident_budget =
-                    Self::public_endpoint_resident_budget(&*compiled_role, program);
+                    Self::public_endpoint_storage_requirement(role_image, binding_enabled);
+                let resident_budget = Self::public_endpoint_resident_budget(role_image);
                 let (slot, generation, dst) = match self
                     .allocate_public_endpoint_storage_for_rv::<ROLE, Mint>(
                         rv_id,
@@ -3922,8 +3932,7 @@ where
                     arena_storage,
                     rv_id,
                     sid,
-                    &*compiled_program,
-                    compiled_role,
+                    role_image,
                     slot,
                     generation,
                     true,
@@ -3942,7 +3951,7 @@ where
                     rv_id,
                     slot,
                     generation,
-                    program.stamp(),
+                    role_image.program(),
                 ) {
                     core::ptr::drop_in_place(dst);
                     return Err(err);
@@ -3954,7 +3963,7 @@ where
     }
 
     #[cfg(test)]
-    pub(crate) unsafe fn attach_endpoint_into<'r, const ROLE: u8, Witness, Mint, B>(
+    pub(crate) unsafe fn attach_endpoint_into<'r, 'prog, const ROLE: u8, P, Mint, B>(
         &'r self,
         dst: *mut crate::endpoint::kernel::CursorEndpoint<
             'r,
@@ -3969,13 +3978,14 @@ where
         >,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
+        program: &P,
         binding: B,
     ) -> Result<(), AttachError>
     where
         'cfg: 'r,
         B: crate::binding::BindingSlot,
         Mint: crate::control::cap::mint::MintConfigMarker,
+        P: crate::global::RoleProgramView<'prog, ROLE, Mint>,
     {
         let lease = self.with_control_mut(|core| {
             let rv = core.locals.get_mut(&rv_id)?;
@@ -3984,9 +3994,7 @@ where
         let Some((slot, generation)) = lease else {
             return Err(AttachError::Control(CpError::ResourceExhausted));
         };
-        let Some((compiled_program, compiled_role)) =
-            Self::materialize_test_compiled_images(slot, program)
-        else {
+        let Some(role_image) = Self::materialize_test_role_image(slot, program) else {
             self.with_control_mut(|core| {
                 if let Some(rv) = core.locals.get_mut(&rv_id) {
                     rv.release_endpoint_lease(slot, generation);
@@ -3995,8 +4003,7 @@ where
             return Err(AttachError::Control(CpError::ResourceExhausted));
         };
         let binding_enabled = true;
-        let resident_budget =
-            Self::public_endpoint_resident_budget(unsafe { &*compiled_role }, program);
+        let resident_budget = Self::public_endpoint_resident_budget(role_image);
         let resident_ready = self.with_control_mut(|core| {
             let Some(rv) = core.locals.get_mut(&rv_id) else {
                 return false;
@@ -4018,8 +4025,7 @@ where
             });
             return Err(AttachError::Control(CpError::ResourceExhausted));
         }
-        let arena_layout =
-            unsafe { (*compiled_role).endpoint_arena_layout_for_binding(binding_enabled) };
+        let arena_layout = role_image.endpoint_arena_layout_for_binding(binding_enabled);
         let Some(arena_storage) = Self::allocate_test_endpoint_arena(
             slot,
             arena_layout.total_bytes(),
@@ -4038,8 +4044,7 @@ where
                 arena_storage,
                 rv_id,
                 sid,
-                &*compiled_program,
-                compiled_role,
+                role_image,
                 slot,
                 generation,
                 true,
@@ -4507,21 +4512,19 @@ mod tests {
         let lowering = crate::global::lowering_input(&projected);
         let summary = lowering.summary();
         let counts = CompiledProgramImage::counts(&summary);
-        let (_, compiled_role) = SessionCluster::<
+        let role_image = SessionCluster::<
             'static,
             DummyTransport,
             DefaultLabelUniverse,
             CounterClock,
             4,
-        >::materialize_test_compiled_images(
-            slot.into(), &projected
-        )
+        >::materialize_test_role_image(slot.into(), &projected)
         .expect("materialize huge choreography compiled image");
-        let compiled_role = unsafe { &*compiled_role };
+        let compiled_role = unsafe { &*role_image.compiled_ptr() };
         let active_lane_count = compiled_role.active_lane_count();
-        let endpoint_layout = compiled_role.endpoint_arena_layout_for_binding(false);
+        let endpoint_layout = role_image.endpoint_arena_layout_for_binding(false);
         let endpoint_storage =
-            StaticTestCluster::<4>::public_endpoint_storage_requirement(compiled_role, false);
+            StaticTestCluster::<4>::public_endpoint_storage_requirement(role_image, false);
         let endpoint_section_bytes = endpoint_layout.phase_cursor_state().bytes()
             + endpoint_layout.route_state().bytes()
             + endpoint_layout.route_arm_stack().bytes()
@@ -5832,7 +5835,7 @@ mod tests {
                             .with_transient_compiled_role(
                                 rv_id,
                                 &route_policy_projected_one,
-                                |_, _| Ok::<(), AttachError>(()),
+                                |_| Ok::<(), AttachError>(()),
                             )
                             .expect("materialize transient compiled role");
 
@@ -5840,7 +5843,7 @@ mod tests {
                             .with_transient_compiled_role(
                                 rv_id,
                                 &route_policy_projected_one,
-                                |_, _| Ok::<(), AttachError>(()),
+                                |_| Ok::<(), AttachError>(()),
                             )
                             .expect("rematerialize transient compiled role");
                     });
@@ -5875,19 +5878,15 @@ mod tests {
                         );
 
                         cluster
-                            .with_transient_compiled_role(
-                                rv_id,
-                                &shared_borrow_projected_a,
-                                |_, _| Ok::<(), AttachError>(()),
-                            )
+                            .with_transient_compiled_role(rv_id, &shared_borrow_projected_a, |_| {
+                                Ok::<(), AttachError>(())
+                            })
                             .expect("materialize first borrowed program");
 
                         cluster
-                            .with_transient_compiled_role(
-                                rv_id,
-                                &shared_borrow_projected_b,
-                                |_, _| Ok::<(), AttachError>(()),
-                            )
+                            .with_transient_compiled_role(rv_id, &shared_borrow_projected_b, |_| {
+                                Ok::<(), AttachError>(())
+                            })
                             .expect("materialize second borrowed program");
                     });
                 });

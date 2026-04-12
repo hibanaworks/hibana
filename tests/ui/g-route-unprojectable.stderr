@@ -5,17 +5,17 @@ error[E0080]: evaluation panicked: Route unprojectable for this role: arms not m
   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::ValidatedProgram::<hibana::g::advanced::steps::RouteSteps<hibana::g::advanced::steps::SeqSteps<hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<100>, hibana::substrate::cap::GenericCapToken<control_kinds::RouteControl<100, 0>>, hibana::g::advanced::CanonicalControl<control_kinds::RouteControl<100, 0>>>>, hibana::g::advanced::steps::StepNil>, hibana::g::advanced::steps::SeqSteps<hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, hibana::g::advanced::steps::StepNil>, hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, hibana::g::advanced::steps::StepNil>>>, hibana::g::advanced::steps::SeqSteps<hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<101>, hibana::substrate::cap::GenericCapToken<control_kinds::RouteControl<101, 0>>, hibana::g::advanced::CanonicalControl<control_kinds::RouteControl<101, 0>>>>, hibana::g::advanced::steps::StepNil>, hibana::g::advanced::steps::SeqSteps<hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, hibana::g::advanced::steps::StepNil>, hibana::g::advanced::steps::SeqSteps<hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, hibana::g::advanced::steps::StepNil>, hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<77>, ()>>, hibana::g::advanced::steps::StepNil>>>>>>::SUMMARY` failed inside this call
   |
 note: inside `hibana::global::compiled::seal::validate_all_roles`
- --> src/global/compiled/seal.rs
+ --> src/global/compiled/lowering/seal.rs
   |
   |     ProjectionSeal::<1>::validate_compiled_layout(summary.view());
   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: inside `hibana::global::compiled::seal::ProjectionSeal::<1>::validate_compiled_layout`
- --> src/global/compiled/seal.rs
+ --> src/global/compiled/lowering/seal.rs
   |
   |         Self::validate_route_projection_guarantees(view);
   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: inside `hibana::global::compiled::seal::ProjectionSeal::<1>::validate_route_projection_guarantees`
- --> src/global/compiled/seal.rs
+ --> src/global/compiled/lowering/seal.rs
   |
   | /                 Self::validate_route_scope(
   | |                     view,
@@ -26,7 +26,7 @@ note: inside `hibana::global::compiled::seal::ProjectionSeal::<1>::validate_rout
   | |                 );
   | |_________________^
 note: inside `hibana::global::compiled::seal::ProjectionSeal::<1>::validate_route_scope`
- --> src/global/compiled/seal.rs
+ --> src/global/compiled/lowering/seal.rs
   |
   | / ...   panic!(
   | | ...       "Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dynamic policy annotation provi...

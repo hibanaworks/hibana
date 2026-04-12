@@ -18,6 +18,8 @@ pub(crate) mod const_dsl;
 pub(crate) mod program;
 /// Role-local program projection and metadata.
 pub(crate) mod role_program;
+pub(crate) use role_program::RoleProgramView;
+#[cfg(test)]
 pub(crate) use role_program::lowering_input;
 /// Type-level step combinators.
 pub(crate) mod steps;

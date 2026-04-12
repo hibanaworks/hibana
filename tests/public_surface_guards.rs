@@ -20,21 +20,21 @@ fn endpoint_kernel_source() -> String {
         include_str!("../src/endpoint.rs"),
         include_str!("../src/endpoint/carrier.rs"),
         include_str!("../src/endpoint/kernel/mod.rs"),
-        include_str!("../src/endpoint/kernel/authority.rs"),
+        include_str!("../src/endpoint/kernel/route_frontier/authority.rs"),
         include_str!("../src/endpoint/kernel/control.rs"),
         include_str!("../src/endpoint/kernel/core.rs"),
         include_str!("../src/endpoint/kernel/endpoint_init.rs"),
-        include_str!("../src/endpoint/kernel/frontier_observation.rs"),
-        include_str!("../src/endpoint/kernel/frontier_select.rs"),
-        include_str!("../src/endpoint/kernel/offer_refresh.rs"),
-        include_str!("../src/endpoint/kernel/scope_evidence_logic.rs"),
+        include_str!("../src/endpoint/kernel/route_frontier/frontier_observation.rs"),
+        include_str!("../src/endpoint/kernel/route_frontier/frontier_select.rs"),
+        include_str!("../src/endpoint/kernel/route_frontier/offer_refresh.rs"),
+        include_str!("../src/endpoint/kernel/route_frontier/scope_evidence_logic.rs"),
         include_str!("../src/endpoint/kernel/decode.rs"),
-        include_str!("../src/endpoint/kernel/evidence.rs"),
-        include_str!("../src/endpoint/kernel/frontier.rs"),
-        include_str!("../src/endpoint/kernel/inbox.rs"),
-        include_str!("../src/endpoint/kernel/lane_port.rs"),
-        include_str!("../src/endpoint/kernel/observe.rs"),
-        include_str!("../src/endpoint/kernel/offer.rs"),
+        include_str!("../src/endpoint/kernel/route_frontier/evidence.rs"),
+        include_str!("../src/endpoint/kernel/runtime/frontier.rs"),
+        include_str!("../src/endpoint/kernel/runtime/inbox.rs"),
+        include_str!("../src/endpoint/kernel/runtime/lane_port.rs"),
+        include_str!("../src/endpoint/kernel/runtime/observe.rs"),
+        include_str!("../src/endpoint/kernel/route_frontier/offer.rs"),
         include_str!("../src/endpoint/kernel/recv.rs"),
         include_str!("../src/endpoint/kernel/send.rs"),
     ]
@@ -497,10 +497,11 @@ fn wire_encode_trait_does_not_keep_optional_length_fallback() {
 #[test]
 fn offer_kernel_stays_three_stage_and_fail_closed() {
     let kernel_src = endpoint_kernel_source();
-    let offer_src = include_str!("../src/endpoint/kernel/offer.rs");
+    let offer_src = include_str!("../src/endpoint/kernel/route_frontier/offer.rs");
     let cursor_src = include_str!("../src/endpoint/kernel/core.rs");
     let decode_src = include_str!("../src/endpoint/kernel/decode.rs");
     let offer_body = impl_body(offer_src, "pub async fn offer(");
+    let offer_driver_body = impl_body(offer_src, "async fn run(&mut self)");
     let select_scope_body = impl_body(
         cursor_src,
         "fn select_scope(&mut self) -> RecvResult<OfferScopeSelection>",
@@ -517,15 +518,19 @@ fn offer_kernel_stays_three_stage_and_fail_closed() {
     let decode_branch_body = impl_body(decode_src, "pub async fn decode_branch<M>(");
     let apply_branch_recv_policy_body = impl_body(decode_src, "fn apply_branch_recv_policy(");
 
-    let select_idx = offer_body
-        .find("let selection = self_endpoint.select_scope()?;")
-        .expect("offer must start by selecting a scope");
-    let resolve_idx = offer_body
+    assert!(
+        offer_body.contains("RouteFrontierMachine::new(self).run().await"),
+        "public offer must delegate orchestration through the sealed route-frontier machine"
+    );
+    let select_idx = offer_driver_body
+        .find("let selection = self.select_scope()?;")
+        .expect("offer driver must start by selecting a scope");
+    let resolve_idx = offer_driver_body
         .find(".resolve_token(")
-        .expect("offer must resolve authority via resolve_token");
-    let materialize_idx = offer_body
-        .find("return self_endpoint.materialize_branch(")
-        .expect("offer must materialize the chosen branch last");
+        .expect("offer driver must resolve authority via resolve_token");
+    let materialize_idx = offer_driver_body
+        .find("return self.materialize_branch(")
+        .expect("offer driver must materialize the chosen branch last");
     assert!(
         select_idx < resolve_idx && resolve_idx < materialize_idx,
         "offer kernel must stay ordered as select_scope -> resolve_token -> materialize_branch"
@@ -783,7 +788,7 @@ fn eff_list_does_not_re_expose_policy_marker_slices() {
 #[test]
 fn eff_list_does_not_reintroduce_derived_lookup_tables() {
     let src = include_str!("../src/global/const_dsl.rs");
-    let compiled_driver_src = include_str!("../src/global/compiled/driver.rs");
+    let compiled_driver_src = include_str!("../src/global/compiled/lowering/driver.rs");
     let compact = compact_ws(src);
 
     assert!(
@@ -836,8 +841,8 @@ fn eff_list_does_not_reintroduce_derived_lookup_tables() {
 fn role_program_does_not_own_policy_marker_metadata_iterators() {
     let role_program_src = include_str!("../src/global/role_program.rs");
     let cluster_core_src = include_str!("../src/control/cluster/core.rs");
-    let compiled_program_src = include_str!("../src/global/compiled/program.rs");
-    let compiled_driver_src = include_str!("../src/global/compiled/driver.rs");
+    let compiled_program_src = include_str!("../src/global/compiled/images/program.rs");
+    let compiled_driver_src = include_str!("../src/global/compiled/lowering/driver.rs");
 
     for forbidden in [
         "pub(crate) struct PolicyInfo",
@@ -905,6 +910,8 @@ fn program_projection_validates_without_materializing_runtime_compiled_owners() 
 #[test]
 fn runtime_compiled_materialization_stays_transient_and_cacheless() {
     let cluster_core_src = include_str!("../src/control/cluster/core.rs");
+    let compiled_mod_src = include_str!("../src/global/compiled/mod.rs");
+    let compiled_image_src = include_str!("../src/global/compiled/images/image.rs");
     let cluster_core_src = cluster_core_src
         .split("\nmod tests {")
         .next()
@@ -949,6 +956,49 @@ fn runtime_compiled_materialization_stays_transient_and_cacheless() {
         role_program_runtime_src.contains("pub struct ProgramWitness<Steps> {"),
         "RoleProgram must keep a dedicated sealed ProgramWitness owner instead of exposing raw global steps directly"
     );
+    for required in [
+        "image::{ProgramImage, RoleImageSlice}",
+        "pub(crate) struct ProgramImage",
+        "pub(crate) struct RoleImageSlice<const ROLE: u8>",
+        "pub(crate) unsafe fn from_raw(",
+        "compiled: *const CompiledProgramImage",
+        "compiled: *const CompiledRoleImage",
+        "pub(crate) trait RoleProgramView<'prog, const ROLE: u8, Mint>",
+        "impl<'prog, const ROLE: u8, Witness, Mint> RoleProgramView<'prog, ROLE, Mint>",
+    ] {
+        assert!(
+            compiled_mod_src.contains(required)
+                || compiled_image_src.contains(required)
+                || role_program_runtime_src.contains(required),
+            "compiled runtime owners must stay sealed behind ProgramImage/RoleImageSlice: {required}"
+        );
+    }
+    for required in [
+        "fn ensure_program_image<'prog, const ROLE: u8, P, Mint>(",
+        "P: crate::global::RoleProgramView<'prog, ROLE, Mint>",
+        "fn ensure_role_image_slice<'prog, const ROLE: u8, P, Mint>(",
+        "fn materialize_test_role_image<'prog, const ROLE: u8, P, Mint>(",
+        "Result<RoleImageSlice<ROLE>, AttachError>",
+        "role_image: RoleImageSlice<ROLE>",
+        "self.ensure_role_image_slice(rv_id, program)",
+    ] {
+        assert!(
+            cluster_core_src.contains(required),
+            "cluster runtime must consume sealed program images and role slices instead of raw compiled tuples: {required}"
+        );
+    }
+    for forbidden in [
+        "Result<(*const CompiledProgramImage, *const CompiledRoleImage), AttachError>",
+        "compiled_program: &CompiledProgramImage,\n        compiled_role: *const CompiledRoleImage,",
+        "fn ensure_program_image<const ROLE: u8, Witness, Mint>(",
+        "fn ensure_role_image_slice<const ROLE: u8, Witness, Mint>(",
+        "fn materialize_test_compiled_images<'prog, const ROLE: u8, Witness, Mint>(",
+    ] {
+        assert!(
+            !cluster_core_src.contains(forbidden),
+            "cluster runtime must not expose raw compiled program/role tuple owners once sealed image slices exist: {forbidden}"
+        );
+    }
 
     for forbidden in [
         "MAX_COMPILED_PROGRAMS",
@@ -1067,7 +1117,7 @@ fn large_owner_types_do_not_regress_to_copy_semantics() {
 #[test]
 fn scan_free_runtime_regression_guards_stay_source_backed() {
     let cluster_core_src = include_str!("../src/control/cluster/core.rs");
-    let driver_src = include_str!("../src/global/compiled/driver.rs");
+    let driver_src = include_str!("../src/global/compiled/lowering/driver.rs");
 
     for forbidden in [
         "mod runtime_scan_counter",
@@ -1089,7 +1139,7 @@ fn scan_free_runtime_regression_guards_stay_source_backed() {
 #[test]
 fn role_program_projection_metadata_stays_internal() {
     let role_program_src = include_str!("../src/global/role_program.rs");
-    let compiled_lease_src = include_str!("../src/global/compiled/lease.rs");
+    let compiled_lease_src = include_str!("../src/global/compiled/materialize/lease.rs");
     let role_program_ws = compact_ws(role_program_src);
 
     for forbidden in [
@@ -1213,7 +1263,7 @@ fn role_program_projection_metadata_stays_internal() {
 #[test]
 fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
     let builder_src = include_str!("../src/global/typestate/builder.rs");
-    let compiled_role_src = include_str!("../src/global/compiled/role.rs");
+    let compiled_role_src = include_str!("../src/global/compiled/images/role.rs");
     let cursor_src = include_str!("../src/global/typestate/cursor.rs");
     let role_program_src = include_str!("../src/global/role_program.rs");
     let registry_src = include_str!("../src/global/typestate/registry.rs");
@@ -1268,6 +1318,8 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
         "pub(super) records: *const ScopeRecord,",
         "pub(super) len: u16,",
         "pub(super) slots_by_scope: *const u16,",
+        "pub(super) route_scope_len: u16,",
+        "pub(super) frontier_entry_capacity_value: u8,",
     ] {
         assert!(
             registry_src.contains(required),
@@ -1305,10 +1357,9 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
                 step_index_to_state: *const StateIndex,
                 role: u8,
                 role_facts: RoleResidentFacts,
-                route_facts: RouteResidentFacts,
             }"
         )),
-        "compiled role image header should stay split into role_facts + route_facts owners"
+        "compiled role image header should stay thin and avoid duplicate route resident facts"
     );
     assert!(
         role_program_ws.contains(&compact_ws(
@@ -1335,7 +1386,7 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
 
 #[test]
 fn control_semantics_table_stays_fixed_and_stateless() {
-    let compiled_program_src = include_str!("../src/global/compiled/program.rs");
+    let compiled_program_src = include_str!("../src/global/compiled/images/program.rs");
 
     for required in [
         "pub(crate) struct ControlSemanticsTable {}",
@@ -3299,8 +3350,8 @@ fn endpoint_transport_and_mgmt_lower_layers_stay_non_public() {
     let control_src = include_str!("../src/endpoint/control.rs");
     let cursor_src = include_str!("../src/endpoint/kernel/core.rs");
     let kernel_mod_src = include_str!("../src/endpoint/kernel/mod.rs");
-    let authority_src = include_str!("../src/endpoint/kernel/authority.rs");
-    let offer_src = include_str!("../src/endpoint/kernel/offer.rs");
+    let authority_src = include_str!("../src/endpoint/kernel/route_frontier/authority.rs");
+    let offer_src = include_str!("../src/endpoint/kernel/route_frontier/offer.rs");
     let flow_src = include_str!("../src/endpoint/flow.rs");
     let cluster_core_src = include_str!("../src/control/cluster/core.rs");
     let rendezvous_core_src = include_str!("../src/rendezvous/core.rs");
@@ -3487,14 +3538,14 @@ fn endpoint_transport_and_mgmt_lower_layers_stay_non_public() {
 fn repo_does_not_reintroduce_stack_tuning_helpers() {
     let cluster_core_src = include_str!("../src/control/cluster/core.rs");
     let typestate_src = include_str!("../src/global/typestate.rs");
-    let compiled_role_src = include_str!("../src/global/compiled/role.rs");
+    let compiled_role_src = include_str!("../src/global/compiled/images/role.rs");
     let core_offer_tests_src = include_str!("../src/endpoint/kernel/core_offer_tests.rs");
     let stack_size_call = concat!("stack_size", "(");
 
     for (owner, body) in [
         ("control/cluster/core.rs", cluster_core_src),
         ("global/typestate.rs", typestate_src),
-        ("global/compiled/role.rs", compiled_role_src),
+        ("global/compiled/images/role.rs", compiled_role_src),
         ("endpoint/kernel/core_offer_tests.rs", core_offer_tests_src),
     ] {
         assert!(
@@ -3521,16 +3572,16 @@ fn repo_does_not_reintroduce_stack_tuning_helpers() {
 fn endpoint_kernel_state_stays_no_alloc() {
     for (owner, body) in [
         (
-            "endpoint/kernel/route_state.rs",
-            include_str!("../src/endpoint/kernel/route_state.rs"),
+            "endpoint/kernel/runtime/route_state.rs",
+            include_str!("../src/endpoint/kernel/runtime/route_state.rs"),
         ),
         (
-            "endpoint/kernel/frontier_state.rs",
-            include_str!("../src/endpoint/kernel/frontier_state.rs"),
+            "endpoint/kernel/runtime/frontier_state.rs",
+            include_str!("../src/endpoint/kernel/runtime/frontier_state.rs"),
         ),
         (
-            "endpoint/kernel/evidence_store.rs",
-            include_str!("../src/endpoint/kernel/evidence_store.rs"),
+            "endpoint/kernel/runtime/evidence_store.rs",
+            include_str!("../src/endpoint/kernel/runtime/evidence_store.rs"),
         ),
     ] {
         assert!(
@@ -3542,9 +3593,9 @@ fn endpoint_kernel_state_stays_no_alloc() {
 
 #[test]
 fn endpoint_kernel_storage_stays_actual_scope_bounded() {
-    let frontier_state_src = include_str!("../src/endpoint/kernel/frontier_state.rs");
-    let frontier_src = include_str!("../src/endpoint/kernel/frontier.rs");
-    let compiled_role_src = include_str!("../src/global/compiled/role.rs");
+    let frontier_state_src = include_str!("../src/endpoint/kernel/runtime/frontier_state.rs");
+    let frontier_src = include_str!("../src/endpoint/kernel/runtime/frontier.rs");
+    let compiled_role_src = include_str!("../src/global/compiled/images/role.rs");
     let rendezvous_tables_src = include_str!("../src/rendezvous/tables.rs");
 
     for forbidden in [
@@ -3562,7 +3613,7 @@ fn endpoint_kernel_storage_stays_actual_scope_bounded() {
             !frontier_state_src.contains(forbidden)
                 && !frontier_src.contains(forbidden)
                 && !compiled_role_src.contains(forbidden)
-                && !include_str!("../src/endpoint/kernel/inbox.rs").contains(forbidden),
+                && !include_str!("../src/endpoint/kernel/runtime/inbox.rs").contains(forbidden),
             "endpoint runtime storage must stay bounded by actual compiled facts, not ordinal-space reserves: {forbidden}"
         );
         assert!(
@@ -3762,7 +3813,7 @@ fn hidden_attach_path_uses_canonical_attach_endpoint_name() {
 
     assert!(
         cluster_core_src.contains(
-            "pub(crate) unsafe fn attach_endpoint_into<'r, const ROLE: u8, Witness, Mint, B>(",
+            "pub(crate) unsafe fn attach_endpoint_into<'r, 'prog, const ROLE: u8, P, Mint, B>(",
         ),
         "cluster lower layer must expose the canonical in-place attach_endpoint_into helper"
     );
@@ -3786,19 +3837,19 @@ fn endpoint_kernel_split_and_lane_port_unsafe_boundary_hold() {
     let kernel_mod_src = include_str!("../src/endpoint/kernel/mod.rs");
     let kernel_core_src = include_str!("../src/endpoint/kernel/core.rs");
     let endpoint_init_src = include_str!("../src/endpoint/kernel/endpoint_init.rs");
-    let lane_port_src = include_str!("../src/endpoint/kernel/lane_port.rs");
-    let authority_src = include_str!("../src/endpoint/kernel/authority.rs");
+    let lane_port_src = include_str!("../src/endpoint/kernel/runtime/lane_port.rs");
+    let authority_src = include_str!("../src/endpoint/kernel/route_frontier/authority.rs");
     let control_src = include_str!("../src/endpoint/kernel/control.rs");
     let decode_src = include_str!("../src/endpoint/kernel/decode.rs");
-    let frontier_src = include_str!("../src/endpoint/kernel/frontier.rs");
-    let frontier_state_src = include_str!("../src/endpoint/kernel/frontier_state.rs");
-    let inbox_src = include_str!("../src/endpoint/kernel/inbox.rs");
-    let observe_src = include_str!("../src/endpoint/kernel/observe.rs");
-    let offer_src = include_str!("../src/endpoint/kernel/offer.rs");
+    let frontier_src = include_str!("../src/endpoint/kernel/runtime/frontier.rs");
+    let frontier_state_src = include_str!("../src/endpoint/kernel/runtime/frontier_state.rs");
+    let inbox_src = include_str!("../src/endpoint/kernel/runtime/inbox.rs");
+    let observe_src = include_str!("../src/endpoint/kernel/runtime/observe.rs");
+    let offer_src = include_str!("../src/endpoint/kernel/route_frontier/offer.rs");
     let recv_src = include_str!("../src/endpoint/kernel/recv.rs");
-    let route_state_src = include_str!("../src/endpoint/kernel/route_state.rs");
+    let route_state_src = include_str!("../src/endpoint/kernel/runtime/route_state.rs");
     let send_src = include_str!("../src/endpoint/kernel/send.rs");
-    let evidence_store_src = include_str!("../src/endpoint/kernel/evidence_store.rs");
+    let evidence_store_src = include_str!("../src/endpoint/kernel/runtime/evidence_store.rs");
 
     assert!(
         endpoint_src.contains("pub(crate) mod kernel;"),
@@ -3882,18 +3933,21 @@ fn endpoint_kernel_owner_split_stays_explicit() {
     let kernel_core_src = include_str!("../src/endpoint/kernel/core.rs");
     let kernel_mod_src = include_str!("../src/endpoint/kernel/mod.rs");
     let kernel_core_offer_tests_src = include_str!("../src/endpoint/kernel/core_offer_tests.rs");
-    let evidence_src = include_str!("../src/endpoint/kernel/evidence.rs");
-    let evidence_store_src = include_str!("../src/endpoint/kernel/evidence_store.rs");
-    let frontier_observation_src = include_str!("../src/endpoint/kernel/frontier_observation.rs");
-    let frontier_select_src = include_str!("../src/endpoint/kernel/frontier_select.rs");
-    let frontier_src = include_str!("../src/endpoint/kernel/frontier.rs");
-    let frontier_state_src = include_str!("../src/endpoint/kernel/frontier_state.rs");
-    let inbox_src = include_str!("../src/endpoint/kernel/inbox.rs");
-    let layout_src = include_str!("../src/endpoint/kernel/layout.rs");
-    let offer_src = include_str!("../src/endpoint/kernel/offer.rs");
-    let offer_refresh_src = include_str!("../src/endpoint/kernel/offer_refresh.rs");
-    let route_state_src = include_str!("../src/endpoint/kernel/route_state.rs");
-    let scope_evidence_logic_src = include_str!("../src/endpoint/kernel/scope_evidence_logic.rs");
+    let evidence_src = include_str!("../src/endpoint/kernel/route_frontier/evidence.rs");
+    let evidence_store_src = include_str!("../src/endpoint/kernel/runtime/evidence_store.rs");
+    let frontier_observation_src =
+        include_str!("../src/endpoint/kernel/route_frontier/frontier_observation.rs");
+    let frontier_select_src =
+        include_str!("../src/endpoint/kernel/route_frontier/frontier_select.rs");
+    let frontier_src = include_str!("../src/endpoint/kernel/runtime/frontier.rs");
+    let frontier_state_src = include_str!("../src/endpoint/kernel/runtime/frontier_state.rs");
+    let inbox_src = include_str!("../src/endpoint/kernel/runtime/inbox.rs");
+    let layout_src = include_str!("../src/endpoint/kernel/runtime/layout.rs");
+    let offer_src = include_str!("../src/endpoint/kernel/route_frontier/offer.rs");
+    let offer_refresh_src = include_str!("../src/endpoint/kernel/route_frontier/offer_refresh.rs");
+    let route_state_src = include_str!("../src/endpoint/kernel/runtime/route_state.rs");
+    let scope_evidence_logic_src =
+        include_str!("../src/endpoint/kernel/route_frontier/scope_evidence_logic.rs");
     let kernel_core_ws = compact_ws(kernel_core_src);
 
     for forbidden in [
@@ -3953,10 +4007,10 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         "core.rs must keep large offer regression helpers in a child test module"
     );
     for required in [
-        "#[path = \"scope_evidence_logic.rs\"]",
-        "#[path = \"frontier_select.rs\"]",
-        "#[path = \"frontier_observation.rs\"]",
-        "#[path = \"offer_refresh.rs\"]",
+        "#[path = \"route_frontier/scope_evidence_logic.rs\"]",
+        "#[path = \"route_frontier/frontier_select.rs\"]",
+        "#[path = \"route_frontier/frontier_observation.rs\"]",
+        "#[path = \"route_frontier/offer_refresh.rs\"]",
     ] {
         assert!(
             kernel_core_src.contains(required),
@@ -4154,6 +4208,41 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         "inbox.rs must remain the canonical owner for binding inbox buffering"
     );
     for required in [
+        "struct RouteFrontierMachine<",
+        "fn commit_pending_branch_preview(",
+        "fn commit_branch_preview(",
+        "fn ingest_binding_scope_evidence(",
+        "fn ingest_scope_evidence_for_offer(",
+        "fn recover_scope_evidence_conflict(",
+        "fn cache_binding_classification_for_offer(",
+        "fn refresh_frontier_observation_cache(",
+        "fn refresh_structural_frontier_observation_cache(",
+        "fn refresh_permuted_frontier_observation_entries(",
+        "fn refresh_multi_replaced_frontier_observation_entries(",
+        "fn refresh_cached_frontier_observation_entry(",
+        "fn refresh_shifted_frontier_observation_entry(",
+        "fn refresh_inserted_frontier_observation_entry(",
+        "fn refresh_removed_frontier_observation_entry(",
+        "fn refresh_replaced_frontier_observation_entry(",
+        "fn refresh_frontier_observation_cache_for_entry(",
+        "fn refresh_frontier_observation_caches_for_entry(",
+        "fn refresh_cached_frontier_observation_scope_entries(",
+        "fn refresh_cached_frontier_observation_binding_lane_entries(",
+        "fn refresh_cached_frontier_observation_route_lane_entries(",
+        "fn refresh_frontier_observation_cache_for_scope(",
+        "fn refresh_frontier_observation_cache_for_binding_lane(",
+        "fn refresh_frontier_observation_cache_for_route_lane(",
+        "fn cached_frontier_changed_entry_slot_mask(",
+        "fn refresh_frontier_observed_entries_from_cache(",
+        "fn compose_frontier_observed_entries(",
+        "fn refresh_frontier_observed_entries(",
+        "fn refresh_frontier_observation_cache_from_cached_entries(",
+        "fn refresh_offer_entry_state(",
+        "fn detach_lane_from_offer_entry(",
+        "fn attach_lane_to_offer_entry(",
+        "fn clear_lane_offer_state(",
+        "fn sync_lane_offer_state(",
+        "fn refresh_lane_offer_state(",
         "pub(super) struct CachedRecvMeta {",
         "pub(super) struct ScopeArmMaterializationMeta {",
         "pub(super) struct CurrentScopeSelectionMeta {",
@@ -4172,10 +4261,16 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         "fn ingest_scope_evidence_for_offer(",
         "fn on_frontier_defer(",
         "fn align_cursor_to_selected_scope(",
+        "fn commit_pending_branch_preview(",
+        "fn commit_branch_preview(",
+        "fn cache_binding_classification_for_offer(",
         "fn frontier_observation_key(",
         "fn refresh_frontier_observation_cache(",
         "fn compose_frontier_observed_entries(",
         "fn refresh_offer_entry_state(",
+        "fn detach_lane_from_offer_entry(",
+        "fn attach_lane_to_offer_entry(",
+        "fn clear_lane_offer_state(",
         "fn sync_lane_offer_state(",
         "fn refresh_lane_offer_state(",
     ] {
@@ -4185,14 +4280,20 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         );
     }
 
-    for required in [
-        "fn record_scope_ack(",
-        "fn ingest_scope_evidence_for_offer(",
-        "fn recover_scope_evidence_conflict(",
-    ] {
+    for required in ["fn record_scope_ack("] {
         assert!(
             scope_evidence_logic_src.contains(required),
             "scope_evidence_logic.rs must remain the canonical owner for scope-evidence ingestion: {required}"
+        );
+    }
+    for forbidden in [
+        "fn ingest_scope_evidence_for_offer(",
+        "fn ingest_binding_scope_evidence(",
+        "fn recover_scope_evidence_conflict(",
+    ] {
+        assert!(
+            !scope_evidence_logic_src.contains(forbidden),
+            "scope_evidence_logic.rs must not re-own offer-path evidence orchestration: {forbidden}"
         );
     }
     for required in [
@@ -4206,24 +4307,62 @@ fn endpoint_kernel_owner_split_stays_explicit() {
     }
     for required in [
         "fn frontier_observation_key(",
-        "fn refresh_frontier_observation_cache(",
-        "fn compose_frontier_observed_entries(",
-        "fn refresh_frontier_observation_caches_for_entry(",
+        "fn cached_offer_entry_observed_state_for_rebuild(",
     ] {
         assert!(
             frontier_observation_src.contains(required),
             "frontier_observation.rs must remain the canonical owner for observation-cache logic: {required}"
         );
     }
+    for forbidden in [
+        "fn refresh_frontier_observation_cache(",
+        "fn refresh_structural_frontier_observation_cache(",
+        "fn refresh_permuted_frontier_observation_entries(",
+        "fn refresh_multi_replaced_frontier_observation_entries(",
+        "fn refresh_cached_frontier_observation_entry(",
+        "fn refresh_shifted_frontier_observation_entry(",
+        "fn refresh_inserted_frontier_observation_entry(",
+        "fn refresh_removed_frontier_observation_entry(",
+        "fn refresh_replaced_frontier_observation_entry(",
+        "fn refresh_cached_frontier_observation_scope_entries(",
+        "fn refresh_cached_frontier_observation_binding_lane_entries(",
+        "fn refresh_cached_frontier_observation_route_lane_entries(",
+        "fn refresh_frontier_observation_cache_for_scope(",
+        "fn refresh_frontier_observation_cache_for_binding_lane(",
+        "fn refresh_frontier_observation_cache_for_route_lane(",
+        "fn cached_frontier_changed_entry_slot_mask(",
+        "fn refresh_frontier_observed_entries_from_cache(",
+        "fn compose_frontier_observed_entries(",
+        "fn refresh_frontier_observed_entries(",
+        "fn refresh_frontier_observation_cache_from_cached_entries(",
+        "fn refresh_frontier_observation_cache_for_entry(",
+        "fn refresh_frontier_observation_caches_for_entry(",
+    ] {
+        assert!(
+            !frontier_observation_src.contains(forbidden),
+            "frontier_observation.rs must not re-own offer-driven observation refresh orchestration: {forbidden}"
+        );
+    }
     for required in [
-        "fn refresh_offer_entry_state(",
-        "fn sync_lane_offer_state(",
-        "fn refresh_lane_offer_state(",
+        "fn compute_offer_entry_static_summary(",
         "fn compute_lane_offer_state(",
     ] {
         assert!(
             offer_refresh_src.contains(required),
-            "offer_refresh.rs must remain the canonical owner for offer-refresh bookkeeping: {required}"
+            "offer_refresh.rs must remain the canonical owner for offer-refresh derivation helpers: {required}"
+        );
+    }
+    for forbidden in [
+        "fn refresh_offer_entry_state(",
+        "fn detach_lane_from_offer_entry(",
+        "fn attach_lane_to_offer_entry(",
+        "fn clear_lane_offer_state(",
+        "fn sync_lane_offer_state(",
+        "fn refresh_lane_offer_state(",
+    ] {
+        assert!(
+            !offer_refresh_src.contains(forbidden),
+            "offer_refresh.rs must not re-own offer refresh orchestration: {forbidden}"
         );
     }
 }
@@ -4357,7 +4496,7 @@ fn typestate_builder_stays_a_facade_and_emit_owns_lowering_walk() {
 #[test]
 fn phase_cursor_owns_private_machine_facts_without_cache_lease_backpointers() {
     let cursor_src = include_str!("../src/global/typestate/cursor.rs");
-    let layout_src = include_str!("../src/endpoint/kernel/layout.rs");
+    let layout_src = include_str!("../src/endpoint/kernel/runtime/layout.rs");
     let endpoint_init_src = include_str!("../src/endpoint/kernel/endpoint_init.rs");
 
     assert!(
@@ -4458,8 +4597,8 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
     let steps_ws = compact_ws(steps_src);
     let global_src_full = include_str!("../src/global.rs");
     let role_program_src = include_str!("../src/global/role_program.rs");
-    let compiled_driver_src = include_str!("../src/global/compiled/driver.rs");
-    let compiled_program_src = include_str!("../src/global/compiled/program.rs");
+    let compiled_driver_src = include_str!("../src/global/compiled/lowering/driver.rs");
+    let compiled_program_src = include_str!("../src/global/compiled/images/program.rs");
 
     for required in [
         "pub type LoopContinueSteps<",
@@ -5477,8 +5616,8 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
         "compiled_role_header_bytes: size_of::<CompiledRoleImage>()",
         "RouteTable::storage_bytes(",
         "LoopTable::storage_bytes(",
-        "let endpoint_layout = compiled_role.endpoint_arena_layout_for_binding(false);",
-        "public_endpoint_storage_requirement(compiled_role, false);",
+        "let endpoint_layout = role_image.endpoint_arena_layout_for_binding(false);",
+        "public_endpoint_storage_requirement(role_image, false);",
         "endpoint_bytes: endpoint_layout.total_bytes(),",
         "huge_shape_matrix_resident_bytes_stay_measured_and_local",
     ] {

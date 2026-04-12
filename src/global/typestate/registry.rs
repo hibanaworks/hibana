@@ -70,6 +70,7 @@ pub(super) struct ScopeRegistry {
     pub(super) route_dense_by_slot: *const u16,
     pub(super) route_records: *const RouteScopeRecord,
     pub(super) route_scope_len: u16,
+    pub(super) frontier_entry_capacity_value: u8,
 }
 
 #[inline]
@@ -350,7 +351,11 @@ impl ScopeRegistry {
         self.route_scope_len as usize
     }
 
-    pub(super) fn max_offer_entries(&self) -> usize {
+    pub(super) fn frontier_entry_capacity(&self) -> usize {
+        self.frontier_entry_capacity_value as usize
+    }
+
+    pub(super) fn derive_max_offer_entries(&self) -> usize {
         let records = self.records();
         let mut max_entries = 0usize;
         let mut slot = 0usize;
@@ -408,6 +413,10 @@ impl ScopeRegistry {
     }
 
     pub(super) fn max_route_stack_depth(&self) -> usize {
+        self.derive_max_route_stack_depth()
+    }
+
+    pub(super) fn derive_max_route_stack_depth(&self) -> usize {
         let mut max_depth = 0usize;
         let records = self.records();
         let mut slot = 0usize;
@@ -438,6 +447,10 @@ impl ScopeRegistry {
     }
 
     pub(super) fn max_loop_stack_depth(&self) -> usize {
+        self.derive_max_loop_stack_depth()
+    }
+
+    pub(super) fn derive_max_loop_stack_depth(&self) -> usize {
         let mut max_depth = 0usize;
         let records = self.records();
         let mut slot = 0usize;

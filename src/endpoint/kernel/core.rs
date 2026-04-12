@@ -382,16 +382,16 @@ mod route_policy_tests {
     }
 }
 
-#[path = "frontier_observation.rs"]
+#[path = "route_frontier/frontier_observation.rs"]
 mod frontier_observation;
-#[path = "frontier_select.rs"]
+#[path = "route_frontier/frontier_select.rs"]
 mod frontier_select;
-#[path = "offer_refresh.rs"]
+#[path = "route_frontier/offer_refresh.rs"]
 mod offer_refresh;
 #[cfg(test)]
 #[path = "core_offer_tests.rs"]
 mod offer_regression_tests;
-#[path = "scope_evidence_logic.rs"]
+#[path = "route_frontier/scope_evidence_logic.rs"]
 mod scope_evidence_logic;
 
 /// Internal endpoint kernel. Owns the rendezvous port as well as the lane
@@ -777,7 +777,7 @@ where
     }
 
     #[inline(always)]
-    fn control_semantics(&self) -> ControlSemanticsTable {
+    pub(in crate::endpoint::kernel) fn control_semantics(&self) -> ControlSemanticsTable {
         self.cursor.control_semantics()
     }
 
@@ -2666,7 +2666,7 @@ where
         Ok(true)
     }
 
-    fn emit_route_decision(
+    pub(super) fn emit_route_decision(
         &self,
         scope_id: ScopeId,
         arm: u8,
@@ -3513,94 +3513,6 @@ where
             branch_meta,
             _cfg: core::marker::PhantomData,
         })
-    }
-
-    fn commit_pending_branch_preview(
-        &mut self,
-        preview: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    ) -> RecvResult<Option<RecvMeta>> {
-        let scope_id = preview.branch_meta.scope_id;
-        let selected_arm = preview.branch_meta.selected_arm;
-        let lane_wire = preview.branch_meta.lane_wire;
-        let is_route_controller = self.cursor.is_route_controller(scope_id);
-        if !is_route_controller {
-            self.propagate_recvless_parent_route_decision(scope_id, selected_arm);
-        }
-
-        match preview.branch_meta.route_source {
-            RouteDecisionSource::Ack if is_route_controller => {
-                let (offer_lanes, offer_lanes_len) = self.offer_lanes_for_scope(scope_id);
-                if offer_lanes_len == 0 {
-                    let lane = lane_wire;
-                    self.record_route_decision_for_lane(lane as usize, scope_id, selected_arm);
-                    self.emit_route_decision(
-                        scope_id,
-                        selected_arm,
-                        RouteDecisionSource::Ack,
-                        lane,
-                    );
-                } else {
-                    let mut lane_idx = 0usize;
-                    while lane_idx < offer_lanes_len {
-                        let lane = offer_lanes[lane_idx];
-                        self.record_route_decision_for_lane(lane as usize, scope_id, selected_arm);
-                        self.emit_route_decision(
-                            scope_id,
-                            selected_arm,
-                            RouteDecisionSource::Ack,
-                            lane,
-                        );
-                        lane_idx += 1;
-                    }
-                }
-            }
-            RouteDecisionSource::Poll => {
-                self.emit_route_decision(
-                    scope_id,
-                    selected_arm,
-                    RouteDecisionSource::Poll,
-                    self.offer_lane_for_scope(scope_id),
-                );
-            }
-            _ => {}
-        }
-
-        self.skip_unselected_arm_lanes(scope_id, selected_arm, lane_wire);
-        self.set_route_arm(lane_wire, scope_id, selected_arm)?;
-        self.set_cursor_index(state_index_to_usize(preview.cursor_index));
-
-        let meta = if preview.branch_meta.kind == BranchKind::WireRecv {
-            let mut meta = self
-                .cursor
-                .try_recv_meta()
-                .ok_or(RecvError::PhaseInvariant)?;
-            if meta.route_arm.is_none() {
-                meta.route_arm = Some(selected_arm);
-            }
-            if meta.label != preview.label {
-                meta.label = preview.label;
-            }
-            Some(meta)
-        } else {
-            None
-        };
-
-        if self.arm_has_recv(scope_id, selected_arm) {
-            self.consume_scope_ready_arm(scope_id, selected_arm);
-        }
-        self.clear_scope_evidence(scope_id);
-        if lane_wire == 5 {
-            self.port_for_lane(lane_wire as usize).clear_route_hints();
-        }
-
-        Ok(meta)
-    }
-
-    pub(in crate::endpoint::kernel) fn commit_branch_preview(
-        &mut self,
-        branch: &RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    ) -> RecvResult<Option<RecvMeta>> {
-        self.commit_pending_branch_preview(branch.clone())
     }
 
     // Stage 2 of the offer kernel: resolve arm authority in fixed order
@@ -4505,14 +4417,14 @@ where
     }
 
     #[inline]
-    fn offer_lanes_for_scope(&self, scope_id: ScopeId) -> ([u8; MAX_LANES], usize) {
+    pub(super) fn offer_lanes_for_scope(&self, scope_id: ScopeId) -> ([u8; MAX_LANES], usize) {
         self.cursor
             .route_scope_offer_lane_list(scope_id)
             .unwrap_or(([0; MAX_LANES], 0))
     }
 
     #[inline]
-    fn offer_lane_for_scope(&self, scope_id: ScopeId) -> u8 {
+    pub(super) fn offer_lane_for_scope(&self, scope_id: ScopeId) -> u8 {
         let (lanes, len) = self.offer_lanes_for_scope(scope_id);
         if len == 0 {
             self.primary_lane as u8
@@ -4521,7 +4433,11 @@ where
         }
     }
 
-    fn propagate_recvless_parent_route_decision(&mut self, child_scope: ScopeId, arm: u8) {
+    pub(super) fn propagate_recvless_parent_route_decision(
+        &mut self,
+        child_scope: ScopeId,
+        arm: u8,
+    ) {
         let Some(parent_scope) = self.cursor.scope_parent(child_scope) else {
             return;
         };
@@ -4639,7 +4555,7 @@ where
         classification
     }
 
-    fn put_back_binding_for_lane(
+    pub(super) fn put_back_binding_for_lane(
         &mut self,
         lane_idx: usize,
         classification: crate::binding::IncomingClassification,
@@ -4965,34 +4881,6 @@ where
         None
     }
 
-    #[inline]
-    fn cache_binding_classification_for_offer(
-        &mut self,
-        scope_id: ScopeId,
-        offer_lane_idx: usize,
-        offer_lane_mask: u8,
-        label_meta: ScopeLabelMeta,
-        materialization_meta: ScopeArmMaterializationMeta,
-        binding_classification: &mut Option<crate::binding::IncomingClassification>,
-    ) {
-        if binding_classification.is_some() {
-            return;
-        }
-        if let Some((lane_idx, classification)) = self.poll_binding_for_offer(
-            scope_id,
-            offer_lane_idx,
-            offer_lane_mask,
-            label_meta,
-            materialization_meta,
-        ) {
-            if binding_classification.is_none() {
-                *binding_classification = Some(classification);
-            } else {
-                self.put_back_binding_for_lane(lane_idx, classification);
-            }
-        }
-    }
-
     pub(super) fn try_recv_from_binding(
         &mut self,
         logical_lane: u8,
@@ -5088,7 +4976,7 @@ where
     }
 
     #[inline]
-    fn scope_loop_meta_at(
+    pub(super) fn scope_loop_meta_at(
         cursor: &PhaseCursor,
         semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
@@ -5128,7 +5016,7 @@ where
     }
 
     #[inline]
-    fn scope_label_meta_at(
+    pub(super) fn scope_label_meta_at(
         cursor: &PhaseCursor,
         semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
@@ -5335,7 +5223,12 @@ where
         has_ack && !loop_meta.control_scope()
     }
 
-    fn skip_unselected_arm_lanes(&mut self, scope: ScopeId, selected_arm: u8, skip_lane: u8) {
+    pub(super) fn skip_unselected_arm_lanes(
+        &mut self,
+        scope: ScopeId,
+        selected_arm: u8,
+        skip_lane: u8,
+    ) {
         if scope.is_none() || scope.kind() != ScopeKind::Route {
             return;
         }

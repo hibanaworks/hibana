@@ -55,12 +55,20 @@ where
             .unwrap_or(self.global_active_entries())
     }
 
-    pub(super) fn detach_lane_from_root_frontier(&mut self, lane_idx: usize, info: LaneOfferState) {
+    pub(in crate::endpoint::kernel) fn detach_lane_from_root_frontier(
+        &mut self,
+        lane_idx: usize,
+        info: LaneOfferState,
+    ) {
         self.frontier_state
             .detach_lane_from_root_frontier(lane_idx, info);
     }
 
-    pub(super) fn attach_lane_to_root_frontier(&mut self, lane_idx: usize, info: LaneOfferState) {
+    pub(in crate::endpoint::kernel) fn attach_lane_to_root_frontier(
+        &mut self,
+        lane_idx: usize,
+        info: LaneOfferState,
+    ) {
         self.frontier_state
             .attach_lane_to_root_frontier(lane_idx, info);
     }
@@ -86,7 +94,7 @@ where
             .detach_offer_entry_from_root_frontier(entry_idx, root);
     }
 
-    pub(super) fn compute_offer_entry_static_summary(
+    pub(in crate::endpoint::kernel) fn compute_offer_entry_static_summary(
         &self,
         active_mask: u8,
         entry_idx: usize,
@@ -141,205 +149,6 @@ where
         Some(self.offer_entry_frontier_mask(entry_idx, entry_state))
     }
 
-    pub(super) fn refresh_offer_entry_state(&mut self, entry_idx: usize) {
-        let Some(entry_state) = self.offer_entry_state_snapshot(entry_idx) else {
-            return;
-        };
-        let previous_root = self
-            .offer_entry_parallel_root_from_state(entry_idx, entry_state)
-            .unwrap_or(ScopeId::none());
-        let active_mask = entry_state.active_mask;
-        if active_mask == 0 {
-            #[cfg(test)]
-            self.frontier_state.clear_offer_entry_state(entry_idx);
-            self.refresh_frontier_observation_caches_for_entry(
-                entry_idx,
-                previous_root,
-                ScopeId::none(),
-            );
-            return;
-        }
-        self.detach_offer_entry_from_root_frontier(entry_idx, previous_root);
-        self.ensure_global_frontier_scratch_initialized();
-        let mut global_active_entries = self.global_active_entries();
-        global_active_entries.remove_entry(entry_idx);
-        let lane_idx = active_mask.trailing_zeros() as usize;
-        let info = self.route_state.lane_offer_state(lane_idx);
-        if info.scope.is_none() {
-            #[cfg(test)]
-            self.frontier_state.clear_offer_entry_state(entry_idx);
-            self.refresh_frontier_observation_caches_for_entry(
-                entry_idx,
-                previous_root,
-                ScopeId::none(),
-            );
-            return;
-        }
-        #[cfg(test)]
-        let (_, offer_lanes_len) = self.offer_lanes_for_scope(info.scope);
-        #[cfg(test)]
-        let selection_meta =
-            self.compute_offer_entry_selection_meta(info.scope, info, offer_lanes_len != 0);
-        #[cfg(test)]
-        let loop_meta = Self::scope_loop_meta_at(
-            &self.cursor,
-            &self.control_semantics(),
-            info.scope,
-            entry_idx,
-        );
-        #[cfg(test)]
-        let label_meta = Self::scope_label_meta_at(
-            &self.cursor,
-            &self.control_semantics(),
-            info.scope,
-            loop_meta,
-            entry_idx,
-        );
-        #[cfg(test)]
-        let materialization_meta = self.compute_scope_arm_materialization_meta(info.scope);
-        #[cfg(test)]
-        let offer_lane_mask = self.offer_lane_mask_for_scope_id(info.scope);
-        #[cfg(test)]
-        let test_summary = self.compute_offer_entry_static_summary(active_mask, entry_idx);
-        #[cfg(test)]
-        {
-            let Some(state) = self.frontier_state.offer_entry_state_mut(entry_idx) else {
-                return;
-            };
-            state.lane_idx = lane_idx as u8;
-            state.parallel_root = info.parallel_root;
-            state.frontier = info.frontier;
-            state.scope_id = info.scope;
-            state.offer_lane_mask = offer_lane_mask;
-            state.selection_meta = selection_meta;
-            state.label_meta = label_meta;
-            state.materialization_meta = materialization_meta;
-            state.summary = test_summary;
-        }
-        self.ensure_global_frontier_scratch_initialized();
-        let mut global_active_entries = self.global_active_entries();
-        global_active_entries.insert_entry(entry_idx, lane_idx as u8);
-        self.attach_offer_entry_to_root_frontier(entry_idx, info.parallel_root, lane_idx as u8);
-        #[cfg(test)]
-        let observed = self
-            .recompute_offer_entry_observed_state_non_consuming(entry_idx)
-            .unwrap_or_else(|| {
-                unreachable!("test observed state must recompute for active offer entry")
-            });
-        #[cfg(test)]
-        self.frontier_state
-            .set_offer_entry_observed(entry_idx, observed);
-        #[cfg(not(test))]
-        let _ = self.recompute_offer_entry_observed_state_non_consuming(entry_idx);
-        self.refresh_frontier_observation_caches_for_entry(
-            entry_idx,
-            previous_root,
-            info.parallel_root,
-        );
-    }
-
-    pub(super) fn detach_lane_from_offer_entry(&mut self, lane_idx: usize, info: LaneOfferState) {
-        let entry_idx = state_index_to_usize(info.entry);
-        if info.entry.is_max() || entry_idx >= crate::global::typestate::MAX_STATES {
-            return;
-        }
-        let bit = 1u8 << lane_idx;
-        let Some(entry_state) = self.offer_entry_state_snapshot(entry_idx) else {
-            return;
-        };
-        let parallel_root = self
-            .offer_entry_parallel_root_from_state(entry_idx, entry_state)
-            .unwrap_or(ScopeId::none());
-        let active_mask = entry_state.active_mask;
-        let active_mask = active_mask & !bit;
-        if active_mask == 0 {
-            self.detach_offer_entry_from_root_frontier(entry_idx, parallel_root);
-            self.ensure_global_frontier_scratch_initialized();
-            let mut global_active_entries = self.global_active_entries();
-            global_active_entries.remove_entry(entry_idx);
-            #[cfg(test)]
-            self.frontier_state.clear_offer_entry_state(entry_idx);
-            self.refresh_frontier_observation_caches_for_entry(
-                entry_idx,
-                parallel_root,
-                ScopeId::none(),
-            );
-            return;
-        }
-        #[cfg(test)]
-        self.frontier_state
-            .set_offer_entry_active_mask(entry_idx, active_mask);
-        self.refresh_offer_entry_state(entry_idx);
-    }
-
-    pub(super) fn attach_lane_to_offer_entry(&mut self, lane_idx: usize, info: LaneOfferState) {
-        let entry_idx = state_index_to_usize(info.entry);
-        if info.entry.is_max() || entry_idx >= crate::global::typestate::MAX_STATES {
-            return;
-        }
-        let bit = 1u8 << lane_idx;
-        #[cfg(not(test))]
-        let was_inactive = (self.offer_entry_active_mask_from_route_state(entry_idx) & !bit) == 0;
-        #[cfg(test)]
-        let was_inactive = if let Some(state) = self.frontier_state.offer_entry_state_mut(entry_idx)
-        {
-            let was_inactive = state.active_mask == 0;
-            state.active_mask |= bit;
-            was_inactive
-        } else {
-            let mut state = OfferEntryState::EMPTY;
-            state.active_mask = bit;
-            self.frontier_state.set_offer_entry_state(entry_idx, state);
-            true
-        };
-        if was_inactive {
-            self.ensure_global_frontier_scratch_initialized();
-            let mut global_active_entries = self.global_active_entries();
-            global_active_entries.insert_entry(entry_idx, lane_idx as u8);
-            self.attach_offer_entry_to_root_frontier(entry_idx, info.parallel_root, lane_idx as u8);
-        }
-        self.refresh_offer_entry_state(entry_idx);
-    }
-
-    #[inline]
-    pub(super) fn clear_lane_offer_state(&mut self, lane_idx: usize) {
-        let old = self.route_state.clear_lane_offer_state(lane_idx);
-        self.detach_lane_from_offer_entry(lane_idx, old);
-        self.detach_lane_from_root_frontier(lane_idx, old);
-    }
-
-    pub(crate) fn sync_lane_offer_state(&mut self) {
-        let refresh_mask = self.offer_refresh_mask();
-        let mut stale_mask = self.route_state.active_offer_mask & !refresh_mask;
-        while stale_mask != 0 {
-            let lane_idx = stale_mask.trailing_zeros() as usize;
-            stale_mask &= !(1u8 << lane_idx);
-            self.clear_lane_offer_state(lane_idx);
-        }
-        let mut lane_mask = refresh_mask;
-        while lane_mask != 0 {
-            let lane_idx = lane_mask.trailing_zeros() as usize;
-            lane_mask &= !(1u8 << lane_idx);
-            self.refresh_lane_offer_state(lane_idx);
-        }
-    }
-
-    pub(super) fn refresh_lane_offer_state(&mut self, lane_idx: usize) {
-        if lane_idx >= MAX_LANES {
-            return;
-        }
-        let old = self.route_state.clear_lane_offer_state(lane_idx);
-        self.detach_lane_from_offer_entry(lane_idx, old);
-        self.detach_lane_from_root_frontier(lane_idx, old);
-        if let Some(info) = self.compute_lane_offer_state(lane_idx) {
-            let is_linger = self.is_linger_route(info.scope);
-            self.route_state
-                .set_lane_offer_state(lane_idx, info, is_linger);
-            self.attach_lane_to_root_frontier(lane_idx, info);
-            self.attach_lane_to_offer_entry(lane_idx, info);
-        }
-    }
-
     pub(in crate::endpoint::kernel) fn set_lane_cursor_to_eff_index(
         &mut self,
         lane_idx: usize,
@@ -369,7 +178,10 @@ where
         self.sync_lane_offer_state();
     }
 
-    pub(super) fn compute_lane_offer_state(&self, lane_idx: usize) -> Option<LaneOfferState> {
+    pub(in crate::endpoint::kernel) fn compute_lane_offer_state(
+        &self,
+        lane_idx: usize,
+    ) -> Option<LaneOfferState> {
         if lane_idx >= MAX_LANES {
             return None;
         }
