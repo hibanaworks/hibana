@@ -2,7 +2,7 @@ error[E0080]: evaluation panicked: route scope recorded conflicting controller p
  --> src/global/program.rs
   |
   |         validate_all_roles(&summary);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::ValidatedProgram::<hibana::g::advanced::steps::RouteSteps<hibana::g::advanced::steps::PolicySteps<hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<5>, hibana::substrate::cap::GenericCapToken<control_kinds::UnitControl<149, 5, 7, 1024>>, hibana::g::advanced::CanonicalControl<control_kinds::UnitControl<149, 5, 7, 1024>>>>, hibana::g::advanced::steps::StepNil>, 9>, hibana::g::advanced::steps::PolicySteps<hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<6>, hibana::substrate::cap::GenericCapToken<control_kinds::UnitControl<150, 6, 7, 1024>>, hibana::g::advanced::CanonicalControl<control_kinds::UnitControl<150, 6, 7, 1024>>>>, hibana::g::advanced::steps::StepNil>, 10>>>::STAMP` failed inside this call
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::ValidatedProgram::<hibana::g::advanced::steps::RouteSteps<hibana::g::advanced::steps::PolicySteps<hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<5>, hibana::substrate::cap::GenericCapToken<control_kinds::UnitControl<149, 5, 7, 1024>>, hibana::g::advanced::CanonicalControl<control_kinds::UnitControl<149, 5, 7, 1024>>>>, hibana::g::advanced::steps::StepNil>, 9>, hibana::g::advanced::steps::PolicySteps<hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<6>, hibana::substrate::cap::GenericCapToken<control_kinds::UnitControl<150, 6, 7, 1024>>, hibana::g::advanced::CanonicalControl<control_kinds::UnitControl<150, 6, 7, 1024>>>>, hibana::g::advanced::steps::StepNil>, 10>>>::SUMMARY` failed inside this call
   |
 note: inside `hibana::global::compiled::seal::validate_all_roles`
  --> src/global/compiled/seal.rs
@@ -41,5 +41,5 @@ note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_rout
 note: erroneous constant encountered
  --> src/global/program.rs
   |
-  |     ValidatedProgram::<Steps>::STAMP
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     &ValidatedProgram::<Steps>::SUMMARY
+  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

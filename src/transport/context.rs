@@ -145,23 +145,72 @@ impl ContextValue {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum PolicyAttrsBacking<'a> {
+    Borrowed(&'a PolicyAttrs),
+    Owned(PolicyAttrs),
+}
+
+impl<'a> PolicyAttrsBacking<'a> {
+    #[inline]
+    fn as_ref(&self) -> &PolicyAttrs {
+        match self {
+            Self::Borrowed(attrs) => attrs,
+            Self::Owned(attrs) => attrs,
+        }
+    }
+}
+
 /// Policy signals provided by bindings.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PolicySignals {
+#[derive(Clone, Copy, Debug)]
+pub struct PolicySignals<'a> {
     pub input: [u32; 4],
-    pub attrs: PolicyAttrs,
+    attrs: PolicyAttrsBacking<'a>,
 }
 
-impl PolicySignals {
-    pub const ZERO: Self = Self {
-        input: [0; 4],
-        attrs: PolicyAttrs::new(),
-    };
+impl<'a> PolicySignals<'a> {
+    #[inline]
+    pub const fn borrowed(input: [u32; 4], attrs: &'a PolicyAttrs) -> Self {
+        Self {
+            input,
+            attrs: PolicyAttrsBacking::Borrowed(attrs),
+        }
+    }
+
+    #[inline]
+    pub const fn owned(input: [u32; 4], attrs: PolicyAttrs) -> Self {
+        Self {
+            input,
+            attrs: PolicyAttrsBacking::Owned(attrs),
+        }
+    }
+
+    #[inline]
+    pub fn attrs(&self) -> &PolicyAttrs {
+        self.attrs.as_ref()
+    }
+
+    #[inline]
+    pub fn into_owned(self) -> PolicySignals<'static> {
+        PolicySignals::owned(self.input, *self.attrs())
+    }
 }
 
-impl Default for PolicySignals {
+impl PolicySignals<'static> {
+    pub const ZERO: Self = Self::borrowed([0; 4], &PolicyAttrs::EMPTY);
+}
+
+impl PartialEq for PolicySignals<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.input == other.input && self.attrs() == other.attrs()
+    }
+}
+
+impl Eq for PolicySignals<'_> {}
+
+impl Default for PolicySignals<'_> {
     fn default() -> Self {
-        Self::ZERO
+        Self::borrowed([0; 4], &PolicyAttrs::EMPTY)
     }
 }
 
@@ -173,7 +222,7 @@ impl Default for PolicySignals {
 /// - Overlay precedence must be explicit and stable (e.g. shared -> local override).
 pub trait PolicySignalsProvider {
     /// Return policy signals for the specified VM slot.
-    fn signals(&self, slot: Slot) -> PolicySignals;
+    fn signals(&self, slot: Slot) -> PolicySignals<'_>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -207,6 +256,7 @@ impl Default for PolicyAttrs {
 impl PolicyAttrs {
     /// Maximum number of policy attributes.
     pub const CAPACITY: usize = POLICY_ATTRS_CAPACITY;
+    pub const EMPTY: Self = Self::new();
 
     /// Create an empty attribute map.
     #[inline]
@@ -376,24 +426,21 @@ mod tests {
     fn policy_signals_zero_defaults() {
         let signals = PolicySignals::ZERO;
         assert_eq!(signals.input, [0; 4]);
-        assert!(signals.attrs.is_empty());
+        assert!(signals.attrs().is_empty());
     }
 
     #[test]
     fn policy_signals_provider_uses_slot() {
         struct Provider;
         impl PolicySignalsProvider for Provider {
-            fn signals(&self, slot: Slot) -> PolicySignals {
+            fn signals(&self, slot: Slot) -> PolicySignals<'_> {
                 let value = match slot {
                     Slot::Route => 1,
                     _ => 2,
                 };
                 let mut attrs = PolicyAttrs::new();
                 let _ = attrs.insert(ContextId::new(0x0100), ContextValue::from_u8(value));
-                PolicySignals {
-                    input: [value as u32, 0, 0, 0],
-                    attrs,
-                }
+                PolicySignals::owned([value as u32, 0, 0, 0], attrs)
             }
         }
 
@@ -402,10 +449,10 @@ mod tests {
         assert_eq!(route.input[0], 1);
         assert_eq!(tx.input[0], 2);
         assert_eq!(
-            route.attrs.query(ContextId::new(0x0100)).unwrap().as_u8(),
+            route.attrs().query(ContextId::new(0x0100)).unwrap().as_u8(),
             1
         );
-        assert_eq!(tx.attrs.query(ContextId::new(0x0100)).unwrap().as_u8(), 2);
+        assert_eq!(tx.attrs().query(ContextId::new(0x0100)).unwrap().as_u8(), 2);
     }
 
     #[test]

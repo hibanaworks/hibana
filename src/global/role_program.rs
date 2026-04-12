@@ -3,10 +3,11 @@
 //! `RoleProgram` is the typed entry point for a role projection witness.
 //! Crate-private lowering facts stay behind this module and the compiled layer.
 
+use core::marker::PhantomData;
 #[cfg(test)]
 use core::ptr;
 
-use super::compiled::ProgramStamp;
+use super::compiled::{ProgramStamp, RoleLoweringCounts};
 use super::{
     program::{BuildProgramSource, Program},
     steps::ProjectRole,
@@ -14,7 +15,7 @@ use super::{
 use crate::control::cap::mint::{CapShot, MintConfig, MintConfigMarker};
 use crate::{
     eff::{self, EffIndex},
-    global::const_dsl::{CompactScopeId, EffList, ScopeEvent, ScopeId, ScopeKind},
+    global::const_dsl::{CompactScopeId, EffList, ScopeId},
     global::{KnownRole, Role},
 };
 
@@ -353,26 +354,19 @@ impl ProjectedRoleLayout {
     }
 }
 
-#[derive(Clone, Copy)]
-struct RoleLoweringCounts {
-    eff_count: usize,
-    parallel_enter_count: usize,
-    route_scope_count: usize,
-    passive_linger_route_scope_count: usize,
-}
-
 /// Erased lowering input derived from a typed `RoleProgram` witness.
 #[derive(Clone, Copy)]
 pub(crate) struct RoleLoweringInput<'prog> {
-    eff_list: &'prog EffList,
+    _borrow: PhantomData<&'prog EffList>,
+    summary: &'static crate::global::compiled::LoweringSummary,
     stamp: ProgramStamp,
     counts: RoleLoweringCounts,
 }
 
 impl<'prog> RoleLoweringInput<'prog> {
     #[inline(always)]
-    pub(crate) const fn eff_list(&self) -> &'prog EffList {
-        self.eff_list
+    pub(crate) const fn summary(&self) -> &'static crate::global::compiled::LoweringSummary {
+        self.summary
     }
 
     #[inline(always)]
@@ -383,6 +377,11 @@ impl<'prog> RoleLoweringInput<'prog> {
     #[inline(always)]
     pub(crate) const fn eff_count(&self) -> usize {
         self.counts.eff_count
+    }
+
+    #[inline(always)]
+    pub(crate) const fn local_step_count(&self) -> usize {
+        self.counts.local_step_count
     }
 
     #[inline(always)]
@@ -405,22 +404,28 @@ pub struct RoleProgram<'prog, const ROLE: u8, GlobalSteps, Mint = MintConfig>
 where
     Mint: MintConfigMarker,
 {
-    eff_list: &'prog EffList,
+    _borrow: PhantomData<&'prog EffList>,
+    _global_steps: PhantomData<fn() -> GlobalSteps>,
+    summary: &'static crate::global::compiled::LoweringSummary,
     mint: Mint,
     stamp: ProgramStamp,
-    _global_steps: core::marker::PhantomData<GlobalSteps>,
 }
 
 impl<'prog, const ROLE: u8, GlobalSteps, Mint> RoleProgram<'prog, ROLE, GlobalSteps, Mint>
 where
     Mint: MintConfigMarker,
 {
-    const fn new(eff_list: &'prog EffList, mint: Mint, stamp: ProgramStamp) -> Self {
+    const fn new(
+        summary: &'static crate::global::compiled::LoweringSummary,
+        mint: Mint,
+        stamp: ProgramStamp,
+    ) -> Self {
         Self {
-            eff_list,
+            _borrow: PhantomData,
+            _global_steps: PhantomData,
+            summary,
             mint,
             stamp,
-            _global_steps: core::marker::PhantomData,
         }
     }
 
@@ -432,7 +437,7 @@ where
     #[inline(always)]
     #[cfg(test)]
     pub(crate) fn borrow_id(&self) -> usize {
-        self.eff_list as *const EffList as usize
+        self.summary as *const crate::global::compiled::LoweringSummary as usize
     }
 
     /// Mint configuration baked into the RoleProgram.
@@ -450,9 +455,10 @@ where
     Mint: MintConfigMarker,
 {
     RoleLoweringInput {
-        eff_list: program.eff_list,
+        _borrow: PhantomData,
+        summary: program.summary,
         stamp: program.stamp,
-        counts: role_lowering_counts::<ROLE>(program.eff_list),
+        counts: program.summary.role_lowering_counts::<ROLE>(),
     }
 }
 
@@ -466,50 +472,7 @@ where
     Steps: BuildProgramSource + ProjectRole<Role<ROLE>>,
     Mint: MintConfigMarker,
 {
-    RoleProgram::new(program.eff_list(), Mint::INSTANCE, program.stamp())
-}
-
-#[inline(always)]
-const fn role_lowering_counts<const ROLE: u8>(eff_list: &EffList) -> RoleLoweringCounts {
-    let scope_markers = eff_list.scope_markers();
-    let mut parallel_enter_count = 0usize;
-    let mut route_scope_count = 0usize;
-    let mut passive_linger_route_scope_count = 0usize;
-    let mut route_scope_ordinals = [0u64; 8];
-    let mut marker_idx = 0usize;
-    while marker_idx < scope_markers.len() {
-        let marker = scope_markers[marker_idx];
-        if matches!(marker.event, ScopeEvent::Enter) {
-            if matches!(marker.scope_kind, ScopeKind::Parallel) {
-                parallel_enter_count = parallel_enter_count.saturating_add(1);
-            } else if matches!(marker.scope_kind, ScopeKind::Route) {
-                let ordinal = marker.scope_id.local_ordinal() as usize;
-                let word = ordinal / 64;
-                let bit = ordinal % 64;
-                if word >= route_scope_ordinals.len() {
-                    panic!("route scope ordinal overflow");
-                }
-                let mask = 1u64 << bit;
-                if (route_scope_ordinals[word] & mask) == 0 {
-                    route_scope_ordinals[word] |= mask;
-                    route_scope_count = route_scope_count.saturating_add(1);
-                    if marker.linger
-                        && matches!(marker.controller_role, Some(controller_role) if controller_role != ROLE)
-                    {
-                        passive_linger_route_scope_count =
-                            passive_linger_route_scope_count.saturating_add(1);
-                    }
-                }
-            }
-        }
-        marker_idx += 1;
-    }
-    RoleLoweringCounts {
-        eff_count: eff_list.len(),
-        parallel_enter_count,
-        route_scope_count,
-        passive_linger_route_scope_count,
-    }
+    RoleProgram::new(program.summary(), Mint::INSTANCE, program.stamp())
 }
 
 #[cfg(test)]
@@ -518,13 +481,10 @@ mod tests {
     use std::{thread::LocalKey, thread_local};
 
     use super::*;
-    use crate::control::cap::mint::{CapShot, GenericCapToken};
-    use crate::control::cap::resource_kinds::CancelKind;
     use crate::g::{self, Msg, Role};
-    use crate::global::CanonicalControl;
     use crate::global::compiled::CompiledRole;
     use crate::global::const_dsl::{ScopeEvent, ScopeKind};
-    use crate::global::steps::{self, ParSteps, PolicySteps, RouteSteps, SeqSteps, StepCons, StepNil};
+    use crate::global::steps::{self, ParSteps, RouteSteps, SeqSteps, StepCons, StepNil};
     use crate::global::typestate::RoleCompileScratch;
 
     thread_local! {
@@ -547,334 +507,65 @@ mod tests {
         crate::global::compiled::with_compiled_role_in_slot::<ROLE, _>(
             compiled_slot,
             scratch_slot,
-            super::lowering_input(program),
+            crate::global::lowering_input(program),
             f,
         )
     }
 
-    fn with_compiled_role<const ROLE: u8, GlobalSteps, R>(
-        program: &RoleProgram<'_, ROLE, GlobalSteps, MintConfig>,
-        f: impl FnOnce(&CompiledRole) -> R,
-    ) -> R {
-        with_compiled_role_in_slot(
-            &COMPILED_ROLE_STORAGE_A,
-            &COMPILED_ROLE_SCRATCH_A,
-            program,
-            f,
-        )
-    }
-
-    fn with_compiled_roles<const LEFT_ROLE: u8, LeftSteps, const RIGHT_ROLE: u8, RightSteps, R>(
+    fn with_compiled_roles<const LEFT_ROLE: u8, const RIGHT_ROLE: u8, LeftSteps, RightSteps, R>(
         left: &RoleProgram<'_, LEFT_ROLE, LeftSteps, MintConfig>,
         right: &RoleProgram<'_, RIGHT_ROLE, RightSteps, MintConfig>,
         f: impl FnOnce(&CompiledRole, &CompiledRole) -> R,
     ) -> R {
-        with_compiled_role_in_slot(
+        with_compiled_role_in_slot::<LEFT_ROLE, _, _>(
             &COMPILED_ROLE_STORAGE_A,
             &COMPILED_ROLE_SCRATCH_A,
             left,
-            |left_compiled| {
-                with_compiled_role_in_slot(
+            |left_projection| {
+                with_compiled_role_in_slot::<RIGHT_ROLE, _, _>(
                     &COMPILED_ROLE_STORAGE_B,
                     &COMPILED_ROLE_SCRATCH_B,
                     right,
-                    |right_compiled| f(left_compiled, right_compiled),
+                    |right_projection| f(left_projection, right_projection),
                 )
             },
         )
     }
 
-    const PROTOCOL: Program<
-        SeqSteps<
-            StepCons<steps::SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>,
-            StepCons<steps::SendStep<Role<1>, Role<0>, Msg<2, ()>, 0>, StepNil>,
-        >,
-    > = g::seq(
-        g::send::<Role<0>, Role<1>, Msg<1, ()>, 0>(),
-        g::send::<Role<1>, Role<0>, Msg<2, ()>, 0>(),
-    );
+    type ParallelLane0 = StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil>;
+    type ParallelLane1 = StepCons<steps::SendStep<Role<1>, Role<0>, Msg<10, ()>, 1>, StepNil>;
+    const PARALLEL_LANE0: Program<ParallelLane0> = g::send::<Role<0>, Role<1>, Msg<9, ()>, 0>();
+    const PARALLEL_LANE1: Program<ParallelLane1> = g::send::<Role<1>, Role<0>, Msg<10, ()>, 1>();
+    const PARALLEL_PROGRAM: Program<ParSteps<ParallelLane0, ParallelLane1>> =
+        g::par(PARALLEL_LANE0, PARALLEL_LANE1);
 
-    const ROLE_ZERO: RoleProgram<
-        'static,
-        0,
-        SeqSteps<
-            StepCons<steps::SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>,
-            StepCons<steps::SendStep<Role<1>, Role<0>, Msg<2, ()>, 0>, StepNil>,
-        >,
-    > = project(&PROTOCOL);
-    const ROLE_ONE: RoleProgram<
-        'static,
-        1,
-        SeqSteps<
-            StepCons<steps::SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>,
-            StepCons<steps::SendStep<Role<1>, Role<0>, Msg<2, ()>, 0>, StepNil>,
-        >,
-    > = project(&PROTOCOL);
-
-    // CancelMsg uses CanonicalControl which requires self-send (From == To)
-    const CANCEL_PROGRAM: Program<
-        StepCons<
-            steps::SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<
-                    { crate::runtime::consts::LABEL_CANCEL },
-                    GenericCapToken<CancelKind>,
-                    CanonicalControl<CancelKind>,
-                >,
-                0,
-            >,
-            StepNil,
-        >,
-    > = g::send::<
-        Role<0>,
-        Role<0>,
-        Msg<
-            { crate::runtime::consts::LABEL_CANCEL },
-            GenericCapToken<CancelKind>,
-            CanonicalControl<CancelKind>,
-        >,
-        0,
-    >();
-
-    const CANCEL_ROLE: RoleProgram<
-        'static,
-        0,
-        StepCons<
-            steps::SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<
-                    { crate::runtime::consts::LABEL_CANCEL },
-                    GenericCapToken<CancelKind>,
-                    CanonicalControl<CancelKind>,
-                >,
-                0,
-            >,
-            StepNil,
-        >,
-    > = project(&CANCEL_PROGRAM);
-
-    const LOCAL_PROGRAM: Program<
-        StepCons<steps::SendStep<Role<0>, Role<0>, Msg<5, ()>, 0>, StepNil>,
-    > = g::send::<Role<0>, Role<0>, Msg<5, ()>, 0>();
-
-    const LOCAL_ROLE: RoleProgram<
-        'static,
-        0,
-        StepCons<steps::SendStep<Role<0>, Role<0>, Msg<5, ()>, 0>, StepNil>,
-    > = project(&LOCAL_PROGRAM);
-
-    const PREFIX_PROGRAM: Program<
-        StepCons<steps::SendStep<Role<0>, Role<0>, Msg<6, ()>, 0>, StepNil>,
-    > = g::send::<Role<0>, Role<0>, Msg<6, ()>, 0>();
-    const MIDDLE_PROGRAM: Program<
-        StepCons<steps::SendStep<Role<0>, Role<1>, Msg<7, ()>, 0>, StepNil>,
-    > = g::send::<Role<0>, Role<1>, Msg<7, ()>, 0>();
-    const APP_PROGRAM: Program<
-        StepCons<steps::SendStep<Role<1>, Role<0>, Msg<8, ()>, 0>, StepNil>,
-    > = g::send::<Role<1>, Role<0>, Msg<8, ()>, 0>();
-    const CHAIN_PROGRAM: Program<
-        SeqSteps<
-            StepCons<steps::SendStep<Role<0>, Role<0>, Msg<6, ()>, 0>, StepNil>,
-            SeqSteps<
-                StepCons<steps::SendStep<Role<0>, Role<1>, Msg<7, ()>, 0>, StepNil>,
-                StepCons<steps::SendStep<Role<1>, Role<0>, Msg<8, ()>, 0>, StepNil>,
-            >,
-        >,
-    > = g::seq(PREFIX_PROGRAM, g::seq(MIDDLE_PROGRAM, APP_PROGRAM));
-    const CHAIN_ROLE: RoleProgram<
-        'static,
-        0,
-        SeqSteps<
-            StepCons<steps::SendStep<Role<0>, Role<0>, Msg<6, ()>, 0>, StepNil>,
-            SeqSteps<
-                StepCons<steps::SendStep<Role<0>, Role<1>, Msg<7, ()>, 0>, StepNil>,
-                StepCons<steps::SendStep<Role<1>, Role<0>, Msg<8, ()>, 0>, StepNil>,
-            >,
-        >,
-    > = project(&CHAIN_PROGRAM);
-
-    const PING_PROGRAM: Program<
-        StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil>,
-    > = g::send::<Role<0>, Role<1>, Msg<9, ()>, 0>();
-    const PONG_PROGRAM: Program<
-        StepCons<steps::SendStep<Role<1>, Role<0>, Msg<10, ()>, 1>, StepNil>,
-    > = g::send::<Role<1>, Role<0>, Msg<10, ()>, 1>();
-    const PARALLEL_PROGRAM: Program<
-        ParSteps<
-            StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil>,
-            StepCons<steps::SendStep<Role<1>, Role<0>, Msg<10, ()>, 1>, StepNil>,
-        >,
-    > = g::par(PING_PROGRAM, PONG_PROGRAM);
-
-    const LANE0_PROGRAM: Program<
-        SeqSteps<
-            StepCons<steps::SendStep<Role<0>, Role<1>, Msg<14, ()>, 0>, StepNil>,
-            StepCons<steps::SendStep<Role<1>, Role<0>, Msg<15, ()>, 0>, StepNil>,
-        >,
-    > = g::seq(
-        g::send::<Role<0>, Role<1>, Msg<14, ()>, 0>(),
-        g::send::<Role<1>, Role<0>, Msg<15, ()>, 0>(),
-    );
-    type ContinueHeadProgram = PolicySteps<
-        StepCons<steps::SendStep<Role<2>, Role<2>, Msg<11, ()>, 1>, StepNil>,
-        77,
+    type RouteLeft = SeqSteps<
+        StepCons<steps::SendStep<Role<0>, Role<0>, Msg<14, ()>, 0>, StepNil>,
+        StepCons<steps::SendStep<Role<0>, Role<1>, Msg<15, ()>, 0>, StepNil>,
     >;
-    type BreakHeadProgram = PolicySteps<
-        StepCons<steps::SendStep<Role<2>, Role<2>, Msg<12, ()>, 1>, StepNil>,
-        77,
+    type RouteRight = SeqSteps<
+        StepCons<steps::SendStep<Role<0>, Role<0>, Msg<16, ()>, 0>, StepNil>,
+        StepCons<steps::SendStep<Role<0>, Role<1>, Msg<17, ()>, 0>, StepNil>,
     >;
-    const CONTINUE_ARM_PROGRAM: Program<
-        SeqSteps<
-            ContinueHeadProgram,
-            StepCons<steps::SendStep<Role<2>, Role<1>, Msg<13, ()>, 1>, StepNil>,
-        >,
-    > = g::seq(
-        g::send::<Role<2>, Role<2>, Msg<11, ()>, 1>().policy::<77>(),
-        g::send::<Role<2>, Role<1>, Msg<13, ()>, 1>(),
+    const ROUTE_LEFT_PROGRAM: Program<RouteLeft> = g::seq(
+        g::send::<Role<0>, Role<0>, Msg<14, ()>, 0>(),
+        g::send::<Role<0>, Role<1>, Msg<15, ()>, 0>(),
     );
-    const BREAK_ARM_PROGRAM: Program<BreakHeadProgram> =
-        g::send::<Role<2>, Role<2>, Msg<12, ()>, 1>().policy::<77>();
-    const PARALLEL_ROUTE_PROGRAM: Program<
-        ParSteps<
-            SeqSteps<
-                StepCons<steps::SendStep<Role<0>, Role<1>, Msg<14, ()>, 0>, StepNil>,
-                StepCons<steps::SendStep<Role<1>, Role<0>, Msg<15, ()>, 0>, StepNil>,
-            >,
-            RouteSteps<
-                SeqSteps<
-                    ContinueHeadProgram,
-                    StepCons<steps::SendStep<Role<2>, Role<1>, Msg<13, ()>, 1>, StepNil>,
-                >,
-                BreakHeadProgram,
-            >,
-        >,
-    > = g::par(
-        LANE0_PROGRAM,
-        g::route(CONTINUE_ARM_PROGRAM, BREAK_ARM_PROGRAM),
+    const ROUTE_RIGHT_PROGRAM: Program<RouteRight> = g::seq(
+        g::send::<Role<0>, Role<0>, Msg<16, ()>, 0>(),
+        g::send::<Role<0>, Role<1>, Msg<17, ()>, 0>(),
     );
-
-    #[test]
-    fn projection_extracts_role_view() {
-        with_compiled_roles(&ROLE_ZERO, &ROLE_ONE, |role_zero, role_one| {
-            let role_zero_layout = role_zero.layout();
-            assert_eq!(role_zero_layout.len(), 2);
-            assert!(role_zero_layout.steps()[0].is_send());
-            assert!(role_zero_layout.steps()[1].is_recv());
-            assert_eq!(role_zero_layout.steps()[0].peer(), 1);
-            assert_eq!(role_zero_layout.steps()[1].peer(), 1);
-
-            let role_one_layout = role_one.layout();
-            assert_eq!(role_one_layout.len(), 2);
-            assert!(role_one_layout.steps()[0].is_recv());
-            assert!(role_one_layout.steps()[1].is_send());
-
-            assert_eq!(
-                super::lowering_input(&ROLE_ZERO)
-                    .eff_list()
-                    .control_markers()
-                    .len(),
-                PROTOCOL.eff_list().control_markers().len()
-            );
-            assert_eq!(
-                super::lowering_input(&ROLE_ONE)
-                    .eff_list()
-                    .scope_markers()
-                    .len(),
-                PROTOCOL.eff_list().scope_markers().len()
-            );
-
-            let ts_zero = role_zero.typestate();
-            assert_eq!(ts_zero.len(), 3);
-            assert!(matches!(
-                ts_zero.node(0).action(),
-                super::super::typestate::LocalAction::Send { .. }
-            ));
-            assert!(matches!(
-                ts_zero.node(1).action(),
-                super::super::typestate::LocalAction::Recv { .. }
-            ));
-            assert!(ts_zero.node(2).action().is_terminal());
-
-            let ts_one = role_one.typestate();
-            assert_eq!(ts_one.len(), 3);
-            assert!(matches!(
-                ts_one.node(0).action(),
-                super::super::typestate::LocalAction::Recv { .. }
-            ));
-            assert!(matches!(
-                ts_one.node(1).action(),
-                super::super::typestate::LocalAction::Send { .. }
-            ));
-            assert!(ts_one.node(2).action().is_terminal());
-        });
-    }
-
-    #[test]
-    fn control_step_carries_shot_metadata() {
-        // CancelMsg is a self-send (Client→Client), which projects to LocalAction
-        with_compiled_role(&CANCEL_ROLE, |cancel_role| {
-            let cancel_layout = cancel_role.layout();
-            assert_eq!(cancel_layout.len(), 1);
-            let step = cancel_layout.steps()[0];
-            assert!(step.is_local_action());
-            assert!(step.is_control);
-            assert_eq!(step.shot, Some(CapShot::One));
-        });
-    }
-
-    #[test]
-    fn local_action_projects_as_local_step() {
-        with_compiled_role(&LOCAL_ROLE, |local_role| {
-            let local_layout = local_role.layout();
-            assert_eq!(local_layout.len(), 1);
-            let step = local_layout.steps()[0];
-            assert!(step.is_local_action());
-            let ts = local_role.typestate();
-            assert_eq!(ts.len(), 2);
-            assert!(matches!(
-                ts.node(0).action(),
-                super::super::typestate::LocalAction::Local { .. }
-            ));
-            assert!(ts.node(1).action().is_terminal());
-        });
-    }
-
-    #[test]
-    fn chained_projection_preserves_typed_local_steps() {
-        with_compiled_role(&CHAIN_ROLE, |chain_role| {
-            let chain_layout = chain_role.layout();
-            assert_eq!(chain_layout.len(), 3);
-            assert!(chain_layout.steps()[0].is_local_action());
-            assert!(chain_layout.steps()[1].is_send());
-            assert!(chain_layout.steps()[2].is_recv());
-            assert_eq!(chain_layout.steps()[1].peer(), 1);
-            assert_eq!(chain_layout.steps()[2].peer(), 1);
-        });
-    }
+    type RouteProgramSteps = RouteSteps<RouteLeft, RouteRight>;
+    const ROUTE_PROGRAM: Program<RouteProgramSteps> =
+        g::route(ROUTE_LEFT_PROGRAM, ROUTE_RIGHT_PROGRAM);
+    const PARALLEL_ROUTE_PROGRAM: Program<ParSteps<ParallelLane1, RouteProgramSteps>> =
+        g::par(PARALLEL_LANE1, ROUTE_PROGRAM);
 
     #[test]
     fn parallel_projection_keeps_phase_and_lane_split_internal() {
         let parallel_program = PARALLEL_PROGRAM;
-        let client: RoleProgram<
-            '_,
-            0,
-            ParSteps<
-                StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil>,
-                StepCons<steps::SendStep<Role<1>, Role<0>, Msg<10, ()>, 1>, StepNil>,
-            >,
-            MintConfig,
-        > = project(&parallel_program);
-        let server: RoleProgram<
-            '_,
-            1,
-            ParSteps<
-                StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil>,
-                StepCons<steps::SendStep<Role<1>, Role<0>, Msg<10, ()>, 1>, StepNil>,
-            >,
-            MintConfig,
-        > = project(&parallel_program);
+        let client: RoleProgram<'_, 0, _, MintConfig> = project(&parallel_program);
+        let server: RoleProgram<'_, 1, _, MintConfig> = project(&parallel_program);
 
         with_compiled_roles(&client, &server, |client_projection, server_projection| {
             assert_eq!(client_projection.layout().phase_count(), 1);
@@ -923,26 +614,11 @@ mod tests {
     #[test]
     fn parallel_route_projection_keeps_scope_markers_without_public_step_surface() {
         let parallel_route_program = PARALLEL_ROUTE_PROGRAM;
-        let program: RoleProgram<
-            '_,
-            0,
-            ParSteps<
-                SeqSteps<
-                    StepCons<steps::SendStep<Role<0>, Role<1>, Msg<14, ()>, 0>, StepNil>,
-                    StepCons<steps::SendStep<Role<1>, Role<0>, Msg<15, ()>, 0>, StepNil>,
-                >,
-                RouteSteps<
-                    SeqSteps<
-                        ContinueHeadProgram,
-                        StepCons<steps::SendStep<Role<2>, Role<1>, Msg<13, ()>, 1>, StepNil>,
-                    >,
-                    BreakHeadProgram,
-                >,
-            >,
-            MintConfig,
-        > = project(&parallel_route_program);
-        let eff_list = super::lowering_input(&program).eff_list();
-        let scope_markers = eff_list.scope_markers();
+        let program: RoleProgram<'_, 0, _, MintConfig> = project(&parallel_route_program);
+        let scope_markers = super::lowering_input(&program)
+            .summary()
+            .view()
+            .scope_markers();
 
         assert!(
             scope_markers

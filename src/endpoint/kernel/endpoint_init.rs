@@ -141,9 +141,9 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
             ),
             section_ptr::<ScopeEvidenceSlot>(arena_storage, arena_layout.scope_evidence_slots()),
             &active_lane_dense_by_lane,
-            compiled_role.active_lane_count(),
+            arena_layout.lane_offer_state_slots().count(),
             compiled_role.max_route_stack_depth(),
-            compiled_role.route_scope_count(),
+            arena_layout.scope_evidence_slots().count(),
         );
     }
 }

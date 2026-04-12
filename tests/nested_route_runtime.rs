@@ -62,8 +62,10 @@ type InnerRightHead = PolicySteps<
     >,
     INNER_ROUTE_POLICY_ID,
 >;
-type InnerLeftSteps = SeqSteps<InnerLeftHead, StepCons<SendStep<Role<0>, Role<1>, Msg<7, u32>>, StepNil>>;
-type InnerRightSteps = SeqSteps<InnerRightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<8, u32>>, StepNil>>;
+type InnerLeftSteps =
+    SeqSteps<InnerLeftHead, StepCons<SendStep<Role<0>, Role<1>, Msg<7, u32>>, StepNil>>;
+type InnerRightSteps =
+    SeqSteps<InnerRightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<8, u32>>, StepNil>>;
 type InnerRouteSteps = RouteSteps<InnerLeftSteps, InnerRightSteps>;
 type OuterLeftHead = PolicySteps<
     StepCons<
@@ -91,8 +93,10 @@ type OuterRightHead = PolicySteps<
     >,
     OUTER_ROUTE_POLICY_ID,
 >;
-type OuterLeftSteps =
-    SeqSteps<OuterLeftHead, SeqSteps<StepCons<SendStep<Role<0>, Role<1>, Msg<5, u32>>, StepNil>, InnerRouteSteps>>;
+type OuterLeftSteps = SeqSteps<
+    OuterLeftHead,
+    SeqSteps<StepCons<SendStep<Role<0>, Role<1>, Msg<5, u32>>, StepNil>, InnerRouteSteps>,
+>;
 type OuterRightSteps =
     SeqSteps<OuterRightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<6, u32>>, StepNil>>;
 type ProgramSteps = RouteSteps<OuterLeftSteps, OuterRightSteps>;

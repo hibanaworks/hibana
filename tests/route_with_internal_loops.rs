@@ -13,9 +13,7 @@
 #[path = "support/route_control_kinds.rs"]
 mod route_control_kinds;
 
-use hibana::g::advanced::steps::{
-    PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil,
-};
+use hibana::g::advanced::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
 use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
 use hibana::g::{self, Msg, Role};
 use hibana::substrate::cap::GenericCapToken;
@@ -69,8 +67,10 @@ type ArmALoopBreakHead = PolicySteps<
     >,
     { ROUTE_POLICY_ID + 1 },
 >;
-type ArmALoopSteps =
-    RouteSteps<SeqSteps<ArmALoopContinueHead, StepCons<SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>>, ArmALoopBreakHead>;
+type ArmALoopSteps = RouteSteps<
+    SeqSteps<ArmALoopContinueHead, StepCons<SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>>,
+    ArmALoopBreakHead,
+>;
 type ArmAMarkerHead = PolicySteps<
     StepCons<
         SendStep<
@@ -116,8 +116,10 @@ type ArmBLoopBreakHead = PolicySteps<
     >,
     { ROUTE_POLICY_ID + 2 },
 >;
-type ArmBLoopSteps =
-    RouteSteps<SeqSteps<ArmBLoopContinueHead, StepCons<SendStep<Role<0>, Role<1>, Msg<2, ()>, 0>, StepNil>>, ArmBLoopBreakHead>;
+type ArmBLoopSteps = RouteSteps<
+    SeqSteps<ArmBLoopContinueHead, StepCons<SendStep<Role<0>, Role<1>, Msg<2, ()>, 0>, StepNil>>,
+    ArmBLoopBreakHead,
+>;
 type ArmBMarkerHead = PolicySteps<
     StepCons<
         SendStep<

@@ -97,12 +97,11 @@ impl EndpointArenaLayout {
         active_lane_count: usize,
         logical_lane_count: usize,
         max_route_stack_depth: usize,
-        route_scope_count: usize,
-        max_frontier_entries: usize,
+        scope_evidence_count: usize,
+        frontier_entry_capacity: usize,
     ) -> Self {
-        let frontier_entry_capacity = max_frontier_entries;
         #[cfg(test)]
-        let offer_entry_capacity = max_usize(max_frontier_entries, TEST_FRONTIER_ENTRY_FLOOR);
+        let offer_entry_capacity = max_usize(frontier_entry_capacity, TEST_FRONTIER_ENTRY_FLOOR);
         let mut offset = 0usize;
         let mut total_align = 1usize;
 
@@ -173,7 +172,7 @@ impl EndpointArenaLayout {
         total_align = max_usize(total_align, binding_label_masks.align);
 
         let scope_evidence_slots =
-            Self::section_array::<ScopeEvidenceSlot>(offset, route_scope_count);
+            Self::section_array::<ScopeEvidenceSlot>(offset, scope_evidence_count);
         offset = scope_evidence_slots.offset + scope_evidence_slots.bytes;
         total_align = max_usize(total_align, scope_evidence_slots.align);
 

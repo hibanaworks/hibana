@@ -180,27 +180,27 @@ impl RouteState {
         lane_offer_state_storage: *mut LaneOfferState,
         scope_evidence_slots: *mut ScopeEvidenceSlot,
         lane_dense_by_lane: &[u8; MAX_LANES],
-        active_lane_count: usize,
-        max_route_stack_depth: usize,
-        route_scope_count: usize,
+        lane_offer_state_count: usize,
+        route_frame_depth: usize,
+        scope_evidence_count: usize,
     ) {
         unsafe {
             RouteArmStackView::init(
                 core::ptr::addr_of_mut!((*dst).lane_route_arms),
                 route_arm_storage,
                 lane_dense_by_lane,
-                max_route_stack_depth,
+                route_frame_depth,
             );
             LaneOfferStateView::init(
                 core::ptr::addr_of_mut!((*dst).lane_offer_states),
                 lane_offer_state_storage,
                 lane_dense_by_lane,
-                active_lane_count,
+                lane_offer_state_count,
             );
             ScopeEvidenceTable::init_from_parts(
                 core::ptr::addr_of_mut!((*dst).scope_evidence),
                 scope_evidence_slots,
-                route_scope_count,
+                scope_evidence_count,
             );
 
             let lens_ptr = core::ptr::addr_of_mut!((*dst).lane_route_arm_lens).cast::<u8>();

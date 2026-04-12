@@ -364,7 +364,6 @@ pub(crate) const fn assert_program_covers_facets<Steps>(
 ) where
     Steps: crate::global::program::BuildProgramSource,
 {
-    let budget =
-        crate::global::compiled::LoweringSummary::scan_const(program.eff_list()).lease_budget();
+    let budget = program.summary().lease_budget();
     assert_budget_covers(budget, needs);
 }

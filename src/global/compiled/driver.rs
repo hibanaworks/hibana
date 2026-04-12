@@ -1,5 +1,3 @@
-use core::ptr;
-
 use crate::{
     control::{cluster::effects::CpEffect, lease::planner::LeaseGraphBudget},
     eff::{EffKind, EffStruct},
@@ -17,6 +15,8 @@ use super::program::{
 
 const MAX_LOWERING_NODES: usize = crate::eff::meta::MAX_EFF_NODES;
 const CONTROL_SPEC_MASK_BYTES: usize = (MAX_LOWERING_NODES + 7) / 8;
+const ROUTE_SCOPE_ORDINAL_WORDS: usize = (MAX_LOWERING_NODES + 63) / 64;
+const MAX_TRACKED_ROLE_FACTS: usize = u8::MAX as usize + 1;
 const EMPTY_CONTROL_SPEC: ControlLabelSpec = ControlLabelSpec {
     label: 0,
     resource_tag: 0,
@@ -126,9 +126,48 @@ pub(crate) struct LoweringSummary {
     control_spec_present: [u8; CONTROL_SPEC_MASK_BYTES],
     lease_budget: LeaseGraphBudget,
     compiled_program_counts: CompiledProgramCounts,
+    program_lowering_facts: ProgramLoweringFacts,
+    role_lowering_facts: [RoleLoweringFacts; MAX_TRACKED_ROLE_FACTS],
     role_count: u8,
     control_scope_mask: u8,
     stamp: ProgramStamp,
+}
+
+#[derive(Clone, Copy, Default)]
+struct ProgramLoweringFacts {
+    eff_count: u16,
+    parallel_enter_count: u16,
+    route_scope_count: u16,
+}
+
+impl ProgramLoweringFacts {
+    const EMPTY: Self = Self {
+        eff_count: 0,
+        parallel_enter_count: 0,
+        route_scope_count: 0,
+    };
+}
+
+#[derive(Clone, Copy, Default)]
+struct RoleLoweringFacts {
+    local_step_count: u16,
+    passive_linger_route_scope_count: u16,
+}
+
+impl RoleLoweringFacts {
+    const EMPTY: Self = Self {
+        local_step_count: 0,
+        passive_linger_route_scope_count: 0,
+    };
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RoleLoweringCounts {
+    pub(crate) eff_count: usize,
+    pub(crate) local_step_count: usize,
+    pub(crate) parallel_enter_count: usize,
+    pub(crate) route_scope_count: usize,
+    pub(crate) passive_linger_route_scope_count: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -285,8 +324,10 @@ impl LoweringSummary {
         let mut policy_markers_len = 0u16;
         let mut control_specs_len = 0u16;
         let mut role_count = 0usize;
+        let mut route_scope_ordinals = [0u64; ROUTE_SCOPE_ORDINAL_WORDS];
         let mut lease_budget = LeaseGraphBudget::new();
         let src_nodes = eff_list.as_slice();
+        summary.program_lowering_facts.eff_count = src_nodes.len() as u16;
         let mut idx = 0usize;
         while idx < src_nodes.len() {
             let node = src_nodes[idx];
@@ -309,6 +350,18 @@ impl LoweringSummary {
             if matches!(node.kind, EffKind::Atom) {
                 let atom = node.atom_data();
                 let policy = summary.policies[idx];
+                let from = atom.from as usize;
+                let to = atom.to as usize;
+                summary.role_lowering_facts[from].local_step_count = summary.role_lowering_facts
+                    [from]
+                    .local_step_count
+                    .saturating_add(1);
+                if to != from {
+                    summary.role_lowering_facts[to].local_step_count = summary.role_lowering_facts
+                        [to]
+                        .local_step_count
+                        .saturating_add(1);
+                }
                 if atom.from as usize + 1 > role_count {
                     role_count = atom.from as usize + 1;
                 }
@@ -341,6 +394,48 @@ impl LoweringSummary {
             summary.scope_markers[scope_idx] = marker;
             if matches!(marker.event, ScopeEvent::Enter) {
                 scope_count = scope_count.saturating_add(1);
+                if matches!(
+                    marker.scope_kind,
+                    crate::global::const_dsl::ScopeKind::Parallel
+                ) {
+                    summary.program_lowering_facts.parallel_enter_count = summary
+                        .program_lowering_facts
+                        .parallel_enter_count
+                        .saturating_add(1);
+                } else if matches!(
+                    marker.scope_kind,
+                    crate::global::const_dsl::ScopeKind::Route
+                ) {
+                    let ordinal = marker.scope_id.local_ordinal() as usize;
+                    let word = ordinal / 64;
+                    let bit = ordinal % 64;
+                    if word >= route_scope_ordinals.len() {
+                        panic!("route scope ordinal overflow");
+                    }
+                    let mask = 1u64 << bit;
+                    if (route_scope_ordinals[word] & mask) == 0 {
+                        route_scope_ordinals[word] |= mask;
+                        summary.program_lowering_facts.route_scope_count = summary
+                            .program_lowering_facts
+                            .route_scope_count
+                            .saturating_add(1);
+                        if marker.linger
+                            && let Some(controller_role) = marker.controller_role
+                        {
+                            let mut role_idx = 0usize;
+                            while role_idx < summary.role_lowering_facts.len() {
+                                if role_idx != controller_role as usize {
+                                    summary.role_lowering_facts[role_idx]
+                                        .passive_linger_route_scope_count = summary
+                                        .role_lowering_facts[role_idx]
+                                        .passive_linger_route_scope_count
+                                        .saturating_add(1);
+                                }
+                                role_idx += 1;
+                            }
+                        }
+                    }
+                }
             }
             lane0 = ProgramStamp::mix_u64(lane0, scope_idx as u64);
             lane0 = ProgramStamp::mix_u64(lane0, marker.offset as u64);
@@ -422,6 +517,8 @@ impl LoweringSummary {
                 controls: 0,
                 dynamic_policy_sites: 0,
             },
+            program_lowering_facts: ProgramLoweringFacts::EMPTY,
+            role_lowering_facts: [RoleLoweringFacts::EMPTY; MAX_TRACKED_ROLE_FACTS],
             role_count: 0,
             control_scope_mask: 0,
             stamp: ProgramStamp {
@@ -497,6 +594,18 @@ impl LoweringSummary {
     #[inline(always)]
     pub(crate) const fn compiled_program_role_count(&self) -> usize {
         self.role_count as usize
+    }
+
+    #[inline(always)]
+    pub(crate) const fn role_lowering_counts<const ROLE: u8>(&self) -> RoleLoweringCounts {
+        let role = self.role_lowering_facts[ROLE as usize];
+        RoleLoweringCounts {
+            eff_count: self.program_lowering_facts.eff_count as usize,
+            local_step_count: role.local_step_count as usize,
+            parallel_enter_count: self.program_lowering_facts.parallel_enter_count as usize,
+            route_scope_count: self.program_lowering_facts.route_scope_count as usize,
+            passive_linger_route_scope_count: role.passive_linger_route_scope_count as usize,
+        }
     }
 
     #[inline(always)]
@@ -585,85 +694,5 @@ impl LoweringSummary {
         }
 
         true
-    }
-}
-
-#[cfg(test)]
-mod runtime_scan_counter {
-    use std::cell::Cell;
-
-    std::thread_local! {
-        static COUNT: Cell<usize> = const { Cell::new(0) };
-    }
-
-    pub(crate) fn bump() {
-        COUNT.with(|count| count.set(count.get() + 1));
-    }
-
-    pub(crate) fn reset() {
-        COUNT.with(|count| count.set(0));
-    }
-
-    pub(crate) fn read() -> usize {
-        COUNT.with(Cell::get)
-    }
-}
-
-impl LoweringSummary {
-    #[inline(always)]
-    unsafe fn init_array_copy<T: Copy, const N: usize>(dst: *mut [T; N], value: T) {
-        let ptr = dst.cast::<T>();
-        let mut idx = 0usize;
-        while idx < N {
-            unsafe {
-                ptr.add(idx).write(value);
-            }
-            idx += 1;
-        }
-    }
-
-    #[inline(never)]
-    pub(crate) unsafe fn init_scan(dst: *mut Self, eff_list: &EffList) {
-        #[cfg(test)]
-        runtime_scan_counter::bump();
-
-        unsafe {
-            Self::init_array_copy(ptr::addr_of_mut!((*dst).nodes), EffStruct::pure());
-            ptr::addr_of_mut!((*dst).len).write(eff_list.len());
-            Self::init_array_copy(
-                ptr::addr_of_mut!((*dst).scope_markers),
-                ScopeMarker::empty(),
-            );
-            ptr::addr_of_mut!((*dst).scope_marker_len).write(eff_list.scope_markers().len());
-            Self::init_array_copy(
-                ptr::addr_of_mut!((*dst).control_markers),
-                ControlMarker::empty(),
-            );
-            ptr::addr_of_mut!((*dst).control_marker_len).write(eff_list.control_markers().len());
-            Self::init_array_copy(ptr::addr_of_mut!((*dst).policies), PolicyMode::Static);
-            Self::init_array_copy(ptr::addr_of_mut!((*dst).control_specs), EMPTY_CONTROL_SPEC);
-            Self::init_array_copy(ptr::addr_of_mut!((*dst).control_spec_present), 0u8);
-            ptr::addr_of_mut!((*dst).lease_budget).write(LeaseGraphBudget::new());
-            ptr::addr_of_mut!((*dst).compiled_program_counts).write(CompiledProgramCounts {
-                cp_effects: 0,
-                tap_events: 0,
-                resources: 0,
-                controls: 0,
-                dynamic_policy_sites: 0,
-            });
-            ptr::addr_of_mut!((*dst).role_count).write(0);
-            ptr::addr_of_mut!((*dst).control_scope_mask).write(0);
-            Self::scan_into(&mut *dst, eff_list);
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn reset_runtime_scan_count() {
-        runtime_scan_counter::reset();
-    }
-
-    #[cfg(test)]
-    pub(crate) fn runtime_scan_count() -> usize {
-        runtime_scan_counter::read()
     }
 }

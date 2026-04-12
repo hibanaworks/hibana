@@ -76,12 +76,6 @@ impl<'ctx, K: ResourceKind> ControlFrame<'ctx, K> {
         }
     }
 
-    /// Get the raw token bytes.
-    #[inline]
-    pub(crate) fn bytes(&self) -> &[u8; CAP_TOKEN_LEN] {
-        &self.bytes
-    }
-
     /// Interpret as `GenericCapToken<K>` for inspection.
     #[inline]
     pub(crate) fn as_generic(&self) -> GenericCapToken<K> {
@@ -228,8 +222,9 @@ mod tests {
         let flow_token = CapFlowToken::new(token);
 
         let frame = ControlFrame::from_flow(flow_token);
-        assert_eq!(frame.bytes(), &bytes);
         let generic = frame.as_generic();
+        assert_eq!(generic.into_bytes(), bytes);
+        let generic = GenericCapToken::<LoopContinueKind>::from_bytes(bytes);
         let view = generic.as_view().expect("should decode");
         assert_eq!(view.handle(), &handle);
     }

@@ -29,11 +29,7 @@ impl ProgramSourceData {
         Self::from_eff(EffList::new(), false, false)
     }
 
-    const fn from_eff(
-        eff: EffList,
-        loop_scope_pending: bool,
-        tail_is_loop_control: bool,
-    ) -> Self {
+    const fn from_eff(eff: EffList, loop_scope_pending: bool, tail_is_loop_control: bool) -> Self {
         Self {
             eff,
             loop_scope_pending,
@@ -69,7 +65,8 @@ impl ProgramSourceData {
             if eff.is_empty() {
                 panic!("loop body must contain at least one step");
             }
-            let loop_scope = ScopeId::loop_scope(add_scope_budget(scope_budget, next.scope_budget()));
+            let loop_scope =
+                ScopeId::loop_scope(add_scope_budget(scope_budget, next.scope_budget()));
             let scoped_next = rebased.with_scope(loop_scope);
             eff = if self.tail_is_loop_control {
                 eff.with_scope(loop_scope).extend_list(scoped_next)
@@ -146,12 +143,14 @@ impl<Steps> ValidatedProgram<Steps>
 where
     Steps: BuildProgramSource,
 {
-    const STAMP: ProgramStamp = {
+    const SUMMARY: LoweringSummary = {
         let summary = LoweringSummary::scan_const(<Steps as BuildProgramSource>::SOURCE.eff_list());
         summary.validate_projection_program();
         validate_all_roles(&summary);
-        summary.stamp()
+        summary
     };
+
+    const STAMP: ProgramStamp = Self::SUMMARY.stamp();
 }
 
 #[inline(always)]
@@ -160,6 +159,14 @@ where
     Steps: BuildProgramSource,
 {
     ValidatedProgram::<Steps>::STAMP
+}
+
+#[inline(always)]
+pub(crate) const fn validated_program_summary<Steps>() -> &'static LoweringSummary
+where
+    Steps: BuildProgramSource,
+{
+    &ValidatedProgram::<Steps>::SUMMARY
 }
 
 impl BuildProgramSource for StepNil {
@@ -171,7 +178,9 @@ impl<From, To, Msg, const LANE: u8, Tail> BuildProgramSource
 where
     From: crate::global::KnownRole + crate::global::RoleMarker + RoleEq<To>,
     To: crate::global::KnownRole + crate::global::RoleMarker,
-    Msg: crate::global::MessageSpec + crate::global::SendableLabel + crate::global::MessageControlSpec,
+    Msg: crate::global::MessageSpec
+        + crate::global::SendableLabel
+        + crate::global::MessageControlSpec,
     Tail: BuildProgramSource,
     <Msg as crate::global::MessageSpec>::ControlKind:
         crate::global::RequireSelfSendForCanonical<<From as RoleEq<To>>::Output>,
@@ -301,6 +310,7 @@ impl<Steps> Program<Steps> {
         Program::new()
     }
 
+    #[cfg(test)]
     pub(crate) const fn eff_list(&self) -> &EffList
     where
         Steps: BuildProgramSource,
@@ -314,6 +324,14 @@ impl<Steps> Program<Steps> {
         Steps: BuildProgramSource,
     {
         validated_program_stamp::<Steps>()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn summary(&self) -> &'static LoweringSummary
+    where
+        Steps: BuildProgramSource,
+    {
+        validated_program_summary::<Steps>()
     }
 
     #[cfg(test)]

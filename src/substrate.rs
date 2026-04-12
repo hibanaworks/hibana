@@ -114,17 +114,16 @@ where
 
     #[inline]
     #[allow(private_bounds)]
-    pub fn enter<'r, const ROLE: u8, Steps, Mint, B>(
+    pub fn enter<'r, const ROLE: u8, GlobalSteps, Mint, B>(
         &'r self,
         rv: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Steps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
         binding: B,
     ) -> Result<crate::Endpoint<'r, ROLE, Self, Mint>, AttachError>
     where
         B: crate::binding::BindingArg<'r>,
         Mint: crate::substrate::cap::advanced::MintConfigMarker,
-        Steps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
         'cfg: 'r,
     {
         let binding = binding.into_binding_handle();
@@ -132,16 +131,15 @@ where
     }
 
     #[inline]
-    fn enter_with_binding<'r, const ROLE: u8, Steps, Mint>(
+    fn enter_with_binding<'r, const ROLE: u8, GlobalSteps, Mint>(
         &'r self,
         rv: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Steps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<crate::Endpoint<'r, ROLE, Self, Mint>, AttachError>
     where
         Mint: crate::substrate::cap::advanced::MintConfigMarker,
-        Steps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
         'cfg: 'r,
     {
         let (slot, generation) = self.inner.enter(rv, sid, program, binding)?;
@@ -154,17 +152,17 @@ where
     }
 
     #[inline]
-    pub fn set_resolver<const POLICY: u16, const ROLE: u8, Steps, Mint>(
+    pub fn set_resolver<const POLICY: u16, const ROLE: u8, GlobalSteps, Mint>(
         &self,
         rv: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Steps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
         resolver: crate::substrate::policy::ResolverRef<'cfg>,
     ) -> Result<(), CpError>
     where
         Mint: crate::substrate::cap::advanced::MintConfigMarker,
     {
         self.inner
-            .set_resolver::<POLICY, ROLE, Steps, Mint>(rv, program, resolver)
+            .set_resolver::<POLICY, ROLE, GlobalSteps, Mint>(rv, program, resolver)
     }
 }
 
@@ -838,9 +836,9 @@ mod tests {
         let mut runtime_metrics = None::<RuntimeShapeMetrics>;
         with_pico_fixture(|clock, tap_buf, slab| {
             let transport = PicoTransport;
-            let controller_program: hibana::g::advanced::RoleProgram<'_, 0, Steps, MintConfig> =
+            let controller_program: hibana::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
                 project(program);
-            let worker_program: hibana::g::advanced::RoleProgram<'_, 1, Steps, MintConfig> =
+            let worker_program: hibana::g::advanced::RoleProgram<'_, 1, _, MintConfig> =
                 project(program);
             let kit = PicoKit::new(clock);
             let rv_id = kit

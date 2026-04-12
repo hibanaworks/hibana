@@ -93,12 +93,15 @@ mod tests {
             const { UnsafeCell::new(MaybeUninit::uninit()) };
     }
 
-    fn with_compiled_role_slot<const ROLE: u8, Steps, R>(
+    fn with_compiled_role_slot<const ROLE: u8, GlobalSteps, Mint, R>(
         compiled_slot: &'static LocalKey<UnsafeCell<MaybeUninit<CompiledRole>>>,
         scratch_slot: &'static LocalKey<UnsafeCell<MaybeUninit<RoleCompileScratch>>>,
-        program: &RoleProgram<'_, ROLE, Steps>,
+        program: &RoleProgram<'_, ROLE, GlobalSteps, Mint>,
         f: impl FnOnce(&CompiledRole) -> R,
-    ) -> R {
+    ) -> R
+    where
+        Mint: crate::control::cap::mint::MintConfigMarker,
+    {
         crate::global::compiled::with_compiled_role_in_slot::<ROLE, _>(
             compiled_slot,
             scratch_slot,
@@ -142,8 +145,10 @@ mod tests {
         >,
         LOOP_POLICY_ID,
     >;
-    type LoopProgramSteps =
-        RouteSteps<SeqSteps<LoopContinueHead, StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>>, LoopBreakHead>;
+    type LoopProgramSteps = RouteSteps<
+        SeqSteps<LoopContinueHead, StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>>,
+        LoopBreakHead,
+    >;
     type RouteScopeContinueHead = PolicySteps<
         StepCons<
             SendStep<
@@ -206,17 +211,9 @@ mod tests {
         g::route(continue_arm, break_arm)
     };
 
-    const CONTROLLER_PROGRAM: RoleProgram<
-        'static,
-        0,
-        LoopProgramSteps,
-    > = project(&LOOP_PROGRAM);
+    const CONTROLLER_PROGRAM: RoleProgram<'static, 0, LoopProgramSteps> = project(&LOOP_PROGRAM);
 
-    const TARGET_PROGRAM: RoleProgram<
-        'static,
-        1,
-        LoopProgramSteps,
-    > = project(&LOOP_PROGRAM);
+    const TARGET_PROGRAM: RoleProgram<'static, 1, LoopProgramSteps> = project(&LOOP_PROGRAM);
 
     const LOCAL_PROGRAM: g::Program<StepCons<SendStep<Role<0>, Role<0>, Msg<9, ()>>, StepNil>> =
         g::send::<Role<0>, Role<0>, Msg<9, ()>, 0>();

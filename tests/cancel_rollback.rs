@@ -30,73 +30,57 @@ const LABEL_CANCEL: u8 = 60;
 const LABEL_CHECKPOINT: u8 = 61;
 const LABEL_ROLLBACK: u8 = 63;
 type TestKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
+type CancelProtocolSteps = StepCons<
+    SendStep<
+        Role<0>,
+        Role<0>,
+        Msg<{ LABEL_CANCEL }, GenericCapToken<CancelKind>, CanonicalControl<CancelKind>>,
+        0,
+    >,
+    StepNil,
+>;
+type CheckpointProtocolSteps = SeqSteps<
+    StepCons<
+        SendStep<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_CHECKPOINT },
+                GenericCapToken<CheckpointKind>,
+                CanonicalControl<CheckpointKind>,
+            >,
+            0,
+        >,
+        StepNil,
+    >,
+    StepCons<
+        SendStep<
+            Role<0>,
+            Role<0>,
+            Msg<{ LABEL_ROLLBACK }, GenericCapToken<RollbackKind>, CanonicalControl<RollbackKind>>,
+            0,
+        >,
+        StepNil,
+    >,
+>;
+type BootstrapProtocolSteps = StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil>;
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
     };
 }
 
-const CANCEL_PROTOCOL: g::Program<
-    StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<{ LABEL_CANCEL }, GenericCapToken<CancelKind>, CanonicalControl<CancelKind>>,
-            0,
-        >,
-        StepNil,
-    >,
-> = g::send::<
+const CANCEL_PROTOCOL: g::Program<CancelProtocolSteps> = g::send::<
     Role<0>,
     Role<0>,
     Msg<{ LABEL_CANCEL }, GenericCapToken<CancelKind>, CanonicalControl<CancelKind>>,
     0,
 >();
 
-static CONTROLLER_CANCEL_PROGRAM: RoleProgram<
-    'static,
-    0,
-    StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<{ LABEL_CANCEL }, GenericCapToken<CancelKind>, CanonicalControl<CancelKind>>,
-            0,
-        >,
-        StepNil,
-    >,
-> = project(&CANCEL_PROTOCOL);
+static CONTROLLER_CANCEL_PROGRAM: RoleProgram<'static, 0, CancelProtocolSteps> =
+    project(&CANCEL_PROTOCOL);
 
-const CHECKPOINT_PROTOCOL: g::Program<
-    SeqSteps<
-        StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<
-                    { LABEL_CHECKPOINT },
-                    GenericCapToken<CheckpointKind>,
-                    CanonicalControl<CheckpointKind>,
-                >,
-                0,
-            >,
-            StepNil,
-        >,
-        StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<
-                    { LABEL_ROLLBACK },
-                    GenericCapToken<RollbackKind>,
-                    CanonicalControl<RollbackKind>,
-                >,
-                0,
-            >,
-            StepNil,
-        >,
-    >,
-> = g::seq(
+const CHECKPOINT_PROTOCOL: g::Program<CheckpointProtocolSteps> = g::seq(
     g::send::<
         Role<0>,
         Role<0>,
@@ -115,47 +99,13 @@ const CHECKPOINT_PROTOCOL: g::Program<
     >(),
 );
 
-static CONTROLLER_CHECKPOINT_PROGRAM: RoleProgram<
-    'static,
-    0,
-    SeqSteps<
-        StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<
-                    { LABEL_CHECKPOINT },
-                    GenericCapToken<CheckpointKind>,
-                    CanonicalControl<CheckpointKind>,
-                >,
-                0,
-            >,
-            StepNil,
-        >,
-        StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<
-                    { LABEL_ROLLBACK },
-                    GenericCapToken<RollbackKind>,
-                    CanonicalControl<RollbackKind>,
-                >,
-                0,
-            >,
-            StepNil,
-        >,
-    >,
-> = project(&CHECKPOINT_PROTOCOL);
-const BOOTSTRAP_PROTOCOL: g::Program<
-    StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil>,
-> = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
+static CONTROLLER_CHECKPOINT_PROGRAM: RoleProgram<'static, 0, CheckpointProtocolSteps> =
+    project(&CHECKPOINT_PROTOCOL);
+const BOOTSTRAP_PROTOCOL: g::Program<BootstrapProtocolSteps> =
+    g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
 
-static CONTROLLER_BOOTSTRAP_PROGRAM: RoleProgram<
-    'static,
-    0,
-    StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil>,
-> = project(&BOOTSTRAP_PROTOCOL);
+static CONTROLLER_BOOTSTRAP_PROGRAM: RoleProgram<'static, 0, BootstrapProtocolSteps> =
+    project(&BOOTSTRAP_PROTOCOL);
 
 fn run_cancel_local_action_test(
     cluster: &'static TestKit,

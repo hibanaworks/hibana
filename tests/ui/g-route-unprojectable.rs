@@ -78,80 +78,44 @@ const ARM1: g::Program<
 );
 
 // No dynamic policy here -> unprojectable for Passive.
-const ROUTE: g::Program<
-    RouteSteps<
-        SeqSteps<
-            StepCons<
-                SendStep<
-                    g::Role<0>,
-                    g::Role<0>,
-                    g::Msg<100, GenericCapToken<RouteArm100Kind>, CanonicalControl<RouteArm100Kind>>,
-                >,
-                StepNil,
+type RouteProgramSteps = RouteSteps<
+    SeqSteps<
+        StepCons<
+            SendStep<
+                g::Role<0>,
+                g::Role<0>,
+                g::Msg<100, GenericCapToken<RouteArm100Kind>, CanonicalControl<RouteArm100Kind>>,
             >,
-            SeqSteps<
-                StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<42, ()>>, StepNil>,
-                StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<99, ()>>, StepNil>,
-            >,
+            StepNil,
         >,
         SeqSteps<
-            StepCons<
-                SendStep<
-                    g::Role<0>,
-                    g::Role<0>,
-                    g::Msg<101, GenericCapToken<RouteArm101Kind>, CanonicalControl<RouteArm101Kind>>,
-                >,
-                StepNil,
+            StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<42, ()>>, StepNil>,
+            StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<99, ()>>, StepNil>,
+        >,
+    >,
+    SeqSteps<
+        StepCons<
+            SendStep<
+                g::Role<0>,
+                g::Role<0>,
+                g::Msg<101, GenericCapToken<RouteArm101Kind>, CanonicalControl<RouteArm101Kind>>,
             >,
+            StepNil,
+        >,
+        SeqSteps<
+            StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<42, ()>>, StepNil>,
             SeqSteps<
-                StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<42, ()>>, StepNil>,
-                SeqSteps<
-                    StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<99, ()>>, StepNil>,
-                    StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<77, ()>>, StepNil>,
-                >,
+                StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<99, ()>>, StepNil>,
+                StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<77, ()>>, StepNil>,
             >,
         >,
     >,
-> = g::route(ARM0, ARM1);
+>;
+
+const ROUTE: g::Program<RouteProgramSteps> = g::route(ARM0, ARM1);
 
 // Force evaluation by projecting to the passive role.
-static PASSIVE_PROGRAM: RoleProgram<
-    'static,
-    1,
-    RouteSteps<
-        SeqSteps<
-            StepCons<
-                SendStep<
-                    g::Role<0>,
-                    g::Role<0>,
-                    g::Msg<100, GenericCapToken<RouteArm100Kind>, CanonicalControl<RouteArm100Kind>>,
-                >,
-                StepNil,
-            >,
-            SeqSteps<
-                StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<42, ()>>, StepNil>,
-                StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<99, ()>>, StepNil>,
-            >,
-        >,
-        SeqSteps<
-            StepCons<
-                SendStep<
-                    g::Role<0>,
-                    g::Role<0>,
-                    g::Msg<101, GenericCapToken<RouteArm101Kind>, CanonicalControl<RouteArm101Kind>>,
-                >,
-                StepNil,
-            >,
-            SeqSteps<
-                StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<42, ()>>, StepNil>,
-                SeqSteps<
-                    StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<99, ()>>, StepNil>,
-                    StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<77, ()>>, StepNil>,
-                >,
-            >,
-        >,
-    >,
-> = project(&ROUTE);
+static PASSIVE_PROGRAM: RoleProgram<'static, 1, RouteProgramSteps> = project(&ROUTE);
 
 fn main() {
     let _ = &PASSIVE_PROGRAM;

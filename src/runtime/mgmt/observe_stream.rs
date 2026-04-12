@@ -186,14 +186,22 @@ type StreamLoopBreakHead = PolicySteps<
 type StreamLoopContinueArm = SeqSteps<
     StreamLoopContinueHead,
     StepCons<
-        steps::SendStep<g::Role<ROLE_CLUSTER>, g::Role<ROLE_CONTROLLER>, g::Msg<LABEL_OBSERVE_BATCH, TapBatch>>,
+        steps::SendStep<
+            g::Role<ROLE_CLUSTER>,
+            g::Role<ROLE_CONTROLLER>,
+            g::Msg<LABEL_OBSERVE_BATCH, TapBatch>,
+        >,
         StepNil,
     >,
 >;
 type StreamLoopBreakArm = SeqSteps<
     StreamLoopBreakHead,
     StepCons<
-        steps::SendStep<g::Role<ROLE_CLUSTER>, g::Role<ROLE_CONTROLLER>, g::Msg<LABEL_OBSERVE_STREAM_END, ()>>,
+        steps::SendStep<
+            g::Role<ROLE_CLUSTER>,
+            g::Role<ROLE_CONTROLLER>,
+            g::Msg<LABEL_OBSERVE_STREAM_END, ()>,
+        >,
         StepNil,
     >,
 >;
@@ -229,12 +237,13 @@ const STREAM_LOOP_BREAK_PREFIX: Program<StreamLoopBreakHead> = g::send::<
 >()
 .policy::<STREAM_LOOP_POLICY_ID>();
 
-const STREAM_LOOP_BREAK_ARM: Program<StreamLoopBreakArm> = STREAM_LOOP_BREAK_PREFIX.then(g::send::<
-    g::Role<ROLE_CLUSTER>,
-    g::Role<ROLE_CONTROLLER>,
-    g::Msg<LABEL_OBSERVE_STREAM_END, ()>,
-    0,
->());
+const STREAM_LOOP_BREAK_ARM: Program<StreamLoopBreakArm> =
+    STREAM_LOOP_BREAK_PREFIX.then(g::send::<
+        g::Role<ROLE_CLUSTER>,
+        g::Role<ROLE_CONTROLLER>,
+        g::Msg<LABEL_OBSERVE_STREAM_END, ()>,
+        0,
+    >());
 
 const STREAM_LOOP_ROUTE: Program<StreamLoopRoute> =
     g::route(STREAM_LOOP_CONTINUE_ARM, STREAM_LOOP_BREAK_ARM);

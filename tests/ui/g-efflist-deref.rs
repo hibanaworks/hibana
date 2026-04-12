@@ -8,11 +8,6 @@ const PROGRAM: g::Program<
 > = g::send::<g::Role<0>, g::Role<1>, Msg<1, ()>, 0>();
 
 fn main() {
-    let program: RoleProgram<
-        '_,
-        0,
-        StepCons<SendStep<g::Role<0>, g::Role<1>, Msg<1, ()>, 0>, StepNil>,
-        MintConfig,
-    > = project(&PROGRAM);
+    let program: RoleProgram<'_, 0, _, MintConfig> = project(&PROGRAM);
     let _ = program.eff_list();
 }

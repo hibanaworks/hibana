@@ -10,7 +10,7 @@ mod role;
 mod seal;
 
 pub(crate) use self::{
-    driver::{LoweringSummary, LoweringView, ProgramStamp},
+    driver::{LoweringSummary, LoweringView, ProgramStamp, RoleLoweringCounts},
     lease::{
         LoweringLeaseMode, init_compiled_program_image_from_summary,
         init_compiled_role_image_from_summary, with_lowering_lease,
@@ -26,8 +26,7 @@ pub(crate) use self::{
 pub(crate) use self::{
     lease::{
         init_compiled_role_image, with_compiled_program, with_compiled_programs,
-        with_compiled_role_image,
-        with_compiled_role_in_slot,
+        with_compiled_role_image, with_compiled_role_in_slot,
     },
     program::{CompiledProgram, MAX_COMPILED_PROGRAM_RESOURCES},
     role::CompiledRole,

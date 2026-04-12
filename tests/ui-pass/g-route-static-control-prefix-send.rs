@@ -70,73 +70,40 @@ const ARM1: g::Program<
     ),
 );
 
-const ROUTE: g::Program<
-    RouteSteps<
-        SeqSteps<
-            StepCons<
-                SendStep<
-                    g::Role<0>,
-                    g::Role<0>,
-                    g::Msg<100, GenericCapToken<RouteArm100Kind>, CanonicalControl<RouteArm100Kind>>,
-                >,
-                StepNil,
+type RouteProgramSteps = RouteSteps<
+    SeqSteps<
+        StepCons<
+            SendStep<
+                g::Role<0>,
+                g::Role<0>,
+                g::Msg<100, GenericCapToken<RouteArm100Kind>, CanonicalControl<RouteArm100Kind>>,
             >,
-            SeqSteps<
-                StepCons<SendStep<g::Role<1>, g::Role<0>, g::Msg<7, ()>>, StepNil>,
-                StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<10, ()>>, StepNil>,
-            >,
+            StepNil,
         >,
         SeqSteps<
-            StepCons<
-                SendStep<
-                    g::Role<0>,
-                    g::Role<0>,
-                    g::Msg<101, GenericCapToken<RouteArm101Kind>, CanonicalControl<RouteArm101Kind>>,
-                >,
-                StepNil,
-            >,
-            SeqSteps<
-                StepCons<SendStep<g::Role<1>, g::Role<0>, g::Msg<7, ()>>, StepNil>,
-                StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<20, ()>>, StepNil>,
-            >,
+            StepCons<SendStep<g::Role<1>, g::Role<0>, g::Msg<7, ()>>, StepNil>,
+            StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<10, ()>>, StepNil>,
         >,
     >,
-> = g::route(ARM0, ARM1);
+    SeqSteps<
+        StepCons<
+            SendStep<
+                g::Role<0>,
+                g::Role<0>,
+                g::Msg<101, GenericCapToken<RouteArm101Kind>, CanonicalControl<RouteArm101Kind>>,
+            >,
+            StepNil,
+        >,
+        SeqSteps<
+            StepCons<SendStep<g::Role<1>, g::Role<0>, g::Msg<7, ()>>, StepNil>,
+            StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<20, ()>>, StepNil>,
+        >,
+    >,
+>;
 
-static PASSIVE_PROGRAM: RoleProgram<
-    'static,
-    1,
-    RouteSteps<
-        SeqSteps<
-            StepCons<
-                SendStep<
-                    g::Role<0>,
-                    g::Role<0>,
-                    g::Msg<100, GenericCapToken<RouteArm100Kind>, CanonicalControl<RouteArm100Kind>>,
-                >,
-                StepNil,
-            >,
-            SeqSteps<
-                StepCons<SendStep<g::Role<1>, g::Role<0>, g::Msg<7, ()>>, StepNil>,
-                StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<10, ()>>, StepNil>,
-            >,
-        >,
-        SeqSteps<
-            StepCons<
-                SendStep<
-                    g::Role<0>,
-                    g::Role<0>,
-                    g::Msg<101, GenericCapToken<RouteArm101Kind>, CanonicalControl<RouteArm101Kind>>,
-                >,
-                StepNil,
-            >,
-            SeqSteps<
-                StepCons<SendStep<g::Role<1>, g::Role<0>, g::Msg<7, ()>>, StepNil>,
-                StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<20, ()>>, StepNil>,
-            >,
-        >,
-    >,
-> = project(&ROUTE);
+const ROUTE: g::Program<RouteProgramSteps> = g::route(ARM0, ARM1);
+
+static PASSIVE_PROGRAM: RoleProgram<'static, 1, RouteProgramSteps> = project(&ROUTE);
 
 fn main() {
     let _ = &PASSIVE_PROGRAM;

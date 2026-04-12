@@ -406,7 +406,7 @@ where
     pub(in crate::endpoint::kernel) fn policy_signals_for_slot(
         &self,
         slot: Slot,
-    ) -> crate::transport::context::PolicySignals {
+    ) -> crate::transport::context::PolicySignals<'_> {
         match self.binding.policy_signals_provider() {
             Some(provider) => provider.signals(slot),
             None => crate::transport::context::PolicySignals::ZERO,

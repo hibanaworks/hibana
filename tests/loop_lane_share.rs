@@ -83,7 +83,8 @@ type LoopContinueArmSteps =
 type LoopBreakArmSteps =
     SeqSteps<LoopBreakHead, StepCons<SendStep<Role<1>, Role<0>, Msg<8, i32>>, StepNil>>;
 type LoopSegmentSteps = RouteSteps<LoopContinueArmSteps, LoopBreakArmSteps>;
-type ProtocolSteps = SeqSteps<StepCons<SendStep<Role<0>, Role<1>, Msg<10, ()>>, StepNil>, LoopSegmentSteps>;
+type ProtocolSteps =
+    SeqSteps<StepCons<SendStep<Role<0>, Role<1>, Msg<10, ()>>, StepNil>, LoopSegmentSteps>;
 type TestKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
 type ControllerEndpoint = hibana::Endpoint<'static, 0, TestKit>;
 type TargetEndpoint = hibana::Endpoint<'static, 1, TestKit>;

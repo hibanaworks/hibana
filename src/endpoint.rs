@@ -137,8 +137,18 @@ where
 {
     #[inline]
     unsafe fn stash_route_branch_preview(
-        endpoint: *mut KernelEndpoint<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
-        branch: KernelRouteBranch<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
+        endpoint: *mut KernelEndpoint<
+            'r,
+            ROLE,
+            crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>,
+            Mint,
+        >,
+        branch: KernelRouteBranch<
+            'r,
+            ROLE,
+            crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>,
+            Mint,
+        >,
     ) {
         unsafe {
             (&mut *endpoint).stash_pending_branch_preview(branch);

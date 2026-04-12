@@ -64,9 +64,10 @@ where
                     if let Some(region) = self.cursor.scope_region() {
                         if region.kind == ScopeKind::Route && region.linger {
                             let scope_id = region.scope_id;
-                            let route_signals = self.policy_signals_for_slot(Slot::Route);
+                            let route_signals =
+                                self.policy_signals_for_slot(Slot::Route).into_owned();
                             if let Ok(step) =
-                                self.prepare_route_decision_from_resolver(scope_id, route_signals)
+                                self.prepare_route_decision_from_resolver(scope_id, &route_signals)
                             {
                                 match step {
                                     super::authority::RouteResolveStep::Resolved(arm) => {

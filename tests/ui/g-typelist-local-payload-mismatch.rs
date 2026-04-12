@@ -7,8 +7,7 @@ const PROGRAM: g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<7, u1
 const PROGRAM_TOKEN: g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<7, u16>, 0>, StepNil>> =
     PROGRAM;
 
-// Intentionally declare an incorrect local typelist for the client role. The payload type
-// (`u8`) mismatches the actual projection (`u16`), so this must fail during compilation.
+// Explicit local typelists are no longer part of the public projection identity.
 const CLIENT: RoleProgram<
     'static,
     0,

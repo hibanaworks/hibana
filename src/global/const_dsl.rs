@@ -400,7 +400,7 @@ impl PolicyMode {
     ///
     /// let route_state = RouteState { preferred_arm: 0 };
     ///
-    /// cluster.set_resolver::<MY_POLICY_ID, 0, _, _>(
+    /// cluster.set_resolver::<MY_POLICY_ID, 0, _>(
     ///     rv_id,
     ///     &controller,
     ///     hibana::substrate::policy::ResolverRef::from_state(&route_state, resolve_route),
@@ -1139,10 +1139,10 @@ mod tests {
 
     use super::{CompactScopeId, ControlMarker, EffList, ScopeId, ScopeKind};
     use crate::g;
+    use crate::g::advanced::CanonicalControl;
     use crate::g::advanced::steps::{
         PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil,
     };
-    use crate::g::advanced::{CanonicalControl, project};
     use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
     use crate::substrate::cap::GenericCapToken;
     use crate::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
@@ -1234,16 +1234,12 @@ mod tests {
         .policy::<LOOP_POLICY_ID>(),
         LOOP_BODY,
     );
-    const LOOP_DECISION: g::Program<LoopDecisionProgram> = g::route(LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
-    static SENDER_PROGRAM: crate::g::advanced::RoleProgram<
-        'static,
-        0,
-        LoopDecisionProgram,
-    > = project(&LOOP_DECISION);
+    const LOOP_DECISION: g::Program<LoopDecisionProgram> =
+        g::route(LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
 
     #[test]
     fn policy_scope_stays_internal() {
-        let list: &EffList = crate::global::lowering_input(&SENDER_PROGRAM).eff_list();
+        let list: &EffList = LOOP_DECISION.eff_list();
         let mut policies = 0usize;
         let mut offset = 0usize;
         while offset < list.len() {

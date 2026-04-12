@@ -7,7 +7,7 @@ const PROGRAM: g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<7, u1
 const PROGRAM_TOKEN: g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<7, u16>, 0>, StepNil>> =
     PROGRAM;
 
-// Expecting the wrong label (`8` instead of `7`) must fail during compilation.
+// Explicit local typelists are no longer part of the public projection identity.
 const CLIENT: RoleProgram<
     'static,
     0,

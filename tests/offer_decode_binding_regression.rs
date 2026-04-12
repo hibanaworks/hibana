@@ -77,7 +77,8 @@ type RightHead = PolicySteps<
 type LeftSteps = SeqSteps<LeftHead, StepCons<SendStep<Role<0>, Role<1>, Msg<71, u32>>, StepNil>>;
 type RightSteps = SeqSteps<RightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<72, u32>>, StepNil>>;
 type DecisionSteps = RouteSteps<LeftSteps, RightSteps>;
-type ProgramSteps = SeqSteps<DecisionSteps, StepCons<SendStep<Role<0>, Role<1>, Msg<73, u32>>, StepNil>>;
+type ProgramSteps =
+    SeqSteps<DecisionSteps, StepCons<SendStep<Role<0>, Role<1>, Msg<73, u32>>, StepNil>>;
 type TestKit = SessionKit<'static, FlowTransport, DefaultLabelUniverse, CounterClock, 2>;
 type ControllerEndpoint = hibana::Endpoint<'static, 0, TestKit>;
 type WorkerEndpoint = hibana::Endpoint<'static, 1, TestKit>;
@@ -150,7 +151,8 @@ const RIGHT_ARM: g::Program<RightSteps> = g::seq(
 
 const ROUTE: g::Program<DecisionSteps> = g::route(LEFT_ARM, RIGHT_ARM);
 
-const PROGRAM: g::Program<ProgramSteps> = g::seq(ROUTE, g::send::<Role<0>, Role<1>, Msg<73, u32>, 0>());
+const PROGRAM: g::Program<ProgramSteps> =
+    g::seq(ROUTE, g::send::<Role<0>, Role<1>, Msg<73, u32>, 0>());
 
 static CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramSteps> = project(&PROGRAM);
 
@@ -434,10 +436,10 @@ impl Transport for FlowTransport {
     }
 }
 
-fn register_route_resolvers_for_program<const ROLE: u8, Steps, T, const MAX_RV: usize>(
+fn register_route_resolvers_for_program<const ROLE: u8, GlobalSteps, T, const MAX_RV: usize>(
     cluster: &SessionKit<'_, T, DefaultLabelUniverse, CounterClock, MAX_RV>,
     rv_id: RendezvousId,
-    program: &RoleProgram<'static, ROLE, Steps>,
+    program: &RoleProgram<'static, ROLE, GlobalSteps>,
 ) where
     T: Transport + 'static,
 {

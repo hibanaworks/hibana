@@ -1520,36 +1520,34 @@ where
     }
 
     #[inline(never)]
-    unsafe fn materialize_new_role_image_from_summary_for_program<const ROLE: u8, GlobalSteps>(
+    unsafe fn materialize_new_role_image_from_summary_for_program<const ROLE: u8>(
         &mut self,
         insert_idx: usize,
         stamp: ProgramStamp,
         summary: &LoweringSummary,
         scratch: &mut RoleCompileScratch,
+        local_step_count: usize,
         passive_linger_route_scope_count: usize,
         route_scope_count: usize,
         parallel_enter_count: usize,
-    ) -> Option<*const CompiledRoleImage>
-    where
-        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
-        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
-            crate::global::steps::StepCount,
-    {
-        let bytes = CompiledRoleImage::persistent_bytes_for_program::<ROLE, GlobalSteps>(
+    ) -> Option<*const CompiledRoleImage> {
+        let bytes = CompiledRoleImage::persistent_bytes_for_program(
             summary.stamp().scope_count(),
             passive_linger_route_scope_count,
             route_scope_count,
             parallel_enter_count,
             summary.view().as_slice().len(),
+            local_step_count,
         );
         let (ptr, offset) = unsafe {
             self.allocate_persistent_image_bytes(bytes, CompiledRoleImage::persistent_align())
         }?;
         unsafe {
-            crate::global::compiled::init_compiled_role_image_from_summary::<ROLE, GlobalSteps>(
+            crate::global::compiled::init_compiled_role_image_from_summary::<ROLE>(
                 ptr.cast::<CompiledRoleImage>(),
                 summary,
                 scratch,
+                local_step_count,
                 passive_linger_route_scope_count,
                 route_scope_count,
                 parallel_enter_count,
@@ -1597,33 +1595,27 @@ where
     }
 
     #[inline(never)]
-    pub(crate) unsafe fn materialize_role_image_from_summary_for_program<
-        const ROLE: u8,
-        GlobalSteps,
-    >(
+    pub(crate) unsafe fn materialize_role_image_from_summary_for_program<const ROLE: u8>(
         &mut self,
         stamp: ProgramStamp,
         summary: &LoweringSummary,
         scratch: &mut RoleCompileScratch,
+        local_step_count: usize,
         passive_linger_route_scope_count: usize,
         route_scope_count: usize,
         parallel_enter_count: usize,
-    ) -> Option<*const CompiledRoleImage>
-    where
-        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
-        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
-            crate::global::steps::StepCount,
-    {
+    ) -> Option<*const CompiledRoleImage> {
         if let Some(idx) = self.role_image_slot_index::<ROLE>(stamp) {
             let slot = unsafe { &*self.role_images.add(idx) };
             return Some(unsafe { self.pinned_role_image_from_slot::<ROLE>(slot) });
         }
         let Some(insert_idx) = self.first_free_role_image_slot() else {
             return unsafe {
-                self.recycle_role_image_from_summary_for_program::<ROLE, GlobalSteps>(
+                self.recycle_role_image_from_summary_for_program::<ROLE>(
                     stamp,
                     summary,
                     scratch,
+                    local_step_count,
                     passive_linger_route_scope_count,
                     route_scope_count,
                     parallel_enter_count,
@@ -1631,11 +1623,12 @@ where
             };
         };
         unsafe {
-            self.materialize_new_role_image_from_summary_for_program::<ROLE, GlobalSteps>(
+            self.materialize_new_role_image_from_summary_for_program::<ROLE>(
                 insert_idx,
                 stamp,
                 summary,
                 scratch,
+                local_step_count,
                 passive_linger_route_scope_count,
                 route_scope_count,
                 parallel_enter_count,
@@ -1726,26 +1719,23 @@ where
 
     #[cold]
     #[inline(never)]
-    unsafe fn recycle_role_image_from_summary_for_program<const ROLE: u8, GlobalSteps>(
+    unsafe fn recycle_role_image_from_summary_for_program<const ROLE: u8>(
         &mut self,
         stamp: ProgramStamp,
         summary: &LoweringSummary,
         scratch: &mut RoleCompileScratch,
+        local_step_count: usize,
         passive_linger_route_scope_count: usize,
         route_scope_count: usize,
         parallel_enter_count: usize,
-    ) -> Option<*const CompiledRoleImage>
-    where
-        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
-        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
-            crate::global::steps::StepCount,
-    {
-        let bytes = CompiledRoleImage::persistent_bytes_for_program::<ROLE, GlobalSteps>(
+    ) -> Option<*const CompiledRoleImage> {
+        let bytes = CompiledRoleImage::persistent_bytes_for_program(
             summary.stamp().scope_count(),
             passive_linger_route_scope_count,
             route_scope_count,
             parallel_enter_count,
             summary.view().as_slice().len(),
+            local_step_count,
         );
         if let Some(insert_idx) = self.first_reusable_role_image_slot(bytes) {
             let slot = unsafe { &mut *self.role_images.add(insert_idx) };
@@ -1756,10 +1746,11 @@ where
                     .cast::<CompiledRoleImage>()
             };
             unsafe {
-                crate::global::compiled::init_compiled_role_image_from_summary::<ROLE, GlobalSteps>(
+                crate::global::compiled::init_compiled_role_image_from_summary::<ROLE>(
                     ptr,
                     summary,
                     scratch,
+                    local_step_count,
                     passive_linger_route_scope_count,
                     route_scope_count,
                     parallel_enter_count,
@@ -1797,10 +1788,11 @@ where
             }
         };
         unsafe {
-            crate::global::compiled::init_compiled_role_image_from_summary::<ROLE, GlobalSteps>(
+            crate::global::compiled::init_compiled_role_image_from_summary::<ROLE>(
                 ptr.cast::<CompiledRoleImage>(),
                 summary,
                 scratch,
+                local_step_count,
                 passive_linger_route_scope_count,
                 route_scope_count,
                 parallel_enter_count,
@@ -4429,12 +4421,12 @@ mod epf_tests {
 
     fn route_summary() -> LoweringSummary {
         let program = g::send::<Role<0>, Role<1>, Msg<11, u32>, 0>();
-        LoweringSummary::scan_const(program.eff_list())
+        program.summary().clone()
     }
 
     fn route_summary_alt() -> LoweringSummary {
         let program = g::send::<Role<0>, Role<1>, Msg<12, u32>, 0>();
-        LoweringSummary::scan_const(program.eff_list())
+        program.summary().clone()
     }
 
     #[test]

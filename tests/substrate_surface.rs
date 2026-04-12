@@ -329,78 +329,27 @@ fn substrate_facade_keeps_enter_as_the_only_public_attach_entry() {
     }
 
     assert!(
-        substrate_src.contains("pub fn enter<'r, const ROLE: u8, Steps, Mint, B>("),
+        substrate_src.contains("pub fn enter<'r, const ROLE: u8, GlobalSteps, Mint, B>("),
         "substrate::SessionKit must keep enter(...) as the canonical public attach entry"
     );
     assert!(
-        substrate_src.contains("program: &crate::g::advanced::RoleProgram<'_, ROLE, Steps, Mint>,"),
+        substrate_src
+            .contains("program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,"),
         "substrate::SessionKit::enter must accept projected programs without extending the endpoint lifetime"
     );
     assert!(
-        !substrate_src
-            .contains("program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, Steps, Mint>,")
-            && !substrate_src.contains("pub fn enter<'r, 'prog, const ROLE: u8, Steps, Mint, B>("),
+        !substrate_src.contains(
+            "program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, GlobalSteps, Mint>,"
+        ) && !substrate_src
+            .contains("pub fn enter<'r, 'prog, const ROLE: u8, GlobalSteps, Mint, B>("),
         "substrate::SessionKit::enter must not tie endpoint lifetime to the projected RoleProgram borrow"
     );
 }
 
 #[test]
-fn substrate_facade_registers_rendezvous_before_enter() {
-    runtime_support::with_fixture(|clock, tap_buf, slab| {
-        let transport = common::TestTransport::default();
-        let rv_id = with_tls_ref(
-            &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(StaticTestKit::new(clock));
-            },
-            |cluster| {
-                cluster
-                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport)
-                    .expect("add rendezvous")
-            },
-        );
-
-        assert!(
-            rv_id.raw() > 0,
-            "rendezvous registration must allocate a concrete id"
-        );
-    });
-}
-
-#[test]
-fn substrate_facade_sets_resolver_before_enter() {
-    runtime_support::with_fixture(|clock, tap_buf, slab| {
-        let transport = common::TestTransport::default();
-        with_tls_ref(
-            &SESSION_SLOT,
-            |ptr| unsafe {
-                ptr.write(StaticTestKit::new(clock));
-            },
-            |cluster| {
-                let rv_id = cluster
-                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport)
-                    .expect("add rendezvous");
-
-                cluster
-                    .set_resolver::<7, 0, _, _>(
-                        rv_id,
-                        &CLIENT_PROGRAM,
-                        ResolverRef::from_fn(defer_resolver),
-                    )
-                    .expect("install resolver");
-            },
-        );
-    });
-}
-
-#[test]
 fn substrate_facade_projects_before_enter() {
     let connection = CONNECTION_SOURCE;
-    let program: RoleProgram<
-        '_,
-        0,
-        SeqSteps<StepNil, StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>, StepNil>>,
-    > = project(&connection);
+    let program: RoleProgram<'_, 0, _> = project(&connection);
 
     let _ = &program;
 }

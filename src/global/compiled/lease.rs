@@ -2,12 +2,12 @@ use core::marker::PhantomData;
 
 use crate::global::{role_program::RoleLoweringInput, typestate::RoleCompileScratch};
 
-use super::program::CompiledProgramImage;
-use super::role::CompiledRoleImage;
 #[cfg(test)]
 use super::program::CompiledProgram;
+use super::program::CompiledProgramImage;
 #[cfg(test)]
 use super::role::CompiledRole;
+use super::role::CompiledRoleImage;
 use super::{LoweringSummary, ProgramStamp};
 #[cfg(test)]
 use core::{cell::UnsafeCell, mem::MaybeUninit, ptr};
@@ -94,13 +94,9 @@ impl<'a> TransientLoweringLeaseStorage<'a> {
     }
 
     #[inline]
-    unsafe fn init(
-        self,
-        eff_list: &crate::global::const_dsl::EffList,
-        stamp: ProgramStamp,
-    ) -> LoweringLease<'a> {
+    unsafe fn init(self, summary: &LoweringSummary, stamp: ProgramStamp) -> LoweringLease<'a> {
         unsafe {
-            LoweringSummary::init_scan(self.lowering, eff_list);
+            self.lowering.write(summary.clone());
             let summary = &*self.lowering;
             debug_assert_eq!(summary.stamp(), stamp);
             let role_compile_scratch = match self.role_compile_scratch {
@@ -127,7 +123,7 @@ pub(crate) unsafe fn with_lowering_lease<R>(
     f: impl FnOnce(LoweringLease<'_>) -> R,
 ) -> Option<R> {
     let storage = unsafe { TransientLoweringLeaseStorage::from_storage(storage, len, mode) }?;
-    let lease = unsafe { storage.init(input.eff_list(), input.stamp()) };
+    let lease = unsafe { storage.init(input.summary(), input.stamp()) };
     Some(f(lease))
 }
 
@@ -140,24 +136,21 @@ pub(crate) unsafe fn init_compiled_program_image_from_summary(
     }
 }
 
-pub(crate) unsafe fn init_compiled_role_image_from_summary<const ROLE: u8, GlobalSteps>(
+pub(crate) unsafe fn init_compiled_role_image_from_summary<const ROLE: u8>(
     dst: *mut CompiledRoleImage,
     summary: &LoweringSummary,
     scratch: *mut RoleCompileScratch,
+    local_step_count: usize,
     passive_linger_route_scope_count: usize,
     route_scope_count: usize,
     parallel_enter_count: usize,
-)
-where
-    GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
-    <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
-        crate::global::steps::StepCount,
-{
+) {
     unsafe {
-        CompiledRoleImage::init_from_summary_for_program::<ROLE, GlobalSteps>(
+        CompiledRoleImage::init_from_summary_for_program::<ROLE>(
             dst,
             summary,
             &mut *scratch,
+            local_step_count,
             passive_linger_route_scope_count,
             route_scope_count,
             parallel_enter_count,
@@ -170,10 +163,10 @@ pub(crate) fn with_compiled_program<R>(
     input: RoleLoweringInput<'_>,
     f: impl FnOnce(&CompiledProgram) -> R,
 ) -> R {
-    let summary = LoweringSummary::scan_const(input.eff_list());
+    let summary = input.summary();
     let mut compiled = core::mem::MaybeUninit::<CompiledProgram>::uninit();
     unsafe {
-        CompiledProgram::init_from_summary(compiled.as_mut_ptr(), &summary);
+        CompiledProgram::init_from_summary(compiled.as_mut_ptr(), summary);
         let result = f(compiled.assume_init_ref());
         compiled.assume_init_drop();
         result
@@ -198,13 +191,13 @@ pub(crate) fn with_compiled_role_in_slot<const ROLE: u8, R>(
     input: RoleLoweringInput<'_>,
     f: impl FnOnce(&CompiledRole) -> R,
 ) -> R {
-    let summary = LoweringSummary::scan_const(input.eff_list());
+    let summary = input.summary();
     compiled_slot.with(|compiled| {
         scratch_slot.with(|scratch| unsafe {
             let compiled_ptr = (*compiled.get()).as_mut_ptr();
             let scratch_ptr = (*scratch.get()).as_mut_ptr();
             scratch_ptr.write(RoleCompileScratch::new());
-            CompiledRole::init_from_summary::<ROLE>(compiled_ptr, &summary, &mut *scratch_ptr);
+            CompiledRole::init_from_summary::<ROLE>(compiled_ptr, summary, &mut *scratch_ptr);
             let result = f(&*compiled_ptr);
             ptr::drop_in_place(compiled_ptr);
             ptr::drop_in_place(scratch_ptr);
@@ -214,23 +207,18 @@ pub(crate) fn with_compiled_role_in_slot<const ROLE: u8, R>(
 }
 
 #[cfg(test)]
-pub(crate) unsafe fn init_compiled_role_image<const ROLE: u8, GlobalSteps>(
+pub(crate) unsafe fn init_compiled_role_image<const ROLE: u8>(
     dst: *mut CompiledRoleImage,
     input: RoleLoweringInput<'_>,
     scratch: *mut RoleCompileScratch,
-)
-where
-    GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
-    <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
-        crate::global::steps::StepCount,
-{
-    let summary = LoweringSummary::scan_const(input.eff_list());
+) {
     unsafe {
         scratch.write(RoleCompileScratch::new());
-        init_compiled_role_image_from_summary::<ROLE, GlobalSteps>(
+        init_compiled_role_image_from_summary::<ROLE>(
             dst,
-            &summary,
+            input.summary(),
             scratch,
+            input.local_step_count(),
             input.passive_linger_route_scope_count(),
             input.route_scope_count(),
             input.parallel_enter_count(),
@@ -239,19 +227,14 @@ where
 }
 
 #[cfg(test)]
-pub(crate) unsafe fn with_compiled_role_image<const ROLE: u8, GlobalSteps, R>(
+pub(crate) unsafe fn with_compiled_role_image<const ROLE: u8, R>(
     dst: *mut CompiledRoleImage,
     input: RoleLoweringInput<'_>,
     scratch: *mut RoleCompileScratch,
     f: impl FnOnce(&CompiledRoleImage) -> R,
-) -> R
-where
-    GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
-    <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
-        crate::global::steps::StepCount,
-{
+) -> R {
     unsafe {
-        init_compiled_role_image::<ROLE, GlobalSteps>(dst, input, scratch);
+        init_compiled_role_image::<ROLE>(dst, input, scratch);
         let result = f(&*dst);
         ptr::drop_in_place(dst);
         ptr::drop_in_place(scratch);

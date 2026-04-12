@@ -350,12 +350,12 @@ fn policy_signals_provider_does_not_keep_zero_fallback_body() {
     );
     assert!(
         context_ws.contains("pub trait PolicySignalsProvider {")
-            && context_ws.contains("fn signals(&self, slot: Slot) -> PolicySignals;"),
+            && context_ws.contains("fn signals(&self, slot: Slot) -> PolicySignals<'_>;"),
         "policy signals provider must require an explicit owner implementation"
     );
     assert!(
         !context_ws.contains(
-            "pub trait PolicySignalsProvider { fn signals(&self, _slot: Slot) -> PolicySignals { PolicySignals::ZERO } }"
+            "pub trait PolicySignalsProvider { fn signals(&self, _slot: Slot) -> PolicySignals<'_> { PolicySignals::ZERO } }"
         ),
         "policy signals provider must not keep a zero fallback body"
     );
@@ -507,15 +507,12 @@ fn offer_kernel_stays_three_stage_and_fail_closed() {
     );
     let resolve_token_body = impl_body(cursor_src, "async fn resolve_token(");
     let materialize_branch_body = impl_body(cursor_src, "fn materialize_branch(");
-    let preview_flow_meta_body = impl_body(
-        cursor_src,
-        "pub(super) fn preview_flow_meta<M>(&mut self) -> SendResult<crate::endpoint::kernel::SendPreview>",
-    );
+    let preview_flow_meta_body = impl_body(cursor_src, "pub(super) fn preview_flow_meta<M>(");
     let send_with_meta_body = impl_body(
         cursor_src,
         "async fn send_with_meta_and_cursor_in_place<M>(",
     );
-    let prepare_send_control_body = impl_body(cursor_src, "fn prepare_send_control<M>(");
+    let prepare_send_control_body = impl_body(cursor_src, "fn prepare_send_control(");
     let decode_branch_body = impl_body(decode_src, "pub async fn decode_branch<M>(");
     let apply_branch_recv_policy_body = impl_body(decode_src, "fn apply_branch_recv_policy(");
 
@@ -870,8 +867,10 @@ fn program_projection_validates_without_materializing_runtime_compiled_owners() 
         "let summary = LoweringSummary::scan_const(<Steps as BuildProgramSource>::SOURCE.eff_list());",
         "summary.validate_projection_program();",
         "validate_all_roles(&summary);",
-        "summary.stamp()",
+        "const SUMMARY: LoweringSummary = {",
+        "Self::SUMMARY.stamp()",
         "validated_program_stamp::<Steps>()",
+        "validated_program_summary::<Steps>()",
         "RoleProgram::new(",
     ] {
         assert!(
@@ -1012,11 +1011,22 @@ fn compiled_authority_completion_stays_summary_backed() {
     for required in [
         "fn with_compiled_role_in_slot<const ROLE: u8, GlobalSteps, R>(",
         "crate::global::compiled::with_compiled_role_in_slot::<ROLE, _>(",
-        "super::lowering_input(program)",
+        "crate::global::lowering_input(program)",
+        "counts: program.summary.role_lowering_counts::<ROLE>(),",
     ] {
         assert!(
             role_program_src.contains(required),
             "RoleProgram test helpers must delegate compiled-role materialization through the compiled owner: {required}"
+        );
+    }
+    for forbidden in [
+        "const fn role_lowering_counts<const ROLE: u8>(",
+        "let nodes = view.as_slice();",
+        "let scope_markers = view.scope_markers();",
+    ] {
+        assert!(
+            !role_program_src.contains(forbidden),
+            "RoleProgram lowering must not rescan summary slices at attach-time: {forbidden}"
         );
     }
 }
@@ -1039,6 +1049,28 @@ fn large_owner_types_do_not_regress_to_copy_semantics() {
             "large lowering/runtime owner types must not regain Copy semantics: {forbidden}"
         );
     }
+}
+
+#[test]
+fn scan_free_runtime_regression_guards_stay_source_backed() {
+    let cluster_core_src = include_str!("../src/control/cluster/core.rs");
+    let driver_src = include_str!("../src/global/compiled/driver.rs");
+
+    for forbidden in [
+        "mod runtime_scan_counter",
+        "reset_runtime_scan_count",
+        "runtime_scan_count",
+    ] {
+        assert!(
+            !driver_src.contains(forbidden) && !cluster_core_src.contains(forbidden),
+            "scan-free runtime regression guards must not depend on a dead runtime counter: {forbidden}"
+        );
+    }
+
+    assert!(
+        !cluster_core_src.contains("LoweringSummary::scan_const("),
+        "runtime cluster paths must not rebuild lowering summaries from raw EffList at runtime"
+    );
 }
 
 #[test]
@@ -3667,7 +3699,7 @@ fn hidden_attach_path_uses_canonical_attach_endpoint_name() {
 
     assert!(
         cluster_core_src.contains(
-            "pub(crate) unsafe fn attach_endpoint_into<'r, const ROLE: u8, GlobalSteps, Mint, B>("
+            "pub(crate) unsafe fn attach_endpoint_into<'r, const ROLE: u8, GlobalSteps, Mint, B>(",
         ),
         "cluster lower layer must expose the canonical in-place attach_endpoint_into helper"
     );
@@ -4044,9 +4076,9 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         "lane_offer_state_storage: *mut LaneOfferState,",
         "scope_evidence_slots: *mut ScopeEvidenceSlot,",
         "lane_dense_by_lane: &[u8; MAX_LANES],",
-        "active_lane_count: usize,",
-        "max_route_stack_depth: usize,",
-        "route_scope_count: usize,",
+        "lane_offer_state_count: usize,",
+        "route_frame_depth: usize,",
+        "scope_evidence_count: usize,",
     ] {
         assert!(
             route_state_src.contains(required),

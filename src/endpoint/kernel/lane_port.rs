@@ -4,9 +4,45 @@ use core::future::Future;
 
 use crate::{
     control::cap::mint::EpochTable,
+    endpoint::SendError,
     rendezvous::port::Port,
-    transport::{Outgoing, Transport, TransportError, wire::Payload},
+    transport::{
+        Outgoing, Transport, TransportError,
+        wire::{Payload, WireEncode},
+    },
 };
+
+#[derive(Clone, Copy)]
+pub(super) struct ErasedSendPayload<'a> {
+    ptr: *const (),
+    encode: unsafe fn(*const (), &mut [u8]) -> Result<usize, SendError>,
+    _marker: core::marker::PhantomData<&'a ()>,
+}
+
+impl<'a> ErasedSendPayload<'a> {
+    #[inline(always)]
+    pub(super) fn from_typed<P: WireEncode>(payload: &'a P) -> Self {
+        Self {
+            ptr: core::ptr::from_ref(payload).cast(),
+            encode: encode_send_payload::<P>,
+            _marker: core::marker::PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    pub(super) fn encode_into(self, scratch: &mut [u8]) -> Result<usize, SendError> {
+        unsafe { (self.encode)(self.ptr, scratch) }
+    }
+}
+
+#[inline(always)]
+unsafe fn encode_send_payload<P: WireEncode>(
+    ptr: *const (),
+    scratch: &mut [u8],
+) -> Result<usize, SendError> {
+    let payload = unsafe { &*ptr.cast::<P>() };
+    payload.encode_into(scratch).map_err(SendError::Codec)
+}
 
 #[inline]
 pub(super) fn scratch_mut<'a, 'r, T, E>(port: &'a Port<'r, T, E>) -> &'a mut [u8]

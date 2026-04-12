@@ -54,53 +54,21 @@ const ARM_WITHOUT_POLICY: g::Program<
     >()
     .policy::<10>();
 
-const ROUTE: g::Program<
-    RouteSteps<
-        PolicySteps<
-            StepCons<
-                SendStep<
-                    Role<0>,
-                    Role<0>,
-                    Msg<5, GenericCapToken<ArmWithPolicyKind>, CanonicalControl<ArmWithPolicyKind>>,
-                    0,
-                >,
-                StepNil,
+type RouteProgramSteps = RouteSteps<
+    PolicySteps<
+        StepCons<
+            SendStep<
+                Role<0>,
+                Role<0>,
+                Msg<5, GenericCapToken<ArmWithPolicyKind>, CanonicalControl<ArmWithPolicyKind>>,
+                0,
             >,
-            9,
+            StepNil,
         >,
-        PolicySteps<
-            StepCons<
-                SendStep<
-                    Role<0>,
-                    Role<0>,
-                    Msg<6, GenericCapToken<ArmWithoutPolicyKind>, CanonicalControl<ArmWithoutPolicyKind>>,
-                    0,
-                >,
-                StepNil,
-            >,
-            10,
-        >,
+        9,
     >,
-> = g::route(ARM_WITH_POLICY, ARM_WITHOUT_POLICY);
-
-const CONTROLLER: RoleProgram<
-    'static,
-    0,
-    RouteSteps<
-        PolicySteps<
-            StepCons<
-                SendStep<
-                    Role<0>,
-                    Role<0>,
-                    Msg<5, GenericCapToken<ArmWithPolicyKind>, CanonicalControl<ArmWithPolicyKind>>,
-                    0,
-                >,
-                StepNil,
-            >,
-            9,
-        >,
-        PolicySteps<
-            StepCons<
+    PolicySteps<
+        StepCons<
             SendStep<
                 Role<0>,
                 Role<0>,
@@ -109,9 +77,12 @@ const CONTROLLER: RoleProgram<
             >,
             StepNil,
         >,
-            10,
-        >,
+        10,
     >,
-> = project(&ROUTE);
+>;
+
+const ROUTE: g::Program<RouteProgramSteps> = g::route(ARM_WITH_POLICY, ARM_WITHOUT_POLICY);
+
+const CONTROLLER: RoleProgram<'static, 0, RouteProgramSteps> = project(&ROUTE);
 
 fn main() {}

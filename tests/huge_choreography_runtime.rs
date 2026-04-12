@@ -29,6 +29,100 @@ use hibana::{
 use scenario::ScenarioHarness;
 
 type HugeKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
+type ControllerEndpoint<'a> = Endpoint<'a, 0, HugeKit, MintConfig>;
+type WorkerEndpoint<'a> = Endpoint<'a, 1, HugeKit, MintConfig>;
+
+fn controller_send_u8<const LABEL: u8>(controller: &mut ControllerEndpoint<'_>, value: u8) {
+    let flow = controller
+        .flow::<g::Msg<LABEL, u8>>()
+        .expect("controller flow<u8>");
+    futures::executor::block_on(flow.send(&value)).expect("controller send<u8>");
+}
+
+fn controller_send_u32<const LABEL: u8>(controller: &mut ControllerEndpoint<'_>, value: u32) {
+    let flow = controller
+        .flow::<g::Msg<LABEL, u32>>()
+        .expect("controller flow<u32>");
+    futures::executor::block_on(flow.send(&value)).expect("controller send<u32>");
+}
+
+fn worker_send_u8<const LABEL: u8>(worker: &mut WorkerEndpoint<'_>, value: u8) {
+    let flow = worker.flow::<g::Msg<LABEL, u8>>().expect("worker flow<u8>");
+    futures::executor::block_on(flow.send(&value)).expect("worker send<u8>");
+}
+
+fn worker_recv_u8<const LABEL: u8>(worker: &mut WorkerEndpoint<'_>) -> u8 {
+    futures::executor::block_on(worker.recv::<g::Msg<LABEL, u8>>()).expect("worker recv<u8>")
+}
+
+fn controller_recv_u8<const LABEL: u8>(controller: &mut ControllerEndpoint<'_>) -> u8 {
+    futures::executor::block_on(controller.recv::<g::Msg<LABEL, u8>>())
+        .expect("controller recv<u8>")
+}
+
+fn controller_select<'a, const LABEL: u8, K>(controller: &mut ControllerEndpoint<'_>)
+where
+    K: ResourceKind + ControlResourceKind + ControlMint + 'a + 'static,
+{
+    let outcome = futures::executor::block_on(
+        controller
+            .flow::<g::Msg<LABEL, GenericCapToken<K>, CanonicalControl<K>>>()
+            .expect("controller control flow")
+            .send(()),
+    )
+    .expect("controller control send");
+    assert!(outcome.is_canonical());
+}
+
+fn worker_offer_decode_u32<const LABEL: u8>(worker: &mut WorkerEndpoint<'_>) -> u32 {
+    let branch = futures::executor::block_on(worker.offer()).expect("worker offer");
+    assert_eq!(branch.label(), LABEL);
+    futures::executor::block_on(branch.decode::<g::Msg<LABEL, u32>>()).expect("worker decode<u32>")
+}
+
+struct RuntimeHarness;
+
+impl ScenarioHarness for RuntimeHarness {
+    type ControllerEndpoint<'a> = ControllerEndpoint<'a>;
+    type WorkerEndpoint<'a> = WorkerEndpoint<'a>;
+
+    fn controller_send_u8<const LABEL: u8>(
+        controller: &mut Self::ControllerEndpoint<'_>,
+        value: u8,
+    ) {
+        controller_send_u8::<LABEL>(controller, value);
+    }
+
+    fn controller_send_u32<const LABEL: u8>(
+        controller: &mut Self::ControllerEndpoint<'_>,
+        value: u32,
+    ) {
+        controller_send_u32::<LABEL>(controller, value);
+    }
+
+    fn worker_send_u8<const LABEL: u8>(worker: &mut Self::WorkerEndpoint<'_>, value: u8) {
+        worker_send_u8::<LABEL>(worker, value);
+    }
+
+    fn worker_recv_u8<const LABEL: u8>(worker: &mut Self::WorkerEndpoint<'_>) -> u8 {
+        worker_recv_u8::<LABEL>(worker)
+    }
+
+    fn controller_recv_u8<const LABEL: u8>(controller: &mut Self::ControllerEndpoint<'_>) -> u8 {
+        controller_recv_u8::<LABEL>(controller)
+    }
+
+    fn controller_select<'a, const LABEL: u8, K>(controller: &mut Self::ControllerEndpoint<'a>)
+    where
+        K: ResourceKind + ControlResourceKind + ControlMint + 'a + 'static,
+    {
+        controller_select::<LABEL, K>(controller);
+    }
+
+    fn worker_offer_decode_u32<const LABEL: u8>(worker: &mut Self::WorkerEndpoint<'_>) -> u32 {
+        worker_offer_decode_u32::<LABEL>(worker)
+    }
+}
 
 static ROUTE_HEAVY_PROGRAM: g::Program<huge_program::ProgramSteps> = huge_program::PROGRAM;
 static LINEAR_HEAVY_PROGRAM: g::Program<linear_program::ProgramSteps> = linear_program::PROGRAM;
@@ -70,69 +164,8 @@ static FANOUT_HEAVY_WORKER_PROGRAM: hibana::g::advanced::RoleProgram<
     MintConfig,
 > = project(&FANOUT_HEAVY_PROGRAM);
 
-struct RuntimeHarness;
-
-impl ScenarioHarness for RuntimeHarness {
-    type ControllerEndpoint<'a> = Endpoint<'a, 0, HugeKit>;
-    type WorkerEndpoint<'a> = Endpoint<'a, 1, HugeKit>;
-
-    fn controller_send_u8<const LABEL: u8>(
-        controller: &mut Self::ControllerEndpoint<'_>,
-        value: u8,
-    ) {
-        let flow = controller
-            .flow::<g::Msg<LABEL, u8>>()
-            .expect("controller flow<u8>");
-        let _ = futures::executor::block_on(flow.send(&value)).expect("controller send");
-    }
-
-    fn controller_send_u32<const LABEL: u8>(
-        controller: &mut Self::ControllerEndpoint<'_>,
-        value: u32,
-    ) {
-        let flow = controller
-            .flow::<g::Msg<LABEL, u32>>()
-            .expect("controller flow<u32>");
-        let _ = futures::executor::block_on(flow.send(&value)).expect("controller send");
-    }
-
-    fn worker_send_u8<const LABEL: u8>(worker: &mut Self::WorkerEndpoint<'_>, value: u8) {
-        let flow = worker.flow::<g::Msg<LABEL, u8>>().expect("worker flow<u8>");
-        let _ = futures::executor::block_on(flow.send(&value)).expect("worker send");
-    }
-
-    fn worker_recv_u8<const LABEL: u8>(worker: &mut Self::WorkerEndpoint<'_>) -> u8 {
-        futures::executor::block_on(worker.recv::<g::Msg<LABEL, u8>>()).expect("worker recv")
-    }
-
-    fn controller_recv_u8<const LABEL: u8>(controller: &mut Self::ControllerEndpoint<'_>) -> u8 {
-        futures::executor::block_on(controller.recv::<g::Msg<LABEL, u8>>())
-            .expect("controller recv")
-    }
-
-    fn controller_select<'a, const LABEL: u8, K>(controller: &mut Self::ControllerEndpoint<'a>)
-    where
-        K: ResourceKind + ControlResourceKind + ControlMint + 'a,
-    {
-        let outcome = futures::executor::block_on(
-            controller
-                .flow::<g::Msg<LABEL, GenericCapToken<K>, CanonicalControl<K>>>()
-                .expect("controller control flow")
-                .send(()),
-        )
-        .expect("controller control send");
-        assert!(outcome.is_canonical());
-    }
-
-    fn worker_offer_decode_u32<const LABEL: u8>(worker: &mut Self::WorkerEndpoint<'_>) -> u32 {
-        let branch = futures::executor::block_on(worker.offer()).expect("worker offer");
-        assert_eq!(branch.label(), LABEL);
-        futures::executor::block_on(branch.decode::<g::Msg<LABEL, u32>>()).expect("worker decode")
-    }
-}
-
 #[inline(never)]
-fn run_attached_sample<Steps: 'static>(
+fn run_attached_sample<Steps>(
     controller_program: &'static hibana::g::advanced::RoleProgram<'static, 0, Steps, MintConfig>,
     worker_program: &'static hibana::g::advanced::RoleProgram<'static, 1, Steps, MintConfig>,
     route_scope_count: usize,
@@ -142,10 +175,7 @@ fn run_attached_sample<Steps: 'static>(
         &mut <RuntimeHarness as ScenarioHarness>::ControllerEndpoint<'_>,
         &mut <RuntimeHarness as ScenarioHarness>::WorkerEndpoint<'_>,
     ),
-) where
-    Steps: hibana::g::advanced::steps::ProjectRole<g::Role<0>>
-        + hibana::g::advanced::steps::ProjectRole<g::Role<1>>,
-{
+) {
     assert_eq!(route_scope_count, expected_branch_labels.len());
     assert_eq!(route_scope_count, expected_acks.len());
 

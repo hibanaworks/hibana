@@ -7,7 +7,7 @@ const PROGRAM: g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<7, u1
 const PROGRAM_TOKEN: g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<7, u16>, 0>, StepNil>> =
     PROGRAM;
 
-// Omitting the projected send step must fail: the client actually performs a send.
+// Explicit local typelists are no longer part of the public projection identity.
 const CLIENT: RoleProgram<'static, 0, StepNil> = project(&PROGRAM_TOKEN);
 
 fn main() {

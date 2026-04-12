@@ -14,9 +14,7 @@ mod tls_ref_support;
 use ::core::{cell::UnsafeCell, mem::MaybeUninit};
 use common::TestTransport;
 use hibana::{
-    g::advanced::steps::{
-        PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil,
-    },
+    g::advanced::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil},
     g::advanced::{CanonicalControl, RoleProgram, project},
     g::{self, Msg, Role},
     substrate::{
@@ -168,7 +166,7 @@ impl PolicyInputBinding {
 }
 
 impl PolicySignalsProvider for PolicyInputBinding {
-    fn signals(&self, slot: Slot) -> PolicySignals {
+    fn signals(&self, slot: Slot) -> PolicySignals<'_> {
         let policy_input0 = self.policy_input0.get();
         let input = if matches!(slot, Slot::Route) {
             [policy_input0, 0, 0, 0]
@@ -177,7 +175,7 @@ impl PolicySignalsProvider for PolicyInputBinding {
         };
         let mut attrs = PolicyAttrs::new();
         let _ = attrs.insert(POLICY_INPUT_ID, ContextValue::from_u32(policy_input0));
-        PolicySignals { input, attrs }
+        PolicySignals::owned(input, attrs)
     }
 }
 

@@ -464,7 +464,7 @@ impl ResolverContext {
         scope_id: ScopeId,
         scope_trace: Option<ScopeTrace>,
         input: [u32; 4],
-        attrs: crate::transport::context::PolicyAttrs,
+        attrs: &crate::transport::context::PolicyAttrs,
     ) -> Self {
         Self {
             rv_id,
@@ -476,7 +476,7 @@ impl ResolverContext {
             scope_id,
             scope_trace,
             policy_input: input,
-            policy_attrs: attrs,
+            policy_attrs: *attrs,
         }
     }
 
@@ -1853,16 +1853,13 @@ where
     ) -> Option<(*const CompiledProgramImage, *const CompiledRoleImage)>
     where
         Mint: MintConfigMarker,
-        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
-        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
-            crate::global::steps::StepCount,
     {
         let slot_idx = usize::from(slot);
         if slot_idx >= TEST_ENDPOINT_ARENA_SLOTS {
             return None;
         }
         let lowering = crate::global::lowering_input(program);
-        let summary = crate::global::compiled::LoweringSummary::scan_const(lowering.eff_list());
+        let summary = lowering.summary();
         let mut result = None;
         TEST_COMPILED_PROGRAM_POOL.with(|program_storage| {
             TEST_COMPILED_ROLE_POOL.with(|role_storage| {
@@ -1887,9 +1884,9 @@ where
                     let scratch_ptr = (&mut *scratch_storage.get())[slot_idx].as_mut_ptr();
                     crate::global::compiled::init_compiled_program_image_from_summary(
                         program_ptr,
-                        &summary,
+                        summary,
                     );
-                    crate::global::compiled::init_compiled_role_image::<ROLE, GlobalSteps>(
+                    crate::global::compiled::init_compiled_role_image::<ROLE>(
                         role_ptr,
                         lowering,
                         scratch_ptr,
@@ -2095,9 +2092,6 @@ where
     ) -> Result<(*const CompiledProgramImage, *const CompiledRoleImage), AttachError>
     where
         Mint: MintConfigMarker,
-        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
-        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
-            crate::global::steps::StepCount,
     {
         let core = unsafe { &mut *self.control_ptr() };
         let rv = core
@@ -2117,12 +2111,13 @@ where
         let role_image_bytes = if has_role {
             0
         } else {
-            CompiledRoleImage::persistent_bytes_for_program::<ROLE, GlobalSteps>(
+            CompiledRoleImage::persistent_bytes_for_program(
                 program.stamp().scope_count(),
                 lowering.passive_linger_route_scope_count(),
                 lowering.route_scope_count(),
                 lowering.parallel_enter_count(),
                 lowering.eff_count(),
+                lowering.local_step_count(),
             )
         };
         let guard = if has_program {
@@ -2159,10 +2154,11 @@ where
                     let role_image = if has_role {
                         rv.role_image::<ROLE>(program.stamp())
                     } else {
-                        rv.materialize_role_image_from_summary_for_program::<ROLE, GlobalSteps>(
+                        rv.materialize_role_image_from_summary_for_program::<ROLE>(
                             program.stamp(),
                             summary,
                             scratch,
+                            lowering.local_step_count(),
                             lowering.passive_linger_route_scope_count(),
                             lowering.route_scope_count(),
                             lowering.parallel_enter_count(),
@@ -2259,9 +2255,6 @@ where
         Mint: MintConfigMarker,
         E: From<CpError>,
         F: FnOnce(&CompiledProgramImage, &CompiledRoleImage) -> Result<R, E>,
-        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
-        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
-            crate::global::steps::StepCount,
     {
         let (compiled_program, compiled_role) = self
             .ensure_compiled_images(rv_id, program)
@@ -2736,10 +2729,10 @@ where
         unsafe { (*self.resolvers_ref_ptr()).get(key) }
     }
 
-    pub(crate) fn set_resolver<'prog, const POLICY: u16, const ROLE: u8, LocalSteps, Mint>(
+    pub(crate) fn set_resolver<'prog, const POLICY: u16, const ROLE: u8, GlobalSteps, Mint>(
         &self,
         rv_id: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<'prog, ROLE, LocalSteps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'prog, ROLE, GlobalSteps, Mint>,
         resolver: ResolverRef<'cfg>,
     ) -> Result<(), CpError>
     where
@@ -2810,7 +2803,7 @@ where
         tag: u8,
         metrics: TransportSnapshot,
         input: [u32; 4],
-        attrs: crate::transport::context::PolicyAttrs,
+        attrs: &crate::transport::context::PolicyAttrs,
     ) -> Result<DynamicResolution, CpError> {
         let key = DynamicResolverKey::new(rv_id, eff_index, tag);
         let entry = self
@@ -2929,7 +2922,7 @@ where
         policy: PolicyMode,
         metrics: TransportSnapshot,
         input: [u32; 4],
-        attrs: crate::transport::context::PolicyAttrs,
+        attrs: &crate::transport::context::PolicyAttrs,
     ) -> Result<SpliceOperands, CpError> {
         if self.get_local(&rv_id).is_none() {
             return Err(CpError::RendezvousMismatch {
@@ -3022,7 +3015,7 @@ where
         policy: PolicyMode,
         metrics: TransportSnapshot,
         input: [u32; 4],
-        attrs: crate::transport::context::PolicyAttrs,
+        attrs: &crate::transport::context::PolicyAttrs,
     ) -> Result<RerouteHandle, CpError> {
         let src_lane_u16 = lane.raw() as u16;
         match policy {
@@ -3895,9 +3888,6 @@ where
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
         Mint: crate::control::cap::mint::MintConfigMarker,
-        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
-        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
-            crate::global::steps::StepCount,
         'cfg: 'r,
     {
         self.attach_public_endpoint_inner(rv_id, sid, program, binding)
@@ -3913,9 +3903,6 @@ where
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
         Mint: crate::control::cap::mint::MintConfigMarker,
-        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
-        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
-            crate::global::steps::StepCount,
         'cfg: 'r,
     {
         match self.ensure_compiled_images(rv_id, program) {
@@ -3999,9 +3986,6 @@ where
         'cfg: 'r,
         B: crate::binding::BindingSlot,
         Mint: crate::control::cap::mint::MintConfigMarker,
-        GlobalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
-        <GlobalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
-            crate::global::steps::StepCount,
     {
         let lease = self.with_control_mut(|core| {
             let rv = core.locals.get_mut(&rv_id)?;
@@ -4085,36 +4069,30 @@ where
     }
 
     #[inline]
-    pub(crate) fn enter<'r, const ROLE: u8, LocalSteps, Mint>(
+    pub(crate) fn enter<'r, const ROLE: u8, GlobalSteps, Mint>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, LocalSteps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
         Mint: crate::control::cap::mint::MintConfigMarker,
-        LocalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
-        <LocalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
-            crate::global::steps::StepCount,
         'cfg: 'r,
     {
         self.enter_with_binding(rv_id, sid, program, binding)
     }
 
     #[inline]
-    fn enter_with_binding<'r, const ROLE: u8, LocalSteps, Mint>(
+    fn enter_with_binding<'r, const ROLE: u8, GlobalSteps, Mint>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, LocalSteps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
         Mint: crate::control::cap::mint::MintConfigMarker,
-        LocalSteps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
-        <LocalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
-            crate::global::steps::StepCount,
         'cfg: 'r,
     {
         self.attach_public_endpoint(rv_id, sid, program, binding)
@@ -4349,8 +4327,12 @@ mod tests {
         Program<PolicySteps<SharedBorrowSteps, POLICY_ID>>;
     type SharedBorrowRoleProgram =
         crate::g::advanced::RoleProgram<'static, 0, SharedBorrowSteps, MintConfig>;
-    type SharedBorrowPolicyRoleProgram<const POLICY_ID: u16> =
-        crate::g::advanced::RoleProgram<'static, 0, PolicySteps<SharedBorrowSteps, POLICY_ID>, MintConfig>;
+    type SharedBorrowPolicyRoleProgram<const POLICY_ID: u16> = crate::g::advanced::RoleProgram<
+        'static,
+        0,
+        PolicySteps<SharedBorrowSteps, POLICY_ID>,
+        MintConfig,
+    >;
 
     static SHARED_BORROW_PROGRAM_A: SharedBorrowProgram = g::send::<
         Role<0>,
@@ -4529,7 +4511,7 @@ mod tests {
         let projected: crate::g::advanced::RoleProgram<'_, ROLE, _, MintConfig> =
             role_program::project(program);
         let lowering = crate::global::lowering_input(&projected);
-        let summary = LoweringSummary::scan_const(lowering.eff_list());
+        let summary = lowering.summary();
         let counts = CompiledProgramImage::counts(&summary);
         let (_, compiled_role) = SessionCluster::<
             'static,
@@ -4586,15 +4568,13 @@ mod tests {
             compiled_program_persistent_bytes: CompiledProgramImage::persistent_bytes_for_counts(
                 counts,
             ),
-            compiled_role_persistent_bytes: CompiledRoleImage::persistent_bytes_for_program::<
-                ROLE,
-                Steps,
-            >(
+            compiled_role_persistent_bytes: CompiledRoleImage::persistent_bytes_for_program(
                 projected.stamp().scope_count(),
                 lowering.passive_linger_route_scope_count(),
                 lowering.route_scope_count(),
                 lowering.parallel_enter_count(),
                 lowering.eff_count(),
+                lowering.local_step_count(),
             ),
             endpoint_phase_cursor_state_bytes: endpoint_layout.phase_cursor_state().bytes(),
             endpoint_route_state_bytes: endpoint_layout.route_state().bytes(),
@@ -5733,7 +5713,7 @@ mod tests {
                                 SpliceIntentKind::TAG,
                                 crate::transport::TransportSnapshot::default(),
                                 [0; 4],
-                                crate::transport::context::PolicyAttrs::new(),
+                                &crate::transport::context::PolicyAttrs::new(),
                             )
                             .expect_err("splice defer must be rejected");
                         assert_eq!(splice_err, CpError::PolicyAbort { reason: policy_id });
@@ -5747,7 +5727,7 @@ mod tests {
                                 RerouteKind::TAG,
                                 crate::transport::TransportSnapshot::default(),
                                 [0; 4],
-                                crate::transport::context::PolicyAttrs::new(),
+                                &crate::transport::context::PolicyAttrs::new(),
                             )
                             .expect_err("reroute defer must be rejected");
                         assert_eq!(reroute_err, CpError::PolicyAbort { reason: policy_id });
@@ -5844,13 +5824,12 @@ mod tests {
             || {
                 with_cluster_fixture(|clock, config| {
                     with_test_cluster(clock, |cluster| {
-                        let route_policy_projected_one: SharedBorrowPolicyRoleProgram<ROUTE_POLICY_ONE> =
-                            role_program::project(&ROUTE_POLICY_PROGRAM_ONE);
+                        let route_policy_projected_one: SharedBorrowPolicyRoleProgram<
+                            ROUTE_POLICY_ONE,
+                        > = role_program::project(&ROUTE_POLICY_PROGRAM_ONE);
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
-
-                        crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
 
                         cluster
                             .set_resolver::<ROUTE_POLICY_ONE, 0, _, _>(
@@ -5859,11 +5838,6 @@ mod tests {
                                 ResolverRef::from_fn(route_resolver),
                             )
                             .expect("register resolver");
-                        assert_eq!(
-                            crate::global::compiled::LoweringSummary::runtime_scan_count(),
-                            1,
-                            "set_resolver must scan the borrowed RoleProgram once"
-                        );
 
                         cluster
                             .with_transient_compiled_role(
@@ -5872,11 +5846,6 @@ mod tests {
                                 |_, _| Ok::<(), AttachError>(()),
                             )
                             .expect("materialize transient compiled role");
-                        assert_eq!(
-                            crate::global::compiled::LoweringSummary::runtime_scan_count(),
-                            2,
-                            "transient compiled role materialization must scan the borrowed RoleProgram once"
-                        );
 
                         cluster
                             .with_transient_compiled_role(
@@ -5885,11 +5854,6 @@ mod tests {
                                 |_, _| Ok::<(), AttachError>(()),
                             )
                             .expect("rematerialize transient compiled role");
-                        assert_eq!(
-                            crate::global::compiled::LoweringSummary::runtime_scan_count(),
-                            2,
-                            "re-materialization against the same borrowed RoleProgram must reuse its lazy shared image"
-                        );
                     });
                 });
             },
@@ -5921,7 +5885,6 @@ mod tests {
                             "equivalent thin RoleProgram values should borrow the same shared source owner"
                         );
 
-                        crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
                         cluster
                             .with_transient_compiled_role(
                                 rv_id,
@@ -5929,11 +5892,6 @@ mod tests {
                                 |_, _| Ok::<(), AttachError>(()),
                             )
                             .expect("materialize first borrowed program");
-                        assert_eq!(
-                            crate::global::compiled::LoweringSummary::runtime_scan_count(),
-                            1,
-                            "first borrowed program must materialize one transient lowering"
-                        );
 
                         cluster
                             .with_transient_compiled_role(
@@ -5942,11 +5900,6 @@ mod tests {
                                 |_, _| Ok::<(), AttachError>(()),
                             )
                             .expect("materialize second borrowed program");
-                        assert_eq!(
-                            crate::global::compiled::LoweringSummary::runtime_scan_count(),
-                            1,
-                            "equivalent borrowed RoleProgram values must reuse the shared runtime image keyed by program stamp and role"
-                        );
                     });
                 });
             },
@@ -5960,13 +5913,13 @@ mod tests {
             || {
                 with_cluster_fixture(|clock, config| {
                     with_test_cluster(clock, |cluster| {
-                        let route_policy_projected_two: SharedBorrowPolicyRoleProgram<ROUTE_POLICY_TWO> =
-                            role_program::project(&ROUTE_POLICY_PROGRAM_TWO);
+                        let route_policy_projected_two: SharedBorrowPolicyRoleProgram<
+                            ROUTE_POLICY_TWO,
+                        > = role_program::project(&ROUTE_POLICY_PROGRAM_TWO);
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
 
-                        crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
                         cluster
                             .set_resolver::<ROUTE_POLICY_TWO, 0, _, _>(
                                 rv_id,
@@ -5974,11 +5927,6 @@ mod tests {
                                 ResolverRef::from_fn(route_resolver),
                             )
                             .expect("register resolver without a free cache slot");
-                        assert_eq!(
-                            crate::global::compiled::LoweringSummary::runtime_scan_count(),
-                            1,
-                            "resolver setup should lower the borrowed RoleProgram exactly once"
-                        );
 
                         crate::global::compiled::with_compiled_program(
                             crate::global::lowering_input(&route_policy_projected_two),

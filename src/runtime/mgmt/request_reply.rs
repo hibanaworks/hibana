@@ -17,9 +17,7 @@ use crate::{
     g::{self, Program},
     global::{
         CanonicalControl, ExternalControl,
-        steps::{
-            self, PolicySteps, RouteSteps, SeqSteps, StepCons, StepNil,
-        },
+        steps::{self, PolicySteps, RouteSteps, SeqSteps, StepCons, StepNil},
     },
     runtime::consts::{
         LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE, LABEL_MGMT_ACTIVATE, LABEL_MGMT_LOAD_AND_ACTIVATE,
@@ -94,14 +92,13 @@ type LoadBeginTokenBody = ControllerControlSend<
 
 const LOAD_REQUEST_HEAD: Program<
     ControllerPolicyHead<LABEL_MGMT_ROUTE_LOAD, MgmtRouteLoadKind, REQUEST_LOAD_POLICY_ID>,
-> =
-    g::send::<
-        g::Role<ROLE_CONTROLLER>,
-        g::Role<ROLE_CONTROLLER>,
-        RouteMsg<LABEL_MGMT_ROUTE_LOAD, MgmtRouteLoadKind>,
-        0,
-    >()
-    .policy::<REQUEST_LOAD_POLICY_ID>();
+> = g::send::<
+    g::Role<ROLE_CONTROLLER>,
+    g::Role<ROLE_CONTROLLER>,
+    RouteMsg<LABEL_MGMT_ROUTE_LOAD, MgmtRouteLoadKind>,
+    0,
+>()
+.policy::<REQUEST_LOAD_POLICY_ID>();
 
 const LOAD_BEGIN: Program<LoadBeginTokenBody> = g::send::<
     g::Role<ROLE_CONTROLLER>,
@@ -132,7 +129,11 @@ type LoopBreakHead = PolicySteps<
         steps::SendStep<
             g::Role<ROLE_CONTROLLER>,
             g::Role<ROLE_CONTROLLER>,
-            g::Msg<LABEL_LOOP_BREAK, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
+            g::Msg<
+                LABEL_LOOP_BREAK,
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
         >,
         StepNil,
     >,
@@ -199,19 +200,12 @@ const LOAD_COMMIT_BODY: Program<LoadCommitBody> = g::send::<
     0,
 >();
 
-type LoadStreamBody = SeqSteps<
-    SeqSteps<
-        LoadBeginTokenBody,
-        LoopSegmentSteps,
-    >,
-    LoadCommitBody,
->;
+type LoadStreamBody = SeqSteps<SeqSteps<LoadBeginTokenBody, LoopSegmentSteps>, LoadCommitBody>;
 type LoadRequestBody = SeqSteps<ControllerSend<LABEL_MGMT_STAGE, LoadBegin>, LoadStreamBody>;
-type LoadRequestArm =
-    SeqSteps<
-        ControllerPolicyHead<LABEL_MGMT_ROUTE_LOAD, MgmtRouteLoadKind, REQUEST_LOAD_POLICY_ID>,
-        LoadRequestBody,
-    >;
+type LoadRequestArm = SeqSteps<
+    ControllerPolicyHead<LABEL_MGMT_ROUTE_LOAD, MgmtRouteLoadKind, REQUEST_LOAD_POLICY_ID>,
+    LoadRequestBody,
+>;
 type LoadActivateBody =
     SeqSteps<ControllerSend<LABEL_MGMT_LOAD_AND_ACTIVATE, LoadBegin>, LoadStreamBody>;
 type LoadActivateArm = SeqSteps<
@@ -223,15 +217,14 @@ type LoadActivateArm = SeqSteps<
     LoadActivateBody,
 >;
 type LoadRouteSteps = RouteSteps<LoadRequestArm, LoadActivateArm>;
-type LoadFamilyArm =
-    SeqSteps<
-        ControllerPolicyHead<
-            LABEL_MGMT_ROUTE_LOAD_FAMILY,
-            MgmtRouteLoadFamilyKind,
-            REQUEST_ROOT_POLICY_ID,
-        >,
-        LoadRouteSteps,
-    >;
+type LoadFamilyArm = SeqSteps<
+    ControllerPolicyHead<
+        LABEL_MGMT_ROUTE_LOAD_FAMILY,
+        MgmtRouteLoadFamilyKind,
+        REQUEST_ROOT_POLICY_ID,
+    >,
+    LoadRouteSteps,
+>;
 
 const LOAD_ACTIVATE_HEAD: Program<
     ControllerPolicyHead<
@@ -293,15 +286,14 @@ const LOAD_ROUTE: Program<LoadRouteSteps> = g::route(LOAD_REQUEST, LOAD_ACTIVATE
 const LOAD_FAMILY_REQUEST: Program<LoadFamilyArm> = g::seq(LOAD_FAMILY_HEAD, LOAD_ROUTE);
 
 type ActivateBody = ControllerSend<LABEL_MGMT_ACTIVATE, SlotRequest>;
-type ActivateArm =
-    SeqSteps<
-        ControllerPolicyHead<
-            LABEL_MGMT_ROUTE_ACTIVATE,
-            MgmtRouteActivateKind,
-            REQUEST_COMMAND_POLICY_ID,
-        >,
-        ActivateBody,
-    >;
+type ActivateArm = SeqSteps<
+    ControllerPolicyHead<
+        LABEL_MGMT_ROUTE_ACTIVATE,
+        MgmtRouteActivateKind,
+        REQUEST_COMMAND_POLICY_ID,
+    >,
+    ActivateBody,
+>;
 
 const ACTIVATE_HEAD: Program<
     ControllerPolicyHead<
@@ -309,14 +301,13 @@ const ACTIVATE_HEAD: Program<
         MgmtRouteActivateKind,
         REQUEST_COMMAND_POLICY_ID,
     >,
-> =
-    g::send::<
-        g::Role<ROLE_CONTROLLER>,
-        g::Role<ROLE_CONTROLLER>,
-        RouteMsg<LABEL_MGMT_ROUTE_ACTIVATE, MgmtRouteActivateKind>,
-        0,
-    >()
-    .policy::<REQUEST_COMMAND_POLICY_ID>();
+> = g::send::<
+    g::Role<ROLE_CONTROLLER>,
+    g::Role<ROLE_CONTROLLER>,
+    RouteMsg<LABEL_MGMT_ROUTE_ACTIVATE, MgmtRouteActivateKind>,
+    0,
+>()
+.policy::<REQUEST_COMMAND_POLICY_ID>();
 
 const ACTIVATE_BODY: Program<ActivateBody> = g::send::<
     g::Role<ROLE_CONTROLLER>,
@@ -343,14 +334,13 @@ const REVERT_HEAD: Program<
         MgmtRouteRevertKind,
         REQUEST_COMMAND_TAIL_POLICY_ID,
     >,
-> =
-    g::send::<
-        g::Role<ROLE_CONTROLLER>,
-        g::Role<ROLE_CONTROLLER>,
-        RouteMsg<LABEL_MGMT_ROUTE_REVERT, MgmtRouteRevertKind>,
-        0,
-    >()
-    .policy::<REQUEST_COMMAND_TAIL_POLICY_ID>();
+> = g::send::<
+    g::Role<ROLE_CONTROLLER>,
+    g::Role<ROLE_CONTROLLER>,
+    RouteMsg<LABEL_MGMT_ROUTE_REVERT, MgmtRouteRevertKind>,
+    0,
+>()
+.policy::<REQUEST_COMMAND_TAIL_POLICY_ID>();
 
 const REVERT_BODY: Program<RevertBody> = g::send::<
     g::Role<ROLE_CONTROLLER>,
@@ -453,22 +443,13 @@ const REQUEST_ROUTE: Program<RequestRouteSteps> =
     g::route(LOAD_FAMILY_REQUEST, COMMAND_FAMILY_REQUEST);
 
 type ErrorReplyBody = ClusterSend<LABEL_MGMT_REPLY_ERROR, MgmtError>;
-type ErrorReplyArm =
-    SeqSteps<
-        ClusterPolicyHead<
-            LABEL_MGMT_ROUTE_REPLY_ERROR,
-            MgmtRouteReplyErrorKind,
-            REPLY_ROOT_POLICY_ID,
-        >,
-        ErrorReplyBody,
-    >;
+type ErrorReplyArm = SeqSteps<
+    ClusterPolicyHead<LABEL_MGMT_ROUTE_REPLY_ERROR, MgmtRouteReplyErrorKind, REPLY_ROOT_POLICY_ID>,
+    ErrorReplyBody,
+>;
 
 const ERROR_REPLY_HEAD: Program<
-    ClusterPolicyHead<
-        LABEL_MGMT_ROUTE_REPLY_ERROR,
-        MgmtRouteReplyErrorKind,
-        REPLY_ROOT_POLICY_ID,
-    >,
+    ClusterPolicyHead<LABEL_MGMT_ROUTE_REPLY_ERROR, MgmtRouteReplyErrorKind, REPLY_ROOT_POLICY_ID>,
 > = g::send::<
     g::Role<ROLE_CLUSTER>,
     g::Role<ROLE_CLUSTER>,
@@ -487,15 +468,14 @@ const ERROR_REPLY_BODY: Program<ErrorReplyBody> = g::send::<
 const ERROR_REPLY: Program<ErrorReplyArm> = g::seq(ERROR_REPLY_HEAD, ERROR_REPLY_BODY);
 
 type LoadedReplyBody = ClusterSend<LABEL_MGMT_REPLY_LOADED, LoadReport>;
-type LoadedReplyArm =
-    SeqSteps<
-        ClusterPolicyHead<
-            LABEL_MGMT_ROUTE_REPLY_LOADED,
-            MgmtRouteReplyLoadedKind,
-            REPLY_SUCCESS_POLICY_ID,
-        >,
-        LoadedReplyBody,
-    >;
+type LoadedReplyArm = SeqSteps<
+    ClusterPolicyHead<
+        LABEL_MGMT_ROUTE_REPLY_LOADED,
+        MgmtRouteReplyLoadedKind,
+        REPLY_SUCCESS_POLICY_ID,
+    >,
+    LoadedReplyBody,
+>;
 
 const LOADED_REPLY_HEAD: Program<
     ClusterPolicyHead<
@@ -588,15 +568,14 @@ const REVERTED_REPLY_BODY: Program<RevertedReplyBody> = g::send::<
 const REVERTED_REPLY: Program<RevertedReplyArm> = g::seq(REVERTED_REPLY_HEAD, REVERTED_REPLY_BODY);
 
 type StatsReplyBody = ClusterSend<LABEL_MGMT_REPLY_STATS, StatsReply>;
-type StatsReplyArm =
-    SeqSteps<
-        ClusterPolicyHead<
-            LABEL_MGMT_ROUTE_REPLY_STATS,
-            MgmtRouteReplyStatsKind,
-            REPLY_SUCCESS_FINAL_POLICY_ID,
-        >,
-        StatsReplyBody,
-    >;
+type StatsReplyArm = SeqSteps<
+    ClusterPolicyHead<
+        LABEL_MGMT_ROUTE_REPLY_STATS,
+        MgmtRouteReplyStatsKind,
+        REPLY_SUCCESS_FINAL_POLICY_ID,
+    >,
+    StatsReplyBody,
+>;
 
 const STATS_REPLY_HEAD: Program<
     ClusterPolicyHead<
