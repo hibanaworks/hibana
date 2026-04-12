@@ -3,7 +3,7 @@ use hibana::g::{self};
 
 const LABEL_CANCEL: u8 = 60;
 
-const BAD: g::ProgramSource<
+const BAD: g::Program<
     StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<LABEL_CANCEL, ()>, 0>, StepNil>,
 > = g::send::<g::Role<0>, g::Role<1>, g::Msg<LABEL_CANCEL, ()>, 0>();
 

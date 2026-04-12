@@ -106,7 +106,10 @@ impl CapTable {
     }
 
     #[inline]
-    fn encode_slots_ptr(slots: *mut Option<CapEntry>, reclaim_delta: usize) -> *mut Option<CapEntry> {
+    fn encode_slots_ptr(
+        slots: *mut Option<CapEntry>,
+        reclaim_delta: usize,
+    ) -> *mut Option<CapEntry> {
         debug_assert_eq!(slots.addr() & Self::STORAGE_TAG_MASK, 0);
         debug_assert!(reclaim_delta <= Self::STORAGE_TAG_MASK);
         slots.map_addr(|addr| addr | reclaim_delta)
@@ -137,7 +140,12 @@ impl CapTable {
         live
     }
 
-    unsafe fn bind_storage(&mut self, slots: *mut Option<CapEntry>, capacity: usize, reclaim_delta: usize) {
+    unsafe fn bind_storage(
+        &mut self,
+        slots: *mut Option<CapEntry>,
+        capacity: usize,
+        reclaim_delta: usize,
+    ) {
         let mut idx = 0usize;
         while idx < capacity {
             unsafe {
@@ -149,7 +157,12 @@ impl CapTable {
         self.capacity = capacity;
     }
 
-    unsafe fn rebind_storage(&mut self, slots: *mut Option<CapEntry>, capacity: usize, reclaim_delta: usize) {
+    unsafe fn rebind_storage(
+        &mut self,
+        slots: *mut Option<CapEntry>,
+        capacity: usize,
+        reclaim_delta: usize,
+    ) {
         *self.slots.get_mut() = Self::encode_slots_ptr(slots, reclaim_delta);
         self.capacity = capacity;
     }

@@ -30,12 +30,45 @@ use scenario::ScenarioHarness;
 
 type HugeKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
 
-const ROUTE_HEAVY_PROGRAM: g::Program<huge_program::ProgramSteps> =
-    g::freeze(&huge_program::PROGRAM);
-const LINEAR_HEAVY_PROGRAM: g::Program<linear_program::ProgramSteps> =
-    g::freeze(&linear_program::PROGRAM);
-const FANOUT_HEAVY_PROGRAM: g::Program<fanout_program::ProgramSteps> =
-    g::freeze(&fanout_program::PROGRAM);
+static ROUTE_HEAVY_PROGRAM: g::Program<huge_program::ProgramSteps> = huge_program::PROGRAM;
+static LINEAR_HEAVY_PROGRAM: g::Program<linear_program::ProgramSteps> = linear_program::PROGRAM;
+static FANOUT_HEAVY_PROGRAM: g::Program<fanout_program::ProgramSteps> = fanout_program::PROGRAM;
+static ROUTE_HEAVY_CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<
+    'static,
+    0,
+    huge_program::ProgramSteps,
+    MintConfig,
+> = project(&ROUTE_HEAVY_PROGRAM);
+static ROUTE_HEAVY_WORKER_PROGRAM: hibana::g::advanced::RoleProgram<
+    'static,
+    1,
+    huge_program::ProgramSteps,
+    MintConfig,
+> = project(&ROUTE_HEAVY_PROGRAM);
+static LINEAR_HEAVY_CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<
+    'static,
+    0,
+    linear_program::ProgramSteps,
+    MintConfig,
+> = project(&LINEAR_HEAVY_PROGRAM);
+static LINEAR_HEAVY_WORKER_PROGRAM: hibana::g::advanced::RoleProgram<
+    'static,
+    1,
+    linear_program::ProgramSteps,
+    MintConfig,
+> = project(&LINEAR_HEAVY_PROGRAM);
+static FANOUT_HEAVY_CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<
+    'static,
+    0,
+    fanout_program::ProgramSteps,
+    MintConfig,
+> = project(&FANOUT_HEAVY_PROGRAM);
+static FANOUT_HEAVY_WORKER_PROGRAM: hibana::g::advanced::RoleProgram<
+    'static,
+    1,
+    fanout_program::ProgramSteps,
+    MintConfig,
+> = project(&FANOUT_HEAVY_PROGRAM);
 
 struct RuntimeHarness;
 
@@ -100,7 +133,8 @@ impl ScenarioHarness for RuntimeHarness {
 
 #[inline(never)]
 fn run_attached_sample<Steps: 'static>(
-    program: &'static g::Program<Steps>,
+    controller_program: &'static hibana::g::advanced::RoleProgram<'static, 0, Steps, MintConfig>,
+    worker_program: &'static hibana::g::advanced::RoleProgram<'static, 1, Steps, MintConfig>,
     route_scope_count: usize,
     expected_branch_labels: &'static [u8],
     expected_acks: &'static [u8],
@@ -118,12 +152,6 @@ fn run_attached_sample<Steps: 'static>(
     runtime_support::with_fixture(|clock, tap_buf, slab| {
         eprintln!("before transport");
         let transport = TestTransport::default();
-        eprintln!("before project controller");
-        let controller_program: hibana::g::advanced::RoleProgram<'_, 0, Steps, MintConfig> =
-            project(program);
-        eprintln!("before project worker");
-        let worker_program: hibana::g::advanced::RoleProgram<'_, 1, Steps, MintConfig> =
-            project(program);
         eprintln!("before kit new");
         let kit = HugeKit::new(clock);
         eprintln!("before add rendezvous");
@@ -133,11 +161,11 @@ fn run_attached_sample<Steps: 'static>(
         eprintln!("before enter controller");
         let sid = SessionId::new(0x6000);
         let mut controller = kit
-            .enter(rv_id, sid, &controller_program, NoBinding)
+            .enter(rv_id, sid, controller_program, NoBinding)
             .expect("enter controller");
         eprintln!("before enter worker");
         let mut worker = kit
-            .enter(rv_id, sid, &worker_program, NoBinding)
+            .enter(rv_id, sid, worker_program, NoBinding)
             .expect("enter worker");
 
         eprintln!("before run");
@@ -163,7 +191,8 @@ fn run_on_small_stack(name: &'static str, f: impl FnOnce() + Send + 'static) {
 fn huge_choreography_shape_matrix_runs_to_completion_on_small_stack() {
     run_on_small_stack("huge-choreography-route-heavy", || {
         run_attached_sample(
-            &ROUTE_HEAVY_PROGRAM,
+            &ROUTE_HEAVY_CONTROLLER_PROGRAM,
+            &ROUTE_HEAVY_WORKER_PROGRAM,
             huge_program::ROUTE_SCOPE_COUNT,
             &huge_program::EXPECTED_WORKER_BRANCH_LABELS,
             &huge_program::ACK_LABELS,
@@ -173,7 +202,8 @@ fn huge_choreography_shape_matrix_runs_to_completion_on_small_stack() {
 
     run_on_small_stack("huge-choreography-linear-heavy", || {
         run_attached_sample(
-            &LINEAR_HEAVY_PROGRAM,
+            &LINEAR_HEAVY_CONTROLLER_PROGRAM,
+            &LINEAR_HEAVY_WORKER_PROGRAM,
             linear_program::ROUTE_SCOPE_COUNT,
             &linear_program::EXPECTED_WORKER_BRANCH_LABELS,
             &linear_program::ACK_LABELS,
@@ -183,7 +213,8 @@ fn huge_choreography_shape_matrix_runs_to_completion_on_small_stack() {
 
     run_on_small_stack("huge-choreography-fanout-heavy", || {
         run_attached_sample(
-            &FANOUT_HEAVY_PROGRAM,
+            &FANOUT_HEAVY_CONTROLLER_PROGRAM,
+            &FANOUT_HEAVY_WORKER_PROGRAM,
             fanout_program::ROUTE_SCOPE_COUNT,
             &fanout_program::EXPECTED_WORKER_BRANCH_LABELS,
             &fanout_program::ACK_LABELS,

@@ -63,7 +63,7 @@ type ProgramTailC = SeqSteps<SegmentC, ProgramTailD>;
 type ProgramTailB = SeqSteps<SegmentB, ProgramTailC>;
 pub type ProgramSteps = SeqSteps<SegmentA, ProgramTailB>;
 
-pub const PROGRAM: g::ProgramSource<ProgramSteps> = g::seq(
+pub const PROGRAM: g::Program<ProgramSteps> = g::seq(
     segment_a(),
     g::seq(
         segment_b(),
@@ -74,7 +74,7 @@ pub const PROGRAM: g::ProgramSource<ProgramSteps> = g::seq(
     ),
 );
 
-const fn segment_a() -> g::ProgramSource<SegmentA> {
+const fn segment_a() -> g::Program<SegmentA> {
     let program = g::send::<Role<0>, Role<1>, Msg<1, u8>, 0>();
     let program = g::seq(program, g::send::<Role<1>, Role<0>, Msg<2, u8>, 0>());
     let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<3, u8>, 0>());
@@ -85,7 +85,7 @@ const fn segment_a() -> g::ProgramSource<SegmentA> {
     g::seq(program, g::send::<Role<1>, Role<0>, Msg<8, u8>, 0>())
 }
 
-const fn segment_b() -> g::ProgramSource<SegmentB> {
+const fn segment_b() -> g::Program<SegmentB> {
     let program = g::send::<Role<0>, Role<1>, Msg<9, u8>, 0>();
     let program = g::seq(program, g::send::<Role<1>, Role<0>, Msg<10, u8>, 0>());
     let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<11, u8>, 0>());
@@ -96,7 +96,7 @@ const fn segment_b() -> g::ProgramSource<SegmentB> {
     g::seq(program, g::send::<Role<1>, Role<0>, Msg<16, u8>, 0>())
 }
 
-const fn segment_c() -> g::ProgramSource<SegmentC> {
+const fn segment_c() -> g::Program<SegmentC> {
     let program = g::send::<Role<0>, Role<1>, Msg<17, u8>, 0>();
     let program = g::seq(program, g::send::<Role<1>, Role<0>, Msg<18, u8>, 0>());
     let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<19, u8>, 0>());
@@ -107,7 +107,7 @@ const fn segment_c() -> g::ProgramSource<SegmentC> {
     g::seq(program, g::send::<Role<1>, Role<0>, Msg<24, u8>, 0>())
 }
 
-const fn segment_d() -> g::ProgramSource<SegmentD> {
+const fn segment_d() -> g::Program<SegmentD> {
     let program = g::send::<Role<0>, Role<1>, Msg<81, u8>, 0>();
     let program = g::seq(program, g::send::<Role<1>, Role<0>, Msg<82, u8>, 0>());
     let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<83, u8>, 0>());
@@ -118,7 +118,7 @@ const fn segment_d() -> g::ProgramSource<SegmentD> {
     g::seq(program, g::send::<Role<1>, Role<0>, Msg<88, u8>, 0>())
 }
 
-const fn segment_e() -> g::ProgramSource<SegmentE> {
+const fn segment_e() -> g::Program<SegmentE> {
     let program = g::send::<Role<0>, Role<1>, Msg<89, u8>, 0>();
     let program = g::seq(program, g::send::<Role<1>, Role<0>, Msg<90, u8>, 0>());
     let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<91, u8>, 0>());
@@ -129,7 +129,7 @@ const fn segment_e() -> g::ProgramSource<SegmentE> {
     g::seq(program, g::send::<Role<1>, Role<0>, Msg<96, u8>, 0>())
 }
 
-const fn segment_f() -> g::ProgramSource<SegmentF> {
+const fn segment_f() -> g::Program<SegmentF> {
     let program = g::send::<Role<0>, Role<1>, Msg<97, u8>, 0>();
     let program = g::seq(program, g::send::<Role<1>, Role<0>, Msg<98, u8>, 0>());
     let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<99, u8>, 0>());

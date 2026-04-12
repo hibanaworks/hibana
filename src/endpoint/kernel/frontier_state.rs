@@ -2,12 +2,12 @@
 
 use core::ops::{Index, IndexMut};
 
+#[cfg(test)]
+use super::frontier::ObservedEntrySummary;
 use super::frontier::{
     ActiveEntrySet, ActiveEntrySlot, EntryBuffer, FrontierObservationKey, FrontierObservationSlot,
     LaneOfferState, ObservedEntrySet, RootFrontierState,
 };
-#[cfg(test)]
-use super::frontier::ObservedEntrySummary;
 #[cfg(test)]
 use super::frontier::{OfferEntrySlot, OfferEntryState, OfferEntryTable};
 use crate::global::const_dsl::ScopeId;
@@ -289,10 +289,7 @@ impl RootFrontierTable {
             }
             idx += 1;
         }
-        self[slot_idx].set_observed_key_cache_masks(
-            key.offer_lane_mask,
-            key.binding_nonempty_mask,
-        );
+        self[slot_idx].set_observed_key_cache_masks(key.offer_lane_mask, key.binding_nonempty_mask);
     }
 
     #[inline]

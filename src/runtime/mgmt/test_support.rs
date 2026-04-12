@@ -8,7 +8,7 @@ use crate::{
         verifier::Header,
         vm::Slot,
     },
-    global::compiled::{CompiledProgram, LoweringSummary},
+    global::compiled::CompiledProgram,
     observe::{
         core::push,
         events::{PolicyCommit, PolicyRollback},
@@ -432,18 +432,11 @@ pub(crate) fn with_management_compiled_programs_for_test<F, R>(f: F) -> R
 where
     F: FnOnce(&CompiledProgram, &CompiledProgram) -> R,
 {
-    let controller_summary = LoweringSummary::scan_const(CONTROLLER_PROGRAM.lowering_input());
-    let cluster_summary = LoweringSummary::scan_const(CLUSTER_PROGRAM.lowering_input());
-    let mut controller = core::mem::MaybeUninit::<CompiledProgram>::uninit();
-    let mut cluster = core::mem::MaybeUninit::<CompiledProgram>::uninit();
-    unsafe {
-        CompiledProgram::init_from_summary(controller.as_mut_ptr(), &controller_summary);
-        CompiledProgram::init_from_summary(cluster.as_mut_ptr(), &cluster_summary);
-        let result = f(controller.assume_init_ref(), cluster.assume_init_ref());
-        controller.assume_init_drop();
-        cluster.assume_init_drop();
-        result
-    }
+    crate::global::compiled::with_compiled_programs(
+        crate::global::lowering_input(&CONTROLLER_PROGRAM),
+        crate::global::lowering_input(&CLUSTER_PROGRAM),
+        f,
+    )
 }
 
 #[derive(Clone, Copy, Debug)]

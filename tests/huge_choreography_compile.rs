@@ -11,20 +11,15 @@ mod route_control_kinds;
 #[path = "../internal/pico_smoke/src/scenario.rs"]
 mod scenario;
 
-use core::mem::size_of;
-
 use hibana::{
     g,
     g::advanced::{RoleProgram, project},
     substrate::cap::advanced::MintConfig,
 };
 
-const ROUTE_HEAVY_PROGRAM: g::Program<huge_program::ProgramSteps> =
-    g::freeze(&huge_program::PROGRAM);
-const LINEAR_HEAVY_PROGRAM: g::Program<linear_program::ProgramSteps> =
-    g::freeze(&linear_program::PROGRAM);
-const FANOUT_HEAVY_PROGRAM: g::Program<fanout_program::ProgramSteps> =
-    g::freeze(&fanout_program::PROGRAM);
+static ROUTE_HEAVY_PROGRAM: g::Program<huge_program::ProgramSteps> = huge_program::PROGRAM;
+static LINEAR_HEAVY_PROGRAM: g::Program<linear_program::ProgramSteps> = linear_program::PROGRAM;
+static FANOUT_HEAVY_PROGRAM: g::Program<fanout_program::ProgramSteps> = fanout_program::PROGRAM;
 
 fn retain_pico_smoke_fixture_symbols() {
     let _ = fanout_program::ROUTE_SCOPE_COUNT;
@@ -47,7 +42,7 @@ fn pico_smoke_fixture_symbols_are_reachable() {
 }
 
 #[test]
-fn huge_programs_freeze_into_thin_tokens() {
+fn huge_programs_stay_on_direct_program_values() {
     retain_pico_smoke_fixture_symbols();
     assert_eq!(huge_program::ROUTE_SCOPE_COUNT, 4);
     assert_eq!(
@@ -63,19 +58,6 @@ fn huge_programs_freeze_into_thin_tokens() {
     assert_eq!(
         fanout_program::ACK_LABELS,
         [97, 98, 99, 100, 101, 102, 103, 104]
-    );
-
-    assert!(
-        size_of::<g::Program<huge_program::ProgramSteps>>() <= 2 * size_of::<usize>(),
-        "route-heavy frozen Program token must stay thin even for huge choreography sources"
-    );
-    assert!(
-        size_of::<g::Program<linear_program::ProgramSteps>>() <= 2 * size_of::<usize>(),
-        "linear-heavy frozen Program token must stay thin even for huge choreography sources"
-    );
-    assert!(
-        size_of::<g::Program<fanout_program::ProgramSteps>>() <= 2 * size_of::<usize>(),
-        "fanout-heavy frozen Program token must stay thin even for huge choreography sources"
     );
 }
 

@@ -1,5 +1,5 @@
 use hibana::g::advanced::CanonicalControl;
-use hibana::g::advanced::steps::{SendStep, SeqSteps, StepConcat, StepCons, StepNil};
+use hibana::g::advanced::steps::{RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
 use hibana::g::{self, Msg, Role};
 use hibana::substrate::cap::GenericCapToken;
 
@@ -54,7 +54,7 @@ type WorkerLead04 = SeqSteps<WorkerLead03, W2C>;
 type WorkerLead05 = SeqSteps<WorkerLead04, C2W>;
 pub type WorkerLeadBlock = SeqSteps<WorkerLead05, W2C>;
 
-pub const CONTROLLER_LEAD_BLOCK: g::ProgramSource<ControllerLeadBlock> = {
+pub const CONTROLLER_LEAD_BLOCK: g::Program<ControllerLeadBlock> = {
     let program = g::send::<Role<0>, Role<1>, Msg<{ LABEL_C2W_U8 }, u8>, 0>();
     let program = g::seq(
         program,
@@ -82,7 +82,7 @@ pub const CONTROLLER_LEAD_BLOCK: g::ProgramSource<ControllerLeadBlock> = {
     )
 };
 
-pub const WORKER_LEAD_BLOCK: g::ProgramSource<WorkerLeadBlock> = {
+pub const WORKER_LEAD_BLOCK: g::Program<WorkerLeadBlock> = {
     let program = g::send::<Role<1>, Role<0>, Msg<{ LABEL_W2C_U8 }, u8>, 0>();
     let program = g::seq(
         program,
@@ -112,9 +112,9 @@ pub const WORKER_LEAD_BLOCK: g::ProgramSource<WorkerLeadBlock> = {
 
 pub type RouteLeftArm = SeqSteps<RouteSelectLeft<RouteLeftKind>, RoutePayloadLeft>;
 pub type RouteRightArm = SeqSteps<RouteSelectRight<RouteRightKind>, RoutePayloadRight>;
-pub type Route = <RouteLeftArm as StepConcat<RouteRightArm>>::Output;
+pub type Route = RouteSteps<RouteLeftArm, RouteRightArm>;
 
-pub const ROUTE_LEFT: g::ProgramSource<RouteLeftArm> = {
+pub const ROUTE_LEFT: g::Program<RouteLeftArm> = {
     let program = g::send::<
         Role<0>,
         Role<0>,
@@ -131,7 +131,7 @@ pub const ROUTE_LEFT: g::ProgramSource<RouteLeftArm> = {
     )
 };
 
-pub const ROUTE_RIGHT: g::ProgramSource<RouteRightArm> = {
+pub const ROUTE_RIGHT: g::Program<RouteRightArm> = {
     let program = g::send::<
         Role<0>,
         Role<0>,
@@ -148,9 +148,9 @@ pub const ROUTE_RIGHT: g::ProgramSource<RouteRightArm> = {
     )
 };
 
-pub const ROUTE: g::ProgramSource<Route> = g::route(ROUTE_LEFT, ROUTE_RIGHT);
+pub const ROUTE: g::Program<Route> = g::route(ROUTE_LEFT, ROUTE_RIGHT);
 pub type RouteSegment = SeqSteps<Route, W2C>;
-pub const ROUTE_SEGMENT: g::ProgramSource<RouteSegment> = g::seq(
+pub const ROUTE_SEGMENT: g::Program<RouteSegment> = g::seq(
     ROUTE,
     g::send::<Role<1>, Role<0>, Msg<{ LABEL_W2C_U8 }, u8>, 0>(),
 );
@@ -158,7 +158,7 @@ pub const ROUTE_SEGMENT: g::ProgramSource<RouteSegment> = g::seq(
 type Suffix01 = SeqSteps<C2W, W2C>;
 type Suffix02 = SeqSteps<Suffix01, C2W>;
 pub type SuffixBlock = SeqSteps<Suffix02, W2C>;
-pub const SUFFIX_BLOCK: g::ProgramSource<SuffixBlock> = {
+pub const SUFFIX_BLOCK: g::Program<SuffixBlock> = {
     let program = g::send::<Role<0>, Role<1>, Msg<{ LABEL_C2W_U8 }, u8>, 0>();
     let program = g::seq(
         program,
@@ -186,7 +186,7 @@ type PrefixTail3 = SeqSteps<ControllerLeadBlock, PrefixTail4>;
 type PrefixTail2 = SeqSteps<WorkerLeadBlock, PrefixTail3>;
 pub type ProgramSteps = SeqSteps<ControllerLeadBlock, PrefixTail2>;
 
-pub const PROGRAM: g::ProgramSource<ProgramSteps> = g::seq(
+pub const PROGRAM: g::Program<ProgramSteps> = g::seq(
     CONTROLLER_LEAD_BLOCK,
     g::seq(
         WORKER_LEAD_BLOCK,

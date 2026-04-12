@@ -17,6 +17,10 @@
 //! Protocol crates should stay on `hibana::g::advanced` and `hibana::substrate`.
 //! The crate root stays intentionally small; protocol seams live under
 //! `hibana::g::advanced` and `hibana::substrate`.
+//! Inside [`substrate`], everyday protocol-implementor owners stay at the
+//! module root plus `runtime`, `binding`, `policy`, `wire`, `transport`, and
+//! `mgmt`; heavier detail buckets stay under `substrate::cap::advanced` and
+//! `substrate::policy::{core, epf}`.
 //!
 //! ```rust,ignore
 //! use hibana::g;
@@ -35,9 +39,9 @@
 //! ```
 //!
 //! Protocol implementors use [`g::advanced`] and [`substrate`] to compose
-//! [`g::ProgramSource`] values, freeze them into a thin [`g::Program`], project
-//! that token, and enter attached endpoints. That lower-level flow is
-//! documented in `README.md`; it is not the primary app-author path.
+//! [`g::Program`] values, project them, and enter attached endpoints. That
+//! lower-level flow is documented in `README.md`; it is not the primary
+//! app-author path.
 //!
 //! Run the verification flow documented in `AGENTS.md` after integrating a
 //! protocol to ensure rendezvous and localside invariants stay intact. The same

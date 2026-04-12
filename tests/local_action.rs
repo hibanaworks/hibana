@@ -41,7 +41,7 @@ impl WireEncode for InstallPayload {
     }
 }
 
-const PROGRAM: g::ProgramSource<
+const PROGRAM: g::Program<
     StepCons<SendStep<Role<0>, Role<0>, Msg<7, InstallPayload>, 0>, StepNil>,
 > = g::send::<Role<0>, Role<0>, Msg<7, InstallPayload>, 0>();
 
@@ -49,7 +49,7 @@ static ACTOR_PROGRAM: RoleProgram<
     'static,
     0,
     StepCons<SendStep<Role<0>, Role<0>, Msg<7, InstallPayload>, 0>, StepNil>,
-> = project(&g::freeze(&PROGRAM));
+> = project(&PROGRAM);
 type TestKit = SessionKit<
     'static,
     TestTransport,

@@ -2,10 +2,10 @@ use hibana::g::{self};
 use hibana::g::advanced::{RoleProgram, project};
 use hibana::g::advanced::steps::{SendStep, StepCons, StepNil};
 
-const PROGRAM: g::ProgramSource<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<7, u16>, 0>, StepNil>> =
+const PROGRAM: g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<7, u16>, 0>, StepNil>> =
     g::send::<g::Role<0>, g::Role<1>, g::Msg<7, u16>, 0>();
 const PROGRAM_TOKEN: g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<7, u16>, 0>, StepNil>> =
-    g::freeze(&PROGRAM);
+    PROGRAM;
 
 // Omitting the projected send step must fail: the client actually performs a send.
 const CLIENT: RoleProgram<'static, 0, StepNil> = project(&PROGRAM_TOKEN);

@@ -499,8 +499,7 @@ mod tests {
 
     use super::*;
     use crate::global::CanonicalControl;
-    use crate::global::compiled::{CompiledProgram, LoweringSummary};
-    use crate::global::const_dsl::EffList;
+    use crate::global::role_program::lowering_input;
 
     #[test]
     fn resource_descriptor_stays_compact() {
@@ -540,11 +539,18 @@ mod tests {
 
     #[test]
     fn test_interpreter_pure() {
-        let program = EffList::new();
-        let summary = LoweringSummary::scan_const(&program);
-        let facts = CompiledProgram::from_summary(&summary);
-        let projected = facts.effect_envelope();
-        assert!(projected.is_empty());
+        let program = crate::g::Program::<crate::global::steps::StepNil>::empty();
+        crate::global::compiled::with_compiled_program(
+            lowering_input(&crate::g::advanced::project::<
+                0,
+                _,
+                crate::control::cap::mint::MintConfig,
+            >(&program)),
+            |facts| {
+                let projected = facts.effect_envelope();
+                assert!(projected.is_empty());
+            },
+        );
     }
 
     #[test]
@@ -563,11 +569,17 @@ mod tests {
             >,
             0,
         >();
-        let eff_list = program.into_eff();
-        let summary = LoweringSummary::scan_const(&eff_list);
-        let facts = CompiledProgram::from_summary(&summary);
-        let projected = facts.effect_envelope();
-        assert_eq!(projected.cp_effects().count(), 1);
-        assert!(projected.tap_events().count() >= 1);
+        crate::global::compiled::with_compiled_program(
+            lowering_input(&crate::g::advanced::project::<
+                0,
+                _,
+                crate::control::cap::mint::MintConfig,
+            >(&program)),
+            |facts| {
+                let projected = facts.effect_envelope();
+                assert_eq!(projected.cp_effects().count(), 1);
+                assert!(projected.tap_events().count() >= 1);
+            },
+        );
     }
 }

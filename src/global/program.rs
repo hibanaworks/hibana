@@ -1,186 +1,337 @@
 //! Typed program representation built from const DSL combinators.
 //!
-//! `ProgramSource<Steps>` is the value-level raw source owner used only by the
-//! compile layer. `Program<Steps>` is the thin frozen token that projection and
-//! attach paths accept.
+//! `Program<Steps>` is the public choreography owner consumed by projection and
+//! attach paths. The raw `EffList` source and cheap composition hints stay
+//! crate-private behind type-level source builders.
 
 use core::marker::PhantomData;
 
 use crate::global::compiled::{LoweringSummary, ProgramStamp, validate_all_roles};
 use crate::global::const_dsl::{EffList, PolicyMode, ScopeId};
-use crate::global::steps::{BuildEffList, PolicyEligible, SeqSteps, StepConcat, StepNil};
+use crate::global::steps::{
+    LocalAction, LocalRecv, LocalSend, ParSteps, PolicyEligible, PolicySteps, RoleEq, RouteSteps,
+    SendStep, SeqSteps, StepConcat, StepCons, StepNil,
+};
 use crate::global::{
     DistinctRouteLabels, LoopControlMeaning, NonEmptyParallelArm, RouteArmHead, RouteArmLoopHead,
     SameRouteController, TailLoopControl,
 };
 
-/// Raw source owner for a global protocol fragment.
-pub struct ProgramSource<Steps> {
+#[derive(Clone, Copy)]
+pub(crate) struct ProgramSourceData {
     eff: EffList,
-    stamp: ProgramStamp,
-    scope_budget: u16,
     loop_scope_pending: bool,
     tail_is_loop_control: bool,
-    steps: PhantomData<Steps>,
 }
 
-/// Thin frozen choreography token accepted by projection.
-#[derive(Clone, Copy)]
-pub struct Program<Steps: 'static> {
-    source: &'static ProgramSource<Steps>,
-    steps: PhantomData<Steps>,
-}
-
-pub const fn freeze<Steps: 'static>(source: &'static ProgramSource<Steps>) -> Program<Steps> {
-    let summary = LoweringSummary::scan_const(source.eff_list());
-    summary.validate_projection_program();
-    validate_all_roles(&summary);
-    Program {
-        source,
-        steps: PhantomData,
-    }
-}
-
-impl<Steps: 'static> Program<Steps> {
-    #[inline(always)]
-    pub(crate) const fn eff_list(&self) -> &EffList {
-        self.source.eff_list()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn stamp(&self) -> ProgramStamp {
-        self.source.stamp()
-    }
-}
-
-impl ProgramSource<StepNil> {
+impl ProgramSourceData {
     pub(crate) const fn empty() -> Self {
-        Self::build()
+        Self::from_eff(EffList::new(), false, false)
     }
-}
 
-impl<Steps> ProgramSource<Steps> {
-    const fn wrap_with_hint(
+    const fn from_eff(
         eff: EffList,
         loop_scope_pending: bool,
         tail_is_loop_control: bool,
     ) -> Self {
         Self {
             eff,
-            stamp: LoweringSummary::scan_const(&eff).stamp(),
-            scope_budget: eff.scope_budget(),
             loop_scope_pending,
             tail_is_loop_control,
-            steps: PhantomData,
         }
     }
 
-    pub(crate) const fn build() -> Self
-    where
-        Steps: BuildEffList + TailLoopControl,
-    {
-        Self::wrap_with_hint(
-            Steps::EFF,
-            false,
-            <Steps as TailLoopControl>::IS_LOOP_CONTROL,
-        )
-    }
-
+    #[inline(always)]
     pub(crate) const fn eff_list(&self) -> &EffList {
         &self.eff
     }
 
     #[inline(always)]
-    pub(crate) const fn stamp(&self) -> ProgramStamp {
-        self.stamp
+    const fn scope_budget(&self) -> u16 {
+        self.eff.scope_budget()
     }
 
-    pub(crate) const fn into_eff(self) -> EffList {
+    #[inline(always)]
+    const fn into_eff(self) -> EffList {
         self.eff
     }
 
-    pub(crate) const fn scope_budget(&self) -> u16 {
-        self.scope_budget
-    }
-
-    const fn compose_parts<NextSteps>(self, next: ProgramSource<NextSteps>) -> (EffList, u16) {
-        let rebased = next.eff.rebase_scopes(self.scope_budget);
+    const fn seq(self, next: Self) -> Self {
+        let next_tail_is_loop_control = if next.eff.is_empty() {
+            self.tail_is_loop_control
+        } else {
+            next.tail_is_loop_control
+        };
+        let rebased = next.eff.rebase_scopes(self.scope_budget());
         let mut eff = self.eff;
-        let mut scope_budget = self.scope_budget;
+        let mut scope_budget = self.scope_budget();
         if next.loop_scope_pending {
             if eff.is_empty() {
                 panic!("loop body must contain at least one step");
             }
-            let loop_scope = ScopeId::loop_scope(add_scope_budget(scope_budget, next.scope_budget));
+            let loop_scope = ScopeId::loop_scope(add_scope_budget(scope_budget, next.scope_budget()));
             let scoped_next = rebased.with_scope(loop_scope);
             eff = if self.tail_is_loop_control {
                 eff.with_scope(loop_scope).extend_list(scoped_next)
             } else {
                 eff.extend_list(scoped_next)
             };
-            scope_budget = add_scope_budget(scope_budget, add_scope_budget(next.scope_budget, 1));
+            scope_budget = add_scope_budget(scope_budget, add_scope_budget(next.scope_budget(), 1));
         } else {
             eff = eff.extend_list(rebased);
-            scope_budget = add_scope_budget(scope_budget, next.scope_budget);
+            scope_budget = add_scope_budget(scope_budget, next.scope_budget());
         }
-        (eff, scope_budget)
+        let _ = scope_budget;
+        Self::from_eff(eff, false, next_tail_is_loop_control)
     }
 
-    pub(crate) const fn then<NextSteps>(
-        self,
-        next: ProgramSource<NextSteps>,
-    ) -> ProgramSource<<Steps as StepConcat<NextSteps>>::Output>
-    where
-        Steps: StepConcat<NextSteps>,
-    {
-        let next_tail_is_loop_control = if next.eff.is_empty() {
-            self.tail_is_loop_control
-        } else {
-            next.tail_is_loop_control
-        };
-        let (eff, scope_budget) = self.compose_parts(next);
-        ProgramSource {
-            eff,
-            stamp: LoweringSummary::scan_const(&eff).stamp(),
-            scope_budget,
-            loop_scope_pending: false,
-            tail_is_loop_control: next_tail_is_loop_control,
-            steps: PhantomData,
-        }
-    }
-}
-
-pub const fn seq<LeftSteps, RightSteps>(
-    left: ProgramSource<LeftSteps>,
-    right: ProgramSource<RightSteps>,
-) -> ProgramSource<SeqSteps<LeftSteps, RightSteps>> {
-    let right_tail_is_loop_control = if right.eff.is_empty() {
-        left.tail_is_loop_control
-    } else {
-        right.tail_is_loop_control
-    };
-    let (eff, scope_budget) = left.compose_parts(right);
-    ProgramSource {
-        eff,
-        stamp: LoweringSummary::scan_const(&eff).stamp(),
-        scope_budget,
-        loop_scope_pending: false,
-        tail_is_loop_control: right_tail_is_loop_control,
-        steps: PhantomData,
-    }
-}
-
-impl<Steps> ProgramSource<Steps>
-where
-    Steps: PolicyEligible,
-{
-    pub const fn policy<const POLICY_ID: u16>(self) -> Self {
-        Self::wrap_with_hint(
-            self.eff.with_policy(PolicyMode::dynamic(POLICY_ID)),
+    const fn with_policy(self, policy_id: u16) -> Self {
+        Self::from_eff(
+            self.eff.with_policy(PolicyMode::dynamic(policy_id)),
             self.loop_scope_pending,
             self.tail_is_loop_control,
         )
     }
+
+    const fn route_with_controller(self, right: Self, controller: u8, is_loop: bool) -> Self {
+        let scope = ScopeId::route(0);
+        let left_budget = self.scope_budget();
+        let left_arm = self.into_eff();
+        let right_arm = right.into_eff();
+        let right_offset = add_scope_budget(1, left_budget);
+        let left_eff = left_arm
+            .rebase_scopes(1)
+            .with_scope_controller(scope, controller);
+        let right_eff = right_arm
+            .rebase_scopes(right_offset)
+            .with_scope(scope)
+            .with_scope_controller_role(scope, controller);
+        let eff = left_eff.extend_list(right_eff);
+        let eff = if is_loop {
+            eff.with_scope_linger(scope, true)
+        } else {
+            eff
+        };
+        let loop_scope_pending = eff.scope_has_linger(scope);
+        Self::from_eff(eff, loop_scope_pending, right.tail_is_loop_control)
+    }
+
+    const fn par(self, right: Self) -> Self {
+        let parallel_scope = ScopeId::parallel(0);
+        let left_budget = self.scope_budget();
+        let right_offset = add_scope_budget(1, left_budget);
+        let left_eff = self.into_eff().rebase_scopes(1);
+        let right_eff = right.into_eff().rebase_scopes(right_offset);
+        Self::from_eff(
+            left_eff.extend_list(right_eff).with_scope(parallel_scope),
+            false,
+            right.tail_is_loop_control,
+        )
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) const fn tail_is_loop_control(&self) -> bool {
+        self.tail_is_loop_control
+    }
+}
+
+pub(crate) trait BuildProgramSource {
+    const SOURCE: ProgramSourceData;
+}
+
+struct ValidatedProgram<Steps>(PhantomData<Steps>);
+
+impl<Steps> ValidatedProgram<Steps>
+where
+    Steps: BuildProgramSource,
+{
+    const STAMP: ProgramStamp = {
+        let summary = LoweringSummary::scan_const(<Steps as BuildProgramSource>::SOURCE.eff_list());
+        summary.validate_projection_program();
+        validate_all_roles(&summary);
+        summary.stamp()
+    };
+}
+
+#[inline(always)]
+pub(crate) const fn validated_program_stamp<Steps>() -> ProgramStamp
+where
+    Steps: BuildProgramSource,
+{
+    ValidatedProgram::<Steps>::STAMP
+}
+
+impl BuildProgramSource for StepNil {
+    const SOURCE: ProgramSourceData = ProgramSourceData::empty();
+}
+
+impl<From, To, Msg, const LANE: u8, Tail> BuildProgramSource
+    for StepCons<SendStep<From, To, Msg, LANE>, Tail>
+where
+    From: crate::global::KnownRole + crate::global::RoleMarker + RoleEq<To>,
+    To: crate::global::KnownRole + crate::global::RoleMarker,
+    Msg: crate::global::MessageSpec + crate::global::SendableLabel + crate::global::MessageControlSpec,
+    Tail: BuildProgramSource,
+    <Msg as crate::global::MessageSpec>::ControlKind:
+        crate::global::RequireSelfSendForCanonical<<From as RoleEq<To>>::Output>,
+    StepCons<SendStep<From, To, Msg, LANE>, StepNil>: TailLoopControl,
+{
+    const SOURCE: ProgramSourceData = ProgramSourceData::from_eff(
+        crate::global::const_dsl::const_send_typed::<From, To, Msg, LANE>(),
+        false,
+        <StepCons<SendStep<From, To, Msg, LANE>, StepNil> as TailLoopControl>::IS_LOOP_CONTROL,
+    )
+    .seq(<Tail as BuildProgramSource>::SOURCE);
+}
+
+impl<To, Msg, Tail> BuildProgramSource for StepCons<LocalSend<To, Msg>, Tail>
+where
+    Tail: BuildProgramSource,
+{
+    const SOURCE: ProgramSourceData = <Tail as BuildProgramSource>::SOURCE;
+}
+
+impl<From, Msg, Tail> BuildProgramSource for StepCons<LocalRecv<From, Msg>, Tail>
+where
+    Tail: BuildProgramSource,
+{
+    const SOURCE: ProgramSourceData = <Tail as BuildProgramSource>::SOURCE;
+}
+
+impl<Msg, Tail> BuildProgramSource for StepCons<LocalAction<Msg>, Tail>
+where
+    Tail: BuildProgramSource,
+{
+    const SOURCE: ProgramSourceData = <Tail as BuildProgramSource>::SOURCE;
+}
+
+impl<Left, Right> BuildProgramSource for SeqSteps<Left, Right>
+where
+    Left: BuildProgramSource,
+    Right: BuildProgramSource,
+{
+    const SOURCE: ProgramSourceData =
+        <Left as BuildProgramSource>::SOURCE.seq(<Right as BuildProgramSource>::SOURCE);
+}
+
+impl<Left, Right> BuildProgramSource for RouteSteps<Left, Right>
+where
+    Left: BuildProgramSource
+        + RouteArmHead
+        + RouteArmLoopHead
+        + SameRouteController<Right>
+        + DistinctRouteLabels<Right>,
+    Right: BuildProgramSource + RouteArmHead + RouteArmLoopHead + TailLoopControl,
+{
+    const SOURCE: ProgramSourceData = <Left as BuildProgramSource>::SOURCE.route_with_controller(
+        <Right as BuildProgramSource>::SOURCE,
+        <<Left as RouteArmHead>::Controller as crate::global::RoleMarker>::INDEX,
+        is_binary_loop_route(
+            <Left as RouteArmLoopHead>::LOOP_MEANING,
+            <Right as RouteArmLoopHead>::LOOP_MEANING,
+        ),
+    );
+}
+
+impl<Left, Right> BuildProgramSource for ParSteps<Left, Right>
+where
+    Left: BuildProgramSource + NonEmptyParallelArm,
+    Right: BuildProgramSource + NonEmptyParallelArm + TailLoopControl,
+{
+    const SOURCE: ProgramSourceData = {
+        let left_set = <Left as NonEmptyParallelArm>::ROLE_LANE_SET;
+        let right_set = <Right as NonEmptyParallelArm>::ROLE_LANE_SET;
+        if left_set.intersects(&right_set) {
+            panic!("parallel lanes must use disjoint (role, lane) pairs");
+        }
+        <Left as BuildProgramSource>::SOURCE.par(<Right as BuildProgramSource>::SOURCE)
+    };
+}
+
+impl<Steps, const POLICY_ID: u16> BuildProgramSource for PolicySteps<Steps, POLICY_ID>
+where
+    Steps: BuildProgramSource + PolicyEligible,
+{
+    const SOURCE: ProgramSourceData = <Steps as BuildProgramSource>::SOURCE.with_policy(POLICY_ID);
+}
+
+/// Public choreography owner for a global protocol fragment.
+#[derive(Clone, Copy)]
+pub struct Program<Steps> {
+    steps: PhantomData<Steps>,
+}
+
+impl Program<StepNil> {
+    pub(crate) const fn empty() -> Self {
+        Self::new()
+    }
+}
+
+impl<Steps> Program<Steps> {
+    #[inline(always)]
+    const fn new() -> Self {
+        Self { steps: PhantomData }
+    }
+
+    pub(crate) const fn build() -> Self
+    where
+        Steps: BuildProgramSource,
+    {
+        let _ = <Steps as BuildProgramSource>::SOURCE.scope_budget();
+        Self::new()
+    }
+
+    pub(crate) const fn then<NextSteps>(
+        self,
+        next: Program<NextSteps>,
+    ) -> Program<<Steps as StepConcat<NextSteps>>::Output>
+    where
+        Steps: StepConcat<NextSteps>,
+    {
+        let _ = (self, next);
+        Program::new()
+    }
+
+    pub const fn policy<const POLICY_ID: u16>(self) -> Program<PolicySteps<Steps, POLICY_ID>>
+    where
+        Steps: PolicyEligible,
+    {
+        let _ = self;
+        Program::new()
+    }
+
+    pub(crate) const fn eff_list(&self) -> &EffList
+    where
+        Steps: BuildProgramSource,
+    {
+        <Steps as BuildProgramSource>::SOURCE.eff_list()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn stamp(&self) -> ProgramStamp
+    where
+        Steps: BuildProgramSource,
+    {
+        validated_program_stamp::<Steps>()
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) const fn tail_is_loop_control(&self) -> bool
+    where
+        Steps: BuildProgramSource,
+    {
+        <Steps as BuildProgramSource>::SOURCE.tail_is_loop_control()
+    }
+}
+
+pub const fn seq<LeftSteps, RightSteps>(
+    left: Program<LeftSteps>,
+    right: Program<RightSteps>,
+) -> Program<SeqSteps<LeftSteps, RightSteps>> {
+    let _ = (left, right);
+    Program::new()
 }
 
 const fn add_scope_budget(lhs: u16, rhs: u16) -> u16 {
@@ -192,77 +343,31 @@ const fn add_scope_budget(lhs: u16, rhs: u16) -> u16 {
 }
 
 pub(crate) const fn route_binary<LeftSteps, RightSteps>(
-    left: ProgramSource<LeftSteps>,
-    right: ProgramSource<RightSteps>,
-) -> ProgramSource<<LeftSteps as StepConcat<RightSteps>>::Output>
+    left: Program<LeftSteps>,
+    right: Program<RightSteps>,
+) -> Program<RouteSteps<LeftSteps, RightSteps>>
 where
-    LeftSteps: StepConcat<RightSteps>
-        + RouteArmHead
-        + RouteArmLoopHead
-        + SameRouteController<RightSteps>
-        + DistinctRouteLabels<RightSteps>,
-    RightSteps: RouteArmHead + RouteArmLoopHead + TailLoopControl,
+    LeftSteps: RouteArmHead + SameRouteController<RightSteps> + DistinctRouteLabels<RightSteps>,
+    RightSteps: RouteArmHead + TailLoopControl,
 {
-    let scope = ScopeId::route(0);
-    let left_budget = left.scope_budget();
-    let left_arm = left.into_eff();
-    let right_arm = right.into_eff();
-    let controller = <<LeftSteps as RouteArmHead>::Controller as crate::global::RoleMarker>::INDEX;
-    let right_offset = add_scope_budget(1, left_budget);
-    let left_eff = left_arm
-        .rebase_scopes(1)
-        .with_scope_controller(scope, controller);
-    let right_eff = right_arm
-        .rebase_scopes(right_offset)
-        .with_scope(scope)
-        .with_scope_controller_role(scope, controller);
-    let is_loop = is_binary_loop_route(
-        <LeftSteps as RouteArmLoopHead>::LOOP_MEANING,
-        <RightSteps as RouteArmLoopHead>::LOOP_MEANING,
-    );
-    let eff = left_eff.extend_list(right_eff);
-    let eff = if is_loop {
-        eff.with_scope_linger(scope, true)
-    } else {
-        eff
-    };
-    let loop_scope_pending = eff.scope_has_linger(scope);
-    ProgramSource::wrap_with_hint(
-        eff,
-        loop_scope_pending,
-        <RightSteps as TailLoopControl>::IS_LOOP_CONTROL,
-    )
+    let _ = (left, right);
+    Program::new()
 }
 
 pub(crate) const fn par_binary<LeftSteps, RightSteps>(
-    left: ProgramSource<LeftSteps>,
-    right: ProgramSource<RightSteps>,
-) -> ProgramSource<<LeftSteps as StepConcat<RightSteps>>::Output>
+    left: Program<LeftSteps>,
+    right: Program<RightSteps>,
+) -> Program<ParSteps<LeftSteps, RightSteps>>
 where
-    LeftSteps: StepConcat<RightSteps> + NonEmptyParallelArm,
+    LeftSteps: NonEmptyParallelArm,
     RightSteps: NonEmptyParallelArm + TailLoopControl,
 {
-    let left_set = <LeftSteps as NonEmptyParallelArm>::ROLE_LANE_SET;
-    let right_set = <RightSteps as NonEmptyParallelArm>::ROLE_LANE_SET;
-    if left_set.intersects(&right_set) {
-        panic!("parallel lanes must use disjoint (role, lane) pairs");
+    if LeftSteps::ROLE_LANE_SET.intersects(&RightSteps::ROLE_LANE_SET) {
+        panic!("parallel arms reuse a role on the same lane");
     }
-
-    let parallel_scope = ScopeId::parallel(0);
-    let left_budget = left.scope_budget();
-    let right_offset = add_scope_budget(1, left_budget);
-    let left_eff = left.into_eff().rebase_scopes(1);
-    let right_eff = right.into_eff().rebase_scopes(right_offset);
-    ProgramSource::wrap_with_hint(
-        left_eff.extend_list(right_eff).with_scope(parallel_scope),
-        false,
-        <RightSteps as TailLoopControl>::IS_LOOP_CONTROL,
-    )
+    let _ = (left, right);
+    Program::new()
 }
-
-// -----------------------------------------------------------------------------
-// Helpers
-// -----------------------------------------------------------------------------
 
 const fn is_binary_loop_route(
     left: Option<LoopControlMeaning>,
@@ -276,7 +381,7 @@ const fn is_binary_loop_route(
 
 #[cfg(test)]
 mod tests {
-    use super::ProgramSource;
+    use super::Program;
     use crate::g;
     use crate::g::advanced::CanonicalControl;
     use crate::g::advanced::steps::{
@@ -287,7 +392,7 @@ mod tests {
     use crate::substrate::cap::GenericCapToken;
     use crate::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
 
-    const LOOP_CONTINUE_ONLY: ProgramSource<
+    const LOOP_CONTINUE_ONLY: Program<
         LoopContinueSteps<
             g::Role<0>,
             g::Msg<
@@ -311,7 +416,7 @@ mod tests {
         StepNil::PROGRAM,
     );
 
-    const LOOP_BREAK_ONLY: ProgramSource<
+    const LOOP_BREAK_ONLY: Program<
         LoopBreakSteps<
             g::Role<0>,
             g::Msg<
@@ -332,7 +437,7 @@ mod tests {
         0,
     >();
 
-    const LOOP_DECISION: ProgramSource<
+    const LOOP_DECISION: Program<
         LoopDecisionSteps<
             g::Role<0>,
             g::Msg<
@@ -354,7 +459,7 @@ mod tests {
     fn seq_with_empty_suffix_preserves_loop_tail_hint() {
         let composed = g::seq(LOOP_CONTINUE_ONLY, StepNil::PROGRAM);
         assert!(
-            composed.tail_is_loop_control,
+            composed.tail_is_loop_control(),
             "empty seq suffix must preserve loop-control tail hints"
         );
     }

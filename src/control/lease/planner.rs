@@ -359,9 +359,11 @@ const fn base_facets_for_tag(tag: u8) -> LeaseFacetNeeds {
 
 #[inline(always)]
 pub(crate) const fn assert_program_covers_facets<Steps>(
-    program: &crate::g::ProgramSource<Steps>,
+    program: &crate::g::Program<Steps>,
     needs: LeaseFacetNeeds,
-) {
+) where
+    Steps: crate::global::program::BuildProgramSource,
+{
     let budget =
         crate::global::compiled::LoweringSummary::scan_const(program.eff_list()).lease_budget();
     assert_budget_covers(budget, needs);

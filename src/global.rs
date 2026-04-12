@@ -5,8 +5,8 @@
 
 use core::marker::PhantomData;
 
-use self::program::ProgramSource;
-use self::steps::{SendStep, SeqSteps, StepConcat, StepCons, StepNil};
+use self::program::Program;
+use self::steps::{ParSteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
 use crate::control::cap::mint::{ControlPayload, ControlResourceKind, ResourceKind};
 use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
 
@@ -18,6 +18,7 @@ pub(crate) mod const_dsl;
 pub(crate) mod program;
 /// Role-local program projection and metadata.
 pub(crate) mod role_program;
+pub(crate) use role_program::lowering_input;
 /// Type-level step combinators.
 pub(crate) mod steps;
 /// Typestate graph and cursor infrastructure.
@@ -33,7 +34,8 @@ pub mod advanced {
         pub use super::super::steps::{
             LocalAction, LocalRecv, LocalSend, LoopBreakSteps, LoopBreakStepsL, LoopContinueSteps,
             LoopContinueStepsL, LoopDecisionSteps, LoopDecisionStepsL, LoopSteps, LoopStepsL,
-            ProjectRole, SendStep, SeqSteps, StepConcat, StepCons, StepNil,
+            ParSteps, PolicySteps, ProjectRole, RouteSteps, SendStep, SeqSteps, StepConcat,
+            StepCons, StepNil,
         };
     }
 }
@@ -356,6 +358,40 @@ where
 }
 
 #[diagnostic::do_not_recommend]
+impl<Inner, const POLICY_ID: u16> RouteArmHead for steps::PolicySteps<Inner, POLICY_ID>
+where
+    Inner: RouteArmHead,
+{
+    type Controller = <Inner as RouteArmHead>::Controller;
+    type Label = <Inner as RouteArmHead>::Label;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Inner, const POLICY_ID: u16> RouteArmLoopHead for steps::PolicySteps<Inner, POLICY_ID>
+where
+    Inner: RouteArmLoopHead,
+{
+    const LOOP_MEANING: Option<LoopControlMeaning> = <Inner as RouteArmLoopHead>::LOOP_MEANING;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Left, Right> RouteArmHead for steps::RouteSteps<Left, Right>
+where
+    Left: RouteArmHead,
+{
+    type Controller = <Left as RouteArmHead>::Controller;
+    type Label = <Left as RouteArmHead>::Label;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Left, Right> RouteArmLoopHead for steps::RouteSteps<Left, Right>
+where
+    Left: RouteArmLoopHead,
+{
+    const LOOP_MEANING: Option<LoopControlMeaning> = <Left as RouteArmLoopHead>::LOOP_MEANING;
+}
+
+#[diagnostic::do_not_recommend]
 impl<Left, Right, Controller> SameRouteController<Right> for Left
 where
     Left: RouteArmHead<Controller = Controller>,
@@ -411,6 +447,36 @@ where
 }
 
 #[diagnostic::do_not_recommend]
+impl<Left, Right> NonEmptyParallelArm for steps::RouteSteps<Left, Right>
+where
+    Left: NonEmptyParallelArm,
+    steps::RouteSteps<Left, Right>: steps::StepRoleSet,
+{
+    const ROLE_LANE_SET: steps::RoleLaneSet =
+        <steps::RouteSteps<Left, Right> as steps::StepRoleSet>::ROLE_LANE_SET;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Left, Right> NonEmptyParallelArm for steps::ParSteps<Left, Right>
+where
+    Left: NonEmptyParallelArm,
+    steps::ParSteps<Left, Right>: steps::StepRoleSet,
+{
+    const ROLE_LANE_SET: steps::RoleLaneSet =
+        <steps::ParSteps<Left, Right> as steps::StepRoleSet>::ROLE_LANE_SET;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Inner, const POLICY_ID: u16> NonEmptyParallelArm for steps::PolicySteps<Inner, POLICY_ID>
+where
+    Inner: NonEmptyParallelArm,
+    steps::PolicySteps<Inner, POLICY_ID>: steps::StepRoleSet,
+{
+    const ROLE_LANE_SET: steps::RoleLaneSet =
+        <steps::PolicySteps<Inner, POLICY_ID> as steps::StepRoleSet>::ROLE_LANE_SET;
+}
+
+#[diagnostic::do_not_recommend]
 impl FragmentShape for StepNil {
     const IS_EMPTY: bool = true;
 }
@@ -429,6 +495,32 @@ where
     Right: FragmentShape,
 {
     const IS_EMPTY: bool = <Left as FragmentShape>::IS_EMPTY && <Right as FragmentShape>::IS_EMPTY;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Left, Right> FragmentShape for steps::RouteSteps<Left, Right>
+where
+    Left: FragmentShape,
+    Right: FragmentShape,
+{
+    const IS_EMPTY: bool = <Left as FragmentShape>::IS_EMPTY && <Right as FragmentShape>::IS_EMPTY;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Left, Right> FragmentShape for steps::ParSteps<Left, Right>
+where
+    Left: FragmentShape,
+    Right: FragmentShape,
+{
+    const IS_EMPTY: bool = <Left as FragmentShape>::IS_EMPTY && <Right as FragmentShape>::IS_EMPTY;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Inner, const POLICY_ID: u16> FragmentShape for steps::PolicySteps<Inner, POLICY_ID>
+where
+    Inner: FragmentShape,
+{
+    const IS_EMPTY: bool = <Inner as FragmentShape>::IS_EMPTY;
 }
 
 #[diagnostic::do_not_recommend]
@@ -462,6 +554,30 @@ where
     } else {
         <Right as TailLoopControl>::IS_LOOP_CONTROL
     };
+}
+
+#[diagnostic::do_not_recommend]
+impl<Left, Right> TailLoopControl for steps::RouteSteps<Left, Right>
+where
+    Right: TailLoopControl,
+{
+    const IS_LOOP_CONTROL: bool = <Right as TailLoopControl>::IS_LOOP_CONTROL;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Left, Right> TailLoopControl for steps::ParSteps<Left, Right>
+where
+    Right: TailLoopControl,
+{
+    const IS_LOOP_CONTROL: bool = <Right as TailLoopControl>::IS_LOOP_CONTROL;
+}
+
+#[diagnostic::do_not_recommend]
+impl<Inner, const POLICY_ID: u16> TailLoopControl for steps::PolicySteps<Inner, POLICY_ID>
+where
+    Inner: TailLoopControl,
+{
+    const IS_LOOP_CONTROL: bool = <Inner as TailLoopControl>::IS_LOOP_CONTROL;
 }
 
 /// Static control-message metadata used across the DSL and runtime.
@@ -609,7 +725,7 @@ where
 /// )
 /// ```
 pub const fn send<From, To, M, const LANE: u8>()
--> ProgramSource<StepCons<SendStep<From, To, M, LANE>, StepNil>>
+-> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
 where
     From: KnownRole + RoleMarker + steps::RoleEq<To>,
     To: KnownRole + RoleMarker,
@@ -618,14 +734,14 @@ where
     <M as MessageSpec>::ControlKind:
         RequireSelfSendForCanonical<<From as steps::RoleEq<To>>::Output>,
 {
-    ProgramSource::build()
+    Program::build()
 }
 
 /// Sequentially compose two protocol fragments.
 pub const fn seq<LeftSteps, RightSteps>(
-    left: ProgramSource<LeftSteps>,
-    right: ProgramSource<RightSteps>,
-) -> ProgramSource<SeqSteps<LeftSteps, RightSteps>> {
+    left: Program<LeftSteps>,
+    right: Program<RightSteps>,
+) -> Program<SeqSteps<LeftSteps, RightSteps>> {
     program::seq(left, right)
 }
 
@@ -635,16 +751,12 @@ pub const fn seq<LeftSteps, RightSteps>(
 /// Both arms must begin with the same controller self-send.
 #[allow(private_bounds)]
 pub const fn route<LeftSteps, RightSteps>(
-    left: ProgramSource<LeftSteps>,
-    right: ProgramSource<RightSteps>,
-) -> ProgramSource<<LeftSteps as StepConcat<RightSteps>>::Output>
+    left: Program<LeftSteps>,
+    right: Program<RightSteps>,
+) -> Program<RouteSteps<LeftSteps, RightSteps>>
 where
-    LeftSteps: StepConcat<RightSteps>
-        + RouteArmHead
-        + SameRouteController<RightSteps>
-        + DistinctRouteLabels<RightSteps>
-        + RouteArmLoopHead,
-    RightSteps: RouteArmHead + TailLoopControl + RouteArmLoopHead,
+    LeftSteps: RouteArmHead + SameRouteController<RightSteps> + DistinctRouteLabels<RightSteps>,
+    RightSteps: RouteArmHead + TailLoopControl,
 {
     program::route_binary(left, right)
 }
@@ -652,11 +764,11 @@ where
 /// Construct a binary parallel composition.
 #[allow(private_bounds)]
 pub const fn par<LeftSteps, RightSteps>(
-    left: ProgramSource<LeftSteps>,
-    right: ProgramSource<RightSteps>,
-) -> ProgramSource<<LeftSteps as StepConcat<RightSteps>>::Output>
+    left: Program<LeftSteps>,
+    right: Program<RightSteps>,
+) -> Program<ParSteps<LeftSteps, RightSteps>>
 where
-    LeftSteps: StepConcat<RightSteps> + NonEmptyParallelArm,
+    LeftSteps: NonEmptyParallelArm,
     RightSteps: NonEmptyParallelArm + TailLoopControl,
 {
     program::par_binary(left, right)

@@ -1,6 +1,6 @@
-use core::marker::PhantomData;
 #[cfg(test)]
 use crate::epf::vm::Slot;
+use core::marker::PhantomData;
 #[cfg(test)]
 use core::ptr::NonNull;
 #[cfg(test)]

@@ -1,8 +1,8 @@
 error[E0080]: evaluation panicked: control labels require capability payloads
- --> src/global/steps.rs
+ --> src/global/program.rs
   |
-  |         let head = const_dsl::const_send_typed::<From, To, Msg, LANE>();
-  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<61>, ()>>, hibana::g::advanced::steps::StepNil> as hibana::global::steps::BuildEffList>::EFF` failed inside this call
+  |         crate::global::const_dsl::const_send_typed::<From, To, Msg, LANE>(),
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<61>, ()>>, hibana::g::advanced::steps::StepNil> as hibana::global::program::BuildProgramSource>::SOURCE` failed inside this call
   |
 note: inside `hibana::global::const_dsl::const_send_typed::<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<61>, ()>, 0>`
  --> src/global/const_dsl.rs
@@ -13,8 +13,8 @@ note: inside `hibana::global::const_dsl::const_send_typed::<Role<0>, Role<1>, hi
 note: erroneous constant encountered
  --> src/global/program.rs
   |
-  |             Steps::EFF,
-  |             ^^^^^^^^^^
+  |         let _ = <Steps as BuildProgramSource>::SOURCE.scope_budget();
+  |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
   --> tests/ui/control-checkpoint-payload.rs:12:13

@@ -3,17 +3,13 @@
 //! `RoleProgram` is the typed entry point for a role projection witness.
 //! Crate-private lowering facts stay behind this module and the compiled layer.
 
-use core::marker::PhantomData;
 #[cfg(test)]
 use core::ptr;
 
-#[cfg(test)]
-use super::program::ProgramSource;
+use super::compiled::ProgramStamp;
 use super::{
-    compiled::{LoweringSummary, ProgramStamp},
-    program::Program,
+    program::{BuildProgramSource, Program},
     steps::ProjectRole,
-    typestate::RoleCompileScratch,
 };
 use crate::control::cap::mint::{CapShot, MintConfig, MintConfigMarker};
 use crate::{
@@ -357,6 +353,54 @@ impl ProjectedRoleLayout {
     }
 }
 
+#[derive(Clone, Copy)]
+struct RoleLoweringCounts {
+    eff_count: usize,
+    parallel_enter_count: usize,
+    route_scope_count: usize,
+    passive_linger_route_scope_count: usize,
+}
+
+/// Erased lowering input derived from a typed `RoleProgram` witness.
+#[derive(Clone, Copy)]
+pub(crate) struct RoleLoweringInput<'prog> {
+    eff_list: &'prog EffList,
+    stamp: ProgramStamp,
+    counts: RoleLoweringCounts,
+}
+
+impl<'prog> RoleLoweringInput<'prog> {
+    #[inline(always)]
+    pub(crate) const fn eff_list(&self) -> &'prog EffList {
+        self.eff_list
+    }
+
+    #[inline(always)]
+    pub(crate) const fn stamp(&self) -> ProgramStamp {
+        self.stamp
+    }
+
+    #[inline(always)]
+    pub(crate) const fn eff_count(&self) -> usize {
+        self.counts.eff_count
+    }
+
+    #[inline(always)]
+    pub(crate) const fn parallel_enter_count(&self) -> usize {
+        self.counts.parallel_enter_count
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_scope_count(&self) -> usize {
+        self.counts.route_scope_count
+    }
+
+    #[inline(always)]
+    pub(crate) const fn passive_linger_route_scope_count(&self) -> usize {
+        self.counts.passive_linger_route_scope_count
+    }
+}
+
 pub struct RoleProgram<'prog, const ROLE: u8, GlobalSteps, Mint = MintConfig>
 where
     Mint: MintConfigMarker,
@@ -364,142 +408,18 @@ where
     eff_list: &'prog EffList,
     mint: Mint,
     stamp: ProgramStamp,
-    parallel_enter_count: u16,
-    route_scope_count: u16,
-    passive_linger_route_scope_count: u16,
     _global_steps: core::marker::PhantomData<GlobalSteps>,
-}
-
-struct TransientRoleProgramScratch<'a> {
-    lowering: *mut LoweringSummary,
-    _marker: PhantomData<&'a mut ()>,
-}
-
-impl<'a> TransientRoleProgramScratch<'a> {
-    #[inline(always)]
-    const fn align_up(value: usize, align: usize) -> usize {
-        let mask = align.saturating_sub(1);
-        (value + mask) & !mask
-    }
-
-    #[inline(always)]
-    const fn lowering_offset(base: usize) -> usize {
-        Self::align_up(base, core::mem::align_of::<LoweringSummary>())
-    }
-
-    #[inline(always)]
-    const fn required_bytes_from_base(base: usize) -> usize {
-        Self::lowering_offset(base) + core::mem::size_of::<LoweringSummary>() - base
-    }
-
-    #[inline]
-    unsafe fn from_storage(storage: *mut u8, len: usize) -> Option<Self> {
-        let base = storage as usize;
-        let lowering = Self::lowering_offset(base);
-        let required = Self::required_bytes_from_base(base);
-        if required > len {
-            return None;
-        }
-        Some(Self {
-            lowering: lowering as *mut LoweringSummary,
-            _marker: PhantomData,
-        })
-    }
-
-    #[inline]
-    unsafe fn init_summary(
-        &mut self,
-        eff_list: &crate::global::const_dsl::EffList,
-        expected_stamp: crate::global::compiled::ProgramStamp,
-    ) -> &LoweringSummary {
-        unsafe {
-            LoweringSummary::init_scan(self.lowering, eff_list);
-            let lowering = &*self.lowering;
-            debug_assert_eq!(lowering.stamp(), expected_stamp);
-            lowering
-        }
-    }
-}
-
-struct TransientLoweringScratch<'a> {
-    lowering: *mut LoweringSummary,
-    role_compile_scratch: *mut RoleCompileScratch,
-    _marker: PhantomData<&'a mut ()>,
-}
-
-impl<'a> TransientLoweringScratch<'a> {
-    #[inline(always)]
-    const fn align_up(value: usize, align: usize) -> usize {
-        let mask = align.saturating_sub(1);
-        (value + mask) & !mask
-    }
-
-    #[inline(always)]
-    const fn lowering_offset(base: usize) -> usize {
-        Self::align_up(base, core::mem::align_of::<LoweringSummary>())
-    }
-
-    #[inline(always)]
-    const fn role_compile_scratch_offset(base: usize) -> usize {
-        let lowering_end = Self::lowering_offset(base) + core::mem::size_of::<LoweringSummary>();
-        Self::align_up(lowering_end, core::mem::align_of::<RoleCompileScratch>())
-    }
-
-    #[inline(always)]
-    const fn required_bytes_from_base(base: usize) -> usize {
-        Self::role_compile_scratch_offset(base) + core::mem::size_of::<RoleCompileScratch>() - base
-    }
-
-    #[inline]
-    unsafe fn from_storage(storage: *mut u8, len: usize) -> Option<Self> {
-        let base = storage as usize;
-        let required = Self::required_bytes_from_base(base);
-        if required > len {
-            return None;
-        }
-        Some(Self {
-            lowering: Self::lowering_offset(base) as *mut LoweringSummary,
-            role_compile_scratch: Self::role_compile_scratch_offset(base)
-                as *mut RoleCompileScratch,
-            _marker: PhantomData,
-        })
-    }
-
-    #[inline]
-    unsafe fn init_summary_and_scratch(
-        &mut self,
-        eff_list: &crate::global::const_dsl::EffList,
-        expected_stamp: crate::global::compiled::ProgramStamp,
-    ) -> (&LoweringSummary, &mut RoleCompileScratch) {
-        unsafe {
-            LoweringSummary::init_scan(self.lowering, eff_list);
-            let lowering = &*self.lowering;
-            debug_assert_eq!(lowering.stamp(), expected_stamp);
-            RoleCompileScratch::init_empty(self.role_compile_scratch);
-            (lowering, &mut *self.role_compile_scratch)
-        }
-    }
 }
 
 impl<'prog, const ROLE: u8, GlobalSteps, Mint> RoleProgram<'prog, ROLE, GlobalSteps, Mint>
 where
     Mint: MintConfigMarker,
 {
-    const fn new(
-        eff_list: &'prog EffList,
-        mint: Mint,
-        stamp: ProgramStamp,
-        parallel_enter_count: u16,
-        route_scope_count: u16,
-        passive_linger_route_scope_count: u16,
-    ) -> Self {
+    const fn new(eff_list: &'prog EffList, mint: Mint, stamp: ProgramStamp) -> Self {
         Self {
             eff_list,
             mint,
             stamp,
-            parallel_enter_count,
-            route_scope_count,
-            passive_linger_route_scope_count,
             _global_steps: core::marker::PhantomData,
         }
     }
@@ -510,35 +430,9 @@ where
     }
 
     #[inline(always)]
-    pub(crate) const fn eff_count(&self) -> usize {
-        self.eff_list.len()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn parallel_enter_count(&self) -> usize {
-        self.parallel_enter_count as usize
-    }
-
-    #[inline(always)]
-    pub(crate) const fn route_scope_count(&self) -> usize {
-        self.route_scope_count as usize
-    }
-
-    #[inline(always)]
-    pub(crate) const fn passive_linger_route_scope_count(&self) -> usize {
-        self.passive_linger_route_scope_count as usize
-    }
-
-    #[inline(always)]
     #[cfg(test)]
     pub(crate) fn borrow_id(&self) -> usize {
         self.eff_list as *const EffList as usize
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn lowering_input(&self) -> &'prog EffList {
-        self.eff_list
     }
 
     /// Mint configuration baked into the RoleProgram.
@@ -546,65 +440,41 @@ where
     pub(crate) const fn mint_config(&self) -> Mint {
         self.mint
     }
+}
 
-    #[inline]
-    pub(crate) unsafe fn with_summary_from_storage<R>(
-        &self,
-        storage: *mut u8,
-        len: usize,
-        f: impl FnOnce(&LoweringSummary) -> R,
-    ) -> Option<R> {
-        let mut scratch = unsafe { TransientRoleProgramScratch::from_storage(storage, len) }?;
-        let summary = unsafe { scratch.init_summary(self.eff_list, self.stamp) };
-        Some(f(summary))
-    }
-
-    #[inline]
-    pub(crate) unsafe fn with_lowering_scratch_from_storage<R>(
-        &self,
-        storage: *mut u8,
-        len: usize,
-        f: impl FnOnce(&LoweringSummary, &mut RoleCompileScratch) -> R,
-    ) -> Option<R> {
-        let mut scratch = unsafe { TransientLoweringScratch::from_storage(storage, len) }?;
-        let (summary, role_compile_scratch) =
-            unsafe { scratch.init_summary_and_scratch(self.eff_list, self.stamp) };
-        Some(f(summary, role_compile_scratch))
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn eff_list_ref(&self) -> &'prog EffList {
-        self.eff_list
+#[inline(always)]
+pub(crate) const fn lowering_input<'prog, const ROLE: u8, GlobalSteps, Mint>(
+    program: &RoleProgram<'prog, ROLE, GlobalSteps, Mint>,
+) -> RoleLoweringInput<'prog>
+where
+    Mint: MintConfigMarker,
+{
+    RoleLoweringInput {
+        eff_list: program.eff_list,
+        stamp: program.stamp,
+        counts: role_lowering_counts::<ROLE>(program.eff_list),
     }
 }
 
 /// Project a typed program into the local view for `ROLE`.
+#[allow(private_bounds)]
 pub const fn project<'prog, const ROLE: u8, Steps, Mint>(
     program: &'prog Program<Steps>,
 ) -> RoleProgram<'prog, ROLE, Steps, Mint>
 where
     Role<ROLE>: KnownRole,
-    Steps: ProjectRole<Role<ROLE>>,
+    Steps: BuildProgramSource + ProjectRole<Role<ROLE>>,
     Mint: MintConfigMarker,
 {
-    let counts = role_program_counts::<ROLE>(program.eff_list());
-    RoleProgram::new(
-        program.eff_list(),
-        Mint::INSTANCE,
-        program.stamp(),
-        counts.0,
-        counts.1,
-        counts.2,
-    )
+    RoleProgram::new(program.eff_list(), Mint::INSTANCE, program.stamp())
 }
 
 #[inline(always)]
-const fn role_program_counts<const ROLE: u8>(eff_list: &EffList) -> (u16, u16, u16) {
+const fn role_lowering_counts<const ROLE: u8>(eff_list: &EffList) -> RoleLoweringCounts {
     let scope_markers = eff_list.scope_markers();
-    let mut parallel_enter_count = 0u16;
-    let mut route_scope_count = 0u16;
-    let mut passive_linger_route_scope_count = 0u16;
+    let mut parallel_enter_count = 0usize;
+    let mut route_scope_count = 0usize;
+    let mut passive_linger_route_scope_count = 0usize;
     let mut route_scope_ordinals = [0u64; 8];
     let mut marker_idx = 0usize;
     while marker_idx < scope_markers.len() {
@@ -634,16 +504,17 @@ const fn role_program_counts<const ROLE: u8>(eff_list: &EffList) -> (u16, u16, u
         }
         marker_idx += 1;
     }
-    (
+    RoleLoweringCounts {
+        eff_count: eff_list.len(),
         parallel_enter_count,
         route_scope_count,
         passive_linger_route_scope_count,
-    )
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use core::{cell::UnsafeCell, mem::MaybeUninit, ptr};
+    use core::{cell::UnsafeCell, mem::MaybeUninit};
     use std::{thread::LocalKey, thread_local};
 
     use super::*;
@@ -651,9 +522,9 @@ mod tests {
     use crate::control::cap::resource_kinds::CancelKind;
     use crate::g::{self, Msg, Role};
     use crate::global::CanonicalControl;
-    use crate::global::compiled::{CompiledRole, LoweringSummary};
+    use crate::global::compiled::CompiledRole;
     use crate::global::const_dsl::{ScopeEvent, ScopeKind};
-    use crate::global::steps::{self, SeqSteps, StepConcat, StepCons, StepNil};
+    use crate::global::steps::{self, ParSteps, PolicySteps, RouteSteps, SeqSteps, StepCons, StepNil};
     use crate::global::typestate::RoleCompileScratch;
 
     thread_local! {
@@ -673,19 +544,12 @@ mod tests {
         program: &RoleProgram<'_, ROLE, GlobalSteps, MintConfig>,
         f: impl FnOnce(&CompiledRole) -> R,
     ) -> R {
-        let summary = LoweringSummary::scan_const(program.lowering_input());
-        compiled_slot.with(|compiled| {
-            scratch_slot.with(|scratch| unsafe {
-                let compiled_ptr = (*compiled.get()).as_mut_ptr();
-                let scratch_ptr = (*scratch.get()).as_mut_ptr();
-                scratch_ptr.write(RoleCompileScratch::new());
-                CompiledRole::init_from_summary::<ROLE>(compiled_ptr, &summary, &mut *scratch_ptr);
-                let result = f(&*compiled_ptr);
-                ptr::drop_in_place(compiled_ptr);
-                ptr::drop_in_place(scratch_ptr);
-                result
-            })
-        })
+        crate::global::compiled::with_compiled_role_in_slot::<ROLE, _>(
+            compiled_slot,
+            scratch_slot,
+            super::lowering_input(program),
+            f,
+        )
     }
 
     fn with_compiled_role<const ROLE: u8, GlobalSteps, R>(
@@ -720,7 +584,7 @@ mod tests {
         )
     }
 
-    const PROTOCOL: ProgramSource<
+    const PROTOCOL: Program<
         SeqSteps<
             StepCons<steps::SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>,
             StepCons<steps::SendStep<Role<1>, Role<0>, Msg<2, ()>, 0>, StepNil>,
@@ -737,7 +601,7 @@ mod tests {
             StepCons<steps::SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>,
             StepCons<steps::SendStep<Role<1>, Role<0>, Msg<2, ()>, 0>, StepNil>,
         >,
-    > = project(&g::freeze(&PROTOCOL));
+    > = project(&PROTOCOL);
     const ROLE_ONE: RoleProgram<
         'static,
         1,
@@ -745,10 +609,10 @@ mod tests {
             StepCons<steps::SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>,
             StepCons<steps::SendStep<Role<1>, Role<0>, Msg<2, ()>, 0>, StepNil>,
         >,
-    > = project(&g::freeze(&PROTOCOL));
+    > = project(&PROTOCOL);
 
     // CancelMsg uses CanonicalControl which requires self-send (From == To)
-    const CANCEL_PROGRAM: ProgramSource<
+    const CANCEL_PROGRAM: Program<
         StepCons<
             steps::SendStep<
                 Role<0>,
@@ -789,9 +653,9 @@ mod tests {
             >,
             StepNil,
         >,
-    > = project(&g::freeze(&CANCEL_PROGRAM));
+    > = project(&CANCEL_PROGRAM);
 
-    const LOCAL_PROGRAM: ProgramSource<
+    const LOCAL_PROGRAM: Program<
         StepCons<steps::SendStep<Role<0>, Role<0>, Msg<5, ()>, 0>, StepNil>,
     > = g::send::<Role<0>, Role<0>, Msg<5, ()>, 0>();
 
@@ -799,18 +663,18 @@ mod tests {
         'static,
         0,
         StepCons<steps::SendStep<Role<0>, Role<0>, Msg<5, ()>, 0>, StepNil>,
-    > = project(&g::freeze(&LOCAL_PROGRAM));
+    > = project(&LOCAL_PROGRAM);
 
-    const PREFIX_PROGRAM: ProgramSource<
+    const PREFIX_PROGRAM: Program<
         StepCons<steps::SendStep<Role<0>, Role<0>, Msg<6, ()>, 0>, StepNil>,
     > = g::send::<Role<0>, Role<0>, Msg<6, ()>, 0>();
-    const MIDDLE_PROGRAM: ProgramSource<
+    const MIDDLE_PROGRAM: Program<
         StepCons<steps::SendStep<Role<0>, Role<1>, Msg<7, ()>, 0>, StepNil>,
     > = g::send::<Role<0>, Role<1>, Msg<7, ()>, 0>();
-    const APP_PROGRAM: ProgramSource<
+    const APP_PROGRAM: Program<
         StepCons<steps::SendStep<Role<1>, Role<0>, Msg<8, ()>, 0>, StepNil>,
     > = g::send::<Role<1>, Role<0>, Msg<8, ()>, 0>();
-    const CHAIN_PROGRAM: ProgramSource<
+    const CHAIN_PROGRAM: Program<
         SeqSteps<
             StepCons<steps::SendStep<Role<0>, Role<0>, Msg<6, ()>, 0>, StepNil>,
             SeqSteps<
@@ -829,21 +693,22 @@ mod tests {
                 StepCons<steps::SendStep<Role<1>, Role<0>, Msg<8, ()>, 0>, StepNil>,
             >,
         >,
-    > = project(&g::freeze(&CHAIN_PROGRAM));
+    > = project(&CHAIN_PROGRAM);
 
-    const PING_PROGRAM: ProgramSource<
+    const PING_PROGRAM: Program<
         StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil>,
     > = g::send::<Role<0>, Role<1>, Msg<9, ()>, 0>();
-    const PONG_PROGRAM: ProgramSource<
+    const PONG_PROGRAM: Program<
         StepCons<steps::SendStep<Role<1>, Role<0>, Msg<10, ()>, 1>, StepNil>,
     > = g::send::<Role<1>, Role<0>, Msg<10, ()>, 1>();
-    const PARALLEL_PROGRAM: ProgramSource<
-        <StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil> as StepConcat<
+    const PARALLEL_PROGRAM: Program<
+        ParSteps<
+            StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil>,
             StepCons<steps::SendStep<Role<1>, Role<0>, Msg<10, ()>, 1>, StepNil>,
-        >>::Output,
+        >,
     > = g::par(PING_PROGRAM, PONG_PROGRAM);
 
-    const LANE0_PROGRAM: ProgramSource<
+    const LANE0_PROGRAM: Program<
         SeqSteps<
             StepCons<steps::SendStep<Role<0>, Role<1>, Msg<14, ()>, 0>, StepNil>,
             StepCons<steps::SendStep<Role<1>, Role<0>, Msg<15, ()>, 0>, StepNil>,
@@ -852,30 +717,39 @@ mod tests {
         g::send::<Role<0>, Role<1>, Msg<14, ()>, 0>(),
         g::send::<Role<1>, Role<0>, Msg<15, ()>, 0>(),
     );
-    const CONTINUE_ARM_PROGRAM: ProgramSource<
+    type ContinueHeadProgram = PolicySteps<
+        StepCons<steps::SendStep<Role<2>, Role<2>, Msg<11, ()>, 1>, StepNil>,
+        77,
+    >;
+    type BreakHeadProgram = PolicySteps<
+        StepCons<steps::SendStep<Role<2>, Role<2>, Msg<12, ()>, 1>, StepNil>,
+        77,
+    >;
+    const CONTINUE_ARM_PROGRAM: Program<
         SeqSteps<
-            StepCons<steps::SendStep<Role<2>, Role<2>, Msg<11, ()>, 1>, StepNil>,
+            ContinueHeadProgram,
             StepCons<steps::SendStep<Role<2>, Role<1>, Msg<13, ()>, 1>, StepNil>,
         >,
     > = g::seq(
         g::send::<Role<2>, Role<2>, Msg<11, ()>, 1>().policy::<77>(),
         g::send::<Role<2>, Role<1>, Msg<13, ()>, 1>(),
     );
-    const BREAK_ARM_PROGRAM: ProgramSource<
-        StepCons<steps::SendStep<Role<2>, Role<2>, Msg<12, ()>, 1>, StepNil>,
-    > = g::send::<Role<2>, Role<2>, Msg<12, ()>, 1>().policy::<77>();
-    const PARALLEL_ROUTE_PROGRAM: ProgramSource<
-        <SeqSteps<
-            StepCons<steps::SendStep<Role<0>, Role<1>, Msg<14, ()>, 0>, StepNil>,
-            StepCons<steps::SendStep<Role<1>, Role<0>, Msg<15, ()>, 0>, StepNil>,
-        > as StepConcat<
-            <SeqSteps<
-                StepCons<steps::SendStep<Role<2>, Role<2>, Msg<11, ()>, 1>, StepNil>,
-                StepCons<steps::SendStep<Role<2>, Role<1>, Msg<13, ()>, 1>, StepNil>,
-            > as StepConcat<
-                StepCons<steps::SendStep<Role<2>, Role<2>, Msg<12, ()>, 1>, StepNil>,
-            >>::Output,
-        >>::Output,
+    const BREAK_ARM_PROGRAM: Program<BreakHeadProgram> =
+        g::send::<Role<2>, Role<2>, Msg<12, ()>, 1>().policy::<77>();
+    const PARALLEL_ROUTE_PROGRAM: Program<
+        ParSteps<
+            SeqSteps<
+                StepCons<steps::SendStep<Role<0>, Role<1>, Msg<14, ()>, 0>, StepNil>,
+                StepCons<steps::SendStep<Role<1>, Role<0>, Msg<15, ()>, 0>, StepNil>,
+            >,
+            RouteSteps<
+                SeqSteps<
+                    ContinueHeadProgram,
+                    StepCons<steps::SendStep<Role<2>, Role<1>, Msg<13, ()>, 1>, StepNil>,
+                >,
+                BreakHeadProgram,
+            >,
+        >,
     > = g::par(
         LANE0_PROGRAM,
         g::route(CONTINUE_ARM_PROGRAM, BREAK_ARM_PROGRAM),
@@ -897,11 +771,17 @@ mod tests {
             assert!(role_one_layout.steps()[1].is_send());
 
             assert_eq!(
-                ROLE_ZERO.eff_list_ref().control_markers().len(),
+                super::lowering_input(&ROLE_ZERO)
+                    .eff_list()
+                    .control_markers()
+                    .len(),
                 PROTOCOL.eff_list().control_markers().len()
             );
             assert_eq!(
-                ROLE_ONE.eff_list_ref().scope_markers().len(),
+                super::lowering_input(&ROLE_ONE)
+                    .eff_list()
+                    .scope_markers()
+                    .len(),
                 PROTOCOL.eff_list().scope_markers().len()
             );
 
@@ -976,21 +856,23 @@ mod tests {
 
     #[test]
     fn parallel_projection_keeps_phase_and_lane_split_internal() {
-        let parallel_program = g::freeze(&PARALLEL_PROGRAM);
+        let parallel_program = PARALLEL_PROGRAM;
         let client: RoleProgram<
             '_,
             0,
-            <StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil> as StepConcat<
+            ParSteps<
+                StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil>,
                 StepCons<steps::SendStep<Role<1>, Role<0>, Msg<10, ()>, 1>, StepNil>,
-            >>::Output,
+            >,
             MintConfig,
         > = project(&parallel_program);
         let server: RoleProgram<
             '_,
             1,
-            <StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil> as StepConcat<
+            ParSteps<
+                StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil>,
                 StepCons<steps::SendStep<Role<1>, Role<0>, Msg<10, ()>, 1>, StepNil>,
-            >>::Output,
+            >,
             MintConfig,
         > = project(&parallel_program);
 
@@ -1040,24 +922,26 @@ mod tests {
 
     #[test]
     fn parallel_route_projection_keeps_scope_markers_without_public_step_surface() {
-        let parallel_route_program = g::freeze(&PARALLEL_ROUTE_PROGRAM);
+        let parallel_route_program = PARALLEL_ROUTE_PROGRAM;
         let program: RoleProgram<
             '_,
             0,
-            <SeqSteps<
-                StepCons<steps::SendStep<Role<0>, Role<1>, Msg<14, ()>, 0>, StepNil>,
-                StepCons<steps::SendStep<Role<1>, Role<0>, Msg<15, ()>, 0>, StepNil>,
-            > as StepConcat<
-                <SeqSteps<
-                    StepCons<steps::SendStep<Role<2>, Role<2>, Msg<11, ()>, 1>, StepNil>,
-                    StepCons<steps::SendStep<Role<2>, Role<1>, Msg<13, ()>, 1>, StepNil>,
-                > as StepConcat<
-                    StepCons<steps::SendStep<Role<2>, Role<2>, Msg<12, ()>, 1>, StepNil>,
-                >>::Output,
-            >>::Output,
+            ParSteps<
+                SeqSteps<
+                    StepCons<steps::SendStep<Role<0>, Role<1>, Msg<14, ()>, 0>, StepNil>,
+                    StepCons<steps::SendStep<Role<1>, Role<0>, Msg<15, ()>, 0>, StepNil>,
+                >,
+                RouteSteps<
+                    SeqSteps<
+                        ContinueHeadProgram,
+                        StepCons<steps::SendStep<Role<2>, Role<1>, Msg<13, ()>, 1>, StepNil>,
+                    >,
+                    BreakHeadProgram,
+                >,
+            >,
             MintConfig,
         > = project(&parallel_route_program);
-        let eff_list = program.eff_list_ref();
+        let eff_list = super::lowering_input(&program).eff_list();
         let scope_markers = eff_list.scope_markers();
 
         assert!(

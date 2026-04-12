@@ -2,10 +2,7 @@
 
 use core::marker::PhantomData;
 
-use crate::{
-    control::types::RendezvousId,
-    rendezvous::core::EndpointLeaseId,
-};
+use crate::{control::types::RendezvousId, rendezvous::core::EndpointLeaseId};
 
 pub(crate) struct SessionCfg<K>(pub(crate) PhantomData<fn() -> K>);
 
@@ -54,25 +51,6 @@ pub(crate) trait SessionKitFamily {
         E: crate::control::cap::mint::EpochTable + 'r,
         Mint: crate::control::cap::mint::MintConfigMarker,
         B: crate::binding::BindingSlot + 'r;
-
-    unsafe fn stash_route_branch_preview<'r, const ROLE: u8, Mint>(
-        endpoint: *mut Self::KernelCursorEndpoint<
-            'r,
-            ROLE,
-            crate::control::cap::mint::EpochTbl,
-            Mint,
-            crate::binding::BindingHandle<'r>,
-        >,
-        branch: Self::KernelRouteBranch<
-            'r,
-            ROLE,
-            crate::control::cap::mint::EpochTbl,
-            Mint,
-            crate::binding::BindingHandle<'r>,
-        >,
-    ) where
-        Self: 'r,
-        Mint: crate::control::cap::mint::MintConfigMarker;
 }
 
 pub(crate) type KernelCursorEndpoint<'r, const ROLE: u8, K, E, Mint, B> =
@@ -111,29 +89,4 @@ where
         E: crate::control::cap::mint::EpochTable + 'r,
         Mint: crate::control::cap::mint::MintConfigMarker,
         B: crate::binding::BindingSlot + 'r;
-
-    #[inline]
-    unsafe fn stash_route_branch_preview<'r, const ROLE: u8, Mint>(
-        endpoint: *mut Self::KernelCursorEndpoint<
-            'r,
-            ROLE,
-            crate::control::cap::mint::EpochTbl,
-            Mint,
-            crate::binding::BindingHandle<'r>,
-        >,
-        branch: Self::KernelRouteBranch<
-            'r,
-            ROLE,
-            crate::control::cap::mint::EpochTbl,
-            Mint,
-            crate::binding::BindingHandle<'r>,
-        >,
-    ) where
-        Self: 'r,
-        Mint: crate::control::cap::mint::MintConfigMarker,
-    {
-        unsafe {
-            (&mut *endpoint).stash_pending_branch_preview(branch);
-        }
-    }
 }

@@ -7,22 +7,31 @@ use hibana::substrate::cap::GenericCapToken;
 use hibana::substrate::policy::DynamicResolution;
 use hibana::g::{self};
 use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
-use hibana::g::advanced::steps::{SendStep, SeqSteps, StepConcat, StepCons, StepNil};
+use hibana::g::advanced::steps::{
+    PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil,
+};
 
 type RouteArm100Kind = control_kinds::RouteControl<100, 0>;
 type RouteArm101Kind = control_kinds::RouteControl<101, 0>;
 
 const POLICY_ID: u16 = 77;
 
-const ARM0: g::ProgramSource<
+const ARM0: g::Program<
     SeqSteps<
-        StepCons<
-            SendStep<
-                g::Role<0>,
-                g::Role<0>,
-                g::Msg<100, GenericCapToken<RouteArm100Kind>, CanonicalControl<RouteArm100Kind>>,
+        PolicySteps<
+            StepCons<
+                SendStep<
+                    g::Role<0>,
+                    g::Role<0>,
+                    g::Msg<
+                        100,
+                        GenericCapToken<RouteArm100Kind>,
+                        CanonicalControl<RouteArm100Kind>,
+                    >,
+                >,
+                StepNil,
             >,
-            StepNil,
+            POLICY_ID,
         >,
         StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<10, ()>>, StepNil>,
     >,
@@ -38,15 +47,22 @@ const ARM0: g::ProgramSource<
         g::send::<g::Role<0>, g::Role<1>, g::Msg<10, ()>, 0>(),
     );
 
-const ARM1: g::ProgramSource<
+const ARM1: g::Program<
     SeqSteps<
-        StepCons<
-            SendStep<
-                g::Role<0>,
-                g::Role<0>,
-                g::Msg<101, GenericCapToken<RouteArm101Kind>, CanonicalControl<RouteArm101Kind>>,
+        PolicySteps<
+            StepCons<
+                SendStep<
+                    g::Role<0>,
+                    g::Role<0>,
+                    g::Msg<
+                        101,
+                        GenericCapToken<RouteArm101Kind>,
+                        CanonicalControl<RouteArm101Kind>,
+                    >,
+                >,
+                StepNil,
             >,
-            StepNil,
+            POLICY_ID,
         >,
         StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<20, ()>>, StepNil>,
     >,
@@ -62,59 +78,89 @@ const ARM1: g::ProgramSource<
         g::send::<g::Role<0>, g::Role<1>, g::Msg<20, ()>, 0>(),
     );
 
-const ROUTE: g::ProgramSource<
-    <SeqSteps<
-        StepCons<
-            SendStep<
-                g::Role<0>,
-                g::Role<0>,
-                g::Msg<100, GenericCapToken<RouteArm100Kind>, CanonicalControl<RouteArm100Kind>>,
-            >,
-            StepNil,
-        >,
-        StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<10, ()>>, StepNil>,
-    > as StepConcat<
+const ROUTE: g::Program<
+    RouteSteps<
         SeqSteps<
-            StepCons<
-                SendStep<
-                    g::Role<0>,
-                    g::Role<0>,
-                    g::Msg<101, GenericCapToken<RouteArm101Kind>, CanonicalControl<RouteArm101Kind>>,
+            PolicySteps<
+                StepCons<
+                    SendStep<
+                        g::Role<0>,
+                        g::Role<0>,
+                        g::Msg<
+                            100,
+                            GenericCapToken<RouteArm100Kind>,
+                            CanonicalControl<RouteArm100Kind>,
+                        >,
+                    >,
+                    StepNil,
                 >,
-                StepNil,
+                POLICY_ID,
+            >,
+            StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<10, ()>>, StepNil>,
+        >,
+        SeqSteps<
+            PolicySteps<
+                StepCons<
+                    SendStep<
+                        g::Role<0>,
+                        g::Role<0>,
+                        g::Msg<
+                            101,
+                            GenericCapToken<RouteArm101Kind>,
+                            CanonicalControl<RouteArm101Kind>,
+                        >,
+                    >,
+                    StepNil,
+                >,
+                POLICY_ID,
             >,
             StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<20, ()>>, StepNil>,
         >,
-    >>::Output,
+    >,
 > = g::route(ARM0, ARM1);
 
 static PASSIVE_PROGRAM: RoleProgram<
     'static,
     1,
-    <SeqSteps<
-        StepCons<
-            SendStep<
-                g::Role<0>,
-                g::Role<0>,
-                g::Msg<100, GenericCapToken<RouteArm100Kind>, CanonicalControl<RouteArm100Kind>>,
-            >,
-            StepNil,
-        >,
-        StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<10, ()>>, StepNil>,
-    > as StepConcat<
+    RouteSteps<
         SeqSteps<
-            StepCons<
-                SendStep<
-                    g::Role<0>,
-                    g::Role<0>,
-                    g::Msg<101, GenericCapToken<RouteArm101Kind>, CanonicalControl<RouteArm101Kind>>,
+            PolicySteps<
+                StepCons<
+                    SendStep<
+                        g::Role<0>,
+                        g::Role<0>,
+                        g::Msg<
+                            100,
+                            GenericCapToken<RouteArm100Kind>,
+                            CanonicalControl<RouteArm100Kind>,
+                        >,
+                    >,
+                    StepNil,
                 >,
-                StepNil,
+                POLICY_ID,
+            >,
+            StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<10, ()>>, StepNil>,
+        >,
+        SeqSteps<
+            PolicySteps<
+                StepCons<
+                    SendStep<
+                        g::Role<0>,
+                        g::Role<0>,
+                        g::Msg<
+                            101,
+                            GenericCapToken<RouteArm101Kind>,
+                            CanonicalControl<RouteArm101Kind>,
+                        >,
+                    >,
+                    StepNil,
+                >,
+                POLICY_ID,
             >,
             StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<20, ()>>, StepNil>,
         >,
-    >>::Output,
-> = project(&g::freeze(&ROUTE));
+    >,
+> = project(&ROUTE);
 
 fn main() {
     let _ = &PASSIVE_PROGRAM;

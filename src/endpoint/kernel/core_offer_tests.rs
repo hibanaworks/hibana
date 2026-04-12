@@ -11,7 +11,7 @@ use crate::control::cluster::core::SessionCluster;
 use crate::g::{self, Msg, Role};
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 use crate::global::role_program::{RoleProgram, project};
-use crate::global::steps::{SendStep, SeqSteps, StepConcat, StepCons, StepNil};
+use crate::global::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
 use crate::global::{CanonicalControl, ControlHandling};
 use crate::observe::core::TapEvent;
 use crate::runtime::config::{Config, CounterClock};
@@ -31,7 +31,7 @@ use futures::task::noop_waker_ref;
 use std::{task::Waker, thread_local};
 
 type SendOnly<const LANE: u8, S, D, M> = StepCons<SendStep<S, D, M, LANE>, StepNil>;
-type BranchSteps<L, R> = <L as StepConcat<R>>::Output;
+type BranchSteps<L, R> = RouteSteps<L, R>;
 const OFFER_FIXTURE_SLAB_CAPACITY: usize = 262_144;
 const fn max_usize(values: &[usize]) -> usize {
     let mut idx = 0usize;
@@ -176,7 +176,7 @@ type DeepRightOuterLeftSteps = SeqSteps<
 type DeepRightOuterRightSteps =
     SeqSteps<SendOnly<0, Role<0>, Role<0>, DeepRightStaticRouteRightMsg>, DeepRightMiddleSteps>;
 type DeepRightProgramSteps = BranchSteps<DeepRightOuterLeftSteps, DeepRightOuterRightSteps>;
-const DEEP_RIGHT_FINAL_DECISION: g::ProgramSource<DeepRightFinalDecisionSteps> = g::route(
+const DEEP_RIGHT_FINAL_DECISION: g::Program<DeepRightFinalDecisionSteps> = g::route(
     g::seq(
         g::send::<Role<0>, Role<0>, DeepRightStaticRouteLeftMsg, 0>(),
         g::send::<Role<0>, Role<1>, DeepRightFinalLeftMsg, 0>(),
@@ -186,7 +186,7 @@ const DEEP_RIGHT_FINAL_DECISION: g::ProgramSource<DeepRightFinalDecisionSteps> =
         g::send::<Role<0>, Role<1>, DeepRightFinalRightMsg, 0>(),
     ),
 );
-const DEEP_RIGHT_THIRD: g::ProgramSource<DeepRightThirdSteps> = g::route(
+const DEEP_RIGHT_THIRD: g::Program<DeepRightThirdSteps> = g::route(
     g::seq(
         g::send::<Role<0>, Role<0>, DeepRightStaticRouteLeftMsg, 0>(),
         g::send::<Role<0>, Role<1>, DeepRightThirdLeftMsg, 0>(),
@@ -196,7 +196,7 @@ const DEEP_RIGHT_THIRD: g::ProgramSource<DeepRightThirdSteps> = g::route(
         DEEP_RIGHT_FINAL_DECISION,
     ),
 );
-const DEEP_RIGHT_MIDDLE: g::ProgramSource<DeepRightMiddleSteps> = g::route(
+const DEEP_RIGHT_MIDDLE: g::Program<DeepRightMiddleSteps> = g::route(
     g::seq(
         g::send::<Role<0>, Role<0>, DeepRightStaticRouteLeftMsg, 0>(),
         g::send::<Role<0>, Role<1>, DeepRightMiddleLeftMsg, 0>(),
@@ -206,7 +206,7 @@ const DEEP_RIGHT_MIDDLE: g::ProgramSource<DeepRightMiddleSteps> = g::route(
         DEEP_RIGHT_THIRD,
     ),
 );
-const DEEP_RIGHT_PROGRAM: g::ProgramSource<DeepRightProgramSteps> = g::route(
+const DEEP_RIGHT_PROGRAM: g::Program<DeepRightProgramSteps> = g::route(
     g::seq(
         g::send::<Role<0>, Role<0>, DeepRightStaticRouteLeftMsg, 0>(),
         g::send::<Role<0>, Role<1>, DeepRightOuterLeftMsg, 0>(),
@@ -252,7 +252,7 @@ type NestedStaticOuterRightSteps =
     SeqSteps<SendOnly<0, Role<0>, Role<0>, NestedStaticRouteRightMsg>, NestedStaticMiddleSteps>;
 type NestedStaticProgramSteps =
     BranchSteps<NestedStaticOuterLeftSteps, NestedStaticOuterRightSteps>;
-const NESTED_STATIC_INNER: g::ProgramSource<NestedStaticInnerSteps> = g::route(
+const NESTED_STATIC_INNER: g::Program<NestedStaticInnerSteps> = g::route(
     g::seq(
         g::send::<Role<0>, Role<0>, NestedStaticRouteLeftMsg, 0>(),
         g::send::<Role<0>, Role<1>, NestedStaticLeafLeftMsg, 0>(),
@@ -262,7 +262,7 @@ const NESTED_STATIC_INNER: g::ProgramSource<NestedStaticInnerSteps> = g::route(
         g::send::<Role<0>, Role<1>, NestedStaticLeafRightMsg, 0>(),
     ),
 );
-const NESTED_STATIC_MIDDLE: g::ProgramSource<NestedStaticMiddleSteps> = g::route(
+const NESTED_STATIC_MIDDLE: g::Program<NestedStaticMiddleSteps> = g::route(
     g::seq(
         g::send::<Role<0>, Role<0>, NestedStaticRouteLeftMsg, 0>(),
         NESTED_STATIC_INNER,
@@ -272,7 +272,7 @@ const NESTED_STATIC_MIDDLE: g::ProgramSource<NestedStaticMiddleSteps> = g::route
         g::send::<Role<0>, Role<1>, NestedStaticMiddleRightMsg, 0>(),
     ),
 );
-const NESTED_STATIC_PROGRAM: g::ProgramSource<NestedStaticProgramSteps> = g::route(
+const NESTED_STATIC_PROGRAM: g::Program<NestedStaticProgramSteps> = g::route(
     g::seq(
         g::send::<Role<0>, Role<0>, NestedStaticRouteLeftMsg, 0>(),
         g::send::<Role<0>, Role<1>, NestedStaticOuterLeftMsg, 0>(),
@@ -287,13 +287,13 @@ static NESTED_STATIC_CONTROLLER_PROGRAM: RoleProgram<
     0,
     NestedStaticProgramSteps,
     crate::control::cap::mint::MintConfig,
-> = project(&g::freeze(&NESTED_STATIC_PROGRAM));
+> = project(&NESTED_STATIC_PROGRAM);
 static NESTED_STATIC_WORKER_PROGRAM: RoleProgram<
     'static,
     1,
     NestedStaticProgramSteps,
     crate::control::cap::mint::MintConfig,
-> = project(&g::freeze(&NESTED_STATIC_PROGRAM));
+> = project(&NESTED_STATIC_PROGRAM);
 type LoopContinueScopedContinueMsg = Msg<
     { crate::runtime::consts::LABEL_LOOP_CONTINUE },
     GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
@@ -335,7 +335,7 @@ type LoopSemanticsProgramSteps = BranchSteps<
     SendOnly<0, Role<0>, Role<0>, LoopContinueScopedContinueMsg>,
     SendOnly<0, Role<0>, Role<0>, LoopContinueScopedBreakMsg>,
 >;
-const LOOP_SEMANTICS_PROGRAM: g::ProgramSource<LoopSemanticsProgramSteps> = g::route(
+const LOOP_SEMANTICS_PROGRAM: g::Program<LoopSemanticsProgramSteps> = g::route(
     g::send::<Role<0>, Role<0>, LoopContinueScopedContinueMsg, 0>(),
     g::send::<Role<0>, Role<0>, LoopContinueScopedBreakMsg, 0>(),
 );
@@ -344,8 +344,8 @@ static LOOP_SEMANTICS_CONTROLLER_PROGRAM: RoleProgram<
     0,
     LoopSemanticsProgramSteps,
     crate::control::cap::mint::MintConfig,
-> = project(&g::freeze(&LOOP_SEMANTICS_PROGRAM));
-const LOOP_CONTINUE_SCOPED_PROGRAM: g::ProgramSource<LoopContinueScopedProgramSteps> = g::route(
+> = project(&LOOP_SEMANTICS_PROGRAM);
+const LOOP_CONTINUE_SCOPED_PROGRAM: g::Program<LoopContinueScopedProgramSteps> = g::route(
     g::seq(
         g::send::<Role<0>, Role<0>, LoopContinueScopedContinueMsg, 0>(),
         g::route(
@@ -366,7 +366,7 @@ static LOOP_CONTINUE_SCOPED_CONTROLLER_PROGRAM: RoleProgram<
     0,
     LoopContinueScopedProgramSteps,
     crate::control::cap::mint::MintConfig,
-> = project(&g::freeze(&LOOP_CONTINUE_SCOPED_PROGRAM));
+> = project(&LOOP_CONTINUE_SCOPED_PROGRAM);
 const LOOP_CONTINUE_PASSIVE_RIGHT_REPLY_LABEL: u8 = 0x51;
 type LoopContinuePassiveOuterLeftMsg = Msg<110, u8>;
 type LoopContinuePassiveRightReplyMsg = Msg<{ LOOP_CONTINUE_PASSIVE_RIGHT_REPLY_LABEL }, u8>;
@@ -387,7 +387,7 @@ type LoopContinuePassiveProgramSteps = BranchSteps<
     >,
     SendOnly<0, Role<0>, Role<0>, LoopContinueScopedBreakMsg>,
 >;
-const LOOP_CONTINUE_PASSIVE_PROGRAM: g::ProgramSource<LoopContinuePassiveProgramSteps> = g::route(
+const LOOP_CONTINUE_PASSIVE_PROGRAM: g::Program<LoopContinuePassiveProgramSteps> = g::route(
     g::seq(
         g::send::<Role<0>, Role<0>, LoopContinueScopedContinueMsg, 0>(),
         g::route(
@@ -408,13 +408,13 @@ static LOOP_CONTINUE_PASSIVE_CONTROLLER_PROGRAM: RoleProgram<
     0,
     LoopContinuePassiveProgramSteps,
     crate::control::cap::mint::MintConfig,
-> = project(&g::freeze(&LOOP_CONTINUE_PASSIVE_PROGRAM));
+> = project(&LOOP_CONTINUE_PASSIVE_PROGRAM);
 static LOOP_CONTINUE_PASSIVE_WORKER_PROGRAM: RoleProgram<
     'static,
     1,
     LoopContinuePassiveProgramSteps,
     crate::control::cap::mint::MintConfig,
-> = project(&g::freeze(&LOOP_CONTINUE_PASSIVE_PROGRAM));
+> = project(&LOOP_CONTINUE_PASSIVE_PROGRAM);
 type NestedDispatchOuterLeftMsg = Msg<0x10, u8>;
 type NestedDispatchLeafLeftMsg = Msg<0x51, u8>;
 type NestedDispatchLeafRightMsg = Msg<0x52, u8>;
@@ -439,7 +439,7 @@ type NestedDispatchProgramSteps = BranchSteps<
         NestedDispatchInnerSteps,
     >,
 >;
-const NESTED_DISPATCH_PROGRAM: g::ProgramSource<NestedDispatchProgramSteps> = g::route(
+const NESTED_DISPATCH_PROGRAM: g::Program<NestedDispatchProgramSteps> = g::route(
     g::seq(
         g::send::<Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg, 0>(),
         g::send::<Role<0>, Role<1>, NestedDispatchOuterLeftMsg, 0>(),
@@ -463,13 +463,13 @@ static NESTED_DISPATCH_CONTROLLER_PROGRAM: RoleProgram<
     0,
     NestedDispatchProgramSteps,
     crate::control::cap::mint::MintConfig,
-> = project(&g::freeze(&NESTED_DISPATCH_PROGRAM));
+> = project(&NESTED_DISPATCH_PROGRAM);
 static NESTED_DISPATCH_WORKER_PROGRAM: RoleProgram<
     'static,
     1,
     NestedDispatchProgramSteps,
     crate::control::cap::mint::MintConfig,
-> = project(&g::freeze(&NESTED_DISPATCH_PROGRAM));
+> = project(&NESTED_DISPATCH_PROGRAM);
 type PendingOfferCluster =
     SessionCluster<'static, PendingTransport, DefaultLabelUniverse, CounterClock, 4>;
 type HintPendingOfferCluster =
@@ -1616,22 +1616,34 @@ impl crate::control::cap::mint::ControlMint for RouteHintRightKind {
 }
 
 const HINT_ROUTE_POLICY_ID: u16 = 601;
-const HINT_LEFT_ARM: g::ProgramSource<
-    SeqSteps<
-        StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<
-                    { LABEL_ROUTE_DECISION },
-                    GenericCapToken<RouteDecisionKind>,
-                    CanonicalControl<RouteDecisionKind>,
-                >,
+type HintLeftHead = PolicySteps<
+    StepCons<
+        SendStep<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_ROUTE_DECISION },
+                GenericCapToken<RouteDecisionKind>,
+                CanonicalControl<RouteDecisionKind>,
             >,
-            StepNil,
         >,
-        StepCons<SendStep<Role<0>, Role<1>, Msg<100, u8>>, StepNil>,
+        StepNil,
     >,
+    HINT_ROUTE_POLICY_ID,
+>;
+type HintRightHead = PolicySteps<
+    StepCons<
+        SendStep<
+            Role<0>,
+            Role<0>,
+            Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>,
+        >,
+        StepNil,
+    >,
+    HINT_ROUTE_POLICY_ID,
+>;
+const HINT_LEFT_ARM: g::Program<
+    SeqSteps<HintLeftHead, StepCons<SendStep<Role<0>, Role<1>, Msg<100, u8>>, StepNil>>,
 > = g::seq(
     g::send::<
         Role<0>,
@@ -1646,18 +1658,8 @@ const HINT_LEFT_ARM: g::ProgramSource<
     .policy::<HINT_ROUTE_POLICY_ID>(),
     g::send::<Role<0>, Role<1>, Msg<100, u8>, 0>(),
 );
-const HINT_RIGHT_ARM: g::ProgramSource<
-    SeqSteps<
-        StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>,
-            >,
-            StepNil,
-        >,
-        StepCons<SendStep<Role<0>, Role<1>, Msg<101, u8>>, StepNil>,
-    >,
+const HINT_RIGHT_ARM: g::Program<
+    SeqSteps<HintRightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<101, u8>>, StepNil>>,
 > = g::seq(
     g::send::<
         Role<0>,
@@ -1668,43 +1670,18 @@ const HINT_RIGHT_ARM: g::ProgramSource<
     .policy::<HINT_ROUTE_POLICY_ID>(),
     g::send::<Role<0>, Role<1>, Msg<101, u8>, 0>(),
 );
-type HintRouteSteps = <SeqSteps<
-    StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >,
-        >,
-        StepNil,
-    >,
-    StepCons<SendStep<Role<0>, Role<1>, Msg<100, u8>>, StepNil>,
-> as StepConcat<
-    SeqSteps<
-        StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>,
-            >,
-            StepNil,
-        >,
-        StepCons<SendStep<Role<0>, Role<1>, Msg<101, u8>>, StepNil>,
-    >,
->>::Output;
-const HINT_ROUTE_PROGRAM: g::ProgramSource<HintRouteSteps> =
-    g::route(HINT_LEFT_ARM, HINT_RIGHT_ARM);
+type HintRouteSteps = RouteSteps<
+    SeqSteps<HintLeftHead, StepCons<SendStep<Role<0>, Role<1>, Msg<100, u8>>, StepNil>>,
+    SeqSteps<HintRightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<101, u8>>, StepNil>>,
+>;
+const HINT_ROUTE_PROGRAM: g::Program<HintRouteSteps> = g::route(HINT_LEFT_ARM, HINT_RIGHT_ARM);
 static HINT_CONTROLLER_PROGRAM: RoleProgram<'static, 0, HintRouteSteps> =
-    project(&g::freeze(&HINT_ROUTE_PROGRAM));
-static HINT_WORKER_PROGRAM: RoleProgram<'static, 1, HintRouteSteps> =
-    project(&g::freeze(&HINT_ROUTE_PROGRAM));
+    project(&HINT_ROUTE_PROGRAM);
+static HINT_WORKER_PROGRAM: RoleProgram<'static, 1, HintRouteSteps> = project(&HINT_ROUTE_PROGRAM);
 const HINT_LEFT_DATA_LABEL: u8 = 100;
 const HINT_RIGHT_DATA_LABEL: u8 = 101;
 
-const ENTRY_ARM0_PROGRAM: g::ProgramSource<
+const ENTRY_ARM0_PROGRAM: g::Program<
     SeqSteps<
         StepCons<SendStep<Role<0>, Role<0>, Msg<102, u8>>, StepNil>,
         SeqSteps<
@@ -1719,7 +1696,7 @@ const ENTRY_ARM0_PROGRAM: g::ProgramSource<
         g::send::<Role<1>, Role<0>, Msg<104, u8>, 0>(),
     ),
 );
-const ENTRY_ARM1_PROGRAM: g::ProgramSource<
+const ENTRY_ARM1_PROGRAM: g::Program<
     SeqSteps<
         StepCons<SendStep<Role<0>, Role<0>, Msg<105, u8>>, StepNil>,
         SeqSteps<
@@ -1734,13 +1711,14 @@ const ENTRY_ARM1_PROGRAM: g::ProgramSource<
         g::send::<Role<1>, Role<0>, Msg<107, u8>, 0>(),
     ),
 );
-type EntryRouteSteps = <SeqSteps<
-    StepCons<SendStep<Role<0>, Role<0>, Msg<102, u8>>, StepNil>,
+type EntryRouteSteps = RouteSteps<
     SeqSteps<
-        StepCons<SendStep<Role<0>, Role<1>, Msg<103, u8>>, StepNil>,
-        StepCons<SendStep<Role<1>, Role<0>, Msg<104, u8>>, StepNil>,
+        StepCons<SendStep<Role<0>, Role<0>, Msg<102, u8>>, StepNil>,
+        SeqSteps<
+            StepCons<SendStep<Role<0>, Role<1>, Msg<103, u8>>, StepNil>,
+            StepCons<SendStep<Role<1>, Role<0>, Msg<104, u8>>, StepNil>,
+        >,
     >,
-> as StepConcat<
     SeqSteps<
         StepCons<SendStep<Role<0>, Role<0>, Msg<105, u8>>, StepNil>,
         SeqSteps<
@@ -1748,15 +1726,15 @@ type EntryRouteSteps = <SeqSteps<
             StepCons<SendStep<Role<1>, Role<0>, Msg<107, u8>>, StepNil>,
         >,
     >,
->>::Output;
-const ENTRY_ROUTE_PROGRAM: g::ProgramSource<EntryRouteSteps> =
+>;
+const ENTRY_ROUTE_PROGRAM: g::Program<EntryRouteSteps> =
     g::route(ENTRY_ARM0_PROGRAM, ENTRY_ARM1_PROGRAM);
 static ENTRY_CONTROLLER_PROGRAM: RoleProgram<'static, 0, EntryRouteSteps> =
-    project(&g::freeze(&ENTRY_ROUTE_PROGRAM));
+    project(&ENTRY_ROUTE_PROGRAM);
 static ENTRY_WORKER_PROGRAM: RoleProgram<'static, 1, EntryRouteSteps> =
-    project(&g::freeze(&ENTRY_ROUTE_PROGRAM));
-type NestedRouteSteps = <HintRouteSteps as StepConcat<EntryRouteSteps>>::Output;
-const NESTED_ROUTE_PROGRAM: g::ProgramSource<NestedRouteSteps> =
+    project(&ENTRY_ROUTE_PROGRAM);
+type NestedRouteSteps = RouteSteps<HintRouteSteps, EntryRouteSteps>;
+const NESTED_ROUTE_PROGRAM: g::Program<NestedRouteSteps> =
     g::route(HINT_ROUTE_PROGRAM, ENTRY_ROUTE_PROGRAM);
 const ENTRY_ARM0_SIGNAL_LABEL: u8 = 103;
 
@@ -3389,7 +3367,7 @@ fn align_cursor_to_selected_scope_keeps_descended_nested_route_entry_authoritati
         "align_cursor_to_selected_scope_keeps_descended_nested_route_entry_authoritative",
         || {
             offer_fixture!(2048, clock, config);
-            let nested_program = g::freeze(&NESTED_ROUTE_PROGRAM);
+            let nested_program = NESTED_ROUTE_PROGRAM;
             let worker_program = project(&nested_program);
             with_offer_cluster!(
                 clock,
@@ -7947,7 +7925,7 @@ fn take_binding_for_selected_arm_preserves_cached_other_arm_classification() {
 #[test]
 fn static_passive_binding_label_materializes_poll() {
     run_offer_regression_test("static_passive_binding_label_materializes_poll", || {
-        let entry_route_program = g::freeze(&ENTRY_ROUTE_PROGRAM);
+        let entry_route_program = ENTRY_ROUTE_PROGRAM;
         let entry_controller_program = project(&entry_route_program);
         let entry_worker_program = project(&entry_route_program);
         offer_fixture!(2048, clock, config);
@@ -8066,7 +8044,7 @@ fn static_passive_staged_transport_hint_materializes_poll() {
     run_offer_regression_test(
         "static_passive_staged_transport_hint_materializes_poll",
         || {
-            let entry_route_program = g::freeze(&ENTRY_ROUTE_PROGRAM);
+            let entry_route_program = ENTRY_ROUTE_PROGRAM;
             let entry_controller_program = project(&entry_route_program);
             let entry_worker_program = project(&entry_route_program);
             offer_fixture!(2048, clock, config);
@@ -8267,7 +8245,7 @@ fn deep_right_nested_static_passive_binding_dispatch_materializes_poll_on_all_an
     run_offer_regression_test(
         "deep_right_nested_static_passive_binding_dispatch_materializes_poll_on_all_ancestor_scopes",
         || {
-            let deep_right_program = g::freeze(&DEEP_RIGHT_PROGRAM);
+            let deep_right_program = DEEP_RIGHT_PROGRAM;
             let deep_right_controller_program = project(&deep_right_program);
             let deep_right_worker_program = project(&deep_right_program);
             offer_fixture!(2048, clock, config);
@@ -8382,7 +8360,7 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label() {
     run_offer_regression_test(
         "deep_right_nested_final_reply_offer_materializes_leaf_label",
         || {
-            let deep_right_program = g::freeze(&DEEP_RIGHT_PROGRAM);
+            let deep_right_program = DEEP_RIGHT_PROGRAM;
             let deep_right_controller_program = project(&deep_right_program);
             let deep_right_worker_program = project(&deep_right_program);
             offer_fixture!(2048, clock, config);
@@ -8540,7 +8518,7 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label_with_deferred_bin
     run_offer_regression_test(
         "deep_right_nested_final_reply_offer_materializes_leaf_label_with_deferred_binding_ingress",
         || {
-            let deep_right_program = g::freeze(&DEEP_RIGHT_PROGRAM);
+            let deep_right_program = DEEP_RIGHT_PROGRAM;
             let deep_right_controller_program = project(&deep_right_program);
             let deep_right_worker_program = project(&deep_right_program);
             type DeferredCluster = SessionCluster<
@@ -9896,7 +9874,7 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
             type BreakArmSteps = SendOnly<3, Role<0>, Role<0>, LoopBreakMsg>;
             type LoopProgramSteps = BranchSteps<ContinueArmSteps, BreakArmSteps>;
 
-            const SNAPSHOT_REPLY_DECISION: g::ProgramSource<SnapshotReplyDecisionSteps> = g::route(
+            const SNAPSHOT_REPLY_DECISION: g::Program<SnapshotReplyDecisionSteps> = g::route(
                 g::seq(
                     g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
                     g::seq(
@@ -9912,7 +9890,7 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                     ),
                 ),
             );
-            const COMMIT_REPLY_DECISION: g::ProgramSource<CommitReplyDecisionSteps> = g::route(
+            const COMMIT_REPLY_DECISION: g::Program<CommitReplyDecisionSteps> = g::route(
                 g::seq(
                     g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
                     g::seq(
@@ -9928,7 +9906,7 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                     ),
                 ),
             );
-            const REPLY_DECISION: g::ProgramSource<ReplyDecisionSteps> = g::route(
+            const REPLY_DECISION: g::Program<ReplyDecisionSteps> = g::route(
                 g::seq(
                     g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
                     g::send::<Role<1>, Role<0>, AdminReplyMsg, 3>(),
@@ -9947,11 +9925,11 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                     ),
                 ),
             );
-            const REQUEST_EXCHANGE: g::ProgramSource<RequestExchangeSteps> = g::seq(
+            const REQUEST_EXCHANGE: g::Program<RequestExchangeSteps> = g::seq(
                 g::send::<Role<0>, Role<1>, SessionRequestWireMsg, 3>(),
                 REPLY_DECISION,
             );
-            const LOOP_PROGRAM: g::ProgramSource<LoopProgramSteps> = g::route(
+            const LOOP_PROGRAM: g::Program<LoopProgramSteps> = g::route(
                 g::seq(
                     g::send::<Role<0>, Role<0>, LoopContinueMsg, 3>(),
                     REQUEST_EXCHANGE,
@@ -9963,13 +9941,13 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                 0,
                 LoopProgramSteps,
                 crate::control::cap::mint::MintConfig,
-            > = project(&g::freeze(&LOOP_PROGRAM));
+            > = project(&LOOP_PROGRAM);
             static SERVER_PROGRAM: RoleProgram<
                 'static,
                 1,
                 LoopProgramSteps,
                 crate::control::cap::mint::MintConfig,
-            > = project(&g::freeze(&LOOP_PROGRAM));
+            > = project(&LOOP_PROGRAM);
             type ClientEndpoint = CursorEndpoint<
                 'static,
                 0,
@@ -10350,7 +10328,7 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
             type BreakArmSteps = SendOnly<3, Role<0>, Role<0>, LoopBreakMsg>;
             type LoopProgramSteps = BranchSteps<ContinueArmSteps, BreakArmSteps>;
 
-            const REPLY_DECISION: g::ProgramSource<ReplyDecisionSteps> = g::route(
+            const REPLY_DECISION: g::Program<ReplyDecisionSteps> = g::route(
                 g::seq(
                     g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
                     g::send::<Role<1>, Role<0>, AdminReplyMsg, 3>(),
@@ -10369,11 +10347,11 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                     ),
                 ),
             );
-            const REQUEST_EXCHANGE: g::ProgramSource<RequestExchangeSteps> = g::seq(
+            const REQUEST_EXCHANGE: g::Program<RequestExchangeSteps> = g::seq(
                 g::send::<Role<0>, Role<1>, SessionRequestWireMsg, 3>(),
                 REPLY_DECISION,
             );
-            const LOOP_PROGRAM: g::ProgramSource<LoopProgramSteps> = g::route(
+            const LOOP_PROGRAM: g::Program<LoopProgramSteps> = g::route(
                 g::seq(
                     g::send::<Role<0>, Role<0>, LoopContinueMsg, 3>(),
                     REQUEST_EXCHANGE,
@@ -10385,13 +10363,13 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                 0,
                 LoopProgramSteps,
                 crate::control::cap::mint::MintConfig,
-            > = project(&g::freeze(&LOOP_PROGRAM));
+            > = project(&LOOP_PROGRAM);
             static SERVER_PROGRAM: RoleProgram<
                 'static,
                 1,
                 LoopProgramSteps,
                 crate::control::cap::mint::MintConfig,
-            > = project(&g::freeze(&LOOP_PROGRAM));
+            > = project(&LOOP_PROGRAM);
             type ClientEndpoint = CursorEndpoint<
                 'static,
                 0,
@@ -10828,7 +10806,7 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
             type BreakArmSteps = SendOnly<3, Role<0>, Role<0>, LoopBreakMsg>;
             type LoopProgramSteps = BranchSteps<ContinueArmSteps, BreakArmSteps>;
 
-            const SNAPSHOT_REPLY_DECISION: g::ProgramSource<SnapshotReplyDecisionSteps> = g::route(
+            const SNAPSHOT_REPLY_DECISION: g::Program<SnapshotReplyDecisionSteps> = g::route(
                 g::seq(
                     g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
                     g::seq(
@@ -10844,7 +10822,7 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                     ),
                 ),
             );
-            const COMMIT_REPLY_DECISION: g::ProgramSource<CommitReplyDecisionSteps> = g::route(
+            const COMMIT_REPLY_DECISION: g::Program<CommitReplyDecisionSteps> = g::route(
                 g::seq(
                     g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
                     g::seq(
@@ -10872,7 +10850,7 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                     ),
                 ),
             );
-            const REPLY_DECISION: g::ProgramSource<ReplyDecisionSteps> = g::route(
+            const REPLY_DECISION: g::Program<ReplyDecisionSteps> = g::route(
                 g::seq(
                     g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
                     g::send::<Role<1>, Role<0>, Msg<0x50, u8>, 3>(),
@@ -10891,11 +10869,11 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                     ),
                 ),
             );
-            const REQUEST_EXCHANGE: g::ProgramSource<RequestExchangeSteps> = g::seq(
+            const REQUEST_EXCHANGE: g::Program<RequestExchangeSteps> = g::seq(
                 g::send::<Role<0>, Role<1>, SessionRequestWireMsg, 3>(),
                 REPLY_DECISION,
             );
-            const LOOP_PROGRAM: g::ProgramSource<LoopProgramSteps> = g::route(
+            const LOOP_PROGRAM: g::Program<LoopProgramSteps> = g::route(
                 g::seq(
                     g::send::<Role<0>, Role<0>, LoopContinueMsg, 3>(),
                     REQUEST_EXCHANGE,
@@ -10907,13 +10885,13 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                 0,
                 LoopProgramSteps,
                 crate::control::cap::mint::MintConfig,
-            > = project(&g::freeze(&LOOP_PROGRAM));
+            > = project(&LOOP_PROGRAM);
             static SERVER_PROGRAM: RoleProgram<
                 'static,
                 1,
                 LoopProgramSteps,
                 crate::control::cap::mint::MintConfig,
-            > = project(&g::freeze(&LOOP_PROGRAM));
+            > = project(&LOOP_PROGRAM);
             type ClientEndpoint = CursorEndpoint<
                 'static,
                 0,

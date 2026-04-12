@@ -543,8 +543,10 @@ impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
                 .expect("active lease graph stores a dense initialized prefix")
                 .add_child(child_id)?;
             unsafe {
-                self.nodes
-                    .write(self.node_count, NodeData::new(child_id, child_facet, child_context));
+                self.nodes.write(
+                    self.node_count,
+                    NodeData::new(child_id, child_facet, child_context),
+                );
             }
         }
         self.node_count += 1;

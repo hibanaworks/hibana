@@ -93,7 +93,7 @@ mod send;
 pub(crate) use self::core::cursor_endpoint_storage_layout;
 #[allow(unused_imports)]
 pub(super) use self::core::*;
-pub(crate) use self::core::{CanonicalTokenProvider, CursorEndpoint, RouteBranch};
+pub(crate) use self::core::{CanonicalTokenProvider, CursorEndpoint, RouteBranch, SendPreview};
 pub(crate) use self::frontier::FrontierScratchLayout;
 pub(crate) use self::frontier::MAX_ROUTE_ARM_STACK;
 pub(crate) use self::layout::EndpointArenaLayout;

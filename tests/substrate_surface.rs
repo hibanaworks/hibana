@@ -21,17 +21,16 @@ use hibana::substrate::{
 use hibana::{Endpoint, RouteBranch};
 use static_assertions::assert_not_impl_any;
 use tls_ref_support::with_tls_ref;
-const PROGRAM: g::ProgramSource<
-    StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>, StepNil>,
-> = g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>();
+const PROGRAM: g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>, StepNil>> =
+    g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>();
 type ConnectionSteps =
     SeqSteps<StepNil, StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>, StepNil>>;
-const CONNECTION_SOURCE: g::ProgramSource<ConnectionSteps> = g::seq(StepNil::PROGRAM, PROGRAM);
+const CONNECTION_SOURCE: g::Program<ConnectionSteps> = g::seq(StepNil::PROGRAM, PROGRAM);
 static CLIENT_PROGRAM: RoleProgram<
     'static,
     0,
     StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>, StepNil>,
-> = project(&g::freeze(&PROGRAM));
+> = project(&PROGRAM);
 type StaticTestKit =
     SessionKit<'static, common::TestTransport, DefaultLabelUniverse, CounterClock, 2>;
 
@@ -396,7 +395,7 @@ fn substrate_facade_sets_resolver_before_enter() {
 
 #[test]
 fn substrate_facade_projects_before_enter() {
-    let connection = g::freeze(&CONNECTION_SOURCE);
+    let connection = CONNECTION_SOURCE;
     let program: RoleProgram<
         '_,
         0,
@@ -472,7 +471,7 @@ fn substrate_facade_accepts_non_static_projected_programs() {
         rv_id: SessionId,
         rendezvous: hibana::substrate::RendezvousId,
     ) -> Endpoint<'a, 0, StaticTestKit, MintConfig> {
-        let connection = g::freeze(&CONNECTION_SOURCE);
+        let connection = CONNECTION_SOURCE;
         let program = project(&connection);
         cluster
             .enter(rendezvous, rv_id, &program, NoBinding)
@@ -504,7 +503,7 @@ fn substrate_cluster_registration_avoids_rendezvous_stack_temporary() {
 
     assert!(
         cluster_core_ws
-            .contains("core.locals.register_local_from_config_auto(config, transport)"),
+            .contains("core .locals .register_local_from_config_auto(config, transport)"),
         "cluster rendezvous registration must construct directly inside the lease-core owner slot"
     );
     for forbidden in [
@@ -1361,7 +1360,7 @@ fn substrate_mgmt_and_binding_roots_stay_minimal() {
         "pub mod observe_stream {",
         "pub use crate::runtime::mgmt::RequestReplyPrefixSteps as PrefixSteps;",
         "pub use crate::runtime::mgmt::ObserveStreamPrefixSteps as PrefixSteps;",
-        "pub const PREFIX: crate::g::ProgramSource<PrefixSteps> =",
+        "pub const PREFIX: crate::g::Program<PrefixSteps> =",
     ] {
         assert!(
             substrate_rs.contains(required),
@@ -1464,10 +1463,9 @@ fn substrate_mgmt_and_binding_roots_stay_minimal() {
         !runtime_mgmt_request_reply_rs.contains("type CommandRouteSteps = CommandStep;")
             && !runtime_mgmt_request_reply_rs.contains("type Controller = g::Role<0>;")
             && !runtime_mgmt_request_reply_rs.contains("type Cluster = g::Role<1>;")
-            && runtime_mgmt_request_reply_rs.contains("const LOOP_SEGMENT: ProgramSource<")
+            && runtime_mgmt_request_reply_rs.contains("const LOOP_SEGMENT: Program<")
             && runtime_mgmt_request_reply_rs.contains("pub type ProgramSteps = SeqSteps<")
-            && runtime_mgmt_request_reply_rs
-                .contains("pub const PROGRAM: ProgramSource<ProgramSteps> ="),
+            && runtime_mgmt_request_reply_rs.contains("pub const PROGRAM: Program<ProgramSteps> ="),
         "request-reply owner must hold the canonical request/reply choreography directly"
     );
     assert!(
@@ -1476,7 +1474,7 @@ fn substrate_mgmt_and_binding_roots_stay_minimal() {
             && !runtime_mgmt_observe_stream_rs.contains("type StreamBreakMsg =")
             && !runtime_mgmt_observe_stream_rs.contains("type TapBatchMsg =")
             && runtime_mgmt_observe_stream_rs.contains("pub struct TapBatch {")
-            && runtime_mgmt_observe_stream_rs.contains("const STREAM_LOOP_ROUTE: ProgramSource<")
+            && runtime_mgmt_observe_stream_rs.contains("const STREAM_LOOP_ROUTE: Program<")
             && runtime_mgmt_observe_stream_ws.contains("g::Msg<LABEL_OBSERVE_STREAM_END, ()>")
             && runtime_mgmt_observe_stream_ws.contains("g::Msg<LABEL_OBSERVE_BATCH, TapBatch>"),
         "observe-stream owner must keep batching local while preserving the canonical loop witnesses"

@@ -3,7 +3,7 @@ use hibana::g::advanced::{RoleProgram, project};
 use hibana::g::advanced::steps::{SendStep, StepCons, StepNil};
 use hibana::substrate::cap::advanced::MintConfig;
 
-const PROGRAM: g::ProgramSource<
+const PROGRAM: g::Program<
     StepCons<SendStep<g::Role<0>, g::Role<1>, Msg<1, ()>, 0>, StepNil>,
 > = g::send::<g::Role<0>, g::Role<1>, Msg<1, ()>, 0>();
 
@@ -13,6 +13,6 @@ fn main() {
         0,
         StepCons<SendStep<g::Role<0>, g::Role<1>, Msg<1, ()>, 0>, StepNil>,
         MintConfig,
-    > = project(&g::freeze(&PROGRAM));
+    > = project(&PROGRAM);
     let _ = program.eff_list();
 }

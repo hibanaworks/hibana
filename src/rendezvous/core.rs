@@ -822,7 +822,11 @@ where
     }
 
     #[inline]
-    fn endpoint_lease(&self, lease_slot: EndpointLeaseId, generation: u32) -> Option<&EndpointLeaseSlot> {
+    fn endpoint_lease(
+        &self,
+        lease_slot: EndpointLeaseId,
+        generation: u32,
+    ) -> Option<&EndpointLeaseSlot> {
         let idx = usize::from(lease_slot);
         if idx >= usize::from(self.endpoint_lease_capacity) {
             return None;
@@ -1024,7 +1028,8 @@ where
             self.reclaim_offset_for_payload(old_ptr, self.loops.storage_reclaim_delta());
         if self.loops.loop_slots() == 0 {
             unsafe {
-                self.loops.bind_from_storage(storage, required_slots, reclaim_delta);
+                self.loops
+                    .bind_from_storage(storage, required_slots, reclaim_delta);
             }
         } else {
             unsafe {
@@ -1360,7 +1365,10 @@ where
             self.allocate_persistent_image_bytes(bytes, CompiledProgramImage::persistent_align())
         }?;
         unsafe {
-            CompiledProgramImage::init_from_summary(ptr.cast::<CompiledProgramImage>(), summary);
+            crate::global::compiled::init_compiled_program_image_from_summary(
+                ptr.cast::<CompiledProgramImage>(),
+                summary,
+            );
         }
         let slot = unsafe { &mut *self.program_images.add(insert_idx) };
         *slot = ProgramImageSlot {
@@ -1391,7 +1399,7 @@ where
                     .cast::<CompiledProgramImage>()
             };
             unsafe {
-                CompiledProgramImage::init_from_summary(ptr, summary);
+                crate::global::compiled::init_compiled_program_image_from_summary(ptr, summary);
             }
             slot.stamp = stamp;
             slot.occupied = true;
@@ -1421,7 +1429,10 @@ where
             }
         };
         unsafe {
-            CompiledProgramImage::init_from_summary(ptr.cast::<CompiledProgramImage>(), summary);
+            crate::global::compiled::init_compiled_program_image_from_summary(
+                ptr.cast::<CompiledProgramImage>(),
+                summary,
+            );
         }
         if let Some((old_offset, old_len)) = released_region {
             self.release_persistent_region(old_offset, old_len);
@@ -1535,7 +1546,7 @@ where
             self.allocate_persistent_image_bytes(bytes, CompiledRoleImage::persistent_align())
         }?;
         unsafe {
-            CompiledRoleImage::init_from_summary_for_program::<ROLE, GlobalSteps>(
+            crate::global::compiled::init_compiled_role_image_from_summary::<ROLE, GlobalSteps>(
                 ptr.cast::<CompiledRoleImage>(),
                 summary,
                 scratch,
@@ -1745,7 +1756,7 @@ where
                     .cast::<CompiledRoleImage>()
             };
             unsafe {
-                CompiledRoleImage::init_from_summary_for_program::<ROLE, GlobalSteps>(
+                crate::global::compiled::init_compiled_role_image_from_summary::<ROLE, GlobalSteps>(
                     ptr,
                     summary,
                     scratch,
@@ -1786,7 +1797,7 @@ where
             }
         };
         unsafe {
-            CompiledRoleImage::init_from_summary_for_program::<ROLE, GlobalSteps>(
+            crate::global::compiled::init_compiled_role_image_from_summary::<ROLE, GlobalSteps>(
                 ptr.cast::<CompiledRoleImage>(),
                 summary,
                 scratch,
@@ -2848,8 +2859,10 @@ where
             .saturating_add(core::mem::size_of::<EndpointLeaseSlot>());
         let per_endpoint_bytes = core::cmp::max(per_endpoint_bytes, 1);
         let mut low = 1usize;
-        let mut high =
-            core::cmp::min(usize::from(EndpointLeaseId::MAX), slab.len() / per_endpoint_bytes);
+        let mut high = core::cmp::min(
+            usize::from(EndpointLeaseId::MAX),
+            slab.len() / per_endpoint_bytes,
+        );
         while low <= high {
             let mid = low + (high - low) / 2;
             if let Some(layout) = Self::runtime_metadata_layout_for_public_path(slab, mid) {
@@ -2867,13 +2880,7 @@ where
                 high = mid - 1;
             }
         }
-        unsafe {
-            Self::init_runtime_metadata_with_image_slots(
-                slab,
-                usize::from(best.5),
-                best.4,
-            )
-        }
+        unsafe { Self::init_runtime_metadata_with_image_slots(slab, usize::from(best.5), best.4) }
     }
 
     unsafe fn carve_resident_storage(slab: &mut [u8]) -> Option<(*mut Self, &mut [u8])> {
@@ -3085,7 +3092,8 @@ where
             core::ptr::addr_of_mut!((*dst).image_slot_capacity).write(image_slot_capacity);
             core::ptr::addr_of_mut!((*dst).endpoint_lease_capacity).write(endpoint_lease_capacity);
             core::ptr::addr_of_mut!((*dst).runtime_frontier).write(image_frontier);
-            core::ptr::addr_of_mut!((*dst).free_regions).write([FreeRegion::EMPTY; FREE_REGION_CAPACITY]);
+            core::ptr::addr_of_mut!((*dst).free_regions)
+                .write([FreeRegion::EMPTY; FREE_REGION_CAPACITY]);
             core::ptr::addr_of_mut!((*dst).lane_range)
                 .write((lane_range.start as u32)..(lane_range.end as u32));
             core::ptr::addr_of_mut!((*dst).universe_marker).write(PhantomData);
@@ -4697,7 +4705,11 @@ mod epf_tests {
                 "aligned external sidecar must record reclaimed prefix padding when frontier is unaligned"
             );
 
-            rendezvous.free_external_persistent_sidecar_bytes(aligned_ptr, 8, aligned_reclaim_delta);
+            rendezvous.free_external_persistent_sidecar_bytes(
+                aligned_ptr,
+                8,
+                aligned_reclaim_delta,
+            );
             assert_eq!(
                 rendezvous.image_frontier, frontier_after_head,
                 "freeing the top external sidecar must reclaim its alignment padding back to the previous frontier"

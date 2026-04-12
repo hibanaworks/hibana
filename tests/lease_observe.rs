@@ -23,9 +23,9 @@ use hibana::{
 use runtime_support::{RING_EVENTS, with_fixture};
 use tls_ref_support::with_tls_ref;
 
-const PROGRAM: g::ProgramSource<StepNil> = StepNil::PROGRAM;
+const PROGRAM: g::Program<StepNil> = StepNil::PROGRAM;
 
-static CONTROLLER_PROGRAM: RoleProgram<'static, 0, StepNil> = project(&g::freeze(&PROGRAM));
+static CONTROLLER_PROGRAM: RoleProgram<'static, 0, StepNil> = project(&PROGRAM);
 type TestKit = SessionKit<
     'static,
     TestTransport,

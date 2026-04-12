@@ -380,11 +380,11 @@ impl PolicyMode {
     /// ```ignore
     /// // Define a route with dynamic policy annotation
     /// const MY_POLICY_ID: u16 = 0x1234;
-    /// const MY_ROUTE: ProgramSource<Steps> =
+    /// const MY_ROUTE: Program<Steps> =
     ///     g::route(arm1.policy::<MY_POLICY_ID>(), arm2.policy::<MY_POLICY_ID>());
     ///
     /// // Register resolver before use
-    /// let controller = hibana::g::advanced::project(&g::freeze(&MY_ROUTE));
+    /// let controller = hibana::g::advanced::project(&MY_ROUTE);
     /// struct RouteState {
     ///     preferred_arm: u8,
     /// }
@@ -1140,7 +1140,7 @@ mod tests {
     use super::{CompactScopeId, ControlMarker, EffList, ScopeId, ScopeKind};
     use crate::g;
     use crate::g::advanced::steps::{
-        LoopBreakSteps, LoopContinueSteps, LoopDecisionSteps, SendStep, StepCons, StepNil,
+        PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil,
     };
     use crate::g::advanced::{CanonicalControl, project};
     use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
@@ -1148,6 +1148,41 @@ mod tests {
     use crate::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
 
     const LOOP_POLICY_ID: u16 = 120;
+    type LoopContinueHead = PolicySteps<
+        StepCons<
+            SendStep<
+                g::Role<0>,
+                g::Role<0>,
+                g::Msg<
+                    { LABEL_LOOP_CONTINUE },
+                    GenericCapToken<LoopContinueKind>,
+                    CanonicalControl<LoopContinueKind>,
+                >,
+            >,
+            StepNil,
+        >,
+        LOOP_POLICY_ID,
+    >;
+    type LoopBreakHead = PolicySteps<
+        StepCons<
+            SendStep<
+                g::Role<0>,
+                g::Role<0>,
+                g::Msg<
+                    { LABEL_LOOP_BREAK },
+                    GenericCapToken<LoopBreakKind>,
+                    CanonicalControl<LoopBreakKind>,
+                >,
+            >,
+            StepNil,
+        >,
+        LOOP_POLICY_ID,
+    >;
+    type LoopContinueProgram = SeqSteps<
+        LoopContinueHead,
+        StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u32>>, StepNil>,
+    >;
+    type LoopDecisionProgram = RouteSteps<LoopContinueProgram, LoopBreakHead>;
 
     #[test]
     fn control_marker_stays_compact() {
@@ -1171,20 +1206,10 @@ mod tests {
         );
     }
 
-    const LOOP_BODY: g::ProgramSource<
+    const LOOP_BODY: g::Program<
         StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u32>>, StepNil>,
     > = g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u32>, 0>();
-    const LOOP_BREAK_ARM: g::ProgramSource<
-        LoopBreakSteps<
-            g::Role<0>,
-            g::Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
-            StepNil,
-        >,
-    > = g::send::<
+    const LOOP_BREAK_ARM: g::Program<LoopBreakHead> = g::send::<
         g::Role<0>,
         g::Role<0>,
         g::Msg<
@@ -1195,17 +1220,7 @@ mod tests {
         0,
     >()
     .policy::<LOOP_POLICY_ID>();
-    const LOOP_CONTINUE_ARM: g::ProgramSource<
-        LoopContinueSteps<
-            g::Role<0>,
-            g::Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
-            StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u32>>, StepNil>,
-        >,
-    > = g::seq(
+    const LOOP_CONTINUE_ARM: g::Program<LoopContinueProgram> = g::seq(
         g::send::<
             g::Role<0>,
             g::Role<0>,
@@ -1219,46 +1234,16 @@ mod tests {
         .policy::<LOOP_POLICY_ID>(),
         LOOP_BODY,
     );
-    const LOOP_DECISION: g::ProgramSource<
-        LoopDecisionSteps<
-            g::Role<0>,
-            g::Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
-            g::Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
-            StepNil,
-            StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u32>>, StepNil>,
-        >,
-    > = g::route(LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
+    const LOOP_DECISION: g::Program<LoopDecisionProgram> = g::route(LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
     static SENDER_PROGRAM: crate::g::advanced::RoleProgram<
         'static,
         0,
-        LoopDecisionSteps<
-            g::Role<0>,
-            g::Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
-            g::Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
-            StepNil,
-            StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u32>>, StepNil>,
-        >,
-    > = project(&g::freeze(&LOOP_DECISION));
+        LoopDecisionProgram,
+    > = project(&LOOP_DECISION);
 
     #[test]
     fn policy_scope_stays_internal() {
-        let list: &EffList = SENDER_PROGRAM.eff_list_ref();
+        let list: &EffList = crate::global::lowering_input(&SENDER_PROGRAM).eff_list();
         let mut policies = 0usize;
         let mut offset = 0usize;
         while offset < list.len() {

@@ -324,7 +324,6 @@ where
         }
         Ok(())
     }
-
 }
 
 impl<'cfg, T, U, C, E> Drop for RendezvousEntry<'cfg, T, U, C, E>

@@ -65,7 +65,7 @@ pub(crate) fn try_local_meta(&self) -> Option<LocalMeta>
 
 #[cfg(test)]
 mod tests {
-    use core::{cell::UnsafeCell, mem::MaybeUninit, ptr};
+    use core::{cell::UnsafeCell, mem::MaybeUninit};
     use std::{thread::LocalKey, thread_local};
 
     use super::{LocalAction, StateIndex};
@@ -73,11 +73,11 @@ mod tests {
     use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
     use crate::eff::EffIndex;
     use crate::g::{self, Msg, Role};
-    use crate::global::compiled::{CompiledRole, LoweringSummary};
+    use crate::global::compiled::CompiledRole;
     use crate::global::const_dsl::{PolicyMode, ScopeKind};
     use crate::global::role_program;
     use crate::global::role_program::{RoleProgram, project};
-    use crate::global::steps::{LoopSteps, SendStep, StepConcat, StepCons, StepNil};
+    use crate::global::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
     use crate::global::typestate::RoleCompileScratch;
     use crate::global::{CanonicalControl, MessageSpec};
     use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
@@ -99,45 +99,85 @@ mod tests {
         program: &RoleProgram<'_, ROLE, Steps>,
         f: impl FnOnce(&CompiledRole) -> R,
     ) -> R {
-        let summary = LoweringSummary::scan_const(program.lowering_input());
-        compiled_slot.with(|compiled| {
-            scratch_slot.with(|scratch| unsafe {
-                let compiled_ptr = (*compiled.get()).as_mut_ptr();
-                let scratch_ptr = (*scratch.get()).as_mut_ptr();
-                scratch_ptr.write(RoleCompileScratch::new());
-                CompiledRole::init_from_summary::<ROLE>(compiled_ptr, &summary, &mut *scratch_ptr);
-                let result = f(&*compiled_ptr);
-                ptr::drop_in_place(compiled_ptr);
-                ptr::drop_in_place(scratch_ptr);
-                result
-            })
-        })
+        crate::global::compiled::with_compiled_role_in_slot::<ROLE, _>(
+            compiled_slot,
+            scratch_slot,
+            crate::global::lowering_input(program),
+            f,
+        )
     }
 
-    const BODY: g::ProgramSource<StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>> =
+    const BODY: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>> =
         g::send::<Role<0>, Role<1>, Msg<7, ()>, 0>();
 
     const LOOP_POLICY_ID: u16 = 9300;
     const ROUTE_POLICY_ID: u16 = 9301;
-
-    #[allow(clippy::type_complexity)]
-    const LOOP_PROGRAM: g::ProgramSource<
-        LoopSteps<
-            StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>,
-            Role<0>,
-            Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
-            Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
+    type LoopContinueHead = PolicySteps<
+        StepCons<
+            SendStep<
+                Role<0>,
+                Role<0>,
+                Msg<
+                    { LABEL_LOOP_CONTINUE },
+                    GenericCapToken<LoopContinueKind>,
+                    CanonicalControl<LoopContinueKind>,
+                >,
             >,
             StepNil,
         >,
-    > = {
+        LOOP_POLICY_ID,
+    >;
+    type LoopBreakHead = PolicySteps<
+        StepCons<
+            SendStep<
+                Role<0>,
+                Role<0>,
+                Msg<
+                    { LABEL_LOOP_BREAK },
+                    GenericCapToken<LoopBreakKind>,
+                    CanonicalControl<LoopBreakKind>,
+                >,
+            >,
+            StepNil,
+        >,
+        LOOP_POLICY_ID,
+    >;
+    type LoopProgramSteps =
+        RouteSteps<SeqSteps<LoopContinueHead, StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>>, LoopBreakHead>;
+    type RouteScopeContinueHead = PolicySteps<
+        StepCons<
+            SendStep<
+                Role<0>,
+                Role<0>,
+                Msg<
+                    { LABEL_LOOP_CONTINUE },
+                    GenericCapToken<LoopContinueKind>,
+                    CanonicalControl<LoopContinueKind>,
+                >,
+            >,
+            StepNil,
+        >,
+        ROUTE_POLICY_ID,
+    >;
+    type RouteScopeBreakHead = PolicySteps<
+        StepCons<
+            SendStep<
+                Role<0>,
+                Role<0>,
+                Msg<
+                    { LABEL_LOOP_BREAK },
+                    GenericCapToken<LoopBreakKind>,
+                    CanonicalControl<LoopBreakKind>,
+                >,
+            >,
+            StepNil,
+        >,
+        ROUTE_POLICY_ID,
+    >;
+    type RouteScopeProgramSteps = RouteSteps<RouteScopeContinueHead, RouteScopeBreakHead>;
+
+    #[allow(clippy::type_complexity)]
+    const LOOP_PROGRAM: g::Program<LoopProgramSteps> = {
         // Self-send for CanonicalControl: Controller → Controller
         let continue_control = g::send::<
             Role<0>,
@@ -169,51 +209,22 @@ mod tests {
     const CONTROLLER_PROGRAM: RoleProgram<
         'static,
         0,
-        LoopSteps<
-            StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>,
-            Role<0>,
-            Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
-            Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
-            StepNil,
-        >,
-    > = project(&g::freeze(&LOOP_PROGRAM));
+        LoopProgramSteps,
+    > = project(&LOOP_PROGRAM);
 
     const TARGET_PROGRAM: RoleProgram<
         'static,
         1,
-        LoopSteps<
-            StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>,
-            Role<0>,
-            Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
-            Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
-            StepNil,
-        >,
-    > = project(&g::freeze(&LOOP_PROGRAM));
+        LoopProgramSteps,
+    > = project(&LOOP_PROGRAM);
 
-    const LOCAL_PROGRAM: g::ProgramSource<
-        StepCons<SendStep<Role<0>, Role<0>, Msg<9, ()>>, StepNil>,
-    > = g::send::<Role<0>, Role<0>, Msg<9, ()>, 0>();
+    const LOCAL_PROGRAM: g::Program<StepCons<SendStep<Role<0>, Role<0>, Msg<9, ()>>, StepNil>> =
+        g::send::<Role<0>, Role<0>, Msg<9, ()>, 0>();
     const LOCAL_ROLE: role_program::RoleProgram<
         'static,
         0,
         StepCons<SendStep<Role<0>, Role<0>, Msg<9, ()>>, StepNil>,
-    > = role_program::project(&g::freeze(&LOCAL_PROGRAM));
+    > = role_program::project(&LOCAL_PROGRAM);
 
     #[test]
     fn state_cursor_rewinds_on_loop_continue() {
@@ -368,33 +379,7 @@ mod tests {
     #[test]
     fn route_scope_kind_detected() {
         // Route is local to Controller (0 → 0)
-        const ROUTE: g::ProgramSource<
-            <StepCons<
-                SendStep<
-                    Role<0>,
-                    Role<0>,
-                    Msg<
-                        { LABEL_LOOP_CONTINUE },
-                        GenericCapToken<LoopContinueKind>,
-                        CanonicalControl<LoopContinueKind>,
-                    >,
-                >,
-                StepNil,
-            > as StepConcat<
-                StepCons<
-                    SendStep<
-                        Role<0>,
-                        Role<0>,
-                        Msg<
-                            { LABEL_LOOP_BREAK },
-                            GenericCapToken<LoopBreakKind>,
-                            CanonicalControl<LoopBreakKind>,
-                        >,
-                    >,
-                    StepNil,
-                >,
-            >>::Output,
-        > = g::route(
+        const ROUTE: g::Program<RouteScopeProgramSteps> = g::route(
             g::send::<
                 Role<0>,
                 Role<0>,
@@ -419,35 +404,7 @@ mod tests {
             .policy::<ROUTE_POLICY_ID>(),
         );
 
-        const CONTROLLER: RoleProgram<
-            'static,
-            0,
-            <StepCons<
-                SendStep<
-                    Role<0>,
-                    Role<0>,
-                    Msg<
-                        { LABEL_LOOP_CONTINUE },
-                        GenericCapToken<LoopContinueKind>,
-                        CanonicalControl<LoopContinueKind>,
-                    >,
-                >,
-                StepNil,
-            > as StepConcat<
-                StepCons<
-                    SendStep<
-                        Role<0>,
-                        Role<0>,
-                        Msg<
-                            { LABEL_LOOP_BREAK },
-                            GenericCapToken<LoopBreakKind>,
-                            CanonicalControl<LoopBreakKind>,
-                        >,
-                    >,
-                    StepNil,
-                >,
-            >>::Output,
-        > = project(&g::freeze(&ROUTE));
+        const CONTROLLER: RoleProgram<'static, 0, RouteScopeProgramSteps> = project(&ROUTE);
 
         with_compiled_role_slot(
             &COMPILED_ROLE_STORAGE,

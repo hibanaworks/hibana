@@ -7,8 +7,7 @@
 
 use core::marker::PhantomData;
 
-use super::const_dsl;
-use super::program::ProgramSource;
+use super::program::Program;
 use crate::global::{KnownRole, MessageSpec, Role, RoleMarker, SendableLabel};
 
 // =============================================================================
@@ -120,6 +119,15 @@ pub struct LocalAction<Msg>(PhantomData<Msg>);
 /// Sequence witness that preserves segment boundaries for substrate composition.
 pub struct SeqSteps<Left, Right>(PhantomData<(Left, Right)>);
 
+/// Route witness that preserves arm boundaries for source reconstruction.
+pub struct RouteSteps<Left, Right>(PhantomData<(Left, Right)>);
+
+/// Parallel witness that preserves arm boundaries for source reconstruction.
+pub struct ParSteps<Left, Right>(PhantomData<(Left, Right)>);
+
+/// Policy annotation witness for the final atom in a fragment.
+pub struct PolicySteps<Inner, const POLICY_ID: u16>(PhantomData<Inner>);
+
 /// Loop continue arm with a controller self-send head.
 pub type LoopContinueSteps<Controller, ContMsg, Tail = StepNil> =
     SeqSteps<StepCons<SendStep<Controller, Controller, ContMsg>, StepNil>, Tail>;
@@ -138,9 +146,10 @@ pub type LoopBreakStepsL<Controller, BreakMsg, const LANE: u8, Tail = StepNil> =
 
 /// Binary loop decision witness composed from continue and break arms.
 pub type LoopDecisionSteps<Controller, ContMsg, BreakMsg, BreakTail = StepNil, ContTail = StepNil> =
-    <LoopContinueSteps<Controller, ContMsg, ContTail> as StepConcat<
+    RouteSteps<
+        LoopContinueSteps<Controller, ContMsg, ContTail>,
         LoopBreakSteps<Controller, BreakMsg, BreakTail>,
-    >>::Output;
+    >;
 
 /// Lane-qualified binary loop decision witness.
 pub type LoopDecisionStepsL<
@@ -150,9 +159,10 @@ pub type LoopDecisionStepsL<
     const LANE: u8,
     BreakTail = StepNil,
     ContTail = StepNil,
-> = <LoopContinueStepsL<Controller, ContMsg, LANE, ContTail> as StepConcat<
+> = RouteSteps<
+    LoopContinueStepsL<Controller, ContMsg, LANE, ContTail>,
     LoopBreakStepsL<Controller, BreakMsg, LANE, BreakTail>,
->>::Output;
+>;
 
 /// Canonical loop witness that preserves the body segment in the continue arm.
 pub type LoopSteps<
@@ -162,12 +172,9 @@ pub type LoopSteps<
     BreakMsg,
     BreakTail = StepNil,
     ContTail = StepNil,
-> = LoopDecisionSteps<
-    Controller,
-    ContMsg,
-    BreakMsg,
-    BreakTail,
-    <BodySteps as StepConcat<ContTail>>::Output,
+> = RouteSteps<
+    LoopContinueSteps<Controller, ContMsg, <BodySteps as StepConcat<ContTail>>::Output>,
+    LoopBreakSteps<Controller, BreakMsg, BreakTail>,
 >;
 
 /// Lane-qualified canonical loop witness that preserves the body segment.
@@ -179,13 +186,9 @@ pub type LoopStepsL<
     const LANE: u8,
     BreakTail = StepNil,
     ContTail = StepNil,
-> = LoopDecisionStepsL<
-    Controller,
-    ContMsg,
-    BreakMsg,
-    LANE,
-    BreakTail,
-    <BodySteps as StepConcat<ContTail>>::Output,
+> = RouteSteps<
+    LoopContinueStepsL<Controller, ContMsg, LANE, <BodySteps as StepConcat<ContTail>>::Output>,
+    LoopBreakStepsL<Controller, BreakMsg, LANE, BreakTail>,
 >;
 
 impl Default for StepNil {
@@ -196,7 +199,7 @@ impl Default for StepNil {
 
 impl StepNil {
     /// Canonical zero-fragment program witness for substrate-side composition.
-    pub const PROGRAM: ProgramSource<Self> = ProgramSource::<Self>::empty();
+    pub const PROGRAM: Program<Self> = Program::<Self>::empty();
 
     pub const fn new() -> Self {
         Self
@@ -210,6 +213,42 @@ impl<Head, Tail> Default for StepCons<Head, Tail> {
 }
 
 impl<Head, Tail> StepCons<Head, Tail> {
+    pub const fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<Left, Right> Default for RouteSteps<Left, Right> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<Left, Right> RouteSteps<Left, Right> {
+    pub const fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<Left, Right> Default for ParSteps<Left, Right> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<Left, Right> ParSteps<Left, Right> {
+    pub const fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<Inner, const POLICY_ID: u16> Default for PolicySteps<Inner, POLICY_ID> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<Inner, const POLICY_ID: u16> PolicySteps<Inner, POLICY_ID> {
     pub const fn new() -> Self {
         Self(PhantomData)
     }
@@ -251,32 +290,6 @@ impl<From, Msg> LocalRecv<From, Msg> {
     }
 }
 
-/// Synthesize the `EffList` corresponding to a typelist of global steps.
-pub trait BuildEffList {
-    const EFF: const_dsl::EffList;
-}
-
-impl BuildEffList for StepNil {
-    const EFF: const_dsl::EffList = const_dsl::EffList::new();
-}
-
-impl<From, To, Msg, const LANE: u8, Tail> BuildEffList
-    for StepCons<SendStep<From, To, Msg, LANE>, Tail>
-where
-    From: KnownRole + RoleMarker + RoleEq<To>,
-    To: KnownRole + RoleMarker,
-    Msg: MessageSpec + SendableLabel + crate::global::MessageControlSpec,
-    Tail: BuildEffList,
-    // Enforce: CanonicalControl requires self-send (From == To)
-    <Msg as MessageSpec>::ControlKind:
-        crate::global::RequireSelfSendForCanonical<<From as RoleEq<To>>::Output>,
-{
-    const EFF: const_dsl::EffList = {
-        let head = const_dsl::const_send_typed::<From, To, Msg, LANE>();
-        head.extend_list(Tail::EFF)
-    };
-}
-
 /// Concatenate typelists.
 pub trait StepConcat<Other> {
     type Output;
@@ -298,6 +311,18 @@ where
     Right: StepConcat<Other>,
 {
     type Output = SeqSteps<Left, <Right as StepConcat<Other>>::Output>;
+}
+
+impl<Left, Right, Other> StepConcat<Other> for RouteSteps<Left, Right> {
+    type Output = SeqSteps<RouteSteps<Left, Right>, Other>;
+}
+
+impl<Left, Right, Other> StepConcat<Other> for ParSteps<Left, Right> {
+    type Output = SeqSteps<ParSteps<Left, Right>, Other>;
+}
+
+impl<Inner, const POLICY_ID: u16, Other> StepConcat<Other> for PolicySteps<Inner, POLICY_ID> {
+    type Output = SeqSteps<PolicySteps<Inner, POLICY_ID>, Other>;
 }
 
 impl StepRoleSet for StepNil {
@@ -324,12 +349,40 @@ where
     const ROLE_LANE_SET: RoleLaneSet = Left::ROLE_LANE_SET.union(Right::ROLE_LANE_SET);
 }
 
+impl<Left, Right> StepRoleSet for RouteSteps<Left, Right>
+where
+    Left: StepRoleSet,
+    Right: StepRoleSet,
+{
+    const ROLE_LANE_SET: RoleLaneSet = Left::ROLE_LANE_SET.union(Right::ROLE_LANE_SET);
+}
+
+impl<Left, Right> StepRoleSet for ParSteps<Left, Right>
+where
+    Left: StepRoleSet,
+    Right: StepRoleSet,
+{
+    const ROLE_LANE_SET: RoleLaneSet = Left::ROLE_LANE_SET.union(Right::ROLE_LANE_SET);
+}
+
+impl<Inner, const POLICY_ID: u16> StepRoleSet for PolicySteps<Inner, POLICY_ID>
+where
+    Inner: StepRoleSet,
+{
+    const ROLE_LANE_SET: RoleLaneSet = Inner::ROLE_LANE_SET;
+}
+
 impl<From, To, Msg, const LANE: u8> PolicyEligible
     for StepCons<SendStep<From, To, Msg, LANE>, StepNil>
 where
     From: KnownRole + RoleMarker,
     To: KnownRole + RoleMarker,
     Msg: MessageSpec + SendableLabel + crate::global::MessageControlSpec,
+{
+}
+
+impl<Inner, const POLICY_ID: u16> PolicyEligible for PolicySteps<Inner, POLICY_ID> where
+    Inner: PolicyEligible
 {
 }
 
@@ -481,10 +534,68 @@ where
     >>::Output;
 }
 
+impl<Local, Left, Right> ProjectRole<Local> for RouteSteps<Left, Right>
+where
+    Left: ProjectRole<Local>,
+    Right: ProjectRole<Local>,
+    <Left as ProjectRole<Local>>::Output: StepConcat<<Right as ProjectRole<Local>>::Output>,
+    <<Left as ProjectRole<Local>>::Output as StepConcat<
+        <Right as ProjectRole<Local>>::Output,
+    >>::Output: StepCount,
+{
+    type Output = <<Left as ProjectRole<Local>>::Output as StepConcat<
+        <Right as ProjectRole<Local>>::Output,
+    >>::Output;
+}
+
+impl<Local, Left, Right> ProjectRole<Local> for ParSteps<Left, Right>
+where
+    Left: ProjectRole<Local>,
+    Right: ProjectRole<Local>,
+    <Left as ProjectRole<Local>>::Output: StepConcat<<Right as ProjectRole<Local>>::Output>,
+    <<Left as ProjectRole<Local>>::Output as StepConcat<
+        <Right as ProjectRole<Local>>::Output,
+    >>::Output: StepCount,
+{
+    type Output = <<Left as ProjectRole<Local>>::Output as StepConcat<
+        <Right as ProjectRole<Local>>::Output,
+    >>::Output;
+}
+
+impl<Local, Inner, const POLICY_ID: u16> ProjectRole<Local> for PolicySteps<Inner, POLICY_ID>
+where
+    Inner: ProjectRole<Local>,
+{
+    type Output = <Inner as ProjectRole<Local>>::Output;
+}
+
 impl<Left, Right> StepCount for SeqSteps<Left, Right>
 where
     Left: StepCount,
     Right: StepCount,
 {
     const LEN: usize = Left::LEN + Right::LEN;
+}
+
+impl<Left, Right> StepCount for RouteSteps<Left, Right>
+where
+    Left: StepCount,
+    Right: StepCount,
+{
+    const LEN: usize = Left::LEN + Right::LEN;
+}
+
+impl<Left, Right> StepCount for ParSteps<Left, Right>
+where
+    Left: StepCount,
+    Right: StepCount,
+{
+    const LEN: usize = Left::LEN + Right::LEN;
+}
+
+impl<Inner, const POLICY_ID: u16> StepCount for PolicySteps<Inner, POLICY_ID>
+where
+    Inner: StepCount,
+{
+    const LEN: usize = Inner::LEN;
 }

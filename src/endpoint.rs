@@ -26,6 +26,8 @@ type KernelEndpoint<'r, const ROLE: u8, K, Mint> =
     carrier::KernelCursorEndpoint<'r, ROLE, K, EpochTbl, Mint, EndpointBinding<'r>>;
 type KernelRouteBranch<'r, const ROLE: u8, K, Mint> =
     carrier::KernelRouteBranch<'r, ROLE, K, EpochTbl, Mint, EndpointBinding<'r>>;
+type RouteBranchStash<'r, const ROLE: u8, K, Mint> =
+    unsafe fn(*mut KernelEndpoint<'r, ROLE, K, Mint>, KernelRouteBranch<'r, ROLE, K, Mint>);
 
 struct EndpointInner<'r, const ROLE: u8, K, Mint>
 where
@@ -56,6 +58,7 @@ where
 {
     branch: Option<KernelRouteBranch<'r, ROLE, K, Mint>>,
     endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>,
+    stash: RouteBranchStash<'r, ROLE, K, Mint>,
     _borrow: core::marker::PhantomData<&'e mut EndpointCfg<'r, K, Mint>>,
     _local_only: crate::local::LocalOnly,
 }
@@ -99,10 +102,12 @@ where
     pub(crate) fn from_parts(
         endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>,
         branch: KernelRouteBranch<'r, ROLE, K, Mint>,
+        stash: RouteBranchStash<'r, ROLE, K, Mint>,
     ) -> Self {
         Self {
             branch: Some(branch),
             endpoint,
+            stash,
             _borrow: core::marker::PhantomData,
             _local_only: crate::local::LocalOnly::new(),
         }
@@ -130,6 +135,16 @@ where
     'cfg: 'r,
     Mint: MintConfigMarker,
 {
+    #[inline]
+    unsafe fn stash_route_branch_preview(
+        endpoint: *mut KernelEndpoint<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
+        branch: KernelRouteBranch<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
+    ) {
+        unsafe {
+            (&mut *endpoint).stash_pending_branch_preview(branch);
+        }
+    }
+
     #[inline]
     pub fn flow<'e, M>(
         &'e mut self,
@@ -163,7 +178,11 @@ where
         RouteBranch<'e, 'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
     > {
         let branch = unsafe { (&mut *self.inner.endpoint).offer().await? };
-        Ok(RouteBranch::from_parts(self.inner.endpoint, branch))
+        Ok(RouteBranch::from_parts(
+            self.inner.endpoint,
+            branch,
+            Self::stash_route_branch_preview,
+        ))
     }
 }
 
@@ -214,7 +233,7 @@ where
             return;
         };
         unsafe {
-            K::stash_route_branch_preview::<ROLE, Mint>(self.endpoint, branch);
+            (self.stash)(self.endpoint, branch);
         }
     }
 }

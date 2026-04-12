@@ -1,50 +1,45 @@
 error[E0080]: evaluation panicked: route scope recorded conflicting controller policy annotations
-  --> tests/ui/g-route-policy-mismatch.rs:95:14
-   |
-95 | > = project(&g::freeze(&ROUTE));
-   |              ^^^^^^^^^^^^^^^^^ evaluation of `CONTROLLER` failed inside this call
-   |
-note: inside `freeze::<StepCons<SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<5>, GenericCapToken<UnitControl<149, 5, 7, 1024>>, CanonicalControl<UnitControl<149, 5, 7, 1024>>>>, StepCons<SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<6>, GenericCapToken<UnitControl<150, 6, 7, 1024>>, CanonicalControl<UnitControl<150, 6, 7, 1024>>>>, StepNil>>>`
-  --> src/global/program.rs
-   |
-   |     validate_all_roles(&summary);
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ --> src/global/program.rs
+  |
+  |         validate_all_roles(&summary);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::ValidatedProgram::<hibana::g::advanced::steps::RouteSteps<hibana::g::advanced::steps::PolicySteps<hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<5>, hibana::substrate::cap::GenericCapToken<control_kinds::UnitControl<149, 5, 7, 1024>>, hibana::g::advanced::CanonicalControl<control_kinds::UnitControl<149, 5, 7, 1024>>>>, hibana::g::advanced::steps::StepNil>, 9>, hibana::g::advanced::steps::PolicySteps<hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<6>, hibana::substrate::cap::GenericCapToken<control_kinds::UnitControl<150, 6, 7, 1024>>, hibana::g::advanced::CanonicalControl<control_kinds::UnitControl<150, 6, 7, 1024>>>>, hibana::g::advanced::steps::StepNil>, 10>>>::STAMP` failed inside this call
+  |
 note: inside `hibana::global::compiled::seal::validate_all_roles`
-  --> src/global/compiled/seal.rs
-   |
-   |     ProjectionSeal::<0>::validate_compiled_layout(summary.view());
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ --> src/global/compiled/seal.rs
+  |
+  |     ProjectionSeal::<0>::validate_compiled_layout(summary.view());
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_compiled_layout`
-  --> src/global/compiled/seal.rs
-   |
-   |         Self::validate_route_projection_guarantees(view);
-   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ --> src/global/compiled/seal.rs
+  |
+  |         Self::validate_route_projection_guarantees(view);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_route_projection_guarantees`
-  --> src/global/compiled/seal.rs
-   |
-   | /                 Self::validate_route_scope(
-   | |                     view,
-   | |                     scope_markers,
-   | |                     marker.scope_id,
-   | |                     marker.controller_role,
-   | |                     marker.linger,
-   | |                 );
-   | |_________________^
+ --> src/global/compiled/seal.rs
+  |
+  | /                 Self::validate_route_scope(
+  | |                     view,
+  | |                     scope_markers,
+  | |                     marker.scope_id,
+  | |                     marker.controller_role,
+  | |                     marker.linger,
+  | |                 );
+  | |_________________^
 note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_route_scope`
-  --> src/global/compiled/seal.rs
-   |
-   | /         Self::validate_route_policy_consistency(
-   | |             view, scope_id, arm0_start, arm0_end, arm1_start, arm1_end,
-   | |         );
-   | |_________^
+ --> src/global/compiled/seal.rs
+  |
+  | /         Self::validate_route_policy_consistency(
+  | |             view, scope_id, arm0_start, arm0_end, arm1_start, arm1_end,
+  | |         );
+  | |_________^
 note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_route_policy_consistency`
-  --> src/global/compiled/seal.rs
-   |
-   |                     panic!("route scope recorded conflicting controller policy annotations");
-   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+ --> src/global/compiled/seal.rs
+  |
+  |                     panic!("route scope recorded conflicting controller policy annotations");
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
 
 note: erroneous constant encountered
-  --> tests/ui/g-route-policy-mismatch.rs:95:13
-   |
-95 | > = project(&g::freeze(&ROUTE));
-   |             ^^^^^^^^^^^^^^^^^^
+ --> src/global/program.rs
+  |
+  |     ValidatedProgram::<Steps>::STAMP
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

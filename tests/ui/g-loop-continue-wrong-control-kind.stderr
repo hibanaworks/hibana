@@ -11,18 +11,6 @@ note: inside `hibana::global::ControlLabelSpec::from_message::<hibana::global::L
   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
 
 note: erroneous constant encountered
- --> src/global/const_dsl.rs
-  |
-  |         Some(<M as MessageControlSpec>::CONTROL_SPEC)
-  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-note: erroneous constant encountered
- --> src/global/program.rs
-  |
-  |             Steps::EFF,
-  |             ^^^^^^^^^^
-
-note: erroneous constant encountered
  --> src/global.rs
   |
   |         LoopControlMeaning::from_control_spec(Some(<Msg as MessageControlSpec>::CONTROL_SPEC))
@@ -31,11 +19,17 @@ note: erroneous constant encountered
 note: erroneous constant encountered
  --> src/global/program.rs
   |
-  |             <Steps as TailLoopControl>::IS_LOOP_CONTROL,
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         <StepCons<SendStep<From, To, Msg, LANE>, StepNil> as TailLoopControl>::IS_LOOP_CONTROL,
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-note: the above error was encountered while instantiating `fn ProgramSource::<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<48>, GenericCapToken<LoopContinueKind>, ExternalControl<LoopContinueKind>>>, StepNil>>::build`
+note: erroneous constant encountered
+ --> src/global/program.rs
+  |
+  |         let _ = <Steps as BuildProgramSource>::SOURCE.scope_budget();
+  |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn Program::<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<48>, GenericCapToken<LoopContinueKind>, ExternalControl<LoopContinueKind>>>, StepNil>>::build`
  --> src/global.rs
   |
-  |     ProgramSource::build()
-  |     ^^^^^^^^^^^^^^^^^^^^^^
+  |     Program::build()
+  |     ^^^^^^^^^^^^^^^^

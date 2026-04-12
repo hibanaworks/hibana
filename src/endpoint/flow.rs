@@ -7,7 +7,6 @@ use crate::{
     binding::BindingHandle,
     control::cap::mint::{AllowsCanonical, EpochTbl, MintConfigMarker},
     endpoint::{SendResult, carrier, control::ControlOutcome},
-    global::typestate::{SendMeta, StateIndex},
     global::{ControlHandling, ControlPayloadKind, MessageSpec, SendableLabel},
 };
 
@@ -15,24 +14,6 @@ type EndpointBinding<'r> = BindingHandle<'r>;
 type EndpointCfg<'r, K, Mint> = carrier::EndpointCfg<K, Mint, EndpointBinding<'r>>;
 type KernelEndpoint<'r, const ROLE: u8, K, Mint> =
     carrier::KernelCursorEndpoint<'r, ROLE, K, EpochTbl, Mint, EndpointBinding<'r>>;
-
-#[derive(Clone, Copy)]
-pub(crate) struct SendPreview {
-    meta: SendMeta,
-    cursor_index: StateIndex,
-}
-
-impl SendPreview {
-    #[inline]
-    pub(crate) const fn new(meta: SendMeta, cursor_index: StateIndex) -> Self {
-        Self { meta, cursor_index }
-    }
-
-    #[inline]
-    pub(crate) const fn into_parts(self) -> (SendMeta, StateIndex) {
-        (self.meta, self.cursor_index)
-    }
-}
 
 /// Affine flow handle for a pending send transition.
 ///
@@ -45,7 +26,7 @@ where
     Mint: MintConfigMarker,
 {
     endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>,
-    preview: SendPreview,
+    preview: crate::endpoint::kernel::SendPreview,
     _msg: PhantomData<(&'e mut EndpointCfg<'r, K, Mint>, M)>,
 }
 
@@ -92,7 +73,7 @@ where
 {
     pub(crate) fn new(
         endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>,
-        preview: SendPreview,
+        preview: crate::endpoint::kernel::SendPreview,
     ) -> Self {
         Self {
             endpoint,
@@ -101,7 +82,12 @@ where
         }
     }
 
-    fn into_parts(self) -> (*mut KernelEndpoint<'r, ROLE, K, Mint>, SendPreview) {
+    fn into_parts(
+        self,
+    ) -> (
+        *mut KernelEndpoint<'r, ROLE, K, Mint>,
+        crate::endpoint::kernel::SendPreview,
+    ) {
         (self.endpoint, self.preview)
     }
 }

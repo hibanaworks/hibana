@@ -13,8 +13,8 @@ note: required by a bound in `route`
    | pub const fn route<LeftSteps, RightSteps>(
    |              ----- required by a bound in this function
 ...
-   |         + RouteArmHead
-   |           ^^^^^^^^^^^^ required by this bound in `route`
+   |     LeftSteps: RouteArmHead + SameRouteController<RightSteps> + DistinctRouteLabels<RightSteps>,
+   |                ^^^^^^^^^^^^ required by this bound in `route`
 
 error[E0277]: `g::route(left, right)` arms must start with the same controller self-send
   --> tests/ui/g-route-policy-required.rs:13:14
@@ -31,8 +31,8 @@ note: required by a bound in `route`
    | pub const fn route<LeftSteps, RightSteps>(
    |              ----- required by a bound in this function
 ...
-   |         + SameRouteController<RightSteps>
-   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `route`
+   |     LeftSteps: RouteArmHead + SameRouteController<RightSteps> + DistinctRouteLabels<RightSteps>,
+   |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `route`
 
 error[E0277]: `g::route(left, right)` arms must use distinct labels
   --> tests/ui/g-route-policy-required.rs:13:14
@@ -49,26 +49,8 @@ note: required by a bound in `route`
    | pub const fn route<LeftSteps, RightSteps>(
    |              ----- required by a bound in this function
 ...
-   |         + DistinctRouteLabels<RightSteps>
-   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `route`
-
-error[E0277]: the trait bound `StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<3>, ()>>, StepNil>: hibana::global::RouteArmLoopHead` is not satisfied
-  --> tests/ui/g-route-policy-required.rs:13:14
-   |
-13 | > = g::route(LEFT_ARM, RIGHT_ARM);
-   |     -------- ^^^^^^^^ unsatisfied trait bound
-   |     |
-   |     required by a bound introduced by this call
-   |
-   = help: the trait `hibana::global::RouteArmLoopHead` is not implemented for `StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<3>, ()>>, StepNil>`
-note: required by a bound in `route`
-  --> src/global.rs
-   |
-   | pub const fn route<LeftSteps, RightSteps>(
-   |              ----- required by a bound in this function
-...
-   |         + RouteArmLoopHead,
-   |           ^^^^^^^^^^^^^^^^ required by this bound in `route`
+   |     LeftSteps: RouteArmHead + SameRouteController<RightSteps> + DistinctRouteLabels<RightSteps>,
+   |                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `route`
 
 error[E0277]: `g::route(left, right)` arms must begin with a controller self-send
   --> tests/ui/g-route-policy-required.rs:13:24
@@ -85,23 +67,14 @@ note: required by a bound in `route`
    | pub const fn route<LeftSteps, RightSteps>(
    |              ----- required by a bound in this function
 ...
-   |     RightSteps: RouteArmHead + TailLoopControl + RouteArmLoopHead,
+   |     RightSteps: RouteArmHead + TailLoopControl,
    |                 ^^^^^^^^^^^^ required by this bound in `route`
 
-error[E0277]: the trait bound `StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<4>, ()>>, StepNil>: hibana::global::RouteArmLoopHead` is not satisfied
-  --> tests/ui/g-route-policy-required.rs:13:24
+error[E0308]: mismatched types
+  --> tests/ui/g-route-policy-required.rs:13:5
    |
 13 | > = g::route(LEFT_ARM, RIGHT_ARM);
-   |     --------           ^^^^^^^^^ unsatisfied trait bound
-   |     |
-   |     required by a bound introduced by this call
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Program<StepCons<..., ...>>`, found `Program<RouteSteps<..., ...>>`
    |
-   = help: the trait `hibana::global::RouteArmLoopHead` is not implemented for `StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<4>, ()>>, StepNil>`
-note: required by a bound in `route`
-  --> src/global.rs
-   |
-   | pub const fn route<LeftSteps, RightSteps>(
-   |              ----- required by a bound in this function
-...
-   |     RightSteps: RouteArmHead + TailLoopControl + RouteArmLoopHead,
-   |                                                  ^^^^^^^^^^^^^^^^ required by this bound in `route`
+   = note: expected struct `Program<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<3>, ()>>, StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<4>, ()>>, StepNil>>>`
+              found struct `Program<RouteSteps<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<3>, ()>>, StepNil>, StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<4>, ()>>, StepNil>>>`

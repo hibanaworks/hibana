@@ -4,12 +4,17 @@
 //! layer without expanding the public API.
 
 mod driver;
+mod lease;
 mod program;
 mod role;
 mod seal;
 
 pub(crate) use self::{
     driver::{LoweringSummary, LoweringView, ProgramStamp},
+    lease::{
+        LoweringLeaseMode, init_compiled_program_image_from_summary,
+        init_compiled_role_image_from_summary, with_lowering_lease,
+    },
     program::{
         CompiledProgramImage, ControlSemanticKind, ControlSemanticsTable, DynamicPolicySite,
     },
@@ -19,6 +24,11 @@ pub(crate) use self::{
 
 #[cfg(test)]
 pub(crate) use self::{
+    lease::{
+        init_compiled_role_image, with_compiled_program, with_compiled_programs,
+        with_compiled_role_image,
+        with_compiled_role_in_slot,
+    },
     program::{CompiledProgram, MAX_COMPILED_PROGRAM_RESOURCES},
     role::CompiledRole,
 };

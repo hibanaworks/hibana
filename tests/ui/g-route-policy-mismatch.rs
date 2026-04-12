@@ -6,20 +6,23 @@ use hibana::substrate::cap::{
 };
 use hibana::g::{self, Msg, Role};
 use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
-use hibana::g::advanced::steps::{SendStep, StepConcat, StepCons, StepNil};
+use hibana::g::advanced::steps::{PolicySteps, RouteSteps, SendStep, StepCons, StepNil};
 
 type ArmWithPolicyKind = control_kinds::UnitControl<0x95, 5, 7, 0x0400>;
 type ArmWithoutPolicyKind = control_kinds::UnitControl<0x96, 6, 7, 0x0400>;
 
-const ARM_WITH_POLICY: g::ProgramSource<
-    StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<5, GenericCapToken<ArmWithPolicyKind>, CanonicalControl<ArmWithPolicyKind>>,
-            0,
+const ARM_WITH_POLICY: g::Program<
+    PolicySteps<
+        StepCons<
+            SendStep<
+                Role<0>,
+                Role<0>,
+                Msg<5, GenericCapToken<ArmWithPolicyKind>, CanonicalControl<ArmWithPolicyKind>>,
+                0,
+            >,
+            StepNil,
         >,
-        StepNil,
+        9,
     >,
 > =
     g::send::<
@@ -29,15 +32,18 @@ const ARM_WITH_POLICY: g::ProgramSource<
         0,
     >()
     .policy::<9>();
-const ARM_WITHOUT_POLICY: g::ProgramSource<
-    StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<6, GenericCapToken<ArmWithoutPolicyKind>, CanonicalControl<ArmWithoutPolicyKind>>,
-            0,
+const ARM_WITHOUT_POLICY: g::Program<
+    PolicySteps<
+        StepCons<
+            SendStep<
+                Role<0>,
+                Role<0>,
+                Msg<6, GenericCapToken<ArmWithoutPolicyKind>, CanonicalControl<ArmWithoutPolicyKind>>,
+                0,
+            >,
+            StepNil,
         >,
-        StepNil,
+        10,
     >,
 > =
     g::send::<
@@ -48,41 +54,53 @@ const ARM_WITHOUT_POLICY: g::ProgramSource<
     >()
     .policy::<10>();
 
-const ROUTE: g::ProgramSource<
-    <StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<5, GenericCapToken<ArmWithPolicyKind>, CanonicalControl<ArmWithPolicyKind>>,
-            0,
-        >,
-        StepNil,
-    > as StepConcat<
-        StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<6, GenericCapToken<ArmWithoutPolicyKind>, CanonicalControl<ArmWithoutPolicyKind>>,
-                0,
+const ROUTE: g::Program<
+    RouteSteps<
+        PolicySteps<
+            StepCons<
+                SendStep<
+                    Role<0>,
+                    Role<0>,
+                    Msg<5, GenericCapToken<ArmWithPolicyKind>, CanonicalControl<ArmWithPolicyKind>>,
+                    0,
+                >,
+                StepNil,
             >,
-            StepNil,
+            9,
         >,
-    >>::Output,
+        PolicySteps<
+            StepCons<
+                SendStep<
+                    Role<0>,
+                    Role<0>,
+                    Msg<6, GenericCapToken<ArmWithoutPolicyKind>, CanonicalControl<ArmWithoutPolicyKind>>,
+                    0,
+                >,
+                StepNil,
+            >,
+            10,
+        >,
+    >,
 > = g::route(ARM_WITH_POLICY, ARM_WITHOUT_POLICY);
 
 const CONTROLLER: RoleProgram<
     'static,
     0,
-    <StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<5, GenericCapToken<ArmWithPolicyKind>, CanonicalControl<ArmWithPolicyKind>>,
-            0,
+    RouteSteps<
+        PolicySteps<
+            StepCons<
+                SendStep<
+                    Role<0>,
+                    Role<0>,
+                    Msg<5, GenericCapToken<ArmWithPolicyKind>, CanonicalControl<ArmWithPolicyKind>>,
+                    0,
+                >,
+                StepNil,
+            >,
+            9,
         >,
-        StepNil,
-    > as StepConcat<
-        StepCons<
+        PolicySteps<
+            StepCons<
             SendStep<
                 Role<0>,
                 Role<0>,
@@ -91,7 +109,9 @@ const CONTROLLER: RoleProgram<
             >,
             StepNil,
         >,
-    >>::Output,
-> = project(&g::freeze(&ROUTE));
+            10,
+        >,
+    >,
+> = project(&ROUTE);
 
 fn main() {}

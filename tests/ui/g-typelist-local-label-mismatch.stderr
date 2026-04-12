@@ -31,5 +31,5 @@ note: required by a bound in `project`
    | pub const fn project<'prog, const ROLE: u8, Steps, Mint>(
    |              ------- required by a bound in this function
 ...
-   |     Steps: ProjectRole<Role<ROLE>>,
-   |            ^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `project`
+   |     Steps: BuildProgramSource + ProjectRole<Role<ROLE>>,
+   |                                 ^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `project`

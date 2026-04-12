@@ -501,7 +501,9 @@ impl LoweringSummary {
 
     #[inline(always)]
     pub(crate) const fn control_markers(&self) -> &[ControlMarker] {
-        unsafe { core::slice::from_raw_parts(self.control_markers.as_ptr(), self.control_marker_len) }
+        unsafe {
+            core::slice::from_raw_parts(self.control_markers.as_ptr(), self.control_marker_len)
+        }
     }
 
     #[inline(always)]

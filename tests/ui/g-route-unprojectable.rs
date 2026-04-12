@@ -10,12 +10,12 @@ mod control_kinds;
 use hibana::substrate::cap::GenericCapToken;
 use hibana::g::{self};
 use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
-use hibana::g::advanced::steps::{SendStep, SeqSteps, StepConcat, StepCons, StepNil};
+use hibana::g::advanced::steps::{RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
 
 type RouteArm100Kind = control_kinds::RouteControl<100, 0>;
 type RouteArm101Kind = control_kinds::RouteControl<101, 0>;
 
-const ARM0: g::ProgramSource<
+const ARM0: g::Program<
     SeqSteps<
         StepCons<
             SendStep<
@@ -43,7 +43,7 @@ const ARM0: g::ProgramSource<
     ),
 );
 
-const ARM1: g::ProgramSource<
+const ARM1: g::Program<
     SeqSteps<
         StepCons<
             SendStep<
@@ -78,21 +78,22 @@ const ARM1: g::ProgramSource<
 );
 
 // No dynamic policy here -> unprojectable for Passive.
-const ROUTE: g::ProgramSource<
-    <SeqSteps<
-        StepCons<
-            SendStep<
-                g::Role<0>,
-                g::Role<0>,
-                g::Msg<100, GenericCapToken<RouteArm100Kind>, CanonicalControl<RouteArm100Kind>>,
-            >,
-            StepNil,
-        >,
+const ROUTE: g::Program<
+    RouteSteps<
         SeqSteps<
-            StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<42, ()>>, StepNil>,
-            StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<99, ()>>, StepNil>,
+            StepCons<
+                SendStep<
+                    g::Role<0>,
+                    g::Role<0>,
+                    g::Msg<100, GenericCapToken<RouteArm100Kind>, CanonicalControl<RouteArm100Kind>>,
+                >,
+                StepNil,
+            >,
+            SeqSteps<
+                StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<42, ()>>, StepNil>,
+                StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<99, ()>>, StepNil>,
+            >,
         >,
-    > as StepConcat<
         SeqSteps<
             StepCons<
                 SendStep<
@@ -110,27 +111,28 @@ const ROUTE: g::ProgramSource<
                 >,
             >,
         >,
-    >>::Output,
+    >,
 > = g::route(ARM0, ARM1);
 
 // Force evaluation by projecting to the passive role.
 static PASSIVE_PROGRAM: RoleProgram<
     'static,
     1,
-    <SeqSteps<
-        StepCons<
-            SendStep<
-                g::Role<0>,
-                g::Role<0>,
-                g::Msg<100, GenericCapToken<RouteArm100Kind>, CanonicalControl<RouteArm100Kind>>,
-            >,
-            StepNil,
-        >,
+    RouteSteps<
         SeqSteps<
-            StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<42, ()>>, StepNil>,
-            StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<99, ()>>, StepNil>,
+            StepCons<
+                SendStep<
+                    g::Role<0>,
+                    g::Role<0>,
+                    g::Msg<100, GenericCapToken<RouteArm100Kind>, CanonicalControl<RouteArm100Kind>>,
+                >,
+                StepNil,
+            >,
+            SeqSteps<
+                StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<42, ()>>, StepNil>,
+                StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<99, ()>>, StepNil>,
+            >,
         >,
-    > as StepConcat<
         SeqSteps<
             StepCons<
                 SendStep<
@@ -148,8 +150,8 @@ static PASSIVE_PROGRAM: RoleProgram<
                 >,
             >,
         >,
-    >>::Output,
-> = project(&g::freeze(&ROUTE));
+    >,
+> = project(&ROUTE);
 
 fn main() {
     let _ = &PASSIVE_PROGRAM;

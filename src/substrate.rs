@@ -168,36 +168,42 @@ where
     }
 }
 
+/// Everyday runtime setup owners for protocol implementors.
 pub mod runtime {
     pub use crate::runtime::config::{Clock, Config, CounterClock};
     pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse};
 }
 
+/// Canonical management prefixes and payload owners.
 pub mod mgmt {
     pub use crate::runtime::mgmt::{
         LoadBegin, LoadChunk, LoadReport, LoadRequest, MgmtError, ROLE_CLUSTER, ROLE_CONTROLLER,
         Reply, Request, SlotRequest, StatsResp, SubscribeReq, TransitionReport,
     };
 
+    /// Canonical tap-event owner for management observation.
     pub mod tap {
         pub use crate::observe::core::TapEvent;
     }
 
+    /// Canonical request/reply management prefix.
     pub mod request_reply {
         pub use crate::runtime::mgmt::RequestReplyPrefixSteps as PrefixSteps;
 
-        pub const PREFIX: crate::g::ProgramSource<PrefixSteps> =
+        pub const PREFIX: crate::g::Program<PrefixSteps> =
             crate::runtime::mgmt::REQUEST_REPLY_PREFIX;
     }
 
+    /// Canonical observe-stream management prefix.
     pub mod observe_stream {
         pub use crate::runtime::mgmt::ObserveStreamPrefixSteps as PrefixSteps;
 
-        pub const PREFIX: crate::g::ProgramSource<PrefixSteps> =
+        pub const PREFIX: crate::g::Program<PrefixSteps> =
             crate::runtime::mgmt::OBSERVE_STREAM_PREFIX;
     }
 }
 
+/// Canonical binding and ingress classification surface.
 pub mod binding {
     pub use crate::binding::{
         BindingSlot, Channel, ChannelDirection, ChannelKey, ChannelStore, IncomingClassification,
@@ -205,6 +211,7 @@ pub mod binding {
     };
 }
 
+/// Canonical resolver/policy surface plus advanced metadata buckets.
 pub mod policy {
     pub use super::cluster::core::{
         DynamicResolution, ResolverContext, ResolverError, ResolverRef,
@@ -213,6 +220,7 @@ pub mod policy {
         ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider,
     };
 
+    /// Advanced fixed metadata keys for resolver-context attributes.
     pub mod core {
         pub use crate::transport::context::core::{
             CONGESTION_MARKS, CONGESTION_WINDOW, IN_FLIGHT_BYTES, LANE, LATENCY_US, LATEST_ACK_PN,
@@ -221,13 +229,16 @@ pub mod policy {
         };
     }
 
+    /// Advanced EPF image/slot owners.
     pub mod epf {
         pub use crate::epf::verifier::Header;
         pub use crate::epf::vm::Slot;
     }
 }
 
+/// Canonical capability-token surface plus advanced mint/control-kind owners.
 pub mod cap {
+    /// Deep-dive mint details and the standard control-kind catalogue.
     pub mod advanced {
         pub use super::super::control::cap::mint::{
             AllowsCanonical, CAP_HANDLE_LEN, CapError, CapsMask, ControlMint, EpochTbl, MintConfig,
@@ -249,10 +260,12 @@ pub mod cap {
     pub use crate::control::types::{Many, One};
 }
 
+/// Canonical wire codec surface.
 pub mod wire {
     pub use crate::transport::wire::{CodecError, Payload, WireDecode, WireEncode};
 }
 
+/// Canonical transport I/O surface plus observation/detail owners.
 pub mod transport {
     pub use crate::transport::{
         LocalDirection, Outgoing, SendMeta, TransportAlgorithm, TransportError, TransportEvent,
@@ -327,12 +340,9 @@ mod tests {
     const QUEUE_CAPACITY: usize = 16;
     const PAYLOAD_CAPACITY: usize = 96;
 
-    const ROUTE_HEAVY_PROGRAM: g::Program<huge_program::ProgramSteps> =
-        g::freeze(&huge_program::PROGRAM);
-    const LINEAR_HEAVY_PROGRAM: g::Program<linear_program::ProgramSteps> =
-        g::freeze(&linear_program::PROGRAM);
-    const FANOUT_HEAVY_PROGRAM: g::Program<fanout_program::ProgramSteps> =
-        g::freeze(&fanout_program::PROGRAM);
+    static ROUTE_HEAVY_PROGRAM: g::Program<huge_program::ProgramSteps> = huge_program::PROGRAM;
+    static LINEAR_HEAVY_PROGRAM: g::Program<linear_program::ProgramSteps> = linear_program::PROGRAM;
+    static FANOUT_HEAVY_PROGRAM: g::Program<fanout_program::ProgramSteps> = fanout_program::PROGRAM;
 
     std::thread_local! {
         static FIXTURE_CLOCK: CounterClock = const { CounterClock::new() };
@@ -813,7 +823,8 @@ mod tests {
         ),
     ) -> RuntimeShapeMetrics
     where
-        Steps: hibana::g::advanced::steps::ProjectRole<g::Role<0>>
+        Steps: crate::global::program::BuildProgramSource
+            + hibana::g::advanced::steps::ProjectRole<g::Role<0>>
             + hibana::g::advanced::steps::ProjectRole<g::Role<1>>,
     {
         let bounds = current_thread_stack_bounds();

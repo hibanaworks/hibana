@@ -61,11 +61,11 @@ use crate::{
         affine::LaneGuard,
         control::{ControlOutcome, SessionControlCtx},
     },
-    rendezvous::core::EndpointLeaseId,
     epf::{self, AbortInfo, Action, vm::Slot},
     observe::core::{TapEvent, emit},
     observe::scope::ScopeTrace,
     observe::{events, ids, policy_abort, policy_trap},
+    rendezvous::core::EndpointLeaseId,
     rendezvous::{port::Port, tables::LoopDisposition},
     runtime::consts::LabelUniverse,
     transport::{
@@ -435,7 +435,7 @@ pub struct CursorEndpoint<
     pub(super) route_state: LeasedState<RouteState>,
     pub(super) frontier_state: LeasedState<FrontierState>,
     pub(super) binding_inbox: LeasedState<BindingInbox>,
-    pub(super) pending_branch_preview: Option<PendingBranchPreview>,
+    pub(super) pending_branch_preview: Option<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>,
     pub(super) liveness_policy: crate::runtime::config::LivenessPolicy,
     pub(super) mint: StoredMint<Mint>,
     pub(super) binding: B,
@@ -466,73 +466,36 @@ pub struct RouteBranch<
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct PendingBranchPreview {
-    pub(super) label: u8,
-    pub(super) cursor_index: StateIndex,
-    pub(super) transport_payload_len: usize,
-    pub(super) transport_payload_lane: u8,
-    pub(super) binding_channel: Option<crate::binding::Channel>,
-    pub(super) branch_meta: BranchMeta,
+pub(crate) struct SendPreview {
+    meta: SendMeta,
+    cursor_index: StateIndex,
 }
 
-impl PendingBranchPreview {
+impl SendPreview {
     #[inline]
-    pub(super) const fn from_branch<
-        'r,
-        const ROLE: u8,
-        T: Transport + 'r,
-        U,
-        C,
-        E: EpochTable,
-        const MAX_RV: usize,
-        Mint,
-        B: BindingSlot,
-    >(
-        branch: &RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    ) -> Self
-    where
-        U: LabelUniverse,
-        C: crate::runtime::config::Clock,
-        Mint: MintConfigMarker,
-    {
+    pub(crate) const fn new(meta: SendMeta, cursor_index: StateIndex) -> Self {
+        Self { meta, cursor_index }
+    }
+
+    #[inline]
+    pub(crate) const fn into_parts(self) -> (SendMeta, StateIndex) {
+        (self.meta, self.cursor_index)
+    }
+}
+
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B> Clone
+    for RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
+{
+    #[inline]
+    fn clone(&self) -> Self {
         Self {
-            label: branch.label,
-            cursor_index: branch.cursor_index,
-            transport_payload_len: branch.transport_payload_len,
-            transport_payload_lane: branch.transport_payload_lane,
-            binding_channel: branch.binding_channel,
-            branch_meta: branch.branch_meta,
-        }
-    }
-
-    #[inline]
-    pub(super) fn matches_send_meta(self, meta: SendMeta) -> bool {
-        self.branch_meta.kind == BranchKind::ArmSendHint
-            && self.label == meta.label
-            && self.branch_meta.scope_id == meta.scope
-            && meta.route_arm == Some(self.branch_meta.selected_arm)
-    }
-
-    #[inline]
-    pub(super) fn into_branch<
-        'r,
-        const ROLE: u8,
-        T: Transport + 'r,
-        U,
-        C,
-        E: EpochTable,
-        const MAX_RV: usize,
-        Mint,
-        B: BindingSlot,
-    >(
-        self,
-    ) -> RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
-    where
-        U: LabelUniverse,
-        C: crate::runtime::config::Clock,
-        Mint: MintConfigMarker,
-    {
-        RouteBranch {
             label: self.label,
             cursor_index: self.cursor_index,
             transport_payload_len: self.transport_payload_len,
@@ -541,6 +504,25 @@ impl PendingBranchPreview {
             branch_meta: self.branch_meta,
             _cfg: core::marker::PhantomData,
         }
+    }
+}
+
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
+    RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
+{
+    #[inline]
+    pub(super) fn matches_send_meta(&self, meta: SendMeta) -> bool {
+        self.branch_meta.kind == BranchKind::ArmSendHint
+            && self.label == meta.label
+            && self.branch_meta.scope_id == meta.scope
+            && meta.route_arm == Some(self.branch_meta.selected_arm)
     }
 }
 
@@ -720,24 +702,22 @@ where
         &mut self,
         branch: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     ) {
-        self.pending_branch_preview = Some(PendingBranchPreview::from_branch(&branch));
+        self.pending_branch_preview = Some(branch);
     }
 
     #[inline]
     pub(super) fn take_pending_branch_preview(
         &mut self,
     ) -> Option<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
-        self.pending_branch_preview
-            .take()
-            .map(PendingBranchPreview::into_branch)
+        self.pending_branch_preview.take()
     }
 
     #[inline]
     fn take_matching_pending_send_branch_preview(
         &mut self,
         meta: SendMeta,
-    ) -> Option<PendingBranchPreview> {
-        let preview = self.pending_branch_preview?;
+    ) -> Option<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
+        let preview = self.pending_branch_preview.as_ref().cloned()?;
         if preview.matches_send_meta(meta) {
             self.pending_branch_preview = None;
             Some(preview)
@@ -1717,7 +1697,7 @@ where
     }
 
     /// Preview the current send transition without mutating endpoint state.
-    pub(super) fn preview_flow_meta<M>(&mut self) -> SendResult<crate::endpoint::flow::SendPreview>
+    pub(super) fn preview_flow_meta<M>(&mut self) -> SendResult<crate::endpoint::kernel::SendPreview>
     where
         M: MessageSpec + SendableLabel,
         T: Transport + 'r,
@@ -1861,7 +1841,7 @@ where
             };
 
             if current_meta.label == target_label {
-                return Ok(crate::endpoint::flow::SendPreview::new(
+                return Ok(crate::endpoint::kernel::SendPreview::new(
                     current_meta,
                     checked_state_index(idx).ok_or(SendError::PhaseInvariant)?,
                 ));
@@ -2335,7 +2315,9 @@ where
                 return Self::cached_recv_meta_from_recv(scope_end, recv_meta, None);
             }
             if let Some(send_meta) = self.cursor.try_send_meta_at(scope_end) {
-                return Self::cached_recv_meta_from_send(scope_end, scope_id, target_arm, send_meta);
+                return Self::cached_recv_meta_from_send(
+                    scope_end, scope_id, target_arm, send_meta,
+                );
             }
             return CachedRecvMeta::EMPTY;
         }
@@ -2888,7 +2870,7 @@ where
 
     pub(crate) fn send_with_preview_in_place<'a, M>(
         &'a mut self,
-        preview: crate::endpoint::flow::SendPreview,
+        preview: crate::endpoint::kernel::SendPreview,
         payload: Option<&'a <M as MessageSpec>::Payload>,
     ) -> impl core::future::Future<
         Output = SendResult<
@@ -3401,7 +3383,7 @@ where
 
     fn commit_pending_branch_preview(
         &mut self,
-        preview: PendingBranchPreview,
+        preview: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     ) -> RecvResult<Option<RecvMeta>> {
         let scope_id = preview.branch_meta.scope_id;
         let selected_arm = preview.branch_meta.selected_arm;
@@ -3484,7 +3466,7 @@ where
         &mut self,
         branch: &RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     ) -> RecvResult<Option<RecvMeta>> {
-        self.commit_pending_branch_preview(PendingBranchPreview::from_branch(branch))
+        self.commit_pending_branch_preview(branch.clone())
     }
 
     // Stage 2 of the offer kernel: resolve arm authority in fixed order
@@ -5330,12 +5312,11 @@ where
             && let Some(cluster) = self.control.cluster()
         {
             if self.public_slot_owned {
-                cluster
-                    .release_public_endpoint_slot_owned(
-                        self.public_rv,
-                        self.public_slot,
-                        self.public_generation,
-                    );
+                cluster.release_public_endpoint_slot_owned(
+                    self.public_rv,
+                    self.public_slot,
+                    self.public_generation,
+                );
             }
             self.public_generation = 0;
         }

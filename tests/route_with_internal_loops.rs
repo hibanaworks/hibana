@@ -14,7 +14,7 @@
 mod route_control_kinds;
 
 use hibana::g::advanced::steps::{
-    LoopBreakSteps, LoopDecisionSteps, SendStep, SeqSteps, StepConcat, StepCons, StepNil,
+    PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil,
 };
 use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
 use hibana::g::{self, Msg, Role};
@@ -37,29 +37,108 @@ type ArmBKind = route_control_kinds::RouteControl<LABEL_ARM_B, 0>;
 // -----------------------------------------------------------------------------
 
 const ROUTE_POLICY_ID: u16 = 0x1000;
+type ArmALoopContinueHead = PolicySteps<
+    StepCons<
+        SendStep<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            0,
+        >,
+        StepNil,
+    >,
+    { ROUTE_POLICY_ID + 1 },
+>;
+type ArmALoopBreakHead = PolicySteps<
+    StepCons<
+        SendStep<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+            0,
+        >,
+        StepNil,
+    >,
+    { ROUTE_POLICY_ID + 1 },
+>;
+type ArmALoopSteps =
+    RouteSteps<SeqSteps<ArmALoopContinueHead, StepCons<SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>>, ArmALoopBreakHead>;
+type ArmAMarkerHead = PolicySteps<
+    StepCons<
+        SendStep<
+            Role<0>,
+            Role<0>,
+            Msg<LABEL_ARM_A, GenericCapToken<ArmAKind>, CanonicalControl<ArmAKind>>,
+            0,
+        >,
+        StepNil,
+    >,
+    ROUTE_POLICY_ID,
+>;
+type ArmASteps = SeqSteps<ArmAMarkerHead, ArmALoopSteps>;
+type ArmBLoopContinueHead = PolicySteps<
+    StepCons<
+        SendStep<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            0,
+        >,
+        StepNil,
+    >,
+    { ROUTE_POLICY_ID + 2 },
+>;
+type ArmBLoopBreakHead = PolicySteps<
+    StepCons<
+        SendStep<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+            0,
+        >,
+        StepNil,
+    >,
+    { ROUTE_POLICY_ID + 2 },
+>;
+type ArmBLoopSteps =
+    RouteSteps<SeqSteps<ArmBLoopContinueHead, StepCons<SendStep<Role<0>, Role<1>, Msg<2, ()>, 0>, StepNil>>, ArmBLoopBreakHead>;
+type ArmBMarkerHead = PolicySteps<
+    StepCons<
+        SendStep<
+            Role<0>,
+            Role<0>,
+            Msg<LABEL_ARM_B, GenericCapToken<ArmBKind>, CanonicalControl<ArmBKind>>,
+            0,
+        >,
+        StepNil,
+    >,
+    ROUTE_POLICY_ID,
+>;
+type ArmBSteps = SeqSteps<ArmBMarkerHead, ArmBLoopSteps>;
+type RouteProgramSteps = RouteSteps<ArmASteps, ArmBSteps>;
 
 // Arm A: marker + loop
-const ARM_A_LOOP_BODY: g::ProgramSource<
-    StepCons<SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>,
-> = g::send::<Role<0>, Role<1>, Msg<1, ()>, 0>();
+const ARM_A_LOOP_BODY: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>> =
+    g::send::<Role<0>, Role<1>, Msg<1, ()>, 0>();
 
-const ARM_A_LOOP_CONT: g::ProgramSource<
-    SeqSteps<
-        StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<
-                    { LABEL_LOOP_CONTINUE },
-                    GenericCapToken<LoopContinueKind>,
-                    CanonicalControl<LoopContinueKind>,
-                >,
-                0,
-            >,
-            StepNil,
-        >,
-        StepCons<SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>,
-    >,
+const ARM_A_LOOP_CONT: g::Program<
+    SeqSteps<ArmALoopContinueHead, StepCons<SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>>,
 > = g::seq(
     g::send::<
         Role<0>,
@@ -75,12 +154,7 @@ const ARM_A_LOOP_CONT: g::ProgramSource<
     ARM_A_LOOP_BODY,
 );
 
-const ARM_A_LOOP_BREAK: g::ProgramSource<
-    LoopBreakSteps<
-        Role<0>,
-        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
-    >,
-> = g::send::<
+const ARM_A_LOOP_BREAK: g::Program<ArmALoopBreakHead> = g::send::<
     Role<0>,
     Role<0>,
     Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
@@ -88,48 +162,9 @@ const ARM_A_LOOP_BREAK: g::ProgramSource<
 >()
 .policy::<{ ROUTE_POLICY_ID + 1 }>();
 
-const ARM_A_LOOP: g::ProgramSource<
-    LoopDecisionSteps<
-        Role<0>,
-        Msg<
-            { LABEL_LOOP_CONTINUE },
-            GenericCapToken<LoopContinueKind>,
-            CanonicalControl<LoopContinueKind>,
-        >,
-        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
-        StepNil,
-        StepCons<SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>,
-    >,
-> = g::route(ARM_A_LOOP_CONT, ARM_A_LOOP_BREAK);
+const ARM_A_LOOP: g::Program<ArmALoopSteps> = g::route(ARM_A_LOOP_CONT, ARM_A_LOOP_BREAK);
 
-const ARM_A: g::ProgramSource<
-    SeqSteps<
-        StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<LABEL_ARM_A, GenericCapToken<ArmAKind>, CanonicalControl<ArmAKind>>,
-                0,
-            >,
-            StepNil,
-        >,
-        LoopDecisionSteps<
-            Role<0>,
-            Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
-            Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
-            StepNil,
-            StepCons<SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>,
-        >,
-    >,
-> = g::seq(
+const ARM_A: g::Program<ArmASteps> = g::seq(
     g::send::<
         Role<0>,
         Role<0>,
@@ -141,27 +176,11 @@ const ARM_A: g::ProgramSource<
 );
 
 // Arm B: marker + loop
-const ARM_B_LOOP_BODY: g::ProgramSource<
-    StepCons<SendStep<Role<0>, Role<1>, Msg<2, ()>, 0>, StepNil>,
-> = g::send::<Role<0>, Role<1>, Msg<2, ()>, 0>();
+const ARM_B_LOOP_BODY: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<2, ()>, 0>, StepNil>> =
+    g::send::<Role<0>, Role<1>, Msg<2, ()>, 0>();
 
-const ARM_B_LOOP_CONT: g::ProgramSource<
-    SeqSteps<
-        StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<
-                    { LABEL_LOOP_CONTINUE },
-                    GenericCapToken<LoopContinueKind>,
-                    CanonicalControl<LoopContinueKind>,
-                >,
-                0,
-            >,
-            StepNil,
-        >,
-        StepCons<SendStep<Role<0>, Role<1>, Msg<2, ()>, 0>, StepNil>,
-    >,
+const ARM_B_LOOP_CONT: g::Program<
+    SeqSteps<ArmBLoopContinueHead, StepCons<SendStep<Role<0>, Role<1>, Msg<2, ()>, 0>, StepNil>>,
 > = g::seq(
     g::send::<
         Role<0>,
@@ -177,12 +196,7 @@ const ARM_B_LOOP_CONT: g::ProgramSource<
     ARM_B_LOOP_BODY,
 );
 
-const ARM_B_LOOP_BREAK: g::ProgramSource<
-    LoopBreakSteps<
-        Role<0>,
-        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
-    >,
-> = g::send::<
+const ARM_B_LOOP_BREAK: g::Program<ArmBLoopBreakHead> = g::send::<
     Role<0>,
     Role<0>,
     Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
@@ -190,48 +204,9 @@ const ARM_B_LOOP_BREAK: g::ProgramSource<
 >()
 .policy::<{ ROUTE_POLICY_ID + 2 }>();
 
-const ARM_B_LOOP: g::ProgramSource<
-    LoopDecisionSteps<
-        Role<0>,
-        Msg<
-            { LABEL_LOOP_CONTINUE },
-            GenericCapToken<LoopContinueKind>,
-            CanonicalControl<LoopContinueKind>,
-        >,
-        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
-        StepNil,
-        StepCons<SendStep<Role<0>, Role<1>, Msg<2, ()>, 0>, StepNil>,
-    >,
-> = g::route(ARM_B_LOOP_CONT, ARM_B_LOOP_BREAK);
+const ARM_B_LOOP: g::Program<ArmBLoopSteps> = g::route(ARM_B_LOOP_CONT, ARM_B_LOOP_BREAK);
 
-const ARM_B: g::ProgramSource<
-    SeqSteps<
-        StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<LABEL_ARM_B, GenericCapToken<ArmBKind>, CanonicalControl<ArmBKind>>,
-                0,
-            >,
-            StepNil,
-        >,
-        LoopDecisionSteps<
-            Role<0>,
-            Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
-            Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
-            StepNil,
-            StepCons<SendStep<Role<0>, Role<1>, Msg<2, ()>, 0>, StepNil>,
-        >,
-    >,
-> = g::seq(
+const ARM_B: g::Program<ArmBSteps> = g::seq(
     g::send::<
         Role<0>,
         Role<0>,
@@ -244,177 +219,11 @@ const ARM_B: g::ProgramSource<
 
 // Route with both arms (this is the key test - both arms have internal loops)
 // Passive observers can distinguish arms by recv label (functional dispatch).
-const ROUTE_PROGRAM: g::ProgramSource<
-    <SeqSteps<
-        StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<LABEL_ARM_A, GenericCapToken<ArmAKind>, CanonicalControl<ArmAKind>>,
-                0,
-            >,
-            StepNil,
-        >,
-        LoopDecisionSteps<
-            Role<0>,
-            Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
-            Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
-            StepNil,
-            StepCons<SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>,
-        >,
-    > as StepConcat<
-        SeqSteps<
-            StepCons<
-                SendStep<
-                    Role<0>,
-                    Role<0>,
-                    Msg<LABEL_ARM_B, GenericCapToken<ArmBKind>, CanonicalControl<ArmBKind>>,
-                    0,
-                >,
-                StepNil,
-            >,
-            LoopDecisionSteps<
-                Role<0>,
-                Msg<
-                    { LABEL_LOOP_CONTINUE },
-                    GenericCapToken<LoopContinueKind>,
-                    CanonicalControl<LoopContinueKind>,
-                >,
-                Msg<
-                    { LABEL_LOOP_BREAK },
-                    GenericCapToken<LoopBreakKind>,
-                    CanonicalControl<LoopBreakKind>,
-                >,
-                StepNil,
-                StepCons<SendStep<Role<0>, Role<1>, Msg<2, ()>, 0>, StepNil>,
-            >,
-        >,
-    >>::Output,
-> = g::route(ARM_A, ARM_B);
+const ROUTE_PROGRAM: g::Program<RouteProgramSteps> = g::route(ARM_A, ARM_B);
 
 // Role projections
-static CLIENT_PROGRAM: RoleProgram<
-    'static,
-    0,
-    <SeqSteps<
-        StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<LABEL_ARM_A, GenericCapToken<ArmAKind>, CanonicalControl<ArmAKind>>,
-                0,
-            >,
-            StepNil,
-        >,
-        LoopDecisionSteps<
-            Role<0>,
-            Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
-            Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
-            StepNil,
-            StepCons<SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>,
-        >,
-    > as StepConcat<
-        SeqSteps<
-            StepCons<
-                SendStep<
-                    Role<0>,
-                    Role<0>,
-                    Msg<LABEL_ARM_B, GenericCapToken<ArmBKind>, CanonicalControl<ArmBKind>>,
-                    0,
-                >,
-                StepNil,
-            >,
-            LoopDecisionSteps<
-                Role<0>,
-                Msg<
-                    { LABEL_LOOP_CONTINUE },
-                    GenericCapToken<LoopContinueKind>,
-                    CanonicalControl<LoopContinueKind>,
-                >,
-                Msg<
-                    { LABEL_LOOP_BREAK },
-                    GenericCapToken<LoopBreakKind>,
-                    CanonicalControl<LoopBreakKind>,
-                >,
-                StepNil,
-                StepCons<SendStep<Role<0>, Role<1>, Msg<2, ()>, 0>, StepNil>,
-            >,
-        >,
-    >>::Output,
-> = project(&g::freeze(&ROUTE_PROGRAM));
-static SERVER_PROGRAM: RoleProgram<
-    'static,
-    1,
-    <SeqSteps<
-        StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<LABEL_ARM_A, GenericCapToken<ArmAKind>, CanonicalControl<ArmAKind>>,
-                0,
-            >,
-            StepNil,
-        >,
-        LoopDecisionSteps<
-            Role<0>,
-            Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
-            Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
-            StepNil,
-            StepCons<SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>,
-        >,
-    > as StepConcat<
-        SeqSteps<
-            StepCons<
-                SendStep<
-                    Role<0>,
-                    Role<0>,
-                    Msg<LABEL_ARM_B, GenericCapToken<ArmBKind>, CanonicalControl<ArmBKind>>,
-                    0,
-                >,
-                StepNil,
-            >,
-            LoopDecisionSteps<
-                Role<0>,
-                Msg<
-                    { LABEL_LOOP_CONTINUE },
-                    GenericCapToken<LoopContinueKind>,
-                    CanonicalControl<LoopContinueKind>,
-                >,
-                Msg<
-                    { LABEL_LOOP_BREAK },
-                    GenericCapToken<LoopBreakKind>,
-                    CanonicalControl<LoopBreakKind>,
-                >,
-                StepNil,
-                StepCons<SendStep<Role<0>, Role<1>, Msg<2, ()>, 0>, StepNil>,
-            >,
-        >,
-    >>::Output,
-> = project(&g::freeze(&ROUTE_PROGRAM));
+static CLIENT_PROGRAM: RoleProgram<'static, 0, RouteProgramSteps> = project(&ROUTE_PROGRAM);
+static SERVER_PROGRAM: RoleProgram<'static, 1, RouteProgramSteps> = project(&ROUTE_PROGRAM);
 
 // -----------------------------------------------------------------------------
 // Tests

@@ -36,7 +36,7 @@ std::thread_local! {
     };
 }
 
-const CANCEL_PROTOCOL: g::ProgramSource<
+const CANCEL_PROTOCOL: g::Program<
     StepCons<
         SendStep<
             Role<0>,
@@ -65,9 +65,9 @@ static CONTROLLER_CANCEL_PROGRAM: RoleProgram<
         >,
         StepNil,
     >,
-> = project(&g::freeze(&CANCEL_PROTOCOL));
+> = project(&CANCEL_PROTOCOL);
 
-const CHECKPOINT_PROTOCOL: g::ProgramSource<
+const CHECKPOINT_PROTOCOL: g::Program<
     SeqSteps<
         StepCons<
             SendStep<
@@ -146,8 +146,8 @@ static CONTROLLER_CHECKPOINT_PROGRAM: RoleProgram<
             StepNil,
         >,
     >,
-> = project(&g::freeze(&CHECKPOINT_PROTOCOL));
-const BOOTSTRAP_PROTOCOL: g::ProgramSource<
+> = project(&CHECKPOINT_PROTOCOL);
+const BOOTSTRAP_PROTOCOL: g::Program<
     StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil>,
 > = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
 
@@ -155,7 +155,7 @@ static CONTROLLER_BOOTSTRAP_PROGRAM: RoleProgram<
     'static,
     0,
     StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil>,
-> = project(&g::freeze(&BOOTSTRAP_PROTOCOL));
+> = project(&BOOTSTRAP_PROTOCOL);
 
 fn run_cancel_local_action_test(
     cluster: &'static TestKit,

@@ -301,8 +301,8 @@ Protocol implementors use the protocol-neutral SPI:
   transport seams
 - the root app surface does not expose `SessionKit`, `BindingSlot`,
   `RoleProgram`, `PhaseCursor`, or typestate internals
-- the canonical public EPF owners are
-  `hibana::substrate::policy::epf::{Header, Slot}`
+
+Everyday substrate owners:
 
 - `hibana::g::advanced::{project, RoleProgram, CanonicalControl, ExternalControl, MessageSpec, ControlMessage, ControlMessageKind}`
 - `hibana::substrate::SessionKit`
@@ -310,13 +310,20 @@ Protocol implementors use the protocol-neutral SPI:
 - `hibana::substrate::Transport`
 - `hibana::substrate::runtime::{Clock, Config, CounterClock, DefaultLabelUniverse, LabelUniverse}`
 - `hibana::substrate::binding::{BindingSlot, NoBinding}`
-- `hibana::substrate::binding::NoBinding`
-- `hibana::substrate::policy::{ContextId, ContextValue, DynamicResolution, PolicyAttrs, PolicySignals, ResolverContext, ResolverError, ResolverRef}`
-- `hibana::substrate::policy::PolicySignalsProvider`
+- `hibana::substrate::binding::NoBinding` is the canonical empty-binding owner
+- `hibana::substrate::policy::{ContextId, ContextValue, DynamicResolution, PolicyAttrs, PolicySignals, PolicySignalsProvider, ResolverContext, ResolverError, ResolverRef}`
+- `hibana::substrate::policy::PolicySignalsProvider` is the canonical slot-scoped policy input owner
 - `hibana::substrate::cap::{CapShot, ControlResourceKind, GenericCapToken, Many, One, ResourceKind}`
-- `hibana::substrate::cap::advanced`
 - `hibana::substrate::wire::{Payload, WireDecode, WireEncode}`
-- `hibana::substrate::transport::{TransportEvent, TransportEventKind, TransportSnapshot}`
+- `hibana::substrate::transport::{Outgoing, TransportError, TransportEvent, TransportEventKind, TransportSnapshot}`
+- `hibana::substrate::mgmt::{request_reply::PREFIX, observe_stream::PREFIX, tap::TapEvent}`
+
+Advanced / deep-dive substrate owners:
+
+- `hibana::substrate::policy::core::*` for fixed context-key ids
+- `hibana::substrate::policy::epf::{Header, Slot}` for EPF image and slot ownership
+- `hibana::substrate::cap::advanced` for mint details and the built-in control-kind catalogue
+- `hibana::substrate::transport` detail owners for local send direction, algorithm reporting, and metrics translation
 
 Everything in this section is protocol-neutral. If a protocol-specific concept
 is needed, keep it outside `hibana`'s public surface.
@@ -341,15 +348,14 @@ composition shim.
 
 Projection stays typed, but protocol implementations do not need to spell the
 projected local typelist in public code. The canonical path is
-`ProgramSource<_>` -> `g::freeze(&SOURCE)` -> `project(&PROGRAM)`.
+`Program<_>` -> `project(&PROGRAM)`.
 
 ```rust
 use hibana::g;
 use hibana::g::advanced::{RoleProgram, project};
 
-const SOURCE: g::ProgramSource<_> =
+const PROGRAM: g::Program<_> =
     g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u32>, 0>();
-const PROGRAM: g::Program<_> = g::freeze(&SOURCE);
 
 let client: RoleProgram<'_, 0, _, _> = project(&PROGRAM);
 ```
@@ -481,13 +487,13 @@ Transport rules:
 
 ## Bootstrap `SessionKit` and Enter Typed Endpoints
 
-`hibana::substrate::SessionKit::new(clock)` is the canonical starting point.
+`hibana::substrate::SessionKit::new(&clock)` is the canonical starting point.
 The borrowed / `no_alloc`-oriented path is the canonical substrate path: keep the
 clock, config storage, projected program, and resolver state borrowed; add
 rendezvous once; then `enter()`.
 
 ```rust
-let mut tap_buf = [Default::default(); 128];
+let mut tap_buf = [hibana::substrate::mgmt::tap::TapEvent::zero(); 128];
 let mut slab = [0u8; 64 * 1024];
 let clock = hibana::substrate::runtime::CounterClock::new();
 let config = hibana::substrate::runtime::Config::new(&mut tap_buf, &mut slab);
@@ -521,7 +527,7 @@ integration should provide stable buffers and clocks without `Box`, `Vec`, or
 stack-growth helpers.
 
 ```rust
-let mut tap_buf = [hibana::substrate::tap::TapEvent::empty(); 128];
+let mut tap_buf = [hibana::substrate::mgmt::tap::TapEvent::zero(); 128];
 let mut slab = [0u8; 64 * 1024];
 let clock = hibana::substrate::runtime::CounterClock::new();
 
@@ -540,7 +546,7 @@ On embedded targets, these borrowed buffers still need stable storage owned by
 the integration layer. The canonical docs do not use `static mut`; keep any
 boot-storage `unsafe` private to the binary or BSP glue.
 
-`SessionKit::new(clock)` is always paired with a rendezvous config. The
+`SessionKit::new(&clock)` is always paired with a rendezvous config. The
 runtime config owner is `hibana::substrate::runtime::Config`, and the public
 customisation points are:
 
@@ -630,9 +636,8 @@ Supporting binding owners:
 
 Transport-owned send owners:
 
-- `hibana::substrate::transport::LocalDirection` describes send direction from the local role
-- `hibana::substrate::transport::SendMeta` describes the lane, direction, and control metadata of an outgoing payload
 - `hibana::substrate::transport::Outgoing<'f>` is the canonical transport-owned send object
+- transport-local send direction and metadata details stay in the transport bucket for transport-detail inspection, not as day-to-day app-facing owners
 
 ## Policy Plane
 
@@ -715,7 +720,7 @@ cluster.set_resolver::<POLICY_ID, 0, _, _>(
 `ResolverRef::from_fn()` remains available as sugar for stateless callbacks, but
 the canonical public path is the borrowed-state form above.
 
-Core metadata arrives through `hibana::substrate::policy::core::*`:
+Advanced policy metadata arrives through `hibana::substrate::policy::core::*`:
 
 - `RV_ID`
 - `SESSION_ID`
@@ -755,8 +760,11 @@ capability token and control kind. The public owner for shot discipline is
 `hibana::substrate::cap::{One, Many}`. The public owner for capability payloads
 is `hibana::substrate::cap::GenericCapToken`.
 
-Built-in control kinds live under `hibana::substrate::cap::advanced`. The
-public control-message handling markers are `CanonicalControl<K>` and
+Built-in control kinds live under `hibana::substrate::cap::advanced`. This is
+the deep-dive bucket for mint details and standard control-kind owners; day-to-
+day capability handling stays on `hibana::substrate::cap::{CapShot,
+ControlResourceKind, GenericCapToken, Many, One, ResourceKind}`. The public
+control-message handling markers are `CanonicalControl<K>` and
 `ExternalControl<K>`, and the handling enum is `ControlHandling`.
 
 ```rust
@@ -1005,10 +1013,8 @@ with the same localside core API as any other choreography:
 use hibana::g;
 use hibana::g::advanced::project;
 
-const APP_SOURCE: g::ProgramSource<_> = APP;
-const SOURCE: g::ProgramSource<_> =
-    g::seq(hibana::substrate::mgmt::request_reply::PREFIX, APP_SOURCE);
-const PROGRAM: g::Program<_> = g::freeze(&SOURCE);
+const PROGRAM: g::Program<_> =
+    g::seq(hibana::substrate::mgmt::request_reply::PREFIX, APP);
 
 let controller_program = project(&PROGRAM); // typed controller-side projection
 let cluster_program = project(&PROGRAM); // typed cluster-side projection
@@ -1030,11 +1036,11 @@ let _state = (controller, cluster_role);
 ```
 
 The request/reply prefix and observe stream prefix are ordinary choreography
-artifacts. Protocol implementors compose `ProgramSource` values with ordinary
-`hibana::g::seq`, freeze them into a thin `Program`, project that token with
-`project()`, attach it with `SessionKit::enter(...)`, and drive the resulting
-endpoints with `flow().send()`, `recv()`, `offer()`, and `decode()` just like
-any other attached session.
+artifacts. Protocol implementors compose `Program` values with ordinary
+`hibana::g::seq`, project them with `project()`, attach them with
+`SessionKit::enter(...)`, and drive the resulting endpoints with
+`flow().send()`, `recv()`, `offer()`, and `decode()` just like any other
+attached session.
 
 ## Validation
 

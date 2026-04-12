@@ -106,8 +106,6 @@ use crate::control::automaton::txn::{InAcked, InBegin, NoopTap};
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 use crate::eff::EffIndex;
 #[cfg(test)]
-use crate::global::compiled::CompiledProgram;
-#[cfg(test)]
 use crate::global::typestate::RoleCompileScratch;
 use crate::global::{
     compiled::{CompiledProgramImage, CompiledRoleImage, ControlSemanticsTable},
@@ -739,7 +737,12 @@ impl<'cfg> ResolverBucket<'cfg> {
         occupied
     }
 
-    unsafe fn bind_from_storage(&mut self, storage: *mut u8, capacity: usize, reclaim_delta: usize) {
+    unsafe fn bind_from_storage(
+        &mut self,
+        storage: *mut u8,
+        capacity: usize,
+        reclaim_delta: usize,
+    ) {
         let entries = storage.cast::<Option<ResolverBucketEntry<'cfg>>>();
         let mut idx = 0usize;
         while idx < capacity {
@@ -1048,7 +1051,12 @@ impl DistributedSpliceBucket {
         occupied
     }
 
-    unsafe fn bind_from_storage(&mut self, storage: *mut u8, capacity: usize, reclaim_delta: usize) {
+    unsafe fn bind_from_storage(
+        &mut self,
+        storage: *mut u8,
+        capacity: usize,
+        reclaim_delta: usize,
+    ) {
         let entries = storage.cast::<Option<DistributedSpliceBucketEntry>>();
         let mut idx = 0usize;
         while idx < capacity {
@@ -1853,8 +1861,8 @@ where
         if slot_idx >= TEST_ENDPOINT_ARENA_SLOTS {
             return None;
         }
-        let summary =
-            crate::global::compiled::LoweringSummary::scan_const(program.lowering_input());
+        let lowering = crate::global::lowering_input(program);
+        let summary = crate::global::compiled::LoweringSummary::scan_const(lowering.eff_list());
         let mut result = None;
         TEST_COMPILED_PROGRAM_POOL.with(|program_storage| {
             TEST_COMPILED_ROLE_POOL.with(|role_storage| {
@@ -1877,15 +1885,14 @@ where
                     );
                     let role_ptr = role_aligned as *mut CompiledRoleImage;
                     let scratch_ptr = (&mut *scratch_storage.get())[slot_idx].as_mut_ptr();
-                    scratch_ptr.write(RoleCompileScratch::new());
-                    CompiledProgramImage::init_from_summary(program_ptr, &summary);
-                    CompiledRoleImage::init_from_summary_for_program::<ROLE, GlobalSteps>(
-                        role_ptr,
+                    crate::global::compiled::init_compiled_program_image_from_summary(
+                        program_ptr,
                         &summary,
-                        &mut *scratch_ptr,
-                        program.passive_linger_route_scope_count(),
-                        program.route_scope_count(),
-                        program.parallel_enter_count(),
+                    );
+                    crate::global::compiled::init_compiled_role_image::<ROLE, GlobalSteps>(
+                        role_ptr,
+                        lowering,
+                        scratch_ptr,
                     );
                     result = Some((program_ptr.cast_const(), role_ptr.cast_const()));
                 });
@@ -1997,19 +2004,14 @@ where
         Mint: crate::control::cap::mint::MintConfigMarker,
         'cfg: 'r,
     {
-        self.allocate_storage_for_rv(
-            rv_id,
-            required_bytes,
-            required_align,
-            resident_budget,
-        )
-        .map(|(slot, generation, ptr)| {
-            (
-                slot,
-                generation,
-                ptr.cast::<PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>>(),
-            )
-        })
+        self.allocate_storage_for_rv(rv_id, required_bytes, required_align, resident_budget)
+            .map(|(slot, generation, ptr)| {
+                (
+                    slot,
+                    generation,
+                    ptr.cast::<PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>>(),
+                )
+            })
     }
 
     #[inline(never)]
@@ -2064,6 +2066,7 @@ where
         if let Some(existing) = rv.program_image(program.stamp()) {
             return Ok(existing);
         }
+        let lowering = crate::global::lowering_input(program);
         let (mut storage, mut len) = rv.scratch_storage_ptr_and_len();
         let guard = rv.program_image_guard_bytes();
         if guard > len {
@@ -2072,9 +2075,13 @@ where
         storage = unsafe { storage.add(guard) };
         len -= guard;
         unsafe {
-            program.with_summary_from_storage(storage, len, |summary| {
-                rv.materialize_program_image_from_summary(program.stamp(), summary)
-            })
+            crate::global::compiled::with_lowering_lease(
+                lowering,
+                storage,
+                len,
+                crate::global::compiled::LoweringLeaseMode::SummaryOnly,
+                |lease| rv.materialize_program_image_from_summary(program.stamp(), lease.summary()),
+            )
         }
         .flatten()
         .ok_or(AttachError::Control(CpError::ResourceExhausted))
@@ -2103,6 +2110,7 @@ where
         ) {
             return Ok((program_image, role_image));
         }
+        let lowering = crate::global::lowering_input(program);
         let (mut storage, mut len) = rv.scratch_storage_ptr_and_len();
         let has_program = rv.has_program_image(program.stamp());
         let has_role = rv.has_role_image::<ROLE>(program.stamp());
@@ -2111,10 +2119,10 @@ where
         } else {
             CompiledRoleImage::persistent_bytes_for_program::<ROLE, GlobalSteps>(
                 program.stamp().scope_count(),
-                program.passive_linger_route_scope_count(),
-                program.route_scope_count(),
-                program.parallel_enter_count(),
-                program.eff_count(),
+                lowering.passive_linger_route_scope_count(),
+                lowering.route_scope_count(),
+                lowering.parallel_enter_count(),
+                lowering.eff_count(),
             )
         };
         let guard = if has_program {
@@ -2135,26 +2143,34 @@ where
         len -= guard;
 
         unsafe {
-            program.with_lowering_scratch_from_storage(storage, len, |summary, scratch| {
-                let program_image = if has_program {
-                    rv.program_image(program.stamp())
-                } else {
-                    rv.materialize_program_image_from_summary(program.stamp(), summary)
-                }?;
-                let role_image = if has_role {
-                    rv.role_image::<ROLE>(program.stamp())
-                } else {
-                    rv.materialize_role_image_from_summary_for_program::<ROLE, GlobalSteps>(
-                        program.stamp(),
-                        summary,
-                        scratch,
-                        program.passive_linger_route_scope_count(),
-                        program.route_scope_count(),
-                        program.parallel_enter_count(),
-                    )
-                }?;
-                Some((program_image, role_image))
-            })
+            crate::global::compiled::with_lowering_lease(
+                lowering,
+                storage,
+                len,
+                crate::global::compiled::LoweringLeaseMode::SummaryAndRoleScratch,
+                |lease| {
+                    let (summary, scratch) = lease.into_parts();
+                    let scratch = scratch.expect("role scratch requested by lowering lease mode");
+                    let program_image = if has_program {
+                        rv.program_image(program.stamp())
+                    } else {
+                        rv.materialize_program_image_from_summary(program.stamp(), summary)
+                    }?;
+                    let role_image = if has_role {
+                        rv.role_image::<ROLE>(program.stamp())
+                    } else {
+                        rv.materialize_role_image_from_summary_for_program::<ROLE, GlobalSteps>(
+                            program.stamp(),
+                            summary,
+                            scratch,
+                            lowering.passive_linger_route_scope_count(),
+                            lowering.route_scope_count(),
+                            lowering.parallel_enter_count(),
+                        )
+                    }?;
+                    Some((program_image, role_image))
+                },
+            )
         }
         .flatten()
         .ok_or(AttachError::Control(CpError::ResourceExhausted))
@@ -2279,7 +2295,10 @@ where
         transport: T,
     ) -> Result<RendezvousId, CpError> {
         self.with_control_mut(|core| {
-            match core.locals.register_local_from_config_auto(config, transport) {
+            match core
+                .locals
+                .register_local_from_config_auto(config, transport)
+            {
                 Ok(id) => Ok(id),
                 Err(
                     RegisterRendezvousError::CapacityExceeded
@@ -2316,7 +2335,10 @@ where
         transport: T,
     ) -> Result<RendezvousId, CpError> {
         self.with_control_mut(|core| {
-            match core.locals.register_local_from_config_auto(config, transport) {
+            match core
+                .locals
+                .register_local_from_config_auto(config, transport)
+            {
                 Ok(id) => Ok(id),
                 Err(
                     RegisterRendezvousError::CapacityExceeded
@@ -2704,11 +2726,7 @@ where
                     (&mut *rv_ptr).allocate_external_persistent_sidecar_bytes(bytes, align)
                 },
                 |ptr, bytes, reclaim_delta| unsafe {
-                    (&mut *rv_ptr).free_external_persistent_sidecar_bytes(
-                        ptr,
-                        bytes,
-                        reclaim_delta,
-                    )
+                    (&mut *rv_ptr).free_external_persistent_sidecar_bytes(ptr, bytes, reclaim_delta)
                 },
             )
         })
@@ -3992,7 +4010,8 @@ where
         let Some((slot, generation)) = lease else {
             return Err(AttachError::Control(CpError::ResourceExhausted));
         };
-        let Some((compiled_program, compiled_role)) = Self::materialize_test_compiled_images(slot, program)
+        let Some((compiled_program, compiled_role)) =
+            Self::materialize_test_compiled_images(slot, program)
         else {
             self.with_control_mut(|core| {
                 if let Some(rv) = core.locals.get_mut(&rv_id) {
@@ -4025,10 +4044,13 @@ where
             });
             return Err(AttachError::Control(CpError::ResourceExhausted));
         }
-        let arena_layout = unsafe { (*compiled_role).endpoint_arena_layout_for_binding(binding_enabled) };
-        let Some(arena_storage) =
-            Self::allocate_test_endpoint_arena(slot, arena_layout.total_bytes(), arena_layout.total_align())
-        else {
+        let arena_layout =
+            unsafe { (*compiled_role).endpoint_arena_layout_for_binding(binding_enabled) };
+        let Some(arena_storage) = Self::allocate_test_endpoint_arena(
+            slot,
+            arena_layout.total_bytes(),
+            arena_layout.total_align(),
+        ) else {
             self.with_control_mut(|core| {
                 if let Some(rv) = core.locals.get_mut(&rv_id) {
                     rv.release_endpoint_lease(slot, generation);
@@ -4292,9 +4314,9 @@ mod tests {
     use crate::g::{self, Msg, Role};
     use crate::global::CanonicalControl;
     use crate::global::compiled::LoweringSummary;
-    use crate::global::program::ProgramSource;
+    use crate::global::program::Program;
     use crate::global::role_program;
-    use crate::global::steps::{SendStep, StepCons, StepNil};
+    use crate::global::steps::{PolicySteps, SendStep, StepCons, StepNil};
     use crate::global::typestate::RoleCompileScratch;
     use crate::observe::core::TapEvent;
     use crate::runtime::config::{Config, CounterClock};
@@ -4322,9 +4344,13 @@ mod tests {
         StepNil,
     >;
 
-    type SharedBorrowProgram = ProgramSource<SharedBorrowSteps>;
+    type SharedBorrowProgram = Program<SharedBorrowSteps>;
+    type SharedBorrowPolicyProgram<const POLICY_ID: u16> =
+        Program<PolicySteps<SharedBorrowSteps, POLICY_ID>>;
     type SharedBorrowRoleProgram =
         crate::g::advanced::RoleProgram<'static, 0, SharedBorrowSteps, MintConfig>;
+    type SharedBorrowPolicyRoleProgram<const POLICY_ID: u16> =
+        crate::g::advanced::RoleProgram<'static, 0, PolicySteps<SharedBorrowSteps, POLICY_ID>, MintConfig>;
 
     static SHARED_BORROW_PROGRAM_A: SharedBorrowProgram = g::send::<
         Role<0>,
@@ -4336,9 +4362,6 @@ mod tests {
         >,
         0,
     >();
-    static SHARED_BORROW_TOKEN_A: crate::g::Program<SharedBorrowSteps> =
-        g::freeze(&SHARED_BORROW_PROGRAM_A);
-
     static SHARED_BORROW_PROGRAM_B: SharedBorrowProgram = g::send::<
         Role<0>,
         Role<0>,
@@ -4349,13 +4372,10 @@ mod tests {
         >,
         0,
     >();
-    static SHARED_BORROW_TOKEN_B: crate::g::Program<SharedBorrowSteps> =
-        g::freeze(&SHARED_BORROW_PROGRAM_B);
-
     const ROUTE_POLICY_ONE: u16 = 9901;
     const ROUTE_POLICY_TWO: u16 = 9902;
 
-    static ROUTE_POLICY_PROGRAM_ONE: SharedBorrowProgram = g::send::<
+    static ROUTE_POLICY_PROGRAM_ONE: SharedBorrowPolicyProgram<ROUTE_POLICY_ONE> = g::send::<
         Role<0>,
         Role<0>,
         Msg<
@@ -4366,10 +4386,7 @@ mod tests {
         0,
     >()
     .policy::<ROUTE_POLICY_ONE>();
-    static ROUTE_POLICY_TOKEN_ONE: crate::g::Program<SharedBorrowSteps> =
-        g::freeze(&ROUTE_POLICY_PROGRAM_ONE);
-
-    static ROUTE_POLICY_PROGRAM_TWO: SharedBorrowProgram = g::send::<
+    static ROUTE_POLICY_PROGRAM_TWO: SharedBorrowPolicyProgram<ROUTE_POLICY_TWO> = g::send::<
         Role<0>,
         Role<0>,
         Msg<
@@ -4380,9 +4397,6 @@ mod tests {
         0,
     >()
     .policy::<ROUTE_POLICY_TWO>();
-    static ROUTE_POLICY_TOKEN_TWO: crate::g::Program<SharedBorrowSteps> =
-        g::freeze(&ROUTE_POLICY_PROGRAM_TWO);
-
     // Dummy transport for testing
     struct DummyTransport;
 
@@ -4459,12 +4473,12 @@ mod tests {
         SessionCluster<'static, DummyTransport, DefaultLabelUniverse, CounterClock, MAX_RV>;
 
     const CLUSTER_TEST_SLAB_CAPACITY: usize = 262_144;
-    const ROUTE_HEAVY_PROGRAM: crate::g::Program<huge_program::ProgramSteps> =
-        crate::g::freeze(&huge_program::PROGRAM);
-    const LINEAR_HEAVY_PROGRAM: crate::g::Program<linear_program::ProgramSteps> =
-        crate::g::freeze(&linear_program::PROGRAM);
-    const FANOUT_HEAVY_PROGRAM: crate::g::Program<fanout_program::ProgramSteps> =
-        crate::g::freeze(&fanout_program::PROGRAM);
+    static ROUTE_HEAVY_PROGRAM: crate::g::Program<huge_program::ProgramSteps> =
+        huge_program::PROGRAM;
+    static LINEAR_HEAVY_PROGRAM: crate::g::Program<linear_program::ProgramSteps> =
+        linear_program::PROGRAM;
+    static FANOUT_HEAVY_PROGRAM: crate::g::Program<fanout_program::ProgramSteps> =
+        fanout_program::PROGRAM;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct MeasuredResidentShape {
@@ -4507,13 +4521,15 @@ mod tests {
         program: &crate::g::Program<Steps>,
     ) -> MeasuredResidentShape
     where
-        Steps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
+        Steps: crate::global::program::BuildProgramSource
+            + crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
         <Steps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
             crate::global::steps::StepCount,
     {
         let projected: crate::g::advanced::RoleProgram<'_, ROLE, _, MintConfig> =
             role_program::project(program);
-        let summary = LoweringSummary::scan_const(projected.lowering_input());
+        let lowering = crate::global::lowering_input(&projected);
+        let summary = LoweringSummary::scan_const(lowering.eff_list());
         let counts = CompiledProgramImage::counts(&summary);
         let (_, compiled_role) = SessionCluster::<
             'static,
@@ -4521,7 +4537,9 @@ mod tests {
             DefaultLabelUniverse,
             CounterClock,
             4,
-        >::materialize_test_compiled_images(slot.into(), &projected)
+        >::materialize_test_compiled_images(
+            slot.into(), &projected
+        )
         .expect("materialize huge choreography compiled image");
         let compiled_role = unsafe { &*compiled_role };
         let active_lane_count = compiled_role.active_lane_count();
@@ -4573,10 +4591,10 @@ mod tests {
                 Steps,
             >(
                 projected.stamp().scope_count(),
-                projected.passive_linger_route_scope_count(),
-                projected.route_scope_count(),
-                projected.parallel_enter_count(),
-                summary.view().as_slice().len(),
+                lowering.passive_linger_route_scope_count(),
+                lowering.route_scope_count(),
+                lowering.parallel_enter_count(),
+                lowering.eff_count(),
             ),
             endpoint_phase_cursor_state_bytes: endpoint_layout.phase_cursor_state().bytes(),
             endpoint_route_state_bytes: endpoint_layout.route_state().bytes(),
@@ -4641,12 +4659,8 @@ mod tests {
                             _,
                             MintConfig,
                         > = role_program::project(&LINEAR_HEAVY_PROGRAM);
-                        let worker_program: crate::g::advanced::RoleProgram<
-                            '_,
-                            1,
-                            _,
-                            MintConfig,
-                        > = role_program::project(&LINEAR_HEAVY_PROGRAM);
+                        let worker_program: crate::g::advanced::RoleProgram<'_, 1, _, MintConfig> =
+                            role_program::project(&LINEAR_HEAVY_PROGRAM);
                         let rv_id = cluster
                             .add_rendezvous_from_config_auto(config, DummyTransport)
                             .expect("register rendezvous");
@@ -4714,12 +4728,8 @@ mod tests {
                             "public-path rendezvous must expose lease ids above u8 for this regression test (capacity={lease_capacity})"
                         );
 
-                        let mut handles = [(
-                            EndpointLeaseId::ZERO,
-                            0u32,
-                            0usize,
-                            0usize,
-                        ); u8::MAX as usize + 2];
+                        let mut handles =
+                            [(EndpointLeaseId::ZERO, 0u32, 0usize, 0usize); u8::MAX as usize + 2];
                         cluster.with_control_mut(|core| {
                             let rv = core.locals.get_mut(&rv_id).expect("registered rendezvous");
                             for handle in &mut handles {
@@ -4741,7 +4751,9 @@ mod tests {
                         );
                         assert_eq!(
                             handles[u8::MAX as usize + 1].0,
-                            u16::from(EndpointLeaseId::from(u8::MAX)).saturating_add(1).into(),
+                            u16::from(EndpointLeaseId::from(u8::MAX))
+                                .saturating_add(1)
+                                .into(),
                             "slot 256 must survive without truncation"
                         );
 
@@ -5549,7 +5561,11 @@ mod tests {
         let entry = bucket.get_mut(sid).expect("mutable entry");
         entry.operands.seq_tx = 9;
         assert_eq!(
-            unsafe { (&*entries).as_ref().map(|stored| stored.entry.operands.seq_tx) },
+            unsafe {
+                (&*entries)
+                    .as_ref()
+                    .map(|stored| stored.entry.operands.seq_tx)
+            },
             Some(9)
         );
 
@@ -5828,8 +5844,8 @@ mod tests {
             || {
                 with_cluster_fixture(|clock, config| {
                     with_test_cluster(clock, |cluster| {
-                        let route_policy_projected_one: SharedBorrowRoleProgram =
-                            role_program::project(&ROUTE_POLICY_TOKEN_ONE);
+                        let route_policy_projected_one: SharedBorrowPolicyRoleProgram<ROUTE_POLICY_ONE> =
+                            role_program::project(&ROUTE_POLICY_PROGRAM_ONE);
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
@@ -5888,9 +5904,9 @@ mod tests {
                 with_cluster_fixture(|clock, config| {
                     with_test_cluster(clock, |cluster| {
                         let shared_borrow_projected_a: SharedBorrowRoleProgram =
-                            role_program::project(&SHARED_BORROW_TOKEN_A);
+                            role_program::project(&SHARED_BORROW_PROGRAM_A);
                         let shared_borrow_projected_b: SharedBorrowRoleProgram =
-                            role_program::project(&SHARED_BORROW_TOKEN_B);
+                            role_program::project(&SHARED_BORROW_PROGRAM_B);
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
@@ -5899,9 +5915,10 @@ mod tests {
                             shared_borrow_projected_a.stamp(),
                             shared_borrow_projected_b.stamp()
                         );
-                        assert_ne!(
+                        assert_eq!(
                             shared_borrow_projected_a.borrow_id(),
-                            shared_borrow_projected_b.borrow_id()
+                            shared_borrow_projected_b.borrow_id(),
+                            "equivalent thin RoleProgram values should borrow the same shared source owner"
                         );
 
                         crate::global::compiled::LoweringSummary::reset_runtime_scan_count();
@@ -5943,8 +5960,8 @@ mod tests {
             || {
                 with_cluster_fixture(|clock, config| {
                     with_test_cluster(clock, |cluster| {
-                        let route_policy_projected_two: SharedBorrowRoleProgram =
-                            role_program::project(&ROUTE_POLICY_TOKEN_TWO);
+                        let route_policy_projected_two: SharedBorrowPolicyRoleProgram<ROUTE_POLICY_TWO> =
+                            role_program::project(&ROUTE_POLICY_PROGRAM_TWO);
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
@@ -5963,25 +5980,25 @@ mod tests {
                             "resolver setup should lower the borrowed RoleProgram exactly once"
                         );
 
-                        let compiled = CompiledProgram::from_summary(
-                            &crate::global::compiled::LoweringSummary::scan_const(
-                                route_policy_projected_two.lowering_input(),
-                            ),
-                        );
-                        let site = compiled
-                            .dynamic_policy_sites_for(ROUTE_POLICY_TWO)
-                            .next()
-                            .expect("dynamic policy site");
-                        let tag = site.resource_tag().expect("route decision tag");
-                        assert!(
-                            cluster
-                                .dynamic_resolver(DynamicResolverKey::new(
-                                    rv_id,
-                                    site.eff_index(),
-                                    tag
-                                ))
-                                .is_some(),
-                            "resolver registration must still succeed when the cache is saturated"
+                        crate::global::compiled::with_compiled_program(
+                            crate::global::lowering_input(&route_policy_projected_two),
+                            |compiled| {
+                                let site = compiled
+                                    .dynamic_policy_sites_for(ROUTE_POLICY_TWO)
+                                    .next()
+                                    .expect("dynamic policy site");
+                                let tag = site.resource_tag().expect("route decision tag");
+                                assert!(
+                                    cluster
+                                        .dynamic_resolver(DynamicResolverKey::new(
+                                            rv_id,
+                                            site.eff_index(),
+                                            tag
+                                        ))
+                                        .is_some(),
+                                    "resolver registration must still succeed when the cache is saturated"
+                                );
+                            },
                         );
                     });
                 });

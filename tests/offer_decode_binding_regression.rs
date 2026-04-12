@@ -20,7 +20,7 @@ use core::{
     cell::{Cell, UnsafeCell},
     mem::MaybeUninit,
 };
-use hibana::g::advanced::steps::{SendStep, SeqSteps, StepConcat, StepCons, StepNil};
+use hibana::g::advanced::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
 use hibana::g::advanced::{CanonicalControl, MessageSpec, RoleProgram, project};
 use hibana::g::{self, Msg, Role};
 use hibana::substrate::{
@@ -48,6 +48,36 @@ const SLOT_TAG_ROUTE: u32 = 4;
 
 use std::pin::Pin;
 const ROUTE_POLICY_ID: u16 = 900;
+type LeftHead = PolicySteps<
+    StepCons<
+        SendStep<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_ROUTE_DECISION },
+                GenericCapToken<RouteDecisionKind>,
+                CanonicalControl<RouteDecisionKind>,
+            >,
+        >,
+        StepNil,
+    >,
+    ROUTE_POLICY_ID,
+>;
+type RightHead = PolicySteps<
+    StepCons<
+        SendStep<
+            Role<0>,
+            Role<0>,
+            Msg<70, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+        >,
+        StepNil,
+    >,
+    ROUTE_POLICY_ID,
+>;
+type LeftSteps = SeqSteps<LeftHead, StepCons<SendStep<Role<0>, Role<1>, Msg<71, u32>>, StepNil>>;
+type RightSteps = SeqSteps<RightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<72, u32>>, StepNil>>;
+type DecisionSteps = RouteSteps<LeftSteps, RightSteps>;
+type ProgramSteps = SeqSteps<DecisionSteps, StepCons<SendStep<Role<0>, Role<1>, Msg<73, u32>>, StepNil>>;
 type TestKit = SessionKit<'static, FlowTransport, DefaultLabelUniverse, CounterClock, 2>;
 type ControllerEndpoint = hibana::Endpoint<'static, 0, TestKit>;
 type WorkerEndpoint = hibana::Endpoint<'static, 1, TestKit>;
@@ -92,23 +122,7 @@ fn count_policy_audit_ext_for_slot(
         .count()
 }
 
-const LEFT_ARM: g::ProgramSource<
-    SeqSteps<
-        StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<
-                    { LABEL_ROUTE_DECISION },
-                    GenericCapToken<RouteDecisionKind>,
-                    CanonicalControl<RouteDecisionKind>,
-                >,
-            >,
-            StepNil,
-        >,
-        StepCons<SendStep<Role<0>, Role<1>, Msg<71, u32>>, StepNil>,
-    >,
-> = g::seq(
+const LEFT_ARM: g::Program<LeftSteps> = g::seq(
     g::send::<
         Role<0>,
         Role<0>,
@@ -123,19 +137,7 @@ const LEFT_ARM: g::ProgramSource<
     g::send::<Role<0>, Role<1>, Msg<71, u32>, 0>(),
 );
 
-const RIGHT_ARM: g::ProgramSource<
-    SeqSteps<
-        StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<70, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
-            >,
-            StepNil,
-        >,
-        StepCons<SendStep<Role<0>, Role<1>, Msg<72, u32>>, StepNil>,
-    >,
-> = g::seq(
+const RIGHT_ARM: g::Program<RightSteps> = g::seq(
     g::send::<
         Role<0>,
         Role<0>,
@@ -146,138 +148,13 @@ const RIGHT_ARM: g::ProgramSource<
     g::send::<Role<0>, Role<1>, Msg<72, u32>, 0>(),
 );
 
-const ROUTE: g::ProgramSource<
-    <SeqSteps<
-        StepCons<
-            SendStep<
-                Role<0>,
-                Role<0>,
-                Msg<
-                    { LABEL_ROUTE_DECISION },
-                    GenericCapToken<RouteDecisionKind>,
-                    CanonicalControl<RouteDecisionKind>,
-                >,
-            >,
-            StepNil,
-        >,
-        StepCons<SendStep<Role<0>, Role<1>, Msg<71, u32>>, StepNil>,
-    > as StepConcat<
-        SeqSteps<
-            StepCons<
-                SendStep<
-                    Role<0>,
-                    Role<0>,
-                    Msg<70, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
-                >,
-                StepNil,
-            >,
-            StepCons<SendStep<Role<0>, Role<1>, Msg<72, u32>>, StepNil>,
-        >,
-    >>::Output,
-> = g::route(LEFT_ARM, RIGHT_ARM);
+const ROUTE: g::Program<DecisionSteps> = g::route(LEFT_ARM, RIGHT_ARM);
 
-const PROGRAM: g::ProgramSource<
-    SeqSteps<
-        <SeqSteps<
-            StepCons<
-                SendStep<
-                    Role<0>,
-                    Role<0>,
-                    Msg<
-                        { LABEL_ROUTE_DECISION },
-                        GenericCapToken<RouteDecisionKind>,
-                        CanonicalControl<RouteDecisionKind>,
-                    >,
-                >,
-                StepNil,
-            >,
-            StepCons<SendStep<Role<0>, Role<1>, Msg<71, u32>>, StepNil>,
-        > as StepConcat<
-            SeqSteps<
-                StepCons<
-                    SendStep<
-                        Role<0>,
-                        Role<0>,
-                        Msg<70, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
-                    >,
-                    StepNil,
-                >,
-                StepCons<SendStep<Role<0>, Role<1>, Msg<72, u32>>, StepNil>,
-            >,
-        >>::Output,
-        StepCons<SendStep<Role<0>, Role<1>, Msg<73, u32>>, StepNil>,
-    >,
-> = g::seq(ROUTE, g::send::<Role<0>, Role<1>, Msg<73, u32>, 0>());
+const PROGRAM: g::Program<ProgramSteps> = g::seq(ROUTE, g::send::<Role<0>, Role<1>, Msg<73, u32>, 0>());
 
-static CONTROLLER_PROGRAM: RoleProgram<
-    'static,
-    0,
-    SeqSteps<
-        <SeqSteps<
-            StepCons<
-                SendStep<
-                    Role<0>,
-                    Role<0>,
-                    Msg<
-                        { LABEL_ROUTE_DECISION },
-                        GenericCapToken<RouteDecisionKind>,
-                        CanonicalControl<RouteDecisionKind>,
-                    >,
-                >,
-                StepNil,
-            >,
-            StepCons<SendStep<Role<0>, Role<1>, Msg<71, u32>>, StepNil>,
-        > as StepConcat<
-            SeqSteps<
-                StepCons<
-                    SendStep<
-                        Role<0>,
-                        Role<0>,
-                        Msg<70, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
-                    >,
-                    StepNil,
-                >,
-                StepCons<SendStep<Role<0>, Role<1>, Msg<72, u32>>, StepNil>,
-            >,
-        >>::Output,
-        StepCons<SendStep<Role<0>, Role<1>, Msg<73, u32>>, StepNil>,
-    >,
-> = project(&g::freeze(&PROGRAM));
+static CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramSteps> = project(&PROGRAM);
 
-static WORKER_PROGRAM: RoleProgram<
-    'static,
-    1,
-    SeqSteps<
-        <SeqSteps<
-            StepCons<
-                SendStep<
-                    Role<0>,
-                    Role<0>,
-                    Msg<
-                        { LABEL_ROUTE_DECISION },
-                        GenericCapToken<RouteDecisionKind>,
-                        CanonicalControl<RouteDecisionKind>,
-                    >,
-                >,
-                StepNil,
-            >,
-            StepCons<SendStep<Role<0>, Role<1>, Msg<71, u32>>, StepNil>,
-        > as StepConcat<
-            SeqSteps<
-                StepCons<
-                    SendStep<
-                        Role<0>,
-                        Role<0>,
-                        Msg<70, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
-                    >,
-                    StepNil,
-                >,
-                StepCons<SendStep<Role<0>, Role<1>, Msg<72, u32>>, StepNil>,
-            >,
-        >>::Output,
-        StepCons<SendStep<Role<0>, Role<1>, Msg<73, u32>>, StepNil>,
-    >,
-> = project(&g::freeze(&PROGRAM));
+static WORKER_PROGRAM: RoleProgram<'static, 1, ProgramSteps> = project(&PROGRAM);
 
 #[derive(Clone, Copy)]
 struct PendingInbound {

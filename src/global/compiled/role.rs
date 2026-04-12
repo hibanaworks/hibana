@@ -817,7 +817,6 @@ impl CompiledRole {
             step_idx += 1;
         }
     }
-
 }
 
 fn build_active_lane_mask_from_phase_slice(phases: &[Phase]) -> u8 {
@@ -1764,7 +1763,7 @@ impl CompiledRoleImage {
 
 #[cfg(test)]
 mod tests {
-    use core::{cell::UnsafeCell, mem::MaybeUninit, ptr};
+    use core::{cell::UnsafeCell, mem::MaybeUninit};
     use std::thread_local;
 
     extern crate self as hibana;
@@ -1838,7 +1837,7 @@ mod tests {
         g::{self, Msg, Role},
         global::{
             CanonicalControl, ControlHandling, role_program,
-            steps::{SendStep, SeqSteps, StepConcat, StepCons, StepNil},
+            steps::{RouteSteps, SendStep, SeqSteps, StepCons, StepNil},
             typestate::{JumpReason, LocalAction, RoleCompileScratch},
         },
     };
@@ -1963,7 +1962,7 @@ mod tests {
     }
 
     type SendOnly<const LANE: u8, S, D, M> = StepCons<SendStep<S, D, M, LANE>, StepNil>;
-    type BranchSteps<L, R> = <L as StepConcat<R>>::Output;
+    type BranchSteps<L, R> = RouteSteps<L, R>;
 
     const COMPILED_ROLE_IMAGE_BYTES: usize =
         super::CompiledRoleScopeStorage::total_bytes_for_counts(
@@ -1988,19 +1987,12 @@ mod tests {
         program: &role_program::RoleProgram<'_, ROLE, LocalSteps, MintConfig>,
         f: impl FnOnce(&CompiledRole) -> R,
     ) -> R {
-        let summary = LoweringSummary::scan_const(program.lowering_input());
-        COMPILED_ROLE_STORAGE.with(|compiled| {
-            COMPILED_ROLE_SCRATCH.with(|scratch| unsafe {
-                let compiled_ptr = (*compiled.get()).as_mut_ptr();
-                let scratch_ptr = (*scratch.get()).as_mut_ptr();
-                scratch_ptr.write(RoleCompileScratch::new());
-                CompiledRole::init_from_summary::<ROLE>(compiled_ptr, &summary, &mut *scratch_ptr);
-                let result = f(&*compiled_ptr);
-                ptr::drop_in_place(compiled_ptr);
-                ptr::drop_in_place(scratch_ptr);
-                result
-            })
-        })
+        crate::global::compiled::with_compiled_role_in_slot::<ROLE, _>(
+            &COMPILED_ROLE_STORAGE,
+            &COMPILED_ROLE_SCRATCH,
+            crate::global::lowering_input(program),
+            f,
+        )
     }
 
     fn with_compiled_role_image<const ROLE: u8, LocalSteps, R>(
@@ -2012,7 +2004,7 @@ mod tests {
         <LocalSteps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
             crate::global::steps::StepCount,
     {
-        let summary = LoweringSummary::scan_const(program.lowering_input());
+        let lowering = crate::global::lowering_input(program);
         COMPILED_ROLE_IMAGE_STORAGE.with(|compiled| {
             COMPILED_ROLE_SCRATCH.with(|scratch| unsafe {
                 let base = (*compiled.get()).as_mut_ptr() as usize;
@@ -2024,19 +2016,12 @@ mod tests {
                         <= base + COMPILED_ROLE_IMAGE_STORAGE_BYTES
                 );
                 let scratch_ptr = (*scratch.get()).as_mut_ptr();
-                scratch_ptr.write(RoleCompileScratch::new());
-                CompiledRoleImage::init_from_summary_for_program::<ROLE, LocalSteps>(
+                crate::global::compiled::with_compiled_role_image::<ROLE, LocalSteps, _>(
                     compiled_ptr,
-                    &summary,
-                    &mut *scratch_ptr,
-                    program.passive_linger_route_scope_count(),
-                    program.route_scope_count(),
-                    program.parallel_enter_count(),
-                );
-                let result = f(&*compiled_ptr);
-                ptr::drop_in_place(compiled_ptr);
-                ptr::drop_in_place(scratch_ptr);
-                result
+                    lowering,
+                    scratch_ptr,
+                    f,
+                )
             })
         })
     }
@@ -2110,7 +2095,7 @@ mod tests {
         >;
         type ProgramSteps = BranchSteps<LeftSteps, RightSteps>;
 
-        const LEFT: g::ProgramSource<LeftSteps> = g::seq(
+        const LEFT: g::Program<LeftSteps> = g::seq(
             g::send::<
                 Role<0>,
                 Role<0>,
@@ -2123,7 +2108,7 @@ mod tests {
             >(),
             g::send::<Role<0>, Role<1>, Msg<41, ()>, 0>(),
         );
-        const RIGHT: g::ProgramSource<RightSteps> = g::seq(
+        const RIGHT: g::Program<RightSteps> = g::seq(
             g::send::<
                 Role<0>,
                 Role<0>,
@@ -2132,8 +2117,8 @@ mod tests {
             >(),
             g::send::<Role<0>, Role<1>, Msg<47, ()>, 0>(),
         );
-        const PROGRAM: g::ProgramSource<ProgramSteps> = g::route(LEFT, RIGHT);
-        let program = g::freeze(&PROGRAM);
+        const PROGRAM: g::Program<ProgramSteps> = g::route(LEFT, RIGHT);
+        let program = PROGRAM;
 
         let controller: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
             role_program::project(&program);
@@ -2283,9 +2268,9 @@ mod tests {
             >,
             StepCons<SendStep<Role<0>, Role<1>, Msg<47, ()>, 0>, StepNil>,
         >;
-        type ProgramSteps = SeqSteps<PrefixSteps, <LeftSteps as StepConcat<RightSteps>>::Output>;
+        type ProgramSteps = SeqSteps<PrefixSteps, RouteSteps<LeftSteps, RightSteps>>;
 
-        const PREFIX: crate::g::ProgramSource<PrefixSteps> = g::seq(
+        const PREFIX: crate::g::Program<PrefixSteps> = g::seq(
             g::send::<Role<0>, Role<1>, Msg<1, u8>, 0>(),
             g::seq(
                 g::send::<Role<1>, Role<0>, Msg<2, u8>, 0>(),
@@ -2356,7 +2341,7 @@ mod tests {
                 ),
             ),
         );
-        const LEFT: crate::g::ProgramSource<LeftSteps> = g::seq(
+        const LEFT: crate::g::Program<LeftSteps> = g::seq(
             g::send::<
                 Role<0>,
                 Role<0>,
@@ -2369,7 +2354,7 @@ mod tests {
             >(),
             g::send::<Role<0>, Role<1>, Msg<41, ()>, 0>(),
         );
-        const RIGHT: crate::g::ProgramSource<RightSteps> = g::seq(
+        const RIGHT: crate::g::Program<RightSteps> = g::seq(
             g::send::<
                 Role<0>,
                 Role<0>,
@@ -2378,24 +2363,24 @@ mod tests {
             >(),
             g::send::<Role<0>, Role<1>, Msg<47, ()>, 0>(),
         );
-        const PROGRAM: crate::g::ProgramSource<ProgramSteps> =
-            g::seq(PREFIX, g::route(LEFT, RIGHT));
-        let program = crate::g::freeze(&PROGRAM);
+        const PROGRAM: crate::g::Program<ProgramSteps> = g::seq(PREFIX, g::route(LEFT, RIGHT));
+        let program = PROGRAM;
 
         let worker: crate::g::advanced::RoleProgram<'_, 1, _, MintConfig> =
             role_program::project(&program);
-        let summary = LoweringSummary::scan_const(worker.lowering_input());
+        let lowering = crate::global::lowering_input(&worker);
+        let summary = LoweringSummary::scan_const(lowering.eff_list());
         assert!(
             CompiledRoleImage::persistent_bytes_for_program::<1, ProgramSteps>(
                 summary.stamp().scope_count(),
-                worker.passive_linger_route_scope_count(),
-                worker.route_scope_count(),
-                worker.parallel_enter_count(),
-                summary.view().as_slice().len(),
+                lowering.passive_linger_route_scope_count(),
+                lowering.route_scope_count(),
+                lowering.parallel_enter_count(),
+                lowering.eff_count(),
             ) < CompiledRoleImage::persistent_bytes_for_counts(
                 summary.stamp().scope_count(),
-                worker.route_scope_count(),
-                summary.view().as_slice().len(),
+                lowering.route_scope_count(),
+                lowering.eff_count(),
             ),
             "role image sizing should use the projected local step count instead of full eff_count"
         );
@@ -2429,7 +2414,8 @@ mod tests {
         expected_route_scope_count: usize,
         expected_frontier_entries: usize,
     ) where
-        Steps: crate::g::advanced::steps::ProjectRole<crate::g::Role<1>>,
+        Steps: crate::global::program::BuildProgramSource
+            + crate::g::advanced::steps::ProjectRole<crate::g::Role<1>>,
     {
         let worker: crate::g::advanced::RoleProgram<'_, 1, _, MintConfig> =
             role_program::project(program);
@@ -2519,10 +2505,11 @@ mod tests {
 
     #[test]
     fn huge_shape_phase_counts_stay_bounded_by_parallel_markers() {
-        let route_program = crate::g::freeze(&huge_program::PROGRAM);
+        let route_program = huge_program::PROGRAM;
         let route_worker: crate::g::advanced::RoleProgram<'_, 1, _, MintConfig> =
             role_program::project(&route_program);
-        let route_summary = LoweringSummary::scan_const(route_worker.lowering_input());
+        let route_lowering = crate::global::lowering_input(&route_worker);
+        let route_summary = LoweringSummary::scan_const(route_lowering.eff_list());
         let route_parallel_markers = count_parallel_enter_markers(&route_summary);
         with_compiled_role_image(&route_worker, |image| {
             let phase_count = image.phase_len();
@@ -2547,10 +2534,11 @@ mod tests {
             );
         });
 
-        let linear_program = crate::g::freeze(&linear_program::PROGRAM);
+        let linear_program = linear_program::PROGRAM;
         let linear_worker: crate::g::advanced::RoleProgram<'_, 1, _, MintConfig> =
             role_program::project(&linear_program);
-        let linear_summary = LoweringSummary::scan_const(linear_worker.lowering_input());
+        let linear_lowering = crate::global::lowering_input(&linear_worker);
+        let linear_summary = LoweringSummary::scan_const(linear_lowering.eff_list());
         let linear_parallel_markers = count_parallel_enter_markers(&linear_summary);
         with_compiled_role_image(&linear_worker, |image| {
             let phase_count = image.phase_len();
@@ -2572,10 +2560,11 @@ mod tests {
             );
         });
 
-        let fanout_program = crate::g::freeze(&fanout_program::PROGRAM);
+        let fanout_program = fanout_program::PROGRAM;
         let fanout_worker: crate::g::advanced::RoleProgram<'_, 1, _, MintConfig> =
             role_program::project(&fanout_program);
-        let fanout_summary = LoweringSummary::scan_const(fanout_worker.lowering_input());
+        let fanout_lowering = crate::global::lowering_input(&fanout_worker);
+        let fanout_summary = LoweringSummary::scan_const(fanout_lowering.eff_list());
         let fanout_parallel_markers = count_parallel_enter_markers(&fanout_summary);
         with_compiled_role_image(&fanout_worker, |image| {
             let phase_count = image.phase_len();
@@ -2602,17 +2591,19 @@ mod tests {
         name: &str,
         program: &crate::g::Program<Steps>,
     ) where
-        Steps: crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
+        Steps: crate::global::program::BuildProgramSource
+            + crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
         <Steps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
             crate::global::steps::StepCount,
     {
         let worker: crate::g::advanced::RoleProgram<'_, ROLE, _, MintConfig> =
             role_program::project(program);
-        let summary = LoweringSummary::scan_const(worker.lowering_input());
+        let lowering = crate::global::lowering_input(&worker);
+        let summary = LoweringSummary::scan_const(lowering.eff_list());
         let scope_count = summary.stamp().scope_count();
-        let eff_count = worker.eff_count();
-        let route_enter_count = worker
-            .lowering_input()
+        let eff_count = lowering.eff_count();
+        let route_enter_count = lowering
+            .eff_list()
             .scope_markers()
             .iter()
             .filter(|marker| {
@@ -2625,15 +2616,15 @@ mod tests {
             .count();
         let local_len = <<Steps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output as crate::global::steps::StepCount>::LEN;
         let phase_cap =
-            super::CompiledRoleScopeStorage::phase_cap(local_len, worker.parallel_enter_count());
+            super::CompiledRoleScopeStorage::phase_cap(local_len, lowering.parallel_enter_count());
         let typestate_node_cap = super::CompiledRoleScopeStorage::typestate_node_cap(
             scope_count,
-            worker.passive_linger_route_scope_count(),
+            lowering.passive_linger_route_scope_count(),
             local_len,
         );
         let scope_cap = super::CompiledRoleScopeStorage::scope_cap(scope_count);
         let route_scope_cap =
-            super::CompiledRoleScopeStorage::route_scope_cap(worker.route_scope_count());
+            super::CompiledRoleScopeStorage::route_scope_cap(lowering.route_scope_count());
         let eff_cap = super::CompiledRoleScopeStorage::step_cap(eff_count);
         let step_cap = super::CompiledRoleScopeStorage::step_cap(local_len);
         let route_stats = with_compiled_role_image(&worker, |image| {
@@ -2668,9 +2659,9 @@ mod tests {
             step_cap * core::mem::size_of::<crate::global::typestate::StateIndex>(),
             CompiledRoleImage::persistent_bytes_for_program::<ROLE, Steps>(
                 summary.stamp().scope_count(),
-                worker.passive_linger_route_scope_count(),
-                worker.route_scope_count(),
-                worker.parallel_enter_count(),
+                lowering.passive_linger_route_scope_count(),
+                lowering.route_scope_count(),
+                lowering.parallel_enter_count(),
                 eff_count,
             ),
             node_stats.send_count,
@@ -2705,16 +2696,16 @@ mod tests {
 
     #[test]
     fn huge_shape_role_image_tail_breakdown_is_reported() {
-        let route_program = crate::g::freeze(&huge_program::PROGRAM);
+        let route_program = huge_program::PROGRAM;
         print_role_tail_breakdown::<1, huge_program::ProgramSteps>("route_heavy", &route_program);
 
-        let linear_program = crate::g::freeze(&linear_program::PROGRAM);
+        let linear_program = linear_program::PROGRAM;
         print_role_tail_breakdown::<1, linear_program::ProgramSteps>(
             "linear_heavy",
             &linear_program,
         );
 
-        let fanout_program = crate::g::freeze(&fanout_program::PROGRAM);
+        let fanout_program = fanout_program::PROGRAM;
         print_role_tail_breakdown::<1, fanout_program::ProgramSteps>(
             "fanout_heavy",
             &fanout_program,
@@ -2772,7 +2763,7 @@ mod tests {
         type BreakArmSteps = SendOnly<3, Role<0>, Role<0>, LoopBreakMsg>;
         type LoopProgramSteps = BranchSteps<ContinueArmSteps, BreakArmSteps>;
 
-        const REPLY_DECISION: g::ProgramSource<ReplyDecisionSteps> = g::route(
+        const REPLY_DECISION: g::Program<ReplyDecisionSteps> = g::route(
             g::seq(
                 g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
                 g::send::<Role<1>, Role<0>, AdminReplyMsg, 3>(),
@@ -2791,18 +2782,18 @@ mod tests {
                 ),
             ),
         );
-        const REQUEST_EXCHANGE: g::ProgramSource<RequestExchangeSteps> = g::seq(
+        const REQUEST_EXCHANGE: g::Program<RequestExchangeSteps> = g::seq(
             g::send::<Role<0>, Role<1>, SessionRequestWireMsg, 3>(),
             REPLY_DECISION,
         );
-        const LOOP_PROGRAM: g::ProgramSource<LoopProgramSteps> = g::route(
+        const LOOP_PROGRAM: g::Program<LoopProgramSteps> = g::route(
             g::seq(
                 g::send::<Role<0>, Role<0>, LoopContinueMsg, 3>(),
                 REQUEST_EXCHANGE,
             ),
             g::send::<Role<0>, Role<0>, LoopBreakMsg, 3>(),
         );
-        let program = crate::g::freeze(&LOOP_PROGRAM);
+        let program = LOOP_PROGRAM;
 
         print_role_tail_breakdown::<0, LoopProgramSteps>("offer_admin_snapshot_client", &program);
         print_role_tail_breakdown::<1, LoopProgramSteps>("offer_admin_snapshot_server", &program);
@@ -2810,19 +2801,19 @@ mod tests {
 
     #[test]
     fn huge_route_heavy_shape_keeps_resident_bounds_local() {
-        let program = crate::g::freeze(&huge_program::PROGRAM);
+        let program = huge_program::PROGRAM;
         assert_huge_shape_bounds(&program, huge_program::ROUTE_SCOPE_COUNT, 1);
     }
 
     #[test]
     fn huge_linear_heavy_shape_keeps_resident_bounds_local() {
-        let program = crate::g::freeze(&linear_program::PROGRAM);
+        let program = linear_program::PROGRAM;
         assert_huge_shape_bounds(&program, linear_program::ROUTE_SCOPE_COUNT, 0);
     }
 
     #[test]
     fn huge_fanout_heavy_shape_keeps_resident_bounds_local() {
-        let program = crate::g::freeze(&fanout_program::PROGRAM);
+        let program = fanout_program::PROGRAM;
         assert_huge_shape_bounds(&program, fanout_program::ROUTE_SCOPE_COUNT, 1);
     }
 }

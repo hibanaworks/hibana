@@ -39,14 +39,13 @@ type MgmtAppSteps = StepCons<
 >;
 type MgmtProgramSteps = SeqSteps<mgmt::request_reply::PrefixSteps, MgmtAppSteps>;
 
-const MGMT_APP: g::ProgramSource<MgmtAppSteps> = g::send::<
+const MGMT_APP: g::Program<MgmtAppSteps> = g::send::<
     g::Role<{ mgmt::ROLE_CONTROLLER }>,
     g::Role<{ mgmt::ROLE_CLUSTER }>,
     g::Msg<120, u32>,
     0,
 >();
-const MGMT_PROGRAM: g::ProgramSource<MgmtProgramSteps> =
-    g::seq(mgmt::request_reply::PREFIX, MGMT_APP);
+const MGMT_PROGRAM: g::Program<MgmtProgramSteps> = g::seq(mgmt::request_reply::PREFIX, MGMT_APP);
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
@@ -70,7 +69,7 @@ fn request_reply_prefix_projects_and_enters_without_helper_surface() {
                     )
                     .expect("register rendezvous");
 
-                let prefix = g::freeze(&mgmt::request_reply::PREFIX);
+                let prefix = mgmt::request_reply::PREFIX;
                 let controller_program =
                     project::<{ mgmt::ROLE_CONTROLLER }, _, MintConfig>(&prefix);
                 let cluster_program = project::<{ mgmt::ROLE_CLUSTER }, _, MintConfig>(&prefix);
@@ -113,7 +112,7 @@ fn request_reply_prefix_stays_composable_as_an_ordinary_choreography_prefix() {
                     )
                     .expect("register rendezvous");
 
-                let program = g::freeze(&MGMT_PROGRAM);
+                let program = MGMT_PROGRAM;
                 let controller_program =
                     project::<{ mgmt::ROLE_CONTROLLER }, _, MintConfig>(&program);
                 let cluster_program = project::<{ mgmt::ROLE_CLUSTER }, _, MintConfig>(&program);

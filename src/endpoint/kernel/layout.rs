@@ -335,5 +335,4 @@ mod tests {
         assert_eq!(layout.frontier_root_observed_key_slots().count(), 5);
         assert_eq!(layout.frontier_offer_entry_slots().count(), 8);
     }
-
 }

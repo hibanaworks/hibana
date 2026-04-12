@@ -3,10 +3,10 @@ use crate::{
         mint::GenericCapToken,
         resource_kinds::{LoopBreakKind, LoopContinueKind},
     },
-    g::{self, ProgramSource},
+    g::{self, Program},
     global::{
         CanonicalControl,
-        steps::{self, LoopBreakSteps, LoopDecisionSteps, SeqSteps, StepCons, StepNil},
+        steps::{self, PolicySteps, RouteSteps, SeqSteps, StepCons, StepNil},
     },
     observe::core::{TAP_BATCH_MAX_EVENTS, TapEvent},
     runtime::consts::{
@@ -137,7 +137,7 @@ impl<'a> WireDecode<'a> for TapBatch {
     }
 }
 
-const STREAM_SUBSCRIBE: ProgramSource<
+const STREAM_SUBSCRIBE: Program<
     StepCons<
         steps::SendStep<
             g::Role<ROLE_CONTROLLER>,
@@ -153,7 +153,7 @@ const STREAM_SUBSCRIBE: ProgramSource<
     0,
 >();
 
-const STREAM_LOOP_CONTINUE_PREFIX: ProgramSource<
+type StreamLoopContinueHead = PolicySteps<
     StepCons<
         steps::SendStep<
             g::Role<ROLE_CLUSTER>,
@@ -166,52 +166,9 @@ const STREAM_LOOP_CONTINUE_PREFIX: ProgramSource<
         >,
         StepNil,
     >,
-> = g::send::<
-    g::Role<ROLE_CLUSTER>,
-    g::Role<ROLE_CLUSTER>,
-    g::Msg<
-        LABEL_LOOP_CONTINUE,
-        GenericCapToken<LoopContinueKind>,
-        CanonicalControl<LoopContinueKind>,
-    >,
-    0,
->()
-.policy::<STREAM_LOOP_POLICY_ID>();
-
-const STREAM_LOOP_CONTINUE_ARM: ProgramSource<
-    SeqSteps<
-        StepCons<
-            steps::SendStep<
-                g::Role<ROLE_CLUSTER>,
-                g::Role<ROLE_CLUSTER>,
-                g::Msg<
-                    LABEL_LOOP_CONTINUE,
-                    GenericCapToken<LoopContinueKind>,
-                    CanonicalControl<LoopContinueKind>,
-                >,
-            >,
-            StepNil,
-        >,
-        StepCons<
-            steps::SendStep<
-                g::Role<ROLE_CLUSTER>,
-                g::Role<ROLE_CONTROLLER>,
-                g::Msg<LABEL_OBSERVE_BATCH, TapBatch>,
-            >,
-            StepNil,
-        >,
-    >,
-> = g::seq(
-    STREAM_LOOP_CONTINUE_PREFIX,
-    g::send::<
-        g::Role<ROLE_CLUSTER>,
-        g::Role<ROLE_CONTROLLER>,
-        g::Msg<LABEL_OBSERVE_BATCH, TapBatch>,
-        0,
-    >(),
-);
-
-const STREAM_LOOP_BREAK_PREFIX: ProgramSource<
+    STREAM_LOOP_POLICY_ID,
+>;
+type StreamLoopBreakHead = PolicySteps<
     StepCons<
         steps::SendStep<
             g::Role<ROLE_CLUSTER>,
@@ -224,7 +181,47 @@ const STREAM_LOOP_BREAK_PREFIX: ProgramSource<
         >,
         StepNil,
     >,
-> = g::send::<
+    STREAM_LOOP_POLICY_ID,
+>;
+type StreamLoopContinueArm = SeqSteps<
+    StreamLoopContinueHead,
+    StepCons<
+        steps::SendStep<g::Role<ROLE_CLUSTER>, g::Role<ROLE_CONTROLLER>, g::Msg<LABEL_OBSERVE_BATCH, TapBatch>>,
+        StepNil,
+    >,
+>;
+type StreamLoopBreakArm = SeqSteps<
+    StreamLoopBreakHead,
+    StepCons<
+        steps::SendStep<g::Role<ROLE_CLUSTER>, g::Role<ROLE_CONTROLLER>, g::Msg<LABEL_OBSERVE_STREAM_END, ()>>,
+        StepNil,
+    >,
+>;
+type StreamLoopRoute = RouteSteps<StreamLoopContinueArm, StreamLoopBreakArm>;
+
+const STREAM_LOOP_CONTINUE_PREFIX: Program<StreamLoopContinueHead> = g::send::<
+    g::Role<ROLE_CLUSTER>,
+    g::Role<ROLE_CLUSTER>,
+    g::Msg<
+        LABEL_LOOP_CONTINUE,
+        GenericCapToken<LoopContinueKind>,
+        CanonicalControl<LoopContinueKind>,
+    >,
+    0,
+>()
+.policy::<STREAM_LOOP_POLICY_ID>();
+
+const STREAM_LOOP_CONTINUE_ARM: Program<StreamLoopContinueArm> = g::seq(
+    STREAM_LOOP_CONTINUE_PREFIX,
+    g::send::<
+        g::Role<ROLE_CLUSTER>,
+        g::Role<ROLE_CONTROLLER>,
+        g::Msg<LABEL_OBSERVE_BATCH, TapBatch>,
+        0,
+    >(),
+);
+
+const STREAM_LOOP_BREAK_PREFIX: Program<StreamLoopBreakHead> = g::send::<
     g::Role<ROLE_CLUSTER>,
     g::Role<ROLE_CLUSTER>,
     g::Msg<LABEL_LOOP_BREAK, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
@@ -232,53 +229,15 @@ const STREAM_LOOP_BREAK_PREFIX: ProgramSource<
 >()
 .policy::<STREAM_LOOP_POLICY_ID>();
 
-const STREAM_LOOP_BREAK_ARM: ProgramSource<
-    LoopBreakSteps<
-        g::Role<ROLE_CLUSTER>,
-        g::Msg<LABEL_LOOP_BREAK, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
-        StepCons<
-            steps::SendStep<
-                g::Role<ROLE_CLUSTER>,
-                g::Role<ROLE_CONTROLLER>,
-                g::Msg<LABEL_OBSERVE_STREAM_END, ()>,
-            >,
-            StepNil,
-        >,
-    >,
-> = STREAM_LOOP_BREAK_PREFIX.then(g::send::<
+const STREAM_LOOP_BREAK_ARM: Program<StreamLoopBreakArm> = STREAM_LOOP_BREAK_PREFIX.then(g::send::<
     g::Role<ROLE_CLUSTER>,
     g::Role<ROLE_CONTROLLER>,
     g::Msg<LABEL_OBSERVE_STREAM_END, ()>,
     0,
 >());
 
-const STREAM_LOOP_ROUTE: ProgramSource<
-    LoopDecisionSteps<
-        g::Role<ROLE_CLUSTER>,
-        g::Msg<
-            LABEL_LOOP_CONTINUE,
-            GenericCapToken<LoopContinueKind>,
-            CanonicalControl<LoopContinueKind>,
-        >,
-        g::Msg<LABEL_LOOP_BREAK, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
-        StepCons<
-            steps::SendStep<
-                g::Role<ROLE_CLUSTER>,
-                g::Role<ROLE_CONTROLLER>,
-                g::Msg<LABEL_OBSERVE_STREAM_END, ()>,
-            >,
-            StepNil,
-        >,
-        StepCons<
-            steps::SendStep<
-                g::Role<ROLE_CLUSTER>,
-                g::Role<ROLE_CONTROLLER>,
-                g::Msg<LABEL_OBSERVE_BATCH, TapBatch>,
-            >,
-            StepNil,
-        >,
-    >,
-> = g::route(STREAM_LOOP_CONTINUE_ARM, STREAM_LOOP_BREAK_ARM);
+const STREAM_LOOP_ROUTE: Program<StreamLoopRoute> =
+    g::route(STREAM_LOOP_CONTINUE_ARM, STREAM_LOOP_BREAK_ARM);
 
 pub type ProgramSteps = SeqSteps<
     StepCons<
@@ -289,31 +248,7 @@ pub type ProgramSteps = SeqSteps<
         >,
         StepNil,
     >,
-    LoopDecisionSteps<
-        g::Role<ROLE_CLUSTER>,
-        g::Msg<
-            LABEL_LOOP_CONTINUE,
-            GenericCapToken<LoopContinueKind>,
-            CanonicalControl<LoopContinueKind>,
-        >,
-        g::Msg<LABEL_LOOP_BREAK, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
-        StepCons<
-            steps::SendStep<
-                g::Role<ROLE_CLUSTER>,
-                g::Role<ROLE_CONTROLLER>,
-                g::Msg<LABEL_OBSERVE_STREAM_END, ()>,
-            >,
-            StepNil,
-        >,
-        StepCons<
-            steps::SendStep<
-                g::Role<ROLE_CLUSTER>,
-                g::Role<ROLE_CONTROLLER>,
-                g::Msg<LABEL_OBSERVE_BATCH, TapBatch>,
-            >,
-            StepNil,
-        >,
-    >,
+    StreamLoopRoute,
 >;
 
-pub const PROGRAM: ProgramSource<ProgramSteps> = crate::g::seq(STREAM_SUBSCRIBE, STREAM_LOOP_ROUTE);
+pub const PROGRAM: Program<ProgramSteps> = crate::g::seq(STREAM_SUBSCRIBE, STREAM_LOOP_ROUTE);

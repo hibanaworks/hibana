@@ -509,7 +509,7 @@ fn offer_kernel_stays_three_stage_and_fail_closed() {
     let materialize_branch_body = impl_body(cursor_src, "fn materialize_branch(");
     let preview_flow_meta_body = impl_body(
         cursor_src,
-        "pub(super) fn preview_flow_meta<M>(&mut self) -> SendResult<crate::endpoint::flow::SendPreview>",
+        "pub(super) fn preview_flow_meta<M>(&mut self) -> SendResult<crate::endpoint::kernel::SendPreview>",
     );
     let send_with_meta_body = impl_body(
         cursor_src,
@@ -862,22 +862,21 @@ fn role_program_does_not_own_policy_marker_metadata_iterators() {
 }
 
 #[test]
-fn frozen_program_stamps_without_materializing_runtime_compiled_owners() {
+fn program_projection_validates_without_materializing_runtime_compiled_owners() {
     let program_src = include_str!("../src/global/program.rs");
+    let role_program_src = include_str!("../src/global/role_program.rs");
 
-    assert!(
-        program_src.contains("let summary = LoweringSummary::scan_const(source.eff_list());"),
-        "freeze() must validate through the unified lowering driver"
-    );
     for required in [
+        "let summary = LoweringSummary::scan_const(<Steps as BuildProgramSource>::SOURCE.eff_list());",
         "summary.validate_projection_program();",
         "validate_all_roles(&summary);",
-        "stamp: LoweringSummary::scan_const(&eff).stamp(),",
-        "self.source.stamp()",
+        "summary.stamp()",
+        "validated_program_stamp::<Steps>()",
+        "RoleProgram::new(",
     ] {
         assert!(
-            program_src.contains(required),
-            "freeze() must stamp and validate without materializing runtime owners: {required}"
+            program_src.contains(required) || role_program_src.contains(required),
+            "Program/project must stamp and validate without materializing runtime owners: {required}"
         );
     }
     for forbidden in [
@@ -889,8 +888,8 @@ fn frozen_program_stamps_without_materializing_runtime_compiled_owners() {
         "CompiledRole::validate_summary(",
     ] {
         assert!(
-            !program_src.contains(forbidden),
-            "freeze() must not materialize runtime compiled owners during stamping: {forbidden}"
+            !program_src.contains(forbidden) && !role_program_src.contains(forbidden),
+            "Program/project must not materialize runtime compiled owners during stamping: {forbidden}"
         );
     }
 }
@@ -905,12 +904,13 @@ fn runtime_compiled_materialization_stays_transient_and_cacheless() {
     let cluster_core_ws = compact_ws(&cluster_core_src);
 
     for required in [
-        ".with_summary_from_storage(storage, len, |summary|",
-        ".with_lowering_scratch_from_storage(storage, len, |summary, scratch|",
+        "crate::global::compiled::with_lowering_lease(",
+        "crate::global::compiled::LoweringLeaseMode::SummaryOnly",
+        "crate::global::compiled::LoweringLeaseMode::SummaryAndRoleScratch",
     ] {
         assert!(
             cluster_core_ws.contains(required),
-            "runtime transient materialization must hand raw scratch storage to RoleProgram-owned image materialization: {required}"
+            "runtime transient materialization must route through the compiled lowering lease owner: {required}"
         );
     }
     for forbidden in [
@@ -924,7 +924,7 @@ fn runtime_compiled_materialization_stays_transient_and_cacheless() {
     ] {
         assert!(
             !cluster_core_src.contains(forbidden),
-            "cluster owner must not rebuild lowering summaries directly once RoleProgram owns image materialization: {forbidden}"
+            "cluster owner must not rebuild lowering summaries directly once the compiled lowering lease owns image materialization: {forbidden}"
         );
     }
     let role_program_src = include_str!("../src/global/role_program.rs");
@@ -990,9 +990,9 @@ fn compiled_authority_completion_stays_summary_backed() {
 
     for required in [
         "with_management_compiled_programs_for_test",
-        "LoweringSummary::scan_const(CONTROLLER_PROGRAM.lowering_input())",
-        "LoweringSummary::scan_const(CLUSTER_PROGRAM.lowering_input())",
-        "CompiledProgram::init_from_summary(",
+        "crate::global::lowering_input(&CONTROLLER_PROGRAM)",
+        "crate::global::lowering_input(&CLUSTER_PROGRAM)",
+        "crate::global::compiled::with_compiled_programs(",
     ] {
         assert!(
             runtime_mgmt_request_reply_src.contains(required)
@@ -1011,12 +1011,12 @@ fn compiled_authority_completion_stays_summary_backed() {
     );
     for required in [
         "fn with_compiled_role_in_slot<const ROLE: u8, GlobalSteps, R>(",
-        "let summary = LoweringSummary::scan_const(program.lowering_input());",
-        "CompiledRole::init_from_summary::<ROLE>(",
+        "crate::global::compiled::with_compiled_role_in_slot::<ROLE, _>(",
+        "super::lowering_input(program)",
     ] {
         assert!(
             role_program_src.contains(required),
-            "RoleProgram test helpers must stay summary-backed and in-place: {required}"
+            "RoleProgram test helpers must delegate compiled-role materialization through the compiled owner: {required}"
         );
     }
 }
@@ -1044,6 +1044,7 @@ fn large_owner_types_do_not_regress_to_copy_semantics() {
 #[test]
 fn role_program_projection_metadata_stays_internal() {
     let role_program_src = include_str!("../src/global/role_program.rs");
+    let compiled_lease_src = include_str!("../src/global/compiled/lease.rs");
     let role_program_ws = compact_ws(role_program_src);
 
     for forbidden in [
@@ -1096,18 +1097,17 @@ fn role_program_projection_metadata_stays_internal() {
         "pub(crate) struct ProjectedRoleLayout {",
         "pub(crate) const fn stamp(&self) -> ProgramStamp {",
         "pub(crate) fn borrow_id(&self) -> usize {",
-        "pub(crate) const fn lowering_input(&self) -> &'prog EffList {",
+        "pub(crate) struct RoleLoweringInput<'prog> {",
+        "pub(crate) const fn lowering_input<'prog, const ROLE: u8, GlobalSteps, Mint>(",
     ] {
         assert!(
             role_program_src.contains(required),
-            "RoleProgram projection-inspection helpers should stay crate-private: {required}"
+            "RoleProgram witness and lowering-input seams should stay crate-private: {required}"
         );
     }
     assert!(
-        role_program_src.contains(
-            "#[cfg(test)]\n    #[inline(always)]\n    pub(crate) const fn eff_list_ref(&self) -> &'prog EffList {"
-        ),
-        "raw EffList inspection helper must stay test-only if it exists at all"
+        !role_program_src.contains("eff_list_ref"),
+        "RoleProgram should stop exposing raw EffList inspection helpers once lowering input is erased"
     );
     assert!(
         !role_program_src.contains("pub(crate) fn compile_role(&self) -> CompiledRole {"),
@@ -1115,8 +1115,6 @@ fn role_program_projection_metadata_stays_internal() {
     );
 
     for forbidden in [
-        "#[derive(Clone, Copy)]",
-        "#[derive(Clone,Copy)]",
         "impl Clone for RoleProgram",
         "impl Copy for RoleProgram",
         "program_image_init: Cell<bool>",
@@ -1130,13 +1128,25 @@ fn role_program_projection_metadata_stays_internal() {
             "RoleProgram must stay thin and avoid inline compiled-image ownership: {forbidden}"
         );
     }
-    for required in [
-        "pub(crate) unsafe fn with_summary_from_storage<R>(",
-        "pub(crate) unsafe fn with_lowering_scratch_from_storage<R>(",
+    for forbidden in [
+        "TransientRoleProgramScratch",
+        "TransientLoweringScratch",
+        "with_summary_from_storage",
+        "with_lowering_scratch_from_storage",
     ] {
         assert!(
-            role_program_src.contains(required),
-            "RoleProgram must expose raw-storage lowering helpers instead of owning compiled images: {required}"
+            !role_program_src.contains(forbidden),
+            "RoleProgram must not keep transient lowering lease ownership after erasing to RoleLoweringInput: {forbidden}"
+        );
+    }
+    for required in [
+        "pub(crate) enum LoweringLeaseMode {",
+        "pub(crate) struct LoweringLease<'a> {",
+        "pub(crate) unsafe fn with_lowering_lease<R>(",
+    ] {
+        assert!(
+            compiled_lease_src.contains(required),
+            "compiled lowering layer must own the transient lowering lease seam: {required}"
         );
     }
     assert!(
@@ -1308,12 +1318,11 @@ fn seq_is_the_only_public_composition_constructor() {
         "program.rs must define the canonical composition constructor as seq"
     );
     assert!(
-        steps_src
-            .contains("pub const PROGRAM: ProgramSource<Self> = ProgramSource::<Self>::empty();"),
+        steps_src.contains("pub const PROGRAM: Program<Self> = Program::<Self>::empty();"),
         "StepNil must own the canonical zero-fragment program witness"
     );
     assert!(
-        !program_src.contains("pub const fn empty() -> ProgramSource<StepNil> {"),
+        !program_src.contains("pub const fn empty() -> Program<StepNil> {"),
         "program.rs must not expose a second public zero-fragment builder at module scope"
     );
     assert!(
@@ -1359,13 +1368,14 @@ fn route_and_parallel_bounds_use_semantic_witnesses() {
     }
 
     for required in [
-        "LeftSteps: StepConcat<RightSteps> + RouteArmHead + SameRouteController<RightSteps> + DistinctRouteLabels<RightSteps>",
-        "RightSteps: RouteArmHead",
-        "LeftSteps: StepConcat<RightSteps> + NonEmptyParallelArm",
-        "RightSteps: NonEmptyParallelArm",
-        "let controller = <<LeftSteps as RouteArmHead>::Controller as crate::global::RoleMarker>::INDEX;",
-        "let left_set = <LeftSteps as NonEmptyParallelArm>::ROLE_LANE_SET;",
-        "let right_set = <RightSteps as NonEmptyParallelArm>::ROLE_LANE_SET;",
+        "LeftSteps: RouteArmHead + SameRouteController<RightSteps> + DistinctRouteLabels<RightSteps>",
+        "RightSteps: RouteArmHead + TailLoopControl",
+        "Left: BuildProgramSource + RouteArmHead + RouteArmLoopHead + SameRouteController<Right> + DistinctRouteLabels<Right>",
+        "Right: BuildProgramSource + RouteArmHead + RouteArmLoopHead + TailLoopControl",
+        "LeftSteps: NonEmptyParallelArm",
+        "RightSteps: NonEmptyParallelArm + TailLoopControl",
+        "let left_set = <Left as NonEmptyParallelArm>::ROLE_LANE_SET;",
+        "let right_set = <Right as NonEmptyParallelArm>::ROLE_LANE_SET;",
         "type Controller = RouteController;",
     ] {
         assert!(
@@ -1480,7 +1490,7 @@ fn regression_fixtures_do_not_hide_canonical_owners_behind_synonyms() {
         ("nested_loop_route.rs", "type Steps = Decision;"),
         (
             "nested_loop_route.rs",
-            "const PROGRAM: g::ProgramSource<Decision> = DECISION;",
+            "const PROGRAM: g::Program<Decision> = DECISION;",
         ),
         ("nested_loop_route.rs", "type TickSteps = StepCons<"),
         (
@@ -1505,7 +1515,7 @@ fn regression_fixtures_do_not_hide_canonical_owners_behind_synonyms() {
         ),
         (
             "route_dynamic_control.rs",
-            "const OUTER_LOOP_BREAK_ARM: g::ProgramSource<LoopBrkSteps> = LOOP_BREAK_ARM;",
+            "const OUTER_LOOP_BREAK_ARM: g::Program<LoopBrkSteps> = LOOP_BREAK_ARM;",
         ),
         ("route_dynamic_control.rs", "type LeftSteps = StepCons<"),
         (
@@ -1639,11 +1649,11 @@ fn regression_fixtures_do_not_hide_canonical_owners_behind_synonyms() {
         ("ui/g-route-unprojectable.rs", "const LABEL: u8 = LABEL;"),
         (
             "cancel_rollback.rs",
-            "type CancelProgram = g::ProgramSource<CancelSteps>;",
+            "type CancelProgram = g::Program<CancelSteps>;",
         ),
         (
             "cancel_rollback.rs",
-            "type CheckpointProgram = g::ProgramSource<CheckpointSteps>;",
+            "type CheckpointProgram = g::Program<CheckpointSteps>;",
         ),
         (
             "offer_decode_binding_regression.rs",
@@ -1832,7 +1842,7 @@ fn route_projection_regression_fixtures_keep_canonical_inputs_live() {
     );
     assert!(
         route_policy_mismatch.contains("const CONTROLLER: RoleProgram<")
-            && route_policy_mismatch.contains("> = project(&g::freeze(&ROUTE));"),
+            && route_policy_mismatch.contains("> = project(&ROUTE);"),
         "g-route-policy-mismatch must force controller projection through a typed const RoleProgram"
     );
     assert!(
@@ -1851,7 +1861,7 @@ fn route_projection_regression_fixtures_keep_canonical_inputs_live() {
     );
     assert!(
         route_unprojectable.contains("static PASSIVE_PROGRAM: RoleProgram<")
-            && route_unprojectable.contains("> = project(&g::freeze(&ROUTE));"),
+            && route_unprojectable.contains("> = project(&ROUTE);"),
         "g-route-unprojectable must force passive projection through a typed static RoleProgram"
     );
     assert!(
@@ -2111,11 +2121,11 @@ fn public_seq_preserves_segment_boundary() {
     let program_src = include_str!("../src/global/program.rs");
 
     assert!(
-        global_src.contains(") -> ProgramSource<SeqSteps<LeftSteps, RightSteps>> {"),
+        global_src.contains(") -> Program<SeqSteps<LeftSteps, RightSteps>> {"),
         "public g::seq must preserve segment boundaries with SeqSteps"
     );
     assert!(
-        program_src.contains(") -> ProgramSource<SeqSteps<LeftSteps, RightSteps>> {"),
+        program_src.contains(") -> Program<SeqSteps<LeftSteps, RightSteps>> {"),
         "program::seq must build preserved SeqSteps witnesses"
     );
     assert!(
@@ -2124,7 +2134,7 @@ fn public_seq_preserves_segment_boundary() {
     );
     assert!(
         global_src.contains(
-            ") -> ProgramSource<SeqSteps<LeftSteps, RightSteps>> {\n    program::seq(left, right)\n}"
+            ") -> Program<SeqSteps<LeftSteps, RightSteps>> {\n    program::seq(left, right)\n}"
         ),
         "public g::seq must delegate to the preserved program::seq constructor directly"
     );
@@ -2152,10 +2162,10 @@ fn program_builder_helpers_are_not_public_surface() {
         "pub(crate) const fn empty() -> Self",
         "pub(crate) const fn build() -> Self",
         "pub(crate) const fn eff_list(&self) -> &EffList",
-        "pub(crate) const fn into_eff(self) -> EffList",
-        "pub(crate) const fn scope_budget(&self) -> u16",
+        "const fn into_eff(self) -> EffList",
+        "const fn scope_budget(&self) -> u16",
         "pub(crate) const fn then<NextSteps>(",
-        "pub const fn policy<const POLICY_ID: u16>(self) -> Self",
+        "pub const fn policy<const POLICY_ID: u16>(self) -> Program<PolicySteps<Steps, POLICY_ID>>",
     ] {
         assert!(
             program_src.contains(required),
@@ -5018,7 +5028,7 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
     assert!(
         substrate_src.contains("pub mod request_reply {")
             && substrate_src.contains("pub mod observe_stream {")
-            && substrate_src.contains("pub const PREFIX: crate::g::ProgramSource<PrefixSteps> =")
+            && substrate_src.contains("pub const PREFIX: crate::g::Program<PrefixSteps> =")
             && substrate_src.contains("ROLE_CLUSTER,")
             && substrate_src.contains("ROLE_CONTROLLER,"),
         "substrate mgmt must stay on the canonical payload-plus-prefix surface"
@@ -5107,7 +5117,6 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         "type LoadBeginSteps =",
         "type LoopContinueArmSteps =",
         "type LoopRouteSteps =",
-        "type LoopSegmentSteps =",
         "type AfterLoop =",
         "type AfterCommit =",
         "type FullProgramSteps =",
@@ -5150,9 +5159,9 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
         );
     }
     for required in [
-        "const LOAD_BEGIN: ProgramSource<",
-        "pub const PROGRAM: ProgramSource<ProgramSteps> =",
-        "LoopDecisionSteps<",
+        "const LOAD_BEGIN: Program<",
+        "pub const PROGRAM: Program<ProgramSteps> =",
+        "type LoopSegmentSteps = RouteSteps<",
         "LABEL_LOOP_CONTINUE,",
         "LABEL_LOOP_BREAK,",
         "LABEL_MGMT_LOAD_BEGIN,",
@@ -5168,9 +5177,9 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
     }
     for required in [
         "pub struct TapBatch {",
-        "pub const PROGRAM: ProgramSource<ProgramSteps> =",
-        "const STREAM_SUBSCRIBE: ProgramSource<",
-        "const STREAM_LOOP_ROUTE: ProgramSource<",
+        "pub const PROGRAM: Program<ProgramSteps> =",
+        "const STREAM_SUBSCRIBE: Program<",
+        "const STREAM_LOOP_ROUTE: Program<",
         "LABEL_OBSERVE_SUBSCRIBE,",
         "LABEL_OBSERVE_STREAM_END,",
         "LABEL_OBSERVE_BATCH,",
@@ -5393,10 +5402,10 @@ fn huge_runtime_storage_story_stays_concrete() {
 
     for required in [
         "let kit = HugeKit::new(clock);",
-        "project(program);",
+        "project(&ROUTE_HEAVY_PROGRAM);",
         ".add_rendezvous_from_config(",
-        ".enter(rv_id, sid, &controller_program, NoBinding)",
-        ".enter(rv_id, sid, &worker_program, NoBinding)",
+        ".enter(rv_id, sid, controller_program, NoBinding)",
+        ".enter(rv_id, sid, worker_program, NoBinding)",
     ] {
         assert!(
             huge_runtime_src.contains(required),
