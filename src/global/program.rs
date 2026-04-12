@@ -310,14 +310,6 @@ impl<Steps> Program<Steps> {
         Program::new()
     }
 
-    #[cfg(test)]
-    pub(crate) const fn eff_list(&self) -> &EffList
-    where
-        Steps: BuildProgramSource,
-    {
-        <Steps as BuildProgramSource>::SOURCE.eff_list()
-    }
-
     #[inline(always)]
     pub(crate) const fn stamp(&self) -> ProgramStamp
     where
@@ -405,7 +397,6 @@ mod tests {
     use crate::g::advanced::steps::{
         LoopBreakSteps, LoopContinueSteps, LoopDecisionSteps, StepNil,
     };
-    use crate::global::compiled::LoweringSummary;
     use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
     use crate::substrate::cap::GenericCapToken;
     use crate::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
@@ -487,8 +478,8 @@ mod tests {
         let direct = g::seq(LOOP_CONTINUE_ONLY, LOOP_DECISION);
         let nested = g::seq(g::seq(LOOP_CONTINUE_ONLY, StepNil::PROGRAM), LOOP_DECISION);
         assert!(
-            LoweringSummary::scan_const(direct.eff_list()).equivalent_eff_list(nested.eff_list()),
-            "empty seq suffix must not change the loop-scoped effect list"
+            direct.summary().equivalent_summary(nested.summary()),
+            "empty seq suffix must not change the validated lowering summary"
         );
     }
 }

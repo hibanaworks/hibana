@@ -783,7 +783,7 @@ mod tests {
         >()
         .policy::<ROUTE_POLICY_ID>();
 
-        let summary = crate::global::compiled::LoweringSummary::scan_const(program.eff_list());
+        let summary = program.summary();
         let compiled = CompiledProgram::from_summary(&summary);
         let mut sites = compiled.dynamic_policy_sites_for(ROUTE_POLICY_ID);
         let site = sites.next().expect("route policy site");
@@ -861,7 +861,7 @@ mod tests {
         >();
         let program = g::route(continue_arm, break_arm);
 
-        let summary = crate::global::compiled::LoweringSummary::scan_const(program.eff_list());
+        let summary = program.summary();
         let compiled = CompiledProgram::from_summary(&summary);
 
         assert_eq!(
@@ -916,7 +916,7 @@ mod tests {
         >();
         let program = g::seq(cancel, g::seq(reroute, route));
 
-        let summary = crate::global::compiled::LoweringSummary::scan_const(program.eff_list());
+        let summary = program.summary();
         let compiled = CompiledProgram::from_summary(&summary);
         let effect_envelope = compiled.effect_envelope();
 

@@ -15,7 +15,7 @@ use ::core::{cell::UnsafeCell, mem::MaybeUninit};
 use common::TestTransport;
 use hibana::{
     g::advanced::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil},
-    g::advanced::{CanonicalControl, RoleProgram, project},
+    g::advanced::{CanonicalControl, ProgramWitness, RoleProgram, project},
     g::{self, Msg, Role},
     substrate::{
         SessionId, SessionKit,
@@ -214,8 +214,10 @@ const RIGHT_ARM: g::Program<RouteRightHead> = g::send::<
 // Route is local to Controller (0 → 0) since all arms are self-sends
 const PROGRAM: g::Program<RouteProgramSteps> = g::route(LEFT_ARM, RIGHT_ARM);
 
-static CONTROLLER_PROGRAM: RoleProgram<'static, 0, RouteProgramSteps> = project(&PROGRAM);
-static WORKER_PROGRAM: RoleProgram<'static, 1, RouteProgramSteps> = project(&PROGRAM);
+static CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramWitness<RouteProgramSteps>> =
+    project(&PROGRAM);
+static WORKER_PROGRAM: RoleProgram<'static, 1, ProgramWitness<RouteProgramSteps>> =
+    project(&PROGRAM);
 
 fn transport_queue_is_empty(transport: &TestTransport) -> bool {
     transport.queue_is_empty()
@@ -246,7 +248,8 @@ const LOOP_BREAK_ARM: g::Program<LoopBreakHead> = g::send::<
 // Route is local to Controller (0 → 0)
 const LOOP_PROGRAM: g::Program<LoopProgramSteps> = g::route(LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
 
-static LOOP_CONTROLLER_PROGRAM: RoleProgram<'static, 0, LoopProgramSteps> = project(&LOOP_PROGRAM);
+static LOOP_CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramWitness<LoopProgramSteps>> =
+    project(&LOOP_PROGRAM);
 
 const OUTER_LOOP_CONTINUE_ARM: g::Program<OuterLoopContinueArmSteps> =
     g::seq(LOOP_CONTINUE_ARM, LOOP_PROGRAM);
@@ -254,8 +257,11 @@ const OUTER_LOOP_CONTINUE_ARM: g::Program<OuterLoopContinueArmSteps> =
 const NESTED_LOOP_PROGRAM: g::Program<NestedLoopProgramSteps> =
     g::route(OUTER_LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
 
-static NESTED_LOOP_CONTROLLER_PROGRAM: RoleProgram<'static, 0, NestedLoopProgramSteps> =
-    project(&NESTED_LOOP_PROGRAM);
+static NESTED_LOOP_CONTROLLER_PROGRAM: RoleProgram<
+    'static,
+    0,
+    ProgramWitness<NestedLoopProgramSteps>,
+> = project(&NESTED_LOOP_PROGRAM);
 
 fn route_resolver(ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
     if ctx.attr(core::TAG).map(|value| value.as_u8()) != Some(RouteDecisionKind::TAG) {

@@ -1239,7 +1239,9 @@ mod tests {
 
     #[test]
     fn policy_scope_stays_internal() {
-        let list: &EffList = LOOP_DECISION.eff_list();
+        let _ = LOOP_DECISION.summary();
+        let list: &EffList =
+            <LoopDecisionProgram as crate::global::program::BuildProgramSource>::SOURCE.eff_list();
         let mut policies = 0usize;
         let mut offset = 0usize;
         while offset < list.len() {

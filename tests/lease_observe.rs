@@ -11,7 +11,7 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 use common::TestTransport;
 use hibana::{
     g::advanced::steps::StepNil,
-    g::advanced::{RoleProgram, project},
+    g::advanced::{ProgramWitness, RoleProgram, project},
     g::{self},
     substrate::{
         Lane, SessionId, SessionKit,
@@ -25,7 +25,7 @@ use tls_ref_support::with_tls_ref;
 
 const PROGRAM: g::Program<StepNil> = StepNil::PROGRAM;
 
-static CONTROLLER_PROGRAM: RoleProgram<'static, 0, StepNil> = project(&PROGRAM);
+static CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramWitness<StepNil>> = project(&PROGRAM);
 type TestKit = SessionKit<
     'static,
     TestTransport,

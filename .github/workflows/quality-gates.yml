@@ -33,6 +33,8 @@ jobs:
         run: ./.github/scripts/check_no_std_build.sh
       - name: Huge choreography compile budget gate
         run: ./.github/scripts/check_huge_choreography_budget.sh
+      - name: Subsystem budget gate
+        run: ./.github/scripts/check_subsystem_budget_gates.sh
       - name: Pico size matrix gate
         run: ./.github/scripts/check_pico_size_matrix.sh
       - name: Pico smoke gate

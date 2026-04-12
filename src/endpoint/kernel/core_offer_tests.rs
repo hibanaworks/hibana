@@ -10,7 +10,7 @@ use crate::control::cap::resource_kinds::{RouteDecisionHandle, RouteDecisionKind
 use crate::control::cluster::core::SessionCluster;
 use crate::g::{self, Msg, Role};
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
-use crate::global::role_program::{RoleProgram, project};
+use crate::global::role_program::{ProgramWitness, RoleProgram, project};
 use crate::global::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
 use crate::global::{CanonicalControl, ControlHandling};
 use crate::observe::core::TapEvent;
@@ -285,13 +285,13 @@ const NESTED_STATIC_PROGRAM: g::Program<NestedStaticProgramSteps> = g::route(
 static NESTED_STATIC_CONTROLLER_PROGRAM: RoleProgram<
     'static,
     0,
-    NestedStaticProgramSteps,
+    ProgramWitness<NestedStaticProgramSteps>,
     crate::control::cap::mint::MintConfig,
 > = project(&NESTED_STATIC_PROGRAM);
 static NESTED_STATIC_WORKER_PROGRAM: RoleProgram<
     'static,
     1,
-    NestedStaticProgramSteps,
+    ProgramWitness<NestedStaticProgramSteps>,
     crate::control::cap::mint::MintConfig,
 > = project(&NESTED_STATIC_PROGRAM);
 type LoopContinueScopedContinueMsg = Msg<
@@ -342,7 +342,7 @@ const LOOP_SEMANTICS_PROGRAM: g::Program<LoopSemanticsProgramSteps> = g::route(
 static LOOP_SEMANTICS_CONTROLLER_PROGRAM: RoleProgram<
     'static,
     0,
-    LoopSemanticsProgramSteps,
+    ProgramWitness<LoopSemanticsProgramSteps>,
     crate::control::cap::mint::MintConfig,
 > = project(&LOOP_SEMANTICS_PROGRAM);
 const LOOP_CONTINUE_SCOPED_PROGRAM: g::Program<LoopContinueScopedProgramSteps> = g::route(
@@ -364,7 +364,7 @@ const LOOP_CONTINUE_SCOPED_PROGRAM: g::Program<LoopContinueScopedProgramSteps> =
 static LOOP_CONTINUE_SCOPED_CONTROLLER_PROGRAM: RoleProgram<
     'static,
     0,
-    LoopContinueScopedProgramSteps,
+    ProgramWitness<LoopContinueScopedProgramSteps>,
     crate::control::cap::mint::MintConfig,
 > = project(&LOOP_CONTINUE_SCOPED_PROGRAM);
 const LOOP_CONTINUE_PASSIVE_RIGHT_REPLY_LABEL: u8 = 0x51;
@@ -406,13 +406,13 @@ const LOOP_CONTINUE_PASSIVE_PROGRAM: g::Program<LoopContinuePassiveProgramSteps>
 static LOOP_CONTINUE_PASSIVE_CONTROLLER_PROGRAM: RoleProgram<
     'static,
     0,
-    LoopContinuePassiveProgramSteps,
+    ProgramWitness<LoopContinuePassiveProgramSteps>,
     crate::control::cap::mint::MintConfig,
 > = project(&LOOP_CONTINUE_PASSIVE_PROGRAM);
 static LOOP_CONTINUE_PASSIVE_WORKER_PROGRAM: RoleProgram<
     'static,
     1,
-    LoopContinuePassiveProgramSteps,
+    ProgramWitness<LoopContinuePassiveProgramSteps>,
     crate::control::cap::mint::MintConfig,
 > = project(&LOOP_CONTINUE_PASSIVE_PROGRAM);
 type NestedDispatchOuterLeftMsg = Msg<0x10, u8>;
@@ -461,13 +461,13 @@ const NESTED_DISPATCH_PROGRAM: g::Program<NestedDispatchProgramSteps> = g::route
 static NESTED_DISPATCH_CONTROLLER_PROGRAM: RoleProgram<
     'static,
     0,
-    NestedDispatchProgramSteps,
+    ProgramWitness<NestedDispatchProgramSteps>,
     crate::control::cap::mint::MintConfig,
 > = project(&NESTED_DISPATCH_PROGRAM);
 static NESTED_DISPATCH_WORKER_PROGRAM: RoleProgram<
     'static,
     1,
-    NestedDispatchProgramSteps,
+    ProgramWitness<NestedDispatchProgramSteps>,
     crate::control::cap::mint::MintConfig,
 > = project(&NESTED_DISPATCH_PROGRAM);
 type PendingOfferCluster =
@@ -1675,9 +1675,10 @@ type HintRouteSteps = RouteSteps<
     SeqSteps<HintRightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<101, u8>>, StepNil>>,
 >;
 const HINT_ROUTE_PROGRAM: g::Program<HintRouteSteps> = g::route(HINT_LEFT_ARM, HINT_RIGHT_ARM);
-static HINT_CONTROLLER_PROGRAM: RoleProgram<'static, 0, HintRouteSteps> =
+static HINT_CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramWitness<HintRouteSteps>> =
     project(&HINT_ROUTE_PROGRAM);
-static HINT_WORKER_PROGRAM: RoleProgram<'static, 1, HintRouteSteps> = project(&HINT_ROUTE_PROGRAM);
+static HINT_WORKER_PROGRAM: RoleProgram<'static, 1, ProgramWitness<HintRouteSteps>> =
+    project(&HINT_ROUTE_PROGRAM);
 const HINT_LEFT_DATA_LABEL: u8 = 100;
 const HINT_RIGHT_DATA_LABEL: u8 = 101;
 
@@ -1729,9 +1730,9 @@ type EntryRouteSteps = RouteSteps<
 >;
 const ENTRY_ROUTE_PROGRAM: g::Program<EntryRouteSteps> =
     g::route(ENTRY_ARM0_PROGRAM, ENTRY_ARM1_PROGRAM);
-static ENTRY_CONTROLLER_PROGRAM: RoleProgram<'static, 0, EntryRouteSteps> =
+static ENTRY_CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramWitness<EntryRouteSteps>> =
     project(&ENTRY_ROUTE_PROGRAM);
-static ENTRY_WORKER_PROGRAM: RoleProgram<'static, 1, EntryRouteSteps> =
+static ENTRY_WORKER_PROGRAM: RoleProgram<'static, 1, ProgramWitness<EntryRouteSteps>> =
     project(&ENTRY_ROUTE_PROGRAM);
 type NestedRouteSteps = RouteSteps<HintRouteSteps, EntryRouteSteps>;
 const NESTED_ROUTE_PROGRAM: g::Program<NestedRouteSteps> =
@@ -9939,13 +9940,13 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
             static CLIENT_PROGRAM: RoleProgram<
                 'static,
                 0,
-                LoopProgramSteps,
+                ProgramWitness<LoopProgramSteps>,
                 crate::control::cap::mint::MintConfig,
             > = project(&LOOP_PROGRAM);
             static SERVER_PROGRAM: RoleProgram<
                 'static,
                 1,
-                LoopProgramSteps,
+                ProgramWitness<LoopProgramSteps>,
                 crate::control::cap::mint::MintConfig,
             > = project(&LOOP_PROGRAM);
             type ClientEndpoint = CursorEndpoint<
@@ -10361,13 +10362,13 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
             static CLIENT_PROGRAM: RoleProgram<
                 'static,
                 0,
-                LoopProgramSteps,
+                ProgramWitness<LoopProgramSteps>,
                 crate::control::cap::mint::MintConfig,
             > = project(&LOOP_PROGRAM);
             static SERVER_PROGRAM: RoleProgram<
                 'static,
                 1,
-                LoopProgramSteps,
+                ProgramWitness<LoopProgramSteps>,
                 crate::control::cap::mint::MintConfig,
             > = project(&LOOP_PROGRAM);
             type ClientEndpoint = CursorEndpoint<
@@ -10883,13 +10884,13 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
             static CLIENT_PROGRAM: RoleProgram<
                 'static,
                 0,
-                LoopProgramSteps,
+                ProgramWitness<LoopProgramSteps>,
                 crate::control::cap::mint::MintConfig,
             > = project(&LOOP_PROGRAM);
             static SERVER_PROGRAM: RoleProgram<
                 'static,
                 1,
-                LoopProgramSteps,
+                ProgramWitness<LoopProgramSteps>,
                 crate::control::cap::mint::MintConfig,
             > = project(&LOOP_PROGRAM);
             type ClientEndpoint = CursorEndpoint<

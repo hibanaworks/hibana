@@ -21,7 +21,7 @@ use core::{
     mem::MaybeUninit,
 };
 use hibana::g::advanced::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
-use hibana::g::advanced::{CanonicalControl, MessageSpec, RoleProgram, project};
+use hibana::g::advanced::{CanonicalControl, MessageSpec, ProgramWitness, RoleProgram, project};
 use hibana::g::{self, Msg, Role};
 use hibana::substrate::{
     RendezvousId,
@@ -154,9 +154,10 @@ const ROUTE: g::Program<DecisionSteps> = g::route(LEFT_ARM, RIGHT_ARM);
 const PROGRAM: g::Program<ProgramSteps> =
     g::seq(ROUTE, g::send::<Role<0>, Role<1>, Msg<73, u32>, 0>());
 
-static CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramSteps> = project(&PROGRAM);
+static CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramWitness<ProgramSteps>> =
+    project(&PROGRAM);
 
-static WORKER_PROGRAM: RoleProgram<'static, 1, ProgramSteps> = project(&PROGRAM);
+static WORKER_PROGRAM: RoleProgram<'static, 1, ProgramWitness<ProgramSteps>> = project(&PROGRAM);
 
 #[derive(Clone, Copy)]
 struct PendingInbound {
@@ -436,10 +437,10 @@ impl Transport for FlowTransport {
     }
 }
 
-fn register_route_resolvers_for_program<const ROLE: u8, GlobalSteps, T, const MAX_RV: usize>(
+fn register_route_resolvers_for_program<const ROLE: u8, Witness, T, const MAX_RV: usize>(
     cluster: &SessionKit<'_, T, DefaultLabelUniverse, CounterClock, MAX_RV>,
     rv_id: RendezvousId,
-    program: &RoleProgram<'static, ROLE, GlobalSteps>,
+    program: &RoleProgram<'static, ROLE, Witness>,
 ) where
     T: Transport + 'static,
 {

@@ -1526,19 +1526,9 @@ where
         stamp: ProgramStamp,
         summary: &LoweringSummary,
         scratch: &mut RoleCompileScratch,
-        local_step_count: usize,
-        passive_linger_route_scope_count: usize,
-        route_scope_count: usize,
-        parallel_enter_count: usize,
+        layout: crate::global::role_program::RoleImageLayoutInput,
     ) -> Option<*const CompiledRoleImage> {
-        let bytes = CompiledRoleImage::persistent_bytes_for_program(
-            summary.stamp().scope_count(),
-            passive_linger_route_scope_count,
-            route_scope_count,
-            parallel_enter_count,
-            summary.view().as_slice().len(),
-            local_step_count,
-        );
+        let bytes = CompiledRoleImage::persistent_bytes_for_program(layout);
         let (ptr, offset) = unsafe {
             self.allocate_persistent_image_bytes(bytes, CompiledRoleImage::persistent_align())
         }?;
@@ -1547,10 +1537,7 @@ where
                 ptr.cast::<CompiledRoleImage>(),
                 summary,
                 scratch,
-                local_step_count,
-                passive_linger_route_scope_count,
-                route_scope_count,
-                parallel_enter_count,
+                layout,
             );
         }
         let reserved = Self::frontier_scratch_guard_bytes(unsafe {
@@ -1600,10 +1587,7 @@ where
         stamp: ProgramStamp,
         summary: &LoweringSummary,
         scratch: &mut RoleCompileScratch,
-        local_step_count: usize,
-        passive_linger_route_scope_count: usize,
-        route_scope_count: usize,
-        parallel_enter_count: usize,
+        layout: crate::global::role_program::RoleImageLayoutInput,
     ) -> Option<*const CompiledRoleImage> {
         if let Some(idx) = self.role_image_slot_index::<ROLE>(stamp) {
             let slot = unsafe { &*self.role_images.add(idx) };
@@ -1612,26 +1596,13 @@ where
         let Some(insert_idx) = self.first_free_role_image_slot() else {
             return unsafe {
                 self.recycle_role_image_from_summary_for_program::<ROLE>(
-                    stamp,
-                    summary,
-                    scratch,
-                    local_step_count,
-                    passive_linger_route_scope_count,
-                    route_scope_count,
-                    parallel_enter_count,
+                    stamp, summary, scratch, layout,
                 )
             };
         };
         unsafe {
             self.materialize_new_role_image_from_summary_for_program::<ROLE>(
-                insert_idx,
-                stamp,
-                summary,
-                scratch,
-                local_step_count,
-                passive_linger_route_scope_count,
-                route_scope_count,
-                parallel_enter_count,
+                insert_idx, stamp, summary, scratch, layout,
             )
         }
     }
@@ -1724,19 +1695,9 @@ where
         stamp: ProgramStamp,
         summary: &LoweringSummary,
         scratch: &mut RoleCompileScratch,
-        local_step_count: usize,
-        passive_linger_route_scope_count: usize,
-        route_scope_count: usize,
-        parallel_enter_count: usize,
+        layout: crate::global::role_program::RoleImageLayoutInput,
     ) -> Option<*const CompiledRoleImage> {
-        let bytes = CompiledRoleImage::persistent_bytes_for_program(
-            summary.stamp().scope_count(),
-            passive_linger_route_scope_count,
-            route_scope_count,
-            parallel_enter_count,
-            summary.view().as_slice().len(),
-            local_step_count,
-        );
+        let bytes = CompiledRoleImage::persistent_bytes_for_program(layout);
         if let Some(insert_idx) = self.first_reusable_role_image_slot(bytes) {
             let slot = unsafe { &mut *self.role_images.add(insert_idx) };
             let ptr = unsafe {
@@ -1747,13 +1708,7 @@ where
             };
             unsafe {
                 crate::global::compiled::init_compiled_role_image_from_summary::<ROLE>(
-                    ptr,
-                    summary,
-                    scratch,
-                    local_step_count,
-                    passive_linger_route_scope_count,
-                    route_scope_count,
-                    parallel_enter_count,
+                    ptr, summary, scratch, layout,
                 );
             }
             let reserved =
@@ -1792,10 +1747,7 @@ where
                 ptr.cast::<CompiledRoleImage>(),
                 summary,
                 scratch,
-                local_step_count,
-                passive_linger_route_scope_count,
-                route_scope_count,
-                parallel_enter_count,
+                layout,
             );
         }
         let reserved = Self::frontier_scratch_guard_bytes(unsafe {

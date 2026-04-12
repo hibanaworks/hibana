@@ -199,7 +199,7 @@ The crate root keeps the app-facing result and error owners explicit:
 The public surface is small because guarantees move into the type system, not
 because guarantees were deleted.
 
-- projection stays typed through `RoleProgram<'prog, ROLE, GlobalSteps, Mint>`
+- projection stays typed through `RoleProgram<'prog, ROLE, Witness, Mint>`
 - `g::route` rejects duplicate labels and controller mismatches before runtime
 - `g::par` rejects empty fragments and role/lane overlap before runtime
 - localside runtime is fail-closed for label and payload mismatches
@@ -1077,6 +1077,10 @@ the measured resident shape matrix:
 - `CompiledProgramImage` header / persistent bytes
 - `CompiledRoleImage` header / persistent bytes
 
+`check_subsystem_budget_gates.sh` promotes the subsystem-local exact gates that
+pin compiled-role bytes, route-heavy resident regressions, and the
+descriptor-driven send/policy hot paths.
+
 ```bash
 # Stable hygiene and boundary gates
 bash ./.github/scripts/check_policy_surface_hygiene.sh
@@ -1090,6 +1094,7 @@ bash ./.github/scripts/check_warning_free.sh
 bash ./.github/scripts/check_direct_projection_binary.sh
 bash ./.github/scripts/check_no_std_build.sh
 bash ./.github/scripts/check_huge_choreography_budget.sh
+bash ./.github/scripts/check_subsystem_budget_gates.sh
 bash ./.github/scripts/check_pico_smoke.sh
 bash ./.github/scripts/check_pico_size_matrix.sh
 

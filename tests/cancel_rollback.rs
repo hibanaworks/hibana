@@ -11,7 +11,7 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 use common::TestTransport;
 use hibana::{
     g::advanced::steps::{SendStep, SeqSteps, StepCons, StepNil},
-    g::advanced::{CanonicalControl, RoleProgram, project},
+    g::advanced::{CanonicalControl, ProgramWitness, RoleProgram, project},
     g::{self, Msg, Role},
     substrate::cap::{
         GenericCapToken,
@@ -77,7 +77,7 @@ const CANCEL_PROTOCOL: g::Program<CancelProtocolSteps> = g::send::<
     0,
 >();
 
-static CONTROLLER_CANCEL_PROGRAM: RoleProgram<'static, 0, CancelProtocolSteps> =
+static CONTROLLER_CANCEL_PROGRAM: RoleProgram<'static, 0, ProgramWitness<CancelProtocolSteps>> =
     project(&CANCEL_PROTOCOL);
 
 const CHECKPOINT_PROTOCOL: g::Program<CheckpointProtocolSteps> = g::seq(
@@ -99,13 +99,19 @@ const CHECKPOINT_PROTOCOL: g::Program<CheckpointProtocolSteps> = g::seq(
     >(),
 );
 
-static CONTROLLER_CHECKPOINT_PROGRAM: RoleProgram<'static, 0, CheckpointProtocolSteps> =
-    project(&CHECKPOINT_PROTOCOL);
+static CONTROLLER_CHECKPOINT_PROGRAM: RoleProgram<
+    'static,
+    0,
+    ProgramWitness<CheckpointProtocolSteps>,
+> = project(&CHECKPOINT_PROTOCOL);
 const BOOTSTRAP_PROTOCOL: g::Program<BootstrapProtocolSteps> =
     g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
 
-static CONTROLLER_BOOTSTRAP_PROGRAM: RoleProgram<'static, 0, BootstrapProtocolSteps> =
-    project(&BOOTSTRAP_PROTOCOL);
+static CONTROLLER_BOOTSTRAP_PROGRAM: RoleProgram<
+    'static,
+    0,
+    ProgramWitness<BootstrapProtocolSteps>,
+> = project(&BOOTSTRAP_PROTOCOL);
 
 fn run_cancel_local_action_test(
     cluster: &'static TestKit,

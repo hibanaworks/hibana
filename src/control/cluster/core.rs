@@ -1847,9 +1847,9 @@ where
     }
 
     #[cfg(test)]
-    fn materialize_test_compiled_images<'prog, const ROLE: u8, GlobalSteps, Mint>(
+    fn materialize_test_compiled_images<'prog, const ROLE: u8, Witness, Mint>(
         slot: EndpointLeaseId,
-        program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, GlobalSteps, Mint>,
+        program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, Witness, Mint>,
     ) -> Option<(*const CompiledProgramImage, *const CompiledRoleImage)>
     where
         Mint: MintConfigMarker,
@@ -1938,9 +1938,9 @@ where
     }
 
     #[inline]
-    fn public_endpoint_resident_budget<const ROLE: u8, GlobalSteps, Mint>(
+    fn public_endpoint_resident_budget<const ROLE: u8, Witness, Mint>(
         compiled_role: &CompiledRoleImage,
-        _program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        _program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
     ) -> crate::rendezvous::core::EndpointResidentBudget
     where
         Mint: MintConfigMarker,
@@ -2047,10 +2047,10 @@ where
         Some(unsafe { slab_ptr.add(offset).cast() })
     }
 
-    fn ensure_program_image<const ROLE: u8, GlobalSteps, Mint>(
+    fn ensure_program_image<const ROLE: u8, Witness, Mint>(
         &self,
         rv_id: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
     ) -> Result<*const CompiledProgramImage, AttachError>
     where
         Mint: MintConfigMarker,
@@ -2085,10 +2085,10 @@ where
     }
 
     #[inline(never)]
-    fn ensure_compiled_images<const ROLE: u8, GlobalSteps, Mint>(
+    fn ensure_compiled_images<const ROLE: u8, Witness, Mint>(
         &self,
         rv_id: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
     ) -> Result<(*const CompiledProgramImage, *const CompiledRoleImage), AttachError>
     where
         Mint: MintConfigMarker,
@@ -2111,14 +2111,7 @@ where
         let role_image_bytes = if has_role {
             0
         } else {
-            CompiledRoleImage::persistent_bytes_for_program(
-                program.stamp().scope_count(),
-                lowering.passive_linger_route_scope_count(),
-                lowering.route_scope_count(),
-                lowering.parallel_enter_count(),
-                lowering.eff_count(),
-                lowering.local_step_count(),
-            )
+            CompiledRoleImage::persistent_bytes_for_program(lowering.layout_input())
         };
         let guard = if has_program {
             if has_role {
@@ -2158,10 +2151,7 @@ where
                             program.stamp(),
                             summary,
                             scratch,
-                            lowering.local_step_count(),
-                            lowering.passive_linger_route_scope_count(),
-                            lowering.route_scope_count(),
-                            lowering.parallel_enter_count(),
+                            lowering.layout_input(),
                         )
                     }?;
                     Some((program_image, role_image))
@@ -2224,10 +2214,10 @@ where
         }
     }
 
-    fn with_transient_compiled_program<const ROLE: u8, GlobalSteps, Mint, F, R, E>(
+    fn with_transient_compiled_program<const ROLE: u8, Witness, Mint, F, R, E>(
         &self,
         rv_id: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
         f: F,
     ) -> Result<R, E>
     where
@@ -2245,10 +2235,10 @@ where
     }
 
     #[cfg(test)]
-    fn with_transient_compiled_role<const ROLE: u8, GlobalSteps, Mint, F, R, E>(
+    fn with_transient_compiled_role<const ROLE: u8, Witness, Mint, F, R, E>(
         &self,
         rv_id: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
         f: F,
     ) -> Result<R, E>
     where
@@ -2729,10 +2719,10 @@ where
         unsafe { (*self.resolvers_ref_ptr()).get(key) }
     }
 
-    pub(crate) fn set_resolver<'prog, const POLICY: u16, const ROLE: u8, GlobalSteps, Mint>(
+    pub(crate) fn set_resolver<'prog, const POLICY: u16, const ROLE: u8, Witness, Mint>(
         &self,
         rv_id: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<'prog, ROLE, GlobalSteps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'prog, ROLE, Witness, Mint>,
         resolver: ResolverRef<'cfg>,
     ) -> Result<(), CpError>
     where
@@ -3879,11 +3869,11 @@ where
     }
 
     #[inline]
-    pub(crate) fn attach_public_endpoint<'r, const ROLE: u8, GlobalSteps, Mint>(
+    pub(crate) fn attach_public_endpoint<'r, const ROLE: u8, Witness, Mint>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
@@ -3894,11 +3884,11 @@ where
     }
 
     #[inline]
-    fn attach_public_endpoint_inner<'r, const ROLE: u8, GlobalSteps, Mint>(
+    fn attach_public_endpoint_inner<'r, const ROLE: u8, Witness, Mint>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
@@ -3964,7 +3954,7 @@ where
     }
 
     #[cfg(test)]
-    pub(crate) unsafe fn attach_endpoint_into<'r, const ROLE: u8, GlobalSteps, Mint, B>(
+    pub(crate) unsafe fn attach_endpoint_into<'r, const ROLE: u8, Witness, Mint, B>(
         &'r self,
         dst: *mut crate::endpoint::kernel::CursorEndpoint<
             'r,
@@ -3979,7 +3969,7 @@ where
         >,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
         binding: B,
     ) -> Result<(), AttachError>
     where
@@ -4069,11 +4059,11 @@ where
     }
 
     #[inline]
-    pub(crate) fn enter<'r, const ROLE: u8, GlobalSteps, Mint>(
+    pub(crate) fn enter<'r, const ROLE: u8, Witness, Mint>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
@@ -4084,11 +4074,11 @@ where
     }
 
     #[inline]
-    fn enter_with_binding<'r, const ROLE: u8, GlobalSteps, Mint>(
+    fn enter_with_binding<'r, const ROLE: u8, Witness, Mint>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
@@ -4325,12 +4315,16 @@ mod tests {
     type SharedBorrowProgram = Program<SharedBorrowSteps>;
     type SharedBorrowPolicyProgram<const POLICY_ID: u16> =
         Program<PolicySteps<SharedBorrowSteps, POLICY_ID>>;
-    type SharedBorrowRoleProgram =
-        crate::g::advanced::RoleProgram<'static, 0, SharedBorrowSteps, MintConfig>;
+    type SharedBorrowRoleProgram = crate::g::advanced::RoleProgram<
+        'static,
+        0,
+        crate::g::advanced::ProgramWitness<SharedBorrowSteps>,
+        MintConfig,
+    >;
     type SharedBorrowPolicyRoleProgram<const POLICY_ID: u16> = crate::g::advanced::RoleProgram<
         'static,
         0,
-        PolicySteps<SharedBorrowSteps, POLICY_ID>,
+        crate::g::advanced::ProgramWitness<PolicySteps<SharedBorrowSteps, POLICY_ID>>,
         MintConfig,
     >;
 
@@ -4569,12 +4563,7 @@ mod tests {
                 counts,
             ),
             compiled_role_persistent_bytes: CompiledRoleImage::persistent_bytes_for_program(
-                projected.stamp().scope_count(),
-                lowering.passive_linger_route_scope_count(),
-                lowering.route_scope_count(),
-                lowering.parallel_enter_count(),
-                lowering.eff_count(),
-                lowering.local_step_count(),
+                lowering.layout_input(),
             ),
             endpoint_phase_cursor_state_bytes: endpoint_layout.phase_cursor_state().bytes(),
             endpoint_route_state_bytes: endpoint_layout.route_state().bytes(),

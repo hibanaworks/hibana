@@ -5,6 +5,7 @@ use crate::endpoint::kernel::{EndpointArenaLayout, FrontierScratchLayout};
 use crate::global::role_program::ProjectedRoleLayout;
 use crate::global::role_program::{
     LaneSteps, LocalStep, MAX_LANES, MAX_PHASES, MAX_STEPS, Phase, PhaseRouteGuard,
+    RoleImageLayoutInput,
 };
 #[cfg(test)]
 use crate::global::typestate::RoleTypestate;
@@ -84,17 +85,135 @@ pub(crate) struct CompiledRoleImage {
     eff_index_to_step: *const u16,
     step_index_to_state: *const StateIndex,
     role: u8,
+    role_facts: RoleResidentFacts,
+    route_facts: RouteResidentFacts,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RouteResidentFacts {
+    compiled_frontier_entries: u8,
+    route_scope_count_value: u16,
+    max_route_stack_depth_value: u16,
+    max_loop_stack_depth_value: u16,
+}
+
+impl RouteResidentFacts {
+    const EMPTY: Self = Self {
+        compiled_frontier_entries: 0,
+        route_scope_count_value: 0,
+        max_route_stack_depth_value: 0,
+        max_loop_stack_depth_value: 0,
+    };
+
+    #[inline(always)]
+    const fn with_counts(
+        route_scope_count: usize,
+        max_route_stack_depth: usize,
+        max_loop_stack_depth: usize,
+        compiled_frontier_entries: usize,
+    ) -> Self {
+        Self {
+            compiled_frontier_entries: encode_compact_count_u8(compiled_frontier_entries),
+            route_scope_count_value: encode_compact_count_u16(route_scope_count),
+            max_route_stack_depth_value: encode_compact_count_u16(max_route_stack_depth),
+            max_loop_stack_depth_value: encode_compact_count_u16(max_loop_stack_depth),
+        }
+    }
+
+    #[inline(always)]
+    const fn route_scope_count(self) -> usize {
+        self.route_scope_count_value as usize
+    }
+
+    #[inline(always)]
+    const fn max_route_stack_depth(self) -> usize {
+        self.max_route_stack_depth_value as usize
+    }
+
+    #[inline(always)]
+    const fn max_loop_stack_depth(self) -> usize {
+        self.max_loop_stack_depth_value as usize
+    }
+
+    #[inline(always)]
+    const fn compiled_frontier_entry_capacity(self) -> usize {
+        self.compiled_frontier_entries as usize
+    }
+
+    #[inline(always)]
+    const fn scope_evidence_count(self) -> usize {
+        self.route_scope_count()
+    }
+
+    #[inline(always)]
+    const fn route_table_frame_slots(self) -> usize {
+        let floor = if self.route_scope_count() != 0 { 1 } else { 0 };
+        let depth = self.max_route_stack_depth();
+        if depth > floor { depth } else { floor }
+    }
+
+    #[inline(always)]
+    const fn loop_table_slots(self) -> usize {
+        self.max_loop_stack_depth()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RoleResidentFacts {
     active_lane_mask_bits: u8,
     active_lane_count_value: u8,
     logical_lane_count_value: u8,
     endpoint_lane_slot_count_value: u8,
-    compiled_frontier_entries: u8,
     phase_len: u16,
-    route_scope_count_value: u16,
-    max_route_stack_depth_value: u16,
-    max_loop_stack_depth_value: u16,
     eff_index_to_step_len: u16,
     step_index_to_state_len: u16,
+}
+
+impl RoleResidentFacts {
+    const EMPTY: Self = Self {
+        active_lane_mask_bits: 0,
+        active_lane_count_value: 0,
+        logical_lane_count_value: 0,
+        endpoint_lane_slot_count_value: 0,
+        phase_len: 0,
+        eff_index_to_step_len: 0,
+        step_index_to_state_len: 0,
+    };
+
+    #[inline(always)]
+    const fn active_lane_mask(self) -> u8 {
+        self.active_lane_mask_bits
+    }
+
+    #[inline(always)]
+    const fn active_lane_count(self) -> usize {
+        self.active_lane_count_value as usize
+    }
+
+    #[inline(always)]
+    const fn logical_lane_count(self) -> usize {
+        self.logical_lane_count_value as usize
+    }
+
+    #[inline(always)]
+    const fn endpoint_lane_slot_count(self) -> usize {
+        self.endpoint_lane_slot_count_value as usize
+    }
+
+    #[inline(always)]
+    const fn phase_len(self) -> usize {
+        self.phase_len as usize
+    }
+
+    #[inline(always)]
+    const fn eff_index_to_step_len(self) -> usize {
+        self.eff_index_to_step_len as usize
+    }
+
+    #[inline(always)]
+    const fn step_index_to_state_len(self) -> usize {
+        self.step_index_to_state_len as usize
+    }
 }
 
 struct CompiledRoleScopeStorage {
@@ -179,24 +298,20 @@ impl CompiledRoleScopeStorage {
     }
 
     #[inline(always)]
-    const fn total_bytes_for_layout(
-        scope_count: usize,
-        passive_linger_route_scope_count: usize,
-        route_scope_count: usize,
-        parallel_enter_count: usize,
-        eff_count: usize,
-        step_index_to_state_count: usize,
-    ) -> usize {
-        let scope_cap = Self::scope_cap(scope_count);
-        let route_scope_cap = Self::route_scope_cap(route_scope_count);
-        let eff_index_cap = Self::step_cap(eff_count);
-        let step_index_cap = Self::step_cap(step_index_to_state_count);
+    const fn total_bytes_for_layout(layout: RoleImageLayoutInput) -> usize {
+        let scope_cap = Self::scope_cap(layout.program.scope_count);
+        let route_scope_cap = Self::route_scope_cap(layout.program.route_scope_count);
+        let eff_index_cap = Self::step_cap(layout.program.eff_count);
+        let step_index_cap = Self::step_cap(layout.role.local_step_count);
         let typestate_node_cap = Self::typestate_node_cap(
-            scope_count,
-            passive_linger_route_scope_count,
-            step_index_to_state_count,
+            layout.program.scope_count,
+            layout.role.passive_linger_route_scope_count,
+            layout.role.local_step_count,
         );
-        let phase_cap = Self::phase_cap(step_index_to_state_count, parallel_enter_count);
+        let phase_cap = Self::phase_cap(
+            layout.role.local_step_count,
+            layout.program.parallel_enter_count,
+        );
         let header = core::mem::size_of::<CompiledRoleImage>();
         let typestate_start = Self::align_up(
             header,
@@ -241,14 +356,18 @@ impl CompiledRoleScopeStorage {
         route_scope_count: usize,
         eff_count: usize,
     ) -> usize {
-        Self::total_bytes_for_layout(
-            scope_count,
-            route_scope_count,
-            route_scope_count,
-            scope_count,
-            eff_count,
-            eff_count,
-        )
+        Self::total_bytes_for_layout(RoleImageLayoutInput {
+            program: crate::global::role_program::ProgramLayoutFacts {
+                scope_count,
+                eff_count,
+                parallel_enter_count: scope_count,
+                route_scope_count,
+            },
+            role: crate::global::role_program::RoleLayoutFacts {
+                local_step_count: eff_count,
+                passive_linger_route_scope_count: route_scope_count,
+            },
+        })
     }
 
     #[inline(always)]
@@ -278,22 +397,20 @@ impl CompiledRoleScopeStorage {
     #[inline(always)]
     unsafe fn from_image_ptr_with_layout(
         image: *mut CompiledRoleImage,
-        scope_count: usize,
-        passive_linger_route_scope_count: usize,
-        route_scope_count: usize,
-        parallel_enter_count: usize,
-        eff_count: usize,
-        step_index_to_state_count: usize,
+        layout: RoleImageLayoutInput,
     ) -> Self {
-        let scope_cap = Self::scope_cap(scope_count);
-        let route_scope_cap = Self::route_scope_cap(route_scope_count);
-        let eff_index_cap = Self::step_cap(eff_count);
+        let scope_cap = Self::scope_cap(layout.program.scope_count);
+        let route_scope_cap = Self::route_scope_cap(layout.program.route_scope_count);
+        let eff_index_cap = Self::step_cap(layout.program.eff_count);
         let typestate_node_cap = Self::typestate_node_cap(
-            scope_count,
-            passive_linger_route_scope_count,
-            step_index_to_state_count,
+            layout.program.scope_count,
+            layout.role.passive_linger_route_scope_count,
+            layout.role.local_step_count,
         );
-        let phase_cap = Self::phase_cap(step_index_to_state_count, parallel_enter_count);
+        let phase_cap = Self::phase_cap(
+            layout.role.local_step_count,
+            layout.program.parallel_enter_count,
+        );
         let base = image.cast::<u8>() as usize;
         let header_end = base + core::mem::size_of::<CompiledRoleImage>();
         let typestate_start =
@@ -1308,22 +1425,8 @@ impl CompiledRoleImage {
     }
 
     #[inline(always)]
-    pub(crate) const fn persistent_bytes_for_program(
-        scope_count: usize,
-        passive_linger_route_scope_count: usize,
-        route_scope_count: usize,
-        parallel_enter_count: usize,
-        eff_count: usize,
-        local_step_count: usize,
-    ) -> usize {
-        CompiledRoleScopeStorage::total_bytes_for_layout(
-            scope_count,
-            passive_linger_route_scope_count,
-            route_scope_count,
-            parallel_enter_count,
-            eff_count,
-            local_step_count,
-        )
+    pub(crate) const fn persistent_bytes_for_program(layout: RoleImageLayoutInput) -> usize {
+        CompiledRoleScopeStorage::total_bytes_for_layout(layout)
     }
 
     #[inline(always)]
@@ -1339,17 +1442,8 @@ impl CompiledRoleImage {
             ptr::addr_of_mut!((*dst).phases).write(core::ptr::null());
             ptr::addr_of_mut!((*dst).step_index_to_state).write(core::ptr::null());
             ptr::addr_of_mut!((*dst).role).write(role);
-            ptr::addr_of_mut!((*dst).active_lane_mask_bits).write(0);
-            ptr::addr_of_mut!((*dst).active_lane_count_value).write(0);
-            ptr::addr_of_mut!((*dst).logical_lane_count_value).write(0);
-            ptr::addr_of_mut!((*dst).endpoint_lane_slot_count_value).write(0);
-            ptr::addr_of_mut!((*dst).compiled_frontier_entries).write(0);
-            ptr::addr_of_mut!((*dst).phase_len).write(0);
-            ptr::addr_of_mut!((*dst).route_scope_count_value).write(0);
-            ptr::addr_of_mut!((*dst).max_route_stack_depth_value).write(0);
-            ptr::addr_of_mut!((*dst).max_loop_stack_depth_value).write(0);
-            ptr::addr_of_mut!((*dst).eff_index_to_step_len).write(0);
-            ptr::addr_of_mut!((*dst).step_index_to_state_len).write(0);
+            ptr::addr_of_mut!((*dst).role_facts).write(RoleResidentFacts::EMPTY);
+            ptr::addr_of_mut!((*dst).route_facts).write(RouteResidentFacts::EMPTY);
         }
     }
 
@@ -1375,12 +1469,12 @@ impl CompiledRoleImage {
             &scratch.eff_index_to_step,
             &mut scratch.step_index_to_state,
         );
-        let step_state_cap = unsafe { (*dst).step_index_to_state_len as usize };
+        let step_state_cap = unsafe { (*dst).role_facts.step_index_to_state_len() };
         if len > step_state_cap {
             panic!("compiled role local step count exceeds allocated step-state capacity");
         }
         unsafe {
-            ptr::addr_of_mut!((*dst).step_index_to_state_len).write(encode_compact_count_u16(len));
+            (*dst).role_facts.step_index_to_state_len = encode_compact_count_u16(len);
         }
         let phase_len = build_phases_into(
             role,
@@ -1392,7 +1486,7 @@ impl CompiledRoleImage {
             &mut scratch.phases,
             &mut scratch.parallel_ranges,
         );
-        let phase_cap = unsafe { (*dst).phase_len as usize };
+        let phase_cap = unsafe { (*dst).role_facts.phase_len() };
         if phase_len > phase_cap {
             panic!("compiled role phase count exceeds allocated phase capacity");
         }
@@ -1409,29 +1503,26 @@ impl CompiledRoleImage {
             usize::from(route_scope_count != 0),
         );
         unsafe {
-            ptr::addr_of_mut!((*dst).active_lane_mask_bits).write(active_lane_mask);
-            ptr::addr_of_mut!((*dst).active_lane_count_value)
-                .write(encode_compact_count_u8(active_lane_count));
-            ptr::addr_of_mut!((*dst).logical_lane_count_value)
-                .write(encode_compact_count_u8(logical_lane_count));
-            ptr::addr_of_mut!((*dst).endpoint_lane_slot_count_value)
-                .write(encode_compact_count_u8(endpoint_lane_slot_count));
-            ptr::addr_of_mut!((*dst).compiled_frontier_entries)
-                .write(encode_compact_count_u8(compiled_frontier_entries));
-            ptr::addr_of_mut!((*dst).phase_len).write(encode_compact_count_u16(phase_len));
-            ptr::addr_of_mut!((*dst).route_scope_count_value)
-                .write(encode_compact_count_u16(route_scope_count));
-            ptr::addr_of_mut!((*dst).max_route_stack_depth_value)
-                .write(encode_compact_count_u16(max_route_stack_depth));
-            ptr::addr_of_mut!((*dst).max_loop_stack_depth_value)
-                .write(encode_compact_count_u16(max_loop_stack_depth));
+            (*dst).role_facts.active_lane_mask_bits = active_lane_mask;
+            (*dst).role_facts.active_lane_count_value = encode_compact_count_u8(active_lane_count);
+            (*dst).role_facts.logical_lane_count_value =
+                encode_compact_count_u8(logical_lane_count);
+            (*dst).role_facts.endpoint_lane_slot_count_value =
+                encode_compact_count_u8(endpoint_lane_slot_count);
+            ptr::addr_of_mut!((*dst).route_facts).write(RouteResidentFacts::with_counts(
+                route_scope_count,
+                max_route_stack_depth,
+                max_loop_stack_depth,
+                compiled_frontier_entries,
+            ));
+            (*dst).role_facts.phase_len = encode_compact_count_u16(phase_len);
             core::ptr::copy_nonoverlapping(
                 scratch.phases.as_ptr(),
                 (*dst).phases.cast_mut(),
                 phase_len,
             );
         }
-        let eff_index_len = unsafe { (*dst).eff_index_to_step_len as usize };
+        let eff_index_len = unsafe { (*dst).role_facts.eff_index_to_step_len() };
         let mut eff_idx = 0usize;
         while eff_idx < eff_index_len {
             unsafe {
@@ -1451,7 +1542,7 @@ impl CompiledRoleImage {
                 copy_eff_index_len,
             );
         }
-        let step_state_len = unsafe { (*dst).step_index_to_state_len as usize };
+        let step_state_len = unsafe { (*dst).role_facts.step_index_to_state_len() };
         let mut step_idx = 0usize;
         while step_idx < step_state_len {
             unsafe {
@@ -1485,10 +1576,18 @@ impl CompiledRoleImage {
                 dst,
                 summary,
                 scratch,
-                None,
-                summary.stamp().scope_count(),
-                summary.stamp().scope_count(),
-                summary.stamp().scope_count(),
+                RoleImageLayoutInput {
+                    program: crate::global::role_program::ProgramLayoutFacts {
+                        scope_count: summary.stamp().scope_count(),
+                        eff_count: summary.view().as_slice().len(),
+                        parallel_enter_count: summary.stamp().scope_count(),
+                        route_scope_count: summary.stamp().scope_count(),
+                    },
+                    role: crate::global::role_program::RoleLayoutFacts {
+                        local_step_count: summary.view().as_slice().len(),
+                        passive_linger_route_scope_count: summary.stamp().scope_count(),
+                    },
+                },
             )
         };
     }
@@ -1498,22 +1597,9 @@ impl CompiledRoleImage {
         dst: *mut Self,
         summary: &LoweringSummary,
         scratch: &mut RoleCompileScratch,
-        local_step_count: usize,
-        passive_linger_route_scope_count: usize,
-        route_scope_count: usize,
-        parallel_enter_count: usize,
+        layout: RoleImageLayoutInput,
     ) {
-        unsafe {
-            Self::init_from_summary_with_layout::<ROLE>(
-                dst,
-                summary,
-                scratch,
-                Some(local_step_count),
-                passive_linger_route_scope_count,
-                route_scope_count,
-                parallel_enter_count,
-            )
-        };
+        unsafe { Self::init_from_summary_with_layout::<ROLE>(dst, summary, scratch, layout) };
     }
 
     #[inline(never)]
@@ -1521,40 +1607,24 @@ impl CompiledRoleImage {
         dst: *mut Self,
         summary: &LoweringSummary,
         scratch: &mut RoleCompileScratch,
-        step_index_to_state_count: Option<usize>,
-        passive_linger_route_scope_count: usize,
-        route_scope_count: usize,
-        parallel_enter_count: usize,
+        layout: RoleImageLayoutInput,
     ) {
         let init_empty =
             core::hint::black_box(init_empty_compiled_role_image as unsafe fn(*mut Self, u8));
         unsafe { init_empty(dst, ROLE) };
-        let scope_count = summary.stamp().scope_count();
-        let eff_count = summary.view().as_slice().len();
-        let step_index_to_state_len = step_index_to_state_count.unwrap_or(eff_count);
-        let storage = unsafe {
-            CompiledRoleScopeStorage::from_image_ptr_with_layout(
-                dst,
-                scope_count,
-                passive_linger_route_scope_count,
-                route_scope_count,
-                parallel_enter_count,
-                eff_count,
-                step_index_to_state_len,
-            )
-        };
+        let storage = unsafe { CompiledRoleScopeStorage::from_image_ptr_with_layout(dst, layout) };
         unsafe {
             ptr::addr_of_mut!((*dst).typestate).write(storage.typestate.cast_const());
             ptr::addr_of_mut!((*dst).phases).write(storage.phases.cast_const());
-            ptr::addr_of_mut!((*dst).phase_len).write(encode_compact_count_u16(storage.phase_cap));
+            (*dst).role_facts.phase_len = encode_compact_count_u16(storage.phase_cap);
             ptr::addr_of_mut!((*dst).eff_index_to_step)
                 .write(storage.eff_index_to_step.cast_const());
-            ptr::addr_of_mut!((*dst).eff_index_to_step_len)
-                .write(encode_compact_count_u16(eff_count));
+            (*dst).role_facts.eff_index_to_step_len =
+                encode_compact_count_u16(layout.program.eff_count);
             ptr::addr_of_mut!((*dst).step_index_to_state)
                 .write(storage.step_index_to_state.cast_const());
-            ptr::addr_of_mut!((*dst).step_index_to_state_len)
-                .write(encode_compact_count_u16(step_index_to_state_len));
+            (*dst).role_facts.step_index_to_state_len =
+                encode_compact_count_u16(layout.role.local_step_count);
         }
         unsafe {
             crate::global::typestate::init_value_from_summary_for_role(
@@ -1585,7 +1655,7 @@ impl CompiledRoleImage {
 
     #[inline(always)]
     pub(crate) fn local_len(&self) -> usize {
-        self.step_index_to_state_len as usize
+        self.role_facts.step_index_to_state_len()
     }
 
     #[inline(always)]
@@ -1605,7 +1675,10 @@ impl CompiledRoleImage {
     #[inline(always)]
     pub(crate) fn eff_index_to_step(&self) -> &[u16] {
         unsafe {
-            core::slice::from_raw_parts(self.eff_index_to_step, self.eff_index_to_step_len as usize)
+            core::slice::from_raw_parts(
+                self.eff_index_to_step,
+                self.role_facts.eff_index_to_step_len(),
+            )
         }
     }
 
@@ -1614,14 +1687,14 @@ impl CompiledRoleImage {
         unsafe {
             core::slice::from_raw_parts(
                 self.step_index_to_state,
-                self.step_index_to_state_len as usize,
+                self.role_facts.step_index_to_state_len(),
             )
         }
     }
 
     #[inline(always)]
     pub(crate) fn active_lane_mask(&self) -> u8 {
-        self.active_lane_mask_bits
+        self.role_facts.active_lane_mask()
     }
 
     #[inline(always)]
@@ -1636,30 +1709,28 @@ impl CompiledRoleImage {
 
     #[inline(always)]
     pub(crate) fn logical_lane_count(&self) -> usize {
-        self.logical_lane_count_value as usize
+        self.role_facts.logical_lane_count()
     }
 
     #[inline(always)]
     pub(crate) fn endpoint_lane_slot_count(&self) -> usize {
-        self.endpoint_lane_slot_count_value as usize
+        self.role_facts.endpoint_lane_slot_count()
     }
 
     #[inline(always)]
     pub(crate) fn max_route_stack_depth(&self) -> usize {
-        self.max_route_stack_depth_value as usize
+        self.route_facts.max_route_stack_depth()
     }
 
     #[inline(always)]
+    #[cfg(test)]
     pub(crate) fn max_loop_stack_depth(&self) -> usize {
-        self.max_loop_stack_depth_value as usize
+        self.route_facts.max_loop_stack_depth()
     }
 
     #[inline(always)]
     pub(crate) fn route_table_frame_slots(&self) -> usize {
-        core::cmp::max(
-            self.max_route_stack_depth(),
-            usize::from(self.route_scope_count() != 0),
-        )
+        self.route_facts.route_table_frame_slots()
     }
 
     #[inline(always)]
@@ -1673,7 +1744,7 @@ impl CompiledRoleImage {
 
     #[inline(always)]
     pub(crate) fn loop_table_slots(&self) -> usize {
-        self.max_loop_stack_depth()
+        self.route_facts.loop_table_slots()
     }
 
     #[inline(always)]
@@ -1692,13 +1763,14 @@ impl CompiledRoleImage {
     }
 
     #[inline(always)]
+    #[cfg(test)]
     pub(crate) fn route_scope_count(&self) -> usize {
-        self.route_scope_count_value as usize
+        self.route_facts.route_scope_count()
     }
 
     #[inline(always)]
     pub(crate) fn scope_evidence_count(&self) -> usize {
-        self.route_scope_count_value as usize
+        self.route_facts.scope_evidence_count()
     }
 
     #[inline(always)]
@@ -1746,17 +1818,17 @@ impl CompiledRoleImage {
 
     #[inline(always)]
     pub(crate) fn active_lane_count(&self) -> usize {
-        self.active_lane_count_value as usize
+        self.role_facts.active_lane_count()
     }
 
     #[inline(always)]
     fn phase_len(&self) -> usize {
-        self.phase_len as usize
+        self.role_facts.phase_len()
     }
 
     #[inline(always)]
     fn compiled_frontier_entry_capacity(&self) -> usize {
-        self.compiled_frontier_entries as usize
+        self.route_facts.compiled_frontier_entry_capacity()
     }
 
     fn build_active_lane_dense_map_into(active_lane_mask: u8, dst: &mut [u8; MAX_LANES]) -> usize {
@@ -2032,8 +2104,8 @@ mod tests {
             const { UnsafeCell::new(MaybeUninit::uninit()) };
     }
 
-    fn with_compiled_role<const ROLE: u8, GlobalSteps, R>(
-        program: &role_program::RoleProgram<'_, ROLE, GlobalSteps, MintConfig>,
+    fn with_compiled_role<const ROLE: u8, Witness, R>(
+        program: &role_program::RoleProgram<'_, ROLE, Witness, MintConfig>,
         f: impl FnOnce(&CompiledRole) -> R,
     ) -> R {
         crate::global::compiled::with_compiled_role_in_slot::<ROLE, _>(
@@ -2044,8 +2116,8 @@ mod tests {
         )
     }
 
-    fn with_compiled_role_image<const ROLE: u8, GlobalSteps, R>(
-        program: &role_program::RoleProgram<'_, ROLE, GlobalSteps, MintConfig>,
+    fn with_compiled_role_image<const ROLE: u8, Witness, R>(
+        program: &role_program::RoleProgram<'_, ROLE, Witness, MintConfig>,
         f: impl FnOnce(&CompiledRoleImage) -> R,
     ) -> R {
         let lowering = crate::global::lowering_input(program);
@@ -2415,18 +2487,12 @@ mod tests {
         let lowering = crate::global::lowering_input(&worker);
         let summary = lowering.summary();
         assert!(
-            CompiledRoleImage::persistent_bytes_for_program(
-                summary.stamp().scope_count(),
-                lowering.passive_linger_route_scope_count(),
-                lowering.route_scope_count(),
-                lowering.parallel_enter_count(),
-                lowering.eff_count(),
-                lowering.local_step_count(),
-            ) < CompiledRoleImage::persistent_bytes_for_counts(
-                summary.stamp().scope_count(),
-                lowering.route_scope_count(),
-                lowering.eff_count(),
-            ),
+            CompiledRoleImage::persistent_bytes_for_program(lowering.layout_input())
+                < CompiledRoleImage::persistent_bytes_for_counts(
+                    summary.stamp().scope_count(),
+                    lowering.route_scope_count(),
+                    lowering.eff_count(),
+                ),
             "role image sizing should use the projected local step count instead of full eff_count"
         );
         with_compiled_role_image(&worker, |image| {
@@ -2702,14 +2768,7 @@ mod tests {
             0usize,
             eff_cap * core::mem::size_of::<u16>(),
             step_cap * core::mem::size_of::<crate::global::typestate::StateIndex>(),
-            CompiledRoleImage::persistent_bytes_for_program(
-                summary.stamp().scope_count(),
-                lowering.passive_linger_route_scope_count(),
-                lowering.route_scope_count(),
-                lowering.parallel_enter_count(),
-                eff_count,
-                local_len,
-            ),
+            CompiledRoleImage::persistent_bytes_for_program(lowering.layout_input()),
             node_stats.send_count,
             node_stats.recv_count,
             node_stats.local_count,

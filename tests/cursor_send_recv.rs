@@ -9,7 +9,7 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 use common::TestTransport;
 use hibana::{
     g::advanced::steps::{SendStep, StepCons, StepNil},
-    g::advanced::{RoleProgram, project},
+    g::advanced::{ProgramWitness, RoleProgram, project},
     g::{self, Msg, Role},
     substrate::{
         SessionId, SessionKit,
@@ -26,12 +26,12 @@ const PROGRAM: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, S
 static ORIGIN_PROGRAM: RoleProgram<
     'static,
     0,
-    StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil>,
+    ProgramWitness<StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil>>,
 > = project(&PROGRAM);
 static TARGET_PROGRAM: RoleProgram<
     'static,
     1,
-    StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil>,
+    ProgramWitness<StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil>>,
 > = project(&PROGRAM);
 type TestKit = SessionKit<
     'static,

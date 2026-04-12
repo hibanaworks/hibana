@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use hibana::g;
 use hibana::g::advanced::steps::{SendStep, SeqSteps, StepCons, StepNil};
-use hibana::g::advanced::{RoleProgram, project};
+use hibana::g::advanced::{ProgramWitness, RoleProgram, project};
 use hibana::substrate::{
     SessionId, SessionKit,
     binding::NoBinding,
@@ -29,7 +29,7 @@ const CONNECTION_SOURCE: g::Program<ConnectionSteps> = g::seq(StepNil::PROGRAM, 
 static CLIENT_PROGRAM: RoleProgram<
     'static,
     0,
-    StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>, StepNil>,
+    ProgramWitness<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>, StepNil>>,
 > = project(&PROGRAM);
 type StaticTestKit =
     SessionKit<'static, common::TestTransport, DefaultLabelUniverse, CounterClock, 2>;
@@ -329,19 +329,18 @@ fn substrate_facade_keeps_enter_as_the_only_public_attach_entry() {
     }
 
     assert!(
-        substrate_src.contains("pub fn enter<'r, const ROLE: u8, GlobalSteps, Mint, B>("),
+        substrate_src.contains("pub fn enter<'r, const ROLE: u8, Witness, Mint, B>("),
         "substrate::SessionKit must keep enter(...) as the canonical public attach entry"
     );
     assert!(
         substrate_src
-            .contains("program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,"),
+            .contains("program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,"),
         "substrate::SessionKit::enter must accept projected programs without extending the endpoint lifetime"
     );
     assert!(
         !substrate_src.contains(
-            "program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, GlobalSteps, Mint>,"
-        ) && !substrate_src
-            .contains("pub fn enter<'r, 'prog, const ROLE: u8, GlobalSteps, Mint, B>("),
+            "program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, Witness, Mint>,"
+        ) && !substrate_src.contains("pub fn enter<'r, 'prog, const ROLE: u8, Witness, Mint, B>("),
         "substrate::SessionKit::enter must not tie endpoint lifetime to the projected RoleProgram borrow"
     );
 }
@@ -391,6 +390,7 @@ fn quality_workflow_runs_canonical_validation_suite() {
         "./.github/scripts/check_warning_free.sh",
         "./.github/scripts/check_direct_projection_binary.sh",
         "./.github/scripts/check_huge_choreography_budget.sh",
+        "./.github/scripts/check_subsystem_budget_gates.sh",
         "./.github/scripts/check_pico_size_matrix.sh",
         "cargo check --all-targets -p hibana",
         "cargo test -p hibana --features std",

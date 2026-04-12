@@ -513,6 +513,7 @@ fn offer_kernel_stays_three_stage_and_fail_closed() {
         "async fn send_with_meta_and_cursor_in_place<M>(",
     );
     let prepare_send_control_body = impl_body(cursor_src, "fn prepare_send_control(");
+    let emit_send_transport_body = impl_body(cursor_src, "async fn emit_send_transport(");
     let decode_branch_body = impl_body(decode_src, "pub async fn decode_branch<M>(");
     let apply_branch_recv_policy_body = impl_body(decode_src, "fn apply_branch_recv_policy(");
 
@@ -592,6 +593,14 @@ fn offer_kernel_stays_three_stage_and_fail_closed() {
     assert!(
         prepare_send_control_body.contains("evaluate_dynamic_policy("),
         "send consume preparation must own dynamic policy evaluation"
+    );
+    assert!(
+        emit_send_transport_body.contains("prepared.stage_payload"),
+        "send transport staging must stay descriptor-driven through the prepared send descriptor"
+    );
+    assert!(
+        !emit_send_transport_body.contains("match prepared.control_handling"),
+        "send transport staging must not branch on control handling after descriptor preparation"
     );
     for forbidden in [
         "take_scope_ack(",
@@ -936,6 +945,10 @@ fn runtime_compiled_materialization_stays_transient_and_cacheless() {
             && !role_program_runtime_src.contains("CompiledRole::init_from_summary::<ROLE>("),
         "RoleProgram must stay a thin witness and must not own compiled image storage or materialization"
     );
+    assert!(
+        role_program_runtime_src.contains("pub struct ProgramWitness<Steps> {"),
+        "RoleProgram must keep a dedicated sealed ProgramWitness owner instead of exposing raw global steps directly"
+    );
 
     for forbidden in [
         "MAX_COMPILED_PROGRAMS",
@@ -1009,7 +1022,7 @@ fn compiled_authority_completion_stays_summary_backed() {
         "RoleProgram must not keep a dead direct compiled-role helper"
     );
     for required in [
-        "fn with_compiled_role_in_slot<const ROLE: u8, GlobalSteps, R>(",
+        "fn with_compiled_role_in_slot<const ROLE: u8, Witness, R>(",
         "crate::global::compiled::with_compiled_role_in_slot::<ROLE, _>(",
         "crate::global::lowering_input(program)",
         "counts: program.summary.role_lowering_counts::<ROLE>(),",
@@ -1111,8 +1124,8 @@ fn role_program_projection_metadata_stays_internal() {
         "pub(crate) const fn local_len(&self) -> usize {",
         "pub(crate) const fn step_meta(&'static self, idx: usize) -> LocalStep {",
         "pub(crate) const fn step_graph(&'static self) -> &'static RoleTypestate<ROLE> {",
-        "impl<'prog, const ROLE: u8, GlobalSteps, Mint> core::ops::Deref",
-        "impl<'prog, const ROLE: u8, GlobalSteps, Mint> AsRef<[LocalStep]>",
+        "impl<'prog, const ROLE: u8, Witness, Mint> core::ops::Deref",
+        "impl<'prog, const ROLE: u8, Witness, Mint> AsRef<[LocalStep]>",
     ] {
         assert!(
             !role_program_src.contains(forbidden),
@@ -1130,7 +1143,7 @@ fn role_program_projection_metadata_stays_internal() {
         "pub(crate) const fn stamp(&self) -> ProgramStamp {",
         "pub(crate) fn borrow_id(&self) -> usize {",
         "pub(crate) struct RoleLoweringInput<'prog> {",
-        "pub(crate) const fn lowering_input<'prog, const ROLE: u8, GlobalSteps, Mint>(",
+        "pub(crate) const fn lowering_input<'prog, const ROLE: u8, Witness, Mint>(",
     ] {
         assert!(
             role_program_src.contains(required),
@@ -1153,7 +1166,7 @@ fn role_program_projection_metadata_stays_internal() {
         "program_image: UnsafeCell<MaybeUninit<CompiledProgram>>",
         "role_image_init: Cell<bool>",
         "role_image: UnsafeCell<MaybeUninit<CompiledRole>>",
-        "impl<'prog, const ROLE: u8, GlobalSteps, Mint> Drop for RoleProgram",
+        "impl<'prog, const ROLE: u8, Witness, Mint> Drop for RoleProgram",
     ] {
         assert!(
             !role_program_src.contains(forbidden),
@@ -1186,9 +1199,9 @@ fn role_program_projection_metadata_stays_internal() {
         "RoleProgram must not hide typed projection behind a StepNil default"
     );
     for forbidden in [
-        "pub struct RoleProgram<'prog, const ROLE: u8, GlobalSteps, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, global_steps:",
-        "pub struct RoleProgram<'prog, const ROLE: u8, GlobalSteps, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, mint: Mint, phases:",
-        "pub struct RoleProgram<'prog, const ROLE: u8, GlobalSteps, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, mint: Mint, typestate:",
+        "pub struct RoleProgram<'prog, const ROLE: u8, Witness, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, _witness:",
+        "pub struct RoleProgram<'prog, const ROLE: u8, Witness, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, mint: Mint, phases:",
+        "pub struct RoleProgram<'prog, const ROLE: u8, Witness, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, mint: Mint, typestate:",
     ] {
         assert!(
             !role_program_ws.contains(forbidden),
@@ -1204,6 +1217,8 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
     let cursor_src = include_str!("../src/global/typestate/cursor.rs");
     let role_program_src = include_str!("../src/global/role_program.rs");
     let registry_src = include_str!("../src/global/typestate/registry.rs");
+    let compiled_role_ws = compact_ws(compiled_role_src);
+    let role_program_ws = compact_ws(role_program_src);
 
     for required in [
         "pub struct RoleTypestate<const ROLE: u8> {",
@@ -1221,6 +1236,11 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
         "pub len: u16,",
         "pub(crate) struct Phase {",
         "pub min_start: u16,",
+        "pub(crate) struct ProgramLayoutFacts {",
+        "pub(crate) struct RoleLayoutFacts {",
+        "pub(crate) struct RoleImageLayoutInput {",
+        "pub(crate) program: ProgramLayoutFacts,",
+        "pub(crate) role: RoleLayoutFacts,",
         "pub(crate) struct ProjectedRoleLayout {",
         "local_steps: [LocalStep; MAX_STEPS],",
         "phases: [Phase; MAX_PHASES],",
@@ -1275,6 +1295,42 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
             "compiled role and phase cursor must keep controller/dispatch facts in compact shared facts: {required}"
         );
     }
+
+    assert!(
+        compiled_role_ws.contains(&compact_ws(
+            "pub(crate) struct CompiledRoleImage {
+                phases: *const Phase,
+                typestate: *const RoleTypestateValue,
+                eff_index_to_step: *const u16,
+                step_index_to_state: *const StateIndex,
+                role: u8,
+                role_facts: RoleResidentFacts,
+                route_facts: RouteResidentFacts,
+            }"
+        )),
+        "compiled role image header should stay split into role_facts + route_facts owners"
+    );
+    assert!(
+        role_program_ws.contains(&compact_ws(
+            "pub(crate) struct RoleImageLayoutInput {
+                pub(crate) program: ProgramLayoutFacts,
+                pub(crate) role: RoleLayoutFacts,
+            }"
+        )),
+        "role image layout input should stay split into shared program facts and compact role facts"
+    );
+    assert!(
+        !compiled_role_ws.contains(&compact_ws(
+            "pub(crate) struct CompiledRoleImage {
+                phases: *const Phase,
+                typestate: *const RoleTypestateValue,
+                eff_index_to_step: *const u16,
+                step_index_to_state: *const StateIndex,
+                role: u8,
+                active_lane_mask_bits: u8,"
+        )),
+        "compiled role image header must not regress to flat role-local scalar fields"
+    );
 }
 
 #[test]
@@ -1893,7 +1949,8 @@ fn route_projection_regression_fixtures_keep_canonical_inputs_live() {
     );
     assert!(
         route_unprojectable.contains("static PASSIVE_PROGRAM: RoleProgram<")
-            && route_unprojectable.contains("> = project(&ROUTE);"),
+            && route_unprojectable.contains("ProgramWitness<RouteProgramSteps>> =")
+            && route_unprojectable.contains("project(&ROUTE);"),
         "g-route-unprojectable must force passive projection through a typed static RoleProgram"
     );
     assert!(
@@ -2193,10 +2250,10 @@ fn program_builder_helpers_are_not_public_surface() {
     for required in [
         "pub(crate) const fn empty() -> Self",
         "pub(crate) const fn build() -> Self",
-        "pub(crate) const fn eff_list(&self) -> &EffList",
         "const fn into_eff(self) -> EffList",
         "const fn scope_budget(&self) -> u16",
         "pub(crate) const fn then<NextSteps>(",
+        "pub(crate) const fn summary(&self) -> &'static LoweringSummary",
         "pub const fn policy<const POLICY_ID: u16>(self) -> Program<PolicySteps<Steps, POLICY_ID>>",
     ] {
         assert!(
@@ -2204,6 +2261,12 @@ fn program_builder_helpers_are_not_public_surface() {
             "Program helper visibility must stay hidden while policy remains public: {required}"
         );
     }
+    assert!(
+        !program_src.contains(
+            "impl<Steps> Program<Steps> {\n    #[cfg(test)]\n    pub(crate) const fn eff_list(&self) -> &EffList"
+        ),
+        "Program must not keep a raw EffList accessor once validated summaries are the sole lowering authority"
+    );
 }
 
 #[test]
@@ -3699,7 +3762,7 @@ fn hidden_attach_path_uses_canonical_attach_endpoint_name() {
 
     assert!(
         cluster_core_src.contains(
-            "pub(crate) unsafe fn attach_endpoint_into<'r, const ROLE: u8, GlobalSteps, Mint, B>(",
+            "pub(crate) unsafe fn attach_endpoint_into<'r, const ROLE: u8, Witness, Mint, B>(",
         ),
         "cluster lower layer must expose the canonical in-place attach_endpoint_into helper"
     );
@@ -5245,6 +5308,7 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
     let pico_smoke_gate = include_str!("../.github/scripts/check_pico_smoke.sh");
     let pico_size_matrix_gate = include_str!("../.github/scripts/check_pico_size_matrix.sh");
     let huge_budget_gate = include_str!("../.github/scripts/check_huge_choreography_budget.sh");
+    let subsystem_budget_gate = include_str!("../.github/scripts/check_subsystem_budget_gates.sh");
 
     for required in [
         "bash ./.github/scripts/check_hibana_public_api.sh",
@@ -5255,6 +5319,7 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
         "bash ./.github/scripts/check_warning_free.sh",
         "bash ./.github/scripts/check_direct_projection_binary.sh",
         "bash ./.github/scripts/check_huge_choreography_budget.sh",
+        "bash ./.github/scripts/check_subsystem_budget_gates.sh",
         "bash ./.github/scripts/check_pico_size_matrix.sh",
         "cargo check --all-targets -p hibana",
         "cargo test -p hibana --features std",
@@ -5280,6 +5345,7 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
         "./.github/scripts/check_warning_free.sh",
         "./.github/scripts/check_direct_projection_binary.sh",
         "./.github/scripts/check_huge_choreography_budget.sh",
+        "./.github/scripts/check_subsystem_budget_gates.sh",
         "./.github/scripts/check_no_std_build.sh",
         "./.github/scripts/check_pico_smoke.sh",
         "./.github/scripts/check_pico_size_matrix.sh",
@@ -5384,6 +5450,24 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
         assert!(
             huge_budget_gate.contains(required),
             "huge choreography budget gate must keep the canonical timeout-bounded compile checks: {required}"
+        );
+    }
+
+    for required in [
+        "--lib",
+        "control::cluster::core::tests::pico2_resident_component_sizes",
+        "control::cluster::core::tests::huge_shape_matrix_resident_bytes_stay_measured_and_local",
+        "global::compiled::role::tests::huge_route_heavy_shape_keeps_resident_bounds_local",
+        "endpoint::kernel::core::route_policy_tests::route_policy_action_mapping_is_explicit",
+        "endpoint::kernel::core::route_policy_tests::route_policy_scope_mismatch_blocks_resolver_delegation",
+        "--test public_surface_guards",
+        "offer_kernel_stays_three_stage_and_fail_closed",
+        "--exact",
+        "--nocapture",
+    ] {
+        assert!(
+            subsystem_budget_gate.contains(required),
+            "subsystem budget gate must keep the targeted compiled-role and send/policy owners pinned: {required}"
         );
     }
 

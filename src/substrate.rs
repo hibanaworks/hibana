@@ -114,11 +114,11 @@ where
 
     #[inline]
     #[allow(private_bounds)]
-    pub fn enter<'r, const ROLE: u8, GlobalSteps, Mint, B>(
+    pub fn enter<'r, const ROLE: u8, Witness, Mint, B>(
         &'r self,
         rv: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
         binding: B,
     ) -> Result<crate::Endpoint<'r, ROLE, Self, Mint>, AttachError>
     where
@@ -131,11 +131,11 @@ where
     }
 
     #[inline]
-    fn enter_with_binding<'r, const ROLE: u8, GlobalSteps, Mint>(
+    fn enter_with_binding<'r, const ROLE: u8, Witness, Mint>(
         &'r self,
         rv: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<crate::Endpoint<'r, ROLE, Self, Mint>, AttachError>
     where
@@ -152,17 +152,17 @@ where
     }
 
     #[inline]
-    pub fn set_resolver<const POLICY: u16, const ROLE: u8, GlobalSteps, Mint>(
+    pub fn set_resolver<const POLICY: u16, const ROLE: u8, Witness, Mint>(
         &self,
         rv: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
         resolver: crate::substrate::policy::ResolverRef<'cfg>,
     ) -> Result<(), CpError>
     where
         Mint: crate::substrate::cap::advanced::MintConfigMarker,
     {
         self.inner
-            .set_resolver::<POLICY, ROLE, GlobalSteps, Mint>(rv, program, resolver)
+            .set_resolver::<POLICY, ROLE, Witness, Mint>(rv, program, resolver)
     }
 }
 

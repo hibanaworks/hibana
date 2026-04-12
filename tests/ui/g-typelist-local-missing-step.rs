@@ -1,5 +1,5 @@
 use hibana::g::{self};
-use hibana::g::advanced::{RoleProgram, project};
+use hibana::g::advanced::{ProgramWitness, RoleProgram, project};
 use hibana::g::advanced::steps::{SendStep, StepCons, StepNil};
 
 const PROGRAM: g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<7, u16>, 0>, StepNil>> =
@@ -8,7 +8,7 @@ const PROGRAM_TOKEN: g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg
     PROGRAM;
 
 // Explicit local typelists are no longer part of the public projection identity.
-const CLIENT: RoleProgram<'static, 0, StepNil> = project(&PROGRAM_TOKEN);
+const CLIENT: RoleProgram<'static, 0, ProgramWitness<StepNil>> = project(&PROGRAM_TOKEN);
 
 fn main() {
     let _ = CLIENT;

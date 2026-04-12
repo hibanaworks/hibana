@@ -107,6 +107,7 @@ impl ProgramStamp {
         Self::mix_u64(state, spec.handling as u64)
     }
 
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn scope_count(&self) -> usize {
         self.scope_count as usize
@@ -135,6 +136,7 @@ pub(crate) struct LoweringSummary {
 
 #[derive(Clone, Copy, Default)]
 struct ProgramLoweringFacts {
+    scope_count: u16,
     eff_count: u16,
     parallel_enter_count: u16,
     route_scope_count: u16,
@@ -142,6 +144,7 @@ struct ProgramLoweringFacts {
 
 impl ProgramLoweringFacts {
     const EMPTY: Self = Self {
+        scope_count: 0,
         eff_count: 0,
         parallel_enter_count: 0,
         route_scope_count: 0,
@@ -163,6 +166,7 @@ impl RoleLoweringFacts {
 
 #[derive(Clone, Copy)]
 pub(crate) struct RoleLoweringCounts {
+    pub(crate) scope_count: usize,
     pub(crate) eff_count: usize,
     pub(crate) local_step_count: usize,
     pub(crate) parallel_enter_count: usize,
@@ -476,6 +480,7 @@ impl LoweringSummary {
         }
         lease_budget.validate();
 
+        summary.program_lowering_facts.scope_count = scope_count;
         summary.lease_budget = lease_budget;
         summary.role_count = if role_count > u8::MAX as usize {
             u8::MAX
@@ -600,6 +605,7 @@ impl LoweringSummary {
     pub(crate) const fn role_lowering_counts<const ROLE: u8>(&self) -> RoleLoweringCounts {
         let role = self.role_lowering_facts[ROLE as usize];
         RoleLoweringCounts {
+            scope_count: self.program_lowering_facts.scope_count as usize,
             eff_count: self.program_lowering_facts.eff_count as usize,
             local_step_count: role.local_step_count as usize,
             parallel_enter_count: self.program_lowering_facts.parallel_enter_count as usize,
@@ -644,49 +650,44 @@ impl LoweringSummary {
     }
 
     #[cfg(test)]
-    pub(crate) fn equivalent_eff_list(&self, eff_list: &EffList) -> bool {
-        if self.len != eff_list.len()
-            || self.scope_marker_len != eff_list.scope_markers().len()
-            || self.control_marker_len != eff_list.control_markers().len()
+    pub(crate) fn equivalent_summary(&self, other: &Self) -> bool {
+        if self.len != other.len
+            || self.scope_marker_len != other.scope_marker_len
+            || self.control_marker_len != other.control_marker_len
         {
             return false;
         }
 
-        let nodes = eff_list.as_slice();
         let mut idx = 0usize;
-        while idx < nodes.len() {
-            if !Self::eff_struct_eq(self.nodes[idx], nodes[idx]) {
+        while idx < self.len {
+            if !Self::eff_struct_eq(self.nodes[idx], other.nodes[idx]) {
                 return false;
             }
-            if self.policies[idx]
-                != eff_list
-                    .policy_with_scope(idx)
-                    .map(|(policy, _)| policy)
-                    .unwrap_or(PolicyMode::Static)
-            {
+            if self.policies[idx] != other.policies[idx] {
                 return false;
             }
-            if self.control_spec_at(idx) != eff_list.control_spec_at(idx) {
+            if self.control_spec_at(idx) != other.control_spec_at(idx) {
                 return false;
             }
             idx += 1;
         }
 
-        let scope_markers = eff_list.scope_markers();
         let mut scope_idx = 0usize;
-        while scope_idx < scope_markers.len() {
-            if !Self::scope_marker_eq(self.scope_markers[scope_idx], scope_markers[scope_idx]) {
+        while scope_idx < self.scope_marker_len {
+            if !Self::scope_marker_eq(
+                self.scope_markers[scope_idx],
+                other.scope_markers[scope_idx],
+            ) {
                 return false;
             }
             scope_idx += 1;
         }
 
-        let control_markers = eff_list.control_markers();
         let mut control_idx = 0usize;
-        while control_idx < control_markers.len() {
+        while control_idx < self.control_marker_len {
             if !Self::control_marker_eq(
                 self.control_markers[control_idx],
-                control_markers[control_idx],
+                other.control_markers[control_idx],
             ) {
                 return false;
             }

@@ -1,6 +1,9 @@
 use core::marker::PhantomData;
 
-use crate::global::{role_program::RoleLoweringInput, typestate::RoleCompileScratch};
+use crate::global::{
+    role_program::{RoleImageLayoutInput, RoleLoweringInput},
+    typestate::RoleCompileScratch,
+};
 
 #[cfg(test)]
 use super::program::CompiledProgram;
@@ -140,20 +143,14 @@ pub(crate) unsafe fn init_compiled_role_image_from_summary<const ROLE: u8>(
     dst: *mut CompiledRoleImage,
     summary: &LoweringSummary,
     scratch: *mut RoleCompileScratch,
-    local_step_count: usize,
-    passive_linger_route_scope_count: usize,
-    route_scope_count: usize,
-    parallel_enter_count: usize,
+    layout: RoleImageLayoutInput,
 ) {
     unsafe {
         CompiledRoleImage::init_from_summary_for_program::<ROLE>(
             dst,
             summary,
             &mut *scratch,
-            local_step_count,
-            passive_linger_route_scope_count,
-            route_scope_count,
-            parallel_enter_count,
+            layout,
         );
     }
 }
@@ -218,10 +215,7 @@ pub(crate) unsafe fn init_compiled_role_image<const ROLE: u8>(
             dst,
             input.summary(),
             scratch,
-            input.local_step_count(),
-            input.passive_linger_route_scope_count(),
-            input.route_scope_count(),
-            input.parallel_enter_count(),
+            input.layout_input(),
         );
     }
 }

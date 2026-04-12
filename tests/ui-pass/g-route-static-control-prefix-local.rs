@@ -8,7 +8,7 @@ mod control_kinds;
 
 use hibana::substrate::cap::GenericCapToken;
 use hibana::g::{self};
-use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
+use hibana::g::advanced::{CanonicalControl, ProgramWitness, RoleProgram, project};
 use hibana::g::advanced::steps::{RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
 
 type RouteArm100Kind = control_kinds::RouteControl<100, 0>;
@@ -103,7 +103,8 @@ type RouteProgramSteps = RouteSteps<
 
 const ROUTE: g::Program<RouteProgramSteps> = g::route(ARM0, ARM1);
 
-static PASSIVE_PROGRAM: RoleProgram<'static, 1, RouteProgramSteps> = project(&ROUTE);
+static PASSIVE_PROGRAM: RoleProgram<'static, 1, ProgramWitness<RouteProgramSteps>> =
+    project(&ROUTE);
 
 fn main() {
     let _ = &PASSIVE_PROGRAM;

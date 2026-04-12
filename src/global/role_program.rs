@@ -363,6 +363,38 @@ pub(crate) struct RoleLoweringInput<'prog> {
     counts: RoleLoweringCounts,
 }
 
+#[doc(hidden)]
+#[derive(Clone, Copy)]
+pub struct ProgramWitness<Steps> {
+    _steps: PhantomData<fn() -> Steps>,
+    _seal: private::ProgramWitnessSeal,
+}
+
+mod private {
+    #[derive(Clone, Copy)]
+    pub struct ProgramWitnessSeal;
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ProgramLayoutFacts {
+    pub(crate) scope_count: usize,
+    pub(crate) eff_count: usize,
+    pub(crate) parallel_enter_count: usize,
+    pub(crate) route_scope_count: usize,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RoleLayoutFacts {
+    pub(crate) local_step_count: usize,
+    pub(crate) passive_linger_route_scope_count: usize,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RoleImageLayoutInput {
+    pub(crate) program: ProgramLayoutFacts,
+    pub(crate) role: RoleLayoutFacts,
+}
+
 impl<'prog> RoleLoweringInput<'prog> {
     #[inline(always)]
     pub(crate) const fn summary(&self) -> &'static crate::global::compiled::LoweringSummary {
@@ -374,44 +406,65 @@ impl<'prog> RoleLoweringInput<'prog> {
         self.stamp
     }
 
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn eff_count(&self) -> usize {
         self.counts.eff_count
     }
 
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn local_step_count(&self) -> usize {
         self.counts.local_step_count
     }
 
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn parallel_enter_count(&self) -> usize {
         self.counts.parallel_enter_count
     }
 
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn route_scope_count(&self) -> usize {
         self.counts.route_scope_count
     }
 
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn passive_linger_route_scope_count(&self) -> usize {
         self.counts.passive_linger_route_scope_count
     }
+
+    #[inline(always)]
+    pub(crate) const fn layout_input(&self) -> RoleImageLayoutInput {
+        RoleImageLayoutInput {
+            program: ProgramLayoutFacts {
+                scope_count: self.counts.scope_count,
+                eff_count: self.counts.eff_count,
+                parallel_enter_count: self.counts.parallel_enter_count,
+                route_scope_count: self.counts.route_scope_count,
+            },
+            role: RoleLayoutFacts {
+                local_step_count: self.counts.local_step_count,
+                passive_linger_route_scope_count: self.counts.passive_linger_route_scope_count,
+            },
+        }
+    }
 }
 
-pub struct RoleProgram<'prog, const ROLE: u8, GlobalSteps, Mint = MintConfig>
+pub struct RoleProgram<'prog, const ROLE: u8, Witness, Mint = MintConfig>
 where
     Mint: MintConfigMarker,
 {
     _borrow: PhantomData<&'prog EffList>,
-    _global_steps: PhantomData<fn() -> GlobalSteps>,
+    _witness: PhantomData<fn() -> Witness>,
     summary: &'static crate::global::compiled::LoweringSummary,
     mint: Mint,
     stamp: ProgramStamp,
 }
 
-impl<'prog, const ROLE: u8, GlobalSteps, Mint> RoleProgram<'prog, ROLE, GlobalSteps, Mint>
+impl<'prog, const ROLE: u8, Witness, Mint> RoleProgram<'prog, ROLE, Witness, Mint>
 where
     Mint: MintConfigMarker,
 {
@@ -422,7 +475,7 @@ where
     ) -> Self {
         Self {
             _borrow: PhantomData,
-            _global_steps: PhantomData,
+            _witness: PhantomData,
             summary,
             mint,
             stamp,
@@ -448,8 +501,8 @@ where
 }
 
 #[inline(always)]
-pub(crate) const fn lowering_input<'prog, const ROLE: u8, GlobalSteps, Mint>(
-    program: &RoleProgram<'prog, ROLE, GlobalSteps, Mint>,
+pub(crate) const fn lowering_input<'prog, const ROLE: u8, Witness, Mint>(
+    program: &RoleProgram<'prog, ROLE, Witness, Mint>,
 ) -> RoleLoweringInput<'prog>
 where
     Mint: MintConfigMarker,
@@ -466,7 +519,7 @@ where
 #[allow(private_bounds)]
 pub const fn project<'prog, const ROLE: u8, Steps, Mint>(
     program: &'prog Program<Steps>,
-) -> RoleProgram<'prog, ROLE, Steps, Mint>
+) -> RoleProgram<'prog, ROLE, ProgramWitness<Steps>, Mint>
 where
     Role<ROLE>: KnownRole,
     Steps: BuildProgramSource + ProjectRole<Role<ROLE>>,
@@ -498,10 +551,10 @@ mod tests {
             const { UnsafeCell::new(MaybeUninit::uninit()) };
     }
 
-    fn with_compiled_role_in_slot<const ROLE: u8, GlobalSteps, R>(
+    fn with_compiled_role_in_slot<const ROLE: u8, Witness, R>(
         compiled_slot: &'static LocalKey<UnsafeCell<MaybeUninit<CompiledRole>>>,
         scratch_slot: &'static LocalKey<UnsafeCell<MaybeUninit<RoleCompileScratch>>>,
-        program: &RoleProgram<'_, ROLE, GlobalSteps, MintConfig>,
+        program: &RoleProgram<'_, ROLE, Witness, MintConfig>,
         f: impl FnOnce(&CompiledRole) -> R,
     ) -> R {
         crate::global::compiled::with_compiled_role_in_slot::<ROLE, _>(

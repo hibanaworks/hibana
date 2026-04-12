@@ -25,7 +25,7 @@ pub(crate) mod steps;
 pub(crate) mod typestate;
 /// Protocol-implementor compile-time SPI.
 pub mod advanced {
-    pub use super::role_program::{RoleProgram, project};
+    pub use super::role_program::{ProgramWitness, RoleProgram, project};
     pub use super::{
         CanonicalControl, ControlMessage, ControlMessageKind, ExternalControl, MessageSpec,
     };

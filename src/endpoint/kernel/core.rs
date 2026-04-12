@@ -558,13 +558,14 @@ impl ErasedCapFlowToken {
 #[derive(Clone, Copy)]
 struct SendDescriptor<E> {
     label: u8,
-    control_handling: ControlHandling,
-    mint_token: fn(&E, SendMeta) -> SendResult<Option<ErasedCapFlowToken>>,
+    expects_control: bool,
+    mint_token: MintSendTokenFn<E>,
+    stage_payload: StageSendPayloadFn,
 }
 
 struct PreparedSendControl {
-    control_handling: ControlHandling,
     minted_token: Option<ErasedCapFlowToken>,
+    stage_payload: StageSendPayloadFn,
 }
 
 struct SendDispatchState {
@@ -572,6 +573,19 @@ struct SendDispatchState {
     dispatch_token: Option<ErasedCapFlowToken>,
     canonical_token: Option<ErasedCapFlowToken>,
     external_token: Option<ErasedCapFlowToken>,
+}
+
+type MintSendTokenFn<E> = fn(&E, SendMeta) -> SendResult<Option<ErasedCapFlowToken>>;
+
+type StageSendPayloadFn = for<'payload, 'scratch> fn(
+    Option<ErasedCapFlowToken>,
+    Option<lane_port::ErasedSendPayload<'payload>>,
+    &'scratch mut [u8],
+) -> SendResult<StagedSendPayload>;
+
+struct StagedSendPayload {
+    encoded_len: usize,
+    dispatch_state: SendDispatchState,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2979,11 +2993,41 @@ where
         M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
         <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
     {
+        let (expects_control, mint_token, stage_payload): (
+            bool,
+            MintSendTokenFn<Self>,
+            StageSendPayloadFn,
+        ) = match <M::ControlKind as ControlPayloadKind>::HANDLING {
+            ControlHandling::None => (
+                false,
+                Self::mint_no_send_token,
+                Self::stage_data_send_payload,
+            ),
+            ControlHandling::Canonical => (
+                true,
+                Self::mint_send_token::<M>,
+                Self::stage_canonical_send_payload,
+            ),
+            ControlHandling::External => (
+                true,
+                Self::mint_send_token::<M>,
+                Self::stage_external_send_payload,
+            ),
+        };
         SendDescriptor {
             label: <M as MessageSpec>::LABEL,
-            control_handling: <M::ControlKind as ControlPayloadKind>::HANDLING,
-            mint_token: Self::mint_send_token::<M>,
+            expects_control,
+            mint_token,
+            stage_payload,
         }
+    }
+
+    #[inline(always)]
+    fn mint_no_send_token(
+        _endpoint: &Self,
+        _meta: SendMeta,
+    ) -> SendResult<Option<ErasedCapFlowToken>> {
+        Ok(None)
     }
 
     #[inline(always)]
@@ -3009,15 +3053,89 @@ where
         .map(|token| token.map(ErasedCapFlowToken::from_typed))
     }
 
+    #[inline(always)]
+    fn stage_data_send_payload(
+        minted_token: Option<ErasedCapFlowToken>,
+        payload: Option<lane_port::ErasedSendPayload<'_>>,
+        scratch: &mut [u8],
+    ) -> SendResult<StagedSendPayload> {
+        if minted_token.is_some() {
+            return Err(SendError::PhaseInvariant);
+        }
+        let data = payload.ok_or(SendError::PhaseInvariant)?;
+        Ok(StagedSendPayload {
+            encoded_len: data.encode_into(scratch)?,
+            dispatch_state: SendDispatchState {
+                control_handling: ControlHandling::None,
+                dispatch_token: None,
+                canonical_token: None,
+                external_token: None,
+            },
+        })
+    }
+
+    #[inline(always)]
+    fn stage_canonical_send_payload(
+        minted_token: Option<ErasedCapFlowToken>,
+        payload: Option<lane_port::ErasedSendPayload<'_>>,
+        scratch: &mut [u8],
+    ) -> SendResult<StagedSendPayload> {
+        if payload.is_some() {
+            return Err(SendError::PhaseInvariant);
+        }
+        let token = minted_token.ok_or(SendError::PhaseInvariant)?;
+        let bytes = token.bytes();
+        scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
+        Ok(StagedSendPayload {
+            encoded_len: CAP_TOKEN_LEN,
+            dispatch_state: SendDispatchState {
+                control_handling: ControlHandling::Canonical,
+                dispatch_token: Some(token),
+                canonical_token: Some(token),
+                external_token: None,
+            },
+        })
+    }
+
+    #[inline(always)]
+    fn stage_external_send_payload(
+        minted_token: Option<ErasedCapFlowToken>,
+        payload: Option<lane_port::ErasedSendPayload<'_>>,
+        scratch: &mut [u8],
+    ) -> SendResult<StagedSendPayload> {
+        if let Some(token) = minted_token {
+            let bytes = token.bytes();
+            scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
+            return Ok(StagedSendPayload {
+                encoded_len: CAP_TOKEN_LEN,
+                dispatch_state: SendDispatchState {
+                    control_handling: ControlHandling::External,
+                    dispatch_token: Some(token),
+                    canonical_token: None,
+                    external_token: Some(token),
+                },
+            });
+        }
+
+        let data = payload.ok_or(SendError::PhaseInvariant)?;
+        Ok(StagedSendPayload {
+            encoded_len: data.encode_into(scratch)?,
+            dispatch_state: SendDispatchState {
+                control_handling: ControlHandling::External,
+                dispatch_token: None,
+                canonical_token: None,
+                external_token: None,
+            },
+        })
+    }
+
     #[inline(never)]
     fn prepare_send_control(
         &mut self,
         meta: SendMeta,
         descriptor: SendDescriptor<Self>,
     ) -> SendResult<PreparedSendControl> {
-        let control_handling = descriptor.control_handling;
-        let expects_control = !matches!(control_handling, ControlHandling::None);
-        if meta.is_control != expects_control {
+        if meta.is_control != descriptor.expects_control {
             return Err(SendError::PhaseInvariant);
         }
 
@@ -3033,18 +3151,11 @@ where
         );
         self.apply_send_policy(policy_action, meta.scope, lane)?;
 
-        let minted_token = if matches!(
-            control_handling,
-            ControlHandling::Canonical | ControlHandling::External
-        ) {
-            (descriptor.mint_token)(self, meta)?
-        } else {
-            None
-        };
+        let minted_token = (descriptor.mint_token)(self, meta)?;
 
         Ok(PreparedSendControl {
-            control_handling,
             minted_token,
+            stage_payload: descriptor.stage_payload,
         })
     }
 
@@ -3054,40 +3165,14 @@ where
         payload: Option<lane_port::ErasedSendPayload<'_>>,
         prepared: PreparedSendControl,
     ) -> SendResult<SendDispatchState> {
-        let mut canonical_token = None;
-        let mut external_token = None;
-        let mut dispatch_token = None;
-        let mut minted_token = prepared.minted_token;
+        let mut staged_send = None;
         {
             let port = self.port_for_lane(meta.lane as usize);
             let payload_view = lane_port::staged_payload(port, |scratch| {
-                let len = match prepared.control_handling {
-                    ControlHandling::None => {
-                        let data = payload.ok_or(SendError::PhaseInvariant)?;
-                        data.encode_into(scratch)?
-                    }
-                    ControlHandling::Canonical => {
-                        let token = minted_token.take().ok_or(SendError::PhaseInvariant)?;
-                        let bytes = token.bytes();
-                        scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
-                        canonical_token = Some(token);
-                        dispatch_token = Some(token);
-                        CAP_TOKEN_LEN
-                    }
-                    ControlHandling::External => {
-                        if let Some(token) = minted_token.take() {
-                            let bytes = token.bytes();
-                            scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
-                            external_token = Some(token);
-                            dispatch_token = Some(token);
-                            CAP_TOKEN_LEN
-                        } else {
-                            let data = payload.ok_or(SendError::PhaseInvariant)?;
-                            data.encode_into(scratch)?
-                        }
-                    }
-                };
-                Ok::<usize, SendError>(len)
+                let staged = (prepared.stage_payload)(prepared.minted_token, payload, scratch)?;
+                let encoded_len = staged.encoded_len;
+                staged_send = Some(staged);
+                Ok::<usize, SendError>(encoded_len)
             })?;
 
             let outgoing = crate::transport::Outgoing {
@@ -3113,12 +3198,7 @@ where
             }
         }
 
-        Ok(SendDispatchState {
-            control_handling: prepared.control_handling,
-            dispatch_token,
-            canonical_token,
-            external_token,
-        })
+        Ok(staged_send.ok_or(SendError::PhaseInvariant)?.dispatch_state)
     }
 
     #[inline(never)]

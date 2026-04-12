@@ -76,7 +76,7 @@ mod tests {
     use crate::global::compiled::CompiledRole;
     use crate::global::const_dsl::{PolicyMode, ScopeKind};
     use crate::global::role_program;
-    use crate::global::role_program::{RoleProgram, project};
+    use crate::global::role_program::{ProgramWitness, RoleProgram, project};
     use crate::global::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
     use crate::global::typestate::RoleCompileScratch;
     use crate::global::{CanonicalControl, MessageSpec};
@@ -93,10 +93,10 @@ mod tests {
             const { UnsafeCell::new(MaybeUninit::uninit()) };
     }
 
-    fn with_compiled_role_slot<const ROLE: u8, GlobalSteps, Mint, R>(
+    fn with_compiled_role_slot<const ROLE: u8, Witness, Mint, R>(
         compiled_slot: &'static LocalKey<UnsafeCell<MaybeUninit<CompiledRole>>>,
         scratch_slot: &'static LocalKey<UnsafeCell<MaybeUninit<RoleCompileScratch>>>,
-        program: &RoleProgram<'_, ROLE, GlobalSteps, Mint>,
+        program: &RoleProgram<'_, ROLE, Witness, Mint>,
         f: impl FnOnce(&CompiledRole) -> R,
     ) -> R
     where
@@ -211,16 +211,18 @@ mod tests {
         g::route(continue_arm, break_arm)
     };
 
-    const CONTROLLER_PROGRAM: RoleProgram<'static, 0, LoopProgramSteps> = project(&LOOP_PROGRAM);
+    const CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramWitness<LoopProgramSteps>> =
+        project(&LOOP_PROGRAM);
 
-    const TARGET_PROGRAM: RoleProgram<'static, 1, LoopProgramSteps> = project(&LOOP_PROGRAM);
+    const TARGET_PROGRAM: RoleProgram<'static, 1, ProgramWitness<LoopProgramSteps>> =
+        project(&LOOP_PROGRAM);
 
     const LOCAL_PROGRAM: g::Program<StepCons<SendStep<Role<0>, Role<0>, Msg<9, ()>>, StepNil>> =
         g::send::<Role<0>, Role<0>, Msg<9, ()>, 0>();
     const LOCAL_ROLE: role_program::RoleProgram<
         'static,
         0,
-        StepCons<SendStep<Role<0>, Role<0>, Msg<9, ()>>, StepNil>,
+        role_program::ProgramWitness<StepCons<SendStep<Role<0>, Role<0>, Msg<9, ()>>, StepNil>>,
     > = role_program::project(&LOCAL_PROGRAM);
 
     #[test]
@@ -401,7 +403,8 @@ mod tests {
             .policy::<ROUTE_POLICY_ID>(),
         );
 
-        const CONTROLLER: RoleProgram<'static, 0, RouteScopeProgramSteps> = project(&ROUTE);
+        const CONTROLLER: RoleProgram<'static, 0, ProgramWitness<RouteScopeProgramSteps>> =
+            project(&ROUTE);
 
         with_compiled_role_slot(
             &COMPILED_ROLE_STORAGE,

@@ -36,7 +36,7 @@ use crate::{
 };
 
 #[cfg(test)]
-use crate::global::advanced::{RoleProgram, project};
+use crate::global::advanced::{ProgramWitness, RoleProgram, project};
 
 use super::payload::{LoadBegin, LoadChunk, LoadReport, MgmtError, SlotRequest, StatsReply};
 
@@ -689,11 +689,17 @@ const REPLY_ROUTE: Program<ReplyRouteSteps> = g::route(ERROR_REPLY, SUCCESS_REPL
 pub const PROGRAM: Program<ProgramSteps> = crate::g::seq(REQUEST_ROUTE, REPLY_ROUTE);
 
 #[cfg(test)]
-pub(super) static CONTROLLER_PROGRAM: RoleProgram<'static, ROLE_CONTROLLER, ProgramSteps> =
-    project(&PROGRAM);
+pub(super) static CONTROLLER_PROGRAM: RoleProgram<
+    'static,
+    ROLE_CONTROLLER,
+    ProgramWitness<ProgramSteps>,
+> = project(&PROGRAM);
 
 #[cfg(test)]
-pub(super) static CLUSTER_PROGRAM: RoleProgram<'static, ROLE_CLUSTER, ProgramSteps> =
-    project(&PROGRAM);
+pub(super) static CLUSTER_PROGRAM: RoleProgram<
+    'static,
+    ROLE_CLUSTER,
+    ProgramWitness<ProgramSteps>,
+> = project(&PROGRAM);
 
 const _: () = assert_program_covers_facets(&PROGRAM, MGMT_FACET_NEEDS);

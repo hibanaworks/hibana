@@ -16,7 +16,7 @@ use ::core::{cell::UnsafeCell, mem::MaybeUninit};
 
 use common::TestTransport;
 use hibana::g::advanced::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
-use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
+use hibana::g::advanced::{CanonicalControl, ProgramWitness, RoleProgram, project};
 use hibana::g::{self, Msg, Role};
 use hibana::substrate::{
     RendezvousId,
@@ -203,9 +203,10 @@ const OUTER_RIGHT: g::Program<OuterRightSteps> = g::seq(
 
 const PROGRAM: g::Program<ProgramSteps> = g::route(OUTER_LEFT, OUTER_RIGHT);
 
-static CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramSteps> = project(&PROGRAM);
+static CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramWitness<ProgramSteps>> =
+    project(&PROGRAM);
 
-static WORKER_PROGRAM: RoleProgram<'static, 1, ProgramSteps> = project(&PROGRAM);
+static WORKER_PROGRAM: RoleProgram<'static, 1, ProgramWitness<ProgramSteps>> = project(&PROGRAM);
 
 // Test nested routes with self-send control pattern via flow().send().
 // Controller uses flow().send(()) for control decisions, Worker uses direct recv().

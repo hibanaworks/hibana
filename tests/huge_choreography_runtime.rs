@@ -130,44 +130,54 @@ static FANOUT_HEAVY_PROGRAM: g::Program<fanout_program::ProgramSteps> = fanout_p
 static ROUTE_HEAVY_CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<
     'static,
     0,
-    huge_program::ProgramSteps,
+    hibana::g::advanced::ProgramWitness<huge_program::ProgramSteps>,
     MintConfig,
 > = project(&ROUTE_HEAVY_PROGRAM);
 static ROUTE_HEAVY_WORKER_PROGRAM: hibana::g::advanced::RoleProgram<
     'static,
     1,
-    huge_program::ProgramSteps,
+    hibana::g::advanced::ProgramWitness<huge_program::ProgramSteps>,
     MintConfig,
 > = project(&ROUTE_HEAVY_PROGRAM);
 static LINEAR_HEAVY_CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<
     'static,
     0,
-    linear_program::ProgramSteps,
+    hibana::g::advanced::ProgramWitness<linear_program::ProgramSteps>,
     MintConfig,
 > = project(&LINEAR_HEAVY_PROGRAM);
 static LINEAR_HEAVY_WORKER_PROGRAM: hibana::g::advanced::RoleProgram<
     'static,
     1,
-    linear_program::ProgramSteps,
+    hibana::g::advanced::ProgramWitness<linear_program::ProgramSteps>,
     MintConfig,
 > = project(&LINEAR_HEAVY_PROGRAM);
 static FANOUT_HEAVY_CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<
     'static,
     0,
-    fanout_program::ProgramSteps,
+    hibana::g::advanced::ProgramWitness<fanout_program::ProgramSteps>,
     MintConfig,
 > = project(&FANOUT_HEAVY_PROGRAM);
 static FANOUT_HEAVY_WORKER_PROGRAM: hibana::g::advanced::RoleProgram<
     'static,
     1,
-    fanout_program::ProgramSteps,
+    hibana::g::advanced::ProgramWitness<fanout_program::ProgramSteps>,
     MintConfig,
 > = project(&FANOUT_HEAVY_PROGRAM);
 
 #[inline(never)]
 fn run_attached_sample<Steps>(
-    controller_program: &'static hibana::g::advanced::RoleProgram<'static, 0, Steps, MintConfig>,
-    worker_program: &'static hibana::g::advanced::RoleProgram<'static, 1, Steps, MintConfig>,
+    controller_program: &'static hibana::g::advanced::RoleProgram<
+        'static,
+        0,
+        hibana::g::advanced::ProgramWitness<Steps>,
+        MintConfig,
+    >,
+    worker_program: &'static hibana::g::advanced::RoleProgram<
+        'static,
+        1,
+        hibana::g::advanced::ProgramWitness<Steps>,
+        MintConfig,
+    >,
     route_scope_count: usize,
     expected_branch_labels: &'static [u8],
     expected_acks: &'static [u8],
