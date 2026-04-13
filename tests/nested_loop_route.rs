@@ -1,7 +1,7 @@
 use hibana::g::advanced::steps::{
     ParSteps, PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil,
 };
-use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
+use hibana::g::advanced::{CanonicalControl, project};
 use hibana::g::{self, Msg, Role};
 use hibana::substrate::cap::GenericCapToken;
 use hibana::substrate::cap::advanced::MintConfig;
@@ -176,12 +176,12 @@ const DECISION: g::Program<DecisionSteps> = g::route(CONTINUE_ARM, BREAK_ARM);
 
 #[test]
 fn nested_loop_scope_balanced() {
-    let _role_program: RoleProgram<'_, 2, _, MintConfig> = project(&DECISION);
+    let _role_program = project::<2, _, MintConfig>(&DECISION);
 
     const HANDSHAKE: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<10, ()>>, StepNil>> =
         g::send::<Role<0>, Role<1>, Msg<10, ()>, 0>();
     const COMBINED: g::Program<
         ParSteps<StepCons<SendStep<Role<0>, Role<1>, Msg<10, ()>>, StepNil>, DecisionSteps>,
     > = g::par(HANDSHAKE, DECISION);
-    let _transport_program: RoleProgram<'_, 2, _, MintConfig> = project(&COMBINED);
+    let _transport_program = project::<2, _, MintConfig>(&COMBINED);
 }

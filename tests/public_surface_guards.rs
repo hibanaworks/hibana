@@ -500,6 +500,7 @@ fn offer_kernel_stays_three_stage_and_fail_closed() {
     let offer_src = include_str!("../src/endpoint/kernel/route_frontier/offer.rs");
     let cursor_src = include_str!("../src/endpoint/kernel/core.rs");
     let decode_src = include_str!("../src/endpoint/kernel/decode.rs");
+    let typed_tokens_src = include_str!("../src/control/cap/typed_tokens.rs");
     let offer_body = impl_body(offer_src, "pub async fn offer(");
     let offer_driver_body = impl_body(offer_src, "async fn run(&mut self)");
     let select_scope_body = impl_body(
@@ -607,6 +608,54 @@ fn offer_kernel_stays_three_stage_and_fail_closed() {
         !emit_send_transport_body.contains("match prepared.control_handling"),
         "send transport staging must not branch on control handling after descriptor preparation"
     );
+    assert!(
+        send_with_meta_body.contains("finish_send_after_transport_erased(")
+            && send_with_meta_body.contains("typed_control_outcome::<M>(control)"),
+        "send orchestration must keep the transport/dispatch split and only retype the final control outcome at the boundary"
+    );
+    for required in [
+        "dispatch_control: DispatchSendTokenFn<E>,",
+        "enum StagedSendControl {",
+        "enum DispatchSendTokenResult {",
+        "enum ErasedControlOutcome<'rv> {",
+        "match (emission.dispatch_control)(self, token)? {",
+    ] {
+        assert!(
+            cursor_src.contains(required),
+            "send kernel must keep the erased staged-control and dispatch owners explicit: {required}"
+        );
+    }
+    for forbidden in [
+        "struct SendDispatchState {",
+        "control_handling: ControlHandling,",
+    ] {
+        assert!(
+            !cursor_src.contains(forbidden),
+            "send kernel must not regress to the old multi-slot dispatch state owner: {forbidden}"
+        );
+    }
+    assert!(
+        !compact_ws(cursor_src).contains(&compact_ws(
+            "struct SendDispatchState {
+                control_handling: ControlHandling,
+                dispatch_token: Option<ErasedCapFlowToken>,
+                canonical_token: Option<ErasedCapFlowToken>,
+                external_token: Option<ErasedCapFlowToken>,
+            }"
+        )),
+        "send kernel must not regress to the flat multi-slot send dispatch state owner"
+    );
+    for required in [
+        "pub(crate) struct RegisteredTokenParts {",
+        "pub(crate) struct ErasedRegisteredCapToken<'rv> {",
+        "pub(crate) fn from_parts(mut parts: RegisteredTokenParts) -> Self {",
+        "pub(crate) fn into_typed<K: ResourceKind>(mut self) -> CapRegisteredToken<'rv, K> {",
+    ] {
+        assert!(
+            typed_tokens_src.contains(required),
+            "typed token layer must keep the erased registered-token bridge explicit for send control erasure: {required}"
+        );
+    }
     for forbidden in [
         "take_scope_ack(",
         "peek_scope_ack(",
@@ -832,8 +881,8 @@ fn eff_list_does_not_reintroduce_derived_lookup_tables() {
         "EffList must not own dynamic policy scans once lowering view is the single authority"
     );
     assert!(
-        compiled_driver_src.contains("pub(crate) const fn first_dynamic_policy_in_range("),
-        "LoweringView must remain the sole owner of dynamic policy scans"
+        compiled_driver_src.contains("pub(crate) fn first_route_head_dynamic_policy_in_range("),
+        "LoweringView must remain the sole owner of route-head dynamic policy scans"
     );
 }
 
@@ -908,6 +957,64 @@ fn program_projection_validates_without_materializing_runtime_compiled_owners() 
 }
 
 #[test]
+fn summary_authority_stays_program_scoped() {
+    let program_src = include_str!("../src/global/program.rs");
+    let emit_src = include_str!("../src/global/typestate/emit.rs");
+    let emit_walk_src = include_str!("../src/global/typestate/emit_walk.rs");
+
+    assert!(
+        program_src.contains(
+            "let summary = LoweringSummary::scan_const(<Steps as BuildProgramSource>::SOURCE.eff_list());"
+        ),
+        "Program must remain the sole raw EffList summary-generation owner"
+    );
+    assert!(
+        emit_src.contains("summary.view(),"),
+        "typestate emit path must consume summary-backed views instead of raw EffList"
+    );
+    assert!(
+        emit_walk_src.contains("impl TypestateProgramView for LoweringView<'_> {"),
+        "emit_walk must keep LoweringView as the typestate walker authority"
+    );
+    for forbidden in [
+        "impl TypestateProgramView for &EffList {",
+        "EffList::as_slice(self)",
+        "EffList::scope_markers(self)",
+        "EffList::policy_at(self, offset)",
+        "EffList::control_spec_at(self, offset)",
+    ] {
+        assert!(
+            !emit_walk_src.contains(forbidden),
+            "emit_walk must not reintroduce raw EffList lowering after summary generation: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn lowering_summary_stays_split_into_internal_fact_owners() {
+    let driver_src = include_str!("../src/global/compiled/lowering/driver.rs");
+    let driver_ws = compact_ws(driver_src);
+
+    for required in [
+        "struct LoweringValidationData {",
+        "struct LoweringProgramData {",
+        "struct LoweringRoleData {",
+        "pub(crate) struct LoweringSummary {",
+    ] {
+        assert!(
+            driver_src.contains(required),
+            "lowering driver must keep the internal split owner: {required}"
+        );
+    }
+    assert!(
+        driver_ws.contains(
+            "pub(crate) struct LoweringSummary { validation: LoweringValidationData, program: LoweringProgramData, roles: LoweringRoleData, }"
+        ),
+        "LoweringSummary must stay a thin external shell over validation/program/role fact owners"
+    );
+}
+
+#[test]
 fn runtime_compiled_materialization_stays_transient_and_cacheless() {
     let cluster_core_src = include_str!("../src/control/cluster/core.rs");
     let compiled_mod_src = include_str!("../src/global/compiled/mod.rs");
@@ -953,8 +1060,12 @@ fn runtime_compiled_materialization_stays_transient_and_cacheless() {
         "RoleProgram must stay a thin witness and must not own compiled image storage or materialization"
     );
     assert!(
-        role_program_runtime_src.contains("pub struct ProgramWitness<Steps> {"),
-        "RoleProgram must keep a dedicated sealed ProgramWitness owner instead of exposing raw global steps directly"
+        !role_program_runtime_src.contains("pub struct ProgramWitness<Steps> {")
+            && role_program_runtime_src.contains(
+                "pub struct RoleProgram<'prog, const ROLE: u8, GlobalSteps, Mint = MintConfig>",
+            )
+            && role_program_runtime_src.contains("_seal: private::RoleProgramSeal,"),
+        "RoleProgram must expose only the sealed thin role witness, without a public ProgramWitness helper"
     );
     for required in [
         "image::{ProgramImage, RoleImageSlice}",
@@ -964,7 +1075,7 @@ fn runtime_compiled_materialization_stays_transient_and_cacheless() {
         "compiled: *const CompiledProgramImage",
         "compiled: *const CompiledRoleImage",
         "pub(crate) trait RoleProgramView<'prog, const ROLE: u8, Mint>",
-        "impl<'prog, const ROLE: u8, Witness, Mint> RoleProgramView<'prog, ROLE, Mint>",
+        "impl<'prog, const ROLE: u8, GlobalSteps, Mint> RoleProgramView<'prog, ROLE, Mint>",
     ] {
         assert!(
             compiled_mod_src.contains(required)
@@ -1072,7 +1183,7 @@ fn compiled_authority_completion_stays_summary_backed() {
         "RoleProgram must not keep a dead direct compiled-role helper"
     );
     for required in [
-        "fn with_compiled_role_in_slot<const ROLE: u8, Witness, R>(",
+        "fn with_compiled_role_in_slot<const ROLE: u8, Steps, R>(",
         "crate::global::compiled::with_compiled_role_in_slot::<ROLE, _>(",
         "crate::global::lowering_input(program)",
         "counts: program.summary.role_lowering_counts::<ROLE>(),",
@@ -1174,8 +1285,8 @@ fn role_program_projection_metadata_stays_internal() {
         "pub(crate) const fn local_len(&self) -> usize {",
         "pub(crate) const fn step_meta(&'static self, idx: usize) -> LocalStep {",
         "pub(crate) const fn step_graph(&'static self) -> &'static RoleTypestate<ROLE> {",
-        "impl<'prog, const ROLE: u8, Witness, Mint> core::ops::Deref",
-        "impl<'prog, const ROLE: u8, Witness, Mint> AsRef<[LocalStep]>",
+        "impl<'prog, const ROLE: u8, Mint> core::ops::Deref",
+        "impl<'prog, const ROLE: u8, Mint> AsRef<[LocalStep]>",
     ] {
         assert!(
             !role_program_src.contains(forbidden),
@@ -1193,7 +1304,7 @@ fn role_program_projection_metadata_stays_internal() {
         "pub(crate) const fn stamp(&self) -> ProgramStamp {",
         "pub(crate) fn borrow_id(&self) -> usize {",
         "pub(crate) struct RoleLoweringInput<'prog> {",
-        "pub(crate) const fn lowering_input<'prog, const ROLE: u8, Witness, Mint>(",
+        "pub(crate) const fn lowering_input<'prog, const ROLE: u8, GlobalSteps, Mint>(",
     ] {
         assert!(
             role_program_src.contains(required),
@@ -1216,7 +1327,7 @@ fn role_program_projection_metadata_stays_internal() {
         "program_image: UnsafeCell<MaybeUninit<CompiledProgram>>",
         "role_image_init: Cell<bool>",
         "role_image: UnsafeCell<MaybeUninit<CompiledRole>>",
-        "impl<'prog, const ROLE: u8, Witness, Mint> Drop for RoleProgram",
+        "impl<'prog, const ROLE: u8, Mint> Drop for RoleProgram",
     ] {
         assert!(
             !role_program_src.contains(forbidden),
@@ -1249,9 +1360,9 @@ fn role_program_projection_metadata_stays_internal() {
         "RoleProgram must not hide typed projection behind a StepNil default"
     );
     for forbidden in [
-        "pub struct RoleProgram<'prog, const ROLE: u8, Witness, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, _witness:",
-        "pub struct RoleProgram<'prog, const ROLE: u8, Witness, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, mint: Mint, phases:",
-        "pub struct RoleProgram<'prog, const ROLE: u8, Witness, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, mint: Mint, typestate:",
+        "pub struct RoleProgram<'prog, const ROLE: u8, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, _witness:",
+        "pub struct RoleProgram<'prog, const ROLE: u8, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, mint: Mint, phases:",
+        "pub struct RoleProgram<'prog, const ROLE: u8, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, mint: Mint, typestate:",
     ] {
         assert!(
             !role_program_ws.contains(forbidden),
@@ -2066,7 +2177,7 @@ fn route_projection_regression_fixtures_keep_canonical_inputs_live() {
     );
     assert!(
         route_unprojectable.contains("static PASSIVE_PROGRAM: RoleProgram<")
-            && route_unprojectable.contains("ProgramWitness<RouteProgramSteps>> =")
+            && route_unprojectable.contains("RoleProgram<'static, 1, RouteProgramSteps> =")
             && route_unprojectable.contains("project(&ROUTE);"),
         "g-route-unprojectable must force passive projection through a typed static RoleProgram"
     );
@@ -2203,7 +2314,7 @@ fn ui_diagnostics_stay_semantic() {
     );
     assert!(
         route_policy_mismatch
-            .contains("route scope recorded conflicting controller policy annotations"),
+            .contains("route scope recorded different controller policy ids across arms"),
         "route-policy-mismatch diagnostics must speak in controller policy annotation terms"
     );
     assert!(
@@ -4592,7 +4703,7 @@ fn typestate_builder_stays_a_facade_and_emit_owns_lowering_walk() {
 
     for required in [
         "pub(super) struct PrefixAction {",
-        "pub(super) const fn route_policy_differs(",
+        "pub(super) fn arm_sequences_equal(",
     ] {
         assert!(
             route_facts_src.contains(required),
@@ -4604,6 +4715,7 @@ fn typestate_builder_stays_a_facade_and_emit_owns_lowering_walk() {
 #[test]
 fn phase_cursor_owns_private_machine_facts_without_cache_lease_backpointers() {
     let cursor_src = include_str!("../src/global/typestate/cursor.rs");
+    let program_image_src = include_str!("../src/global/compiled/images/image.rs");
     let layout_src = include_str!("../src/endpoint/kernel/runtime/layout.rs");
     let endpoint_init_src = include_str!("../src/endpoint/kernel/endpoint_init.rs");
 
@@ -4614,12 +4726,16 @@ fn phase_cursor_owns_private_machine_facts_without_cache_lease_backpointers() {
             && cursor_src.contains("machine: PhaseCursorMachine,")
             && cursor_src.contains("state: *mut PhaseCursorState,")
             && cursor_src.contains("compiled_role: *const CompiledRoleImage,")
-            && cursor_src.contains("control_semantics: *const ControlSemanticsTable,")
+            && cursor_src.contains("program_image: ProgramImage,")
             && cursor_src.contains("idx: u16,")
             && cursor_src.contains("phase_index: u8,")
             && cursor_src.contains("lane_cursors: [u16; MAX_LANES],")
             && cursor_src.contains("current_step_labels: [u8; MAX_LANES],")
             && cursor_src.contains("labeled_lane_mask: u8,")
+            && program_image_src.contains("pub(crate) struct ProgramImage {")
+            && program_image_src.contains(
+                "pub(crate) fn route_controller_role(&self, scope_id: ScopeId) -> Option<u8> {"
+            )
             && layout_src.contains("phase_cursor_state: EndpointArenaSection,")
             && endpoint_init_src
                 .contains("section_ptr::<crate::global::typestate::PhaseCursorState>(")
@@ -4666,11 +4782,14 @@ fn endpoint_kernel_reads_control_semantics_from_shared_compiled_facts() {
     let endpoint_init_src = include_str!("../src/endpoint/kernel/endpoint_init.rs");
 
     assert!(
-        cursor_src.contains("control_semantics: *const ControlSemanticsTable,"),
+        cursor_src.contains("program_image: ProgramImage,")
+            && cursor_src.contains("fn control_semantics(&self) -> &ControlSemanticsTable {")
+            && cursor_src.contains("self.program_image().control_semantics()"),
         "PhaseCursorMachine must keep control semantics behind shared compiled facts"
     );
     for forbidden in [
         "pub(super) control_semantics: ControlSemanticsTable,",
+        "control_semantics: *const ControlSemanticsTable,",
         "::core::ptr::addr_of_mut!((*dst).control_semantics).write(",
     ] {
         assert!(
@@ -5554,6 +5673,42 @@ fn crate_manifest_does_not_reintroduce_public_test_utils_feature() {
         !cargo_toml.contains("test-utils = []"),
         "crate manifest must not keep a public test-utils feature"
     );
+}
+
+#[test]
+fn route_controller_atlas_stays_program_owned() {
+    let program_src = include_str!("../src/global/compiled/images/program.rs");
+    let image_src = include_str!("../src/global/compiled/images/image.rs");
+    let cursor_src = include_str!("../src/global/typestate/cursor.rs");
+    let registry_src = include_str!("../src/global/typestate/registry.rs");
+
+    for required in [
+        "pub(crate) struct RouteControlRecord {",
+        "fn compiled_program_emit_route_controls(",
+        "pub(crate) fn route_controller_role(&self, scope_id: ScopeId) -> Option<u8> {",
+        "pub(crate) fn route_controller(",
+    ] {
+        assert!(
+            program_src.contains(required) || image_src.contains(required),
+            "route/controller atlas split must stay program-owned: {required}"
+        );
+    }
+    assert!(
+        cursor_src.contains("self.machine().route_controller(scope_id)")
+            && cursor_src.contains("self.machine()\n            .route_controller_role(scope_id)"),
+        "PhaseCursor must consume shared route/controller facts from ProgramImage instead of re-reading role-local scope records"
+    );
+    for forbidden in [
+        "pub route_policy_tag: u8,",
+        "pub route_policy_id: u16,",
+        "pub route_policy_eff: EffIndex,",
+        "pub controller_role: u8,",
+    ] {
+        assert!(
+            !registry_src.contains(forbidden),
+            "ScopeRecord must not re-embed shared route/controller atlas fields: {forbidden}"
+        );
+    }
 }
 
 #[test]

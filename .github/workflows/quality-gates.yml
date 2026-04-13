@@ -23,6 +23,8 @@ jobs:
         run: ./.github/scripts/check_resolver_context_surface.sh
       - name: Lowering hygiene gate
         run: ./.github/scripts/check_lowering_hygiene.sh
+      - name: Summary authority hygiene gate
+        run: ./.github/scripts/check_summary_authority_hygiene.sh
       - name: Surface hygiene gate
         run: ./.github/scripts/check_surface_hygiene.sh
       - name: Warning-free gate

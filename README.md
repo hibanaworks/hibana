@@ -199,7 +199,7 @@ The crate root keeps the app-facing result and error owners explicit:
 The public surface is small because guarantees move into the type system, not
 because guarantees were deleted.
 
-- projection stays typed through `RoleProgram<'prog, ROLE, Witness, Mint>`
+- projection stays typed through `RoleProgram<'prog, ROLE, GlobalSteps, Mint>`
 - `g::route` rejects duplicate labels and controller mismatches before runtime
 - `g::par` rejects empty fragments and role/lane overlap before runtime
 - localside runtime is fail-closed for label and payload mismatches
@@ -1086,6 +1086,7 @@ descriptor-driven send/policy hot paths.
 bash ./.github/scripts/check_policy_surface_hygiene.sh
 bash ./.github/scripts/check_surface_hygiene.sh
 bash ./.github/scripts/check_lowering_hygiene.sh
+bash ./.github/scripts/check_summary_authority_hygiene.sh
 bash ./.github/scripts/check_boundary_contracts.sh
 bash ./.github/scripts/check_plane_boundaries.sh
 bash ./.github/scripts/check_mgmt_boundary.sh

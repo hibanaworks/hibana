@@ -367,15 +367,9 @@ pub(crate) struct RoleLoweringInput<'prog> {
     counts: RoleLoweringCounts,
 }
 
-#[derive(Clone, Copy)]
-pub struct ProgramWitness<Steps> {
-    _steps: PhantomData<fn() -> Steps>,
-    _seal: private::ProgramWitnessSeal,
-}
-
 mod private {
     #[derive(Clone, Copy)]
-    pub struct ProgramWitnessSeal;
+    pub struct RoleProgramSeal;
 
     pub trait RoleProgramViewSeal {}
 }
@@ -500,18 +494,19 @@ impl<'prog> RoleLoweringInput<'prog> {
     }
 }
 
-pub struct RoleProgram<'prog, const ROLE: u8, Witness, Mint = MintConfig>
+pub struct RoleProgram<'prog, const ROLE: u8, GlobalSteps, Mint = MintConfig>
 where
     Mint: MintConfigMarker,
 {
     _borrow: PhantomData<&'prog EffList>,
-    _witness: PhantomData<fn() -> Witness>,
+    _global_steps: PhantomData<fn() -> GlobalSteps>,
+    _seal: private::RoleProgramSeal,
     summary: &'static crate::global::compiled::LoweringSummary,
     mint: Mint,
     stamp: ProgramStamp,
 }
 
-impl<'prog, const ROLE: u8, Witness, Mint> RoleProgram<'prog, ROLE, Witness, Mint>
+impl<'prog, const ROLE: u8, GlobalSteps, Mint> RoleProgram<'prog, ROLE, GlobalSteps, Mint>
 where
     Mint: MintConfigMarker,
 {
@@ -522,7 +517,8 @@ where
     ) -> Self {
         Self {
             _borrow: PhantomData,
-            _witness: PhantomData,
+            _global_steps: PhantomData,
+            _seal: private::RoleProgramSeal,
             summary,
             mint,
             stamp,
@@ -547,15 +543,15 @@ where
     }
 }
 
-impl<'prog, const ROLE: u8, Witness, Mint> private::RoleProgramViewSeal
-    for RoleProgram<'prog, ROLE, Witness, Mint>
+impl<'prog, const ROLE: u8, GlobalSteps, Mint> private::RoleProgramViewSeal
+    for RoleProgram<'prog, ROLE, GlobalSteps, Mint>
 where
     Mint: MintConfigMarker,
 {
 }
 
-impl<'prog, const ROLE: u8, Witness, Mint> RoleProgramView<'prog, ROLE, Mint>
-    for RoleProgram<'prog, ROLE, Witness, Mint>
+impl<'prog, const ROLE: u8, GlobalSteps, Mint> RoleProgramView<'prog, ROLE, Mint>
+    for RoleProgram<'prog, ROLE, GlobalSteps, Mint>
 where
     Mint: MintConfigMarker,
 {
@@ -576,8 +572,8 @@ where
 }
 
 #[inline(always)]
-pub(crate) const fn lowering_input<'prog, const ROLE: u8, Witness, Mint>(
-    program: &RoleProgram<'prog, ROLE, Witness, Mint>,
+pub(crate) const fn lowering_input<'prog, const ROLE: u8, GlobalSteps, Mint>(
+    program: &RoleProgram<'prog, ROLE, GlobalSteps, Mint>,
 ) -> RoleLoweringInput<'prog>
 where
     Mint: MintConfigMarker,
@@ -594,7 +590,7 @@ where
 #[allow(private_bounds)]
 pub const fn project<'prog, const ROLE: u8, Steps, Mint>(
     program: &'prog Program<Steps>,
-) -> RoleProgram<'prog, ROLE, ProgramWitness<Steps>, Mint>
+) -> RoleProgram<'prog, ROLE, Steps, Mint>
 where
     Role<ROLE>: KnownRole,
     Steps: BuildProgramSource + ProjectRole<Role<ROLE>>,
@@ -626,10 +622,10 @@ mod tests {
             const { UnsafeCell::new(MaybeUninit::uninit()) };
     }
 
-    fn with_compiled_role_in_slot<const ROLE: u8, Witness, R>(
+    fn with_compiled_role_in_slot<const ROLE: u8, Steps, R>(
         compiled_slot: &'static LocalKey<UnsafeCell<MaybeUninit<CompiledRole>>>,
         scratch_slot: &'static LocalKey<UnsafeCell<MaybeUninit<RoleCompileScratch>>>,
-        program: &RoleProgram<'_, ROLE, Witness, MintConfig>,
+        program: &RoleProgram<'_, ROLE, Steps, MintConfig>,
         f: impl FnOnce(&CompiledRole) -> R,
     ) -> R {
         crate::global::compiled::with_compiled_role_in_slot::<ROLE, _>(
@@ -645,12 +641,12 @@ mod tests {
         right: &RoleProgram<'_, RIGHT_ROLE, RightSteps, MintConfig>,
         f: impl FnOnce(&CompiledRole, &CompiledRole) -> R,
     ) -> R {
-        with_compiled_role_in_slot::<LEFT_ROLE, _, _>(
+        with_compiled_role_in_slot::<LEFT_ROLE, LeftSteps, _>(
             &COMPILED_ROLE_STORAGE_A,
             &COMPILED_ROLE_SCRATCH_A,
             left,
             |left_projection| {
-                with_compiled_role_in_slot::<RIGHT_ROLE, _, _>(
+                with_compiled_role_in_slot::<RIGHT_ROLE, RightSteps, _>(
                     &COMPILED_ROLE_STORAGE_B,
                     &COMPILED_ROLE_SCRATCH_B,
                     right,
@@ -692,8 +688,8 @@ mod tests {
     #[test]
     fn parallel_projection_keeps_phase_and_lane_split_internal() {
         let parallel_program = PARALLEL_PROGRAM;
-        let client: RoleProgram<'_, 0, _, MintConfig> = project(&parallel_program);
-        let server: RoleProgram<'_, 1, _, MintConfig> = project(&parallel_program);
+        let client = project::<0, _, MintConfig>(&parallel_program);
+        let server = project::<1, _, MintConfig>(&parallel_program);
 
         with_compiled_roles(&client, &server, |client_projection, server_projection| {
             assert_eq!(client_projection.layout().phase_count(), 1);
@@ -742,7 +738,7 @@ mod tests {
     #[test]
     fn parallel_route_projection_keeps_scope_markers_without_public_step_surface() {
         let parallel_route_program = PARALLEL_ROUTE_PROGRAM;
-        let program: RoleProgram<'_, 0, _, MintConfig> = project(&parallel_route_program);
+        let program = project::<0, _, MintConfig>(&parallel_route_program);
         let scope_markers = super::lowering_input(&program)
             .summary()
             .view()

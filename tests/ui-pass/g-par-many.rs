@@ -1,6 +1,7 @@
 use hibana::g::{self};
-use hibana::g::advanced::{RoleProgram, project};
+use hibana::g::advanced::project;
 use hibana::g::advanced::steps::{ParSteps, SendStep, StepCons, StepNil};
+use hibana::substrate::cap::advanced::MintConfig;
 const LANE_A: g::Program<
     StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<10, ()>, 0>, StepNil>,
 > = g::send::<g::Role<0>, g::Role<1>, g::Msg<10, ()>, 0>();
@@ -23,6 +24,6 @@ const PARALLEL: g::Program<
 
 fn main() {
     let frozen = PARALLEL;
-    let program: RoleProgram<'_, 0, _> = project(&frozen);
+    let program = project::<0, _, MintConfig>(&frozen);
     let _ = &program;
 }

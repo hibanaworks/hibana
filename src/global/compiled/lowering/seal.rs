@@ -212,10 +212,20 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         controller_role: Option<u8>,
         linger: bool,
     ) {
-        let (arm0_start, arm0_end, arm1_start, arm1_end) =
-            Self::route_arm_ranges(scope_markers, scope_id);
+        let (
+            arm0_enter_marker_idx,
+            arm0_start,
+            arm0_end,
+            arm1_enter_marker_idx,
+            arm1_start,
+            arm1_end,
+        ) = Self::route_arm_ranges(scope_markers, scope_id);
         Self::validate_route_policy_consistency(
-            view, scope_id, arm0_start, arm0_end, arm1_start, arm1_end,
+            view,
+            arm0_enter_marker_idx,
+            arm0_end,
+            arm1_enter_marker_idx,
+            arm1_end,
         );
         if linger {
             return;
@@ -240,7 +250,11 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
             return;
         }
         if Self::scope_has_dynamic_policy(
-            view, scope_id, arm0_start, arm0_end, arm1_start, arm1_end,
+            view,
+            arm0_enter_marker_idx,
+            arm0_end,
+            arm1_enter_marker_idx,
+            arm1_end,
         ) {
             return;
         }
@@ -252,7 +266,8 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
     const fn route_arm_ranges(
         scope_markers: &[crate::global::const_dsl::ScopeMarker],
         scope_id: ScopeId,
-    ) -> (usize, usize, usize, usize) {
+    ) -> (usize, usize, usize, usize, usize, usize) {
+        let mut enter_marker_indices = [usize::MAX; 2];
         let mut enter_offsets = [usize::MAX; 2];
         let mut exit_offsets = [usize::MAX; 2];
         let mut enter_len = 0usize;
@@ -260,12 +275,13 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         let mut idx = 0usize;
         while idx < scope_markers.len() {
             let marker = scope_markers[idx];
-            if marker.scope_id.raw() == scope_id.raw()
+            if marker.scope_id.canonical().raw() == scope_id.canonical().raw()
                 && matches!(marker.scope_kind, ScopeKind::Route)
             {
                 match marker.event {
                     ScopeEvent::Enter => {
                         if enter_len < 2 {
+                            enter_marker_indices[enter_len] = idx;
                             enter_offsets[enter_len] = marker.offset;
                         }
                         enter_len += 1;
@@ -285,8 +301,10 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
             panic!("route must have exactly 2 arms");
         }
         (
+            enter_marker_indices[0],
             enter_offsets[0],
             exit_offsets[0],
+            enter_marker_indices[1],
             enter_offsets[1],
             exit_offsets[1],
         )
@@ -294,72 +312,116 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
 
     const fn scope_has_dynamic_policy(
         view: crate::global::compiled::LoweringView<'_>,
-        scope_id: ScopeId,
-        arm0_start: usize,
+        arm0_enter_marker_idx: usize,
         arm0_end: usize,
-        arm1_start: usize,
+        arm1_enter_marker_idx: usize,
         arm1_end: usize,
     ) -> bool {
-        Self::first_dynamic_policy_id_in_range(view, scope_id, arm0_start, arm0_end).is_some()
-            || Self::first_dynamic_policy_id_in_range(view, scope_id, arm1_start, arm1_end)
-                .is_some()
+        Self::first_route_head_dynamic_policy_id_in_range(view, arm0_enter_marker_idx, arm0_end)
+            .is_some()
+            || Self::first_route_head_dynamic_policy_id_in_range(
+                view,
+                arm1_enter_marker_idx,
+                arm1_end,
+            )
+            .is_some()
     }
 
     const fn validate_route_policy_consistency(
         view: crate::global::compiled::LoweringView<'_>,
-        scope_id: ScopeId,
-        arm0_start: usize,
+        arm0_enter_marker_idx: usize,
         arm0_end: usize,
-        arm1_start: usize,
+        arm1_enter_marker_idx: usize,
         arm1_end: usize,
     ) {
-        let left = Self::first_dynamic_policy_id_in_range(view, scope_id, arm0_start, arm0_end);
-        let right = Self::first_dynamic_policy_id_in_range(view, scope_id, arm1_start, arm1_end);
+        let left = Self::first_route_head_dynamic_policy_id_in_range(
+            view,
+            arm0_enter_marker_idx,
+            arm0_end,
+        );
+        let right = Self::first_route_head_dynamic_policy_id_in_range(
+            view,
+            arm1_enter_marker_idx,
+            arm1_end,
+        );
         match (left, right) {
             (Some(left_id), Some(right_id)) => {
                 if left_id != right_id {
-                    panic!("route scope recorded conflicting controller policy annotations");
+                    panic!("route scope recorded different controller policy ids across arms");
                 }
             }
             (Some(_), None) | (None, Some(_)) => {
-                panic!("route scope recorded conflicting controller policy annotations");
+                panic!("route scope recorded a controller policy annotation on only one arm");
             }
             (None, None) => {}
         }
     }
 
-    const fn first_dynamic_policy_id_in_range(
+    const fn first_route_head_dynamic_policy_id_in_range(
         view: crate::global::compiled::LoweringView<'_>,
-        scope_id: ScopeId,
-        start: usize,
+        route_enter_marker_idx: usize,
         end: usize,
     ) -> Option<u16> {
+        let scope_markers = view.scope_markers();
+        if route_enter_marker_idx >= scope_markers.len() {
+            return None;
+        }
+        let route_enter = scope_markers[route_enter_marker_idx];
+        if !matches!(route_enter.event, ScopeEvent::Enter)
+            || !matches!(route_enter.scope_kind, ScopeKind::Route)
+        {
+            return None;
+        }
         let nodes = view.as_slice();
-        let mut idx = start;
+        let mut marker_idx = route_enter_marker_idx + 1;
+        let mut active_scope_depth = 1usize;
+        let mut idx = route_enter.offset;
         while idx < end && idx < nodes.len() {
+            let mut scan_marker_idx = marker_idx;
+            let mut depth_after_exits = active_scope_depth;
+            while scan_marker_idx < scope_markers.len() {
+                let marker = scope_markers[scan_marker_idx];
+                if marker.offset != idx {
+                    break;
+                }
+                if matches!(marker.event, ScopeEvent::Exit) {
+                    depth_after_exits = depth_after_exits.saturating_sub(1);
+                }
+                scan_marker_idx += 1;
+            }
+
+            let mut enter_count = 0usize;
+            let mut nested_non_policy_enter = false;
+            let mut next_marker_idx = marker_idx;
+            while next_marker_idx < scope_markers.len() {
+                let marker = scope_markers[next_marker_idx];
+                if marker.offset != idx {
+                    break;
+                }
+                if matches!(marker.event, ScopeEvent::Enter) {
+                    if depth_after_exits == 1 && !matches!(marker.scope_kind, ScopeKind::Generic) {
+                        nested_non_policy_enter = true;
+                    }
+                    enter_count += 1;
+                }
+                next_marker_idx += 1;
+            }
+
             match view.policy_at(idx) {
                 Some(policy)
-                    if policy.is_dynamic()
-                        && Self::policy_belongs_to_route_scope(scope_id, policy.scope()) =>
+                    if depth_after_exits == 1
+                        && !nested_non_policy_enter
+                        && policy.dynamic_policy_id().is_some() =>
                 {
                     return policy.dynamic_policy_id();
                 }
                 _ => {}
             }
+            active_scope_depth = depth_after_exits.saturating_add(enter_count);
+            marker_idx = next_marker_idx;
             idx += 1;
         }
         None
-    }
-
-    const fn policy_belongs_to_route_scope(route_scope: ScopeId, policy_scope: ScopeId) -> bool {
-        if policy_scope.is_none() {
-            return true;
-        }
-        if matches!(policy_scope.kind(), ScopeKind::Route) {
-            policy_scope.raw() == route_scope.raw()
-        } else {
-            true
-        }
     }
 
     const fn collect_local_sigs(

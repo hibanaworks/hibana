@@ -1,15 +1,8 @@
 error[E0308]: mismatched types
-  --> tests/ui/g-typelist-local-missing-step.rs:11:74
-   |
-11 | const CLIENT: RoleProgram<'static, 0, ProgramWitness<StepNil>> = project(&PROGRAM_TOKEN);
-   |                                                                  ------- ^^^^^^^^^^^^^^ expected `&Program<StepNil>`, found `&Program<StepCons<..., ...>>`
-   |                                                                  |
-   |                                                                  arguments to this function are incorrect
-   |
-   = note: expected reference `&Program<StepNil>`
-              found reference `&Program<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<7>, u16>>, StepNil>>`
-note: function defined here
-  --> src/global/role_program.rs
-   |
-   | pub const fn project<'prog, const ROLE: u8, Steps, Mint>(
-   |              ^^^^^^^
+ --> tests/ui/g-typelist-local-missing-step.rs:7:44
+  |
+7 | const PROGRAM_TOKEN: g::Program<StepNil> = PROGRAM;
+  |                                            ^^^^^^^ expected `Program<StepNil>`, found `Program<StepCons<..., ...>>`
+  |
+  = note: expected struct `Program<StepNil>`
+             found struct `Program<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<7>, u16>>, StepNil>>`

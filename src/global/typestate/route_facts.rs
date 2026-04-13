@@ -3,10 +3,7 @@
 use super::facts::{
     JumpReason, LocalAction, LocalNode, MAX_STATES, StateIndex, state_index_to_usize,
 };
-use crate::{
-    eff,
-    global::const_dsl::{PolicyMode, ScopeId},
-};
+use crate::{eff, global::const_dsl::ScopeId};
 
 pub(super) const MAX_PREFIX_ACTIONS: usize = eff::meta::MAX_EFF_NODES;
 pub(super) const PREFIX_KIND_SEND: u8 = 0;
@@ -27,14 +24,6 @@ impl PrefixAction {
         label: 0,
         lane: 0,
     };
-}
-
-/// Route-scope controller policy storage is keyed by the dynamic policy id.
-pub(super) const fn route_policy_differs(existing_policy_id: u16, new_policy: PolicyMode) -> bool {
-    match new_policy.dynamic_policy_id() {
-        Some(new_policy_id) => existing_policy_id != new_policy_id,
-        None => true,
-    }
 }
 
 const fn actions_equivalent(

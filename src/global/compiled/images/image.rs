@@ -1,4 +1,8 @@
-use crate::{control::cluster::effects::EffectEnvelopeRef, endpoint::kernel::EndpointArenaLayout};
+use crate::{
+    control::cluster::effects::EffectEnvelopeRef,
+    endpoint::kernel::EndpointArenaLayout,
+    global::const_dsl::{PolicyMode, ScopeId},
+};
 
 use super::{
     ControlSemanticsTable, ProgramStamp,
@@ -7,7 +11,7 @@ use super::{
 };
 
 /// Sealed runtime owner for immutable program-wide compiled facts.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ProgramImage {
     stamp: ProgramStamp,
     compiled: *const CompiledProgramImage,
@@ -58,8 +62,16 @@ impl ProgramImage {
     }
 
     #[inline(always)]
-    pub(crate) fn control_semantics_ptr(&self) -> *const ControlSemanticsTable {
-        self.control_semantics() as *const ControlSemanticsTable
+    pub(crate) fn route_controller_role(&self, scope_id: ScopeId) -> Option<u8> {
+        self.compiled().route_controller_role(scope_id)
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_controller(
+        &self,
+        scope_id: ScopeId,
+    ) -> Option<(PolicyMode, crate::eff::EffIndex, u8)> {
+        self.compiled().route_controller(scope_id)
     }
 }
 

@@ -6,7 +6,7 @@ mod control_kinds;
 use hibana::substrate::cap::GenericCapToken;
 use hibana::substrate::policy::DynamicResolution;
 use hibana::g::{self};
-use hibana::g::advanced::{CanonicalControl, ProgramWitness, RoleProgram, project};
+use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
 use hibana::g::advanced::steps::{
     PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil,
 };
@@ -119,7 +119,7 @@ type RouteProgramSteps = RouteSteps<
 
 const ROUTE: g::Program<RouteProgramSteps> = g::route(ARM0, ARM1);
 
-static PASSIVE_PROGRAM: RoleProgram<'static, 1, ProgramWitness<RouteProgramSteps>> =
+static PASSIVE_PROGRAM: RoleProgram<'static, 1, RouteProgramSteps> =
     project(&ROUTE);
 
 fn main() {

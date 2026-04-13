@@ -23,7 +23,7 @@ use common::TestTransport;
 use hibana::{
     g::advanced::steps::SeqSteps,
     g::advanced::steps::{PolicySteps, RouteSteps, SendStep, StepCons, StepNil},
-    g::advanced::{CanonicalControl, ProgramWitness, RoleProgram, project},
+    g::advanced::{CanonicalControl, RoleProgram, project},
     g::{self, Msg, Role},
     substrate::{
         RendezvousId,
@@ -166,10 +166,8 @@ const LOOP_SEGMENT: g::Program<LoopSegmentSteps> = g::route(LOOP_CONTINUE_ARM, L
 const PROTOCOL: g::Program<LoopLaneProgramSteps> =
     g::seq(g::send::<Role<0>, Role<1>, Msg<10, ()>, 0>(), LOOP_SEGMENT);
 
-static CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramWitness<LoopLaneProgramSteps>> =
-    project(&PROTOCOL);
-static TARGET_PROGRAM: RoleProgram<'static, 1, ProgramWitness<LoopLaneProgramSteps>> =
-    project(&PROTOCOL);
+static CONTROLLER_PROGRAM: RoleProgram<'static, 0, LoopLaneProgramSteps> = project(&PROTOCOL);
+static TARGET_PROGRAM: RoleProgram<'static, 1, LoopLaneProgramSteps> = project(&PROTOCOL);
 
 fn transport_queue_is_empty(transport: &TestTransport) -> bool {
     transport.queue_is_empty()

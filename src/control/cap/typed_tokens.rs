@@ -219,6 +219,97 @@ impl<'rv, K: ResourceKind> CapRegisteredToken<'rv, K> {
     }
 }
 
+pub(crate) struct ErasedRegisteredCapToken<'rv> {
+    bytes: [u8; CAP_TOKEN_LEN],
+    nonce: [u8; CAP_NONCE_LEN],
+    cap_table: Option<NonNull<CapTable>>,
+    _marker: PhantomData<&'rv CapTable>,
+}
+
+pub(crate) struct RegisteredTokenParts {
+    bytes: [u8; CAP_TOKEN_LEN],
+    nonce: [u8; CAP_NONCE_LEN],
+    cap_table: Option<NonNull<CapTable>>,
+}
+
+impl RegisteredTokenParts {
+    #[inline]
+    pub(crate) fn from_typed<K: ResourceKind>(mut token: CapRegisteredToken<'_, K>) -> Self {
+        let parts = Self {
+            bytes: token.bytes,
+            nonce: token.nonce,
+            cap_table: token.cap_table.take(),
+        };
+        token.bytes.fill(0);
+        token.nonce.fill(0);
+        parts
+    }
+
+    #[inline]
+    pub(crate) fn from_bytes(bytes: [u8; CAP_TOKEN_LEN]) -> Self {
+        Self {
+            bytes,
+            nonce: [0u8; CAP_NONCE_LEN],
+            cap_table: None,
+        }
+    }
+}
+
+impl Drop for RegisteredTokenParts {
+    fn drop(&mut self) {
+        if let Some(table) = self.cap_table.take() {
+            unsafe {
+                table.as_ref().release_by_nonce(&self.nonce);
+            }
+        }
+
+        self.bytes.fill(0);
+        self.nonce.fill(0);
+    }
+}
+
+impl<'rv> ErasedRegisteredCapToken<'rv> {
+    #[inline]
+    pub(crate) fn from_parts(mut parts: RegisteredTokenParts) -> Self {
+        let erased = Self {
+            bytes: parts.bytes,
+            nonce: parts.nonce,
+            cap_table: parts.cap_table.take(),
+            _marker: PhantomData,
+        };
+        parts.bytes.fill(0);
+        parts.nonce.fill(0);
+        erased
+    }
+
+    #[inline]
+    pub(crate) fn into_typed<K: ResourceKind>(mut self) -> CapRegisteredToken<'rv, K> {
+        let bytes = self.bytes;
+        let nonce = self.nonce;
+        let cap_table = self.cap_table.take();
+        self.bytes.fill(0);
+        self.nonce.fill(0);
+        let scope = GenericCapToken::<K>::from_bytes(bytes).scope_hint();
+        match cap_table {
+            Some(table) => CapRegisteredToken::new(bytes, nonce, unsafe { table.as_ref() }, scope),
+            None => CapRegisteredToken::from_bytes(bytes),
+        }
+    }
+}
+
+impl<'rv> Drop for ErasedRegisteredCapToken<'rv> {
+    fn drop(&mut self) {
+        if let Some(table) = self.cap_table.take() {
+            unsafe {
+                table.as_ref().release_by_nonce(&self.nonce);
+            }
+        }
+
+        self.bytes.fill(0);
+        self.nonce.fill(0);
+    }
+}
+
 impl<'rv, K: ResourceKind> Drop for CapRegisteredToken<'rv, K> {
     fn drop(&mut self) {
         // Release from CapTable if registered

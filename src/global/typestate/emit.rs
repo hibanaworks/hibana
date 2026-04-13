@@ -13,7 +13,7 @@ use crate::{
     eff::EffIndex,
     global::{
         compiled::LoweringSummary,
-        const_dsl::{PolicyMode, ScopeId, ScopeKind},
+        const_dsl::{ScopeId, ScopeKind},
         role_program::MAX_LANES,
     },
 };
@@ -481,14 +481,6 @@ impl RoleTypestateValue {
         )
     }
 
-    #[inline]
-    pub(in crate::global::typestate) fn route_controller(
-        &self,
-        scope_id: ScopeId,
-    ) -> Option<(PolicyMode, EffIndex, u8)> {
-        self.scope_registry.route_controller(scope_id)
-    }
-
     #[inline(always)]
     pub(in crate::global) fn has_parallel_phase_scope(&self) -> bool {
         let mut idx = 0usize;
@@ -655,14 +647,6 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
         controller_arm_entry_by_arm_for_scope_registry(&self.scope_registry, scope_id, arm, |idx| {
             self.node(idx)
         })
-    }
-
-    #[inline]
-    pub(in crate::global::typestate) fn route_controller(
-        &self,
-        scope_id: ScopeId,
-    ) -> Option<(PolicyMode, EffIndex, u8)> {
-        self.scope_registry.route_controller(scope_id)
     }
 
     #[inline(always)]

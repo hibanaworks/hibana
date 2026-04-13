@@ -5,7 +5,7 @@ use crate::{
     eff,
     eff::EffIndex,
     global::{
-        const_dsl::{CompactScopeId, PolicyMode, ScopeId, ScopeKind},
+        const_dsl::{CompactScopeId, ScopeId, ScopeKind},
         role_program::MAX_LANES,
     },
 };
@@ -33,15 +33,11 @@ pub(crate) struct ScopeRecord {
     pub scope_id: CompactScopeId,
     pub kind: ScopeKind,
     pub linger: bool,
-    pub route_policy_tag: u8,
-    pub controller_role: u8,
     pub start: StateIndex,
     pub end: StateIndex,
     pub range: u16,
     pub nest: u16,
     pub parent: u16,
-    pub route_policy_id: u16,
-    pub route_policy_eff: EffIndex,
     pub lane_first_eff: [EffIndex; MAX_LANES],
     pub lane_last_eff: [EffIndex; MAX_LANES],
     pub arm_entry: [StateIndex; 2],
@@ -100,15 +96,11 @@ impl ScopeRecord {
         scope_id: CompactScopeId::none(),
         kind: ScopeKind::Generic,
         linger: false,
-        route_policy_tag: 0,
-        controller_role: CONTROLLER_ROLE_NONE,
         start: StateIndex::ZERO,
         end: StateIndex::ZERO,
         range: 0,
         nest: 0,
         parent: SCOPE_LINK_NONE,
-        route_policy_id: u16::MAX,
-        route_policy_eff: EffIndex::MAX,
         lane_first_eff: [EffIndex::MAX; MAX_LANES],
         lane_last_eff: [EffIndex::MAX; MAX_LANES],
         arm_entry: [StateIndex::MAX, StateIndex::MAX],
@@ -123,11 +115,7 @@ impl ScopeRecord {
             range: self.range,
             nest: self.nest,
             linger: self.linger,
-            controller_role: if self.controller_role == CONTROLLER_ROLE_NONE {
-                None
-            } else {
-                Some(self.controller_role)
-            },
+            controller_role: None,
         }
     }
 }
@@ -561,22 +549,6 @@ impl ScopeRegistry {
             None
         }
     }
-    pub(super) fn route_controller(&self, scope_id: ScopeId) -> Option<(PolicyMode, EffIndex, u8)> {
-        let record = self.lookup_record(scope_id)?;
-        if record.route_policy_eff == EffIndex::MAX {
-            return None;
-        }
-        let policy = if record.route_policy_id == u16::MAX {
-            PolicyMode::Static
-        } else {
-            PolicyMode::Dynamic {
-                policy_id: record.route_policy_id,
-                scope: record.scope_id,
-            }
-        };
-        Some((policy, record.route_policy_eff, record.route_policy_tag))
-    }
-
     pub(super) fn passive_arm_jump(&self, scope_id: ScopeId, arm: u8) -> Option<StateIndex> {
         if arm >= 2 {
             return None;

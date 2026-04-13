@@ -173,7 +173,7 @@ fn public_docs_use_canonical_surface_paths() {
         "`hibana::substrate::mgmt::ROLE_CONTROLLER`",
         "`hibana::substrate::mgmt::ROLE_CLUSTER`",
         "`hibana::substrate::mgmt::tap::TapEvent`",
-        "`RoleProgram<'prog, ROLE, Witness, Mint>`",
+        "`RoleProgram<'prog, ROLE, GlobalSteps, Mint>`",
         "`SessionKit::enter(...)`",
         "`flow().send()`, `recv()`, `offer()`, and `decode()`",
         "Dynamic policy remains explicit:",

@@ -13,7 +13,7 @@ use crate::{
     eff::EffIndex,
     global::{
         LoopControlMeaning,
-        compiled::{CompiledRoleImage, ControlSemanticsTable},
+        compiled::{CompiledRoleImage, ControlSemanticsTable, ProgramImage},
         const_dsl::{PolicyMode, ScopeId, ScopeKind},
         role_program::{LaneSteps, MAX_LANES, PhaseRouteGuard},
     },
@@ -51,7 +51,7 @@ const PHASE_CURSOR_NO_STATE: StateIndex = StateIndex::MAX;
 #[cfg_attr(test, derive(Clone, Copy, PartialEq, Eq))]
 struct PhaseCursorMachine {
     compiled_role: *const CompiledRoleImage,
-    control_semantics: *const ControlSemanticsTable,
+    program_image: ProgramImage,
 }
 
 impl PhaseCursorMachine {
@@ -59,11 +59,11 @@ impl PhaseCursorMachine {
     unsafe fn init_from_compiled(
         dst: *mut Self,
         compiled_role: *const CompiledRoleImage,
-        control_semantics: *const ControlSemanticsTable,
+        program_image: ProgramImage,
     ) {
         unsafe {
             core::ptr::addr_of_mut!((*dst).compiled_role).write(compiled_role);
-            core::ptr::addr_of_mut!((*dst).control_semantics).write(control_semantics);
+            core::ptr::addr_of_mut!((*dst).program_image).write(program_image);
         }
     }
 
@@ -76,6 +76,11 @@ impl PhaseCursorMachine {
     #[inline(always)]
     fn role(&self) -> u8 {
         self.compiled_role().role()
+    }
+
+    #[inline(always)]
+    fn program_image(&self) -> &ProgramImage {
+        &self.program_image
     }
 
     #[inline(always)]
@@ -120,8 +125,17 @@ impl PhaseCursorMachine {
 
     #[inline(always)]
     fn control_semantics(&self) -> &ControlSemanticsTable {
-        debug_assert!(!self.control_semantics.is_null());
-        unsafe { &*self.control_semantics }
+        self.program_image().control_semantics()
+    }
+
+    #[inline(always)]
+    fn route_controller_role(&self, scope_id: ScopeId) -> Option<u8> {
+        self.program_image().route_controller_role(scope_id)
+    }
+
+    #[inline(always)]
+    fn route_controller(&self, scope_id: ScopeId) -> Option<(PolicyMode, EffIndex, u8)> {
+        self.program_image().route_controller(scope_id)
     }
 }
 
@@ -247,14 +261,14 @@ impl PhaseCursor {
         dst: *mut Self,
         state: *mut PhaseCursorState,
         compiled_role: *const CompiledRoleImage,
-        control_semantics: *const ControlSemanticsTable,
+        program_image: ProgramImage,
     ) {
         unsafe {
             core::ptr::addr_of_mut!((*dst).state).write(state);
             PhaseCursorMachine::init_from_compiled(
                 core::ptr::addr_of_mut!((*dst).machine),
                 compiled_role,
-                control_semantics,
+                program_image,
             );
             PhaseCursorState::init_empty(state);
             (&mut *dst).rebuild_current_step_labels();
@@ -866,14 +880,16 @@ impl PhaseCursor {
         if scope_id.is_none() {
             None
         } else {
-            typestate.scope_region_for(scope_id)
+            self.scope_region_by_id(scope_id)
         }
     }
 
     /// Get scope region by scope ID.
     #[inline(always)]
     pub(crate) fn scope_region_by_id(&self, scope_id: ScopeId) -> Option<ScopeRegion> {
-        self.typestate().scope_region_for(scope_id)
+        let mut region = self.typestate().scope_region_for(scope_id)?;
+        region.controller_role = self.machine().route_controller_role(scope_id);
+        Some(region)
     }
 
     /// FIRST-recv dispatch lookup for passive observers.
@@ -909,15 +925,15 @@ impl PhaseCursor {
 
     /// Check if this role is the controller for the given route scope.
     ///
-    /// Uses type-level `controller_role` from `ScopeRegion` (propagated from
-    /// binary route construction via `ScopeMarker`). This eliminates runtime
-    /// inference based on `controller_arm_entry` presence.
+    /// Uses the shared program route atlas to compare the route controller role
+    /// against the attached role image. This keeps controller authority program-wide
+    /// instead of duplicating it in every role-local scope record.
     ///
     /// Returns `true` if `controller_role == self.compiled.role()`, `false` otherwise.
     #[inline]
     pub(crate) fn is_route_controller(&self, scope_id: ScopeId) -> bool {
-        self.scope_region_by_id(scope_id)
-            .and_then(|region| region.controller_role)
+        self.machine()
+            .route_controller_role(scope_id)
             .map_or(false, |ctrl| ctrl == self.machine().role())
     }
 
@@ -1150,7 +1166,7 @@ impl PhaseCursor {
         &self,
         scope_id: ScopeId,
     ) -> Option<(PolicyMode, EffIndex, u8)> {
-        self.typestate().route_controller(scope_id)
+        self.machine().route_controller(scope_id)
     }
 
     // =========================================================================

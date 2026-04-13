@@ -21,7 +21,7 @@ use futures::task::noop_waker_ref;
 use hibana::{
     g,
     g::advanced::steps::{SendStep, StepCons, StepNil},
-    g::advanced::{ProgramWitness, RoleProgram, project},
+    g::advanced::{RoleProgram, project},
     g::{Msg, Role},
     substrate::{
         SessionId, SessionKit, Transport,
@@ -44,14 +44,11 @@ const SEND_PROTOCOL: g::Program<SendOnly<LABEL_SEND, Role<0>, Role<1>, u32>> =
 static CONTROLLER_SEND_PROGRAM: RoleProgram<
     'static,
     0,
-    ProgramWitness<SendOnly<LABEL_SEND, Role<0>, Role<1>, u32>>,
+    SendOnly<LABEL_SEND, Role<0>, Role<1>, u32>,
 > = project(&SEND_PROTOCOL);
 
-static WORKER_SEND_PROGRAM: RoleProgram<
-    'static,
-    1,
-    ProgramWitness<SendOnly<LABEL_SEND, Role<0>, Role<1>, u32>>,
-> = project(&SEND_PROTOCOL);
+static WORKER_SEND_PROGRAM: RoleProgram<'static, 1, SendOnly<LABEL_SEND, Role<0>, Role<1>, u32>> =
+    project(&SEND_PROTOCOL);
 
 struct PendingSendState {
     ready: Cell<bool>,

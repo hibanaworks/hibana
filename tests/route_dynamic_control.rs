@@ -15,7 +15,7 @@ use ::core::{cell::UnsafeCell, mem::MaybeUninit};
 use common::TestTransport;
 use hibana::{
     g::advanced::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil},
-    g::advanced::{CanonicalControl, ProgramWitness, RoleProgram, project},
+    g::advanced::{CanonicalControl, RoleProgram, project},
     g::{self, Msg, Role},
     substrate::{
         SessionId, SessionKit,
@@ -116,7 +116,12 @@ type LoopBreakHead = PolicySteps<
 type LoopContinueArmSteps = SeqSteps<LoopContinueHead, StepNil>;
 type LoopProgramSteps = RouteSteps<LoopContinueArmSteps, LoopBreakHead>;
 type OuterLoopContinueArmSteps = SeqSteps<LoopContinueArmSteps, LoopProgramSteps>;
-type NestedLoopProgramSteps = RouteSteps<OuterLoopContinueArmSteps, LoopBreakHead>;
+type NestedLoopLeftSteps = SeqSteps<RouteLeftHead, OuterLoopContinueArmSteps>;
+type NestedLoopRightSteps = SeqSteps<RouteRightHead, LoopBreakHead>;
+type NestedLoopProgramSteps = RouteSteps<NestedLoopLeftSteps, NestedLoopRightSteps>;
+type RouteTailLeftSteps = SeqSteps<RouteLeftHead, LoopContinueArmSteps>;
+type RouteTailRightSteps = SeqSteps<RouteRightHead, LoopBreakHead>;
+type RouteTailProgramSteps = RouteSteps<RouteTailLeftSteps, RouteTailRightSteps>;
 type TestKit = SessionKit<
     'static,
     TestTransport,
@@ -214,10 +219,8 @@ const RIGHT_ARM: g::Program<RouteRightHead> = g::send::<
 // Route is local to Controller (0 → 0) since all arms are self-sends
 const PROGRAM: g::Program<RouteProgramSteps> = g::route(LEFT_ARM, RIGHT_ARM);
 
-static CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramWitness<RouteProgramSteps>> =
-    project(&PROGRAM);
-static WORKER_PROGRAM: RoleProgram<'static, 1, ProgramWitness<RouteProgramSteps>> =
-    project(&PROGRAM);
+static CONTROLLER_PROGRAM: RoleProgram<'static, 0, RouteProgramSteps> = project(&PROGRAM);
+static WORKER_PROGRAM: RoleProgram<'static, 1, RouteProgramSteps> = project(&PROGRAM);
 
 fn transport_queue_is_empty(transport: &TestTransport) -> bool {
     transport.queue_is_empty()
@@ -248,20 +251,29 @@ const LOOP_BREAK_ARM: g::Program<LoopBreakHead> = g::send::<
 // Route is local to Controller (0 → 0)
 const LOOP_PROGRAM: g::Program<LoopProgramSteps> = g::route(LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
 
-static LOOP_CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramWitness<LoopProgramSteps>> =
-    project(&LOOP_PROGRAM);
+static LOOP_CONTROLLER_PROGRAM: RoleProgram<'static, 0, LoopProgramSteps> = project(&LOOP_PROGRAM);
+
+const ROUTE_TAIL_LEFT_ARM: g::Program<RouteTailLeftSteps> = g::seq(LEFT_ARM, LOOP_CONTINUE_ARM);
+const ROUTE_TAIL_RIGHT_ARM: g::Program<RouteTailRightSteps> = g::seq(RIGHT_ARM, LOOP_BREAK_ARM);
+const ROUTE_TAIL_PROGRAM: g::Program<RouteTailProgramSteps> =
+    g::route(ROUTE_TAIL_LEFT_ARM, ROUTE_TAIL_RIGHT_ARM);
+
+static ROUTE_TAIL_CONTROLLER_PROGRAM: RoleProgram<'static, 0, RouteTailProgramSteps> =
+    project(&ROUTE_TAIL_PROGRAM);
+static ROUTE_TAIL_WORKER_PROGRAM: RoleProgram<'static, 1, RouteTailProgramSteps> =
+    project(&ROUTE_TAIL_PROGRAM);
 
 const OUTER_LOOP_CONTINUE_ARM: g::Program<OuterLoopContinueArmSteps> =
     g::seq(LOOP_CONTINUE_ARM, LOOP_PROGRAM);
+const NESTED_LOOP_LEFT_ARM: g::Program<NestedLoopLeftSteps> =
+    g::seq(LEFT_ARM, OUTER_LOOP_CONTINUE_ARM);
+const NESTED_LOOP_RIGHT_ARM: g::Program<NestedLoopRightSteps> = g::seq(RIGHT_ARM, LOOP_BREAK_ARM);
 // Route is local to Controller (0 → 0)
 const NESTED_LOOP_PROGRAM: g::Program<NestedLoopProgramSteps> =
-    g::route(OUTER_LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
+    g::route(NESTED_LOOP_LEFT_ARM, NESTED_LOOP_RIGHT_ARM);
 
-static NESTED_LOOP_CONTROLLER_PROGRAM: RoleProgram<
-    'static,
-    0,
-    ProgramWitness<NestedLoopProgramSteps>,
-> = project(&NESTED_LOOP_PROGRAM);
+static NESTED_LOOP_CONTROLLER_PROGRAM: RoleProgram<'static, 0, NestedLoopProgramSteps> =
+    project(&NESTED_LOOP_PROGRAM);
 
 fn route_resolver(ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
     if ctx.attr(core::TAG).map(|value| value.as_u8()) != Some(RouteDecisionKind::TAG) {
@@ -400,6 +412,77 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                     },
                 );
 
+                assert!(transport_queue_is_empty(&transport));
+            },
+        );
+    });
+}
+
+#[test]
+fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
+    with_fixture(|clock, tap_buf, slab| {
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let config = Config::new(tap_buf, slab);
+                let transport = TestTransport::default();
+
+                let rv_id = cluster
+                    .add_rendezvous_from_config(config, transport.clone())
+                    .expect("register rendezvous");
+                cluster
+                    .set_resolver::<ROUTE_POLICY_ID, 0, _, _>(
+                        rv_id,
+                        &ROUTE_TAIL_CONTROLLER_PROGRAM,
+                        hibana::substrate::policy::ResolverRef::from_fn(route_resolver),
+                    )
+                    .expect("register route resolver");
+                set_route_allow(true);
+
+                let sid = SessionId::new(10);
+                with_tls_mut(
+                    &WORKER_ENDPOINT_SLOT,
+                    |ptr| unsafe {
+                        write_value(
+                            ptr,
+                            cluster
+                                .enter(rv_id, sid, &ROUTE_TAIL_WORKER_PROGRAM, NoBinding)
+                                .expect("worker endpoint"),
+                        );
+                    },
+                    |_worker| {
+                        with_tls_mut(
+                            &CONTROLLER_ENDPOINT_SLOT,
+                            |ptr| unsafe {
+                                write_value(
+                                    ptr,
+                                    cluster
+                                        .enter(
+                                            rv_id,
+                                            sid,
+                                            &ROUTE_TAIL_CONTROLLER_PROGRAM,
+                                            NoBinding,
+                                        )
+                                        .expect("controller endpoint"),
+                                );
+                            },
+                            |controller| {
+                                let _route_flow = controller
+                                    .flow::<Msg<
+                                        { LABEL_ROUTE_DECISION },
+                                        GenericCapToken<RouteDecisionKind>,
+                                        CanonicalControl<RouteDecisionKind>,
+                                    >>()
+                                    .expect("route flow should remain available after enter");
+                            },
+                        );
+                    },
+                );
+
+                set_route_allow(false);
                 assert!(transport_queue_is_empty(&transport));
             },
         );

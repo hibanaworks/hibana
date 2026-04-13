@@ -1,28 +1,21 @@
 error[E0308]: mismatched types
-  --> tests/ui/g-typelist-local-label-mismatch.rs:15:13
-   |
-15 | > = project(&PROGRAM_TOKEN);
-   |     ------- ^^^^^^^^^^^^^^ expected `LocalSend<Role<1>, Message<..., u16>>`, found `SendStep<Role<0>, Role<1>, ...>`
-   |     |
-   |     arguments to this function are incorrect
-   |
-   = note: expected reference `&Program<StepCons<LocalSend<Role<1>, hibana::global::Message<hibana::global::LabelMarker<8>, u16>>, StepNil>>`
-              found reference `&Program<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<7>, u16>>, StepNil>>`
-note: function defined here
-  --> src/global/role_program.rs
-   |
-   | pub const fn project<'prog, const ROLE: u8, Steps, Mint>(
-   |              ^^^^^^^
+ --> tests/ui/g-typelist-local-label-mismatch.rs:9:5
+  |
+9 | > = PROGRAM;
+  |     ^^^^^^^ expected `LocalSend<Role<1>, Message<..., u16>>`, found `SendStep<Role<0>, Role<1>, ...>`
+  |
+  = note: expected struct `Program<StepCons<LocalSend<Role<1>, hibana::global::Message<hibana::global::LabelMarker<8>, u16>>, StepNil>>`
+             found struct `Program<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<7>, u16>>, StepNil>>`
 
-error[E0277]: the trait bound `StepCons<LocalSend<Role<1>, hibana::global::Message<hibana::global::LabelMarker<8>, u16>>, StepNil>: ProjectRole<Role<0>>` is not satisfied
-  --> tests/ui/g-typelist-local-label-mismatch.rs:15:13
+error[E0277]: the trait bound `StepCons<LocalSend<Role<1>, hibana::global::Message<hibana::global::LabelMarker<8>, u16>>, StepNil>: ProjectRole<Role<_>>` is not satisfied
+  --> tests/ui/g-typelist-local-label-mismatch.rs:12:13
    |
-15 | > = project(&PROGRAM_TOKEN);
+12 |     project(&PROGRAM_TOKEN);
    |     ------- ^^^^^^^^^^^^^^ unsatisfied trait bound
    |     |
    |     required by a bound introduced by this call
    |
-   = help: the trait `ProjectRole<Role<0>>` is not implemented for `StepCons<LocalSend<Role<1>, hibana::global::Message<hibana::global::LabelMarker<8>, u16>>, StepNil>`
+   = help: the trait `ProjectRole<Role<_>>` is not implemented for `StepCons<LocalSend<Role<1>, hibana::global::Message<hibana::global::LabelMarker<8>, u16>>, StepNil>`
            but it is implemented for `StepCons<SendStep<_, _, _, _>, _>`
    = help: for that trait implementation, expected `SendStep<_, _, _, _>`, found `LocalSend<Role<1>, hibana::global::Message<hibana::global::LabelMarker<8>, u16>>`
 note: required by a bound in `project`

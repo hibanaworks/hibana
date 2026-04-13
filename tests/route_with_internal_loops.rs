@@ -14,7 +14,7 @@
 mod route_control_kinds;
 
 use hibana::g::advanced::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
-use hibana::g::advanced::{CanonicalControl, ProgramWitness, RoleProgram, project};
+use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
 use hibana::g::{self, Msg, Role};
 use hibana::substrate::cap::GenericCapToken;
 use hibana::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
@@ -224,10 +224,8 @@ const ARM_B: g::Program<RouteArmBSteps> = g::seq(
 const ROUTE_PROGRAM: g::Program<RouteProgramSteps> = g::route(ARM_A, ARM_B);
 
 // Role projections
-static CLIENT_PROGRAM: RoleProgram<'static, 0, ProgramWitness<RouteProgramSteps>> =
-    project(&ROUTE_PROGRAM);
-static SERVER_PROGRAM: RoleProgram<'static, 1, ProgramWitness<RouteProgramSteps>> =
-    project(&ROUTE_PROGRAM);
+static CLIENT_PROGRAM: RoleProgram<'static, 0, RouteProgramSteps> = project(&ROUTE_PROGRAM);
+static SERVER_PROGRAM: RoleProgram<'static, 1, RouteProgramSteps> = project(&ROUTE_PROGRAM);
 
 // -----------------------------------------------------------------------------
 // Tests

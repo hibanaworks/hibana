@@ -14,7 +14,6 @@ use super::{
     route_facts::{
         MAX_PREFIX_ACTIONS, PREFIX_KIND_LOCAL, PREFIX_KIND_SEND, PrefixAction,
         arm_common_prefix_end, arm_sequences_equal, continuations_equivalent, prefix_action_eq,
-        route_policy_differs,
     },
 };
 
@@ -38,6 +37,10 @@ pub(crate) struct RoleTypestateBuildScratch {
     pub(super) scope_stack_kinds: [ScopeKind; MAX_SCOPE_SCRATCH],
     pub(super) scope_stack_entries: [u16; MAX_SCOPE_SCRATCH],
     pub(super) route_current_arm: [u8; MAX_SCOPE_SCRATCH],
+    pub(super) scope_controller_roles: [u8; MAX_SCOPE_SCRATCH],
+    pub(super) scope_route_policy_tags: [u8; MAX_SCOPE_SCRATCH],
+    pub(super) scope_route_policy_ids: [u16; MAX_SCOPE_SCRATCH],
+    pub(super) scope_route_policy_effs: [EffIndex; MAX_SCOPE_SCRATCH],
     pub(super) last_step_was_scope: [bool; MAX_SCOPE_SCRATCH],
     pub(super) route_arm_last_node: [[StateIndex; 2]; MAX_SCOPE_SCRATCH],
     pub(super) route_enter_count: [u8; MAX_SCOPE_SCRATCH],
@@ -70,6 +73,10 @@ impl RoleTypestateBuildScratch {
             scope_stack_kinds: [ScopeKind::Generic; MAX_SCOPE_SCRATCH],
             scope_stack_entries: [0; MAX_SCOPE_SCRATCH],
             route_current_arm: [0; MAX_SCOPE_SCRATCH],
+            scope_controller_roles: [CONTROLLER_ROLE_NONE; MAX_SCOPE_SCRATCH],
+            scope_route_policy_tags: [0; MAX_SCOPE_SCRATCH],
+            scope_route_policy_ids: [u16::MAX; MAX_SCOPE_SCRATCH],
+            scope_route_policy_effs: [EffIndex::MAX; MAX_SCOPE_SCRATCH],
             last_step_was_scope: [false; MAX_SCOPE_SCRATCH],
             route_arm_last_node: [[StateIndex::MAX; 2]; MAX_SCOPE_SCRATCH],
             route_enter_count: [0; MAX_SCOPE_SCRATCH],
@@ -108,6 +115,11 @@ impl RoleTypestateBuildScratch {
                 core::ptr::addr_of_mut!((*dst).scope_stack_kinds[idx]).write(ScopeKind::Generic);
                 core::ptr::addr_of_mut!((*dst).scope_stack_entries[idx]).write(0);
                 core::ptr::addr_of_mut!((*dst).route_current_arm[idx]).write(0);
+                core::ptr::addr_of_mut!((*dst).scope_controller_roles[idx])
+                    .write(CONTROLLER_ROLE_NONE);
+                core::ptr::addr_of_mut!((*dst).scope_route_policy_tags[idx]).write(0);
+                core::ptr::addr_of_mut!((*dst).scope_route_policy_ids[idx]).write(u16::MAX);
+                core::ptr::addr_of_mut!((*dst).scope_route_policy_effs[idx]).write(EffIndex::MAX);
                 core::ptr::addr_of_mut!((*dst).last_step_was_scope[idx]).write(false);
                 core::ptr::addr_of_mut!((*dst).route_arm_last_node[idx])
                     .write([StateIndex::MAX; 2]);
@@ -170,7 +182,7 @@ use crate::{
     global::{
         ControlLabelSpec, LoopControlMeaning,
         compiled::LoweringView,
-        const_dsl::{EffList, PolicyMode, ScopeEvent, ScopeId, ScopeKind},
+        const_dsl::{PolicyMode, ScopeEvent, ScopeId, ScopeKind},
     },
 };
 
@@ -179,58 +191,12 @@ pub(super) trait TypestateProgramView {
     fn scope_markers(&self) -> &[crate::global::const_dsl::ScopeMarker];
     fn policy_at(&self, offset: usize) -> Option<PolicyMode>;
     fn control_spec_at(&self, offset: usize) -> Option<ControlLabelSpec>;
-
-    fn first_dynamic_policy_in_range(
+    fn first_route_head_dynamic_policy_in_range(
         &self,
         scope_id: ScopeId,
-        scope_start: usize,
+        route_enter_marker_idx: usize,
         scope_end: usize,
-    ) -> Option<(PolicyMode, usize, u8)> {
-        if scope_start >= scope_end {
-            return None;
-        }
-        let nodes = self.as_slice();
-        let mut best_offset = nodes.len();
-        let mut best_policy = None;
-        let mut idx = scope_start;
-        while idx < scope_end && idx < nodes.len() {
-            if let Some(policy) = self.policy_at(idx)
-                && policy.is_dynamic()
-                && Self::policy_belongs_to_route_scope(scope_id, policy.scope())
-                && idx < best_offset
-            {
-                best_offset = idx;
-                best_policy = Some(policy);
-            }
-            idx += 1;
-        }
-        match best_policy {
-            Some(policy) => {
-                let eff_struct = nodes[best_offset];
-                let tag = if matches!(eff_struct.kind, eff::EffKind::Atom) {
-                    match eff_struct.atom_data().resource {
-                        Some(tag) => tag,
-                        None => 0,
-                    }
-                } else {
-                    0
-                };
-                Some((policy, best_offset, tag))
-            }
-            None => None,
-        }
-    }
-
-    fn policy_belongs_to_route_scope(route_scope: ScopeId, policy_scope: ScopeId) -> bool {
-        if policy_scope.is_none() {
-            return true;
-        }
-        if matches!(policy_scope.kind(), ScopeKind::Route) {
-            policy_scope.raw() == route_scope.raw()
-        } else {
-            true
-        }
-    }
+    ) -> Option<(PolicyMode, usize, u8)>;
 }
 
 impl TypestateProgramView for LoweringView<'_> {
@@ -255,35 +221,18 @@ impl TypestateProgramView for LoweringView<'_> {
     }
 
     #[inline(always)]
-    fn first_dynamic_policy_in_range(
+    fn first_route_head_dynamic_policy_in_range(
         &self,
         scope_id: ScopeId,
-        scope_start: usize,
+        route_enter_marker_idx: usize,
         scope_end: usize,
     ) -> Option<(PolicyMode, usize, u8)> {
-        LoweringView::first_dynamic_policy_in_range(self, scope_id, scope_start, scope_end)
-    }
-}
-
-impl TypestateProgramView for &EffList {
-    #[inline(always)]
-    fn as_slice(&self) -> &[EffStruct] {
-        EffList::as_slice(self)
-    }
-
-    #[inline(always)]
-    fn scope_markers(&self) -> &[crate::global::const_dsl::ScopeMarker] {
-        EffList::scope_markers(self)
-    }
-
-    #[inline(always)]
-    fn policy_at(&self, offset: usize) -> Option<PolicyMode> {
-        EffList::policy_at(self, offset)
-    }
-
-    #[inline(always)]
-    fn control_spec_at(&self, offset: usize) -> Option<ControlLabelSpec> {
-        EffList::control_spec_at(self, offset)
+        LoweringView::first_route_head_dynamic_policy_in_range(
+            self,
+            scope_id,
+            route_enter_marker_idx,
+            scope_end,
+        )
     }
 }
 
@@ -416,6 +365,8 @@ fn finalize_route_scope_exit_for_role(
     node_len: usize,
     entry_idx: usize,
     scope_entries: &mut [ScopeRecord],
+    scope_controller_roles: &[u8; MAX_SCOPE_SCRATCH],
+    scope_route_policy_effs: &[EffIndex; MAX_SCOPE_SCRATCH],
     route_scope_entries: &mut [RouteScopeRecord],
     scope_entries_len: usize,
     dispatch_table: &mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
@@ -428,7 +379,7 @@ fn finalize_route_scope_exit_for_role(
     let mut offer_entry_locked = false;
     let scope_id = scope_entries[entry_idx].scope_id.to_scope_id();
     let is_linger = scope_entries[entry_idx].linger;
-    let is_controller = scope_entries[entry_idx].controller_role == role;
+    let is_controller = scope_controller_roles[entry_idx] == role;
     let scope_end = as_state_index(node_len);
 
     if !is_linger {
@@ -818,7 +769,7 @@ fn finalize_route_scope_exit_for_role(
             di += 1;
         }
         route_scope_entries[entry_idx].offer_lanes = offer_lanes;
-    } else if scope_entries[entry_idx].route_policy_eff != EffIndex::MAX {
+    } else if scope_route_policy_effs[entry_idx] != EffIndex::MAX {
         clear_dispatch_table(dispatch_table);
         route_scope_entries[entry_idx].first_recv_dispatch = *dispatch_table;
         route_scope_entries[entry_idx].first_recv_len = 0;
@@ -903,6 +854,10 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
     // Track current arm number for each route scope in the stack.
     // Starts at 0 (no arm yet), incremented when a dynamic control recv is found.
     let route_current_arm = &mut scratch.route_current_arm;
+    let scope_controller_roles = &mut scratch.scope_controller_roles;
+    let scope_route_policy_tags = &mut scratch.scope_route_policy_tags;
+    let scope_route_policy_ids = &mut scratch.scope_route_policy_ids;
+    let scope_route_policy_effs = &mut scratch.scope_route_policy_effs;
     // Scope-as-Block: Track whether the last step was a scope exit (for nested route handling).
     let last_step_was_scope = &mut scratch.last_step_was_scope;
     // Scope-as-Block: Track the last node index for each arm in non-linger Route scopes.
@@ -983,12 +938,13 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                         if entry.start.is_max() {
                             entry.start = as_state_index(node_len);
                         }
-                        // Propagate controller_role from ScopeMarker to ScopeEntry.
-                        // This allows type-level controller detection instead of runtime inference.
+                        // Propagate controller_role from ScopeMarker into the shared-atlas scratch.
+                        // This keeps the builder's passive/controller decisions detached from the
+                        // final role-local scope record payload.
                         if let Some(controller_role) = marker.controller_role
-                            && entry.controller_role == CONTROLLER_ROLE_NONE
+                            && scope_controller_roles[entry_idx] == CONTROLLER_ROLE_NONE
                         {
-                            entry.controller_role = controller_role;
+                            scope_controller_roles[entry_idx] = controller_role;
                         }
                     }
 
@@ -1015,9 +971,9 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                         if matches!(scope_stack_kinds[parent_idx], ScopeKind::Route) {
                             let parent_entry_idx = scope_stack_entries[parent_idx] as usize;
                             let arm = route_current_arm[parent_idx] as usize;
-                            let parent_is_passive = scope_entries[parent_entry_idx].controller_role
-                                != CONTROLLER_ROLE_NONE
-                                && scope_entries[parent_entry_idx].controller_role != role;
+                            let parent_controller_role = scope_controller_roles[parent_entry_idx];
+                            let parent_is_passive = parent_controller_role != CONTROLLER_ROLE_NONE
+                                && parent_controller_role != role;
                             if arm < 2
                                 && parent_is_passive
                                 && scope_entries[parent_entry_idx].arm_entry[arm].is_max()
@@ -1042,12 +998,11 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                         route_arm_last_node[stack_idx][arm] = StateIndex::MAX;
                         last_step_was_scope[stack_idx] = false;
 
-                        // At first Enter (enter_count == 1), set route policy from EffList.
+                        // At first Enter (enter_count == 1), read route policy from the lowering view.
                         // This keeps route policy metadata independent of role projection.
                         if route_enter_count[stack_idx] == 1
-                            && scope_entries[entry_idx].route_policy_eff == EffIndex::MAX
+                            && scope_route_policy_effs[entry_idx] == EffIndex::MAX
                         {
-                            let scope_start = marker.offset;
                             let mut scope_end = slice.len();
                             let mut scan_idx = scope_marker_idx + 1;
                             let mut nest_depth = 1usize;
@@ -1067,15 +1022,18 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                                 }
                                 scan_idx += 1;
                             }
-                            if let Some((policy, eff_offset, tag)) =
-                                program.first_dynamic_policy_in_range(scope, scope_start, scope_end)
+                            if let Some((policy, eff_offset, tag)) = program
+                                .first_route_head_dynamic_policy_in_range(
+                                    scope,
+                                    scope_marker_idx,
+                                    scope_end,
+                                )
                             {
-                                scope_entries[entry_idx].route_policy_id = policy
+                                scope_route_policy_ids[entry_idx] = policy
                                     .dynamic_policy_id()
                                     .expect("route policy marker must be dynamic");
-                                scope_entries[entry_idx].route_policy_eff =
-                                    as_eff_index(eff_offset);
-                                scope_entries[entry_idx].route_policy_tag = tag;
+                                scope_route_policy_effs[entry_idx] = as_eff_index(eff_offset);
+                                scope_route_policy_tags[entry_idx] = tag;
                             }
                         }
                     }
@@ -1126,11 +1084,11 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                         if linger_idx < linger_arm_len {
                             let arm_last = linger_arm_last_node[linger_idx];
                             let loop_start = scope_entries[entry_idx].start;
-                            // Passive observer detection using type-level controller_role.
-                            // controller_role is propagated from the route arm entry via ScopeMarker.
-                            let is_passive = scope_entries[entry_idx].controller_role
-                                != CONTROLLER_ROLE_NONE
-                                && scope_entries[entry_idx].controller_role != role;
+                            // Passive observer detection uses the route-controller atlas scratch
+                            // seeded from ScopeMarker controller roles.
+                            let controller_role = scope_controller_roles[entry_idx];
+                            let is_passive =
+                                controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
                             // For passive observers, use passive_arm_entry for arm start positions.
                             // passive_arm_entry tracks the first cross-role node (Send or Recv)
                             // of each arm, which is more reliable than any derived recv lookup
@@ -1383,12 +1341,10 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                     // At final Exit (is_immediate_reenter=false):
                     //   - Passive observer: PassiveObserverBranch Jump → arm entry
                     //
-                    // Passive observer detection using type-level controller_role.
-                    // controller_role is propagated from the route arm entry via ScopeMarker.
-                    // If controller_role matches this role, we're the controller.
-                    let _is_passive_observer = scope_entries[entry_idx].controller_role
-                        != CONTROLLER_ROLE_NONE
-                        && scope_entries[entry_idx].controller_role != role;
+                    // Passive observer detection stays in the shared controller-role scratch.
+                    let controller_role = scope_controller_roles[entry_idx];
+                    let _is_passive_observer =
+                        controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
 
                     // Generate RouteArmEnd Jump at arm 0's end (intermediate Exit).
                     // This explicitly exits arm 0 to scope_end, purifying the CFG.
@@ -1402,9 +1358,8 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                         // For τ-eliminated arm 0 (passive observer has no nodes in arm 0),
                         // this RouteArmEnd also serves as the arm entry placeholder.
                         let arm0_is_tau_eliminated = scope_entries[entry_idx].arm_entry[0].is_max();
-                        let is_passive = scope_entries[entry_idx].controller_role
-                            != CONTROLLER_ROLE_NONE
-                            && scope_entries[entry_idx].controller_role != role;
+                        let is_passive =
+                            controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
 
                         if node_len >= MAX_STATES {
                             panic!("node capacity exceeded inserting RouteArmEnd Jump for arm 0");
@@ -1518,9 +1473,8 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                         && !is_immediate_reenter
                     {
                         let arm1_has_content = !scope_entries[entry_idx].arm_entry[1].is_max();
-                        let is_passive = scope_entries[entry_idx].controller_role
-                            != CONTROLLER_ROLE_NONE
-                            && scope_entries[entry_idx].controller_role != role;
+                        let is_passive =
+                            controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
                         if !arm1_has_content {
                             // τ-eliminated arm 1: insert ArmEmpty placeholder
                             if node_len >= MAX_STATES {
@@ -1577,6 +1531,8 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                             node_len,
                             entry_idx,
                             scope_entries,
+                            scope_controller_roles,
+                            scope_route_policy_effs,
                             route_scope_entries,
                             scope_entries_len,
                             &mut scratch.dispatch_table,
@@ -1660,20 +1616,7 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                 && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
             {
                 let entry_idx = scope_stack_entries[scope_stack_len - 1] as usize;
-                let entry = &mut scope_entries[entry_idx];
                 let route_entry = &mut route_scope_entries[entry_idx];
-                if let Some(policy_id) = policy.dynamic_policy_id() {
-                    if entry.route_policy_eff == EffIndex::MAX {
-                        entry.route_policy_id = policy_id;
-                        entry.route_policy_eff = as_eff_index(eff_idx);
-                        entry.route_policy_tag = match atom.resource {
-                            Some(tag) => tag,
-                            None => 0,
-                        };
-                    } else if route_policy_differs(entry.route_policy_id, policy) {
-                        panic!("route scope recorded conflicting controller policy annotations");
-                    }
-                }
                 if policy.is_dynamic() || loop_control.is_some() {
                     route_entry.offer_lanes |= offer_lane_bit(atom.lane);
                 }
@@ -1706,7 +1649,7 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                     let entry = &mut scope_entries[entry_idx];
                     debug_assert!(
                         !matches!(entry.kind, ScopeKind::Route)
-                            || entry.controller_role != CONTROLLER_ROLE_NONE,
+                            || scope_controller_roles[entry_idx] != CONTROLLER_ROLE_NONE,
                         "route scope missing controller_role"
                     );
 
@@ -1857,9 +1800,9 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                     let stack_idx = scope_stack_len - 1;
                     let arm = route_current_arm[stack_idx];
                     let entry_idx = scope_stack_entries[stack_idx] as usize;
-                    let is_passive = scope_entries[entry_idx].controller_role
-                        != CONTROLLER_ROLE_NONE
-                        && scope_entries[entry_idx].controller_role != role;
+                    let controller_role = scope_controller_roles[entry_idx];
+                    let is_passive =
+                        controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
 
                     // Passive observers need the first cross-role send as the arm entry
                     // when an arm has no earlier local entry or recv.
@@ -1996,8 +1939,9 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                     let entry_idx = scope_stack_entries[stack_idx] as usize;
                     let entry = &mut scope_entries[entry_idx];
                     let route_entry = &mut route_scope_entries[entry_idx];
-                    let is_passive = entry.controller_role != CONTROLLER_ROLE_NONE
-                        && entry.controller_role != role;
+                    let controller_role = scope_controller_roles[entry_idx];
+                    let is_passive =
+                        controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
 
                     // Passive observers use the first recv when it is the first cross-role
                     // node, or when it must replace an earlier local/send placeholder.

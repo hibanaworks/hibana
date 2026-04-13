@@ -367,7 +367,7 @@ impl<'a> TransientLoweringLeaseStorage<'a> {
     #[inline]
     unsafe fn init(self, summary: &LoweringSummary, stamp: ProgramStamp) -> LoweringLease<'a> {
         unsafe {
-            self.lowering.write(summary.clone());
+            summary.write_clone_to(self.lowering);
             let summary = &*self.lowering;
             debug_assert_eq!(summary.stamp(), stamp);
             let mut role_lowering_scratch = self.role_lowering_scratch;

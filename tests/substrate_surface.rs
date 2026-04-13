@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use hibana::g;
 use hibana::g::advanced::steps::{SendStep, SeqSteps, StepCons, StepNil};
-use hibana::g::advanced::{ProgramWitness, RoleProgram, project};
+use hibana::g::advanced::{RoleProgram, project};
 use hibana::substrate::{
     SessionId, SessionKit,
     binding::NoBinding,
@@ -29,7 +29,7 @@ const CONNECTION_SOURCE: g::Program<ConnectionSteps> = g::seq(StepNil::PROGRAM, 
 static CLIENT_PROGRAM: RoleProgram<
     'static,
     0,
-    ProgramWitness<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>, StepNil>>,
+    StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>, StepNil>,
 > = project(&PROGRAM);
 type StaticTestKit =
     SessionKit<'static, common::TestTransport, DefaultLabelUniverse, CounterClock, 2>;
@@ -329,18 +329,17 @@ fn substrate_facade_keeps_enter_as_the_only_public_attach_entry() {
     }
 
     assert!(
-        substrate_src.contains("pub fn enter<'r, const ROLE: u8, Witness, Mint, B>("),
+        substrate_src.contains("pub fn enter<'r, const ROLE: u8, Steps, Mint, B>("),
         "substrate::SessionKit must keep enter(...) as the canonical public attach entry"
     );
     assert!(
-        substrate_src
-            .contains("program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,"),
+        substrate_src.contains("program: &crate::g::advanced::RoleProgram<'_, ROLE, Steps, Mint>,"),
         "substrate::SessionKit::enter must accept projected programs without extending the endpoint lifetime"
     );
     assert!(
-        !substrate_src.contains(
-            "program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, Witness, Mint>,"
-        ) && !substrate_src.contains("pub fn enter<'r, 'prog, const ROLE: u8, Witness, Mint, B>("),
+        !substrate_src
+            .contains("program: &'prog crate::g::advanced::RoleProgram<'prog, ROLE, Steps, Mint>,")
+            && !substrate_src.contains("pub fn enter<'r, 'prog, const ROLE: u8, Steps, Mint, B>("),
         "substrate::SessionKit::enter must not tie endpoint lifetime to the projected RoleProgram borrow"
     );
 }
@@ -348,7 +347,7 @@ fn substrate_facade_keeps_enter_as_the_only_public_attach_entry() {
 #[test]
 fn substrate_facade_projects_before_enter() {
     let connection = CONNECTION_SOURCE;
-    let program: RoleProgram<'_, 0, _> = project(&connection);
+    let program = project::<0, _, MintConfig>(&connection);
 
     let _ = &program;
 }
@@ -386,6 +385,7 @@ fn quality_workflow_runs_canonical_validation_suite() {
         "./.github/scripts/check_plane_boundaries.sh",
         "./.github/scripts/check_resolver_context_surface.sh",
         "./.github/scripts/check_lowering_hygiene.sh",
+        "./.github/scripts/check_summary_authority_hygiene.sh",
         "./.github/scripts/check_surface_hygiene.sh",
         "./.github/scripts/check_warning_free.sh",
         "./.github/scripts/check_direct_projection_binary.sh",
@@ -421,7 +421,7 @@ fn substrate_facade_accepts_non_static_projected_programs() {
         rendezvous: hibana::substrate::RendezvousId,
     ) -> Endpoint<'a, 0, StaticTestKit, MintConfig> {
         let connection = CONNECTION_SOURCE;
-        let program = project(&connection);
+        let program = project::<0, _, MintConfig>(&connection);
         cluster
             .enter(rendezvous, rv_id, &program, NoBinding)
             .expect("enter endpoint")

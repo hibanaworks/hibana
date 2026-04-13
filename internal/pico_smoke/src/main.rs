@@ -67,13 +67,13 @@ const PROGRAM: g::Program<sample_program::ProgramSteps> = sample_program::PROGRA
 static CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<
     'static,
     0,
-    hibana::g::advanced::ProgramWitness<sample_program::ProgramSteps>,
+    sample_program::ProgramSteps,
     MintConfig,
 > = project(&PROGRAM);
 static WORKER_PROGRAM: hibana::g::advanced::RoleProgram<
     'static,
     1,
-    hibana::g::advanced::ProgramWitness<sample_program::ProgramSteps>,
+    sample_program::ProgramSteps,
     MintConfig,
 > = project(&PROGRAM);
 

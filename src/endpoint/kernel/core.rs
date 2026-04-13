@@ -48,7 +48,7 @@ use crate::{
                 CAP_TOKEN_LEN, CapShot, ControlMint, E0, EndpointEpoch, EpochTable, EpochTbl,
                 GenericCapToken, MintConfigMarker, Owner, ResourceKind,
             },
-            typed_tokens::{CapFlowToken, CapRegisteredToken},
+            typed_tokens::{CapFlowToken, ErasedRegisteredCapToken, RegisteredTokenParts},
         },
         cluster::{
             core::{DynamicResolution, SpliceOperands},
@@ -561,21 +561,33 @@ struct SendDescriptor<E> {
     expects_control: bool,
     mint_token: MintSendTokenFn<E>,
     stage_payload: StageSendPayloadFn,
+    dispatch_control: DispatchSendTokenFn<E>,
 }
 
-struct PreparedSendControl {
+struct PreparedSendControl<E> {
     minted_token: Option<ErasedCapFlowToken>,
     stage_payload: StageSendPayloadFn,
+    dispatch_control: DispatchSendTokenFn<E>,
 }
 
-struct SendDispatchState {
-    control_handling: ControlHandling,
-    dispatch_token: Option<ErasedCapFlowToken>,
-    canonical_token: Option<ErasedCapFlowToken>,
-    external_token: Option<ErasedCapFlowToken>,
+#[derive(Clone, Copy)]
+enum StagedSendControl {
+    None,
+    Canonical(ErasedCapFlowToken),
+    External {
+        dispatch_token: Option<ErasedCapFlowToken>,
+        external_token: Option<ErasedCapFlowToken>,
+    },
 }
 
 type MintSendTokenFn<E> = fn(&E, SendMeta) -> SendResult<Option<ErasedCapFlowToken>>;
+type DispatchSendTokenFn<E> = fn(&E, ErasedCapFlowToken) -> SendResult<DispatchSendTokenResult>;
+
+enum DispatchSendTokenResult {
+    None,
+    Registered(RegisteredTokenParts),
+    CanonicalFallback,
+}
 
 type StageSendPayloadFn = for<'payload, 'scratch> fn(
     Option<ErasedCapFlowToken>,
@@ -585,7 +597,18 @@ type StageSendPayloadFn = for<'payload, 'scratch> fn(
 
 struct StagedSendPayload {
     encoded_len: usize,
-    dispatch_state: SendDispatchState,
+    control: StagedSendControl,
+}
+
+struct SendTransportEmission<E> {
+    control: StagedSendControl,
+    dispatch_control: DispatchSendTokenFn<E>,
+}
+
+enum ErasedControlOutcome<'rv> {
+    None,
+    Canonical(ErasedRegisteredCapToken<'rv>),
+    External(ErasedCapFlowToken),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2975,14 +2998,16 @@ where
         <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
     {
         let prepared = self.prepare_send_control(meta, Self::send_descriptor::<M>())?;
-        let dispatch_state = self
+        let emission = self
             .emit_send_transport(
                 meta,
                 payload.map(lane_port::ErasedSendPayload::from_typed::<M::Payload>),
                 prepared,
             )
             .await?;
-        self.finish_send_after_transport::<M>(meta, preview_cursor_index, dispatch_state)
+        let control =
+            self.finish_send_after_transport_erased(meta, preview_cursor_index, emission)?;
+        Ok(Self::typed_control_outcome::<M>(control))
     }
 
     #[inline(always)]
@@ -2993,25 +3018,29 @@ where
         M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
         <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
     {
-        let (expects_control, mint_token, stage_payload): (
+        let (expects_control, mint_token, stage_payload, dispatch_control): (
             bool,
             MintSendTokenFn<Self>,
             StageSendPayloadFn,
+            DispatchSendTokenFn<Self>,
         ) = match <M::ControlKind as ControlPayloadKind>::HANDLING {
             ControlHandling::None => (
                 false,
                 Self::mint_no_send_token,
                 Self::stage_data_send_payload,
+                Self::dispatch_no_send_token,
             ),
             ControlHandling::Canonical => (
                 true,
                 Self::mint_send_token::<M>,
                 Self::stage_canonical_send_payload,
+                Self::dispatch_send_token::<M>,
             ),
             ControlHandling::External => (
                 true,
                 Self::mint_send_token::<M>,
                 Self::stage_external_send_payload,
+                Self::dispatch_send_token::<M>,
             ),
         };
         SendDescriptor {
@@ -3019,6 +3048,7 @@ where
             expects_control,
             mint_token,
             stage_payload,
+            dispatch_control,
         }
     }
 
@@ -3028,6 +3058,14 @@ where
         _meta: SendMeta,
     ) -> SendResult<Option<ErasedCapFlowToken>> {
         Ok(None)
+    }
+
+    #[inline(always)]
+    fn dispatch_no_send_token(
+        _endpoint: &Self,
+        _token: ErasedCapFlowToken,
+    ) -> SendResult<DispatchSendTokenResult> {
+        Ok(DispatchSendTokenResult::None)
     }
 
     #[inline(always)]
@@ -3054,6 +3092,43 @@ where
     }
 
     #[inline(always)]
+    fn dispatch_send_token<M>(
+        endpoint: &Self,
+        token: ErasedCapFlowToken,
+    ) -> SendResult<DispatchSendTokenResult>
+    where
+        M: MessageSpec + SendableLabel,
+        M::Payload: WireEncode,
+        M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
+        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
+    {
+        let cluster = endpoint
+            .control
+            .cluster()
+            .ok_or(SendError::PhaseInvariant)?;
+        let flow_token: CapFlowToken<
+            <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind,
+        > = token.into_flow_token();
+        let frame = flow_token.into_frame();
+        match cluster.dispatch_typed_control_frame(endpoint.rendezvous_id(), frame, None) {
+            Ok(Some(registered)) => Ok(DispatchSendTokenResult::Registered(
+                RegisteredTokenParts::from_typed(registered),
+            )),
+            Ok(None) => Ok(DispatchSendTokenResult::None),
+            Err(CpError::Authorisation {
+                effect: CpEffect::SpliceAck,
+            }) if matches!(
+                <M::ControlKind as ControlPayloadKind>::HANDLING,
+                ControlHandling::Canonical
+            ) =>
+            {
+                Ok(DispatchSendTokenResult::CanonicalFallback)
+            }
+            Err(_) => Err(SendError::PhaseInvariant),
+        }
+    }
+
+    #[inline(always)]
     fn stage_data_send_payload(
         minted_token: Option<ErasedCapFlowToken>,
         payload: Option<lane_port::ErasedSendPayload<'_>>,
@@ -3065,12 +3140,7 @@ where
         let data = payload.ok_or(SendError::PhaseInvariant)?;
         Ok(StagedSendPayload {
             encoded_len: data.encode_into(scratch)?,
-            dispatch_state: SendDispatchState {
-                control_handling: ControlHandling::None,
-                dispatch_token: None,
-                canonical_token: None,
-                external_token: None,
-            },
+            control: StagedSendControl::None,
         })
     }
 
@@ -3088,12 +3158,7 @@ where
         scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
         Ok(StagedSendPayload {
             encoded_len: CAP_TOKEN_LEN,
-            dispatch_state: SendDispatchState {
-                control_handling: ControlHandling::Canonical,
-                dispatch_token: Some(token),
-                canonical_token: Some(token),
-                external_token: None,
-            },
+            control: StagedSendControl::Canonical(token),
         })
     }
 
@@ -3108,10 +3173,8 @@ where
             scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
             return Ok(StagedSendPayload {
                 encoded_len: CAP_TOKEN_LEN,
-                dispatch_state: SendDispatchState {
-                    control_handling: ControlHandling::External,
+                control: StagedSendControl::External {
                     dispatch_token: Some(token),
-                    canonical_token: None,
                     external_token: Some(token),
                 },
             });
@@ -3120,10 +3183,8 @@ where
         let data = payload.ok_or(SendError::PhaseInvariant)?;
         Ok(StagedSendPayload {
             encoded_len: data.encode_into(scratch)?,
-            dispatch_state: SendDispatchState {
-                control_handling: ControlHandling::External,
+            control: StagedSendControl::External {
                 dispatch_token: None,
-                canonical_token: None,
                 external_token: None,
             },
         })
@@ -3134,7 +3195,7 @@ where
         &mut self,
         meta: SendMeta,
         descriptor: SendDescriptor<Self>,
-    ) -> SendResult<PreparedSendControl> {
+    ) -> SendResult<PreparedSendControl<Self>> {
         if meta.is_control != descriptor.expects_control {
             return Err(SendError::PhaseInvariant);
         }
@@ -3156,6 +3217,7 @@ where
         Ok(PreparedSendControl {
             minted_token,
             stage_payload: descriptor.stage_payload,
+            dispatch_control: descriptor.dispatch_control,
         })
     }
 
@@ -3163,8 +3225,8 @@ where
         &mut self,
         meta: SendMeta,
         payload: Option<lane_port::ErasedSendPayload<'_>>,
-        prepared: PreparedSendControl,
-    ) -> SendResult<SendDispatchState> {
+        prepared: PreparedSendControl<Self>,
+    ) -> SendResult<SendTransportEmission<Self>> {
         let mut staged_send = None;
         {
             let port = self.port_for_lane(meta.lane as usize);
@@ -3198,27 +3260,21 @@ where
             }
         }
 
-        Ok(staged_send.ok_or(SendError::PhaseInvariant)?.dispatch_state)
+        let staged_send = staged_send.ok_or(SendError::PhaseInvariant)?;
+        Ok(SendTransportEmission {
+            control: staged_send.control,
+            dispatch_control: prepared.dispatch_control,
+        })
     }
 
     #[inline(never)]
-    fn finish_send_after_transport<M>(
+    fn finish_send_after_transport_erased(
         &mut self,
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
-        mut dispatch_state: SendDispatchState,
-    ) -> SendResult<
-        ControlOutcome<'r, <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>,
-    >
-    where
-        M: MessageSpec + SendableLabel,
-        M::Payload: WireEncode,
-        M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
-    {
-        let mut control_outcome = ControlOutcome::<
-            'r,
-            <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind,
-        >::None;
+        emission: SendTransportEmission<Self>,
+    ) -> SendResult<ErasedControlOutcome<'r>> {
+        let mut control_outcome = ErasedControlOutcome::None;
         self.commit_send_after_emit(preview_cursor_index, meta)?;
 
         let lane_wire = self.port_for_lane(meta.lane as usize).lane().as_wire();
@@ -3237,44 +3293,60 @@ where
         };
         self.emit_endpoint_event(event_id, logical_meta, scope_trace, meta.lane);
 
-        if let Some(token) = dispatch_state.dispatch_token {
-            let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-            let flow_token: CapFlowToken<
-                <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind,
-            > = token.into_flow_token();
-            let frame = flow_token.into_frame();
-            match cluster.dispatch_typed_control_frame(self.rendezvous_id(), frame, None) {
-                Ok(result) => {
-                    if matches!(dispatch_state.control_handling, ControlHandling::Canonical) {
-                        let registered = result.ok_or(SendError::PhaseInvariant)?;
-                        control_outcome = ControlOutcome::Canonical(registered);
+        match emission.control {
+            StagedSendControl::None => {}
+            StagedSendControl::Canonical(token) => {
+                match (emission.dispatch_control)(self, token)? {
+                    DispatchSendTokenResult::Registered(parts) => {
+                        control_outcome = ErasedControlOutcome::Canonical(
+                            ErasedRegisteredCapToken::from_parts(parts),
+                        );
                     }
+                    DispatchSendTokenResult::CanonicalFallback => {
+                        control_outcome =
+                            ErasedControlOutcome::Canonical(ErasedRegisteredCapToken::from_parts(
+                                RegisteredTokenParts::from_bytes(token.bytes()),
+                            ));
+                    }
+                    DispatchSendTokenResult::None => return Err(SendError::PhaseInvariant),
                 }
-                Err(err) => match err {
-                    CpError::Authorisation {
-                        effect: CpEffect::SpliceAck,
-                    } => {
-                        if let Some(token) = dispatch_state.canonical_token.take() {
-                            control_outcome = ControlOutcome::Canonical(
-                                CapRegisteredToken::from_bytes(token.bytes()),
-                            );
+            }
+            StagedSendControl::External {
+                dispatch_token,
+                external_token,
+            } => {
+                if let Some(token) = dispatch_token {
+                    match (emission.dispatch_control)(self, token)? {
+                        DispatchSendTokenResult::None | DispatchSendTokenResult::Registered(_) => {}
+                        DispatchSendTokenResult::CanonicalFallback => {
+                            return Err(SendError::PhaseInvariant);
                         }
                     }
-                    _ => return Err(SendError::PhaseInvariant),
-                },
+                }
+                if let Some(token) = external_token {
+                    control_outcome = ErasedControlOutcome::External(token);
+                }
             }
-        } else if matches!(dispatch_state.control_handling, ControlHandling::Canonical) {
-            return Err(SendError::PhaseInvariant);
-        }
-
-        if let Some(token) = dispatch_state.external_token.take() {
-            let generic: GenericCapToken<
-                <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind,
-            > = token.into_generic();
-            control_outcome = ControlOutcome::External(generic);
         }
 
         Ok(control_outcome)
+    }
+
+    #[inline(always)]
+    fn typed_control_outcome<M>(
+        outcome: ErasedControlOutcome<'r>,
+    ) -> ControlOutcome<'r, <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>
+    where
+        M: MessageSpec + SendableLabel,
+        M::Payload: WireEncode,
+        M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
+        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
+    {
+        match outcome {
+            ErasedControlOutcome::None => ControlOutcome::None,
+            ErasedControlOutcome::Canonical(token) => ControlOutcome::Canonical(token.into_typed()),
+            ErasedControlOutcome::External(token) => ControlOutcome::External(token.into_generic()),
+        }
     }
 
     fn record_loop_decision(

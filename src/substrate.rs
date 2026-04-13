@@ -114,11 +114,11 @@ where
 
     #[inline]
     #[allow(private_bounds)]
-    pub fn enter<'r, const ROLE: u8, Witness, Mint, B>(
+    pub fn enter<'r, const ROLE: u8, Steps, Mint, B>(
         &'r self,
         rv: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Steps, Mint>,
         binding: B,
     ) -> Result<crate::Endpoint<'r, ROLE, Self, Mint>, AttachError>
     where
@@ -131,11 +131,11 @@ where
     }
 
     #[inline]
-    fn enter_with_binding<'r, const ROLE: u8, Witness, Mint>(
+    fn enter_with_binding<'r, const ROLE: u8, Steps, Mint>(
         &'r self,
         rv: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Steps, Mint>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<crate::Endpoint<'r, ROLE, Self, Mint>, AttachError>
     where
@@ -152,17 +152,17 @@ where
     }
 
     #[inline]
-    pub fn set_resolver<const POLICY: u16, const ROLE: u8, Witness, Mint>(
+    pub fn set_resolver<const POLICY: u16, const ROLE: u8, Steps, Mint>(
         &self,
         rv: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Steps, Mint>,
         resolver: crate::substrate::policy::ResolverRef<'cfg>,
     ) -> Result<(), CpError>
     where
         Mint: crate::substrate::cap::advanced::MintConfigMarker,
     {
         self.inner
-            .set_resolver::<POLICY, ROLE, Witness, Mint>(rv, program, resolver)
+            .set_resolver::<POLICY, ROLE, Steps, Mint>(rv, program, resolver)
     }
 }
 
@@ -836,10 +836,8 @@ mod tests {
         let mut runtime_metrics = None::<RuntimeShapeMetrics>;
         with_pico_fixture(|clock, tap_buf, slab| {
             let transport = PicoTransport;
-            let controller_program: hibana::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
-                project(program);
-            let worker_program: hibana::g::advanced::RoleProgram<'_, 1, _, MintConfig> =
-                project(program);
+            let controller_program = project::<0, _, MintConfig>(program);
+            let worker_program = project::<1, _, MintConfig>(program);
             let kit = PicoKit::new(clock);
             let rv_id = kit
                 .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())

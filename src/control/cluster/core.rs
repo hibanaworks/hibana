@@ -2735,10 +2735,10 @@ where
         unsafe { (*self.resolvers_ref_ptr()).get(key) }
     }
 
-    pub(crate) fn set_resolver<'prog, const POLICY: u16, const ROLE: u8, Witness, Mint>(
+    pub(crate) fn set_resolver<'prog, const POLICY: u16, const ROLE: u8, Steps, Mint>(
         &self,
         rv_id: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<'prog, ROLE, Witness, Mint>,
+        program: &crate::g::advanced::RoleProgram<'prog, ROLE, Steps, Mint>,
         resolver: ResolverRef<'cfg>,
     ) -> Result<(), CpError>
     where
@@ -3836,7 +3836,7 @@ where
                 owner,
                 epoch,
                 role_image.compiled_ptr(),
-                program_image.control_semantics_ptr(),
+                program_image,
                 rv_id,
                 public_slot,
                 public_generation,
@@ -3884,11 +3884,11 @@ where
     }
 
     #[inline]
-    pub(crate) fn attach_public_endpoint<'r, const ROLE: u8, Witness, Mint>(
+    pub(crate) fn attach_public_endpoint<'r, const ROLE: u8, Steps, Mint>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Steps, Mint>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
@@ -4069,11 +4069,11 @@ where
     }
 
     #[inline]
-    pub(crate) fn enter<'r, const ROLE: u8, Witness, Mint>(
+    pub(crate) fn enter<'r, const ROLE: u8, Steps, Mint>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Steps, Mint>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
@@ -4084,11 +4084,11 @@ where
     }
 
     #[inline]
-    fn enter_with_binding<'r, const ROLE: u8, Witness, Mint>(
+    fn enter_with_binding<'r, const ROLE: u8, Steps, Mint>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Steps, Mint>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
@@ -4325,16 +4325,12 @@ mod tests {
     type SharedBorrowProgram = Program<SharedBorrowSteps>;
     type SharedBorrowPolicyProgram<const POLICY_ID: u16> =
         Program<PolicySteps<SharedBorrowSteps, POLICY_ID>>;
-    type SharedBorrowRoleProgram = crate::g::advanced::RoleProgram<
-        'static,
-        0,
-        crate::g::advanced::ProgramWitness<SharedBorrowSteps>,
-        MintConfig,
-    >;
+    type SharedBorrowRoleProgram =
+        crate::g::advanced::RoleProgram<'static, 0, SharedBorrowSteps, MintConfig>;
     type SharedBorrowPolicyRoleProgram<const POLICY_ID: u16> = crate::g::advanced::RoleProgram<
         'static,
         0,
-        crate::g::advanced::ProgramWitness<PolicySteps<SharedBorrowSteps, POLICY_ID>>,
+        PolicySteps<SharedBorrowSteps, POLICY_ID>,
         MintConfig,
     >;
 
@@ -4512,8 +4508,7 @@ mod tests {
         <Steps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
             crate::global::steps::StepCount,
     {
-        let projected: crate::g::advanced::RoleProgram<'_, ROLE, _, MintConfig> =
-            role_program::project(program);
+        let projected = role_program::project::<ROLE, _, MintConfig>(program);
         let lowering = crate::global::lowering_input(&projected);
         let summary = lowering.summary();
         let counts = CompiledProgramImage::counts(&summary);
@@ -4630,14 +4625,10 @@ mod tests {
             || {
                 with_cluster_fixture(|clock, config| {
                     with_test_cluster_1(clock, |cluster| {
-                        let controller_program: crate::g::advanced::RoleProgram<
-                            '_,
-                            0,
-                            _,
-                            MintConfig,
-                        > = role_program::project(&LINEAR_HEAVY_PROGRAM);
-                        let worker_program: crate::g::advanced::RoleProgram<'_, 1, _, MintConfig> =
-                            role_program::project(&LINEAR_HEAVY_PROGRAM);
+                        let controller_program =
+                            role_program::project::<0, _, MintConfig>(&LINEAR_HEAVY_PROGRAM);
+                        let worker_program =
+                            role_program::project::<1, _, MintConfig>(&LINEAR_HEAVY_PROGRAM);
                         let rv_id = cluster
                             .add_rendezvous_from_config_auto(config, DummyTransport)
                             .expect("register rendezvous");

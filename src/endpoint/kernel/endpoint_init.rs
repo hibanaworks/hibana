@@ -6,7 +6,7 @@ use crate::endpoint::control::SessionControlCtx;
 use crate::endpoint::kernel::frontier_state::FrontierState;
 use crate::endpoint::kernel::inbox::BindingInbox;
 use crate::endpoint::kernel::route_state::RouteState;
-use crate::global::compiled::{CompiledRoleImage, ControlSemanticsTable};
+use crate::global::compiled::{CompiledRoleImage, ProgramImage};
 use crate::global::typestate::PhaseCursor;
 use crate::rendezvous::core::EndpointLeaseId;
 use crate::rendezvous::port::Port;
@@ -87,7 +87,7 @@ unsafe fn init_endpoint_cursor<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     arena_storage: *mut u8,
     arena_layout: &crate::endpoint::kernel::layout::EndpointArenaLayout,
     compiled_role: *const CompiledRoleImage,
-    control_semantics: *const ControlSemanticsTable,
+    program_image: ProgramImage,
 ) where
     T: Transport + 'r,
     U: LabelUniverse,
@@ -104,7 +104,7 @@ unsafe fn init_endpoint_cursor<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
                 arena_layout.phase_cursor_state(),
             ),
             compiled_role,
-            control_semantics,
+            program_image,
         );
     }
 }
@@ -255,7 +255,7 @@ pub(crate) unsafe fn init_empty_from_compiled<
     owner: Owner<'r, E0>,
     epoch: EndpointEpoch<'r, E>,
     compiled_role: *const CompiledRoleImage,
-    control_semantics: *const ControlSemanticsTable,
+    program_image: ProgramImage,
     public_rv: RendezvousId,
     public_slot: EndpointLeaseId,
     public_generation: u32,
@@ -305,7 +305,7 @@ pub(crate) unsafe fn init_empty_from_compiled<
             arena_storage,
             &arena_layout,
             compiled_role,
-            control_semantics,
+            program_image,
         );
         init_endpoint_route(dst, arena_storage, &arena_layout, compiled_role);
         init_endpoint_frontier(dst, arena_storage, &arena_layout, compiled_role);

@@ -1,4 +1,4 @@
-error[E0080]: evaluation panicked: route scope recorded conflicting controller policy annotations
+error[E0080]: evaluation panicked: route scope recorded different controller policy ids across arms
  --> src/global/program.rs
   |
   |         validate_all_roles(&summary);
@@ -29,14 +29,18 @@ note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_rout
  --> src/global/compiled/lowering/seal.rs
   |
   | /         Self::validate_route_policy_consistency(
-  | |             view, scope_id, arm0_start, arm0_end, arm1_start, arm1_end,
+  | |             view,
+  | |             arm0_enter_marker_idx,
+  | |             arm0_end,
+  | |             arm1_enter_marker_idx,
+  | |             arm1_end,
   | |         );
   | |_________^
 note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_route_policy_consistency`
  --> src/global/compiled/lowering/seal.rs
   |
-  |                     panic!("route scope recorded conflicting controller policy annotations");
-  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |                     panic!("route scope recorded different controller policy ids across arms");
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
 
 note: erroneous constant encountered
  --> src/global/program.rs

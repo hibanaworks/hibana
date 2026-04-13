@@ -115,23 +115,38 @@ impl ProgramStamp {
 }
 
 #[derive(Clone)]
-pub(crate) struct LoweringSummary {
+struct LoweringValidationData {
     nodes: [EffStruct; MAX_LOWERING_NODES],
     len: usize,
     scope_markers: [ScopeMarker; MAX_LOWERING_NODES],
     scope_marker_len: usize,
-    control_markers: [ControlMarker; MAX_LOWERING_NODES],
-    control_marker_len: usize,
     policies: [PolicyMode; MAX_LOWERING_NODES],
     control_specs: [ControlLabelSpec; MAX_LOWERING_NODES],
     control_spec_present: [u8; CONTROL_SPEC_MASK_BYTES],
+}
+
+#[derive(Clone)]
+struct LoweringProgramData {
+    control_markers: [ControlMarker; MAX_LOWERING_NODES],
+    control_marker_len: usize,
     lease_budget: LeaseGraphBudget,
     compiled_program_counts: CompiledProgramCounts,
-    program_lowering_facts: ProgramLoweringFacts,
-    role_lowering_facts: [RoleLoweringFacts; MAX_TRACKED_ROLE_FACTS],
-    role_count: u8,
+    lowering_facts: ProgramLoweringFacts,
     control_scope_mask: u8,
     stamp: ProgramStamp,
+}
+
+#[derive(Clone)]
+struct LoweringRoleData {
+    facts: [RoleLoweringFacts; MAX_TRACKED_ROLE_FACTS],
+    count: u8,
+}
+
+#[derive(Clone)]
+pub(crate) struct LoweringSummary {
+    validation: LoweringValidationData,
+    program: LoweringProgramData,
+    roles: LoweringRoleData,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -227,63 +242,193 @@ impl<'a> LoweringView<'a> {
         }
     }
 
-    pub(crate) const fn first_dynamic_policy_in_range(
+    pub(crate) fn first_route_head_dynamic_policy_in_range(
         &self,
-        scope_id: ScopeId,
-        scope_start: usize,
+        route_scope: ScopeId,
+        route_enter_marker_idx: usize,
         scope_end: usize,
     ) -> Option<(PolicyMode, usize, u8)> {
+        if route_enter_marker_idx >= self.scope_markers.len() {
+            return None;
+        }
+        let route_marker = self.scope_markers[route_enter_marker_idx];
+        if !matches!(route_marker.event, ScopeEvent::Enter)
+            || !matches!(
+                route_marker.scope_kind,
+                crate::global::const_dsl::ScopeKind::Route
+            )
+            || route_marker.scope_id.canonical().raw() != route_scope.canonical().raw()
+        {
+            return None;
+        }
+        let scope_start = route_marker.offset;
         if scope_start >= MAX_LOWERING_NODES || scope_start >= scope_end {
             return None;
         }
-        let mut best_offset = MAX_LOWERING_NODES;
-        let mut best_policy = None;
+
+        let mut marker_idx = route_enter_marker_idx + 1;
+        let mut active_scope_depth = 1usize;
         let mut idx = scope_start;
         while idx < scope_end && idx < self.nodes.len() {
-            if let Some(policy) = self.policy_at(idx)
-                && policy.is_dynamic()
-                && Self::policy_belongs_to_route_scope(scope_id, policy.scope())
-                && idx < best_offset
-            {
-                best_offset = idx;
-                best_policy = Some(policy);
+            let mut scan_marker_idx = marker_idx;
+            let mut depth_after_exits = active_scope_depth;
+            while scan_marker_idx < self.scope_markers.len() {
+                let marker = self.scope_markers[scan_marker_idx];
+                if marker.offset != idx {
+                    break;
+                }
+                if matches!(marker.event, ScopeEvent::Exit) {
+                    depth_after_exits = depth_after_exits.saturating_sub(1);
+                }
+                scan_marker_idx += 1;
             }
+
+            let mut enter_count = 0usize;
+            let mut nested_non_policy_enter = false;
+            let mut next_marker_idx = marker_idx;
+            while next_marker_idx < self.scope_markers.len() {
+                let marker = self.scope_markers[next_marker_idx];
+                if marker.offset != idx {
+                    break;
+                }
+                if matches!(marker.event, ScopeEvent::Enter) {
+                    if depth_after_exits == 1
+                        && !matches!(
+                            marker.scope_kind,
+                            crate::global::const_dsl::ScopeKind::Generic
+                        )
+                    {
+                        nested_non_policy_enter = true;
+                    }
+                    enter_count += 1;
+                }
+                next_marker_idx += 1;
+            }
+
+            if depth_after_exits == 1 && !nested_non_policy_enter {
+                if let Some(policy) = self.policy_at(idx) {
+                    if policy.dynamic_policy_id().is_some() {
+                        let eff_struct = self.nodes[idx];
+                        let tag = if matches!(eff_struct.kind, EffKind::Atom) {
+                            match eff_struct.atom_data().resource {
+                                Some(tag) => tag,
+                                None => 0,
+                            }
+                        } else {
+                            0
+                        };
+                        return Some((policy, idx, tag));
+                    }
+                }
+            }
+            active_scope_depth = depth_after_exits.saturating_add(enter_count);
+            marker_idx = next_marker_idx;
             idx += 1;
         }
-        match best_policy {
-            Some(policy) => {
-                let eff_struct = self.nodes[best_offset];
-                let tag = if matches!(eff_struct.kind, EffKind::Atom) {
-                    match eff_struct.atom_data().resource {
-                        Some(tag) => tag,
-                        None => 0,
-                    }
-                } else {
-                    0
-                };
-                Some((policy, best_offset, tag))
-            }
-            None => None,
+        None
+    }
+}
+
+impl LoweringValidationData {
+    #[inline(always)]
+    const fn view(&self) -> LoweringView<'_> {
+        LoweringView {
+            nodes: unsafe { core::slice::from_raw_parts(self.nodes.as_ptr(), self.len) },
+            scope_markers: unsafe {
+                core::slice::from_raw_parts(self.scope_markers.as_ptr(), self.scope_marker_len)
+            },
+            policies: &self.policies,
+            control_specs: &self.control_specs,
+            control_spec_present: &self.control_spec_present,
+        }
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    const fn control_spec_present_at(&self, offset: usize) -> bool {
+        if offset >= MAX_LOWERING_NODES {
+            return false;
+        }
+        let byte = offset / 8;
+        let bit = offset & 7;
+        (self.control_spec_present[byte] & (1u8 << bit)) != 0
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    const fn control_spec_at(&self, offset: usize) -> Option<ControlLabelSpec> {
+        if offset < self.len && self.control_spec_present_at(offset) {
+            Some(self.control_specs[offset])
+        } else {
+            None
+        }
+    }
+}
+
+impl LoweringProgramData {
+    #[inline(always)]
+    const fn control_markers(&self) -> &[ControlMarker] {
+        unsafe {
+            core::slice::from_raw_parts(self.control_markers.as_ptr(), self.control_marker_len)
         }
     }
 
     #[inline(always)]
-    const fn policy_belongs_to_route_scope(route_scope: ScopeId, policy_scope: ScopeId) -> bool {
-        if policy_scope.is_none() {
-            return true;
+    const fn validate_projection_program(&self, scope_marker_len: usize) {
+        if self.compiled_program_counts.resources > MAX_COMPILED_PROGRAM_RESOURCES {
+            panic!("CompiledProgram: MAX_RESOURCES exceeded");
         }
-        if matches!(
-            policy_scope.kind(),
-            crate::global::const_dsl::ScopeKind::Route
-        ) {
-            policy_scope.raw() == route_scope.raw()
-        } else {
-            true
+        if self.compiled_program_counts.cp_effects > MAX_COMPILED_PROGRAM_CP_EFFECTS {
+            panic!("CompiledProgram: MAX_CP_EFFECTS exceeded");
+        }
+        if self.compiled_program_counts.tap_events > MAX_COMPILED_PROGRAM_TAP_EVENTS {
+            panic!("CompiledProgram: MAX_TAP_EVENTS exceeded");
+        }
+        if self.compiled_program_counts.dynamic_policy_sites > MAX_LOWERING_NODES {
+            panic!("CompiledProgram: MAX_DYNAMIC_POLICY_SITES exceeded");
+        }
+        if self.compiled_program_counts.route_controls > MAX_LOWERING_NODES {
+            panic!("CompiledProgram: MAX_ROUTE_CONTROLS exceeded");
+        }
+        if self.control_markers().len() > MAX_COMPILED_PROGRAM_CONTROLS {
+            panic!("CompiledProgram: MAX_CONTROLS exceeded");
+        }
+        if scope_marker_len > MAX_COMPILED_PROGRAM_SCOPES {
+            panic!("CompiledProgram: MAX_SCOPES exceeded");
+        }
+        self.lease_budget.validate();
+    }
+}
+
+impl LoweringRoleData {
+    #[inline(always)]
+    const fn lowering_counts<const ROLE: u8>(
+        &self,
+        program: ProgramLoweringFacts,
+    ) -> RoleLoweringCounts {
+        let role = self.facts[ROLE as usize];
+        RoleLoweringCounts {
+            scope_count: program.scope_count as usize,
+            eff_count: program.eff_count as usize,
+            local_step_count: role.local_step_count as usize,
+            parallel_enter_count: program.parallel_enter_count as usize,
+            route_scope_count: program.route_scope_count as usize,
+            passive_linger_route_scope_count: role.passive_linger_route_scope_count as usize,
         }
     }
 }
 
 impl LoweringSummary {
+    #[inline(always)]
+    pub(crate) unsafe fn write_clone_to(&self, dst: *mut Self) {
+        // Keep the only transient summary copy on the lowering lease slab so
+        // small-stack enter paths do not materialize a full stack temporary.
+        debug_assert!(!core::mem::needs_drop::<Self>());
+        unsafe {
+            core::ptr::copy_nonoverlapping(self as *const Self, dst, 1);
+        }
+    }
+
     #[cfg(test)]
     #[inline(always)]
     fn scope_marker_eq(
@@ -331,40 +476,36 @@ impl LoweringSummary {
         let mut route_scope_ordinals = [0u64; ROUTE_SCOPE_ORDINAL_WORDS];
         let mut lease_budget = LeaseGraphBudget::new();
         let src_nodes = eff_list.as_slice();
-        summary.program_lowering_facts.eff_count = src_nodes.len() as u16;
+        summary.program.lowering_facts.eff_count = src_nodes.len() as u16;
         let mut idx = 0usize;
         while idx < src_nodes.len() {
             let node = src_nodes[idx];
-            summary.nodes[idx] = node;
+            summary.validation.nodes[idx] = node;
             lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
             lane1 = ProgramStamp::mix_eff_struct(lane1, node);
             if let Some((policy, _scope)) = eff_list.policy_with_scope(idx) {
-                summary.policies[idx] = policy;
+                summary.validation.policies[idx] = policy;
                 policy_markers_len = policy_markers_len.saturating_add(1);
                 lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
                 lane1 = ProgramStamp::mix_policy(lane1, policy);
             }
             if let Some(spec) = eff_list.control_spec_at(idx) {
-                summary.control_specs[idx] = spec;
-                summary.control_spec_present[idx / 8] |= 1u8 << (idx & 7);
+                summary.validation.control_specs[idx] = spec;
+                summary.validation.control_spec_present[idx / 8] |= 1u8 << (idx & 7);
                 control_specs_len = control_specs_len.saturating_add(1);
                 lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
                 lane1 = ProgramStamp::mix_control_spec(lane1, spec);
             }
             if matches!(node.kind, EffKind::Atom) {
                 let atom = node.atom_data();
-                let policy = summary.policies[idx];
+                let policy = summary.validation.policies[idx];
                 let from = atom.from as usize;
                 let to = atom.to as usize;
-                summary.role_lowering_facts[from].local_step_count = summary.role_lowering_facts
-                    [from]
-                    .local_step_count
-                    .saturating_add(1);
+                summary.roles.facts[from].local_step_count =
+                    summary.roles.facts[from].local_step_count.saturating_add(1);
                 if to != from {
-                    summary.role_lowering_facts[to].local_step_count = summary.role_lowering_facts
-                        [to]
-                        .local_step_count
-                        .saturating_add(1);
+                    summary.roles.facts[to].local_step_count =
+                        summary.roles.facts[to].local_step_count.saturating_add(1);
                 }
                 if atom.from as usize + 1 > role_count {
                     role_count = atom.from as usize + 1;
@@ -373,19 +514,19 @@ impl LoweringSummary {
                     role_count = atom.to as usize + 1;
                 }
                 lease_budget = lease_budget.include_atom(atom.label, atom.resource, policy);
-                summary.compiled_program_counts.tap_events += 1;
+                summary.program.compiled_program_counts.tap_events += 1;
                 if atom.is_control {
                     if let Some(tag) = atom.resource {
-                        summary.compiled_program_counts.resources += 1;
+                        summary.program.compiled_program_counts.resources += 1;
                         if CpEffect::from_resource_tag(tag).is_some() {
-                            summary.compiled_program_counts.cp_effects += 1;
+                            summary.program.compiled_program_counts.cp_effects += 1;
                         }
                     }
                 } else if !policy.is_static() && !matches!(policy, PolicyMode::Dynamic { .. }) {
                     panic!("static policy attached to non-control atom");
                 }
                 if policy.is_dynamic() {
-                    summary.compiled_program_counts.dynamic_policy_sites += 1;
+                    summary.program.compiled_program_counts.dynamic_policy_sites += 1;
                 }
             }
             idx += 1;
@@ -395,15 +536,16 @@ impl LoweringSummary {
         let mut scope_idx = 0usize;
         while scope_idx < src_scope_markers.len() {
             let marker = src_scope_markers[scope_idx];
-            summary.scope_markers[scope_idx] = marker;
+            summary.validation.scope_markers[scope_idx] = marker;
             if matches!(marker.event, ScopeEvent::Enter) {
                 scope_count = scope_count.saturating_add(1);
                 if matches!(
                     marker.scope_kind,
                     crate::global::const_dsl::ScopeKind::Parallel
                 ) {
-                    summary.program_lowering_facts.parallel_enter_count = summary
-                        .program_lowering_facts
+                    summary.program.lowering_facts.parallel_enter_count = summary
+                        .program
+                        .lowering_facts
                         .parallel_enter_count
                         .saturating_add(1);
                 } else if matches!(
@@ -419,19 +561,22 @@ impl LoweringSummary {
                     let mask = 1u64 << bit;
                     if (route_scope_ordinals[word] & mask) == 0 {
                         route_scope_ordinals[word] |= mask;
-                        summary.program_lowering_facts.route_scope_count = summary
-                            .program_lowering_facts
+                        summary.program.lowering_facts.route_scope_count = summary
+                            .program
+                            .lowering_facts
                             .route_scope_count
                             .saturating_add(1);
+                        summary.program.compiled_program_counts.route_controls =
+                            summary.program.lowering_facts.route_scope_count as usize;
                         if marker.linger
                             && let Some(controller_role) = marker.controller_role
                         {
                             let mut role_idx = 0usize;
-                            while role_idx < summary.role_lowering_facts.len() {
+                            while role_idx < summary.roles.facts.len() {
                                 if role_idx != controller_role as usize {
-                                    summary.role_lowering_facts[role_idx]
-                                        .passive_linger_route_scope_count = summary
-                                        .role_lowering_facts[role_idx]
+                                    summary.roles.facts[role_idx]
+                                        .passive_linger_route_scope_count = summary.roles.facts
+                                        [role_idx]
                                         .passive_linger_route_scope_count
                                         .saturating_add(1);
                                 }
@@ -463,31 +608,31 @@ impl LoweringSummary {
         }
 
         let src_control_markers = eff_list.control_markers();
-        summary.compiled_program_counts.controls = src_control_markers.len();
+        summary.program.compiled_program_counts.controls = src_control_markers.len();
         let mut control_idx = 0usize;
         while control_idx < src_control_markers.len() {
             let marker = src_control_markers[control_idx];
-            summary.control_markers[control_idx] = marker;
-            summary.control_scope_mask |= control_scope_mask_bit(marker.scope_kind);
+            summary.program.control_markers[control_idx] = marker;
+            summary.program.control_scope_mask |= control_scope_mask_bit(marker.scope_kind);
             lane0 = ProgramStamp::mix_u64(lane0, control_idx as u64);
             lane0 = ProgramStamp::mix_u64(lane0, marker.offset as u64);
             lane1 = ProgramStamp::mix_u64(lane1, marker.scope_kind as u64);
             lane1 = ProgramStamp::mix_u64(lane1, marker.tap_id as u64);
             if marker.tap_id != 0 {
-                summary.compiled_program_counts.tap_events += 1;
+                summary.program.compiled_program_counts.tap_events += 1;
             }
             control_idx += 1;
         }
         lease_budget.validate();
 
-        summary.program_lowering_facts.scope_count = scope_count;
-        summary.lease_budget = lease_budget;
-        summary.role_count = if role_count > u8::MAX as usize {
+        summary.program.lowering_facts.scope_count = scope_count;
+        summary.program.lease_budget = lease_budget;
+        summary.roles.count = if role_count > u8::MAX as usize {
             u8::MAX
         } else {
             role_count as u8
         };
-        summary.stamp = ProgramStamp {
+        summary.program.stamp = ProgramStamp {
             lane0,
             lane1,
             len: eff_list.len() as u16,
@@ -505,37 +650,44 @@ impl LoweringSummary {
         let src_scope_markers = eff_list.scope_markers();
         let src_control_markers = eff_list.control_markers();
         let mut summary = Self {
-            nodes: [EffStruct::pure(); MAX_LOWERING_NODES],
-            len: src_nodes.len(),
-            scope_markers: [ScopeMarker::empty(); MAX_LOWERING_NODES],
-            scope_marker_len: src_scope_markers.len(),
-            control_markers: [ControlMarker::empty(); MAX_LOWERING_NODES],
-            control_marker_len: src_control_markers.len(),
-            policies: [PolicyMode::Static; MAX_LOWERING_NODES],
-            control_specs: [EMPTY_CONTROL_SPEC; MAX_LOWERING_NODES],
-            control_spec_present: [0u8; CONTROL_SPEC_MASK_BYTES],
-            lease_budget: LeaseGraphBudget::new(),
-            compiled_program_counts: CompiledProgramCounts {
-                cp_effects: 0,
-                tap_events: 0,
-                resources: 0,
-                controls: 0,
-                dynamic_policy_sites: 0,
+            validation: LoweringValidationData {
+                nodes: [EffStruct::pure(); MAX_LOWERING_NODES],
+                len: src_nodes.len(),
+                scope_markers: [ScopeMarker::empty(); MAX_LOWERING_NODES],
+                scope_marker_len: src_scope_markers.len(),
+                policies: [PolicyMode::Static; MAX_LOWERING_NODES],
+                control_specs: [EMPTY_CONTROL_SPEC; MAX_LOWERING_NODES],
+                control_spec_present: [0u8; CONTROL_SPEC_MASK_BYTES],
             },
-            program_lowering_facts: ProgramLoweringFacts::EMPTY,
-            role_lowering_facts: [RoleLoweringFacts::EMPTY; MAX_TRACKED_ROLE_FACTS],
-            role_count: 0,
-            control_scope_mask: 0,
-            stamp: ProgramStamp {
-                lane0: ProgramStamp::SEED0,
-                lane1: ProgramStamp::SEED1,
-                len: eff_list.len() as u16,
-                scope_budget: eff_list.scope_budget(),
-                scope_markers_len: src_scope_markers.len() as u16,
-                scope_count: 0,
-                control_markers_len: src_control_markers.len() as u16,
-                policy_markers_len: 0,
-                control_specs_len: 0,
+            program: LoweringProgramData {
+                control_markers: [ControlMarker::empty(); MAX_LOWERING_NODES],
+                control_marker_len: src_control_markers.len(),
+                lease_budget: LeaseGraphBudget::new(),
+                compiled_program_counts: CompiledProgramCounts {
+                    cp_effects: 0,
+                    tap_events: 0,
+                    resources: 0,
+                    controls: 0,
+                    dynamic_policy_sites: 0,
+                    route_controls: 0,
+                },
+                lowering_facts: ProgramLoweringFacts::EMPTY,
+                control_scope_mask: 0,
+                stamp: ProgramStamp {
+                    lane0: ProgramStamp::SEED0,
+                    lane1: ProgramStamp::SEED1,
+                    len: eff_list.len() as u16,
+                    scope_budget: eff_list.scope_budget(),
+                    scope_markers_len: src_scope_markers.len() as u16,
+                    scope_count: 0,
+                    control_markers_len: src_control_markers.len() as u16,
+                    policy_markers_len: 0,
+                    control_specs_len: 0,
+                },
+            },
+            roles: LoweringRoleData {
+                facts: [RoleLoweringFacts::EMPTY; MAX_TRACKED_ROLE_FACTS],
+                count: 0,
             },
         };
         Self::scan_into(&mut summary, eff_list);
@@ -549,121 +701,73 @@ impl LoweringSummary {
 
     #[inline(always)]
     pub(crate) const fn view(&self) -> LoweringView<'_> {
-        LoweringView {
-            nodes: unsafe { core::slice::from_raw_parts(self.nodes.as_ptr(), self.len) },
-            scope_markers: unsafe {
-                core::slice::from_raw_parts(self.scope_markers.as_ptr(), self.scope_marker_len)
-            },
-            policies: &self.policies,
-            control_specs: &self.control_specs,
-            control_spec_present: &self.control_spec_present,
-        }
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    const fn control_spec_present_at(&self, offset: usize) -> bool {
-        if offset >= MAX_LOWERING_NODES {
-            return false;
-        }
-        let byte = offset / 8;
-        let bit = offset & 7;
-        (self.control_spec_present[byte] & (1u8 << bit)) != 0
+        self.validation.view()
     }
 
     #[cfg(test)]
     #[inline(always)]
     const fn control_spec_at(&self, offset: usize) -> Option<ControlLabelSpec> {
-        if offset < self.len && self.control_spec_present_at(offset) {
-            Some(self.control_specs[offset])
-        } else {
-            None
-        }
+        self.validation.control_spec_at(offset)
     }
 
     #[inline(always)]
     pub(crate) const fn stamp(&self) -> ProgramStamp {
-        self.stamp
+        self.program.stamp
     }
 
     #[inline(always)]
     pub(crate) const fn lease_budget(&self) -> LeaseGraphBudget {
-        self.lease_budget
+        self.program.lease_budget
     }
 
     #[inline(always)]
     pub(crate) const fn compiled_program_counts(&self) -> CompiledProgramCounts {
-        self.compiled_program_counts
+        self.program.compiled_program_counts
     }
 
     #[inline(always)]
     pub(crate) const fn compiled_program_role_count(&self) -> usize {
-        self.role_count as usize
+        self.roles.count as usize
     }
 
     #[inline(always)]
     pub(crate) const fn role_lowering_counts<const ROLE: u8>(&self) -> RoleLoweringCounts {
-        let role = self.role_lowering_facts[ROLE as usize];
-        RoleLoweringCounts {
-            scope_count: self.program_lowering_facts.scope_count as usize,
-            eff_count: self.program_lowering_facts.eff_count as usize,
-            local_step_count: role.local_step_count as usize,
-            parallel_enter_count: self.program_lowering_facts.parallel_enter_count as usize,
-            route_scope_count: self.program_lowering_facts.route_scope_count as usize,
-            passive_linger_route_scope_count: role.passive_linger_route_scope_count as usize,
-        }
+        self.roles
+            .lowering_counts::<ROLE>(self.program.lowering_facts)
     }
 
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn control_markers(&self) -> &[ControlMarker] {
-        unsafe {
-            core::slice::from_raw_parts(self.control_markers.as_ptr(), self.control_marker_len)
-        }
+        self.program.control_markers()
     }
 
     #[inline(always)]
     pub(crate) const fn compiled_program_control_scope_mask(&self) -> u8 {
-        self.control_scope_mask
+        self.program.control_scope_mask
     }
 
     #[inline(always)]
     pub(crate) const fn validate_projection_program(&self) {
-        if self.compiled_program_counts.resources > MAX_COMPILED_PROGRAM_RESOURCES {
-            panic!("CompiledProgram: MAX_RESOURCES exceeded");
-        }
-        if self.compiled_program_counts.cp_effects > MAX_COMPILED_PROGRAM_CP_EFFECTS {
-            panic!("CompiledProgram: MAX_CP_EFFECTS exceeded");
-        }
-        if self.compiled_program_counts.tap_events > MAX_COMPILED_PROGRAM_TAP_EVENTS {
-            panic!("CompiledProgram: MAX_TAP_EVENTS exceeded");
-        }
-        if self.compiled_program_counts.dynamic_policy_sites > MAX_LOWERING_NODES {
-            panic!("CompiledProgram: MAX_DYNAMIC_POLICY_SITES exceeded");
-        }
-        if self.control_markers().len() > MAX_COMPILED_PROGRAM_CONTROLS {
-            panic!("CompiledProgram: MAX_CONTROLS exceeded");
-        }
-        if self.scope_marker_len > MAX_COMPILED_PROGRAM_SCOPES {
-            panic!("CompiledProgram: MAX_SCOPES exceeded");
-        }
-        self.lease_budget.validate();
+        self.program
+            .validate_projection_program(self.validation.scope_marker_len);
     }
 
     #[cfg(test)]
     pub(crate) fn equivalent_summary(&self, other: &Self) -> bool {
-        if self.len != other.len
-            || self.scope_marker_len != other.scope_marker_len
-            || self.control_marker_len != other.control_marker_len
+        if self.validation.len != other.validation.len
+            || self.validation.scope_marker_len != other.validation.scope_marker_len
+            || self.program.control_marker_len != other.program.control_marker_len
         {
             return false;
         }
 
         let mut idx = 0usize;
-        while idx < self.len {
-            if !Self::eff_struct_eq(self.nodes[idx], other.nodes[idx]) {
+        while idx < self.validation.len {
+            if !Self::eff_struct_eq(self.validation.nodes[idx], other.validation.nodes[idx]) {
                 return false;
             }
-            if self.policies[idx] != other.policies[idx] {
+            if self.validation.policies[idx] != other.validation.policies[idx] {
                 return false;
             }
             if self.control_spec_at(idx) != other.control_spec_at(idx) {
@@ -673,10 +777,10 @@ impl LoweringSummary {
         }
 
         let mut scope_idx = 0usize;
-        while scope_idx < self.scope_marker_len {
+        while scope_idx < self.validation.scope_marker_len {
             if !Self::scope_marker_eq(
-                self.scope_markers[scope_idx],
-                other.scope_markers[scope_idx],
+                self.validation.scope_markers[scope_idx],
+                other.validation.scope_markers[scope_idx],
             ) {
                 return false;
             }
@@ -684,10 +788,10 @@ impl LoweringSummary {
         }
 
         let mut control_idx = 0usize;
-        while control_idx < self.control_marker_len {
+        while control_idx < self.program.control_marker_len {
             if !Self::control_marker_eq(
-                self.control_markers[control_idx],
-                other.control_markers[control_idx],
+                self.program.control_markers[control_idx],
+                other.program.control_markers[control_idx],
             ) {
                 return false;
             }

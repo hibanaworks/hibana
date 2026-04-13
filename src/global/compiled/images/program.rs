@@ -16,7 +16,10 @@ use crate::{
     eff::{EffAtom, EffIndex, EffKind},
     global::{
         ControlLabelSpec,
-        const_dsl::{ControlScopeKind, PolicyMode},
+        const_dsl::{
+            CompactScopeId, ControlScopeKind, PolicyMode, ScopeEvent, ScopeId, ScopeKind,
+            ScopeMarker,
+        },
     },
     runtime::consts::{
         LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE, LABEL_REROUTE, LABEL_ROUTE_DECISION,
@@ -88,6 +91,79 @@ impl DynamicPolicySite {
             PolicyMode::Dynamic { policy_id, .. } => policy_id,
             PolicyMode::Static => 0,
         }
+    }
+}
+
+const ROUTE_CONTROL_NONE: u8 = u8::MAX;
+
+/// Shared immutable route/controller facts derived once per lowered program.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RouteControlRecord {
+    scope_id: CompactScopeId,
+    controller_role: u8,
+    route_policy_tag: u8,
+    route_policy_id: u16,
+    route_policy_eff: EffIndex,
+}
+
+impl RouteControlRecord {
+    #[cfg(test)]
+    const EMPTY: Self = Self {
+        scope_id: CompactScopeId::none(),
+        controller_role: ROUTE_CONTROL_NONE,
+        route_policy_tag: 0,
+        route_policy_id: u16::MAX,
+        route_policy_eff: EffIndex::MAX,
+    };
+
+    #[inline(always)]
+    const fn new(
+        scope_id: ScopeId,
+        controller_role: Option<u8>,
+        route_policy_id: u16,
+        route_policy_eff: EffIndex,
+        route_policy_tag: u8,
+    ) -> Self {
+        Self {
+            scope_id: CompactScopeId::from_scope_id(scope_id),
+            controller_role: match controller_role {
+                Some(role) => role,
+                None => ROUTE_CONTROL_NONE,
+            },
+            route_policy_tag,
+            route_policy_id,
+            route_policy_eff,
+        }
+    }
+
+    #[inline(always)]
+    const fn canonical_raw(self) -> u64 {
+        self.scope_id.canonical().raw()
+    }
+
+    #[inline(always)]
+    const fn controller_role(self) -> Option<u8> {
+        if self.controller_role == ROUTE_CONTROL_NONE {
+            None
+        } else {
+            Some(self.controller_role)
+        }
+    }
+
+    #[inline(always)]
+    fn route_controller(self) -> Option<(PolicyMode, EffIndex, u8)> {
+        if self.route_policy_eff.raw() == EffIndex::MAX.raw() {
+            return None;
+        }
+        let policy = if self.route_policy_id == u16::MAX {
+            PolicyMode::Static
+        } else {
+            PolicyMode::Dynamic {
+                policy_id: self.route_policy_id,
+                scope: self.scope_id,
+            }
+        };
+        Some((policy, self.route_policy_eff, self.route_policy_tag))
     }
 }
 
@@ -174,6 +250,7 @@ pub(crate) const MAX_COMPILED_PROGRAM_TAP_EVENTS: usize = 512;
 pub(crate) const MAX_COMPILED_PROGRAM_RESOURCES: usize = 128;
 pub(crate) const MAX_COMPILED_PROGRAM_SCOPES: usize = crate::eff::meta::MAX_EFF_NODES;
 pub(crate) const MAX_COMPILED_PROGRAM_CONTROLS: usize = crate::eff::meta::MAX_EFF_NODES;
+pub(crate) const MAX_COMPILED_PROGRAM_ROUTE_CONTROLS: usize = crate::eff::meta::MAX_EFF_NODES;
 
 #[inline(always)]
 const fn encode_compact_program_len(value: usize) -> u16 {
@@ -243,6 +320,7 @@ pub(crate) struct CompiledProgramCounts {
     pub(crate) resources: usize,
     pub(crate) controls: usize,
     pub(crate) dynamic_policy_sites: usize,
+    pub(crate) route_controls: usize,
 }
 
 impl CompiledProgramCounts {
@@ -252,6 +330,7 @@ impl CompiledProgramCounts {
         resources: MAX_COMPILED_PROGRAM_RESOURCES,
         controls: MAX_COMPILED_PROGRAM_CONTROLS,
         dynamic_policy_sites: MAX_DYNAMIC_POLICY_SITES,
+        route_controls: MAX_COMPILED_PROGRAM_ROUTE_CONTROLS,
     };
 }
 
@@ -260,6 +339,8 @@ struct CompiledProgramTailStorage {
     resources_len: usize,
     sites: *mut DynamicPolicySite,
     sites_len: usize,
+    route_controls: *mut RouteControlRecord,
+    route_controls_len: usize,
 }
 
 impl CompiledProgramTailStorage {
@@ -281,6 +362,9 @@ impl CompiledProgramTailStorage {
         if core::mem::align_of::<DynamicPolicySite>() > align {
             align = core::mem::align_of::<DynamicPolicySite>();
         }
+        if core::mem::align_of::<RouteControlRecord>() > align {
+            align = core::mem::align_of::<RouteControlRecord>();
+        }
         align
     }
 
@@ -295,8 +379,12 @@ impl CompiledProgramTailStorage {
         offset = Self::align_up(offset, core::mem::align_of::<ResourceDescriptor>());
         offset = offset.saturating_add(Self::section_bytes::<ResourceDescriptor>(counts.resources));
         offset = Self::align_up(offset, core::mem::align_of::<DynamicPolicySite>());
-        offset.saturating_add(Self::section_bytes::<DynamicPolicySite>(
+        offset = offset.saturating_add(Self::section_bytes::<DynamicPolicySite>(
             counts.dynamic_policy_sites,
+        ));
+        offset = Self::align_up(offset, core::mem::align_of::<RouteControlRecord>());
+        offset.saturating_add(Self::section_bytes::<RouteControlRecord>(
+            counts.route_controls,
         ))
     }
 
@@ -320,11 +408,14 @@ impl CompiledProgramTailStorage {
         let mut offset = core::mem::size_of::<CompiledProgramImage>();
         let resources = unsafe { Self::section_ptr(base, &mut offset, counts.resources) };
         let sites = unsafe { Self::section_ptr(base, &mut offset, counts.dynamic_policy_sites) };
+        let route_controls = unsafe { Self::section_ptr(base, &mut offset, counts.route_controls) };
         Self {
             resources,
             resources_len: counts.resources,
             sites,
             sites_len: counts.dynamic_policy_sites,
+            route_controls,
+            route_controls_len: counts.route_controls,
         }
     }
 }
@@ -334,6 +425,7 @@ impl CompiledProgramTailStorage {
 pub(crate) struct CompiledProgramImage {
     resources: CompiledProgramSection,
     dynamic_policy_sites: CompiledProgramSection,
+    route_controls: CompiledProgramSection,
     role_count: u8,
     control_scope_mask: u8,
 }
@@ -364,6 +456,142 @@ fn compiled_program_push_resource(
     }
     resources[*len] = descriptor;
     *len += 1;
+}
+
+#[inline(always)]
+fn compiled_program_route_scope_end(
+    scope_markers: &[ScopeMarker],
+    enter_idx: usize,
+    scope: ScopeId,
+    default_end: usize,
+) -> usize {
+    let mut scope_end = default_end;
+    let mut scan_idx = enter_idx + 1;
+    let mut nest_depth = 1usize;
+    while scan_idx < scope_markers.len() {
+        let scan_marker = scope_markers[scan_idx];
+        if scan_marker.scope_id.local_ordinal() == scope.local_ordinal() {
+            match scan_marker.event {
+                ScopeEvent::Enter => nest_depth += 1,
+                ScopeEvent::Exit => {
+                    nest_depth -= 1;
+                    if nest_depth == 0 {
+                        scope_end = scan_marker.offset;
+                        break;
+                    }
+                }
+            }
+        }
+        scan_idx += 1;
+    }
+    scope_end
+}
+
+#[inline(always)]
+fn compiled_program_insert_route_control(
+    route_controls: &mut [RouteControlRecord],
+    route_controls_len: &mut usize,
+    record: RouteControlRecord,
+) {
+    let target_raw = record.canonical_raw();
+    let mut insert_idx = 0usize;
+    while insert_idx < *route_controls_len {
+        let existing_raw = route_controls[insert_idx].canonical_raw();
+        if existing_raw == target_raw {
+            return;
+        }
+        if existing_raw > target_raw {
+            break;
+        }
+        insert_idx += 1;
+    }
+    if *route_controls_len >= route_controls.len() {
+        panic!("CompiledProgram: MAX_ROUTE_CONTROLS exceeded");
+    }
+    let mut shift_idx = *route_controls_len;
+    while shift_idx > insert_idx {
+        route_controls[shift_idx] = route_controls[shift_idx - 1];
+        shift_idx -= 1;
+    }
+    route_controls[insert_idx] = record;
+    *route_controls_len += 1;
+}
+
+#[inline(always)]
+fn compiled_program_emit_route_controls(
+    route_controls: &mut [RouteControlRecord],
+    route_controls_len: &mut usize,
+    summary: &LoweringSummary,
+) {
+    let view = summary.view();
+    let scope_markers = view.scope_markers();
+    let default_end = view.as_slice().len();
+    let mut marker_idx = 0usize;
+    while marker_idx < scope_markers.len() {
+        let marker = scope_markers[marker_idx];
+        if matches!(marker.event, ScopeEvent::Enter)
+            && matches!(marker.scope_kind, ScopeKind::Route)
+        {
+            let scope_end = compiled_program_route_scope_end(
+                scope_markers,
+                marker_idx,
+                marker.scope_id,
+                default_end,
+            );
+            let (route_policy_id, route_policy_eff, route_policy_tag) = match view
+                .first_route_head_dynamic_policy_in_range(marker.scope_id, marker_idx, scope_end)
+            {
+                Some((policy, eff_offset, tag)) => (
+                    match policy.dynamic_policy_id() {
+                        Some(policy_id) => policy_id,
+                        None => u16::MAX,
+                    },
+                    EffIndex::from_usize(eff_offset),
+                    tag,
+                ),
+                None => (u16::MAX, EffIndex::MAX, 0),
+            };
+            compiled_program_insert_route_control(
+                route_controls,
+                route_controls_len,
+                RouteControlRecord::new(
+                    marker.scope_id,
+                    marker.controller_role,
+                    route_policy_id,
+                    route_policy_eff,
+                    route_policy_tag,
+                ),
+            );
+        }
+        marker_idx += 1;
+    }
+}
+
+#[inline(always)]
+fn compiled_program_lookup_route_control(
+    route_controls: &[RouteControlRecord],
+    scope_id: ScopeId,
+) -> Option<&RouteControlRecord> {
+    if scope_id.is_none() {
+        return None;
+    }
+    let target_raw = scope_id.canonical().raw();
+    let mut lo = 0usize;
+    let mut hi = route_controls.len();
+    while lo < hi {
+        let mid = lo + ((hi - lo) / 2);
+        let raw = route_controls[mid].canonical_raw();
+        if raw < target_raw {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    if lo >= route_controls.len() || route_controls[lo].canonical_raw() != target_raw {
+        None
+    } else {
+        Some(&route_controls[lo])
+    }
 }
 
 #[inline(always)]
@@ -453,6 +681,7 @@ pub(crate) struct CompiledProgram {
     effect_envelope: EffectEnvelope,
     control_scope_mask: u8,
     dynamic_policy_sites: [DynamicPolicySite; MAX_DYNAMIC_POLICY_SITES],
+    route_controls: [RouteControlRecord; MAX_COMPILED_PROGRAM_ROUTE_CONTROLS],
 }
 
 #[cfg(test)]
@@ -488,11 +717,17 @@ impl CompiledProgram {
                 ptr::addr_of_mut!((*dst).dynamic_policy_sites),
                 DynamicPolicySite::EMPTY,
             );
+            Self::init_array_copy(
+                ptr::addr_of_mut!((*dst).route_controls),
+                RouteControlRecord::EMPTY,
+            );
         }
 
         let effect_envelope = unsafe { &mut *ptr::addr_of_mut!((*dst).effect_envelope) };
         let dynamic_policy_sites = unsafe { &mut *ptr::addr_of_mut!((*dst).dynamic_policy_sites) };
         let mut dynamic_policy_sites_len = 0usize;
+        let route_controls = unsafe { &mut *ptr::addr_of_mut!((*dst).route_controls) };
+        let mut route_controls_len = 0usize;
 
         let view = summary.view();
         let mut lease_budget = LeaseGraphBudget::new();
@@ -553,6 +788,7 @@ impl CompiledProgram {
             ptr::addr_of_mut!((*dst).control_scope_mask)
                 .write(summary.compiled_program_control_scope_mask());
         }
+        compiled_program_emit_route_controls(route_controls, &mut route_controls_len, summary);
     }
 
     #[inline(always)]
@@ -560,6 +796,18 @@ impl CompiledProgram {
         let mut len = 0usize;
         while len < self.dynamic_policy_sites.len() {
             if self.dynamic_policy_sites[len] == DynamicPolicySite::EMPTY {
+                break;
+            }
+            len += 1;
+        }
+        len
+    }
+
+    #[inline(always)]
+    fn route_controls_len(&self) -> usize {
+        let mut len = 0usize;
+        while len < self.route_controls.len() {
+            if self.route_controls[len] == RouteControlRecord::EMPTY {
                 break;
             }
             len += 1;
@@ -593,6 +841,24 @@ impl CompiledProgram {
         self.dynamic_policy_sites()
             .iter()
             .filter(move |site| site.policy_id() == policy_id)
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_controller_role(&self, scope_id: ScopeId) -> Option<u8> {
+        compiled_program_lookup_route_control(
+            &self.route_controls[..self.route_controls_len()],
+            scope_id,
+        )
+        .and_then(|record| record.controller_role())
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_controller(&self, scope_id: ScopeId) -> Option<(PolicyMode, EffIndex, u8)> {
+        compiled_program_lookup_route_control(
+            &self.route_controls[..self.route_controls_len()],
+            scope_id,
+        )
+        .and_then(|record| record.route_controller())
     }
 }
 
@@ -648,9 +914,17 @@ impl CompiledProgramImage {
         let dynamic_policy_sites_section = unsafe {
             CompiledProgramSection::from_ptr(base, storage.sites.cast_const(), storage.sites_len)
         };
+        let route_controls_section = unsafe {
+            CompiledProgramSection::from_ptr(
+                base,
+                storage.route_controls.cast_const(),
+                storage.route_controls_len,
+            )
+        };
         unsafe {
             ptr::addr_of_mut!((*dst).resources).write(resources_section);
             ptr::addr_of_mut!((*dst).dynamic_policy_sites).write(dynamic_policy_sites_section);
+            ptr::addr_of_mut!((*dst).route_controls).write(route_controls_section);
             ptr::addr_of_mut!((*dst).role_count).write(summary.compiled_program_role_count() as u8);
             ptr::addr_of_mut!((*dst).control_scope_mask).write(0);
         }
@@ -661,6 +935,10 @@ impl CompiledProgramImage {
         let dynamic_policy_sites =
             unsafe { core::slice::from_raw_parts_mut(storage.sites, storage.sites_len) };
         let mut dynamic_policy_sites_len = 0usize;
+        let route_controls = unsafe {
+            core::slice::from_raw_parts_mut(storage.route_controls, storage.route_controls_len)
+        };
+        let mut route_controls_len = 0usize;
 
         let view = summary.view();
         let nodes = view.as_slice();
@@ -705,6 +983,9 @@ impl CompiledProgramImage {
             ptr::addr_of_mut!((*dst).resources).write(resources_section.with_len(resources_len));
             ptr::addr_of_mut!((*dst).dynamic_policy_sites)
                 .write(dynamic_policy_sites_section.with_len(dynamic_policy_sites_len));
+            compiled_program_emit_route_controls(route_controls, &mut route_controls_len, summary);
+            ptr::addr_of_mut!((*dst).route_controls)
+                .write(route_controls_section.with_len(route_controls_len));
             ptr::addr_of_mut!((*dst).control_scope_mask)
                 .write(summary.compiled_program_control_scope_mask());
         }
@@ -737,6 +1018,11 @@ impl CompiledProgramImage {
     }
 
     #[inline(always)]
+    fn route_controls(&self) -> &[RouteControlRecord] {
+        self.section_slice(self.route_controls)
+    }
+
+    #[inline(always)]
     pub(crate) fn dynamic_policy_sites_for(
         &self,
         policy_id: u16,
@@ -744,6 +1030,18 @@ impl CompiledProgramImage {
         self.dynamic_policy_sites()
             .iter()
             .filter(move |site| site.policy_id() == policy_id)
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_controller_role(&self, scope_id: ScopeId) -> Option<u8> {
+        compiled_program_lookup_route_control(self.route_controls(), scope_id)
+            .and_then(|record| record.controller_role())
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_controller(&self, scope_id: ScopeId) -> Option<(PolicyMode, EffIndex, u8)> {
+        compiled_program_lookup_route_control(self.route_controls(), scope_id)
+            .and_then(|record| record.route_controller())
     }
 }
 
@@ -759,8 +1057,12 @@ mod tests {
                 CancelKind, LoopBreakKind, LoopContinueKind, RerouteKind, RouteDecisionKind,
             },
         },
+        eff::EffIndex,
         g::{self, Msg, Role},
-        global::CanonicalControl,
+        global::{
+            CanonicalControl,
+            const_dsl::{PolicyMode, ScopeEvent, ScopeKind},
+        },
         runtime::consts::{
             LABEL_CANCEL, LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE, LABEL_REROUTE,
             LABEL_ROUTE_DECISION,
@@ -811,6 +1113,119 @@ mod tests {
                 .control_semantics()
                 .semantic_for_resource_tag(Some(RouteDecisionKind::TAG)),
             ControlSemanticKind::RouteArm
+        );
+    }
+
+    #[test]
+    fn compiled_program_tracks_shared_route_controller_atlas() {
+        let left = g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>();
+        let right = g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>();
+        let program = g::route(left, right);
+
+        let summary = program.summary();
+        let scope_id = summary
+            .view()
+            .scope_markers()
+            .iter()
+            .find(|marker| {
+                matches!(marker.event, ScopeEvent::Enter)
+                    && matches!(marker.scope_kind, ScopeKind::Route)
+            })
+            .expect("route enter marker")
+            .scope_id;
+        let compiled = CompiledProgram::from_summary(&summary);
+
+        assert_eq!(compiled.route_controller_role(scope_id), Some(0));
+        let (policy, eff_index, resource_tag) = compiled
+            .route_controller(scope_id)
+            .expect("route controller atlas entry");
+        assert_eq!(
+            policy,
+            PolicyMode::dynamic(ROUTE_POLICY_ID).with_scope(scope_id)
+        );
+        assert_eq!(eff_index, EffIndex::ZERO);
+        assert_eq!(resource_tag, LoopContinueKind::TAG);
+    }
+
+    #[test]
+    fn compiled_program_route_controller_atlas_ignores_nested_dynamic_policy_scopes() {
+        let nested_left = g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<{ LABEL_CANCEL }, GenericCapToken<CancelKind>, CanonicalControl<CancelKind>>,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>();
+        let nested_right = g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<{ LABEL_REROUTE }, GenericCapToken<RerouteKind>, CanonicalControl<RerouteKind>>,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>();
+        let left = g::seq(
+            g::send::<
+                Role<0>,
+                Role<0>,
+                Msg<
+                    { LABEL_LOOP_CONTINUE },
+                    GenericCapToken<LoopContinueKind>,
+                    CanonicalControl<LoopContinueKind>,
+                >,
+                0,
+            >(),
+            g::route(nested_left, nested_right),
+        );
+        let right = g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+            0,
+        >();
+        let program = g::route(left, right);
+
+        let summary = program.summary();
+        let scope_id = summary
+            .view()
+            .scope_markers()
+            .iter()
+            .find(|marker| {
+                matches!(marker.event, ScopeEvent::Enter)
+                    && matches!(marker.scope_kind, ScopeKind::Route)
+            })
+            .expect("outer route enter marker")
+            .scope_id;
+        let compiled = CompiledProgram::from_summary(&summary);
+
+        assert_eq!(compiled.route_controller_role(scope_id), Some(0));
+        assert_eq!(
+            compiled.route_controller(scope_id),
+            None,
+            "nested dynamic policies must not promote the enclosing static route"
         );
     }
 
