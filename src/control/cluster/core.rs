@@ -108,6 +108,8 @@ use crate::eff::EffIndex;
 #[cfg(test)]
 use crate::global::compiled::CompiledProgramImage;
 #[cfg(test)]
+use crate::global::role_program::RoleFootprint;
+#[cfg(test)]
 use crate::global::typestate::RoleCompileScratch;
 use crate::global::{
     compiled::{CompiledRoleImage, ProgramImage, RoleImageSlice},
@@ -126,12 +128,14 @@ use std::thread_local;
 const TEST_ENDPOINT_ARENA_SLOTS: usize = 16;
 #[cfg(test)]
 const TEST_ENDPOINT_ARENA_LAYOUT: crate::endpoint::kernel::EndpointArenaLayout =
-    crate::endpoint::kernel::EndpointArenaLayout::new(
-        crate::global::role_program::MAX_LANES,
-        crate::global::role_program::MAX_LANES,
-        crate::endpoint::kernel::MAX_ROUTE_ARM_STACK,
-        crate::eff::meta::MAX_EFF_NODES,
-        crate::global::role_program::MAX_LANES,
+    crate::endpoint::kernel::EndpointArenaLayout::from_footprint(
+        RoleFootprint::for_endpoint_layout(
+            crate::global::role_program::MAX_LANES,
+            crate::global::role_program::MAX_LANES,
+            crate::endpoint::kernel::MAX_ROUTE_ARM_STACK,
+            crate::eff::meta::MAX_EFF_NODES,
+            crate::global::role_program::MAX_LANES,
+        ),
     );
 #[cfg(test)]
 const TEST_ENDPOINT_ARENA_BYTES: usize =
@@ -2119,7 +2123,7 @@ where
         let role_image_bytes = if has_role {
             0
         } else {
-            CompiledRoleImage::persistent_bytes_for_program(lowering.layout_input())
+            CompiledRoleImage::persistent_bytes_for_program(lowering.footprint())
         };
         let guard = if has_program {
             if has_role {
@@ -2146,7 +2150,8 @@ where
                 crate::global::compiled::LoweringLeaseMode::SummaryAndRoleScratch,
                 |lease| {
                     let (summary, scratch) = lease.into_parts();
-                    let scratch = scratch.expect("role scratch requested by lowering lease mode");
+                    let mut scratch =
+                        scratch.expect("role scratch requested by lowering lease mode");
                     let program_image = if has_program {
                         rv.program_image(program.stamp())
                     } else {
@@ -2158,8 +2163,8 @@ where
                         rv.materialize_role_image_from_summary_for_program::<ROLE>(
                             program.stamp(),
                             summary,
-                            scratch,
-                            lowering.layout_input(),
+                            &mut scratch,
+                            lowering.footprint(),
                         )
                     }?;
                     let program_image = ProgramImage::from_raw(program.stamp(), program_image);
@@ -4566,7 +4571,7 @@ mod tests {
                 counts,
             ),
             compiled_role_persistent_bytes: CompiledRoleImage::persistent_bytes_for_program(
-                lowering.layout_input(),
+                lowering.footprint(),
             ),
             endpoint_phase_cursor_state_bytes: endpoint_layout.phase_cursor_state().bytes(),
             endpoint_route_state_bytes: endpoint_layout.route_state().bytes(),

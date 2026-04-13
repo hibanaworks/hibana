@@ -21,7 +21,7 @@ pub(crate) use self::{
     driver::{LoweringSummary, LoweringView, ProgramStamp, RoleLoweringCounts},
     image::{ProgramImage, RoleImageSlice},
     lease::{
-        LoweringLeaseMode, init_compiled_program_image_from_summary,
+        LoweringLeaseMode, RoleLoweringScratch, init_compiled_program_image_from_summary,
         init_compiled_role_image_from_summary, with_lowering_lease,
     },
     program::{

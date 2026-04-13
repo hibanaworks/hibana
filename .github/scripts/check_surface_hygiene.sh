@@ -601,7 +601,7 @@ POLL_READY_BLOCK="$(
       print
       if ($0 ~ /^    }$/) { exit }
     }
-  ' src/endpoint/kernel/scope_evidence_logic.rs
+  ' src/endpoint/kernel/route_frontier/scope_evidence_logic.rs
 )"
 if [[ -z "${POLL_READY_BLOCK}" ]]; then
   echo "poll_arm_from_ready_mask block not found" >&2
@@ -618,7 +618,7 @@ ROUTE_SOURCE_BLOCK="$(
       if ($0 ~ /^}/) { exit }
       print
     }
-  ' src/endpoint/kernel/authority.rs
+  ' src/endpoint/kernel/route_frontier/authority.rs
 )"
 if [[ -z "${ROUTE_SOURCE_BLOCK}" ]]; then
   echo "RouteDecisionSource enum block not found" >&2
@@ -653,19 +653,8 @@ else
   fi
 fi
 
-OFFER_BLOCK="$(
-  awk '
-    /pub async fn offer\(/ { in_block=1 }
-    in_block {
-      print
-      if ($0 ~ /^    }$/) { exit }
-    }
-  ' src/endpoint/kernel/offer.rs
-)"
-if [[ -z "${OFFER_BLOCK}" ]]; then
-  echo "offer block not found" >&2
-  FAILED=1
-elif ! printf '%s\n' "${OFFER_BLOCK}" | rg -n -U "select_scope\\(\\)\\?[[:space:][:cntrl:]]*;[[:space:][:cntrl:][:print:]]*resolve_token\\([[:space:][:cntrl:][:print:]]*materialize_branch\\(" >/dev/null; then
+if ! rg -n -U "async fn run\\([[:space:][:cntrl:][:print:]]*let selection = self\\.select_scope\\(\\)\\?[[:space:][:cntrl:]]*;[[:space:][:cntrl:][:print:]]*resolve_token\\([[:space:][:cntrl:][:print:]]*return self\\.materialize_branch\\(" \
+  src/endpoint/kernel/route_frontier/offer.rs >/dev/null; then
   echo "offer kernel stage order regression" >&2
   FAILED=1
 fi
@@ -778,9 +767,9 @@ if ! rg -n "mod evidence_store;|mod frontier_state;|mod route_state;" src/endpoi
 fi
 
 for required in \
-  "src/endpoint/kernel/evidence_store.rs:pub\\(super\\) struct ScopeEvidenceTable" \
-  "src/endpoint/kernel/frontier_state.rs:pub\\(super\\) struct FrontierState" \
-  "src/endpoint/kernel/route_state.rs:pub\\(super\\) struct RouteState"
+  "src/endpoint/kernel/runtime/evidence_store.rs:pub\\(super\\) struct ScopeEvidenceTable" \
+  "src/endpoint/kernel/runtime/frontier_state.rs:pub\\(super\\) struct FrontierState" \
+  "src/endpoint/kernel/runtime/route_state.rs:pub\\(super\\) struct RouteState"
 do
   path="${required%%:*}"
   pattern="${required#*:}"
@@ -791,14 +780,11 @@ do
 done
 
 for required in \
-  'src/endpoint/kernel/core.rs:#[path = "scope_evidence_logic.rs"]' \
-  'src/endpoint/kernel/core.rs:#[path = "frontier_select.rs"]' \
-  'src/endpoint/kernel/core.rs:#[path = "frontier_observation.rs"]' \
-  'src/endpoint/kernel/core.rs:#[path = "offer_refresh.rs"]' \
-  'src/endpoint/kernel/scope_evidence_logic.rs:fn record_scope_ack(' \
-  'src/endpoint/kernel/frontier_select.rs:fn on_frontier_defer(' \
-  'src/endpoint/kernel/frontier_observation.rs:fn frontier_observation_key(' \
-  'src/endpoint/kernel/offer_refresh.rs:fn refresh_offer_entry_state('
+  'src/endpoint/kernel/mod.rs:#[path = "route_frontier/offer.rs"]' \
+  'src/endpoint/kernel/route_frontier/offer.rs:fn record_scope_ack(' \
+  'src/endpoint/kernel/route_frontier/frontier_select.rs:fn on_frontier_defer(' \
+  'src/endpoint/kernel/route_frontier/offer.rs:fn frontier_observation_key(' \
+  'src/endpoint/kernel/route_frontier/offer.rs:fn refresh_offer_entry_state('
 do
   path="${required%%:*}"
   pattern="${required#*:}"

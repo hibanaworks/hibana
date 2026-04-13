@@ -15,7 +15,7 @@ use crate::{
         LoopControlMeaning,
         compiled::{CompiledRoleImage, ControlSemanticsTable},
         const_dsl::{PolicyMode, ScopeId, ScopeKind},
-        role_program::{MAX_LANES, Phase},
+        role_program::{LaneSteps, MAX_LANES, PhaseRouteGuard},
     },
 };
 
@@ -79,8 +79,23 @@ impl PhaseCursorMachine {
     }
 
     #[inline(always)]
-    fn phase(&self, idx: usize) -> Option<Phase> {
-        self.compiled_role().phase(idx)
+    fn phase_lane_mask(&self, idx: usize) -> Option<u8> {
+        self.compiled_role().phase_lane_mask(idx)
+    }
+
+    #[inline(always)]
+    fn phase_min_start(&self, idx: usize) -> Option<u16> {
+        self.compiled_role().phase_min_start(idx)
+    }
+
+    #[inline(always)]
+    fn phase_route_guard(&self, idx: usize) -> Option<PhaseRouteGuard> {
+        self.compiled_role().phase_route_guard(idx)
+    }
+
+    #[inline(always)]
+    fn phase_lane_steps(&self, idx: usize, lane_idx: usize) -> Option<LaneSteps> {
+        self.compiled_role().phase_lane_steps(idx, lane_idx)
     }
 
     #[inline(always)]
@@ -249,10 +264,27 @@ impl PhaseCursor {
     // =========================================================================
     // =========================================================================
 
-    /// Get the current phase, if any.
-    #[inline]
-    pub(crate) fn current_phase(&self) -> Option<Phase> {
-        self.machine().phase(self.phase_index_usize())
+    #[inline(always)]
+    pub(crate) fn current_phase_lane_mask(&self) -> u8 {
+        self.machine()
+            .phase_lane_mask(self.phase_index_usize())
+            .unwrap_or(0)
+    }
+
+    #[inline(always)]
+    pub(crate) fn current_phase_route_guard(&self) -> Option<PhaseRouteGuard> {
+        self.machine().phase_route_guard(self.phase_index_usize())
+    }
+
+    #[inline(always)]
+    fn current_phase_min_start(&self) -> Option<u16> {
+        self.machine().phase_min_start(self.phase_index_usize())
+    }
+
+    #[inline(always)]
+    fn current_phase_lane_steps(&self, lane_idx: usize) -> Option<LaneSteps> {
+        self.machine()
+            .phase_lane_steps(self.phase_index_usize(), lane_idx)
     }
 
     // =========================================================================
@@ -341,13 +373,11 @@ impl PhaseCursor {
 
     /// Get the step index at the current cursor position for a specific lane.
     pub(crate) fn step_index_at_lane(&self, lane_idx: usize) -> Option<usize> {
-        let phase = self.current_phase()?;
-
         if lane_idx >= MAX_LANES {
             return None;
         }
 
-        let lane_steps = &phase.lanes[lane_idx];
+        let lane_steps = self.current_phase_lane_steps(lane_idx)?;
         if !lane_steps.is_active() {
             return None;
         }
@@ -395,13 +425,12 @@ impl PhaseCursor {
     /// Unlike `advance_lane_to_eff_index`, this positions the lane cursor at the
     /// step itself (not past it). Used for loop rewinds.
     pub(crate) fn set_lane_cursor_to_eff_index(&mut self, lane_idx: usize, eff_index: EffIndex) {
-        let Some(phase) = self.current_phase() else {
-            return;
-        };
         if lane_idx >= MAX_LANES {
             return;
         }
-        let lane_steps = &phase.lanes[lane_idx];
+        let Some(lane_steps) = self.current_phase_lane_steps(lane_idx) else {
+            return;
+        };
         if !lane_steps.is_active() {
             return;
         }
@@ -437,13 +466,12 @@ impl PhaseCursor {
 
     /// Advance cursor for a specific lane to the step matching `eff_index`.
     pub(crate) fn advance_lane_to_eff_index(&mut self, lane_idx: usize, eff_index: EffIndex) {
-        let Some(phase) = self.current_phase() else {
-            return;
-        };
         if lane_idx >= MAX_LANES {
             return;
         }
-        let lane_steps = &phase.lanes[lane_idx];
+        let Some(lane_steps) = self.current_phase_lane_steps(lane_idx) else {
+            return;
+        };
         if !lane_steps.is_active() {
             return;
         }
@@ -489,13 +517,14 @@ impl PhaseCursor {
     }
 
     pub(crate) fn sync_idx_to_phase_start(&mut self) {
-        let Some(phase) = self.current_phase() else {
+        let phase_lane_mask = self.current_phase_lane_mask();
+        if phase_lane_mask == 0 {
+            return;
+        }
+        let Some(phase_min_start) = self.current_phase_min_start() else {
             return;
         };
-        if phase.lane_mask == 0 {
-            return;
-        };
-        let step_idx = phase.min_start as usize;
+        let step_idx = phase_min_start as usize;
         if step_idx >= self.local_steps_len() {
             debug_assert!(false, "phase start out of local steps range");
             return;
@@ -510,15 +539,17 @@ impl PhaseCursor {
 
     /// Check if all lanes in current phase are complete.
     pub(crate) fn is_phase_complete(&self) -> bool {
-        let Some(phase) = self.current_phase() else {
+        let mut lane_mask = self.current_phase_lane_mask();
+        if lane_mask == 0 {
             return true; // No more phases
-        };
-
-        let mut lane_mask = phase.lane_mask;
+        }
         while lane_mask != 0 {
             let lane_idx = lane_mask.trailing_zeros() as usize;
             lane_mask &= lane_mask - 1;
-            let lane_steps = &phase.lanes[lane_idx];
+            let Some(lane_steps) = self.current_phase_lane_steps(lane_idx) else {
+                debug_assert!(false, "compiled phase lane mask missing lane entry");
+                return false;
+            };
             if (self.state().lane_cursors[lane_idx] as usize) < lane_steps.len as usize {
                 return false;
             }

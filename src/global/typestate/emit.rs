@@ -7,12 +7,14 @@ use super::{
     emit_walk::RoleTypestateBuildScratch,
     facts::{LocalAction, LocalNode, StateIndex, state_index_to_usize},
 };
+#[cfg(test)]
+use crate::global::role_program::{LocalStep, MAX_PHASES, MAX_STEPS, Phase, PhaseRouteGuard};
 use crate::{
     eff::EffIndex,
     global::{
         compiled::LoweringSummary,
         const_dsl::{PolicyMode, ScopeId, ScopeKind},
-        role_program::{LocalStep, MAX_LANES, MAX_PHASES, MAX_STEPS, Phase, PhaseRouteGuard},
+        role_program::MAX_LANES,
     },
 };
 
@@ -155,7 +157,7 @@ pub(crate) unsafe fn init_value_from_summary_for_role(
     route_records: *mut super::registry::RouteScopeRecord,
     route_scope_cap: usize,
     summary: &LoweringSummary,
-    scratch: &mut RoleCompileScratch,
+    scratch: &mut RoleTypestateBuildScratch,
 ) {
     unsafe {
         core::ptr::addr_of_mut!((*dst).nodes).write(nodes_ptr.cast_const());
@@ -165,7 +167,7 @@ pub(crate) unsafe fn init_value_from_summary_for_role(
             core::ptr::addr_of_mut!((*dst).len),
             core::ptr::addr_of_mut!((*dst).scope_registry),
             role,
-            &mut scratch.typestate_build,
+            scratch,
             scope_records,
             scope_slots_by_scope,
             route_dense_by_slot,
@@ -261,6 +263,7 @@ fn count_arm_lane_last_override_entries(
 ///
 /// This keeps the canonical `no_std`/`no_alloc` path off the call stack by
 /// moving builder workspaces into a stable owner held by the control plane.
+#[cfg(test)]
 pub(crate) struct RoleCompileScratch {
     pub(crate) typestate_build: RoleTypestateBuildScratch,
     pub(crate) by_eff_index: [LocalStep; MAX_STEPS],
@@ -273,6 +276,7 @@ pub(crate) struct RoleCompileScratch {
     pub(crate) parallel_ranges: [(usize, usize); MAX_PHASES],
 }
 
+#[cfg(test)]
 impl RoleCompileScratch {
     #[cfg(test)]
     pub(crate) const fn new() -> Self {
@@ -286,40 +290,6 @@ impl RoleCompileScratch {
             route_guards: [PhaseRouteGuard::EMPTY; MAX_STEPS],
             phases: [Phase::EMPTY; MAX_PHASES],
             parallel_ranges: [(0usize, 0usize); MAX_PHASES],
-        }
-    }
-
-    pub(crate) unsafe fn init_empty(dst: *mut Self) {
-        unsafe {
-            RoleTypestateBuildScratch::init_empty(core::ptr::addr_of_mut!((*dst).typestate_build));
-            let by_eff_index = core::ptr::addr_of_mut!((*dst).by_eff_index).cast::<LocalStep>();
-            let present = core::ptr::addr_of_mut!((*dst).present).cast::<bool>();
-            let steps = core::ptr::addr_of_mut!((*dst).steps).cast::<LocalStep>();
-            let eff_index_to_step = core::ptr::addr_of_mut!((*dst).eff_index_to_step).cast::<u16>();
-            let step_index_to_state =
-                core::ptr::addr_of_mut!((*dst).step_index_to_state).cast::<StateIndex>();
-            let route_guards =
-                core::ptr::addr_of_mut!((*dst).route_guards).cast::<PhaseRouteGuard>();
-            let mut i = 0;
-            while i < MAX_STEPS {
-                by_eff_index.add(i).write(LocalStep::EMPTY);
-                present.add(i).write(false);
-                steps.add(i).write(LocalStep::EMPTY);
-                eff_index_to_step.add(i).write(u16::MAX);
-                step_index_to_state.add(i).write(StateIndex::MAX);
-                route_guards.add(i).write(PhaseRouteGuard::EMPTY);
-                i += 1;
-            }
-
-            let phases = core::ptr::addr_of_mut!((*dst).phases).cast::<Phase>();
-            let parallel_ranges =
-                core::ptr::addr_of_mut!((*dst).parallel_ranges).cast::<(usize, usize)>();
-            let mut j = 0;
-            while j < MAX_PHASES {
-                phases.add(j).write(Phase::EMPTY);
-                parallel_ranges.add(j).write((0usize, 0usize));
-                j += 1;
-            }
         }
     }
 }

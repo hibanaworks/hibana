@@ -13,14 +13,18 @@ use super::{
     steps::ProjectRole,
 };
 use crate::control::cap::mint::{CapShot, MintConfig, MintConfigMarker};
+#[cfg(test)]
+use crate::eff;
 use crate::{
-    eff::{self, EffIndex},
+    eff::EffIndex,
     global::const_dsl::{CompactScopeId, EffList, ScopeId},
     global::{KnownRole, Role},
 };
 
+#[cfg(test)]
 pub(super) const MAX_STEPS: usize = eff::meta::MAX_EFF_NODES;
 /// Maximum number of parallel phases in a program.
+#[cfg(test)]
 pub(super) const MAX_PHASES: usize = 32;
 /// Maximum number of concurrent lanes (matches RoleLaneSet::LANE_COUNT).
 pub(crate) const MAX_LANES: usize = 8;
@@ -363,7 +367,6 @@ pub(crate) struct RoleLoweringInput<'prog> {
     counts: RoleLoweringCounts,
 }
 
-#[doc(hidden)]
 #[derive(Clone, Copy)]
 pub struct ProgramWitness<Steps> {
     _steps: PhantomData<fn() -> Steps>,
@@ -388,23 +391,60 @@ where
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct ProgramLayoutFacts {
+pub(crate) struct RoleFootprint {
     pub(crate) scope_count: usize,
     pub(crate) eff_count: usize,
     pub(crate) parallel_enter_count: usize,
     pub(crate) route_scope_count: usize,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct RoleLayoutFacts {
     pub(crate) local_step_count: usize,
     pub(crate) passive_linger_route_scope_count: usize,
+    pub(crate) active_lane_count: usize,
+    pub(crate) logical_lane_count: usize,
+    pub(crate) max_route_stack_depth: usize,
+    pub(crate) scope_evidence_count: usize,
+    pub(crate) frontier_entry_count: usize,
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct RoleImageLayoutInput {
-    pub(crate) program: ProgramLayoutFacts,
-    pub(crate) role: RoleLayoutFacts,
+impl RoleFootprint {
+    #[inline(always)]
+    pub(crate) const fn for_endpoint_layout(
+        active_lane_count: usize,
+        logical_lane_count: usize,
+        max_route_stack_depth: usize,
+        scope_evidence_count: usize,
+        frontier_entry_count: usize,
+    ) -> Self {
+        Self {
+            scope_count: 0,
+            eff_count: 0,
+            parallel_enter_count: 0,
+            route_scope_count: 0,
+            local_step_count: 0,
+            passive_linger_route_scope_count: 0,
+            active_lane_count,
+            logical_lane_count,
+            max_route_stack_depth,
+            scope_evidence_count,
+            frontier_entry_count,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn phase_upper_bound(self) -> usize {
+        if self.local_step_count == 0 {
+            0
+        } else {
+            let derived = self
+                .parallel_enter_count
+                .saturating_mul(2)
+                .saturating_add(1);
+            if derived < self.local_step_count {
+                derived
+            } else {
+                self.local_step_count
+            }
+        }
+    }
 }
 
 impl<'prog> RoleLoweringInput<'prog> {
@@ -432,12 +472,6 @@ impl<'prog> RoleLoweringInput<'prog> {
 
     #[cfg(test)]
     #[inline(always)]
-    pub(crate) const fn parallel_enter_count(&self) -> usize {
-        self.counts.parallel_enter_count
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
     pub(crate) const fn route_scope_count(&self) -> usize {
         self.counts.route_scope_count
     }
@@ -449,18 +483,19 @@ impl<'prog> RoleLoweringInput<'prog> {
     }
 
     #[inline(always)]
-    pub(crate) const fn layout_input(&self) -> RoleImageLayoutInput {
-        RoleImageLayoutInput {
-            program: ProgramLayoutFacts {
-                scope_count: self.counts.scope_count,
-                eff_count: self.counts.eff_count,
-                parallel_enter_count: self.counts.parallel_enter_count,
-                route_scope_count: self.counts.route_scope_count,
-            },
-            role: RoleLayoutFacts {
-                local_step_count: self.counts.local_step_count,
-                passive_linger_route_scope_count: self.counts.passive_linger_route_scope_count,
-            },
+    pub(crate) const fn footprint(&self) -> RoleFootprint {
+        RoleFootprint {
+            scope_count: self.counts.scope_count,
+            eff_count: self.counts.eff_count,
+            parallel_enter_count: self.counts.parallel_enter_count,
+            route_scope_count: self.counts.route_scope_count,
+            local_step_count: self.counts.local_step_count,
+            passive_linger_route_scope_count: self.counts.passive_linger_route_scope_count,
+            active_lane_count: 0,
+            logical_lane_count: 0,
+            max_route_stack_depth: 0,
+            scope_evidence_count: 0,
+            frontier_entry_count: 0,
         }
     }
 }

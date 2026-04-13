@@ -2378,9 +2378,9 @@ fn refresh_lane_offer_state_caches_scope_label_meta() {
                 worker.refresh_lane_offer_state(0);
                 let entry_idx = state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
                 let entry_state = worker.frontier_state.offer_entry_state[entry_idx];
-                let cached = worker
-                    .offer_entry_label_meta(scope, entry_idx)
-                    .expect("cached offer-entry label metadata");
+                let cached =
+                    RouteFrontierMachine::offer_entry_label_meta(&worker, scope, entry_idx)
+                        .expect("cached offer-entry label metadata");
                 let recv_meta = worker.cursor.try_recv_meta().expect("recv metadata");
                 assert_eq!(cached.scope_id(), scope);
                 assert_eq!(
@@ -3005,7 +3005,11 @@ fn align_cursor_to_selected_scope_reuses_cached_multi_entry_observation() {
                         worker.overwrite_global_frontier_observed_for_test(
                             observed_entries_with_ready_current(current_idx, fake_entry_idx),
                         );
-                        let stored_key = worker.frontier_observation_key(ScopeId::none(), false);
+                        let stored_key = RouteFrontierMachine::frontier_observation_key(
+                            &worker,
+                            ScopeId::none(),
+                            false,
+                        );
                         worker.overwrite_global_frontier_observed_key_for_test(stored_key);
                         worker.frontier_state.frontier_observation_epoch = 17;
 
@@ -3078,7 +3082,11 @@ fn align_cursor_to_selected_scope_ignores_unrelated_lane_binding_changes() {
                         worker.overwrite_global_frontier_observed_for_test(
                             observed_entries_with_ready_current(current_idx, fake_entry_idx),
                         );
-                        let stored_key = worker.frontier_observation_key(ScopeId::none(), false);
+                        let stored_key = RouteFrontierMachine::frontier_observation_key(
+                            &worker,
+                            ScopeId::none(),
+                            false,
+                        );
                         worker.overwrite_global_frontier_observed_key_for_test(stored_key);
                         worker.frontier_state.frontier_observation_epoch = 23;
 
@@ -3173,7 +3181,11 @@ fn align_cursor_to_selected_scope_ignores_relevant_lane_binding_content_changes(
                             has_fin: false,
                         };
                         assert!(worker.binding_inbox.push_back(0, first));
-                        let stored_key = worker.frontier_observation_key(ScopeId::none(), false);
+                        let stored_key = RouteFrontierMachine::frontier_observation_key(
+                            &worker,
+                            ScopeId::none(),
+                            false,
+                        );
                         worker.overwrite_global_frontier_observed_key_for_test(stored_key);
                         worker.frontier_state.frontier_observation_epoch = 27;
 
@@ -3252,7 +3264,11 @@ fn align_cursor_to_selected_scope_ignores_unrelated_scope_evidence_changes() {
                         worker.overwrite_global_frontier_observed_for_test(
                             observed_entries_with_ready_current(current_idx, fake_entry_idx),
                         );
-                        let stored_key = worker.frontier_observation_key(ScopeId::none(), false);
+                        let stored_key = RouteFrontierMachine::frontier_observation_key(
+                            &worker,
+                            ScopeId::none(),
+                            false,
+                        );
                         worker.overwrite_global_frontier_observed_key_for_test(stored_key);
                         worker.frontier_state.frontier_observation_epoch = 29;
 
@@ -3340,7 +3356,11 @@ fn align_cursor_to_selected_scope_ignores_unrelated_lane_frontier_refresh() {
                         worker.overwrite_global_frontier_observed_for_test(
                             observed_entries_with_ready_current(current_idx, fake_entry_idx),
                         );
-                        let stored_key = worker.frontier_observation_key(ScopeId::none(), false);
+                        let stored_key = RouteFrontierMachine::frontier_observation_key(
+                            &worker,
+                            ScopeId::none(),
+                            false,
+                        );
                         worker.overwrite_global_frontier_observed_key_for_test(stored_key);
                         worker.frontier_state.frontier_observation_epoch = 31;
 
@@ -3759,7 +3779,11 @@ fn rebuild_frontier_observed_entries_reuses_cached_entry_after_slot_shift() {
                     assert!(cached_active_entries.insert_entry(fake_entry_idx, 1));
                     worker.overwrite_global_active_entries_for_test(cached_active_entries);
                     let cached_key = worker.frontier_scratch_view().working_observation_key_from(
-                        worker.frontier_observation_key(ScopeId::none(), false),
+                        RouteFrontierMachine::frontier_observation_key(
+                            &worker,
+                            ScopeId::none(),
+                            false,
+                        ),
                     );
 
                     let mut cached_observed_entries = ObservedEntrySet::EMPTY;
@@ -3805,7 +3829,11 @@ fn rebuild_frontier_observed_entries_reuses_cached_entry_after_slot_shift() {
                     assert!(shifted_active_entries.insert_entry(current_idx, 1));
                     worker.overwrite_global_active_entries_for_test(shifted_active_entries);
 
-                    let observation_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let observation_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     let current_shifted_state =
                         worker.frontier_state.offer_entry_state[current_idx];
                     let cached_current = worker.cached_offer_entry_observed_state_for_rebuild(
@@ -3919,7 +3947,11 @@ fn refresh_frontier_observation_cache_prewarms_after_active_entry_replacement() 
                         ),
                     );
                     worker.overwrite_global_frontier_observed_for_test(cached_observed_entries);
-                    let stored_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let stored_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     worker.overwrite_global_frontier_observed_key_for_test(stored_key);
                     worker.frontier_state.frontier_observation_epoch = 37;
 
@@ -3951,7 +3983,11 @@ fn refresh_frontier_observation_cache_prewarms_after_active_entry_replacement() 
                     assert!(replaced_active_entries.insert_entry(new_entry_idx, 0));
                     worker.overwrite_global_active_entries_for_test(replaced_active_entries);
 
-                    let updated_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let updated_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     assert!(
                         worker
                             .cached_frontier_observed_entries(ScopeId::none(), false, updated_key)
@@ -3959,7 +3995,11 @@ fn refresh_frontier_observation_cache_prewarms_after_active_entry_replacement() 
                         "entry replacement should invalidate the previous cache key before warm-up",
                     );
 
-                    worker.refresh_frontier_observation_cache(ScopeId::none(), false);
+                    RouteFrontierMachine::refresh_frontier_observation_cache(
+                        worker,
+                        ScopeId::none(),
+                        false,
+                    );
 
                     assert!(
                         worker.global_frontier_observed_key_for_test() == updated_key,
@@ -4109,7 +4149,11 @@ fn patch_frontier_observed_entries_from_cached_structure_handles_cardinality_cha
                     assert!(cached_active_entries.insert_entry(third_entry_idx, 0));
                     assert!(cached_active_entries.insert_entry(last_entry_idx, 1));
                     worker.overwrite_global_active_entries_for_test(cached_active_entries);
-                    let cached_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let cached_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
 
                     let mut cached_observed_entries = ObservedEntrySet::EMPTY;
                     let (current_bit, inserted_current) = cached_observed_entries
@@ -4193,7 +4237,11 @@ fn patch_frontier_observed_entries_from_cached_structure_handles_cardinality_cha
                     assert!(active_entries.insert_entry(middle_entry_idx, 1));
                     worker.overwrite_global_active_entries_for_test(active_entries);
 
-                    let observation_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let observation_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     let patched = worker
                         .patch_frontier_observed_entries_from_cached_structure(
                             active_entries,
@@ -4405,7 +4453,11 @@ fn refresh_frontier_observation_cache_prewarms_after_multi_entry_permutation() {
                         ),
                     );
                     worker.overwrite_global_frontier_observed_for_test(cached_observed_entries);
-                    let stored_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let stored_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     worker.overwrite_global_frontier_observed_key_for_test(stored_key);
                     worker.frontier_state.frontier_observation_epoch = 41;
 
@@ -4433,8 +4485,16 @@ fn refresh_frontier_observation_cache_prewarms_after_multi_entry_permutation() {
                     assert!(permuted_active_entries.insert_entry(current_idx, 1));
                     worker.overwrite_global_active_entries_for_test(permuted_active_entries);
 
-                    let updated_key = worker.frontier_observation_key(ScopeId::none(), false);
-                    worker.refresh_frontier_observation_cache(ScopeId::none(), false);
+                    let updated_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
+                    RouteFrontierMachine::refresh_frontier_observation_cache(
+                        worker,
+                        ScopeId::none(),
+                        false,
+                    );
 
                     assert!(
                         worker.global_frontier_observed_key_for_test() == updated_key,
@@ -4700,7 +4760,11 @@ fn refresh_frontier_observation_cache_prewarms_after_multi_entry_replacement() {
                         ),
                     );
                     worker.overwrite_global_frontier_observed_for_test(cached_observed_entries);
-                    let stored_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let stored_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     worker.overwrite_global_frontier_observed_key_for_test(stored_key);
                     worker.frontier_state.frontier_observation_epoch = 53;
 
@@ -4745,7 +4809,11 @@ fn refresh_frontier_observation_cache_prewarms_after_multi_entry_replacement() {
                     assert!(replaced_active_entries.insert_entry(new_passive_entry_idx, 1));
                     worker.overwrite_global_active_entries_for_test(replaced_active_entries);
 
-                    let updated_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let updated_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     assert!(
                         worker.refresh_structural_frontier_observation_cache(
                             ScopeId::none(),
@@ -4885,7 +4953,11 @@ fn refresh_cached_frontier_observation_entry_updates_stable_slot_in_place() {
                         ),
                     );
                     worker.overwrite_global_frontier_observed_for_test(observed_entries);
-                    let stored_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let stored_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     worker.overwrite_global_frontier_observed_key_for_test(stored_key);
                     worker.frontier_state.frontier_observation_epoch = 41;
                     assert_eq!(
@@ -4901,7 +4973,11 @@ fn refresh_cached_frontier_observation_entry_updates_stable_slot_in_place() {
                         .lane_offer_state_mut(0)
                         .expect("lane 0 offer state")
                         .static_ready = true;
-                    let updated_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let updated_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     assert!(
                         worker
                             .cached_frontier_observed_entries(ScopeId::none(), false, updated_key)
@@ -5232,7 +5308,11 @@ fn refresh_inserted_frontier_observation_entry_updates_cache_in_place() {
                     worker.overwrite_global_active_entries_for_test(ActiveEntrySet::EMPTY);
                     assert!(worker.insert_global_active_entry_for_test(current_idx, 0));
                     worker.overwrite_global_frontier_observed_for_test(current_observed);
-                    let stored_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let stored_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     worker.overwrite_global_frontier_observed_key_for_test(stored_key);
                     worker.frontier_state.frontier_observation_epoch = 59;
 
@@ -5250,7 +5330,11 @@ fn refresh_inserted_frontier_observation_entry_updates_cache_in_place() {
                     };
                     assert!(worker.insert_global_active_entry_for_test(fake_entry_idx, 0));
 
-                    let updated_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let updated_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     assert!(
                         worker
                             .cached_frontier_observed_entries(ScopeId::none(), false, updated_key)
@@ -5376,7 +5460,11 @@ fn refresh_replaced_frontier_observation_entry_updates_cache_in_place() {
                         ),
                     );
                     worker.overwrite_global_frontier_observed_for_test(cached_observed_entries);
-                    let stored_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let stored_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     worker.overwrite_global_frontier_observed_key_for_test(stored_key);
                     worker.frontier_state.frontier_observation_epoch = 67;
 
@@ -5407,7 +5495,11 @@ fn refresh_replaced_frontier_observation_entry_updates_cache_in_place() {
                     assert!(replaced_active_entries.insert_entry(new_entry_idx, 0));
                     worker.overwrite_global_active_entries_for_test(replaced_active_entries);
 
-                    let updated_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let updated_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     assert!(
                         worker
                             .cached_frontier_observed_entries(ScopeId::none(), false, updated_key)
@@ -5543,7 +5635,11 @@ fn refresh_removed_frontier_observation_entry_updates_cache_in_place() {
                         ),
                     );
                     worker.overwrite_global_frontier_observed_for_test(cached_observed_entries);
-                    let stored_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let stored_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     worker.overwrite_global_frontier_observed_key_for_test(stored_key);
                     worker.frontier_state.frontier_observation_epoch = 61;
 
@@ -5551,7 +5647,11 @@ fn refresh_removed_frontier_observation_entry_updates_cache_in_place() {
                         OfferEntryState::EMPTY;
                     assert!(worker.remove_global_active_entry_for_test(fake_entry_idx));
 
-                    let updated_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let updated_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     assert!(
                         worker
                             .cached_frontier_observed_entries(ScopeId::none(), false, updated_key)
@@ -5664,13 +5764,21 @@ fn scope_evidence_change_prewarms_relevant_frontier_observation_cache() {
                     worker.overwrite_global_frontier_observed_for_test(
                         observed_entries_with_route_entries(current_idx, fake_entry_idx),
                     );
-                    let stored_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let stored_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     worker.overwrite_global_frontier_observed_key_for_test(stored_key);
                     worker.frontier_state.frontier_observation_epoch = 41;
 
                     worker.mark_scope_ready_arm(current_scope, 0);
 
-                    let warmed_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let warmed_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     assert!(
                         worker
                             .cached_frontier_observed_entries(ScopeId::none(), false, warmed_key)
@@ -5783,7 +5891,11 @@ fn binding_inbox_change_prewarms_relevant_frontier_observation_cache() {
                     worker.overwrite_global_frontier_observed_for_test(
                         observed_entries_with_route_entries(current_idx, fake_entry_idx),
                     );
-                    let stored_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let stored_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     worker.overwrite_global_frontier_observed_key_for_test(stored_key);
                     worker.frontier_state.frontier_observation_epoch = 43;
 
@@ -5797,7 +5909,11 @@ fn binding_inbox_change_prewarms_relevant_frontier_observation_cache() {
                         },
                     );
 
-                    let warmed_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let warmed_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     assert!(
                         worker
                             .cached_frontier_observed_entries(ScopeId::none(), false, warmed_key,)
@@ -5880,7 +5996,11 @@ fn cached_frontier_changed_entry_slot_mask_ignores_non_representative_route_lane
                     worker.overwrite_global_active_entries_for_test(active_entries);
 
                     let cached_key = worker.frontier_scratch_view().working_observation_key_from(
-                        worker.frontier_observation_key(ScopeId::none(), false),
+                        RouteFrontierMachine::frontier_observation_key(
+                            &worker,
+                            ScopeId::none(),
+                            false,
+                        ),
                     );
                     let mut observation_key = cached_key;
                     observation_key.slot_mut(1).route_change_epoch =
@@ -5965,7 +6085,11 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
                     assert!(active_entries.insert_entry(current_idx, 0));
                     assert!(active_entries.insert_entry(fake_entry_idx, 1));
                     worker.overwrite_global_active_entries_for_test(active_entries);
-                    let cached_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let cached_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
                     let cached_observed_entries =
                         observed_entries_with_ready_current(current_idx, fake_entry_idx);
 
@@ -5976,7 +6100,11 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
                         has_fin: false,
                     };
                     assert!(worker.binding_inbox.push_back(1, buffered));
-                    let observation_key = worker.frontier_observation_key(ScopeId::none(), false);
+                    let observation_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
 
                     let refreshed = worker
                         .refresh_frontier_observed_entries_from_cache(

@@ -62,11 +62,11 @@ type InnerRightHead = PolicySteps<
     >,
     INNER_ROUTE_POLICY_ID,
 >;
-type InnerLeftSteps =
+type InnerLeftArmSteps =
     SeqSteps<InnerLeftHead, StepCons<SendStep<Role<0>, Role<1>, Msg<7, u32>>, StepNil>>;
-type InnerRightSteps =
+type InnerRightArmSteps =
     SeqSteps<InnerRightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<8, u32>>, StepNil>>;
-type InnerRouteSteps = RouteSteps<InnerLeftSteps, InnerRightSteps>;
+type InnerRouteProgramSteps = RouteSteps<InnerLeftArmSteps, InnerRightArmSteps>;
 type OuterLeftHead = PolicySteps<
     StepCons<
         SendStep<
@@ -93,13 +93,13 @@ type OuterRightHead = PolicySteps<
     >,
     OUTER_ROUTE_POLICY_ID,
 >;
-type OuterLeftSteps = SeqSteps<
+type OuterLeftArmSteps = SeqSteps<
     OuterLeftHead,
-    SeqSteps<StepCons<SendStep<Role<0>, Role<1>, Msg<5, u32>>, StepNil>, InnerRouteSteps>,
+    SeqSteps<StepCons<SendStep<Role<0>, Role<1>, Msg<5, u32>>, StepNil>, InnerRouteProgramSteps>,
 >;
-type OuterRightSteps =
+type OuterRightArmSteps =
     SeqSteps<OuterRightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<6, u32>>, StepNil>>;
-type ProgramSteps = RouteSteps<OuterLeftSteps, OuterRightSteps>;
+type ProgramSteps = RouteSteps<OuterLeftArmSteps, OuterRightArmSteps>;
 
 // CanonicalControl requires self-send (From == To)
 const OUTER_ROUTE_POLICY_ID: u16 = 310;
@@ -148,7 +148,7 @@ fn register_route_resolvers<const MAX_RV: usize>(
         .expect("register inner route resolver");
 }
 
-const INNER_ROUTE: g::Program<InnerRouteSteps> = g::route(
+const INNER_ROUTE: g::Program<InnerRouteProgramSteps> = g::route(
     g::seq(
         g::send::<
             Role<0>,
@@ -175,7 +175,7 @@ const INNER_ROUTE: g::Program<InnerRouteSteps> = g::route(
     ),
 );
 
-const OUTER_LEFT: g::Program<OuterLeftSteps> = g::seq(
+const OUTER_LEFT: g::Program<OuterLeftArmSteps> = g::seq(
     g::send::<
         Role<0>,
         Role<0>,
@@ -190,7 +190,7 @@ const OUTER_LEFT: g::Program<OuterLeftSteps> = g::seq(
     g::seq(g::send::<Role<0>, Role<1>, Msg<5, u32>, 0>(), INNER_ROUTE),
 );
 
-const OUTER_RIGHT: g::Program<OuterRightSteps> = g::seq(
+const OUTER_RIGHT: g::Program<OuterRightArmSteps> = g::seq(
     g::send::<
         Role<0>,
         Role<0>,

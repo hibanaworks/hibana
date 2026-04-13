@@ -21,6 +21,8 @@ use super::{
     tables::{CheckpointTable, GenTable, LoopTable, PolicyTable, RouteTable, VmCapsTable},
 };
 #[cfg(test)]
+use crate::global::typestate::RoleCompileScratch;
+#[cfg(test)]
 use crate::runtime::consts::LANES_MAX;
 use crate::{
     control::{
@@ -40,9 +42,10 @@ use crate::{
     eff::EffIndex,
     endpoint::affine::LaneGuard,
     epf::host::HostSlots,
-    global::compiled::{CompiledProgramImage, CompiledRoleImage, LoweringSummary, ProgramStamp},
+    global::compiled::{
+        CompiledProgramImage, CompiledRoleImage, LoweringSummary, ProgramStamp, RoleLoweringScratch,
+    },
     global::const_dsl::{ControlScopeKind, PolicyMode},
-    global::typestate::RoleCompileScratch,
     observe::core::{TapEvent, TapRing, emit},
     observe::{
         events::{DelegBegin, DelegSplice, LaneRelease, RawEvent, RollbackOk},
@@ -1525,10 +1528,10 @@ where
         insert_idx: usize,
         stamp: ProgramStamp,
         summary: &LoweringSummary,
-        scratch: &mut RoleCompileScratch,
-        layout: crate::global::role_program::RoleImageLayoutInput,
+        scratch: &mut RoleLoweringScratch<'_>,
+        footprint: crate::global::role_program::RoleFootprint,
     ) -> Option<*const CompiledRoleImage> {
-        let bytes = CompiledRoleImage::persistent_bytes_for_program(layout);
+        let bytes = CompiledRoleImage::persistent_bytes_for_program(footprint);
         let (ptr, offset) = unsafe {
             self.allocate_persistent_image_bytes(bytes, CompiledRoleImage::persistent_align())
         }?;
@@ -1537,7 +1540,7 @@ where
                 ptr.cast::<CompiledRoleImage>(),
                 summary,
                 scratch,
-                layout,
+                footprint,
             );
         }
         let reserved = Self::frontier_scratch_guard_bytes(unsafe {
@@ -1586,8 +1589,8 @@ where
         &mut self,
         stamp: ProgramStamp,
         summary: &LoweringSummary,
-        scratch: &mut RoleCompileScratch,
-        layout: crate::global::role_program::RoleImageLayoutInput,
+        scratch: &mut RoleLoweringScratch<'_>,
+        footprint: crate::global::role_program::RoleFootprint,
     ) -> Option<*const CompiledRoleImage> {
         if let Some(idx) = self.role_image_slot_index::<ROLE>(stamp) {
             let slot = unsafe { &*self.role_images.add(idx) };
@@ -1596,13 +1599,13 @@ where
         let Some(insert_idx) = self.first_free_role_image_slot() else {
             return unsafe {
                 self.recycle_role_image_from_summary_for_program::<ROLE>(
-                    stamp, summary, scratch, layout,
+                    stamp, summary, scratch, footprint,
                 )
             };
         };
         unsafe {
             self.materialize_new_role_image_from_summary_for_program::<ROLE>(
-                insert_idx, stamp, summary, scratch, layout,
+                insert_idx, stamp, summary, scratch, footprint,
             )
         }
     }
@@ -1694,10 +1697,10 @@ where
         &mut self,
         stamp: ProgramStamp,
         summary: &LoweringSummary,
-        scratch: &mut RoleCompileScratch,
-        layout: crate::global::role_program::RoleImageLayoutInput,
+        scratch: &mut RoleLoweringScratch<'_>,
+        footprint: crate::global::role_program::RoleFootprint,
     ) -> Option<*const CompiledRoleImage> {
-        let bytes = CompiledRoleImage::persistent_bytes_for_program(layout);
+        let bytes = CompiledRoleImage::persistent_bytes_for_program(footprint);
         if let Some(insert_idx) = self.first_reusable_role_image_slot(bytes) {
             let slot = unsafe { &mut *self.role_images.add(insert_idx) };
             let ptr = unsafe {
@@ -1708,7 +1711,7 @@ where
             };
             unsafe {
                 crate::global::compiled::init_compiled_role_image_from_summary::<ROLE>(
-                    ptr, summary, scratch, layout,
+                    ptr, summary, scratch, footprint,
                 );
             }
             let reserved =
@@ -1747,7 +1750,7 @@ where
                 ptr.cast::<CompiledRoleImage>(),
                 summary,
                 scratch,
-                layout,
+                footprint,
             );
         }
         let reserved = Self::frontier_scratch_guard_bytes(unsafe {
@@ -2587,12 +2590,14 @@ where
 {
     const IMAGE_BANK_EXPANSION_TAIL_FLOOR: usize = 4 * 1024;
     const PUBLIC_ENDPOINT_ATTACH_TAIL_FLOOR: usize = {
-        let arena_layout = crate::endpoint::kernel::EndpointArenaLayout::new(
-            crate::global::role_program::MAX_LANES,
-            crate::global::role_program::MAX_LANES,
-            crate::endpoint::kernel::MAX_ROUTE_ARM_STACK,
-            crate::eff::meta::MAX_EFF_NODES,
-            crate::global::role_program::MAX_LANES,
+        let arena_layout = crate::endpoint::kernel::EndpointArenaLayout::from_footprint(
+            crate::global::role_program::RoleFootprint::for_endpoint_layout(
+                crate::global::role_program::MAX_LANES,
+                crate::global::role_program::MAX_LANES,
+                crate::endpoint::kernel::MAX_ROUTE_ARM_STACK,
+                crate::eff::meta::MAX_EFF_NODES,
+                crate::global::role_program::MAX_LANES,
+            ),
         );
         crate::endpoint::kernel::cursor_endpoint_storage_layout::<
             0,

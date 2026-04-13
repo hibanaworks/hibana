@@ -15,6 +15,8 @@ mod facts;
 mod registry;
 mod route_facts;
 
+#[cfg(test)]
+pub(crate) use self::emit::RoleCompileScratch;
 pub use self::facts::StateIndex;
 pub(crate) use self::registry::{RouteScopeRecord, ScopeRecord};
 #[cfg(test)]
@@ -23,9 +25,8 @@ pub(crate) use self::{builder::RoleTypestate, emit::phase_route_guard_for_built_
 pub(crate) use self::{
     builder::{ARM_SHARED, MAX_FIRST_RECV_DISPATCH, RoleTypestateValue, ScopeRegion},
     cursor::{LoopMetadata, LoopRole, PhaseCursor, PhaseCursorState},
-    emit::{
-        RoleCompileScratch, init_value_from_summary_for_role, phase_route_guard_for_state_for_role,
-    },
+    emit::{init_value_from_summary_for_role, phase_route_guard_for_state_for_role},
+    emit_walk::RoleTypestateBuildScratch,
     facts::{
         JumpError, JumpReason, LocalAction, LocalMeta, LocalNode, MAX_STATES, PassiveArmNavigation,
         RecvMeta, SendMeta, as_eff_index, as_state_index, state_index_to_usize,

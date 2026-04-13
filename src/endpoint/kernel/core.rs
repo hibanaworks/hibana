@@ -4967,7 +4967,7 @@ where
     }
 
     #[inline]
-    fn scope_loop_meta(
+    pub(super) fn scope_loop_meta(
         cursor: &PhaseCursor,
         semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
@@ -5006,7 +5006,7 @@ where
     }
 
     #[inline]
-    fn scope_label_meta(
+    pub(super) fn scope_label_meta(
         cursor: &PhaseCursor,
         semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
@@ -5092,7 +5092,9 @@ where
             let info = self.route_state.lane_offer_state(offer_lane_idx);
             if info.scope == scope_id {
                 let entry_idx = state_index_to_usize(info.entry);
-                if let Some(cached) = self.offer_entry_label_meta(scope_id, entry_idx) {
+                if let Some(cached) =
+                    RouteFrontierMachine::offer_entry_label_meta(self, scope_id, entry_idx)
+                {
                     return cached;
                 }
                 let loop_meta = Self::scope_loop_meta_at(
@@ -5116,7 +5118,9 @@ where
             } else {
                 state_index_to_usize(offer_entry)
             };
-            if let Some(cached) = self.offer_entry_label_meta(scope_id, entry_idx) {
+            if let Some(cached) =
+                RouteFrontierMachine::offer_entry_label_meta(self, scope_id, entry_idx)
+            {
                 return cached;
             }
             let loop_meta = Self::scope_loop_meta_at(
@@ -5289,10 +5293,9 @@ where
     }
 
     fn phase_guard_mismatch(&self) -> bool {
-        let Some(phase) = self.cursor.current_phase() else {
+        let Some(guard) = self.cursor.current_phase_route_guard() else {
             return false;
         };
-        let guard = phase.route_guard;
         if guard.is_empty() {
             return false;
         }
@@ -5303,11 +5306,7 @@ where
     }
 
     fn has_active_linger_route(&self) -> bool {
-        let phase_mask = self
-            .cursor
-            .current_phase()
-            .map(|phase| phase.lane_mask)
-            .unwrap_or(0);
+        let phase_mask = self.cursor.current_phase_lane_mask();
         ((self.route_state.lane_linger_mask | self.route_state.lane_offer_linger_mask) & phase_mask)
             != 0
     }

@@ -83,7 +83,7 @@ type ArmAMarkerHead = PolicySteps<
     >,
     ROUTE_POLICY_ID,
 >;
-type ArmASteps = SeqSteps<ArmAMarkerHead, ArmALoopSteps>;
+type RouteArmASteps = SeqSteps<ArmAMarkerHead, ArmALoopSteps>;
 type ArmBLoopContinueHead = PolicySteps<
     StepCons<
         SendStep<
@@ -132,8 +132,8 @@ type ArmBMarkerHead = PolicySteps<
     >,
     ROUTE_POLICY_ID,
 >;
-type ArmBSteps = SeqSteps<ArmBMarkerHead, ArmBLoopSteps>;
-type RouteProgramSteps = RouteSteps<ArmASteps, ArmBSteps>;
+type RouteArmBSteps = SeqSteps<ArmBMarkerHead, ArmBLoopSteps>;
+type RouteProgramSteps = RouteSteps<RouteArmASteps, RouteArmBSteps>;
 
 // Arm A: marker + loop
 const ARM_A_LOOP_BODY: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<1, ()>, 0>, StepNil>> =
@@ -166,7 +166,7 @@ const ARM_A_LOOP_BREAK: g::Program<ArmALoopBreakHead> = g::send::<
 
 const ARM_A_LOOP: g::Program<ArmALoopSteps> = g::route(ARM_A_LOOP_CONT, ARM_A_LOOP_BREAK);
 
-const ARM_A: g::Program<ArmASteps> = g::seq(
+const ARM_A: g::Program<RouteArmASteps> = g::seq(
     g::send::<
         Role<0>,
         Role<0>,
@@ -208,7 +208,7 @@ const ARM_B_LOOP_BREAK: g::Program<ArmBLoopBreakHead> = g::send::<
 
 const ARM_B_LOOP: g::Program<ArmBLoopSteps> = g::route(ARM_B_LOOP_CONT, ARM_B_LOOP_BREAK);
 
-const ARM_B: g::Program<ArmBSteps> = g::seq(
+const ARM_B: g::Program<RouteArmBSteps> = g::seq(
     g::send::<
         Role<0>,
         Role<0>,

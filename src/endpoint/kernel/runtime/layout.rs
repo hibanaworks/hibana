@@ -10,6 +10,7 @@ use super::frontier::{
 use super::frontier_state::FrontierState;
 use super::inbox::{BindingInbox, PackedIncomingClassification};
 use super::route_state::RouteState;
+use crate::global::role_program::RoleFootprint;
 use crate::global::typestate::PhaseCursorState;
 
 pub(super) struct LeasedState<T> {
@@ -70,10 +71,7 @@ impl EndpointArenaSection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct EndpointArenaLayout {
-    header_align: usize,
-    phase_cursor_state: EndpointArenaSection,
-    route_state: EndpointArenaSection,
+pub(crate) struct RouteFrontierArenaLayout {
     route_arm_stack: EndpointArenaSection,
     lane_offer_state_slots: EndpointArenaSection,
     frontier_state: EndpointArenaSection,
@@ -82,26 +80,29 @@ pub(crate) struct EndpointArenaLayout {
     frontier_root_observed_key_slots: EndpointArenaSection,
     #[cfg(test)]
     frontier_offer_entry_slots: EndpointArenaSection,
+    scope_evidence_slots: EndpointArenaSection,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct EndpointArenaLayout {
+    header_align: usize,
+    phase_cursor_state: EndpointArenaSection,
+    route_state: EndpointArenaSection,
+    frontier: RouteFrontierArenaLayout,
     binding_inbox: EndpointArenaSection,
     binding_slots: EndpointArenaSection,
     binding_len: EndpointArenaSection,
     binding_label_masks: EndpointArenaSection,
-    scope_evidence_slots: EndpointArenaSection,
     total_bytes: usize,
     total_align: usize,
 }
 
 impl EndpointArenaLayout {
     #[inline(always)]
-    pub(crate) const fn new(
-        active_lane_count: usize,
-        logical_lane_count: usize,
-        max_route_stack_depth: usize,
-        scope_evidence_count: usize,
-        frontier_entry_capacity: usize,
-    ) -> Self {
+    pub(crate) const fn from_footprint(footprint: RoleFootprint) -> Self {
         #[cfg(test)]
-        let offer_entry_capacity = max_usize(frontier_entry_capacity, TEST_FRONTIER_ENTRY_FLOOR);
+        let offer_entry_capacity =
+            max_usize(footprint.frontier_entry_count, TEST_FRONTIER_ENTRY_FLOOR);
         let mut offset = 0usize;
         let mut total_align = 1usize;
 
@@ -113,13 +114,17 @@ impl EndpointArenaLayout {
         offset = route_state.offset + route_state.bytes;
         total_align = max_usize(total_align, route_state.align);
 
-        let route_arm_stack =
-            Self::section_array::<RouteArmState>(offset, active_lane_count * max_route_stack_depth);
+        let route_arm_stack = Self::section_array::<RouteArmState>(
+            offset,
+            footprint
+                .active_lane_count
+                .saturating_mul(footprint.max_route_stack_depth),
+        );
         offset = route_arm_stack.offset + route_arm_stack.bytes;
         total_align = max_usize(total_align, route_arm_stack.align);
 
         let lane_offer_state_slots =
-            Self::section_array::<LaneOfferState>(offset, active_lane_count);
+            Self::section_array::<LaneOfferState>(offset, footprint.active_lane_count);
         offset = lane_offer_state_slots.offset + lane_offer_state_slots.bytes;
         total_align = max_usize(total_align, lane_offer_state_slots.align);
 
@@ -128,17 +133,17 @@ impl EndpointArenaLayout {
         total_align = max_usize(total_align, frontier_state.align);
 
         let frontier_root_rows =
-            Self::section_array::<RootFrontierState>(offset, active_lane_count);
+            Self::section_array::<RootFrontierState>(offset, footprint.active_lane_count);
         offset = frontier_root_rows.offset + frontier_root_rows.bytes;
         total_align = max_usize(total_align, frontier_root_rows.align);
 
         let frontier_root_active_slots =
-            Self::section_array::<ActiveEntrySlot>(offset, frontier_entry_capacity);
+            Self::section_array::<ActiveEntrySlot>(offset, footprint.frontier_entry_count);
         offset = frontier_root_active_slots.offset + frontier_root_active_slots.bytes;
         total_align = max_usize(total_align, frontier_root_active_slots.align);
 
         let frontier_root_observed_key_slots =
-            Self::section_array::<FrontierObservationSlot>(offset, frontier_entry_capacity);
+            Self::section_array::<FrontierObservationSlot>(offset, footprint.frontier_entry_count);
         offset = frontier_root_observed_key_slots.offset + frontier_root_observed_key_slots.bytes;
         total_align = max_usize(total_align, frontier_root_observed_key_slots.align);
 
@@ -158,21 +163,21 @@ impl EndpointArenaLayout {
 
         let binding_slots = Self::section_array::<PackedIncomingClassification>(
             offset,
-            logical_lane_count * BindingInbox::PER_LANE_CAPACITY,
+            footprint.logical_lane_count * BindingInbox::PER_LANE_CAPACITY,
         );
         offset = binding_slots.offset + binding_slots.bytes;
         total_align = max_usize(total_align, binding_slots.align);
 
-        let binding_len = Self::section_array::<u8>(offset, logical_lane_count);
+        let binding_len = Self::section_array::<u8>(offset, footprint.logical_lane_count);
         offset = binding_len.offset + binding_len.bytes;
         total_align = max_usize(total_align, binding_len.align);
 
-        let binding_label_masks = Self::section_array::<u128>(offset, logical_lane_count);
+        let binding_label_masks = Self::section_array::<u128>(offset, footprint.logical_lane_count);
         offset = binding_label_masks.offset + binding_label_masks.bytes;
         total_align = max_usize(total_align, binding_label_masks.align);
 
         let scope_evidence_slots =
-            Self::section_array::<ScopeEvidenceSlot>(offset, scope_evidence_count);
+            Self::section_array::<ScopeEvidenceSlot>(offset, footprint.scope_evidence_count);
         offset = scope_evidence_slots.offset + scope_evidence_slots.bytes;
         total_align = max_usize(total_align, scope_evidence_slots.align);
 
@@ -180,19 +185,21 @@ impl EndpointArenaLayout {
             header_align: total_align,
             phase_cursor_state,
             route_state,
-            route_arm_stack,
-            lane_offer_state_slots,
-            frontier_state,
-            frontier_root_rows,
-            frontier_root_active_slots,
-            frontier_root_observed_key_slots,
-            #[cfg(test)]
-            frontier_offer_entry_slots,
+            frontier: RouteFrontierArenaLayout {
+                route_arm_stack,
+                lane_offer_state_slots,
+                frontier_state,
+                frontier_root_rows,
+                frontier_root_active_slots,
+                frontier_root_observed_key_slots,
+                #[cfg(test)]
+                frontier_offer_entry_slots,
+                scope_evidence_slots,
+            },
             binding_inbox,
             binding_slots,
             binding_len,
             binding_label_masks,
-            scope_evidence_slots,
             total_bytes: offset,
             total_align,
         }
@@ -210,12 +217,12 @@ impl EndpointArenaLayout {
 
     #[inline(always)]
     pub(crate) const fn route_arm_stack(&self) -> EndpointArenaSection {
-        self.route_arm_stack
+        self.frontier.route_arm_stack
     }
 
     #[inline(always)]
     pub(crate) const fn lane_offer_state_slots(&self) -> EndpointArenaSection {
-        self.lane_offer_state_slots
+        self.frontier.lane_offer_state_slots
     }
 
     #[inline(always)]
@@ -225,27 +232,27 @@ impl EndpointArenaLayout {
 
     #[inline(always)]
     pub(crate) const fn frontier_state(&self) -> EndpointArenaSection {
-        self.frontier_state
+        self.frontier.frontier_state
     }
 
     pub(crate) const fn frontier_root_rows(&self) -> EndpointArenaSection {
-        self.frontier_root_rows
+        self.frontier.frontier_root_rows
     }
 
     #[inline(always)]
     pub(crate) const fn frontier_root_active_slots(&self) -> EndpointArenaSection {
-        self.frontier_root_active_slots
+        self.frontier.frontier_root_active_slots
     }
 
     #[inline(always)]
     pub(crate) const fn frontier_root_observed_key_slots(&self) -> EndpointArenaSection {
-        self.frontier_root_observed_key_slots
+        self.frontier.frontier_root_observed_key_slots
     }
 
     #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn frontier_offer_entry_slots(&self) -> EndpointArenaSection {
-        self.frontier_offer_entry_slots
+        self.frontier.frontier_offer_entry_slots
     }
 
     #[inline(always)]
@@ -270,7 +277,7 @@ impl EndpointArenaLayout {
 
     #[inline(always)]
     pub(crate) const fn scope_evidence_slots(&self) -> EndpointArenaSection {
-        self.scope_evidence_slots
+        self.frontier.scope_evidence_slots
     }
 
     #[inline(always)]
@@ -325,10 +332,12 @@ const fn align_up(value: usize, align: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::EndpointArenaLayout;
+    use crate::global::role_program::RoleFootprint;
 
     #[test]
     fn root_frontier_shared_pools_track_max_frontier_entries() {
-        let layout = EndpointArenaLayout::new(3, 3, 2, 4, 5);
+        let layout =
+            EndpointArenaLayout::from_footprint(RoleFootprint::for_endpoint_layout(3, 3, 2, 4, 5));
         assert_eq!(layout.frontier_root_rows().count(), 3);
         assert_eq!(layout.frontier_root_active_slots().count(), 5);
         assert_eq!(layout.frontier_root_observed_key_slots().count(), 5);

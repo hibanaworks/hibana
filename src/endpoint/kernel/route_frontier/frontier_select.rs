@@ -105,47 +105,6 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_label_meta(
-        &self,
-        scope_id: ScopeId,
-        entry_idx: usize,
-    ) -> Option<ScopeLabelMeta> {
-        let state = self.offer_entry_state_snapshot(entry_idx)?;
-        if state.active_mask == 0 || self.offer_entry_scope_id(entry_idx, state) != scope_id {
-            return None;
-        }
-        if let Some(info) = self.offer_entry_lane_state(scope_id, entry_idx) {
-            let representative_idx = state_index_to_usize(info.entry);
-            let loop_meta = Self::scope_loop_meta_at(
-                &self.cursor,
-                &self.control_semantics(),
-                scope_id,
-                representative_idx,
-            );
-            return Some(Self::scope_label_meta_at(
-                &self.cursor,
-                &self.control_semantics(),
-                scope_id,
-                loop_meta,
-                representative_idx,
-            ));
-        }
-        let loop_meta = Self::scope_loop_meta(&self.cursor, &self.control_semantics(), scope_id);
-        #[cfg(test)]
-        {
-            if !state.label_meta.scope_id().is_none() {
-                return Some(state.label_meta);
-            }
-        }
-        Some(Self::scope_label_meta(
-            &self.cursor,
-            &self.control_semantics(),
-            scope_id,
-            loop_meta,
-        ))
-    }
-
-    #[inline]
     pub(in crate::endpoint::kernel) fn offer_entry_materialization_meta(
         &self,
         scope_id: ScopeId,
@@ -820,8 +779,11 @@ where
                 return Ok(());
             }
         }
-        let observation_key =
-            self.frontier_observation_key(current_parallel_root, use_root_observed_entries);
+        let observation_key = RouteFrontierMachine::frontier_observation_key(
+            self,
+            current_parallel_root,
+            use_root_observed_entries,
+        );
         let mut observed_entries = if use_root_observed_entries {
             self.root_frontier_observed_entries(current_parallel_root)
         } else {
@@ -833,7 +795,8 @@ where
             observation_key,
         );
         if cached_entries.is_none() && observed_entries.len() != 0 {
-            self.refresh_frontier_observation_cache(
+            RouteFrontierMachine::refresh_frontier_observation_cache(
+                self,
                 current_parallel_root,
                 use_root_observed_entries,
             );

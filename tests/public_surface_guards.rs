@@ -1286,11 +1286,10 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
         "pub len: u16,",
         "pub(crate) struct Phase {",
         "pub min_start: u16,",
-        "pub(crate) struct ProgramLayoutFacts {",
-        "pub(crate) struct RoleLayoutFacts {",
-        "pub(crate) struct RoleImageLayoutInput {",
-        "pub(crate) program: ProgramLayoutFacts,",
-        "pub(crate) role: RoleLayoutFacts,",
+        "pub(crate) struct RoleFootprint {",
+        "pub(crate) scope_count: usize,",
+        "pub(crate) frontier_entry_count: usize,",
+        "pub(crate) const fn for_endpoint_layout(",
         "pub(crate) struct ProjectedRoleLayout {",
         "local_steps: [LocalStep; MAX_STEPS],",
         "phases: [Phase; MAX_PHASES],",
@@ -1341,6 +1340,9 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
         "self.typestate()\n            .first_recv_dispatch_target_for_label(scope_id, label)",
         "self.typestate()\n            .controller_arm_entry_for_label(scope_id, label)",
         "self.typestate().controller_arm_entry_by_arm(scope_id, arm)",
+        "struct PhaseImageHeader {",
+        "struct PhaseLaneEntry {",
+        "phase_lane_entry_len: u16,",
     ] {
         assert!(
             compiled_role_src.contains(required) || cursor_src.contains(required),
@@ -1351,7 +1353,8 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
     assert!(
         compiled_role_ws.contains(&compact_ws(
             "pub(crate) struct CompiledRoleImage {
-                phases: *const Phase,
+                phase_headers: *const PhaseImageHeader,
+                phase_lane_entries: *const PhaseLaneEntry,
                 typestate: *const RoleTypestateValue,
                 eff_index_to_step: *const u16,
                 step_index_to_state: *const StateIndex,
@@ -1363,12 +1366,21 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
     );
     assert!(
         role_program_ws.contains(&compact_ws(
-            "pub(crate) struct RoleImageLayoutInput {
-                pub(crate) program: ProgramLayoutFacts,
-                pub(crate) role: RoleLayoutFacts,
+            "pub(crate) struct RoleFootprint {
+                pub(crate) scope_count: usize,
+                pub(crate) eff_count: usize,
+                pub(crate) parallel_enter_count: usize,
+                pub(crate) route_scope_count: usize,
+                pub(crate) local_step_count: usize,
+                pub(crate) passive_linger_route_scope_count: usize,
+                pub(crate) active_lane_count: usize,
+                pub(crate) logical_lane_count: usize,
+                pub(crate) max_route_stack_depth: usize,
+                pub(crate) scope_evidence_count: usize,
+                pub(crate) frontier_entry_count: usize,
             }"
         )),
-        "role image layout input should stay split into shared program facts and compact role facts"
+        "role footprint should stay a single crate-private exact sizing owner"
     );
     assert!(
         !compiled_role_ws.contains(&compact_ws(
@@ -1378,10 +1390,64 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
                 eff_index_to_step: *const u16,
                 step_index_to_state: *const StateIndex,
                 role: u8,
-                active_lane_mask_bits: u8,"
+                role_facts: RoleResidentFacts,
+            }"
         )),
-        "compiled role image header must not regress to flat role-local scalar fields"
+        "compiled role image header must not regress to a whole-phase array pointer"
     );
+}
+
+#[test]
+fn exact_layout_owners_stay_footprint_backed() {
+    let role_program_src = include_str!("../src/global/role_program.rs");
+    let compiled_role_src = include_str!("../src/global/compiled/images/role.rs");
+    let layout_src = include_str!("../src/endpoint/kernel/runtime/layout.rs");
+    let cluster_core_src = include_str!("../src/control/cluster/core.rs");
+    let rendezvous_core_src = include_str!("../src/rendezvous/core.rs");
+
+    for required in [
+        "pub(crate) struct RoleFootprint {",
+        "pub(crate) const fn for_endpoint_layout(",
+        "pub(crate) const fn footprint(&self) -> RoleFootprint {",
+        "fn endpoint_layout_footprint(",
+        "pub(crate) struct RouteFrontierArenaLayout {",
+        "pub(crate) const fn from_footprint(footprint: RoleFootprint) -> Self {",
+        "struct PhaseImageHeader {",
+        "struct PhaseLaneEntry {",
+    ] {
+        assert!(
+            role_program_src.contains(required)
+                || compiled_role_src.contains(required)
+                || layout_src.contains(required),
+            "exact runtime layout should stay footprint-backed: {required}"
+        );
+    }
+
+    for required in [
+        "EndpointArenaLayout::from_footprint(",
+        "RoleFootprint::for_endpoint_layout(",
+    ] {
+        assert!(
+            cluster_core_src.contains(required) || rendezvous_core_src.contains(required),
+            "cluster and rendezvous owners must construct endpoint arena layout from RoleFootprint: {required}"
+        );
+    }
+
+    for forbidden in [
+        "RoleImageLayoutInput",
+        "ProgramLayoutFacts",
+        "RoleLayoutFacts",
+        "EndpointArenaLayout::new(",
+    ] {
+        assert!(
+            !role_program_src.contains(forbidden)
+                && !compiled_role_src.contains(forbidden)
+                && !layout_src.contains(forbidden)
+                && !cluster_core_src.contains(forbidden)
+                && !rendezvous_core_src.contains(forbidden),
+            "legacy exact-layout owners must stay deleted: {forbidden}"
+        );
+    }
 }
 
 #[test]
@@ -4209,8 +4275,19 @@ fn endpoint_kernel_owner_split_stays_explicit() {
     );
     for required in [
         "struct RouteFrontierMachine<",
+        "fn record_scope_ack(",
+        "fn mark_scope_ready_arm(",
+        "fn mark_scope_ready_arm_from_label(",
+        "fn mark_scope_ready_arm_from_binding_label(",
+        "fn mark_static_passive_descendant_path_ready(",
         "fn commit_pending_branch_preview(",
         "fn commit_branch_preview(",
+        "fn offer_entry_label_meta(",
+        "fn offer_refresh_mask(",
+        "fn frontier_observation_lane_mask(",
+        "fn frontier_observation_offer_lane_entry_slot_masks(",
+        "fn frontier_observation_key(",
+        "fn working_frontier_observation_cache(",
         "fn ingest_binding_scope_evidence(",
         "fn ingest_scope_evidence_for_offer(",
         "fn recover_scope_evidence_conflict(",
@@ -4255,6 +4332,19 @@ fn endpoint_kernel_owner_split_stays_explicit() {
             "offer.rs must remain the canonical owner for offer-path orchestration state: {required}"
         );
     }
+    for forbidden in [
+        "fn offer_entry_label_meta(&self,",
+        "fn offer_refresh_mask(&self)",
+        "fn frontier_observation_lane_mask(&self,",
+        "fn frontier_observation_offer_lane_entry_slot_masks(&self,",
+        "fn frontier_observation_key(&self,",
+        "fn refresh_frontier_observation_cache(&mut self,",
+    ] {
+        assert!(
+            !offer_src.contains(forbidden),
+            "offer.rs must keep route-frontier helper ownership on RouteFrontierMachine: {forbidden}"
+        );
+    }
 
     for forbidden in [
         "fn record_scope_ack(",
@@ -4280,13 +4370,23 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         );
     }
 
-    for required in ["fn record_scope_ack("] {
+    for required in [
+        "fn scope_slot_for_route(",
+        "fn scope_evidence_generation_for_scope(",
+        "fn scope_ready_arm_mask(",
+        "fn static_passive_descendant_dispatch_arm_from_exact_label(",
+    ] {
         assert!(
             scope_evidence_logic_src.contains(required),
             "scope_evidence_logic.rs must remain the canonical owner for scope-evidence ingestion: {required}"
         );
     }
     for forbidden in [
+        "fn record_scope_ack(",
+        "fn mark_scope_ready_arm(",
+        "fn mark_scope_ready_arm_from_label(",
+        "fn mark_scope_ready_arm_from_binding_label(",
+        "fn mark_static_passive_descendant_path_ready(",
         "fn ingest_scope_evidence_for_offer(",
         "fn ingest_binding_scope_evidence(",
         "fn recover_scope_evidence_conflict(",
@@ -4306,7 +4406,8 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         );
     }
     for required in [
-        "fn frontier_observation_key(",
+        "fn frontier_observation_cache(",
+        "fn store_frontier_observation(",
         "fn cached_offer_entry_observed_state_for_rebuild(",
     ] {
         assert!(
@@ -4315,6 +4416,11 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         );
     }
     for forbidden in [
+        "fn frontier_observation_key(",
+        "fn working_frontier_observation_cache(",
+        "fn frontier_observation_lane_mask(",
+        "fn frontier_observation_offer_lane_entry_slot_masks(",
+        "fn offer_entry_label_meta(",
         "fn refresh_frontier_observation_cache(",
         "fn refresh_structural_frontier_observation_cache(",
         "fn refresh_permuted_frontier_observation_entries(",
@@ -4344,6 +4450,7 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         );
     }
     for required in [
+        "fn root_frontier_active_mask(",
         "fn compute_offer_entry_static_summary(",
         "fn compute_lane_offer_state(",
     ] {
@@ -4353,6 +4460,7 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         );
     }
     for forbidden in [
+        "fn offer_refresh_mask(",
         "fn refresh_offer_entry_state(",
         "fn detach_lane_from_offer_entry(",
         "fn attach_lane_to_offer_entry(",
@@ -4517,6 +4625,18 @@ fn phase_cursor_owns_private_machine_facts_without_cache_lease_backpointers() {
                 .contains("section_ptr::<crate::global::typestate::PhaseCursorState>(")
             && endpoint_init_src.contains("arena_layout.phase_cursor_state(),"),
         "PhaseCursor must keep shared machine facts in the header and mutable cursor state in the leased arena"
+    );
+    assert!(
+        cursor_src.contains("pub(crate) fn current_phase_lane_mask(&self) -> u8 {")
+            && cursor_src.contains(
+                "pub(crate) fn current_phase_route_guard(&self) -> Option<PhaseRouteGuard> {"
+            )
+            && cursor_src.contains(
+                "fn current_phase_lane_steps(&self, lane_idx: usize) -> Option<LaneSteps> {"
+            )
+            && !cursor_src.contains("pub(crate) fn current_phase(&self) -> Option<Phase> {")
+            && !cursor_src.contains("role_program::{MAX_LANES, Phase}"),
+        "PhaseCursor must consume exact phase image accessors instead of whole Phase values"
     );
     for forbidden in [
         "Arc<PhaseCursorMachine>",
@@ -5395,7 +5515,7 @@ fn advanced_steps_and_internal_hubs_stay_canonical() {
     for required in [
         "const LOAD_BEGIN: Program<",
         "pub const PROGRAM: Program<ProgramSteps> =",
-        "type LoopSegmentSteps = RouteSteps<",
+        "type LoadStreamLoopRoute = RouteSteps<",
         "LABEL_LOOP_CONTINUE,",
         "LABEL_LOOP_BREAK,",
         "LABEL_MGMT_LOAD_BEGIN,",

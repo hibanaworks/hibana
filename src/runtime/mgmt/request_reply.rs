@@ -180,8 +180,8 @@ const LOAD_FINAL_CHUNK_BODY: Program<LoadFinalChunkBody> = g::send::<
 const LOOP_BREAK_ARM: Program<LoopBreakArm> =
     Program::then(LOOP_BREAK_PREFIX, LOAD_FINAL_CHUNK_BODY);
 
-type LoopSegmentSteps = RouteSteps<LoopContinueArm, LoopBreakArm>;
-const LOOP_SEGMENT: Program<LoopSegmentSteps> = g::route(LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
+type LoadStreamLoopRoute = RouteSteps<LoopContinueArm, LoopBreakArm>;
+const LOOP_SEGMENT: Program<LoadStreamLoopRoute> = g::route(LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
 
 type LoadCommitBody = ControllerControlSend<
     LABEL_MGMT_LOAD_COMMIT,
@@ -200,7 +200,7 @@ const LOAD_COMMIT_BODY: Program<LoadCommitBody> = g::send::<
     0,
 >();
 
-type LoadStreamBody = SeqSteps<SeqSteps<LoadBeginTokenBody, LoopSegmentSteps>, LoadCommitBody>;
+type LoadStreamBody = SeqSteps<SeqSteps<LoadBeginTokenBody, LoadStreamLoopRoute>, LoadCommitBody>;
 type LoadRequestBody = SeqSteps<ControllerSend<LABEL_MGMT_STAGE, LoadBegin>, LoadStreamBody>;
 type LoadRequestArm = SeqSteps<
     ControllerPolicyHead<LABEL_MGMT_ROUTE_LOAD, MgmtRouteLoadKind, REQUEST_LOAD_POLICY_ID>,

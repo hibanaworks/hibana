@@ -5,7 +5,9 @@ use super::core::{CursorEndpoint, RouteBranch};
 use super::evidence::ScopeLabelMeta;
 use super::frontier::{
     ActiveEntrySet, FrontierKind, FrontierObservationKey, FrontierObservationSlot, LaneOfferState,
-    ObservedEntrySet, checked_state_index,
+    ObservedEntrySet, OfferLaneEntrySlotMasks, checked_state_index,
+    frontier_observation_key_view_from_storage, frontier_observed_entries_view_from_storage,
+    frontier_working_observation_key_view_from_storage,
 };
 #[cfg(test)]
 use super::frontier::{FrontierCandidate, OfferEntryState};
@@ -19,6 +21,7 @@ use crate::global::role_program::MAX_LANES;
 use crate::global::typestate::{
     ARM_SHARED, MAX_FIRST_RECV_DISPATCH, RecvMeta, StateIndex, state_index_to_usize,
 };
+use crate::rendezvous::port::Port;
 use crate::runtime::{config::Clock, consts::LabelUniverse};
 use crate::transport::Transport;
 
@@ -391,7 +394,7 @@ pub(crate) enum BranchKind {
     EmptyArmTerminal,
 }
 
-struct RouteFrontierMachine<
+pub(super) struct RouteFrontierMachine<
     'endpoint,
     'r,
     const ROLE: u8,
@@ -428,6 +431,202 @@ where
     }
 
     #[inline]
+    pub(in crate::endpoint::kernel) fn offer_entry_label_meta(
+        endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        scope_id: ScopeId,
+        entry_idx: usize,
+    ) -> Option<ScopeLabelMeta> {
+        let state = endpoint.offer_entry_state_snapshot(entry_idx)?;
+        if state.active_mask == 0 || endpoint.offer_entry_scope_id(entry_idx, state) != scope_id {
+            return None;
+        }
+        if let Some(info) = endpoint.offer_entry_lane_state(scope_id, entry_idx) {
+            let representative_idx = state_index_to_usize(info.entry);
+            let loop_meta = CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_loop_meta_at(
+                &endpoint.cursor,
+                &endpoint.control_semantics(),
+                scope_id,
+                representative_idx,
+            );
+            return Some(
+                CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_label_meta_at(
+                    &endpoint.cursor,
+                    &endpoint.control_semantics(),
+                    scope_id,
+                    loop_meta,
+                    representative_idx,
+                ),
+            );
+        }
+        let loop_meta = CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_loop_meta(
+            &endpoint.cursor,
+            &endpoint.control_semantics(),
+            scope_id,
+        );
+        #[cfg(test)]
+        {
+            if !state.label_meta.scope_id().is_none() {
+                return Some(state.label_meta);
+            }
+        }
+        Some(
+            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_label_meta(
+                &endpoint.cursor,
+                &endpoint.control_semantics(),
+                scope_id,
+                loop_meta,
+            ),
+        )
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn offer_refresh_mask(
+        endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    ) -> u8 {
+        endpoint.cursor.current_phase_lane_mask()
+            | endpoint.route_state.lane_linger_mask
+            | endpoint.route_state.lane_offer_linger_mask
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn frontier_observation_lane_mask(
+        endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        current_parallel_root: ScopeId,
+        use_root_observed_entries: bool,
+    ) -> u8 {
+        if use_root_observed_entries {
+            endpoint.root_frontier_offer_lane_mask(current_parallel_root)
+        } else {
+            endpoint.offer_lane_mask_for_active_entries(endpoint.global_active_entries())
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn frontier_observation_offer_lane_entry_slot_masks(
+        endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        current_parallel_root: ScopeId,
+        use_root_observed_entries: bool,
+    ) -> OfferLaneEntrySlotMasks {
+        let active_entries = if use_root_observed_entries {
+            endpoint.root_frontier_active_entries(current_parallel_root)
+        } else {
+            endpoint.global_active_entries()
+        };
+        let mut slot_masks = OfferLaneEntrySlotMasks::EMPTY;
+        let mut remaining_slots = active_entries.occupancy_mask();
+        while let Some(slot_idx) =
+            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::next_lane_in_mask(
+                &mut remaining_slots,
+            )
+        {
+            let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
+                continue;
+            };
+            let Some(state) = endpoint.offer_entry_state_snapshot(entry_idx) else {
+                continue;
+            };
+            if state.active_mask == 0 {
+                continue;
+            }
+            let mut lane_mask = endpoint.offer_entry_offer_lane_mask(entry_idx, state);
+            while let Some(lane_idx) =
+                CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::next_lane_in_mask(
+                    &mut lane_mask,
+                )
+            {
+                slot_masks.set_logical_mask(lane_idx, slot_masks[lane_idx] | (1u8 << slot_idx));
+            }
+        }
+        slot_masks
+    }
+
+    pub(in crate::endpoint::kernel) fn frontier_observation_key(
+        endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        current_parallel_root: ScopeId,
+        use_root_observed_entries: bool,
+    ) -> FrontierObservationKey {
+        let active_entries = if use_root_observed_entries {
+            endpoint.root_frontier_active_entries(current_parallel_root)
+        } else {
+            endpoint.global_active_entries()
+        };
+        let offer_lane_mask = Self::frontier_observation_lane_mask(
+            endpoint,
+            current_parallel_root,
+            use_root_observed_entries,
+        );
+        let port = endpoint.port_for_lane(endpoint.primary_lane);
+        let scratch_ptr = lane_port::frontier_scratch_ptr(port);
+        let layout = endpoint.cursor.frontier_scratch_layout();
+        let mut key = frontier_observation_key_view_from_storage(
+            scratch_ptr,
+            layout,
+            endpoint.cursor.max_frontier_entries(),
+        );
+        key.clear();
+        key.set_active_entries_from(active_entries);
+        let mut remaining_entries = active_entries.occupancy_mask();
+        while let Some(slot_idx) =
+            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::next_lane_in_mask(
+                &mut remaining_entries,
+            )
+        {
+            let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
+                continue;
+            };
+            let Some(entry_state) = endpoint.offer_entry_state_snapshot(entry_idx) else {
+                continue;
+            };
+            let summary =
+                endpoint.compute_offer_entry_static_summary(entry_state.active_mask, entry_idx);
+            let slot = key.slot_mut(slot_idx);
+            slot.entry_summary_fingerprint = summary.observation_fingerprint();
+            slot.scope_generation = endpoint.scope_evidence_generation_for_scope(
+                endpoint.offer_entry_scope_id(entry_idx, entry_state),
+            );
+        }
+        let mut remaining_entries = active_entries.occupancy_mask();
+        while let Some(slot_idx) =
+            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::next_lane_in_mask(
+                &mut remaining_entries,
+            )
+        {
+            let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
+                continue;
+            };
+            let Some(entry_state) = endpoint.offer_entry_state_snapshot(entry_idx) else {
+                continue;
+            };
+            let Some(lane_idx) =
+                endpoint.offer_entry_representative_lane_idx(entry_idx, entry_state)
+            else {
+                continue;
+            };
+            key.slot_mut(slot_idx).route_change_epoch = endpoint
+                .ports
+                .get(lane_idx)
+                .and_then(Option::as_ref)
+                .map(Port::route_change_epoch)
+                .unwrap_or(0);
+        }
+        key.offer_lane_mask = offer_lane_mask;
+        key.binding_nonempty_mask = endpoint.binding_inbox.nonempty_mask & offer_lane_mask;
+        key
+    }
+
+    pub(in crate::endpoint::kernel) fn refresh_frontier_observation_cache(
+        endpoint: &'endpoint mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        current_parallel_root: ScopeId,
+        use_root_observed_entries: bool,
+    ) {
+        let mut machine = Self { endpoint };
+        machine.refresh_frontier_observation_cache_impl(
+            current_parallel_root,
+            use_root_observed_entries,
+        )
+    }
+
+    #[inline]
     fn take_pending_branch_preview(
         &mut self,
     ) -> Option<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
@@ -440,6 +639,121 @@ where
     }
 
     #[inline]
+    fn record_scope_ack(&mut self, scope_id: ScopeId, token: RouteDecisionToken) {
+        if let Some(slot) = self.endpoint.scope_slot_for_route(scope_id)
+            && self
+                .endpoint
+                .route_state
+                .scope_evidence
+                .record_ack(slot, token)
+        {
+            self.endpoint
+                .bump_scope_evidence_generation_for_scope(scope_id, slot);
+        }
+    }
+
+    #[inline]
+    fn mark_scope_ready_arm(&mut self, scope_id: ScopeId, arm: u8) {
+        self.endpoint
+            .mark_scope_ready_arm_inner(scope_id, arm, true);
+    }
+
+    #[inline]
+    fn mark_scope_materialization_ready_arm(&mut self, scope_id: ScopeId, arm: u8) {
+        self.endpoint
+            .mark_scope_ready_arm_inner(scope_id, arm, false);
+    }
+
+    #[inline]
+    fn mark_scope_ready_arm_from_label(
+        &mut self,
+        scope_id: ScopeId,
+        label: u8,
+        label_meta: ScopeLabelMeta,
+    ) {
+        let exact_static_passive_arm = self
+            .endpoint
+            .static_passive_dispatch_arm_from_exact_label(scope_id, label, label_meta);
+        let arm = CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_evidence_label_to_arm(
+            label_meta, label,
+        )
+        .or(exact_static_passive_arm);
+        if let Some(arm) = arm {
+            if self
+                .endpoint
+                .loop_control_label_evidence_only(label_meta, label, arm)
+            {
+                return;
+            }
+            if self
+                .endpoint
+                .static_passive_scope_evidence_materializes_poll(scope_id)
+            {
+                self.mark_scope_ready_arm(scope_id, arm);
+            } else {
+                self.mark_scope_materialization_ready_arm(scope_id, arm);
+            }
+            if exact_static_passive_arm.is_some() {
+                self.mark_static_passive_descendant_path_ready(scope_id, label);
+            }
+        }
+    }
+
+    #[inline]
+    fn mark_scope_ready_arm_from_binding_label(
+        &mut self,
+        scope_id: ScopeId,
+        label: u8,
+        label_meta: ScopeLabelMeta,
+    ) {
+        let exact_static_passive_arm = self
+            .endpoint
+            .static_passive_dispatch_arm_from_exact_label(scope_id, label, label_meta);
+        let arm = CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::binding_scope_evidence_label_to_arm(
+            label_meta,
+            label,
+        )
+        .or(exact_static_passive_arm);
+        if let Some(arm) = arm {
+            if self
+                .endpoint
+                .loop_control_label_evidence_only(label_meta, label, arm)
+            {
+                return;
+            }
+            if self
+                .endpoint
+                .static_passive_scope_evidence_materializes_poll(scope_id)
+            {
+                self.mark_scope_ready_arm(scope_id, arm);
+            } else {
+                self.mark_scope_materialization_ready_arm(scope_id, arm);
+            }
+            if exact_static_passive_arm.is_some() {
+                self.mark_static_passive_descendant_path_ready(scope_id, label);
+            }
+        }
+    }
+
+    #[inline]
+    fn mark_static_passive_descendant_path_ready(&mut self, scope_id: ScopeId, label: u8) {
+        let Some(arm) = self
+            .endpoint
+            .static_passive_descendant_dispatch_arm_from_exact_label(scope_id, label)
+        else {
+            return;
+        };
+        self.mark_scope_ready_arm(scope_id, arm);
+        if self.endpoint.selected_arm_for_scope(scope_id).is_none() {
+            let lane = self.endpoint.offer_lane_for_scope(scope_id);
+            let _ = self.endpoint.set_route_arm(lane, scope_id, arm);
+        }
+        let Some(child_scope) = self.endpoint.cursor.passive_arm_scope_by_arm(scope_id, arm) else {
+            return;
+        };
+        self.mark_static_passive_descendant_path_ready(child_scope, label);
+    }
+
     async fn resolve_token(
         &mut self,
         selection: OfferScopeSelection,
@@ -758,11 +1072,12 @@ where
         if entry_state.active_mask == 0 {
             return false;
         }
-        let observation_key = self
-            .endpoint
-            .frontier_observation_key(current_parallel_root, use_root_observed_entries);
+        let observation_key = Self::frontier_observation_key(
+            self.endpoint,
+            current_parallel_root,
+            use_root_observed_entries,
+        );
         let (mut cached_key, mut cached_observed_entries) = self
-            .endpoint
             .working_frontier_observation_cache(current_parallel_root, use_root_observed_entries);
         if cached_key == FrontierObservationKey::EMPTY
             || !cached_key.exact_entries_match(active_entries)
@@ -804,6 +1119,34 @@ where
         true
     }
 
+    #[inline]
+    fn working_frontier_observation_cache(
+        &mut self,
+        current_parallel_root: ScopeId,
+        use_root_observed_entries: bool,
+    ) -> (FrontierObservationKey, ObservedEntrySet) {
+        let (cached_key, cached_observed_entries) = self
+            .endpoint
+            .frontier_observation_cache(current_parallel_root, use_root_observed_entries);
+        let port = self.endpoint.port_for_lane(self.endpoint.primary_lane);
+        let scratch_ptr = lane_port::frontier_scratch_ptr(port);
+        let layout = self.endpoint.cursor.frontier_scratch_layout();
+        let frontier_entry_capacity = self.endpoint.cursor.max_frontier_entries();
+        let mut key = frontier_working_observation_key_view_from_storage(
+            scratch_ptr,
+            layout,
+            frontier_entry_capacity,
+        );
+        key.copy_from(cached_key);
+        let mut observed = frontier_observed_entries_view_from_storage(
+            scratch_ptr,
+            layout,
+            frontier_entry_capacity,
+        );
+        observed.copy_from(cached_observed_entries);
+        (key, observed)
+    }
+
     fn refresh_shifted_frontier_observation_entry(
         &mut self,
         current_parallel_root: ScopeId,
@@ -816,11 +1159,12 @@ where
         } else {
             self.endpoint.global_active_entries()
         };
-        let observation_key = self
-            .endpoint
-            .frontier_observation_key(current_parallel_root, use_root_observed_entries);
+        let observation_key = Self::frontier_observation_key(
+            self.endpoint,
+            current_parallel_root,
+            use_root_observed_entries,
+        );
         let (mut cached_key, mut cached_observed_entries) = self
-            .endpoint
             .working_frontier_observation_cache(current_parallel_root, use_root_observed_entries);
         if cached_key == FrontierObservationKey::EMPTY
             || cached_key.offer_lane_mask != observation_key.offer_lane_mask
@@ -903,11 +1247,12 @@ where
         if entry_state.active_mask == 0 {
             return false;
         }
-        let observation_key = self
-            .endpoint
-            .frontier_observation_key(current_parallel_root, use_root_observed_entries);
+        let observation_key = Self::frontier_observation_key(
+            self.endpoint,
+            current_parallel_root,
+            use_root_observed_entries,
+        );
         let (mut cached_key, mut cached_observed_entries) = self
-            .endpoint
             .working_frontier_observation_cache(current_parallel_root, use_root_observed_entries);
         if cached_key == FrontierObservationKey::EMPTY {
             return false;
@@ -998,11 +1343,12 @@ where
         } else {
             self.endpoint.global_active_entries()
         };
-        let observation_key = self
-            .endpoint
-            .frontier_observation_key(current_parallel_root, use_root_observed_entries);
+        let observation_key = Self::frontier_observation_key(
+            self.endpoint,
+            current_parallel_root,
+            use_root_observed_entries,
+        );
         let (mut cached_key, mut cached_observed_entries) = self
-            .endpoint
             .working_frontier_observation_cache(current_parallel_root, use_root_observed_entries);
         if cached_key == FrontierObservationKey::EMPTY {
             return false;
@@ -1019,12 +1365,11 @@ where
         let changed_lane_mask = (cached_key.offer_lane_mask ^ observation_key.offer_lane_mask)
             | (cached_key.binding_nonempty_mask ^ observation_key.binding_nonempty_mask);
         if changed_lane_mask != 0 {
-            let slot_masks = self
-                .endpoint
-                .frontier_observation_offer_lane_entry_slot_masks(
-                    current_parallel_root,
-                    use_root_observed_entries,
-                );
+            let slot_masks = Self::frontier_observation_offer_lane_entry_slot_masks(
+                self.endpoint,
+                current_parallel_root,
+                use_root_observed_entries,
+            );
             let mut remaining_lanes = changed_lane_mask;
             while let Some(lane_idx) =
                 CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::next_lane_in_mask(
@@ -1074,11 +1419,12 @@ where
         } else {
             self.endpoint.global_active_entries()
         };
-        let observation_key = self
-            .endpoint
-            .frontier_observation_key(current_parallel_root, use_root_observed_entries);
+        let observation_key = Self::frontier_observation_key(
+            self.endpoint,
+            current_parallel_root,
+            use_root_observed_entries,
+        );
         let (mut cached_key, mut cached_observed_entries) = self
-            .endpoint
             .working_frontier_observation_cache(current_parallel_root, use_root_observed_entries);
         if cached_key == FrontierObservationKey::EMPTY
             || cached_key.offer_lane_mask != observation_key.offer_lane_mask
@@ -1150,16 +1496,17 @@ where
             self.endpoint.global_active_entries()
         };
         let (mut cached_key, mut cached_observed_entries) = self
-            .endpoint
             .working_frontier_observation_cache(current_parallel_root, use_root_observed_entries);
         if cached_key == FrontierObservationKey::EMPTY
             || !cached_key.exact_entries_match(active_entries)
         {
             return;
         }
-        let offer_lane_mask = self
-            .endpoint
-            .frontier_observation_lane_mask(current_parallel_root, use_root_observed_entries);
+        let offer_lane_mask = Self::frontier_observation_lane_mask(
+            self.endpoint,
+            current_parallel_root,
+            use_root_observed_entries,
+        );
         if cached_key.offer_lane_mask != offer_lane_mask
             || cached_key.binding_nonempty_mask
                 != (self.endpoint.binding_inbox.nonempty_mask & offer_lane_mask)
@@ -1257,16 +1604,17 @@ where
             self.endpoint.global_active_entries()
         };
         let (mut cached_key, mut cached_observed_entries) = self
-            .endpoint
             .working_frontier_observation_cache(current_parallel_root, use_root_observed_entries);
         if cached_key == FrontierObservationKey::EMPTY
             || !cached_key.exact_entries_match(active_entries)
         {
             return;
         }
-        let offer_lane_mask = self
-            .endpoint
-            .frontier_observation_lane_mask(current_parallel_root, use_root_observed_entries);
+        let offer_lane_mask = Self::frontier_observation_lane_mask(
+            self.endpoint,
+            current_parallel_root,
+            use_root_observed_entries,
+        );
         if cached_key.offer_lane_mask != offer_lane_mask || (offer_lane_mask & lane_bit) == 0 {
             return;
         }
@@ -1274,12 +1622,11 @@ where
         if ((cached_key.binding_nonempty_mask ^ binding_nonempty_mask) & !lane_bit) != 0 {
             return;
         }
-        let mut affected_slot_mask = self
-            .endpoint
-            .frontier_observation_offer_lane_entry_slot_masks(
-                current_parallel_root,
-                use_root_observed_entries,
-            )[lane_idx];
+        let mut affected_slot_mask = Self::frontier_observation_offer_lane_entry_slot_masks(
+            self.endpoint,
+            current_parallel_root,
+            use_root_observed_entries,
+        )[lane_idx];
         if affected_slot_mask == 0 {
             return;
         }
@@ -1370,16 +1717,17 @@ where
             self.endpoint.global_active_entries()
         };
         let (mut cached_key, mut cached_observed_entries) = self
-            .endpoint
             .working_frontier_observation_cache(current_parallel_root, use_root_observed_entries);
         if cached_key == FrontierObservationKey::EMPTY
             || !cached_key.exact_entries_match(active_entries)
         {
             return;
         }
-        let offer_lane_mask = self
-            .endpoint
-            .frontier_observation_lane_mask(current_parallel_root, use_root_observed_entries);
+        let offer_lane_mask = Self::frontier_observation_lane_mask(
+            self.endpoint,
+            current_parallel_root,
+            use_root_observed_entries,
+        );
         if cached_key.offer_lane_mask != offer_lane_mask
             || cached_key.binding_nonempty_mask
                 != (self.endpoint.binding_inbox.nonempty_mask & offer_lane_mask)
@@ -1519,9 +1867,8 @@ where
         let mut slot_idx = 0usize;
         while slot_idx < self.endpoint.frontier_state.root_frontier_len() {
             let root = self.endpoint.frontier_state.root_frontier_state[slot_idx].root;
-            if self
-                .endpoint
-                .frontier_observation_offer_lane_entry_slot_masks(root, true)[lane_idx]
+            if Self::frontier_observation_offer_lane_entry_slot_masks(self.endpoint, root, true)
+                [lane_idx]
                 != 0
             {
                 self.refresh_cached_frontier_observation_binding_lane_entries(
@@ -1589,12 +1936,11 @@ where
         changed_lane_mask |=
             cached_key.binding_nonempty_mask ^ observation_key.binding_nonempty_mask;
         if changed_lane_mask != 0 {
-            let slot_masks = self
-                .endpoint
-                .frontier_observation_offer_lane_entry_slot_masks(
-                    current_parallel_root,
-                    use_root_observed_entries,
-                );
+            let slot_masks = Self::frontier_observation_offer_lane_entry_slot_masks(
+                self.endpoint,
+                current_parallel_root,
+                use_root_observed_entries,
+            );
             let mut remaining_lanes = changed_lane_mask;
             while let Some(lane_idx) =
                 CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::next_lane_in_mask(
@@ -1736,9 +2082,11 @@ where
         } else {
             self.endpoint.global_active_entries()
         };
-        let observation_key = self
-            .endpoint
-            .frontier_observation_key(current_parallel_root, use_root_observed_entries);
+        let observation_key = Self::frontier_observation_key(
+            self.endpoint,
+            current_parallel_root,
+            use_root_observed_entries,
+        );
         let (cached_key, cached_observed_entries) = self
             .endpoint
             .frontier_observation_cache(current_parallel_root, use_root_observed_entries);
@@ -1762,7 +2110,7 @@ where
         true
     }
 
-    fn refresh_frontier_observation_cache(
+    fn refresh_frontier_observation_cache_impl(
         &mut self,
         current_parallel_root: ScopeId,
         use_root_observed_entries: bool,
@@ -1773,9 +2121,11 @@ where
         } else {
             self.endpoint.global_active_entries()
         };
-        let observation_key = self
-            .endpoint
-            .frontier_observation_key(current_parallel_root, use_root_observed_entries);
+        let observation_key = Self::frontier_observation_key(
+            self.endpoint,
+            current_parallel_root,
+            use_root_observed_entries,
+        );
         let (cached_key, cached_observed_entries) = self
             .endpoint
             .frontier_observation_cache(current_parallel_root, use_root_observed_entries);
@@ -1913,9 +2263,11 @@ where
         use_root_observed_entries: bool,
         active_entries: ActiveEntrySet,
     ) -> bool {
-        let observation_key = self
-            .endpoint
-            .frontier_observation_key(current_parallel_root, use_root_observed_entries);
+        let observation_key = Self::frontier_observation_key(
+            self.endpoint,
+            current_parallel_root,
+            use_root_observed_entries,
+        );
         let (cached_key, cached_observed_entries) = self
             .endpoint
             .frontier_observation_cache(current_parallel_root, use_root_observed_entries);
@@ -1986,9 +2338,11 @@ where
         use_root_observed_entries: bool,
         active_entries: ActiveEntrySet,
     ) -> bool {
-        let observation_key = self
-            .endpoint
-            .frontier_observation_key(current_parallel_root, use_root_observed_entries);
+        let observation_key = Self::frontier_observation_key(
+            self.endpoint,
+            current_parallel_root,
+            use_root_observed_entries,
+        );
         let (cached_key, cached_observed_entries) = self
             .endpoint
             .frontier_observation_cache(current_parallel_root, use_root_observed_entries);
@@ -2084,7 +2438,7 @@ where
             .endpoint
             .frontier_observation_cache(current_parallel_root, use_root_observed_entries);
         if cached_key == FrontierObservationKey::EMPTY {
-            self.refresh_frontier_observation_cache(
+            self.refresh_frontier_observation_cache_impl(
                 current_parallel_root,
                 use_root_observed_entries,
             );
@@ -2116,7 +2470,10 @@ where
         ) {
             return;
         }
-        self.refresh_frontier_observation_cache(current_parallel_root, use_root_observed_entries);
+        self.refresh_frontier_observation_cache_impl(
+            current_parallel_root,
+            use_root_observed_entries,
+        );
     }
 
     fn refresh_frontier_observation_caches_for_entry(
@@ -2343,7 +2700,7 @@ where
     }
 
     fn sync_lane_offer_state(&mut self) {
-        let refresh_mask = self.endpoint.offer_refresh_mask();
+        let refresh_mask = Self::offer_refresh_mask(self.endpoint);
         let mut stale_mask = self.endpoint.route_state.active_offer_mask & !refresh_mask;
         while stale_mask != 0 {
             let lane_idx = stale_mask.trailing_zeros() as usize;
@@ -2748,13 +3105,35 @@ where
         )
     }
 
-    pub(in crate::endpoint::kernel) fn refresh_frontier_observation_cache(
+    pub(in crate::endpoint::kernel) fn record_scope_ack(
         &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
+        scope_id: ScopeId,
+        token: RouteDecisionToken,
+    ) {
+        RouteFrontierMachine::new(self).record_scope_ack(scope_id, token)
+    }
+
+    pub(in crate::endpoint::kernel) fn mark_scope_ready_arm(&mut self, scope_id: ScopeId, arm: u8) {
+        RouteFrontierMachine::new(self).mark_scope_ready_arm(scope_id, arm)
+    }
+
+    pub(in crate::endpoint::kernel) fn mark_scope_ready_arm_from_label(
+        &mut self,
+        scope_id: ScopeId,
+        label: u8,
+        label_meta: ScopeLabelMeta,
+    ) {
+        RouteFrontierMachine::new(self).mark_scope_ready_arm_from_label(scope_id, label, label_meta)
+    }
+
+    pub(in crate::endpoint::kernel) fn mark_scope_ready_arm_from_binding_label(
+        &mut self,
+        scope_id: ScopeId,
+        label: u8,
+        label_meta: ScopeLabelMeta,
     ) {
         RouteFrontierMachine::new(self)
-            .refresh_frontier_observation_cache(current_parallel_root, use_root_observed_entries)
+            .mark_scope_ready_arm_from_binding_label(scope_id, label, label_meta)
     }
 
     pub(in crate::endpoint::kernel) fn refresh_frontier_observation_cache_for_scope(

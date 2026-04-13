@@ -3,7 +3,6 @@ use crate::{
     global::{
         compiled::LoweringSummary,
         const_dsl::{ScopeEvent, ScopeId, ScopeKind},
-        role_program::{MAX_PHASES, MAX_STEPS},
     },
 };
 
@@ -48,7 +47,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
                 && matches!(marker.scope_kind, ScopeKind::Route | ScopeKind::Loop)
                 && !Self::contains_scope(&seen_route_like, seen_route_like_len, marker.scope_id)
             {
-                if seen_route_like_len >= MAX_STEPS {
+                if seen_route_like_len >= seen_route_like.len() {
                     panic!("controller arm table capacity exceeded");
                 }
                 seen_route_like[seen_route_like_len] = marker.scope_id;
@@ -125,13 +124,13 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
             let (enter_eff, exit_eff) = ranges[range_idx];
             if Self::has_local_step_in_range(&present, current_eff, enter_eff) {
                 phase_count += 1;
-                if phase_count > MAX_PHASES {
+                if phase_count > u16::MAX as usize {
                     panic!("compiled role phase capacity exceeded");
                 }
             }
             if Self::has_local_step_in_range(&present, enter_eff, exit_eff) {
                 phase_count += 1;
-                if phase_count > MAX_PHASES {
+                if phase_count > u16::MAX as usize {
                     panic!("compiled role phase capacity exceeded");
                 }
             }
@@ -148,7 +147,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         if phase_count == 0 {
             phase_count = 1;
         }
-        if phase_count > MAX_PHASES {
+        if phase_count > u16::MAX as usize {
             panic!("compiled role phase capacity exceeded");
         }
     }

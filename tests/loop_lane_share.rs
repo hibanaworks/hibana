@@ -83,7 +83,7 @@ type LoopContinueArmSteps =
 type LoopBreakArmSteps =
     SeqSteps<LoopBreakHead, StepCons<SendStep<Role<1>, Role<0>, Msg<8, i32>>, StepNil>>;
 type LoopSegmentSteps = RouteSteps<LoopContinueArmSteps, LoopBreakArmSteps>;
-type ProtocolSteps =
+type LoopLaneProgramSteps =
     SeqSteps<StepCons<SendStep<Role<0>, Role<1>, Msg<10, ()>>, StepNil>, LoopSegmentSteps>;
 type TestKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
 type ControllerEndpoint = hibana::Endpoint<'static, 0, TestKit>;
@@ -163,12 +163,13 @@ const LOOP_BREAK_ARM: g::Program<LoopBreakArmSteps> = g::seq(
 // Route is local to Controller (0 → 0, self-send)
 const LOOP_SEGMENT: g::Program<LoopSegmentSteps> = g::route(LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
 
-const PROTOCOL: g::Program<ProtocolSteps> =
+const PROTOCOL: g::Program<LoopLaneProgramSteps> =
     g::seq(g::send::<Role<0>, Role<1>, Msg<10, ()>, 0>(), LOOP_SEGMENT);
 
-static CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramWitness<ProtocolSteps>> =
+static CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramWitness<LoopLaneProgramSteps>> =
     project(&PROTOCOL);
-static TARGET_PROGRAM: RoleProgram<'static, 1, ProgramWitness<ProtocolSteps>> = project(&PROTOCOL);
+static TARGET_PROGRAM: RoleProgram<'static, 1, ProgramWitness<LoopLaneProgramSteps>> =
+    project(&PROTOCOL);
 
 fn transport_queue_is_empty(transport: &TestTransport) -> bool {
     transport.queue_is_empty()

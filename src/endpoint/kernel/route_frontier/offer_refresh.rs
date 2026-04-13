@@ -11,16 +11,6 @@ where
     B: BindingSlot,
 {
     #[inline]
-    pub(in crate::endpoint::kernel) fn offer_refresh_mask(&self) -> u8 {
-        self.cursor
-            .current_phase()
-            .map(|phase| phase.lane_mask)
-            .unwrap_or(0)
-            | self.route_state.lane_linger_mask
-            | self.route_state.lane_offer_linger_mask
-    }
-
-    #[inline]
     pub(in crate::endpoint::kernel) fn root_frontier_active_mask(&self, root: ScopeId) -> u8 {
         self.frontier_state.root_frontier_active_mask(root)
     }

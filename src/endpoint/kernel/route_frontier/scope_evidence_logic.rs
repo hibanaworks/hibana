@@ -47,19 +47,6 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn record_scope_ack(
-        &mut self,
-        scope_id: ScopeId,
-        token: RouteDecisionToken,
-    ) {
-        if let Some(slot) = self.scope_slot_for_route(scope_id)
-            && self.route_state.scope_evidence.record_ack(slot, token)
-        {
-            self.bump_scope_evidence_generation_for_scope(scope_id, slot);
-        }
-    }
-
-    #[inline]
     pub(in crate::endpoint::kernel) fn peek_scope_ack(
         &self,
         scope_id: ScopeId,
@@ -130,20 +117,6 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn mark_scope_ready_arm(&mut self, scope_id: ScopeId, arm: u8) {
-        self.mark_scope_ready_arm_inner(scope_id, arm, true);
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn mark_scope_materialization_ready_arm(
-        &mut self,
-        scope_id: ScopeId,
-        arm: u8,
-    ) {
-        self.mark_scope_ready_arm_inner(scope_id, arm, false);
-    }
-
-    #[inline]
     pub(in crate::endpoint::kernel) fn loop_control_label_evidence_only(
         &self,
         label_meta: ScopeLabelMeta,
@@ -153,57 +126,6 @@ where
         label_meta.loop_meta().loop_label_scope()
             && self.is_loop_semantic_label(label)
             && label_meta.loop_meta().arm_has_recv(arm)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn mark_scope_ready_arm_from_label(
-        &mut self,
-        scope_id: ScopeId,
-        label: u8,
-        label_meta: ScopeLabelMeta,
-    ) {
-        let exact_static_passive_arm =
-            self.static_passive_dispatch_arm_from_exact_label(scope_id, label, label_meta);
-        let arm = Self::scope_evidence_label_to_arm(label_meta, label).or(exact_static_passive_arm);
-        if let Some(arm) = arm {
-            if self.loop_control_label_evidence_only(label_meta, label, arm) {
-                return;
-            }
-            if self.static_passive_scope_evidence_materializes_poll(scope_id) {
-                self.mark_scope_ready_arm(scope_id, arm);
-            } else {
-                self.mark_scope_materialization_ready_arm(scope_id, arm);
-            }
-            if exact_static_passive_arm.is_some() {
-                self.mark_static_passive_descendant_path_ready(scope_id, label);
-            }
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn mark_scope_ready_arm_from_binding_label(
-        &mut self,
-        scope_id: ScopeId,
-        label: u8,
-        label_meta: ScopeLabelMeta,
-    ) {
-        let exact_static_passive_arm =
-            self.static_passive_dispatch_arm_from_exact_label(scope_id, label, label_meta);
-        let arm = Self::binding_scope_evidence_label_to_arm(label_meta, label)
-            .or(exact_static_passive_arm);
-        if let Some(arm) = arm {
-            if self.loop_control_label_evidence_only(label_meta, label, arm) {
-                return;
-            }
-            if self.static_passive_scope_evidence_materializes_poll(scope_id) {
-                self.mark_scope_ready_arm(scope_id, arm);
-            } else {
-                self.mark_scope_materialization_ready_arm(scope_id, arm);
-            }
-            if exact_static_passive_arm.is_some() {
-                self.mark_static_passive_descendant_path_ready(scope_id, label);
-            }
-        }
     }
 
     #[inline]
@@ -259,27 +181,6 @@ where
             }
         }
         matched_arm
-    }
-
-    pub(in crate::endpoint::kernel) fn mark_static_passive_descendant_path_ready(
-        &mut self,
-        scope_id: ScopeId,
-        label: u8,
-    ) {
-        let Some(arm) =
-            self.static_passive_descendant_dispatch_arm_from_exact_label(scope_id, label)
-        else {
-            return;
-        };
-        self.mark_scope_ready_arm(scope_id, arm);
-        if self.selected_arm_for_scope(scope_id).is_none() {
-            let lane = self.offer_lane_for_scope(scope_id);
-            let _ = self.set_route_arm(lane, scope_id, arm);
-        }
-        let Some(child_scope) = self.cursor.passive_arm_scope_by_arm(scope_id, arm) else {
-            return;
-        };
-        self.mark_static_passive_descendant_path_ready(child_scope, label);
     }
 
     #[inline]
