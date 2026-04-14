@@ -26,8 +26,31 @@ pub(super) const MAX_STEPS: usize = eff::meta::MAX_EFF_NODES;
 /// Maximum number of parallel phases in a program.
 #[cfg(test)]
 pub(super) const MAX_PHASES: usize = 32;
-/// Maximum number of concurrent lanes (matches RoleLaneSet::LANE_COUNT).
+/// Fixed-array lane ceiling for compile-time and test-only owners.
 pub(crate) const MAX_LANES: usize = 8;
+pub(crate) use core::primitive::u32 as LaneMask;
+pub(crate) const RESERVED_BINDING_LANES: usize = 2;
+
+#[inline(always)]
+pub(crate) const fn lane_mask_bit(lane: usize) -> LaneMask {
+    if lane >= LaneMask::BITS as usize {
+        panic!("lane exceeds LaneMask width");
+    }
+    (1u32 << lane) as LaneMask
+}
+
+#[inline(always)]
+pub(crate) const fn logical_lane_count_for_role(
+    active_lane_count: usize,
+    endpoint_lane_slot_count: usize,
+) -> usize {
+    let reserved = active_lane_count.saturating_add(RESERVED_BINDING_LANES);
+    if reserved > endpoint_lane_slot_count {
+        reserved
+    } else {
+        endpoint_lane_slot_count
+    }
+}
 
 /// Steps for a single lane within a phase.
 ///
@@ -101,6 +124,7 @@ impl PhaseRouteGuard {
 /// Phase 1 (Join):              ↓
 ///   Lane 0: [C's steps...]
 /// ```
+#[cfg(test)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Phase {
     /// Steps for each lane (up to MAX_LANES).
@@ -114,12 +138,14 @@ pub(crate) struct Phase {
     pub route_guard: PhaseRouteGuard,
 }
 
+#[cfg(test)]
 impl Default for Phase {
     fn default() -> Self {
         Self::EMPTY
     }
 }
 
+#[cfg(test)]
 impl Phase {
     pub const EMPTY: Self = Self {
         lanes: [LaneSteps::EMPTY; MAX_LANES],
@@ -393,6 +419,7 @@ pub(crate) struct RoleFootprint {
     pub(crate) local_step_count: usize,
     pub(crate) passive_linger_route_scope_count: usize,
     pub(crate) active_lane_count: usize,
+    pub(crate) endpoint_lane_slot_count: usize,
     pub(crate) logical_lane_count: usize,
     pub(crate) max_route_stack_depth: usize,
     pub(crate) scope_evidence_count: usize,
@@ -403,6 +430,7 @@ impl RoleFootprint {
     #[inline(always)]
     pub(crate) const fn for_endpoint_layout(
         active_lane_count: usize,
+        endpoint_lane_slot_count: usize,
         logical_lane_count: usize,
         max_route_stack_depth: usize,
         scope_evidence_count: usize,
@@ -416,6 +444,7 @@ impl RoleFootprint {
             local_step_count: 0,
             passive_linger_route_scope_count: 0,
             active_lane_count,
+            endpoint_lane_slot_count,
             logical_lane_count,
             max_route_stack_depth,
             scope_evidence_count,
@@ -485,8 +514,9 @@ impl<'prog> RoleLoweringInput<'prog> {
             route_scope_count: self.counts.route_scope_count,
             local_step_count: self.counts.local_step_count,
             passive_linger_route_scope_count: self.counts.passive_linger_route_scope_count,
-            active_lane_count: 0,
-            logical_lane_count: 0,
+            active_lane_count: self.counts.active_lane_count,
+            endpoint_lane_slot_count: self.counts.endpoint_lane_slot_count,
+            logical_lane_count: self.counts.logical_lane_count,
             max_route_stack_depth: 0,
             scope_evidence_count: 0,
             frontier_entry_count: 0,
@@ -622,6 +652,15 @@ mod tests {
             const { UnsafeCell::new(MaybeUninit::uninit()) };
     }
 
+    #[test]
+    fn lane_mask_width_matches_production_builds() {
+        assert_eq!(
+            LaneMask::BITS,
+            u32::BITS,
+            "LaneMask must stay widened in test builds so cargo test matches production lane-mask semantics"
+        );
+    }
+
     fn with_compiled_role_in_slot<const ROLE: u8, Steps, R>(
         compiled_slot: &'static LocalKey<UnsafeCell<MaybeUninit<CompiledRole>>>,
         scratch_slot: &'static LocalKey<UnsafeCell<MaybeUninit<RoleCompileScratch>>>,
@@ -688,8 +727,8 @@ mod tests {
     #[test]
     fn parallel_projection_keeps_phase_and_lane_split_internal() {
         let parallel_program = PARALLEL_PROGRAM;
-        let client = project::<0, _, MintConfig>(&parallel_program);
-        let server = project::<1, _, MintConfig>(&parallel_program);
+        let client: RoleProgram<'_, 0, _, MintConfig> = project(&parallel_program);
+        let server: RoleProgram<'_, 1, _, MintConfig> = project(&parallel_program);
 
         with_compiled_roles(&client, &server, |client_projection, server_projection| {
             assert_eq!(client_projection.layout().phase_count(), 1);
@@ -738,7 +777,7 @@ mod tests {
     #[test]
     fn parallel_route_projection_keeps_scope_markers_without_public_step_surface() {
         let parallel_route_program = PARALLEL_ROUTE_PROGRAM;
-        let program = project::<0, _, MintConfig>(&parallel_route_program);
+        let program: RoleProgram<'_, 0, _, MintConfig> = project(&parallel_route_program);
         let scope_markers = super::lowering_input(&program)
             .summary()
             .view()

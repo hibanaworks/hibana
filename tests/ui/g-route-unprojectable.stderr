@@ -26,12 +26,17 @@ note: inside `hibana::global::compiled::seal::ProjectionSeal::<1>::validate_rout
   | |                 );
   | |_________________^
 note: inside `hibana::global::compiled::seal::ProjectionSeal::<1>::validate_route_scope`
- --> src/global/compiled/lowering/seal.rs
+ --> $RUST/core/src/panic.rs
+  |
+  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: src/global/compiled/lowering/seal.rs
   |
   | / ...   panic!(
-  | | ...       "Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dynamic policy annotation provi...
+  | | ...       "Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dyn...
   | | ...   );
-  | |_______^ the failure occurred here
+  | |_______- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global/program.rs

@@ -296,68 +296,6 @@ where
         }
     }
 
-    pub(super) async fn await_transport_payload_for_offer_lane(
-        &mut self,
-        offer_lane: u8,
-        transport_payload_len: &mut usize,
-        transport_payload_lane: &mut u8,
-    ) -> RecvResult<()> {
-        let lane_idx = offer_lane as usize;
-        let port = self.port_for_lane(lane_idx);
-        let payload = lane_port::recv_future(port)
-            .await
-            .map_err(RecvError::Transport)?;
-        if *transport_payload_len == 0 && !payload.as_bytes().is_empty() {
-            *transport_payload_len = lane_port::copy_payload_into_scratch(port, &payload)
-                .map_err(|_| RecvError::PhaseInvariant)?;
-            *transport_payload_lane = offer_lane;
-        }
-        Ok(())
-    }
-
-    pub(super) async fn await_static_passive_progress(
-        &mut self,
-        selection: OfferScopeSelection,
-        selected_arm: Option<u8>,
-        binding_classification: &mut Option<crate::binding::IncomingClassification>,
-        transport_payload_len: &mut usize,
-        transport_payload_lane: &mut u8,
-    ) -> RecvResult<()> {
-        let materialization_meta = self.selection_materialization_meta(selection);
-        if let Some(arm) = selected_arm
-            && selection.at_route_offer_entry
-            && let Some(entry) = materialization_meta.passive_arm_entry(arm)
-        {
-            if !self.cursor.is_recv_at(state_index_to_usize(entry)) {
-                return Ok(());
-            }
-        }
-        if binding_classification.is_none()
-            && let Some((_, classification)) = {
-                let label_meta = self.selection_label_meta(selection);
-                self.poll_binding_for_offer(
-                    selection.scope_id,
-                    selection.offer_lane_idx as usize,
-                    selection.offer_lane_mask,
-                    label_meta,
-                    materialization_meta,
-                )
-            }
-        {
-            *binding_classification = Some(classification);
-            return Ok(());
-        }
-        if *transport_payload_len == 0 {
-            self.await_transport_payload_for_offer_lane(
-                selection.offer_lane,
-                transport_payload_len,
-                transport_payload_lane,
-            )
-            .await?;
-        }
-        Ok(())
-    }
-
     #[inline]
     pub(in crate::endpoint::kernel) fn evidence_fingerprint(
         &self,
@@ -371,28 +309,6 @@ where
         )
     }
 
-    pub(super) async fn try_poll_route_decision_immediate(
-        &self,
-        scope_id: ScopeId,
-        offer_lanes: &[u8; MAX_LANES],
-        offer_lanes_len: usize,
-    ) -> Option<Arm> {
-        let arm = poll_fn(|cx| {
-            let mut lane_idx = 0usize;
-            while lane_idx < offer_lanes_len {
-                let lane = offer_lanes[lane_idx];
-                let port = self.port_for_lane(lane as usize);
-                if let Poll::Ready(arm) = port.poll_route_decision(scope_id, ROLE, cx) {
-                    return Poll::Ready(Some(arm));
-                }
-                lane_idx += 1;
-            }
-            Poll::Ready(None)
-        })
-        .await?;
-        Arm::new(arm)
-    }
-
     #[inline]
     pub(in crate::endpoint::kernel) fn poll_arm_from_ready_mask(
         &self,
@@ -403,17 +319,6 @@ where
             return None;
         }
         Arm::new(mask.trailing_zeros() as u8)
-    }
-
-    pub(super) async fn try_poll_route_decision_for_offer(
-        &self,
-        scope_id: ScopeId,
-        offer_lanes: &[u8; MAX_LANES],
-        offer_lanes_len: usize,
-    ) -> Option<Arm> {
-        self.try_poll_route_decision_immediate(scope_id, offer_lanes, offer_lanes_len)
-            .await
-            .or_else(|| self.poll_arm_from_ready_mask(scope_id))
     }
 
     pub(in crate::endpoint::kernel) fn try_select_lane_for_label(
@@ -648,13 +553,15 @@ where
         &self,
         lane_idx: usize,
         scope_id: ScopeId,
-        offer_lane_mask: u8,
-    ) -> u8 {
+        offer_lane_mask: crate::global::role_program::LaneMask,
+    ) -> crate::global::role_program::LaneMask {
         self.ports
             .get(lane_idx)
             .and_then(|port| port.as_ref())
             .map(|port| {
-                (port.pending_route_decision_lane_mask(scope_id, ROLE) as u8) & offer_lane_mask
+                (port.pending_route_decision_lane_mask(scope_id, ROLE)
+                    as crate::global::role_program::LaneMask)
+                    & offer_lane_mask
             })
             .unwrap_or(0)
     }
@@ -663,9 +570,9 @@ where
     pub(in crate::endpoint::kernel) fn pending_scope_hint_lane_mask(
         &mut self,
         lane_idx: usize,
-        offer_lane_mask: u8,
+        offer_lane_mask: crate::global::role_program::LaneMask,
         label_meta: ScopeLabelMeta,
-    ) -> u8 {
+    ) -> crate::global::role_program::LaneMask {
         let previous_change_epoch = self
             .ports
             .get(lane_idx)
@@ -675,9 +582,10 @@ where
         let Some(port) = self.ports.get(lane_idx).and_then(|port| port.as_ref()) else {
             return 0;
         };
-        let lane_mask =
-            (port.pending_route_hint_lane_mask_for_label_mask(label_meta.hint_label_mask()) as u8)
-                & offer_lane_mask;
+        let lane_mask = (port
+            .pending_route_hint_lane_mask_for_label_mask(label_meta.hint_label_mask())
+            as crate::global::role_program::LaneMask)
+            & offer_lane_mask;
         self.refresh_frontier_observation_cache_for_route_lane(lane_idx, previous_change_epoch);
         lane_mask
     }
@@ -687,12 +595,12 @@ where
         &self,
         scope_id: ScopeId,
         summary_lane_idx: usize,
-        offer_lane_mask: u8,
+        offer_lane_mask: crate::global::role_program::LaneMask,
     ) -> Option<RouteDecisionToken> {
         if let Some(token) = self.peek_scope_ack(scope_id) {
             return Some(token);
         }
-        if summary_lane_idx >= MAX_LANES {
+        if summary_lane_idx >= self.cursor.logical_lane_count() {
             return None;
         }
         let mut pending_ack_mask =
@@ -712,22 +620,36 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn next_lane_in_mask(lane_mask: &mut u8) -> Option<usize> {
+    pub(in crate::endpoint::kernel) fn next_lane_in_mask(
+        lane_mask: &mut crate::global::role_program::LaneMask,
+    ) -> Option<usize> {
         if *lane_mask == 0 {
             return None;
         }
         let lane_idx = lane_mask.trailing_zeros() as usize;
-        *lane_mask &= !(1u8 << lane_idx);
+        *lane_mask &= !crate::global::role_program::lane_mask_bit(lane_idx);
         Some(lane_idx)
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn next_slot_in_mask(slot_mask: &mut u8) -> Option<usize> {
+        if *slot_mask == 0 {
+            return None;
+        }
+        let slot_idx = slot_mask.trailing_zeros() as usize;
+        *slot_mask &= !(1u8 << slot_idx);
+        Some(slot_idx)
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn take_preferred_lane_in_mask(
         preferred_lane_idx: usize,
-        lane_mask: &mut u8,
+        lane_mask: &mut crate::global::role_program::LaneMask,
     ) -> Option<usize> {
-        if preferred_lane_idx < MAX_LANES && (*lane_mask & (1u8 << preferred_lane_idx)) != 0 {
-            *lane_mask &= !(1u8 << preferred_lane_idx);
+        if preferred_lane_idx < crate::global::role_program::LaneMask::BITS as usize
+            && (*lane_mask & crate::global::role_program::lane_mask_bit(preferred_lane_idx)) != 0
+        {
+            *lane_mask &= !crate::global::role_program::lane_mask_bit(preferred_lane_idx);
             return Some(preferred_lane_idx);
         }
         Self::next_lane_in_mask(lane_mask)

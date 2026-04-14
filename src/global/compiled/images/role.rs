@@ -1,13 +1,17 @@
 use core::ptr;
 
+use crate::eff::EffIndex;
 use crate::endpoint::kernel::{EndpointArenaLayout, FrontierScratchLayout};
+#[cfg(test)]
+use crate::global::role_program::Phase;
 #[cfg(test)]
 use crate::global::role_program::ProjectedRoleLayout;
 use crate::global::role_program::{
-    LaneSteps, LocalStep, MAX_LANES, Phase, PhaseRouteGuard, RoleFootprint,
+    LaneMask, LaneSteps, LocalStep, PhaseRouteGuard, RoleFootprint, lane_mask_bit,
+    logical_lane_count_for_role,
 };
 #[cfg(test)]
-use crate::global::role_program::{MAX_PHASES, MAX_STEPS};
+use crate::global::role_program::{MAX_LANES, MAX_PHASES, MAX_STEPS};
 #[cfg(test)]
 use crate::global::typestate::RoleCompileScratch;
 #[cfg(test)]
@@ -19,7 +23,6 @@ use crate::global::typestate::{
 use super::{LoweringSummary, lease::RoleLoweringScratch};
 
 const MACHINE_NO_STEP: u16 = u16::MAX;
-const RESERVED_BINDING_LANES: usize = 2;
 #[cfg(test)]
 const TEST_FRONTIER_ENTRY_FLOOR: usize = 8;
 
@@ -63,10 +66,16 @@ pub(crate) struct CompiledRole {
     layout: ProjectedRoleLayout,
     typestate: RoleTypestate<0>,
     scope_records: [crate::global::typestate::ScopeRecord; crate::eff::meta::MAX_EFF_NODES],
+    scope_lane_first_eff:
+        [EffIndex; crate::eff::meta::MAX_EFF_NODES * crate::global::role_program::MAX_LANES],
+    scope_lane_last_eff:
+        [EffIndex; crate::eff::meta::MAX_EFF_NODES * crate::global::role_program::MAX_LANES],
     scope_slots_by_scope: [u16; crate::eff::meta::MAX_EFF_NODES],
     scope_route_dense_by_slot: [u16; crate::eff::meta::MAX_EFF_NODES],
     route_scope_records:
         [crate::global::typestate::RouteScopeRecord; crate::eff::meta::MAX_EFF_NODES],
+    route_arm0_lane_last_eff_by_slot:
+        [EffIndex; crate::eff::meta::MAX_EFF_NODES * crate::global::role_program::MAX_LANES],
     eff_index_to_step: [u16; MAX_STEPS],
     step_index_to_state: [StateIndex; MAX_STEPS],
 }
@@ -86,8 +95,7 @@ pub(crate) struct CompiledRoleImage {
 #[derive(Clone, Copy, Debug)]
 struct PhaseImageHeader {
     lane_entry_start: u16,
-    lane_entry_len: u8,
-    lane_mask: u8,
+    lane_entry_len: u16,
     min_start: u16,
     route_guard: PhaseRouteGuard,
 }
@@ -96,7 +104,6 @@ impl PhaseImageHeader {
     const EMPTY: Self = Self {
         lane_entry_start: 0,
         lane_entry_len: 0,
-        lane_mask: 0,
         min_start: 0,
         route_guard: PhaseRouteGuard::EMPTY,
     };
@@ -117,7 +124,8 @@ impl PhaseLaneEntry {
 
 #[derive(Clone, Copy, Debug)]
 struct RoleResidentFacts {
-    active_lane_mask_bits: u8,
+    active_lane_count: u8,
+    endpoint_lane_slot_count: u8,
     phase_len: u16,
     phase_lane_entry_len: u16,
     eff_index_to_step_len: u16,
@@ -126,7 +134,8 @@ struct RoleResidentFacts {
 
 impl RoleResidentFacts {
     const EMPTY: Self = Self {
-        active_lane_mask_bits: 0,
+        active_lane_count: 0,
+        endpoint_lane_slot_count: 0,
         phase_len: 0,
         phase_lane_entry_len: 0,
         eff_index_to_step_len: 0,
@@ -134,8 +143,13 @@ impl RoleResidentFacts {
     };
 
     #[inline(always)]
-    const fn active_lane_mask(self) -> u8 {
-        self.active_lane_mask_bits
+    const fn active_lane_count(self) -> usize {
+        self.active_lane_count as usize
+    }
+
+    #[inline(always)]
+    const fn endpoint_lane_slot_count(self) -> usize {
+        self.endpoint_lane_slot_count as usize
     }
 
     #[inline(always)]
@@ -168,9 +182,12 @@ struct CompiledRoleScopeStorage {
     phase_lane_entries: *mut PhaseLaneEntry,
     phase_lane_entry_cap: usize,
     records: *mut ScopeRecord,
+    scope_lane_first_eff: *mut EffIndex,
+    scope_lane_last_eff: *mut EffIndex,
     slots_by_scope: *mut u16,
     route_dense_by_slot: *mut u16,
     route_records: *mut RouteScopeRecord,
+    route_arm0_lane_last_eff_by_slot: *mut EffIndex,
     route_scope_cap: usize,
     scope_cap: usize,
     eff_index_to_step: *mut u16,
@@ -227,6 +244,11 @@ impl CompiledRoleScopeStorage {
     }
 
     #[inline(always)]
+    const fn scope_lane_matrix_cap(footprint: RoleFootprint) -> usize {
+        Self::scope_cap(footprint.scope_count).saturating_mul(footprint.logical_lane_count)
+    }
+
+    #[inline(always)]
     const fn total_bytes_for_layout(footprint: RoleFootprint) -> usize {
         let scope_cap = Self::scope_cap(footprint.scope_count);
         let route_scope_cap = Self::route_scope_cap(footprint.route_scope_count);
@@ -239,6 +261,7 @@ impl CompiledRoleScopeStorage {
         );
         let phase_header_cap = Self::phase_cap(footprint);
         let phase_lane_entry_cap = Self::phase_lane_entry_cap(footprint.local_step_count);
+        let scope_lane_matrix_cap = Self::scope_lane_matrix_cap(footprint);
         let header = core::mem::size_of::<CompiledRoleImage>();
         let typestate_start = Self::align_up(
             header,
@@ -269,7 +292,14 @@ impl CompiledRoleScopeStorage {
             Self::align_up(phase_lane_entries_end, core::mem::align_of::<ScopeRecord>());
         let records_end =
             records_start + scope_cap.saturating_mul(core::mem::size_of::<ScopeRecord>());
-        let slots_start = Self::align_up(records_end, core::mem::align_of::<u16>());
+        let scope_lane_first_start = Self::align_up(records_end, core::mem::align_of::<EffIndex>());
+        let scope_lane_first_end = scope_lane_first_start
+            + scope_lane_matrix_cap.saturating_mul(core::mem::size_of::<EffIndex>());
+        let scope_lane_last_start =
+            Self::align_up(scope_lane_first_end, core::mem::align_of::<EffIndex>());
+        let scope_lane_last_end = scope_lane_last_start
+            + scope_lane_matrix_cap.saturating_mul(core::mem::size_of::<EffIndex>());
+        let slots_start = Self::align_up(scope_lane_last_end, core::mem::align_of::<u16>());
         let slots_end = slots_start + scope_cap.saturating_mul(core::mem::size_of::<u16>());
         let route_dense_start = Self::align_up(slots_end, core::mem::align_of::<u16>());
         let route_dense_end =
@@ -278,7 +308,12 @@ impl CompiledRoleScopeStorage {
             Self::align_up(route_dense_end, core::mem::align_of::<RouteScopeRecord>());
         let route_records_end = route_records_start
             + route_scope_cap.saturating_mul(core::mem::size_of::<RouteScopeRecord>());
-        let eff_index_start = Self::align_up(route_records_end, core::mem::align_of::<u16>());
+        let route_arm0_lane_last_start =
+            Self::align_up(route_records_end, core::mem::align_of::<EffIndex>());
+        let route_arm0_lane_last_end = route_arm0_lane_last_start
+            + scope_lane_matrix_cap.saturating_mul(core::mem::size_of::<EffIndex>());
+        let eff_index_start =
+            Self::align_up(route_arm0_lane_last_end, core::mem::align_of::<u16>());
         let eff_index_end =
             eff_index_start + eff_index_cap.saturating_mul(core::mem::size_of::<u16>());
         let step_index_start = Self::align_up(eff_index_end, core::mem::align_of::<StateIndex>());
@@ -300,6 +335,7 @@ impl CompiledRoleScopeStorage {
             local_step_count: eff_count,
             passive_linger_route_scope_count: route_scope_count,
             active_lane_count: 0,
+            endpoint_lane_slot_count: 0,
             logical_lane_count: 0,
             max_route_stack_depth: 0,
             scope_evidence_count: 0,
@@ -328,6 +364,9 @@ impl CompiledRoleScopeStorage {
         if core::mem::align_of::<RouteScopeRecord>() > align {
             align = core::mem::align_of::<RouteScopeRecord>();
         }
+        if core::mem::align_of::<EffIndex>() > align {
+            align = core::mem::align_of::<EffIndex>();
+        }
         if core::mem::align_of::<StateIndex>() > align {
             align = core::mem::align_of::<StateIndex>();
         }
@@ -349,6 +388,7 @@ impl CompiledRoleScopeStorage {
         );
         let phase_header_cap = Self::phase_cap(footprint);
         let phase_lane_entry_cap = Self::phase_lane_entry_cap(footprint.local_step_count);
+        let scope_lane_matrix_cap = Self::scope_lane_matrix_cap(footprint);
         let base = image.cast::<u8>() as usize;
         let header_end = base + core::mem::size_of::<CompiledRoleImage>();
         let typestate_start =
@@ -372,7 +412,14 @@ impl CompiledRoleScopeStorage {
             Self::align_up(phase_lane_entries_end, core::mem::align_of::<ScopeRecord>());
         let records_end =
             records_start + scope_cap.saturating_mul(core::mem::size_of::<ScopeRecord>());
-        let slots_start = Self::align_up(records_end, core::mem::align_of::<u16>());
+        let scope_lane_first_start = Self::align_up(records_end, core::mem::align_of::<EffIndex>());
+        let scope_lane_first_end = scope_lane_first_start
+            + scope_lane_matrix_cap.saturating_mul(core::mem::size_of::<EffIndex>());
+        let scope_lane_last_start =
+            Self::align_up(scope_lane_first_end, core::mem::align_of::<EffIndex>());
+        let scope_lane_last_end = scope_lane_last_start
+            + scope_lane_matrix_cap.saturating_mul(core::mem::size_of::<EffIndex>());
+        let slots_start = Self::align_up(scope_lane_last_end, core::mem::align_of::<u16>());
         let slots_end = slots_start + scope_cap.saturating_mul(core::mem::size_of::<u16>());
         let route_dense_start = Self::align_up(slots_end, core::mem::align_of::<u16>());
         let route_dense_end =
@@ -381,7 +428,12 @@ impl CompiledRoleScopeStorage {
             Self::align_up(route_dense_end, core::mem::align_of::<RouteScopeRecord>());
         let route_records_end = route_records_start
             + route_scope_cap.saturating_mul(core::mem::size_of::<RouteScopeRecord>());
-        let eff_index_start = Self::align_up(route_records_end, core::mem::align_of::<u16>());
+        let route_arm0_lane_last_start =
+            Self::align_up(route_records_end, core::mem::align_of::<EffIndex>());
+        let route_arm0_lane_last_end = route_arm0_lane_last_start
+            + scope_lane_matrix_cap.saturating_mul(core::mem::size_of::<EffIndex>());
+        let eff_index_start =
+            Self::align_up(route_arm0_lane_last_end, core::mem::align_of::<u16>());
         let eff_index_end =
             eff_index_start + eff_index_cap.saturating_mul(core::mem::size_of::<u16>());
         let step_index_start = Self::align_up(eff_index_end, core::mem::align_of::<StateIndex>());
@@ -394,9 +446,12 @@ impl CompiledRoleScopeStorage {
             phase_lane_entries: phase_lane_entries_start as *mut PhaseLaneEntry,
             phase_lane_entry_cap,
             records: records_start as *mut ScopeRecord,
+            scope_lane_first_eff: scope_lane_first_start as *mut EffIndex,
+            scope_lane_last_eff: scope_lane_last_start as *mut EffIndex,
             slots_by_scope: slots_start as *mut u16,
             route_dense_by_slot: route_dense_start as *mut u16,
             route_records: route_records_start as *mut RouteScopeRecord,
+            route_arm0_lane_last_eff_by_slot: route_arm0_lane_last_start as *mut EffIndex,
             route_scope_cap,
             scope_cap,
             eff_index_to_step: eff_index_start as *mut u16,
@@ -418,6 +473,14 @@ impl CompiledRole {
             ptr::addr_of_mut!((*dst).scope_records).write(
                 [crate::global::typestate::ScopeRecord::EMPTY; crate::eff::meta::MAX_EFF_NODES],
             );
+            ptr::addr_of_mut!((*dst).scope_lane_first_eff).write(
+                [EffIndex::MAX;
+                    crate::eff::meta::MAX_EFF_NODES * crate::global::role_program::MAX_LANES],
+            );
+            ptr::addr_of_mut!((*dst).scope_lane_last_eff).write(
+                [EffIndex::MAX;
+                    crate::eff::meta::MAX_EFF_NODES * crate::global::role_program::MAX_LANES],
+            );
             ptr::addr_of_mut!((*dst).scope_slots_by_scope)
                 .write([u16::MAX; crate::eff::meta::MAX_EFF_NODES]);
             ptr::addr_of_mut!((*dst).scope_route_dense_by_slot)
@@ -426,6 +489,10 @@ impl CompiledRole {
                 [crate::global::typestate::RouteScopeRecord::EMPTY;
                     crate::eff::meta::MAX_EFF_NODES],
             );
+            ptr::addr_of_mut!((*dst).route_arm0_lane_last_eff_by_slot).write(
+                [EffIndex::MAX;
+                    crate::eff::meta::MAX_EFF_NODES * crate::global::role_program::MAX_LANES],
+            );
             RoleTypestate::<ROLE>::init_value_from_summary(
                 ptr::addr_of_mut!((*dst).typestate).cast::<RoleTypestate<ROLE>>(),
                 &mut *ptr::addr_of_mut!((*dst).scope_records),
@@ -433,6 +500,10 @@ impl CompiledRole {
                 ptr::addr_of_mut!((*dst).scope_route_dense_by_slot).cast::<u16>(),
                 ptr::addr_of_mut!((*dst).route_scope_records)
                     .cast::<crate::global::typestate::RouteScopeRecord>(),
+                crate::global::role_program::MAX_LANES,
+                ptr::addr_of_mut!((*dst).scope_lane_first_eff).cast::<EffIndex>(),
+                ptr::addr_of_mut!((*dst).scope_lane_last_eff).cast::<EffIndex>(),
+                ptr::addr_of_mut!((*dst).route_arm0_lane_last_eff_by_slot).cast::<EffIndex>(),
                 crate::eff::meta::MAX_EFF_NODES,
                 summary,
                 scratch,
@@ -919,16 +990,6 @@ fn build_active_lane_mask_from_phase_slice(phases: &[Phase]) -> u8 {
     mask
 }
 
-#[inline(always)]
-fn active_lane_count_from_mask(mask: u8) -> usize {
-    let clipped = if MAX_LANES >= u8::BITS as usize {
-        mask
-    } else {
-        mask & ((1u8 << MAX_LANES) - 1)
-    };
-    clipped.count_ones() as usize
-}
-
 fn build_local_steps_into(
     role: u8,
     typestate: &RoleTypestateValue,
@@ -1163,132 +1224,7 @@ fn record_step_state(
     }
 }
 
-fn build_phases_into(
-    role: u8,
-    steps: &[LocalStep],
-    len: usize,
-    typestate: &RoleTypestateValue,
-    step_index_to_state: &[StateIndex],
-    route_guards: &mut [PhaseRouteGuard],
-    phases: &mut [Phase],
-    parallel_ranges: &mut [(usize, usize)],
-) -> usize {
-    if len > steps.len() || len > step_index_to_state.len() || len > route_guards.len() {
-        panic!("compiled role phase lowering exceeds scratch capacity");
-    }
-    let mut phase_idx = 0usize;
-    while phase_idx < phases.len() {
-        phases[phase_idx] = Phase::EMPTY;
-        phase_idx += 1;
-    }
-    let mut range_idx = 0usize;
-    while range_idx < parallel_ranges.len() {
-        parallel_ranges[range_idx] = (0, 0);
-        range_idx += 1;
-    }
-    if len == 0 {
-        return 0;
-    }
-
-    build_route_guards_for_steps_into(role, len, typestate, step_index_to_state, route_guards);
-
-    if !typestate.has_parallel_phase_scope() {
-        phases[0] = build_phase_for_range(steps, 0, len, route_guards);
-        return 1;
-    }
-
-    let mut parallel_count = 0usize;
-    loop {
-        let Some(range) = typestate.parallel_phase_range_at(parallel_count) else {
-            break;
-        };
-        if parallel_count >= parallel_ranges.len() {
-            panic!("compiled role phase capacity exceeded");
-        }
-        parallel_ranges[parallel_count] = range;
-        parallel_count += 1;
-    }
-
-    if parallel_count == 0 {
-        phases[0] = build_phase_for_range(steps, 0, len, route_guards);
-        return 1;
-    }
-
-    let mut phase_count = 0usize;
-    let mut current_step = 0usize;
-    let mut range_idx = 0usize;
-    while range_idx < parallel_count {
-        let (enter_eff, exit_eff) = parallel_ranges[range_idx];
-
-        let seq_start = current_step;
-        let mut seq_end = current_step;
-        while seq_end < len && steps[seq_end].eff_index().as_usize() < enter_eff {
-            seq_end += 1;
-        }
-        if seq_end > seq_start {
-            push_phase(
-                phases,
-                &mut phase_count,
-                build_phase_for_range(steps, seq_start, seq_end, route_guards),
-            );
-        }
-
-        let par_start = seq_end;
-        let mut par_end = par_start;
-        while par_end < len && steps[par_end].eff_index().as_usize() < exit_eff {
-            par_end += 1;
-        }
-        if par_end > par_start {
-            push_phase(
-                phases,
-                &mut phase_count,
-                build_phase_for_range(steps, par_start, par_end, route_guards),
-            );
-        }
-
-        current_step = par_end;
-        range_idx += 1;
-    }
-
-    if current_step < len {
-        push_phase(
-            phases,
-            &mut phase_count,
-            build_phase_for_range(steps, current_step, len, route_guards),
-        );
-    }
-
-    if phase_count == 0 {
-        phases[0] = build_phase_for_range(steps, 0, len, route_guards);
-        return 1;
-    }
-    phase_count
-}
-
-fn build_route_guards_for_steps_into(
-    role: u8,
-    len: usize,
-    typestate: &RoleTypestateValue,
-    step_index_to_state: &[StateIndex],
-    route_guards: &mut [PhaseRouteGuard],
-) {
-    let mut idx = 0usize;
-    while idx < route_guards.len() {
-        route_guards[idx] = PhaseRouteGuard::EMPTY;
-        idx += 1;
-    }
-    let mut step_idx = 0usize;
-    while step_idx < len {
-        let state = step_index_to_state[step_idx];
-        if let Some((scope, arm)) =
-            crate::global::typestate::phase_route_guard_for_state_for_role(typestate, role, state)
-        {
-            route_guards[step_idx] = PhaseRouteGuard::new(scope, arm);
-        }
-        step_idx += 1;
-    }
-}
-
+#[cfg(test)]
 #[inline(always)]
 fn push_phase(phases: &mut [Phase], phase_count: &mut usize, phase: Phase) {
     if *phase_count >= phases.len() {
@@ -1298,6 +1234,7 @@ fn push_phase(phases: &mut [Phase], phase_count: &mut usize, phase: Phase) {
     *phase_count += 1;
 }
 
+#[cfg(test)]
 fn build_phase_for_range(
     steps: &[LocalStep],
     start: usize,
@@ -1325,7 +1262,7 @@ fn build_phase_for_range(
 
     let mut lane_mask = 0u8;
     let mut min_start = u16::MAX;
-    let mut lane_idx = 0;
+    let mut lane_idx = 0usize;
     while lane_idx < MAX_LANES {
         if lane_lens[lane_idx] > 0 {
             let lane_start = lane_first[lane_idx];
@@ -1344,6 +1281,284 @@ fn build_phase_for_range(
     phase.min_start = if lane_mask == 0 { 0 } else { min_start };
     phase.route_guard = route_guard_for_range(route_guards, start, end);
     phase
+}
+
+unsafe fn build_phase_image_from_steps(
+    role: u8,
+    steps: &[LocalStep],
+    len: usize,
+    typestate: &RoleTypestateValue,
+    step_index_to_state: &[StateIndex],
+    route_guards: &mut [PhaseRouteGuard],
+    parallel_ranges: &mut [(usize, usize)],
+    phase_headers: *mut PhaseImageHeader,
+    phase_header_cap: usize,
+    phase_lane_entries: *mut PhaseLaneEntry,
+    phase_lane_entry_cap: usize,
+) -> (usize, usize) {
+    if len > steps.len() || len > step_index_to_state.len() || len > route_guards.len() {
+        panic!("compiled role phase lowering exceeds scratch capacity");
+    }
+    unsafe {
+        initialize_phase_image_storage(
+            phase_headers,
+            phase_header_cap,
+            phase_lane_entries,
+            phase_lane_entry_cap,
+        );
+    }
+    let mut range_idx = 0usize;
+    while range_idx < parallel_ranges.len() {
+        parallel_ranges[range_idx] = (0, 0);
+        range_idx += 1;
+    }
+    if len == 0 {
+        return (0, 0);
+    }
+
+    build_route_guards_for_steps_into(role, len, typestate, step_index_to_state, route_guards);
+
+    let mut phase_count = 0usize;
+    let mut phase_lane_entry_len = 0usize;
+
+    if !typestate.has_parallel_phase_scope() {
+        unsafe {
+            push_phase_range_to_image(
+                steps,
+                0,
+                len,
+                route_guards,
+                phase_headers,
+                phase_header_cap,
+                phase_lane_entries,
+                phase_lane_entry_cap,
+                &mut phase_count,
+                &mut phase_lane_entry_len,
+            );
+        }
+    } else {
+        let mut parallel_count = 0usize;
+        loop {
+            let Some(range) = typestate.parallel_phase_range_at(parallel_count) else {
+                break;
+            };
+            if parallel_count >= parallel_ranges.len() {
+                panic!("compiled role phase capacity exceeded");
+            }
+            parallel_ranges[parallel_count] = range;
+            parallel_count += 1;
+        }
+
+        if parallel_count == 0 {
+            unsafe {
+                push_phase_range_to_image(
+                    steps,
+                    0,
+                    len,
+                    route_guards,
+                    phase_headers,
+                    phase_header_cap,
+                    phase_lane_entries,
+                    phase_lane_entry_cap,
+                    &mut phase_count,
+                    &mut phase_lane_entry_len,
+                );
+            }
+        } else {
+            let mut current_step = 0usize;
+            let mut range_idx = 0usize;
+            while range_idx < parallel_count {
+                let (enter_eff, exit_eff) = parallel_ranges[range_idx];
+
+                let seq_start = current_step;
+                let mut seq_end = current_step;
+                while seq_end < len && steps[seq_end].eff_index().as_usize() < enter_eff {
+                    seq_end += 1;
+                }
+                if seq_end > seq_start {
+                    unsafe {
+                        push_phase_range_to_image(
+                            steps,
+                            seq_start,
+                            seq_end,
+                            route_guards,
+                            phase_headers,
+                            phase_header_cap,
+                            phase_lane_entries,
+                            phase_lane_entry_cap,
+                            &mut phase_count,
+                            &mut phase_lane_entry_len,
+                        );
+                    }
+                }
+
+                let par_start = seq_end;
+                let mut par_end = par_start;
+                while par_end < len && steps[par_end].eff_index().as_usize() < exit_eff {
+                    par_end += 1;
+                }
+                if par_end > par_start {
+                    unsafe {
+                        push_phase_range_to_image(
+                            steps,
+                            par_start,
+                            par_end,
+                            route_guards,
+                            phase_headers,
+                            phase_header_cap,
+                            phase_lane_entries,
+                            phase_lane_entry_cap,
+                            &mut phase_count,
+                            &mut phase_lane_entry_len,
+                        );
+                    }
+                }
+
+                current_step = par_end;
+                range_idx += 1;
+            }
+
+            if current_step < len {
+                unsafe {
+                    push_phase_range_to_image(
+                        steps,
+                        current_step,
+                        len,
+                        route_guards,
+                        phase_headers,
+                        phase_header_cap,
+                        phase_lane_entries,
+                        phase_lane_entry_cap,
+                        &mut phase_count,
+                        &mut phase_lane_entry_len,
+                    );
+                }
+            }
+
+            if phase_count == 0 {
+                unsafe {
+                    push_phase_range_to_image(
+                        steps,
+                        0,
+                        len,
+                        route_guards,
+                        phase_headers,
+                        phase_header_cap,
+                        phase_lane_entries,
+                        phase_lane_entry_cap,
+                        &mut phase_count,
+                        &mut phase_lane_entry_len,
+                    );
+                }
+            }
+        }
+    }
+
+    (phase_count, phase_lane_entry_len)
+}
+
+fn build_route_guards_for_steps_into(
+    role: u8,
+    len: usize,
+    typestate: &RoleTypestateValue,
+    step_index_to_state: &[StateIndex],
+    route_guards: &mut [PhaseRouteGuard],
+) {
+    let mut idx = 0usize;
+    while idx < route_guards.len() {
+        route_guards[idx] = PhaseRouteGuard::EMPTY;
+        idx += 1;
+    }
+    let mut step_idx = 0usize;
+    while step_idx < len {
+        let state = step_index_to_state[step_idx];
+        if let Some((scope, arm)) =
+            crate::global::typestate::phase_route_guard_for_state_for_role(typestate, role, state)
+        {
+            route_guards[step_idx] = PhaseRouteGuard::new(scope, arm);
+        }
+        step_idx += 1;
+    }
+}
+
+unsafe fn push_phase_range_to_image(
+    steps: &[LocalStep],
+    start: usize,
+    end: usize,
+    route_guards: &[PhaseRouteGuard],
+    phase_headers: *mut PhaseImageHeader,
+    phase_header_cap: usize,
+    phase_lane_entries: *mut PhaseLaneEntry,
+    phase_lane_entry_cap: usize,
+    phase_count: &mut usize,
+    total_lane_entries: &mut usize,
+) {
+    if *phase_count >= phase_header_cap {
+        panic!("compiled role phase capacity exceeded");
+    }
+    let lane_entry_start = *total_lane_entries;
+    let mut min_start = u16::MAX;
+    let mut phase_lane_entry_len = 0usize;
+    let mut step_idx = start;
+    while step_idx < end {
+        let lane = steps[step_idx].lane();
+        let mut entry_idx = 0usize;
+        let mut matched = false;
+        while entry_idx < phase_lane_entry_len {
+            let entry = unsafe { &mut *phase_lane_entries.add(lane_entry_start + entry_idx) };
+            if entry.lane == lane {
+                if entry.steps.len == u16::MAX {
+                    panic!("phase lane length overflow");
+                }
+                entry.steps.len += 1;
+                matched = true;
+                break;
+            }
+            entry_idx += 1;
+        }
+        if !matched {
+            if *total_lane_entries >= phase_lane_entry_cap {
+                panic!("compiled role phase lane-entry capacity exceeded");
+            }
+            let lane_start = encode_compact_step_index(step_idx);
+            unsafe {
+                phase_lane_entries
+                    .add(*total_lane_entries)
+                    .write(PhaseLaneEntry {
+                        lane,
+                        steps: LaneSteps {
+                            start: lane_start,
+                            len: 1,
+                        },
+                    });
+            }
+            *total_lane_entries += 1;
+            phase_lane_entry_len += 1;
+            if lane_start < min_start {
+                min_start = lane_start;
+            }
+        }
+        step_idx += 1;
+    }
+    if phase_lane_entry_len > u16::MAX as usize {
+        panic!("compiled role phase lane-entry count overflow");
+    }
+    if lane_entry_start > u16::MAX as usize {
+        panic!("compiled role phase lane-entry offset overflow");
+    }
+    unsafe {
+        phase_headers.add(*phase_count).write(PhaseImageHeader {
+            lane_entry_start: encode_compact_count_u16(lane_entry_start),
+            lane_entry_len: encode_compact_count_u16(phase_lane_entry_len),
+            min_start: if phase_lane_entry_len == 0 {
+                0
+            } else {
+                min_start
+            },
+            route_guard: route_guard_for_range(route_guards, start, end),
+        });
+    }
+    *phase_count += 1;
 }
 
 fn route_guard_for_range(
@@ -1388,67 +1603,6 @@ unsafe fn initialize_phase_image_storage(
         }
         lane_entry_idx += 1;
     }
-}
-
-unsafe fn materialize_phase_image_from_scratch(
-    phases: &[Phase],
-    phase_len: usize,
-    phase_headers: *mut PhaseImageHeader,
-    phase_header_cap: usize,
-    phase_lane_entries: *mut PhaseLaneEntry,
-    phase_lane_entry_cap: usize,
-) -> (u8, usize) {
-    if phase_len > phase_header_cap || phase_len > phases.len() {
-        panic!("compiled role phase count exceeds allocated phase-header capacity");
-    }
-    let mut active_lane_mask = 0u8;
-    let mut total_lane_entries = 0usize;
-    let mut phase_idx = 0usize;
-    while phase_idx < phase_len {
-        let phase = phases[phase_idx];
-        let lane_entry_start = total_lane_entries;
-        let mut phase_lane_mask = 0u8;
-        let mut phase_lane_entry_len = 0usize;
-        let mut lane_idx = 0usize;
-        while lane_idx < MAX_LANES {
-            let steps = phase.lanes[lane_idx];
-            if steps.is_active() {
-                if total_lane_entries >= phase_lane_entry_cap {
-                    panic!("compiled role phase lane-entry capacity exceeded");
-                }
-                unsafe {
-                    phase_lane_entries
-                        .add(total_lane_entries)
-                        .write(PhaseLaneEntry {
-                            lane: lane_idx as u8,
-                            steps,
-                        });
-                }
-                total_lane_entries += 1;
-                phase_lane_entry_len += 1;
-                phase_lane_mask |= 1u8 << (lane_idx as u32);
-            }
-            lane_idx += 1;
-        }
-        if phase_lane_entry_len > u8::MAX as usize {
-            panic!("compiled role phase lane-entry count overflow");
-        }
-        if lane_entry_start > u16::MAX as usize {
-            panic!("compiled role phase lane-entry offset overflow");
-        }
-        active_lane_mask |= phase_lane_mask;
-        unsafe {
-            phase_headers.add(phase_idx).write(PhaseImageHeader {
-                lane_entry_start: encode_compact_count_u16(lane_entry_start),
-                lane_entry_len: phase_lane_entry_len as u8,
-                lane_mask: phase_lane_mask,
-                min_start: phase.min_start,
-                route_guard: phase.route_guard,
-            });
-        }
-        phase_idx += 1;
-    }
-    (active_lane_mask, total_lane_entries)
 }
 
 #[inline(never)]
@@ -1530,31 +1684,19 @@ impl CompiledRoleImage {
         unsafe {
             (*dst).role_facts.step_index_to_state_len = encode_compact_count_u16(len);
         }
-        let (steps, step_index_to_state, route_guards, phases, parallel_ranges) =
+        let (steps, step_index_to_state, route_guards, parallel_ranges) =
             scratch.phase_build_slices_mut();
-        let phase_len = build_phases_into(
-            role,
-            steps,
-            len,
-            typed_typestate,
-            step_index_to_state,
-            route_guards,
-            phases,
-            parallel_ranges,
-        );
         let phase_cap = unsafe { (*dst).role_facts.phase_len() };
         let phase_lane_entry_cap = unsafe { (*dst).role_facts.phase_lane_entry_len() };
-        let phases = scratch.phases();
-        let (active_lane_mask, phase_lane_entry_len) = unsafe {
-            initialize_phase_image_storage(
-                (*dst).phase_headers.cast_mut(),
-                phase_cap,
-                (*dst).phase_lane_entries.cast_mut(),
-                phase_lane_entry_cap,
-            );
-            materialize_phase_image_from_scratch(
-                phases,
-                phase_len,
+        let (phase_len, phase_lane_entry_len) = unsafe {
+            build_phase_image_from_steps(
+                role,
+                steps,
+                len,
+                typed_typestate,
+                step_index_to_state,
+                route_guards,
+                parallel_ranges,
                 (*dst).phase_headers.cast_mut(),
                 phase_cap,
                 (*dst).phase_lane_entries.cast_mut(),
@@ -1562,7 +1704,6 @@ impl CompiledRoleImage {
             )
         };
         unsafe {
-            (*dst).role_facts.active_lane_mask_bits = active_lane_mask;
             (*dst).role_facts.phase_len = encode_compact_count_u16(phase_len);
             (*dst).role_facts.phase_lane_entry_len = encode_compact_count_u16(phase_lane_entry_len);
         }
@@ -1622,20 +1763,22 @@ impl CompiledRoleImage {
         scratch: &mut RoleCompileScratch,
     ) {
         let mut scratch = RoleLoweringScratch::from_compile_scratch(scratch);
+        let counts = summary.role_lowering_counts::<ROLE>();
         unsafe {
             Self::init_from_summary_with_layout::<ROLE>(
                 dst,
                 summary,
                 &mut scratch,
                 RoleFootprint {
-                    scope_count: summary.stamp().scope_count(),
-                    eff_count: summary.view().as_slice().len(),
-                    parallel_enter_count: summary.stamp().scope_count(),
-                    route_scope_count: summary.stamp().scope_count(),
-                    local_step_count: summary.view().as_slice().len(),
-                    passive_linger_route_scope_count: summary.stamp().scope_count(),
-                    active_lane_count: 0,
-                    logical_lane_count: 0,
+                    scope_count: counts.scope_count,
+                    eff_count: counts.eff_count,
+                    parallel_enter_count: counts.parallel_enter_count,
+                    route_scope_count: counts.route_scope_count,
+                    local_step_count: counts.local_step_count,
+                    passive_linger_route_scope_count: counts.passive_linger_route_scope_count,
+                    active_lane_count: counts.active_lane_count,
+                    endpoint_lane_slot_count: counts.endpoint_lane_slot_count,
+                    logical_lane_count: counts.logical_lane_count,
                     max_route_stack_depth: 0,
                     scope_evidence_count: 0,
                     frontier_entry_count: 0,
@@ -1667,10 +1810,18 @@ impl CompiledRoleImage {
         let storage =
             unsafe { CompiledRoleScopeStorage::from_image_ptr_with_layout(dst, footprint) };
         unsafe {
+            if footprint.active_lane_count > u8::MAX as usize {
+                panic!("compiled role active lane count overflow");
+            }
+            if footprint.endpoint_lane_slot_count > u8::MAX as usize {
+                panic!("compiled role endpoint lane slot count overflow");
+            }
             ptr::addr_of_mut!((*dst).typestate).write(storage.typestate.cast_const());
             ptr::addr_of_mut!((*dst).phase_headers).write(storage.phase_headers.cast_const());
             ptr::addr_of_mut!((*dst).phase_lane_entries)
                 .write(storage.phase_lane_entries.cast_const());
+            (*dst).role_facts.active_lane_count = footprint.active_lane_count as u8;
+            (*dst).role_facts.endpoint_lane_slot_count = footprint.endpoint_lane_slot_count as u8;
             (*dst).role_facts.phase_len = encode_compact_count_u16(storage.phase_header_cap);
             (*dst).role_facts.phase_lane_entry_len =
                 encode_compact_count_u16(storage.phase_lane_entry_cap);
@@ -1692,6 +1843,10 @@ impl CompiledRoleImage {
                 storage.slots_by_scope,
                 storage.route_dense_by_slot,
                 storage.route_records,
+                footprint.logical_lane_count,
+                storage.scope_lane_first_eff,
+                storage.scope_lane_last_eff,
+                storage.route_arm0_lane_last_eff_by_slot,
                 storage.route_scope_cap,
                 summary,
                 scratch.typestate_build_mut(),
@@ -1732,8 +1887,20 @@ impl CompiledRoleImage {
     }
 
     #[inline(always)]
-    pub(crate) fn phase_lane_mask(&self, idx: usize) -> Option<u8> {
-        self.phase_header(idx).map(|header| header.lane_mask)
+    pub(crate) fn phase_lane_mask(&self, idx: usize) -> Option<LaneMask> {
+        self.phase_header(idx).map(|header| {
+            let mut lane_mask = 0;
+            let lane_entries = self.phase_lane_entries_for_header(header);
+            let mut entry_idx = 0usize;
+            while entry_idx < lane_entries.len() {
+                let lane = lane_entries[entry_idx].lane as usize;
+                if lane < LaneMask::BITS as usize {
+                    lane_mask |= lane_mask_bit(lane);
+                }
+                entry_idx += 1;
+            }
+            lane_mask
+        })
     }
 
     #[inline(always)]
@@ -1748,13 +1915,10 @@ impl CompiledRoleImage {
 
     #[inline(always)]
     pub(crate) fn phase_lane_steps(&self, idx: usize, lane_idx: usize) -> Option<LaneSteps> {
-        if lane_idx >= MAX_LANES {
+        if lane_idx >= self.logical_lane_count() {
             return None;
         }
         let header = self.phase_header(idx)?;
-        if ((header.lane_mask >> (lane_idx as u32)) & 1) == 0 {
-            return None;
-        }
         let lane_entries = self.phase_lane_entries_for_header(header);
         let mut entry_idx = 0usize;
         while entry_idx < lane_entries.len() {
@@ -1764,7 +1928,6 @@ impl CompiledRoleImage {
             }
             entry_idx += 1;
         }
-        debug_assert!(false, "compiled role phase lane entry missing");
         None
     }
 
@@ -1795,28 +1958,36 @@ impl CompiledRoleImage {
     }
 
     #[inline(always)]
-    pub(crate) fn active_lane_mask(&self) -> u8 {
-        self.role_facts.active_lane_mask()
+    pub(crate) fn active_lane_mask(&self) -> LaneMask {
+        let mut lane_mask = 0;
+        let mut phase_idx = 0usize;
+        while phase_idx < self.phase_len() {
+            if let Some(phase_lane_mask) = self.phase_lane_mask(phase_idx) {
+                lane_mask |= phase_lane_mask;
+            }
+            phase_idx += 1;
+        }
+        lane_mask
     }
 
     #[inline(always)]
-    pub(crate) fn fill_active_lane_dense_by_lane(&self, dst: &mut [u8; MAX_LANES]) -> usize {
-        Self::build_active_lane_dense_map_into(self.active_lane_mask(), dst)
+    pub(crate) fn fill_active_lane_dense_by_lane(&self, dst: &mut [u8]) -> usize {
+        Self::build_active_lane_dense_map_into(self, dst)
     }
 
     #[inline(always)]
-    pub(crate) fn fill_logical_lane_dense_by_lane(&self, dst: &mut [u8; MAX_LANES]) -> usize {
+    pub(crate) fn fill_logical_lane_dense_by_lane(&self, dst: &mut [u8]) -> usize {
         Self::build_logical_lane_dense_map_into(self.logical_lane_count(), dst)
     }
 
     #[inline(always)]
     pub(crate) fn logical_lane_count(&self) -> usize {
-        Self::binding_lane_count(self.active_lane_count())
+        logical_lane_count_for_role(self.active_lane_count(), self.endpoint_lane_slot_count())
     }
 
     #[inline(always)]
     pub(crate) fn endpoint_lane_slot_count(&self) -> usize {
-        Self::endpoint_lane_slot_count_from_mask(self.active_lane_mask())
+        self.role_facts.endpoint_lane_slot_count()
     }
 
     #[inline(always)]
@@ -1881,7 +2052,10 @@ impl CompiledRoleImage {
         &self,
         binding_enabled: bool,
     ) -> EndpointArenaLayout {
-        EndpointArenaLayout::from_footprint(self.endpoint_layout_footprint(binding_enabled))
+        EndpointArenaLayout::from_footprint_with_binding(
+            self.endpoint_layout_footprint(),
+            binding_enabled,
+        )
     }
 
     #[inline(always)]
@@ -1907,22 +2081,19 @@ impl CompiledRoleImage {
 
     #[inline(always)]
     pub(crate) fn active_lane_count(&self) -> usize {
-        active_lane_count_from_mask(self.active_lane_mask())
+        self.role_facts.active_lane_count()
     }
 
     #[inline(always)]
-    pub(crate) fn endpoint_layout_footprint(&self, binding_enabled: bool) -> RoleFootprint {
+    pub(crate) fn endpoint_layout_footprint(&self) -> RoleFootprint {
         #[cfg(test)]
         let frontier_entry_count = self.compiled_max_frontier_entries();
         #[cfg(not(test))]
         let frontier_entry_count = self.max_frontier_entries();
         RoleFootprint::for_endpoint_layout(
             self.active_lane_count(),
-            if binding_enabled {
-                self.logical_lane_count()
-            } else {
-                0
-            },
+            self.endpoint_lane_slot_count(),
+            self.logical_lane_count(),
             self.max_route_stack_depth(),
             self.scope_evidence_count(),
             frontier_entry_count,
@@ -1945,46 +2116,38 @@ impl CompiledRoleImage {
         self.typestate_ref().frontier_entry_capacity()
     }
 
-    fn build_active_lane_dense_map_into(active_lane_mask: u8, dst: &mut [u8; MAX_LANES]) -> usize {
+    fn build_active_lane_dense_map_into(image: &Self, dst: &mut [u8]) -> usize {
+        dst.fill(u8::MAX);
+        let mut phase_idx = 0usize;
+        while phase_idx < image.phase_len() {
+            if let Some(header) = image.phase_header(phase_idx) {
+                let lane_entries = image.phase_lane_entries_for_header(header);
+                let mut entry_idx = 0usize;
+                while entry_idx < lane_entries.len() {
+                    let lane = lane_entries[entry_idx].lane as usize;
+                    if lane < dst.len() {
+                        dst[lane] = 0;
+                    }
+                    entry_idx += 1;
+                }
+            }
+            phase_idx += 1;
+        }
         let mut lane_idx = 0usize;
         let mut dense = 0usize;
-        while lane_idx < MAX_LANES {
-            if ((active_lane_mask >> lane_idx) & 1) != 0 {
+        while lane_idx < dst.len() {
+            if dst[lane_idx] != u8::MAX {
                 dst[lane_idx] = dense as u8;
                 dense += 1;
-            } else {
-                dst[lane_idx] = u8::MAX;
             }
             lane_idx += 1;
         }
         dense
     }
 
-    fn binding_lane_count(active_lane_count: usize) -> usize {
-        core::cmp::min(
-            MAX_LANES,
-            active_lane_count.saturating_add(RESERVED_BINDING_LANES),
-        )
-    }
-
-    fn endpoint_lane_slot_count_from_mask(active_lane_mask: u8) -> usize {
-        let live_lane_mask = active_lane_mask | 1;
-        if live_lane_mask == 0 {
-            0
-        } else {
-            core::cmp::min(
-                MAX_LANES,
-                (u8::BITS as usize).saturating_sub(live_lane_mask.leading_zeros() as usize),
-            )
-        }
-    }
-
-    fn build_logical_lane_dense_map_into(
-        logical_lane_count: usize,
-        dst: &mut [u8; MAX_LANES],
-    ) -> usize {
+    fn build_logical_lane_dense_map_into(logical_lane_count: usize, dst: &mut [u8]) -> usize {
         let mut lane_idx = 0usize;
-        while lane_idx < MAX_LANES {
+        while lane_idx < dst.len() {
             dst[lane_idx] = if lane_idx < logical_lane_count {
                 lane_idx as u8
             } else {
@@ -1992,7 +2155,7 @@ impl CompiledRoleImage {
             };
             lane_idx += 1;
         }
-        logical_lane_count
+        core::cmp::min(logical_lane_count, dst.len())
     }
 }
 
@@ -2350,7 +2513,8 @@ mod tests {
         const PROGRAM: g::Program<ProgramSteps> = g::route(LEFT, RIGHT);
         let program = PROGRAM;
 
-        let controller = role_program::project::<0, _, MintConfig>(&program);
+        let controller: role_program::RoleProgram<'_, 0, _, MintConfig> =
+            role_program::project(&program);
         with_compiled_role(&controller, |controller_compiled| {
             let controller_scope = controller_compiled.typestate_ref().node(0).scope();
             assert_eq!(controller_compiled.role(), 0);
@@ -2376,7 +2540,8 @@ mod tests {
             );
         });
 
-        let worker = role_program::project::<1, _, MintConfig>(&program);
+        let worker: role_program::RoleProgram<'_, 1, _, MintConfig> =
+            role_program::project(&program);
         with_compiled_role(&worker, |worker_compiled| {
             let worker_scope = worker_compiled.typestate_ref().node(0).scope();
             assert_eq!(worker_compiled.role(), 1);
@@ -2594,7 +2759,8 @@ mod tests {
         const PROGRAM: crate::g::Program<ProgramSteps> = g::seq(PREFIX, g::route(LEFT, RIGHT));
         let program = PROGRAM;
 
-        let worker = role_program::project::<1, _, MintConfig>(&program);
+        let worker: role_program::RoleProgram<'_, 1, _, MintConfig> =
+            role_program::project(&program);
         let lowering = crate::global::lowering_input(&worker);
         let summary = lowering.summary();
         assert!(
@@ -2639,7 +2805,8 @@ mod tests {
         Steps: crate::global::program::BuildProgramSource
             + crate::g::advanced::steps::ProjectRole<crate::g::Role<1>>,
     {
-        let worker = role_program::project::<1, _, MintConfig>(program);
+        let worker: role_program::RoleProgram<'_, 1, _, MintConfig> =
+            role_program::project(program);
         with_compiled_role_image(&worker, |image| {
             let active_lane_count = image.active_lane_count();
             let layout = image.endpoint_arena_layout_for_binding(true);
@@ -2677,6 +2844,16 @@ mod tests {
                 no_binding_layout.binding_slots().count(),
                 0,
                 "NoBinding layout must not reserve buffered binding slots"
+            );
+            assert_eq!(
+                no_binding_layout.phase_cursor_lane_cursors().count(),
+                image.logical_lane_count(),
+                "NoBinding layout must still reserve phase cursor lane storage"
+            );
+            assert_eq!(
+                no_binding_layout.route_state_lane_dense_by_lane().count(),
+                image.logical_lane_count(),
+                "NoBinding layout must still reserve route lane maps"
             );
             assert_eq!(
                 no_binding_layout.binding_len().count(),
@@ -2727,7 +2904,8 @@ mod tests {
     #[test]
     fn huge_shape_phase_counts_stay_bounded_by_parallel_markers() {
         let route_program = huge_program::PROGRAM;
-        let route_worker = role_program::project::<1, _, MintConfig>(&route_program);
+        let route_worker: role_program::RoleProgram<'_, 1, _, MintConfig> =
+            role_program::project(&route_program);
         let route_lowering = crate::global::lowering_input(&route_worker);
         let route_summary = route_lowering.summary();
         let route_parallel_markers = count_parallel_enter_markers(route_summary);
@@ -2758,7 +2936,8 @@ mod tests {
         });
 
         let linear_program = linear_program::PROGRAM;
-        let linear_worker = role_program::project::<1, _, MintConfig>(&linear_program);
+        let linear_worker: role_program::RoleProgram<'_, 1, _, MintConfig> =
+            role_program::project(&linear_program);
         let linear_lowering = crate::global::lowering_input(&linear_worker);
         let linear_summary = linear_lowering.summary();
         let linear_parallel_markers = count_parallel_enter_markers(linear_summary);
@@ -2783,7 +2962,8 @@ mod tests {
         });
 
         let fanout_program = fanout_program::PROGRAM;
-        let fanout_worker = role_program::project::<1, _, MintConfig>(&fanout_program);
+        let fanout_worker: role_program::RoleProgram<'_, 1, _, MintConfig> =
+            role_program::project(&fanout_program);
         let fanout_lowering = crate::global::lowering_input(&fanout_worker);
         let fanout_summary = fanout_lowering.summary();
         let fanout_parallel_markers = count_parallel_enter_markers(fanout_summary);
@@ -2817,7 +2997,8 @@ mod tests {
         <Steps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
             crate::global::steps::StepCount,
     {
-        let worker = role_program::project::<ROLE, _, MintConfig>(program);
+        let worker: role_program::RoleProgram<'_, ROLE, _, MintConfig> =
+            role_program::project(program);
         let lowering = crate::global::lowering_input(&worker);
         let summary = lowering.summary();
         let scope_count = summary.stamp().scope_count();

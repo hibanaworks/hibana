@@ -3,7 +3,7 @@ use core::{marker::PhantomData, ptr::NonNull};
 #[cfg(test)]
 use crate::global::typestate::RoleCompileScratch;
 use crate::global::{
-    role_program::{LocalStep, Phase, PhaseRouteGuard, RoleFootprint, RoleLoweringInput},
+    role_program::{LocalStep, PhaseRouteGuard, RoleFootprint, RoleLoweringInput},
     typestate::{RoleTypestateBuildScratch, StateIndex},
 };
 
@@ -39,8 +39,6 @@ pub(crate) struct RoleLoweringScratch<'a> {
     step_index_to_state_len: usize,
     route_guards: *mut PhaseRouteGuard,
     route_guards_len: usize,
-    phases: *mut Phase,
-    phases_len: usize,
     parallel_ranges: *mut (usize, usize),
     parallel_ranges_len: usize,
     _marker: PhantomData<&'a mut ()>,
@@ -64,8 +62,6 @@ impl<'a> RoleLoweringScratch<'a> {
             step_index_to_state_len: scratch.step_index_to_state.len(),
             route_guards: scratch.route_guards.as_mut_ptr(),
             route_guards_len: scratch.route_guards.len(),
-            phases: scratch.phases.as_mut_ptr(),
-            phases_len: scratch.phases.len(),
             parallel_ranges: scratch.parallel_ranges.as_mut_ptr(),
             parallel_ranges_len: scratch.parallel_ranges.len(),
             _marker: PhantomData,
@@ -140,7 +136,6 @@ impl<'a> RoleLoweringScratch<'a> {
         &[LocalStep],
         &[StateIndex],
         &mut [PhaseRouteGuard],
-        &mut [Phase],
         &mut [(usize, usize)],
     ) {
         unsafe {
@@ -148,15 +143,9 @@ impl<'a> RoleLoweringScratch<'a> {
                 core::slice::from_raw_parts(self.steps, self.steps_len),
                 core::slice::from_raw_parts(self.step_index_to_state, self.step_index_to_state_len),
                 core::slice::from_raw_parts_mut(self.route_guards, self.route_guards_len),
-                core::slice::from_raw_parts_mut(self.phases, self.phases_len),
                 core::slice::from_raw_parts_mut(self.parallel_ranges, self.parallel_ranges_len),
             )
         }
-    }
-
-    #[inline(always)]
-    pub(crate) fn phases(&self) -> &[Phase] {
-        unsafe { core::slice::from_raw_parts(self.phases, self.phases_len) }
     }
 }
 
@@ -169,7 +158,6 @@ struct RoleLoweringScratchLayout {
     eff_index_to_step: usize,
     step_index_to_state: usize,
     route_guards: usize,
-    phases: usize,
     parallel_ranges: usize,
     end: usize,
 }
@@ -192,11 +180,6 @@ impl RoleLoweringScratchLayout {
     }
 
     #[inline(always)]
-    const fn phase_count(footprint: RoleFootprint) -> usize {
-        footprint.phase_upper_bound()
-    }
-
-    #[inline(always)]
     const fn parallel_range_count(footprint: RoleFootprint) -> usize {
         footprint.parallel_enter_count
     }
@@ -205,7 +188,6 @@ impl RoleLoweringScratchLayout {
     const fn from_start(start: usize, footprint: RoleFootprint) -> Self {
         let eff_index_count = Self::eff_index_count(footprint);
         let step_count = Self::step_count(footprint);
-        let phase_count = Self::phase_count(footprint);
         let parallel_range_count = Self::parallel_range_count(footprint);
 
         let typestate_build =
@@ -232,9 +214,8 @@ impl RoleLoweringScratchLayout {
         );
         let route_guards_end =
             route_guards + step_count.saturating_mul(core::mem::size_of::<PhaseRouteGuard>());
-        let phases = Self::align_up(route_guards_end, core::mem::align_of::<Phase>());
-        let phases_end = phases + phase_count.saturating_mul(core::mem::size_of::<Phase>());
-        let parallel_ranges = Self::align_up(phases_end, core::mem::align_of::<(usize, usize)>());
+        let parallel_ranges =
+            Self::align_up(route_guards_end, core::mem::align_of::<(usize, usize)>());
         let end = parallel_ranges
             + parallel_range_count.saturating_mul(core::mem::size_of::<(usize, usize)>());
         Self {
@@ -245,7 +226,6 @@ impl RoleLoweringScratchLayout {
             eff_index_to_step,
             step_index_to_state,
             route_guards,
-            phases,
             parallel_ranges,
             end,
         }
@@ -255,7 +235,6 @@ impl RoleLoweringScratchLayout {
     unsafe fn scratch<'a>(self, footprint: RoleFootprint) -> RoleLoweringScratch<'a> {
         let eff_index_count = Self::eff_index_count(footprint);
         let step_count = Self::step_count(footprint);
-        let phase_count = Self::phase_count(footprint);
         let parallel_range_count = Self::parallel_range_count(footprint);
         RoleLoweringScratch {
             typestate_build: self.typestate_build as *mut RoleTypestateBuildScratch,
@@ -277,8 +256,6 @@ impl RoleLoweringScratchLayout {
             step_index_to_state_len: step_count,
             route_guards: RoleLoweringScratch::ptr_or_dangling(self.route_guards, step_count),
             route_guards_len: step_count,
-            phases: RoleLoweringScratch::ptr_or_dangling(self.phases, phase_count),
-            phases_len: phase_count,
             parallel_ranges: RoleLoweringScratch::ptr_or_dangling(
                 self.parallel_ranges,
                 parallel_range_count,
@@ -507,6 +484,7 @@ mod tests {
             local_step_count: 0,
             passive_linger_route_scope_count: 0,
             active_lane_count: 0,
+            endpoint_lane_slot_count: 0,
             logical_lane_count: 0,
             max_route_stack_depth: 0,
             scope_evidence_count: 0,
@@ -520,6 +498,7 @@ mod tests {
             local_step_count: 2,
             passive_linger_route_scope_count: 0,
             active_lane_count: 0,
+            endpoint_lane_slot_count: 0,
             logical_lane_count: 0,
             max_route_stack_depth: 0,
             scope_evidence_count: 0,

@@ -2594,6 +2594,7 @@ where
             crate::global::role_program::RoleFootprint::for_endpoint_layout(
                 crate::global::role_program::MAX_LANES,
                 crate::global::role_program::MAX_LANES,
+                crate::global::role_program::MAX_LANES,
                 crate::endpoint::kernel::MAX_ROUTE_ARM_STACK,
                 crate::eff::meta::MAX_EFF_NODES,
                 crate::global::role_program::MAX_LANES,

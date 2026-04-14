@@ -103,6 +103,11 @@ unsafe fn init_endpoint_cursor<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
                 arena_storage,
                 arena_layout.phase_cursor_state(),
             ),
+            section_ptr::<u16>(arena_storage, arena_layout.phase_cursor_lane_cursors()),
+            section_ptr::<u8>(
+                arena_storage,
+                arena_layout.phase_cursor_current_step_labels(),
+            ),
             compiled_role,
             program_image,
         );
@@ -125,8 +130,13 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
 {
     unsafe {
         let compiled_role = &*compiled_role;
-        let mut active_lane_dense_by_lane = [u8::MAX; crate::global::role_program::MAX_LANES];
-        compiled_role.fill_active_lane_dense_by_lane(&mut active_lane_dense_by_lane);
+        let active_lane_dense_by_lane =
+            section_ptr::<u8>(arena_storage, arena_layout.route_state_lane_dense_by_lane());
+        let active_lane_count =
+            compiled_role.fill_active_lane_dense_by_lane(core::slice::from_raw_parts_mut(
+                active_lane_dense_by_lane,
+                arena_layout.route_state_lane_dense_by_lane().count(),
+            ));
         let route_state = section_ptr::<RouteState>(arena_storage, arena_layout.route_state());
         LeasedState::init_from_ptr(::core::ptr::addr_of_mut!((*dst).route_state), route_state);
         RouteState::init_empty(
@@ -140,7 +150,14 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
                 arena_layout.lane_offer_state_slots(),
             ),
             section_ptr::<ScopeEvidenceSlot>(arena_storage, arena_layout.scope_evidence_slots()),
-            &active_lane_dense_by_lane,
+            active_lane_dense_by_lane,
+            arena_layout.route_state_lane_dense_by_lane().count(),
+            section_ptr::<u8>(
+                arena_storage,
+                arena_layout.route_state_lane_route_arm_lens(),
+            ),
+            section_ptr::<u8>(arena_storage, arena_layout.route_state_lane_linger_counts()),
+            active_lane_count,
             arena_layout.lane_offer_state_slots().count(),
             compiled_role.max_route_stack_depth(),
             arena_layout.scope_evidence_slots().count(),
@@ -210,9 +227,13 @@ unsafe fn init_endpoint_binding<'r, const ROLE: u8, T, U, C, E, const MAX_RV: us
 {
     unsafe {
         let compiled_role = &*compiled_role;
-        let mut logical_lane_dense_by_lane = [u8::MAX; crate::global::role_program::MAX_LANES];
+        let logical_lane_dense_by_lane =
+            section_ptr::<u8>(arena_storage, arena_layout.binding_lane_dense_by_lane());
         let logical_lane_count = if binding_enabled {
-            compiled_role.fill_logical_lane_dense_by_lane(&mut logical_lane_dense_by_lane)
+            compiled_role.fill_logical_lane_dense_by_lane(core::slice::from_raw_parts_mut(
+                logical_lane_dense_by_lane,
+                arena_layout.binding_lane_dense_by_lane().count(),
+            ))
         } else {
             0
         };
@@ -230,7 +251,7 @@ unsafe fn init_endpoint_binding<'r, const ROLE: u8, T, U, C, E, const MAX_RV: us
             ),
             section_ptr::<u8>(arena_storage, arena_layout.binding_len()),
             section_ptr::<u128>(arena_storage, arena_layout.binding_label_masks()),
-            &logical_lane_dense_by_lane,
+            logical_lane_dense_by_lane,
             logical_lane_count,
         );
     }

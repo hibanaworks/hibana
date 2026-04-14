@@ -347,7 +347,7 @@ fn substrate_facade_keeps_enter_as_the_only_public_attach_entry() {
 #[test]
 fn substrate_facade_projects_before_enter() {
     let connection = CONNECTION_SOURCE;
-    let program = project::<0, _, MintConfig>(&connection);
+    let program: RoleProgram<'_, 0, _, MintConfig> = project(&connection);
 
     let _ = &program;
 }
@@ -421,7 +421,7 @@ fn substrate_facade_accepts_non_static_projected_programs() {
         rendezvous: hibana::substrate::RendezvousId,
     ) -> Endpoint<'a, 0, StaticTestKit, MintConfig> {
         let connection = CONNECTION_SOURCE;
-        let program = project::<0, _, MintConfig>(&connection);
+        let program: RoleProgram<'_, 0, _, MintConfig> = project(&connection);
         cluster
             .enter(rendezvous, rv_id, &program, NoBinding)
             .expect("enter endpoint")

@@ -24,12 +24,18 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn root_frontier_offer_lane_mask(&self, root: ScopeId) -> u8 {
+    pub(in crate::endpoint::kernel) fn root_frontier_offer_lane_mask(
+        &self,
+        root: ScopeId,
+    ) -> crate::global::role_program::LaneMask {
         self.offer_lane_mask_for_active_entries(self.root_frontier_active_entries(root))
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_active_mask(&self, entry_idx: usize) -> u8 {
+    pub(in crate::endpoint::kernel) fn offer_entry_active_mask(
+        &self,
+        entry_idx: usize,
+    ) -> crate::global::role_program::LaneMask {
         self.offer_entry_state_snapshot(entry_idx)
             .map(|state| state.active_mask)
             .unwrap_or(0)
@@ -86,7 +92,7 @@ where
 
     pub(in crate::endpoint::kernel) fn compute_offer_entry_static_summary(
         &self,
-        active_mask: u8,
+        active_mask: crate::global::role_program::LaneMask,
         entry_idx: usize,
     ) -> OfferEntryStaticSummary {
         let mut summary = OfferEntryStaticSummary::EMPTY;
@@ -95,7 +101,7 @@ where
         let mut lane_mask = active_mask;
         while lane_mask != 0 {
             let lane_idx = lane_mask.trailing_zeros() as usize;
-            lane_mask &= !(1u8 << lane_idx);
+            lane_mask &= !crate::global::role_program::lane_mask_bit(lane_idx);
             let info = self.route_state.lane_offer_state(lane_idx);
             if info.scope.is_none() || state_index_to_usize(info.entry) != entry_idx {
                 continue;
@@ -172,7 +178,7 @@ where
         &self,
         lane_idx: usize,
     ) -> Option<LaneOfferState> {
-        if lane_idx >= MAX_LANES {
+        if lane_idx >= self.cursor.logical_lane_count() {
             return None;
         }
         let (mut entry_idx, mut scope_id) =
@@ -282,7 +288,7 @@ where
         &self,
         lane_idx: usize,
     ) -> Option<(ScopeId, StateIndex)> {
-        if lane_idx >= MAX_LANES {
+        if lane_idx >= self.cursor.logical_lane_count() {
             return None;
         }
         let Some(scope) = self

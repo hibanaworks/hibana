@@ -6,7 +6,7 @@ use crate::{
     eff::EffIndex,
     global::{
         const_dsl::{CompactScopeId, ScopeId, ScopeKind},
-        role_program::MAX_LANES,
+        role_program::{LaneMask, lane_mask_bit},
     },
 };
 
@@ -38,8 +38,6 @@ pub(crate) struct ScopeRecord {
     pub range: u16,
     pub nest: u16,
     pub parent: u16,
-    pub lane_first_eff: [EffIndex; MAX_LANES],
-    pub lane_last_eff: [EffIndex; MAX_LANES],
     pub arm_entry: [StateIndex; 2],
 }
 
@@ -47,13 +45,9 @@ pub(crate) struct ScopeRecord {
 pub(crate) struct RouteScopeRecord {
     pub route_recv: [StateIndex; 2],
     pub passive_arm_jump: [StateIndex; 2],
-    pub offer_lanes: u8,
+    pub offer_lanes: LaneMask,
     pub offer_entry: StateIndex,
-    // Arm 1 always ends at the enclosing scope's per-lane last eff, so the
-    // route tail only needs explicit arm-local last-eff storage for arm 0 plus
-    // a presence mask for arm 1.
-    pub arm0_lane_last_eff: [EffIndex; MAX_LANES],
-    pub arm1_lane_mask: u8,
+    pub arm1_lane_mask: LaneMask,
     pub first_recv_dispatch: [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     pub first_recv_len: u8,
 }
@@ -66,29 +60,16 @@ pub(super) struct ScopeRegistry {
     pub(super) route_dense_by_slot: *const u16,
     pub(super) route_records: *const RouteScopeRecord,
     pub(super) route_scope_len: u16,
+    pub(super) lane_slot_count: u16,
+    pub(super) scope_lane_first_eff: *const EffIndex,
+    pub(super) scope_lane_last_eff: *const EffIndex,
+    pub(super) route_arm0_lane_last_eff_by_slot: *const EffIndex,
     pub(super) frontier_entry_capacity_value: u8,
 }
 
 #[inline]
-pub(super) const fn offer_lane_bit(lane: u8) -> u8 {
-    if lane >= MAX_LANES as u8 {
-        panic!("offer lane exceeds MAX_LANES");
-    }
-    1u8 << (lane as u32)
-}
-
-const fn offer_lane_list_from_mask(mask: u8) -> ([u8; MAX_LANES], u8) {
-    let mut lanes = [0u8; MAX_LANES];
-    let mut len = 0u8;
-    let mut lane = 0u8;
-    while (lane as usize) < MAX_LANES {
-        if (mask & (1u8 << (lane as u32))) != 0 {
-            lanes[len as usize] = lane;
-            len = len + 1;
-        }
-        lane = lane + 1;
-    }
-    (lanes, len)
+pub(super) const fn offer_lane_bit(lane: u8) -> LaneMask {
+    lane_mask_bit(lane as usize)
 }
 
 impl ScopeRecord {
@@ -101,8 +82,6 @@ impl ScopeRecord {
         range: 0,
         nest: 0,
         parent: SCOPE_LINK_NONE,
-        lane_first_eff: [EffIndex::MAX; MAX_LANES],
-        lane_last_eff: [EffIndex::MAX; MAX_LANES],
         arm_entry: [StateIndex::MAX, StateIndex::MAX],
     };
 
@@ -126,7 +105,6 @@ impl RouteScopeRecord {
         passive_arm_jump: [StateIndex::MAX, StateIndex::MAX],
         offer_lanes: 0,
         offer_entry: StateIndex::MAX,
-        arm0_lane_last_eff: [EffIndex::MAX; MAX_LANES],
         arm1_lane_mask: 0,
         first_recv_dispatch: [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH],
         first_recv_len: 0,
@@ -192,6 +170,39 @@ impl ScopeRegistry {
                 core::slice::from_raw_parts(self.route_records, self.route_scope_len as usize)
             }
         }
+    }
+
+    #[inline(always)]
+    fn lane_slot_count(&self) -> usize {
+        self.lane_slot_count as usize
+    }
+
+    #[inline(always)]
+    fn lane_row(&self, base: *const EffIndex, slot: usize) -> &[EffIndex] {
+        let lane_slot_count = self.lane_slot_count();
+        if lane_slot_count == 0 || slot >= self.len as usize {
+            &[]
+        } else {
+            unsafe {
+                core::slice::from_raw_parts(base.add(slot * lane_slot_count), lane_slot_count)
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub(super) fn scope_lane_first_row(&self, slot: usize) -> &[EffIndex] {
+        self.lane_row(self.scope_lane_first_eff, slot)
+    }
+
+    #[inline(always)]
+    pub(super) fn scope_lane_last_row(&self, slot: usize) -> &[EffIndex] {
+        self.lane_row(self.scope_lane_last_eff, slot)
+    }
+
+    #[inline(always)]
+    #[cfg(test)]
+    pub(super) fn route_arm0_lane_last_row(&self, slot: usize) -> &[EffIndex] {
+        self.lane_row(self.route_arm0_lane_last_eff_by_slot, slot)
     }
 
     #[inline(always)]
@@ -298,13 +309,9 @@ impl ScopeRegistry {
         Some(route.route_recv_count() as u16)
     }
 
-    pub(super) fn route_offer_lane_list(
-        &self,
-        scope_id: ScopeId,
-    ) -> Option<([u8; MAX_LANES], usize)> {
+    pub(super) fn route_offer_lane_mask(&self, scope_id: ScopeId) -> Option<LaneMask> {
         let (_record, route) = self.lookup_route_record(scope_id)?;
-        let (lanes, len) = offer_lane_list_from_mask(route.offer_lanes);
-        Some((lanes, len as usize))
+        Some(route.offer_lanes)
     }
 
     pub(super) fn route_offer_entry(&self, scope_id: ScopeId) -> Option<StateIndex> {
@@ -468,31 +475,17 @@ impl ScopeRegistry {
         max_depth
     }
 
-    pub(super) fn scope_lane_first_eff_in_record(
+    fn scope_lane_eff_in_slot(
         &self,
-        record: &ScopeRecord,
+        base: *const EffIndex,
+        slot: usize,
         lane: u8,
     ) -> Option<EffIndex> {
-        if lane as usize >= MAX_LANES {
+        let lane_idx = lane as usize;
+        if slot >= self.len as usize || lane_idx >= self.lane_slot_count() {
             return None;
         }
-        let eff_index = record.lane_first_eff[lane as usize];
-        if eff_index == EffIndex::MAX {
-            None
-        } else {
-            Some(eff_index)
-        }
-    }
-
-    pub(super) fn scope_lane_last_eff_in_record(
-        &self,
-        record: &ScopeRecord,
-        lane: u8,
-    ) -> Option<EffIndex> {
-        if lane as usize >= MAX_LANES {
-            return None;
-        }
-        let eff_index = record.lane_last_eff[lane as usize];
+        let eff_index = self.lane_row(base, slot)[lane_idx];
         if eff_index == EffIndex::MAX {
             None
         } else {
@@ -501,13 +494,13 @@ impl ScopeRegistry {
     }
 
     pub(super) fn scope_lane_first_eff(&self, scope_id: ScopeId, lane: u8) -> Option<EffIndex> {
-        let record = self.lookup_record(scope_id)?;
-        self.scope_lane_first_eff_in_record(record, lane)
+        let slot = self.lookup_slot(scope_id)?;
+        self.scope_lane_eff_in_slot(self.scope_lane_first_eff, slot, lane)
     }
 
     pub(super) fn scope_lane_last_eff(&self, scope_id: ScopeId, lane: u8) -> Option<EffIndex> {
-        let record = self.lookup_record(scope_id)?;
-        self.scope_lane_last_eff_in_record(record, lane)
+        let slot = self.lookup_slot(scope_id)?;
+        self.scope_lane_eff_in_slot(self.scope_lane_last_eff, slot, lane)
     }
 
     pub(super) fn scope_lane_last_eff_for_arm(
@@ -516,25 +509,21 @@ impl ScopeRegistry {
         arm: u8,
         lane: u8,
     ) -> Option<EffIndex> {
-        let (record, route) = self.lookup_route_record(scope_id)?;
+        let (_record, route) = self.lookup_route_record(scope_id)?;
+        let slot = self.lookup_slot(scope_id)?;
         if arm >= 2 {
             return None;
         }
         let lane_idx = lane as usize;
-        if lane_idx >= MAX_LANES {
+        if lane_idx >= self.lane_slot_count() {
             return None;
         }
         if arm == 0 {
-            let eff_index = route.arm0_lane_last_eff[lane_idx];
-            if eff_index == EffIndex::MAX {
-                None
-            } else {
-                Some(eff_index)
-            }
+            self.scope_lane_eff_in_slot(self.route_arm0_lane_last_eff_by_slot, slot, lane)
         } else if (route.arm1_lane_mask & offer_lane_bit(lane)) == 0 {
             None
         } else {
-            self.scope_lane_last_eff_in_record(record, lane)
+            self.scope_lane_eff_in_slot(self.scope_lane_last_eff, slot, lane)
         }
     }
 

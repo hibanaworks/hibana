@@ -2,6 +2,7 @@ use crate::{
     control::cluster::effects::EffectEnvelopeRef,
     endpoint::kernel::EndpointArenaLayout,
     global::const_dsl::{PolicyMode, ScopeId},
+    global::role_program::LaneMask,
 };
 
 use super::{
@@ -109,13 +110,18 @@ impl<const ROLE: u8> RoleImageSlice<ROLE> {
     }
 
     #[inline(always)]
-    pub(crate) fn active_lane_mask(&self) -> u8 {
+    pub(crate) fn active_lane_mask(&self) -> LaneMask {
         self.compiled().active_lane_mask()
     }
 
     #[inline(always)]
     pub(crate) fn endpoint_lane_slot_count(&self) -> usize {
         self.compiled().endpoint_lane_slot_count()
+    }
+
+    #[inline(always)]
+    pub(crate) fn logical_lane_count(&self) -> usize {
+        self.compiled().logical_lane_count()
     }
 
     #[inline(always)]

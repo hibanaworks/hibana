@@ -504,11 +504,11 @@ fn offer_kernel_stays_three_stage_and_fail_closed() {
     let offer_body = impl_body(offer_src, "pub async fn offer(");
     let offer_driver_body = impl_body(offer_src, "async fn run(&mut self)");
     let select_scope_body = impl_body(
-        cursor_src,
-        "fn select_scope(&mut self) -> RecvResult<OfferScopeSelection>",
+        offer_src,
+        "pub(super) fn select_scope(&mut self) -> RecvResult<OfferScopeSelection>",
     );
-    let resolve_token_body = impl_body(cursor_src, "async fn resolve_token(");
-    let materialize_branch_body = impl_body(cursor_src, "fn materialize_branch(");
+    let resolve_token_body = impl_body(offer_src, "pub(super) async fn resolve_token(");
+    let materialize_branch_body = impl_body(offer_src, "pub(super) fn materialize_branch(");
     let preview_flow_meta_body = impl_body(cursor_src, "pub(super) fn preview_flow_meta<M>(");
     let send_with_meta_body = impl_body(
         cursor_src,
@@ -524,13 +524,15 @@ fn offer_kernel_stays_three_stage_and_fail_closed() {
         "public offer must delegate orchestration through the sealed route-frontier machine"
     );
     let select_idx = offer_driver_body
-        .find("let selection = self.select_scope()?;")
+        .find("let selection = self.endpoint.select_scope()?;")
+        .or_else(|| offer_driver_body.find("let selection = self.select_scope()?;"))
         .expect("offer driver must start by selecting a scope");
     let resolve_idx = offer_driver_body
         .find(".resolve_token(")
         .expect("offer driver must resolve authority via resolve_token");
     let materialize_idx = offer_driver_body
-        .find("return self.materialize_branch(")
+        .find("return self.endpoint.materialize_branch(")
+        .or_else(|| offer_driver_body.find("return self.materialize_branch("))
         .expect("offer driver must materialize the chosen branch last");
     assert!(
         select_idx < resolve_idx && resolve_idx < materialize_idx,
@@ -585,7 +587,8 @@ fn offer_kernel_stays_three_stage_and_fail_closed() {
     }
 
     assert!(
-        materialize_branch_body.contains("self.preview_selected_arm_meta("),
+        materialize_branch_body.contains("self.endpoint.preview_selected_arm_meta(")
+            || materialize_branch_body.contains("self.preview_selected_arm_meta("),
         "materialize_branch must remain the owner of branch metadata materialization"
     );
     assert!(
@@ -1485,6 +1488,7 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
                 pub(crate) local_step_count: usize,
                 pub(crate) passive_linger_route_scope_count: usize,
                 pub(crate) active_lane_count: usize,
+                pub(crate) endpoint_lane_slot_count: usize,
                 pub(crate) logical_lane_count: usize,
                 pub(crate) max_route_stack_depth: usize,
                 pub(crate) scope_evidence_count: usize,
@@ -4009,6 +4013,58 @@ fn hidden_attach_path_uses_canonical_attach_endpoint_name() {
 }
 
 #[test]
+fn session_cluster_attach_leases_exact_logical_lane_slots() {
+    let cluster_core_src = include_str!("../src/control/cluster/core.rs");
+    let cluster_core_ws = compact_ws(cluster_core_src);
+
+    assert!(
+        cluster_core_src.contains("logical_lane_count: usize,")
+            && cluster_core_src.contains("active_lane_mask: LaneMask,")
+            && cluster_core_src
+                .contains("let active_application_lane_mask = role_image.active_lane_mask();")
+            && cluster_core_src
+                .contains("let active_lane_mask = active_application_lane_mask | 1;")
+            && !cluster_core_src.contains("let primary_lane_index = 0usize;")
+            && !cluster_core_src.contains("while logical_idx < MAX_LANES"),
+        "session-cluster lane attach must size by exact logical-lane counts instead of the fixed MAX_LANES ceiling"
+    );
+    assert!(
+        cluster_core_ws.contains(
+            "while logical_idx < logical_lane_count { if logical_idx == occupied_lane_index || ((active_lane_mask >> logical_idx) & 1) == 0 {"
+        )
+            && cluster_core_ws.contains(
+                "let logical_lane_count = core::cmp::min( role_image.logical_lane_count().max(1), LaneMask::BITS as usize, );"
+            )
+            && cluster_core_ws.contains(
+                "let primary_lane_index = if active_application_lane_mask == 0 { 0usize } else { active_application_lane_mask.trailing_zeros() as usize };"
+            )
+            && cluster_core_ws.contains("let control_lane_index = 0usize;")
+            && cluster_core_ws.contains(
+                "crate::endpoint::kernel::endpoint_init::write_port_slot( dst, control_lane_index, control_port, );"
+            )
+            && cluster_core_ws.contains(
+                "self.attach_secondary_endpoint_lanes::<ROLE, Mint, B>( dst, rv_id, sid, role_count, effect_envelope, active_lane_mask, logical_lane_count, control_lane_index, );"
+            ),
+        "session-cluster attach must iterate exact logical lane slots, keep the widened active-lane mask, and derive primary_lane from the first live application lane"
+    );
+}
+
+#[test]
+fn lane_mask_width_stays_uniform_across_build_kinds() {
+    let role_program_src = include_str!("../src/global/role_program.rs");
+    let role_program_ws = compact_ws(role_program_src);
+
+    assert!(
+        role_program_ws.contains("pub(crate) use core::primitive::u32 as LaneMask;")
+            && !role_program_ws
+                .contains("#[cfg(test)] pub(crate) use core::primitive::u8 as LaneMask;")
+            && !role_program_ws
+                .contains("#[cfg(not(test))] pub(crate) use core::primitive::u32 as LaneMask;"),
+        "LaneMask must keep the widened 32-bit width in both test and non-test builds"
+    );
+}
+
+#[test]
 fn endpoint_kernel_split_and_lane_port_unsafe_boundary_hold() {
     let endpoint_src = include_str!("../src/endpoint.rs");
     let kernel_mod_src = include_str!("../src/endpoint/kernel/mod.rs");
@@ -4122,6 +4178,8 @@ fn endpoint_kernel_owner_split_stays_explicit() {
     let layout_src = include_str!("../src/endpoint/kernel/runtime/layout.rs");
     let offer_src = include_str!("../src/endpoint/kernel/route_frontier/offer.rs");
     let offer_refresh_src = include_str!("../src/endpoint/kernel/route_frontier/offer_refresh.rs");
+    let route_frontier_owner_script =
+        include_str!("../.github/scripts/check_route_frontier_owner.sh");
     let route_state_src = include_str!("../src/endpoint/kernel/runtime/route_state.rs");
     let scope_evidence_logic_src =
         include_str!("../src/endpoint/kernel/route_frontier/scope_evidence_logic.rs");
@@ -4270,7 +4328,7 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         "#[cfg(test)]\n    pub(super) lane_idx: u8,",
         "#[cfg(test)]\n    pub(super) scope_id: ScopeId,",
         "#[cfg(test)]\n    pub(super) summary: OfferEntryStaticSummary,",
-        "#[cfg(test)]\n    pub(super) offer_lane_mask: u8,",
+        "#[cfg(test)]\n    pub(super) offer_lane_mask: LaneMask,",
         "#[cfg(test)]\n    pub(super) selection_meta: CurrentScopeSelectionMeta,",
         "#[cfg(test)]\n    pub(super) label_meta: ScopeLabelMeta,",
         "#[cfg(test)]\n    pub(super) materialization_meta: ScopeArmMaterializationMeta,",
@@ -4358,7 +4416,7 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         "pub(super) struct RouteState {",
         "fn set_route_arm(",
         "fn pop_route_arm(",
-        "fn collect_lane_scopes<F>(",
+        "fn last_matching_lane_scope<F>(",
         "fn clear_lane_offer_state(",
         "fn set_lane_offer_state(",
         "lane_route_arms:",
@@ -4369,7 +4427,10 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         "route_arm_storage: *mut RouteArmState,",
         "lane_offer_state_storage: *mut LaneOfferState,",
         "scope_evidence_slots: *mut ScopeEvidenceSlot,",
-        "lane_dense_by_lane: &[u8; MAX_LANES],",
+        "lane_dense_by_lane: *mut u8,",
+        "lane_slot_count: usize,",
+        "lane_route_arm_lens: *mut u8,",
+        "lane_linger_counts: *mut u8,",
         "lane_offer_state_count: usize,",
         "route_frame_depth: usize,",
         "scope_evidence_count: usize,",
@@ -4386,11 +4447,20 @@ fn endpoint_kernel_owner_split_stays_explicit() {
     );
     for required in [
         "struct RouteFrontierMachine<",
+        "fn select_scope(",
+        "fn resolve_token(",
+        "fn materialize_branch(",
         "fn record_scope_ack(",
         "fn mark_scope_ready_arm(",
         "fn mark_scope_ready_arm_from_label(",
         "fn mark_scope_ready_arm_from_binding_label(",
         "fn mark_static_passive_descendant_path_ready(",
+        "fn on_frontier_defer(",
+        "fn align_cursor_to_selected_scope(",
+        "fn await_transport_payload_for_offer_lane(",
+        "fn await_static_passive_progress(",
+        "fn try_poll_route_decision_immediate(",
+        "fn try_poll_route_decision_for_offer(",
         "fn commit_pending_branch_preview(",
         "fn commit_branch_preview(",
         "fn offer_entry_label_meta(",
@@ -4398,6 +4468,10 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         "fn frontier_observation_lane_mask(",
         "fn frontier_observation_offer_lane_entry_slot_masks(",
         "fn frontier_observation_key(",
+        "fn ensure_global_frontier_scratch_initialized(",
+        "fn frontier_observation_cache(",
+        "fn store_frontier_observation(",
+        "fn cached_offer_entry_observed_state_for_rebuild(",
         "fn working_frontier_observation_cache(",
         "fn ingest_binding_scope_evidence(",
         "fn ingest_scope_evidence_for_offer(",
@@ -4501,6 +4575,10 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         "fn ingest_scope_evidence_for_offer(",
         "fn ingest_binding_scope_evidence(",
         "fn recover_scope_evidence_conflict(",
+        "fn await_transport_payload_for_offer_lane(",
+        "fn await_static_passive_progress(",
+        "fn try_poll_route_decision_immediate(",
+        "fn try_poll_route_decision_for_offer(",
     ] {
         assert!(
             !scope_evidence_logic_src.contains(forbidden),
@@ -4510,23 +4588,57 @@ fn endpoint_kernel_owner_split_stays_explicit() {
     for required in [
         "fn on_frontier_defer(",
         "fn align_cursor_to_selected_scope(",
+        "fn await_transport_payload_for_offer_lane(",
+        "fn await_static_passive_progress(",
+        "fn try_poll_route_decision_immediate(",
+        "fn try_poll_route_decision_for_offer(",
     ] {
         assert!(
-            frontier_select_src.contains(required),
-            "frontier_select.rs must remain the canonical owner for frontier selection logic: {required}"
-        );
-    }
-    for required in [
-        "fn frontier_observation_cache(",
-        "fn store_frontier_observation(",
-        "fn cached_offer_entry_observed_state_for_rebuild(",
-    ] {
-        assert!(
-            frontier_observation_src.contains(required),
-            "frontier_observation.rs must remain the canonical owner for observation-cache logic: {required}"
+            offer_src.contains(required),
+            "offer.rs must remain the canonical owner for route-decision frontier logic: {required}"
         );
     }
     for forbidden in [
+        "fn on_frontier_defer(",
+        "fn current_scope_selection_meta(",
+        "fn current_frontier_selection_state(",
+        "fn align_cursor_to_selected_scope(",
+    ] {
+        assert!(
+            !frontier_select_src.contains(forbidden),
+            "frontier_select.rs must stay focused on offer-entry data helpers instead of route-decision owners: {forbidden}"
+        );
+    }
+    for required in [
+        "fn init_global_frontier_scratch_if_needed(",
+        "fn frontier_observation_cache_snapshot(",
+        "fn write_frontier_observation_snapshot(",
+        "fn reusable_cached_offer_entry_observed_state(",
+    ] {
+        assert!(
+            frontier_observation_src.contains(required),
+            "frontier_observation.rs must remain the helper owner for observation-cache support: {required}"
+        );
+    }
+    assert!(
+        route_frontier_owner_script.contains("check_absent_outside_owner")
+            && route_frontier_owner_script.contains("\"init_global_frontier_scratch_if_needed(\"")
+            && route_frontier_owner_script
+                .contains("\"frontier_observation_cache_snapshot(\"")
+            && route_frontier_owner_script.contains("\"write_frontier_observation_snapshot(\"")
+            && route_frontier_owner_script
+                .contains("\"reusable_cached_offer_entry_observed_state(\"")
+            && route_frontier_owner_script.contains("\"src/endpoint/kernel\"")
+            && route_frontier_owner_script.contains(
+                "frontier_observation helper leaked beyond offer.rs/frontier_observation.rs"
+            ),
+        "route-frontier owner script must ban helper call-sites outside offer.rs/frontier_observation.rs"
+    );
+    for forbidden in [
+        "fn ensure_global_frontier_scratch_initialized(",
+        "fn frontier_observation_cache(",
+        "fn store_frontier_observation(",
+        "fn cached_offer_entry_observed_state_for_rebuild(",
         "fn frontier_observation_key(",
         "fn working_frontier_observation_cache(",
         "fn frontier_observation_lane_mask(",
@@ -4674,7 +4786,7 @@ fn typestate_builder_stays_a_facade_and_emit_owns_lowering_walk() {
         "pub(super) const MAX_LOOP_TRACKED: usize =",
         "pub(super) const fn find_loop_entry_state(",
         "pub(super) const fn store_loop_entry_if_absent(",
-        "pub(super) const fn parallel_phase_eff_range(",
+        "pub(super) fn parallel_phase_eff_range(",
         "pub(super) const fn phase_route_entry_for_arm(",
         "pub(super) const fn phase_route_arm_for_record(",
     ] {
@@ -4718,6 +4830,7 @@ fn phase_cursor_owns_private_machine_facts_without_cache_lease_backpointers() {
     let program_image_src = include_str!("../src/global/compiled/images/image.rs");
     let layout_src = include_str!("../src/endpoint/kernel/runtime/layout.rs");
     let endpoint_init_src = include_str!("../src/endpoint/kernel/endpoint_init.rs");
+    let endpoint_init_ws = compact_ws(endpoint_init_src);
 
     assert!(
         cursor_src.contains("struct PhaseCursorMachine {")
@@ -4729,21 +4842,28 @@ fn phase_cursor_owns_private_machine_facts_without_cache_lease_backpointers() {
             && cursor_src.contains("program_image: ProgramImage,")
             && cursor_src.contains("idx: u16,")
             && cursor_src.contains("phase_index: u8,")
-            && cursor_src.contains("lane_cursors: [u16; MAX_LANES],")
-            && cursor_src.contains("current_step_labels: [u8; MAX_LANES],")
-            && cursor_src.contains("labeled_lane_mask: u8,")
+            && cursor_src.contains("lane_cursors: *mut u16,")
+            && cursor_src.contains("current_step_labels: *mut u8,")
+            && cursor_src.contains("labeled_lane_mask: LaneMask,")
             && program_image_src.contains("pub(crate) struct ProgramImage {")
             && program_image_src.contains(
                 "pub(crate) fn route_controller_role(&self, scope_id: ScopeId) -> Option<u8> {"
             )
             && layout_src.contains("phase_cursor_state: EndpointArenaSection,")
-            && endpoint_init_src
+            && layout_src.contains("phase_cursor_lane_cursors: EndpointArenaSection,")
+            && layout_src.contains("phase_cursor_current_step_labels: EndpointArenaSection,")
+            && endpoint_init_ws
                 .contains("section_ptr::<crate::global::typestate::PhaseCursorState>(")
-            && endpoint_init_src.contains("arena_layout.phase_cursor_state(),"),
+            && endpoint_init_ws.contains("arena_layout.phase_cursor_state(),")
+            && endpoint_init_ws.contains(
+                "section_ptr::<u16>(arena_storage, arena_layout.phase_cursor_lane_cursors())",
+            )
+            && endpoint_init_ws.contains("section_ptr::<u8>(")
+            && endpoint_init_ws.contains("arena_layout.phase_cursor_current_step_labels(),"),
         "PhaseCursor must keep shared machine facts in the header and mutable cursor state in the leased arena"
     );
     assert!(
-        cursor_src.contains("pub(crate) fn current_phase_lane_mask(&self) -> u8 {")
+        cursor_src.contains("pub(crate) fn current_phase_lane_mask(&self) -> LaneMask {")
             && cursor_src.contains(
                 "pub(crate) fn current_phase_route_guard(&self) -> Option<PhaseRouteGuard> {"
             )

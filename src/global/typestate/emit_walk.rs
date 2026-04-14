@@ -794,12 +794,37 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
     scope_slots_by_scope: *mut u16,
     route_dense_by_slot: *mut u16,
     route_records: *mut RouteScopeRecord,
+    lane_slot_count: usize,
+    scope_lane_first_eff: *mut EffIndex,
+    scope_lane_last_eff: *mut EffIndex,
+    route_arm0_lane_last_eff_by_slot: *mut EffIndex,
     route_scope_cap: usize,
     program: P,
 ) {
     let slice = program.as_slice();
     let scope_markers = program.scope_markers();
     let nodes = unsafe { core::slice::from_raw_parts_mut(nodes_ptr, nodes_cap) };
+    let lane_matrix_len = scope_records.len().saturating_mul(lane_slot_count);
+    let scope_lane_first_eff = if lane_matrix_len == 0 {
+        &mut []
+    } else {
+        unsafe { core::slice::from_raw_parts_mut(scope_lane_first_eff, lane_matrix_len) }
+    };
+    let scope_lane_last_eff = if lane_matrix_len == 0 {
+        &mut []
+    } else {
+        unsafe { core::slice::from_raw_parts_mut(scope_lane_last_eff, lane_matrix_len) }
+    };
+    let route_arm0_lane_last_eff_by_slot = if lane_matrix_len == 0 {
+        &mut []
+    } else {
+        unsafe {
+            core::slice::from_raw_parts_mut(route_arm0_lane_last_eff_by_slot, lane_matrix_len)
+        }
+    };
+    scope_lane_first_eff.fill(EffIndex::MAX);
+    scope_lane_last_eff.fill(EffIndex::MAX);
+    route_arm0_lane_last_eff_by_slot.fill(EffIndex::MAX);
 
     let loop_entry_ids = &mut scratch.loop_entry_ids;
     let loop_entry_states = &mut scratch.loop_entry_states;
@@ -1698,19 +1723,21 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                     false, // Local nodes are never choice determinants
                 );
                 let lane_idx = atom.lane as usize;
+                if lane_idx >= lane_slot_count {
+                    panic!("scope lane facts missing lane slot capacity");
+                }
                 let mut stack_idx = 0usize;
                 while stack_idx < scope_stack_len {
                     let entry_idx = scope_stack_entries[stack_idx] as usize;
-                    let scope_entry = &mut scope_entries[entry_idx];
-                    if scope_entry.lane_first_eff[lane_idx] == crate::eff::EffIndex::MAX {
-                        scope_entry.lane_first_eff[lane_idx] = as_eff_index(eff_idx);
+                    let lane_offset = entry_idx * lane_slot_count + lane_idx;
+                    if scope_lane_first_eff[lane_offset] == crate::eff::EffIndex::MAX {
+                        scope_lane_first_eff[lane_offset] = as_eff_index(eff_idx);
                     }
-                    scope_entry.lane_last_eff[lane_idx] = as_eff_index(eff_idx);
+                    scope_lane_last_eff[lane_offset] = as_eff_index(eff_idx);
                     if matches!(scope_stack_kinds[stack_idx], ScopeKind::Route) {
                         let arm = route_current_arm[stack_idx] as usize;
                         if arm == 0 {
-                            route_scope_entries[entry_idx].arm0_lane_last_eff[lane_idx] =
-                                as_eff_index(eff_idx);
+                            route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
                         } else if arm == 1 {
                             route_scope_entries[entry_idx].arm1_lane_mask |=
                                 offer_lane_bit(atom.lane);
@@ -1850,19 +1877,21 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                     false, // Send nodes are never choice determinants
                 );
                 let lane_idx = atom.lane as usize;
+                if lane_idx >= lane_slot_count {
+                    panic!("scope lane facts missing lane slot capacity");
+                }
                 let mut stack_idx = 0usize;
                 while stack_idx < scope_stack_len {
                     let entry_idx = scope_stack_entries[stack_idx] as usize;
-                    let scope_entry = &mut scope_entries[entry_idx];
-                    if scope_entry.lane_first_eff[lane_idx] == crate::eff::EffIndex::MAX {
-                        scope_entry.lane_first_eff[lane_idx] = as_eff_index(eff_idx);
+                    let lane_offset = entry_idx * lane_slot_count + lane_idx;
+                    if scope_lane_first_eff[lane_offset] == crate::eff::EffIndex::MAX {
+                        scope_lane_first_eff[lane_offset] = as_eff_index(eff_idx);
                     }
-                    scope_entry.lane_last_eff[lane_idx] = as_eff_index(eff_idx);
+                    scope_lane_last_eff[lane_offset] = as_eff_index(eff_idx);
                     if matches!(scope_stack_kinds[stack_idx], ScopeKind::Route) {
                         let arm = route_current_arm[stack_idx] as usize;
                         if arm == 0 {
-                            route_scope_entries[entry_idx].arm0_lane_last_eff[lane_idx] =
-                                as_eff_index(eff_idx);
+                            route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
                         } else if arm == 1 {
                             route_scope_entries[entry_idx].arm1_lane_mask |=
                                 offer_lane_bit(atom.lane);
@@ -2008,19 +2037,21 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                     is_choice_determinant,
                 );
                 let lane_idx = atom.lane as usize;
+                if lane_idx >= lane_slot_count {
+                    panic!("scope lane facts missing lane slot capacity");
+                }
                 let mut stack_idx = 0usize;
                 while stack_idx < scope_stack_len {
                     let entry_idx = scope_stack_entries[stack_idx] as usize;
-                    let scope_entry = &mut scope_entries[entry_idx];
-                    if scope_entry.lane_first_eff[lane_idx] == crate::eff::EffIndex::MAX {
-                        scope_entry.lane_first_eff[lane_idx] = as_eff_index(eff_idx);
+                    let lane_offset = entry_idx * lane_slot_count + lane_idx;
+                    if scope_lane_first_eff[lane_offset] == crate::eff::EffIndex::MAX {
+                        scope_lane_first_eff[lane_offset] = as_eff_index(eff_idx);
                     }
-                    scope_entry.lane_last_eff[lane_idx] = as_eff_index(eff_idx);
+                    scope_lane_last_eff[lane_offset] = as_eff_index(eff_idx);
                     if matches!(scope_stack_kinds[stack_idx], ScopeKind::Route) {
                         let arm = route_current_arm[stack_idx] as usize;
                         if arm == 0 {
-                            route_scope_entries[entry_idx].arm0_lane_last_eff[lane_idx] =
-                                as_eff_index(eff_idx);
+                            route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
                         } else if arm == 1 {
                             route_scope_entries[entry_idx].arm1_lane_mask |=
                                 offer_lane_bit(atom.lane);
@@ -2147,6 +2178,10 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
             route_records,
             route_scope_cap,
             route_scope_entries.as_mut_ptr(),
+            lane_slot_count,
+            scope_lane_first_eff.as_mut_ptr(),
+            scope_lane_last_eff.as_mut_ptr(),
+            route_arm0_lane_last_eff_by_slot.as_mut_ptr(),
             scope_entries_len,
         );
     }

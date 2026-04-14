@@ -11,7 +11,9 @@ where
     B: BindingSlot,
 {
     #[inline]
-    fn global_frontier_scratch_parts(&self) -> (*mut [u8], FrontierScratchLayout, usize) {
+    pub(in crate::endpoint::kernel) fn global_frontier_scratch_parts(
+        &self,
+    ) -> (*mut [u8], FrontierScratchLayout, usize) {
         let port = self.port_for_lane(self.primary_lane);
         (
             lane_port::frontier_scratch_ptr(port),
@@ -22,7 +24,9 @@ where
 
     #[cfg(not(test))]
     #[inline]
-    fn global_frontier_observed_state(&self) -> GlobalFrontierObservedState {
+    pub(in crate::endpoint::kernel) fn global_frontier_observed_state(
+        &self,
+    ) -> GlobalFrontierObservedState {
         if !self.frontier_state.global_frontier_scratch_initialized {
             return GlobalFrontierObservedState::EMPTY;
         }
@@ -32,14 +36,16 @@ where
 
     #[cfg(not(test))]
     #[inline]
-    fn global_frontier_observed_state_mut(&mut self) -> &mut GlobalFrontierObservedState {
-        self.ensure_global_frontier_scratch_initialized();
+    pub(in crate::endpoint::kernel) fn global_frontier_observed_state_mut(
+        &mut self,
+    ) -> &mut GlobalFrontierObservedState {
+        self.init_global_frontier_scratch_if_needed();
         let (scratch_ptr, layout, _) = self.global_frontier_scratch_parts();
         unsafe { &mut *frontier_global_observed_state_ptr_from_storage(scratch_ptr, layout) }
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn ensure_global_frontier_scratch_initialized(&mut self) {
+    pub(in crate::endpoint::kernel) fn init_global_frontier_scratch_if_needed(&mut self) {
         if self.frontier_state.global_frontier_scratch_initialized {
             return;
         }
@@ -85,7 +91,9 @@ where
     }
 
     #[inline]
-    fn cached_global_frontier_observation_key(&self) -> FrontierObservationKey {
+    pub(in crate::endpoint::kernel) fn cached_global_frontier_observation_key(
+        &self,
+    ) -> FrontierObservationKey {
         if !self.frontier_state.global_frontier_scratch_initialized {
             return FrontierObservationKey::EMPTY;
         }
@@ -117,7 +125,7 @@ where
         &mut self,
         src: ActiveEntrySet,
     ) {
-        self.ensure_global_frontier_scratch_initialized();
+        self.init_global_frontier_scratch_if_needed();
         let (scratch_ptr, layout, frontier_entry_capacity) = self.global_frontier_scratch_parts();
         let mut active_entries = frontier_global_active_entries_view_from_storage(
             scratch_ptr,
@@ -134,7 +142,7 @@ where
         entry_idx: usize,
         lane_idx: u8,
     ) -> bool {
-        self.ensure_global_frontier_scratch_initialized();
+        self.init_global_frontier_scratch_if_needed();
         let mut active_entries = self.global_active_entries();
         active_entries.insert_entry(entry_idx, lane_idx)
     }
@@ -158,7 +166,7 @@ where
         &mut self,
         src: FrontierObservationKey,
     ) {
-        self.ensure_global_frontier_scratch_initialized();
+        self.init_global_frontier_scratch_if_needed();
         let (scratch_ptr, layout, frontier_entry_capacity) = self.global_frontier_scratch_parts();
         let mut cached_key = frontier_cached_observation_key_view_from_storage(
             scratch_ptr,
@@ -177,7 +185,7 @@ where
         &mut self,
         src: ObservedEntrySet,
     ) {
-        self.ensure_global_frontier_scratch_initialized();
+        self.init_global_frontier_scratch_if_needed();
         let mut cached_key = self.cached_global_frontier_observation_key();
         self.frontier_state
             .overwrite_global_frontier_observed(&mut cached_key, src);
@@ -220,7 +228,7 @@ where
     }
 
     #[inline]
-    pub(super) fn cached_frontier_observed_entries(
+    pub(in crate::endpoint::kernel) fn cached_frontier_observed_entries(
         &self,
         current_parallel_root: ScopeId,
         use_root_observed_entries: bool,
@@ -275,7 +283,7 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn frontier_observation_cache(
+    pub(in crate::endpoint::kernel) fn frontier_observation_cache_snapshot(
         &self,
         current_parallel_root: ScopeId,
         use_root_observed_entries: bool,
@@ -314,7 +322,7 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn store_frontier_observation(
+    pub(in crate::endpoint::kernel) fn write_frontier_observation_snapshot(
         &mut self,
         current_parallel_root: ScopeId,
         use_root_observed_entries: bool,
@@ -324,7 +332,7 @@ where
         #[cfg(test)]
         {
             if !use_root_observed_entries {
-                self.ensure_global_frontier_scratch_initialized();
+                self.init_global_frontier_scratch_if_needed();
             }
             let cached_global_key = self.cached_global_frontier_observation_key();
             self.frontier_state.store_frontier_observation(
@@ -351,7 +359,7 @@ where
                 slot.observed_entries = observed_entries.summary();
                 return;
             }
-            self.ensure_global_frontier_scratch_initialized();
+            self.init_global_frontier_scratch_if_needed();
             let (scratch_ptr, layout, frontier_entry_capacity) =
                 self.global_frontier_scratch_parts();
             let mut cached_key = frontier_cached_observation_key_view_from_storage(
@@ -413,15 +421,27 @@ where
         if old_slot_idx >= len || old_slot_idx == new_slot_idx {
             return None;
         }
-        let mut shifted = [StateIndex::MAX; MAX_LANES];
-        let mut copy_idx = 0usize;
-        while copy_idx < len {
-            shifted[copy_idx] = cached_key.entry_state(copy_idx);
-            copy_idx += 1;
-        }
-        Self::move_slot_in_array(&mut shifted, len, old_slot_idx, new_slot_idx);
-        if !active_entries.entries_prefix_matches(&shifted, len) {
-            return None;
+        let mut slot_idx = 0usize;
+        while slot_idx < len {
+            let shifted = if slot_idx == new_slot_idx {
+                cached_key.entry_state(old_slot_idx)
+            } else if old_slot_idx < new_slot_idx
+                && slot_idx >= old_slot_idx
+                && slot_idx < new_slot_idx
+            {
+                cached_key.entry_state(slot_idx + 1)
+            } else if old_slot_idx > new_slot_idx
+                && slot_idx > new_slot_idx
+                && slot_idx <= old_slot_idx
+            {
+                cached_key.entry_state(slot_idx - 1)
+            } else {
+                cached_key.entry_state(slot_idx)
+            };
+            if active_entries.entry_state(slot_idx) != shifted {
+                return None;
+            }
+            slot_idx += 1;
         }
         Some((old_slot_idx, new_slot_idx))
     }
@@ -445,15 +465,19 @@ where
             }
             slot_idx += 1;
         }
-        let mut inserted = [StateIndex::MAX; MAX_LANES];
-        let mut copy_idx = 0usize;
-        while copy_idx < cached_len {
-            inserted[copy_idx] = cached_key.entry_state(copy_idx);
-            copy_idx += 1;
-        }
-        Self::insert_slot_in_array(&mut inserted, cached_len, insert_slot_idx, entry);
-        if !active_entries.entries_prefix_matches(&inserted, len) {
-            return None;
+        let mut active_slot_idx = 0usize;
+        while active_slot_idx < len {
+            let inserted = if active_slot_idx == insert_slot_idx {
+                entry
+            } else if active_slot_idx < insert_slot_idx {
+                cached_key.entry_state(active_slot_idx)
+            } else {
+                cached_key.entry_state(active_slot_idx - 1)
+            };
+            if active_entries.entry_state(active_slot_idx) != inserted {
+                return None;
+            }
+            active_slot_idx += 1;
         }
         Some(insert_slot_idx)
     }
@@ -464,9 +488,6 @@ where
         entry_idx: usize,
     ) -> Option<usize> {
         let len = active_entries.len();
-        if len >= MAX_LANES {
-            return None;
-        }
         let cached_len = len + 1;
         let entry = u16::try_from(entry_idx).ok()?;
         let mut removed_slot_idx = 0usize;
@@ -479,15 +500,17 @@ where
         if removed_slot_idx >= cached_len {
             return None;
         }
-        let mut removed = [StateIndex::MAX; MAX_LANES];
-        let mut copy_idx = 0usize;
-        while copy_idx < cached_len {
-            removed[copy_idx] = cached_key.entry_state(copy_idx);
-            copy_idx += 1;
-        }
-        Self::remove_slot_from_array(&mut removed, cached_len, removed_slot_idx, StateIndex::MAX);
-        if !active_entries.entries_prefix_matches(&removed, len) {
-            return None;
+        let mut active_slot_idx = 0usize;
+        while active_slot_idx < len {
+            let removed = if active_slot_idx < removed_slot_idx {
+                cached_key.entry_state(active_slot_idx)
+            } else {
+                cached_key.entry_state(active_slot_idx + 1)
+            };
+            if active_entries.entry_state(active_slot_idx) != removed {
+                return None;
+            }
+            active_slot_idx += 1;
         }
         Some(removed_slot_idx)
     }
@@ -556,7 +579,7 @@ where
         }
         let mut remaining_slots = active_entries.occupancy_mask();
         let mut inserted = None;
-        while let Some(slot_idx) = Self::next_lane_in_mask(&mut remaining_slots) {
+        while let Some(slot_idx) = Self::next_slot_in_mask(&mut remaining_slots) {
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 return None;
             };
@@ -608,7 +631,7 @@ where
         }
         let mut remaining_slots = active_entries.occupancy_mask();
         let mut inserted = None;
-        while let Some(slot_idx) = Self::next_lane_in_mask(&mut remaining_slots) {
+        while let Some(slot_idx) = Self::next_slot_in_mask(&mut remaining_slots) {
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 return None;
             };
@@ -657,7 +680,7 @@ where
             return false;
         }
         let mut remaining_slots = active_entries.occupancy_mask();
-        while let Some(slot_idx) = Self::next_lane_in_mask(&mut remaining_slots) {
+        while let Some(slot_idx) = Self::next_slot_in_mask(&mut remaining_slots) {
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 return false;
             };
@@ -775,7 +798,7 @@ where
                 .unwrap_or(ScopeId::none());
             let use_root_observed_entries = !parallel_root.is_none();
             let (_, cached_observed_entries) =
-                self.frontier_observation_cache(parallel_root, use_root_observed_entries);
+                self.frontier_observation_cache_snapshot(parallel_root, use_root_observed_entries);
             let cached_bit = cached_observed_entries.entry_bit(entry_idx);
             if cached_bit == 0 {
                 return None;
@@ -806,7 +829,7 @@ where
         else {
             return false;
         };
-        if cached_slot_idx >= MAX_LANES
+        if cached_slot_idx >= cached_key.len()
             || cached_key.entry_state(cached_slot_idx) != entry
             || cached_key.entry_state(cached_slot_idx).is_max()
             || observation_key
@@ -848,7 +871,7 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn cached_offer_entry_observed_state_for_rebuild(
+    pub(in crate::endpoint::kernel) fn reusable_cached_offer_entry_observed_state(
         &self,
         entry_idx: usize,
         entry_state: &OfferEntryState,

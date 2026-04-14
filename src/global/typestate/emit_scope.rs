@@ -3,6 +3,7 @@ use super::{
     facts::StateIndex,
     registry::{RouteScopeRecord, SCOPE_LINK_NONE, ScopeRecord, ScopeRegistry},
 };
+use crate::eff::EffIndex;
 use crate::global::const_dsl::{CompactScopeId, ScopeId, ScopeKind};
 
 #[inline(never)]
@@ -59,6 +60,10 @@ pub(super) unsafe fn init_scope_registry(
     route_records: *mut RouteScopeRecord,
     route_scope_cap: usize,
     route_records_sparse: *mut RouteScopeRecord,
+    lane_slot_count: usize,
+    scope_lane_first_eff: *mut EffIndex,
+    scope_lane_last_eff: *mut EffIndex,
+    route_arm0_lane_last_eff_by_slot: *mut EffIndex,
     scope_records_len: usize,
 ) {
     let mut route_scope_len = 0usize;
@@ -114,14 +119,17 @@ pub(super) unsafe fn init_scope_registry(
         core::ptr::addr_of_mut!((*dst).route_records).write(route_records);
         core::ptr::addr_of_mut!((*dst).route_scope_len)
             .write(encode_typestate_len(route_scope_len));
+        core::ptr::addr_of_mut!((*dst).lane_slot_count)
+            .write(encode_typestate_len(lane_slot_count));
+        core::ptr::addr_of_mut!((*dst).scope_lane_first_eff).write(scope_lane_first_eff);
+        core::ptr::addr_of_mut!((*dst).scope_lane_last_eff).write(scope_lane_last_eff);
+        core::ptr::addr_of_mut!((*dst).route_arm0_lane_last_eff_by_slot)
+            .write(route_arm0_lane_last_eff_by_slot);
         core::ptr::addr_of_mut!((*dst).frontier_entry_capacity_value).write(0);
     }
     let registry = unsafe { &*dst };
     let frontier_entry_capacity = core::cmp::max(
-        core::cmp::min(
-            registry.derive_max_offer_entries(),
-            crate::global::role_program::MAX_LANES,
-        ),
+        core::cmp::min(registry.derive_max_offer_entries(), u8::BITS as usize),
         usize::from(route_scope_len != 0),
     );
     if frontier_entry_capacity > u8::MAX as usize {

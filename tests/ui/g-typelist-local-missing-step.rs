@@ -4,9 +4,7 @@ use hibana::g::advanced::steps::{SendStep, StepCons, StepNil};
 
 const PROGRAM: g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<7, u16>, 0>, StepNil>> =
     g::send::<g::Role<0>, g::Role<1>, g::Msg<7, u16>, 0>();
-const PROGRAM_TOKEN: g::Program<StepNil> = PROGRAM;
-
-const CLIENT: RoleProgram<'static, 0, StepNil> = project(&PROGRAM_TOKEN);
+const CLIENT: RoleProgram<'static, 0, StepNil> = project(&PROGRAM);
 
 fn main() {
     let _ = CLIENT;

@@ -36,6 +36,22 @@ check_required_regex() {
   fi
 }
 
+check_absent_outside_owner() {
+  local pattern="$1"
+  local label="$2"
+  local path="$3"
+  local owner_a="$4"
+  local owner_b="$5"
+  if rg -n -F \
+    --glob "!${owner_a}" \
+    --glob "!${owner_b}" \
+    "${pattern}" \
+    "${path}" >/dev/null; then
+    echo "route frontier owner violation: ${label}" >&2
+    FAILED=1
+  fi
+}
+
 OFFER=src/endpoint/kernel/route_frontier/offer.rs
 OBS=src/endpoint/kernel/route_frontier/frontier_observation.rs
 SELECT=src/endpoint/kernel/route_frontier/frontier_select.rs
@@ -112,22 +128,59 @@ for forbidden in \
   "fn mark_static_passive_descendant_path_ready(" \
   "fn ingest_binding_scope_evidence(" \
   "fn ingest_scope_evidence_for_offer(" \
-  "fn recover_scope_evidence_conflict("; do
+  "fn recover_scope_evidence_conflict(" \
+  "fn await_transport_payload_for_offer_lane(" \
+  "fn await_static_passive_progress(" \
+  "fn try_poll_route_decision_immediate(" \
+  "fn try_poll_route_decision_for_offer("; do
   check_absent "${forbidden}" "scope_evidence_logic.rs regrew route-decision entrypoint ${forbidden}" "${SCOPE}"
 done
 
 for required in \
   "fn on_frontier_defer(" \
-  "fn align_cursor_to_selected_scope("; do
-  check_required "${required}" "frontier-select owner missing ${required}" "${SELECT}"
+  "fn align_cursor_to_selected_scope(" \
+  "fn try_poll_route_decision_immediate(" \
+  "fn try_poll_route_decision_for_offer(" \
+  "fn await_transport_payload_for_offer_lane(" \
+  "fn await_static_passive_progress("; do
+  check_required "${required}" "offer owner missing ${required}" "${OFFER}"
 done
 
 for forbidden in \
+  "fn on_frontier_defer(" \
+  "fn current_scope_selection_meta(" \
+  "fn current_frontier_selection_state(" \
+  "fn align_cursor_to_selected_scope(" \
   "fn frontier_observation_lane_mask(" \
   "fn frontier_observation_offer_lane_entry_slot_masks(" \
   "fn offer_entry_label_meta(" \
+  "fn ensure_global_frontier_scratch_initialized(" \
+  "fn frontier_observation_cache(" \
+  "fn store_frontier_observation(" \
+  "fn cached_offer_entry_observed_state_for_rebuild(" \
   "fn refresh_frontier_observation_cache("; do
   check_absent "${forbidden}" "frontier_select.rs regrew delegated route-frontier entrypoint ${forbidden}" "${SELECT}"
+done
+
+for required in \
+  "fn init_global_frontier_scratch_if_needed(" \
+  "fn frontier_observation_cache_snapshot(" \
+  "fn write_frontier_observation_snapshot(" \
+  "fn reusable_cached_offer_entry_observed_state("; do
+  check_required "${required}" "frontier-observation helper missing ${required}" "${OBS}"
+done
+
+for helper_call in \
+  "init_global_frontier_scratch_if_needed(" \
+  "frontier_observation_cache_snapshot(" \
+  "write_frontier_observation_snapshot(" \
+  "reusable_cached_offer_entry_observed_state("; do
+  check_absent_outside_owner \
+    "${helper_call}" \
+    "frontier_observation helper leaked beyond offer.rs/frontier_observation.rs ${helper_call}" \
+    "src/endpoint/kernel" \
+    "${OFFER}" \
+    "${OBS}"
 done
 
 for required in \
@@ -135,13 +188,21 @@ for required in \
   "fn frontier_observation_cache(" \
   "fn store_frontier_observation(" \
   "fn cached_offer_entry_observed_state_for_rebuild("; do
-  check_required "${required}" "frontier-observation owner missing ${required}" "${OBS}"
+  check_required "${required}" "offer owner missing ${required}" "${OFFER}"
 done
 
 check_absent \
   "fn refresh_frontier_observation_cache(" \
   "frontier_observation.rs regrew refresh entrypoint" \
   "${OBS}"
+
+for forbidden in \
+  "fn ensure_global_frontier_scratch_initialized(" \
+  "fn frontier_observation_cache(" \
+  "fn store_frontier_observation(" \
+  "fn cached_offer_entry_observed_state_for_rebuild("; do
+  check_absent "${forbidden}" "frontier_observation.rs regrew route-frontier owner ${forbidden}" "${OBS}"
+done
 
 check_absent \
   "fn frontier_observation_key(" \

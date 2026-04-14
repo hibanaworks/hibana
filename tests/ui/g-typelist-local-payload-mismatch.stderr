@@ -15,8 +15,18 @@ error[E0277]: the trait bound `StepCons<LocalSend<Role<1>, hibana::global::Messa
    |     |
    |     required by a bound introduced by this call
    |
-   = help: the trait `ProjectRole<Role<_>>` is not implemented for `StepCons<LocalSend<Role<1>, hibana::global::Message<hibana::global::LabelMarker<7>, u8>>, StepNil>`
-           but it is implemented for `StepCons<SendStep<_, _, _, _>, _>`
+help: the trait `ProjectRole<Role<_>>` is not implemented for `StepCons<LocalSend<Role<1>, hibana::global::Message<hibana::global::LabelMarker<7>, u8>>, StepNil>`
+      but it is implemented for `StepCons<SendStep<_, _, _, _>, _>`
+  --> src/global/steps.rs
+   |
+   | / impl<Local, From, To, Msg, const LANE: u8, Tail> ProjectRole<Local>
+   | |     for StepCons<SendStep<From, To, Msg, LANE>, Tail>
+   | | where
+   | |     Local: KnownRole,
+...  |
+   | |         Msg,
+   | |     >>::Output as StepConcat<<Tail as ProjectRole<Local>>::Output>>::Output: StepCount,
+   | |_______________________________________________________________________________________^
    = help: for that trait implementation, expected `SendStep<_, _, _, _>`, found `LocalSend<Role<1>, hibana::global::Message<hibana::global::LabelMarker<7>, u8>>`
 note: required by a bound in `project`
   --> src/global/role_program.rs

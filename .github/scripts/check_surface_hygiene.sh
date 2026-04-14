@@ -666,7 +666,7 @@ SELECT_SCOPE_BLOCK="$(
       print
       if ($0 ~ /^    }$/) { exit }
     }
-  ' src/endpoint/kernel/core.rs
+  ' src/endpoint/kernel/route_frontier/offer.rs
 )"
 if [[ -z "${SELECT_SCOPE_BLOCK}" ]]; then
   echo "select_scope block not found" >&2
@@ -683,7 +683,7 @@ RESOLVE_TOKEN_BLOCK="$(
       print
       if ($0 ~ /^    }$/) { exit }
     }
-  ' src/endpoint/kernel/core.rs
+  ' src/endpoint/kernel/route_frontier/offer.rs
 )"
 if [[ -z "${RESOLVE_TOKEN_BLOCK}" ]]; then
   echo "resolve_token block not found" >&2
@@ -714,7 +714,7 @@ MATERIALIZE_BRANCH_BLOCK="$(
       print
       if ($0 ~ /^    }$/) { exit }
     }
-  ' src/endpoint/kernel/core.rs
+  ' src/endpoint/kernel/route_frontier/offer.rs
 )"
 if [[ -z "${MATERIALIZE_BRANCH_BLOCK}" ]]; then
   echo "materialize_branch block not found" >&2
@@ -782,7 +782,8 @@ done
 for required in \
   'src/endpoint/kernel/mod.rs:#[path = "route_frontier/offer.rs"]' \
   'src/endpoint/kernel/route_frontier/offer.rs:fn record_scope_ack(' \
-  'src/endpoint/kernel/route_frontier/frontier_select.rs:fn on_frontier_defer(' \
+  'src/endpoint/kernel/route_frontier/offer.rs:fn on_frontier_defer(' \
+  'src/endpoint/kernel/route_frontier/offer.rs:fn align_cursor_to_selected_scope(' \
   'src/endpoint/kernel/route_frontier/offer.rs:fn frontier_observation_key(' \
   'src/endpoint/kernel/route_frontier/offer.rs:fn refresh_offer_entry_state('
 do

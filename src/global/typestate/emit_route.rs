@@ -1,6 +1,6 @@
 use super::{
     facts::{StateIndex, state_index_to_usize},
-    registry::ScopeRecord,
+    registry::{ScopeRecord, ScopeRegistry},
 };
 use crate::{
     eff,
@@ -49,14 +49,20 @@ pub(super) const fn store_loop_entry_if_absent(
     *len += 1;
 }
 
-pub(super) const fn parallel_phase_eff_range(record: &ScopeRecord) -> Option<(usize, usize)> {
+pub(super) fn parallel_phase_eff_range(
+    scope_registry: &ScopeRegistry,
+    slot: usize,
+    _record: &ScopeRecord,
+) -> Option<(usize, usize)> {
+    let lane_first_eff = scope_registry.scope_lane_first_row(slot);
+    let lane_last_eff = scope_registry.scope_lane_last_row(slot);
     let mut min_eff = usize::MAX;
     let mut max_eff = 0usize;
     let mut have_lane = false;
     let mut lane = 0usize;
-    while lane < crate::global::role_program::MAX_LANES {
-        let first_eff = record.lane_first_eff[lane];
-        let last_eff = record.lane_last_eff[lane];
+    while lane < lane_first_eff.len() {
+        let first_eff = lane_first_eff[lane];
+        let last_eff = lane_last_eff[lane];
         if first_eff.raw() != crate::eff::EffIndex::MAX.raw() {
             if last_eff.raw() == crate::eff::EffIndex::MAX.raw() {
                 panic!("parallel scope lane missing last eff index");

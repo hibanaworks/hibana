@@ -5,10 +5,15 @@ error[E0080]: evaluation panicked: control handling mismatch
   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::global::Message<hibana::global::LabelMarker<48>, hibana::substrate::cap::GenericCapToken<hibana::substrate::cap::advanced::LoopContinueKind>, hibana::g::advanced::ExternalControl<hibana::substrate::cap::advanced::LoopContinueKind>> as hibana::global::MessageControlSpec>::CONTROL_SPEC` failed inside this call
   |
 note: inside `hibana::global::ControlLabelSpec::from_message::<hibana::global::LabelMarker<48>, LoopContinueKind>`
- --> src/global.rs
+ --> $RUST/core/src/panic.rs
+  |
+  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: src/global.rs
   |
   |             panic!("control handling mismatch");
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |             ----------------------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global.rs

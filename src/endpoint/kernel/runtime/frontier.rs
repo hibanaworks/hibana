@@ -12,8 +12,13 @@ use core::{
 #[cfg(test)]
 use super::evidence::ScopeLabelMeta;
 use crate::global::const_dsl::ScopeId;
+use crate::global::role_program::LaneMask;
+#[cfg(test)]
 use crate::global::role_program::MAX_LANES;
 use crate::global::typestate::{MAX_STATES, StateIndex, state_index_to_usize};
+
+const FRONTIER_SLOT_MASK_BITS: usize = u8::BITS as usize;
+const OFFER_LANE_MASK_LANES: usize = LaneMask::BITS as usize;
 
 #[cfg(test)]
 use super::offer::{CurrentScopeSelectionMeta, ScopeArmMaterializationMeta};
@@ -400,7 +405,7 @@ impl ActiveEntrySet {
     #[inline]
     pub(super) fn occupancy_mask(self) -> u8 {
         let len = self.len();
-        if len >= MAX_LANES {
+        if len >= FRONTIER_SLOT_MASK_BITS {
             u8::MAX
         } else {
             (1u8 << len) - 1
@@ -421,21 +426,6 @@ impl ActiveEntrySet {
             return StateIndex::MAX;
         }
         self.slots[slot_idx].entry
-    }
-
-    #[inline]
-    pub(super) fn entries_prefix_matches(self, entries: &[StateIndex], len: usize) -> bool {
-        if len > self.len() || entries.len() < len {
-            return false;
-        }
-        let mut idx = 0usize;
-        while idx < len {
-            if self.entry_state(idx) != entries[idx] {
-                return false;
-            }
-            idx += 1;
-        }
-        true
     }
 
     #[inline]
@@ -477,7 +467,7 @@ impl ActiveEntrySet {
             }
             insert_idx += 1;
         }
-        if len >= self.slots.capacity() || len >= MAX_LANES {
+        if len >= self.slots.capacity() || len >= FRONTIER_SLOT_MASK_BITS {
             return false;
         }
         let mut shift_idx = len;
@@ -554,8 +544,8 @@ impl ObservedEntrySummary {
 pub(super) struct GlobalFrontierObservedState {
     pub(super) summary: ObservedEntrySummary,
     pub(super) observation_epoch: u16,
-    pub(super) offer_lane_mask: u8,
-    pub(super) binding_nonempty_mask: u8,
+    pub(super) offer_lane_mask: LaneMask,
+    pub(super) binding_nonempty_mask: LaneMask,
 }
 
 #[cfg(not(test))]
@@ -686,7 +676,7 @@ impl ObservedEntrySet {
     #[inline]
     pub(super) fn occupancy_mask(self) -> u8 {
         let len = self.len();
-        if len >= MAX_LANES {
+        if len >= FRONTIER_SLOT_MASK_BITS {
             u8::MAX
         } else {
             (1u8 << len) - 1
@@ -732,7 +722,7 @@ impl ObservedEntrySet {
             return Some((1u8 << observed_idx, false));
         }
         let observed_idx = self.len();
-        if observed_idx >= self.slots.capacity() || observed_idx >= MAX_LANES {
+        if observed_idx >= self.slots.capacity() || observed_idx >= FRONTIER_SLOT_MASK_BITS {
             return None;
         }
         self.slots[observed_idx] = FrontierObservationSlot {
@@ -878,7 +868,7 @@ impl ObservedEntrySet {
             return false;
         }
         let len = self.len();
-        if len >= self.slots.capacity() || len >= MAX_LANES || slot_idx > len {
+        if len >= self.slots.capacity() || len >= FRONTIER_SLOT_MASK_BITS || slot_idx > len {
             return false;
         }
         let Some(entry) = checked_state_index(entry_idx) else {
@@ -1091,17 +1081,17 @@ impl ObservedEntrySet {
 
 #[derive(Clone, Copy)]
 pub(super) struct OfferLaneEntrySlotMasks {
-    masks: [u8; MAX_LANES],
+    masks: [u8; OFFER_LANE_MASK_LANES],
 }
 
 impl OfferLaneEntrySlotMasks {
     pub(super) const EMPTY: Self = Self {
-        masks: [0; MAX_LANES],
+        masks: [0; OFFER_LANE_MASK_LANES],
     };
 
     #[inline]
     pub(super) fn set_logical_mask(&mut self, logical_lane: usize, value: u8) {
-        if logical_lane < MAX_LANES {
+        if logical_lane < self.masks.len() {
             self.masks[logical_lane] = value;
         }
     }
@@ -1122,32 +1112,32 @@ impl Index<usize> for OfferLaneEntrySlotMasks {
 pub(super) struct RootFrontierState {
     pub(super) root: ScopeId,
     pub(super) observed_entries: ObservedEntrySummary,
-    pub(super) observed_offer_lane_mask: u8,
-    pub(super) observed_binding_nonempty_mask: u8,
+    pub(super) observed_offer_lane_mask: LaneMask,
+    pub(super) observed_binding_nonempty_mask: LaneMask,
+    pub(super) observed_key_present: bool,
     pub(super) active_start: u8,
     pub(super) active_len: u8,
 }
 
 impl RootFrontierState {
-    const OBSERVED_KEY_PRESENT: u8 = 0x80;
-
     pub(super) const EMPTY: Self = Self {
         root: ScopeId::none(),
         observed_entries: ObservedEntrySummary::EMPTY,
         observed_offer_lane_mask: 0,
         observed_binding_nonempty_mask: 0,
+        observed_key_present: false,
         active_start: 0,
         active_len: 0,
     };
 
     #[inline]
     pub(super) fn observed_key_valid(self) -> bool {
-        (self.observed_offer_lane_mask & Self::OBSERVED_KEY_PRESENT) != 0
+        self.observed_key_present
     }
 
     #[inline]
-    pub(super) fn observed_key_offer_lane_mask(self) -> u8 {
-        self.observed_offer_lane_mask & !Self::OBSERVED_KEY_PRESENT
+    pub(super) fn observed_key_offer_lane_mask(self) -> LaneMask {
+        self.observed_offer_lane_mask
     }
 
     #[inline]
@@ -1155,18 +1145,18 @@ impl RootFrontierState {
         self.observed_entries = ObservedEntrySummary::EMPTY;
         self.observed_offer_lane_mask = 0;
         self.observed_binding_nonempty_mask = 0;
+        self.observed_key_present = false;
     }
 
     #[inline]
     pub(super) fn set_observed_key_cache_masks(
         &mut self,
-        offer_lane_mask: u8,
-        binding_nonempty_mask: u8,
+        offer_lane_mask: LaneMask,
+        binding_nonempty_mask: LaneMask,
     ) {
-        debug_assert_eq!(offer_lane_mask & Self::OBSERVED_KEY_PRESENT, 0);
-        self.observed_offer_lane_mask =
-            (offer_lane_mask & !Self::OBSERVED_KEY_PRESENT) | Self::OBSERVED_KEY_PRESENT;
+        self.observed_offer_lane_mask = offer_lane_mask;
         self.observed_binding_nonempty_mask = binding_nonempty_mask;
+        self.observed_key_present = true;
     }
 }
 
@@ -1201,8 +1191,8 @@ impl FrontierObservationSlot {
 #[derive(Clone, Copy)]
 pub(super) struct FrontierObservationKey {
     pub(super) slots: EntryBuffer<FrontierObservationSlot>,
-    pub(super) offer_lane_mask: u8,
-    pub(super) binding_nonempty_mask: u8,
+    pub(super) offer_lane_mask: LaneMask,
+    pub(super) binding_nonempty_mask: LaneMask,
 }
 
 impl FrontierObservationKey {
@@ -1492,7 +1482,7 @@ impl OfferEntryStaticSummary {
 
 #[derive(Clone, Copy)]
 pub(super) struct OfferEntryState {
-    pub(super) active_mask: u8,
+    pub(super) active_mask: LaneMask,
     #[cfg(test)]
     pub(super) lane_idx: u8,
     #[cfg(test)]
@@ -1502,7 +1492,7 @@ pub(super) struct OfferEntryState {
     #[cfg(test)]
     pub(super) scope_id: ScopeId,
     #[cfg(test)]
-    pub(super) offer_lane_mask: u8,
+    pub(super) offer_lane_mask: LaneMask,
     #[cfg(test)]
     pub(super) selection_meta: CurrentScopeSelectionMeta,
     #[cfg(test)]

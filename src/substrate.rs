@@ -836,8 +836,10 @@ mod tests {
         let mut runtime_metrics = None::<RuntimeShapeMetrics>;
         with_pico_fixture(|clock, tap_buf, slab| {
             let transport = PicoTransport;
-            let controller_program = project::<0, _, MintConfig>(program);
-            let worker_program = project::<1, _, MintConfig>(program);
+            let controller_program: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
+                project(program);
+            let worker_program: crate::g::advanced::RoleProgram<'_, 1, _, MintConfig> =
+                project(program);
             let kit = PicoKit::new(clock);
             let rv_id = kit
                 .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())

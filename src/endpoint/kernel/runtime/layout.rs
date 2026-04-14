@@ -87,9 +87,15 @@ pub(crate) struct RouteFrontierArenaLayout {
 pub(crate) struct EndpointArenaLayout {
     header_align: usize,
     phase_cursor_state: EndpointArenaSection,
+    phase_cursor_lane_cursors: EndpointArenaSection,
+    phase_cursor_current_step_labels: EndpointArenaSection,
     route_state: EndpointArenaSection,
+    route_state_lane_dense_by_lane: EndpointArenaSection,
+    route_state_lane_route_arm_lens: EndpointArenaSection,
+    route_state_lane_linger_counts: EndpointArenaSection,
     frontier: RouteFrontierArenaLayout,
     binding_inbox: EndpointArenaSection,
+    binding_lane_dense_by_lane: EndpointArenaSection,
     binding_slots: EndpointArenaSection,
     binding_len: EndpointArenaSection,
     binding_label_masks: EndpointArenaSection,
@@ -100,6 +106,14 @@ pub(crate) struct EndpointArenaLayout {
 impl EndpointArenaLayout {
     #[inline(always)]
     pub(crate) const fn from_footprint(footprint: RoleFootprint) -> Self {
+        Self::from_footprint_with_binding(footprint, true)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn from_footprint_with_binding(
+        footprint: RoleFootprint,
+        binding_enabled: bool,
+    ) -> Self {
         #[cfg(test)]
         let offer_entry_capacity =
             max_usize(footprint.frontier_entry_count, TEST_FRONTIER_ENTRY_FLOOR);
@@ -110,9 +124,34 @@ impl EndpointArenaLayout {
         offset = phase_cursor_state.offset + phase_cursor_state.bytes;
         total_align = max_usize(total_align, phase_cursor_state.align);
 
+        let phase_cursor_lane_cursors =
+            Self::section_array::<u16>(offset, footprint.logical_lane_count);
+        offset = phase_cursor_lane_cursors.offset + phase_cursor_lane_cursors.bytes;
+        total_align = max_usize(total_align, phase_cursor_lane_cursors.align);
+
+        let phase_cursor_current_step_labels =
+            Self::section_array::<u8>(offset, footprint.logical_lane_count);
+        offset = phase_cursor_current_step_labels.offset + phase_cursor_current_step_labels.bytes;
+        total_align = max_usize(total_align, phase_cursor_current_step_labels.align);
+
         let route_state = Self::section::<RouteState>(offset);
         offset = route_state.offset + route_state.bytes;
         total_align = max_usize(total_align, route_state.align);
+
+        let route_state_lane_dense_by_lane =
+            Self::section_array::<u8>(offset, footprint.logical_lane_count);
+        offset = route_state_lane_dense_by_lane.offset + route_state_lane_dense_by_lane.bytes;
+        total_align = max_usize(total_align, route_state_lane_dense_by_lane.align);
+
+        let route_state_lane_route_arm_lens =
+            Self::section_array::<u8>(offset, footprint.active_lane_count);
+        offset = route_state_lane_route_arm_lens.offset + route_state_lane_route_arm_lens.bytes;
+        total_align = max_usize(total_align, route_state_lane_route_arm_lens.align);
+
+        let route_state_lane_linger_counts =
+            Self::section_array::<u8>(offset, footprint.active_lane_count);
+        offset = route_state_lane_linger_counts.offset + route_state_lane_linger_counts.bytes;
+        total_align = max_usize(total_align, route_state_lane_linger_counts.align);
 
         let route_arm_stack = Self::section_array::<RouteArmState>(
             offset,
@@ -161,18 +200,27 @@ impl EndpointArenaLayout {
         offset = binding_inbox.offset + binding_inbox.bytes;
         total_align = max_usize(total_align, binding_inbox.align);
 
+        let binding_lane_count = if binding_enabled {
+            footprint.logical_lane_count
+        } else {
+            0
+        };
+        let binding_lane_dense_by_lane = Self::section_array::<u8>(offset, binding_lane_count);
+        offset = binding_lane_dense_by_lane.offset + binding_lane_dense_by_lane.bytes;
+        total_align = max_usize(total_align, binding_lane_dense_by_lane.align);
+
         let binding_slots = Self::section_array::<PackedIncomingClassification>(
             offset,
-            footprint.logical_lane_count * BindingInbox::PER_LANE_CAPACITY,
+            binding_lane_count * BindingInbox::PER_LANE_CAPACITY,
         );
         offset = binding_slots.offset + binding_slots.bytes;
         total_align = max_usize(total_align, binding_slots.align);
 
-        let binding_len = Self::section_array::<u8>(offset, footprint.logical_lane_count);
+        let binding_len = Self::section_array::<u8>(offset, binding_lane_count);
         offset = binding_len.offset + binding_len.bytes;
         total_align = max_usize(total_align, binding_len.align);
 
-        let binding_label_masks = Self::section_array::<u128>(offset, footprint.logical_lane_count);
+        let binding_label_masks = Self::section_array::<u128>(offset, binding_lane_count);
         offset = binding_label_masks.offset + binding_label_masks.bytes;
         total_align = max_usize(total_align, binding_label_masks.align);
 
@@ -184,7 +232,12 @@ impl EndpointArenaLayout {
         Self {
             header_align: total_align,
             phase_cursor_state,
+            phase_cursor_lane_cursors,
+            phase_cursor_current_step_labels,
             route_state,
+            route_state_lane_dense_by_lane,
+            route_state_lane_route_arm_lens,
+            route_state_lane_linger_counts,
             frontier: RouteFrontierArenaLayout {
                 route_arm_stack,
                 lane_offer_state_slots,
@@ -197,6 +250,7 @@ impl EndpointArenaLayout {
                 scope_evidence_slots,
             },
             binding_inbox,
+            binding_lane_dense_by_lane,
             binding_slots,
             binding_len,
             binding_label_masks,
@@ -231,8 +285,33 @@ impl EndpointArenaLayout {
     }
 
     #[inline(always)]
+    pub(crate) const fn phase_cursor_lane_cursors(&self) -> EndpointArenaSection {
+        self.phase_cursor_lane_cursors
+    }
+
+    #[inline(always)]
+    pub(crate) const fn phase_cursor_current_step_labels(&self) -> EndpointArenaSection {
+        self.phase_cursor_current_step_labels
+    }
+
+    #[inline(always)]
     pub(crate) const fn frontier_state(&self) -> EndpointArenaSection {
         self.frontier.frontier_state
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_state_lane_dense_by_lane(&self) -> EndpointArenaSection {
+        self.route_state_lane_dense_by_lane
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_state_lane_route_arm_lens(&self) -> EndpointArenaSection {
+        self.route_state_lane_route_arm_lens
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_state_lane_linger_counts(&self) -> EndpointArenaSection {
+        self.route_state_lane_linger_counts
     }
 
     pub(crate) const fn frontier_root_rows(&self) -> EndpointArenaSection {
@@ -258,6 +337,11 @@ impl EndpointArenaLayout {
     #[inline(always)]
     pub(crate) const fn binding_inbox(&self) -> EndpointArenaSection {
         self.binding_inbox
+    }
+
+    #[inline(always)]
+    pub(crate) const fn binding_lane_dense_by_lane(&self) -> EndpointArenaSection {
+        self.binding_lane_dense_by_lane
     }
 
     #[inline(always)]
@@ -336,8 +420,9 @@ mod tests {
 
     #[test]
     fn root_frontier_shared_pools_track_max_frontier_entries() {
-        let layout =
-            EndpointArenaLayout::from_footprint(RoleFootprint::for_endpoint_layout(3, 3, 2, 4, 5));
+        let layout = EndpointArenaLayout::from_footprint(RoleFootprint::for_endpoint_layout(
+            3, 3, 3, 2, 4, 5,
+        ));
         assert_eq!(layout.frontier_root_rows().count(), 3);
         assert_eq!(layout.frontier_root_active_slots().count(), 5);
         assert_eq!(layout.frontier_root_observed_key_slots().count(), 5);

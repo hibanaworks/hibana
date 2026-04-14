@@ -1,8 +1,10 @@
 //! Binding inbox helpers for endpoint demux.
 
+#[cfg(test)]
+use crate::global::role_program::MAX_LANES;
 use crate::{
     binding::{BindingSlot, IncomingClassification},
-    global::role_program::MAX_LANES,
+    global::role_program::{LaneMask, lane_mask_bit},
 };
 
 #[inline]
@@ -14,6 +16,7 @@ const fn label_bit(label: u8) -> u128 {
     }
 }
 
+#[cfg(test)]
 #[cfg(test)]
 const fn identity_lane_dense_by_lane() -> [u8; MAX_LANES] {
     let mut lanes = [u8::MAX; MAX_LANES];
@@ -27,37 +30,37 @@ const fn identity_lane_dense_by_lane() -> [u8; MAX_LANES] {
 
 #[derive(Clone, Copy)]
 struct DenseLaneIndex {
-    lane_dense_by_lane: [u8; MAX_LANES],
+    lane_dense_by_lane: *mut u8,
     active_lane_count: u8,
 }
 
 impl DenseLaneIndex {
     #[cfg(test)]
     const EMPTY: Self = Self {
-        lane_dense_by_lane: [u8::MAX; MAX_LANES],
+        lane_dense_by_lane: core::ptr::null_mut(),
         active_lane_count: 0,
     };
 
     unsafe fn init_from_parts(
         dst: *mut Self,
-        lane_dense_by_lane: &[u8; MAX_LANES],
+        lane_dense_by_lane: *mut u8,
         active_lane_count: usize,
     ) {
         if active_lane_count > u8::MAX as usize {
             panic!("binding inbox lane count overflow");
         }
         unsafe {
-            core::ptr::addr_of_mut!((*dst).lane_dense_by_lane).write(*lane_dense_by_lane);
+            core::ptr::addr_of_mut!((*dst).lane_dense_by_lane).write(lane_dense_by_lane);
             core::ptr::addr_of_mut!((*dst).active_lane_count).write(active_lane_count as u8);
         }
     }
 
     #[inline]
     fn dense_ordinal(&self, lane_idx: usize) -> Option<usize> {
-        if lane_idx >= MAX_LANES {
+        if lane_idx >= self.active_lane_count as usize {
             return None;
         }
-        let dense = self.lane_dense_by_lane[lane_idx];
+        let dense = unsafe { *self.lane_dense_by_lane.add(lane_idx) };
         if dense == u8::MAX || dense as usize >= self.active_lane_count as usize {
             None
         } else {
@@ -295,6 +298,7 @@ impl DenseLaneSlots {
 
 #[cfg(test)]
 struct BindingInboxTestStorage {
+    lane_dense_by_lane: [u8; MAX_LANES],
     slots: [[PackedIncomingClassification; BindingInbox::PER_LANE_CAPACITY]; MAX_LANES],
     len: [u8; MAX_LANES],
     label_masks: [u128; MAX_LANES],
@@ -303,6 +307,7 @@ struct BindingInboxTestStorage {
 #[cfg(test)]
 impl BindingInboxTestStorage {
     const EMPTY: Self = Self {
+        lane_dense_by_lane: [u8::MAX; MAX_LANES],
         slots: [[PackedIncomingClassification::EMPTY; BindingInbox::PER_LANE_CAPACITY]; MAX_LANES],
         len: [0; MAX_LANES],
         label_masks: [0; MAX_LANES],
@@ -319,7 +324,7 @@ pub(super) struct BindingInbox {
     lanes: DenseLaneIndex,
     slots: DenseLaneSlots,
     len: DenseLaneU8Array,
-    pub(super) nonempty_mask: u8,
+    pub(super) nonempty_mask: LaneMask,
     label_masks: DenseLaneU128Array,
 }
 
@@ -331,7 +336,7 @@ impl BindingInbox {
         slots: *mut PackedIncomingClassification,
         len: *mut u8,
         label_masks: *mut u128,
-        lane_dense_by_lane: &[u8; MAX_LANES],
+        lane_dense_by_lane: *mut u8,
         active_lane_count: usize,
     ) {
         unsafe {
@@ -366,6 +371,7 @@ impl BindingInbox {
             *storage = BindingInboxTestStorage::EMPTY;
 
             let lane_dense_by_lane = identity_lane_dense_by_lane();
+            storage.lane_dense_by_lane = lane_dense_by_lane;
             let mut inbox = Self {
                 lanes: DenseLaneIndex::EMPTY,
                 slots: DenseLaneSlots::EMPTY,
@@ -376,7 +382,7 @@ impl BindingInbox {
             unsafe {
                 DenseLaneIndex::init_from_parts(
                     core::ptr::addr_of_mut!(inbox.lanes),
-                    &lane_dense_by_lane,
+                    storage.lane_dense_by_lane.as_mut_ptr(),
                     MAX_LANES,
                 );
                 DenseLaneSlots::init_from_parts(
@@ -404,10 +410,10 @@ impl BindingInbox {
 
     #[inline]
     pub(super) fn update_nonempty_mask(&mut self, lane_idx: usize) {
-        if lane_idx >= MAX_LANES {
+        if !self.lanes.contains_lane(lane_idx) {
             return;
         }
-        let bit = 1u8 << lane_idx;
+        let bit = lane_mask_bit(lane_idx);
         if self.len.get_value(&self.lanes, lane_idx) == 0 {
             self.nonempty_mask &= !bit;
         } else {
@@ -416,13 +422,13 @@ impl BindingInbox {
     }
 
     #[inline]
-    pub(super) fn has_buffered_for_lane_mask(&self, lane_mask: u8) -> bool {
+    pub(super) fn has_buffered_for_lane_mask(&self, lane_mask: LaneMask) -> bool {
         (self.nonempty_mask & lane_mask) != 0
     }
 
     #[inline]
     pub(super) fn recompute_label_mask(&mut self, lane_idx: usize) {
-        if lane_idx >= MAX_LANES {
+        if !self.lanes.contains_lane(lane_idx) {
             return;
         }
         let buffered = self.len.get_value(&self.lanes, lane_idx) as usize;
@@ -439,19 +445,20 @@ impl BindingInbox {
 
     #[inline]
     pub(super) fn sync_label_mask(&mut self, lane_idx: usize, new_mask: u128) {
-        if lane_idx >= MAX_LANES {
+        if !self.lanes.contains_lane(lane_idx) {
             return;
         }
         let _ = self.label_masks.set_value(&self.lanes, lane_idx, new_mask);
     }
 
     #[inline]
-    pub(super) fn buffered_lane_mask_for_labels(&self, label_mask: u128) -> u8 {
-        let mut lane_mask = 0u8;
+    pub(super) fn buffered_lane_mask_for_labels(&self, label_mask: u128) -> LaneMask {
+        let mut lane_mask = 0;
+        let lane_limit = self.lanes.active_lane_count as usize;
         let mut lane_idx = 0usize;
-        while lane_idx < MAX_LANES {
+        while lane_idx < lane_limit {
             if (self.label_masks.get_value(&self.lanes, lane_idx) & label_mask) != 0 {
-                lane_mask |= 1u8 << lane_idx;
+                lane_mask |= lane_mask_bit(lane_idx);
             }
             lane_idx += 1;
         }
@@ -464,7 +471,7 @@ impl BindingInbox {
         lane_idx: usize,
         idx: usize,
     ) -> Option<IncomingClassification> {
-        if lane_idx >= MAX_LANES {
+        if !self.lanes.contains_lane(lane_idx) {
             return None;
         }
         let buffered = self.len.get_value(&self.lanes, lane_idx) as usize;
@@ -497,7 +504,7 @@ impl BindingInbox {
         binding: &mut B,
         lane_idx: usize,
     ) -> Option<IncomingClassification> {
-        if lane_idx >= MAX_LANES || !self.lanes.contains_lane(lane_idx) {
+        if !self.lanes.contains_lane(lane_idx) {
             return None;
         }
         let buffered = self.len.get_value(&self.lanes, lane_idx) as usize;
@@ -513,7 +520,7 @@ impl BindingInbox {
         lane_idx: usize,
         classification: IncomingClassification,
     ) -> bool {
-        if lane_idx >= MAX_LANES || !self.lanes.contains_lane(lane_idx) {
+        if !self.lanes.contains_lane(lane_idx) {
             return false;
         }
         let buffered = self.len.get_value(&self.lanes, lane_idx) as usize;
@@ -526,7 +533,7 @@ impl BindingInbox {
         let _ = self
             .len
             .set_value(&self.lanes, lane_idx, (buffered + 1) as u8);
-        self.nonempty_mask |= 1u8 << lane_idx;
+        self.nonempty_mask |= lane_mask_bit(lane_idx);
         self.sync_label_mask(
             lane_idx,
             self.label_masks.get_value(&self.lanes, lane_idx) | label_bit(classification.label),
@@ -541,7 +548,7 @@ impl BindingInbox {
         lane_idx: usize,
         expected_label: u8,
     ) -> Option<IncomingClassification> {
-        if lane_idx >= MAX_LANES || !self.lanes.contains_lane(lane_idx) {
+        if !self.lanes.contains_lane(lane_idx) {
             return None;
         }
         let expected_bit = label_bit(expected_label);
@@ -587,7 +594,7 @@ impl BindingInbox {
         drop_label_mask: u128,
         mut drop_mismatch: F,
     ) -> Option<IncomingClassification> {
-        if lane_idx >= MAX_LANES || !self.lanes.contains_lane(lane_idx) || label_mask == 0 {
+        if !self.lanes.contains_lane(lane_idx) || label_mask == 0 {
             return None;
         }
         let buffered_scan_mask = label_mask | drop_label_mask;
@@ -636,7 +643,7 @@ impl BindingInbox {
 
     #[inline]
     pub(super) fn put_back(&mut self, lane_idx: usize, classification: IncomingClassification) {
-        if lane_idx >= MAX_LANES || !self.lanes.contains_lane(lane_idx) {
+        if !self.lanes.contains_lane(lane_idx) {
             return;
         }
         let buffered = self.len.get_value(&self.lanes, lane_idx) as usize;
@@ -655,7 +662,7 @@ impl BindingInbox {
         let _ = self
             .len
             .set_value(&self.lanes, lane_idx, (buffered + 1) as u8);
-        self.nonempty_mask |= 1u8 << lane_idx;
+        self.nonempty_mask |= lane_mask_bit(lane_idx);
         self.sync_label_mask(
             lane_idx,
             self.label_masks.get_value(&self.lanes, lane_idx) | label_bit(classification.label),

@@ -11,8 +11,8 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 use common::TestTransport;
 use hibana::{
     g,
-    g::advanced::project,
     g::advanced::steps::{SendStep, SeqSteps, StepCons, StepNil},
+    g::advanced::{RoleProgram, project},
     substrate::{
         SessionId, SessionKit,
         binding::NoBinding,
@@ -70,9 +70,10 @@ fn request_reply_prefix_projects_and_enters_without_helper_surface() {
                     .expect("register rendezvous");
 
                 let prefix = mgmt::request_reply::PREFIX;
-                let controller_program =
-                    project::<{ mgmt::ROLE_CONTROLLER }, _, MintConfig>(&prefix);
-                let cluster_program = project::<{ mgmt::ROLE_CLUSTER }, _, MintConfig>(&prefix);
+                let controller_program: RoleProgram<'_, { mgmt::ROLE_CONTROLLER }, _, MintConfig> =
+                    project(&prefix);
+                let cluster_program: RoleProgram<'_, { mgmt::ROLE_CLUSTER }, _, MintConfig> =
+                    project(&prefix);
                 let _controller_endpoint = cluster
                     .enter(
                         rv_id,
@@ -113,9 +114,10 @@ fn request_reply_prefix_stays_composable_as_an_ordinary_choreography_prefix() {
                     .expect("register rendezvous");
 
                 let program = MGMT_PROGRAM;
-                let controller_program =
-                    project::<{ mgmt::ROLE_CONTROLLER }, _, MintConfig>(&program);
-                let cluster_program = project::<{ mgmt::ROLE_CLUSTER }, _, MintConfig>(&program);
+                let controller_program: RoleProgram<'_, { mgmt::ROLE_CONTROLLER }, _, MintConfig> =
+                    project(&program);
+                let cluster_program: RoleProgram<'_, { mgmt::ROLE_CLUSTER }, _, MintConfig> =
+                    project(&program);
                 let _controller_endpoint = cluster
                     .enter(
                         rv_id,

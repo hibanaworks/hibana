@@ -14,7 +14,6 @@ use crate::{
     global::{
         compiled::LoweringSummary,
         const_dsl::{ScopeId, ScopeKind},
-        role_program::MAX_LANES,
     },
 };
 
@@ -155,6 +154,10 @@ pub(crate) unsafe fn init_value_from_summary_for_role(
     scope_slots_by_scope: *mut u16,
     route_dense_by_slot: *mut u16,
     route_records: *mut super::registry::RouteScopeRecord,
+    lane_slot_count: usize,
+    scope_lane_first_eff: *mut EffIndex,
+    scope_lane_last_eff: *mut EffIndex,
+    route_arm0_lane_last_eff_by_slot: *mut EffIndex,
     route_scope_cap: usize,
     summary: &LoweringSummary,
     scratch: &mut RoleTypestateBuildScratch,
@@ -172,6 +175,10 @@ pub(crate) unsafe fn init_value_from_summary_for_role(
             scope_slots_by_scope,
             route_dense_by_slot,
             route_records,
+            lane_slot_count,
+            scope_lane_first_eff,
+            scope_lane_last_eff,
+            route_arm0_lane_last_eff_by_slot,
             route_scope_cap,
             summary.view(),
         );
@@ -207,15 +214,15 @@ pub(crate) struct ScopePayloadStats {
 }
 
 #[cfg(test)]
-const fn count_offer_lane_entries(mask: u8) -> usize {
+const fn count_offer_lane_entries(mask: crate::global::role_program::LaneMask) -> usize {
     mask.count_ones() as usize
 }
 
 #[cfg(test)]
-fn count_lane_entries(entries: &[crate::eff::EffIndex; MAX_LANES]) -> usize {
+fn count_lane_entries(entries: &[crate::eff::EffIndex]) -> usize {
     let mut count = 0usize;
     let mut idx = 0usize;
-    while idx < MAX_LANES {
+    while idx < entries.len() {
         if entries[idx] != crate::eff::EffIndex::MAX {
             count += 1;
         }
@@ -238,20 +245,24 @@ fn count_state_entries(entries: &[StateIndex; 2]) -> usize {
 }
 
 #[cfg(test)]
-fn count_arm_lane_last_entries(record: &super::registry::RouteScopeRecord) -> usize {
-    count_lane_entries(&record.arm0_lane_last_eff) + count_offer_lane_entries(record.arm1_lane_mask)
+fn count_arm_lane_last_entries(
+    arm0_lane_last_eff: &[crate::eff::EffIndex],
+    record: &super::registry::RouteScopeRecord,
+) -> usize {
+    count_lane_entries(arm0_lane_last_eff) + count_offer_lane_entries(record.arm1_lane_mask)
 }
 
 #[cfg(test)]
 fn count_arm_lane_last_override_entries(
-    scope: &super::registry::ScopeRecord,
-    route: &super::registry::RouteScopeRecord,
+    scope_lane_last_eff: &[crate::eff::EffIndex],
+    _route: &super::registry::RouteScopeRecord,
+    arm0_lane_last_eff: &[crate::eff::EffIndex],
 ) -> usize {
     let mut count = 0usize;
     let mut lane = 0usize;
-    while lane < MAX_LANES {
-        let eff = route.arm0_lane_last_eff[lane];
-        if eff != crate::eff::EffIndex::MAX && scope.lane_last_eff[lane] != eff {
+    while lane < arm0_lane_last_eff.len() {
+        let eff = arm0_lane_last_eff[lane];
+        if eff != crate::eff::EffIndex::MAX && scope_lane_last_eff[lane] != eff {
             count += 1;
         }
         lane += 1;
@@ -357,11 +368,11 @@ impl RoleTypestateValue {
     }
 
     #[inline]
-    pub(in crate::global::typestate) fn route_offer_lane_list(
+    pub(in crate::global::typestate) fn route_offer_lane_mask(
         &self,
         scope_id: ScopeId,
-    ) -> Option<([u8; MAX_LANES], usize)> {
-        self.scope_registry.route_offer_lane_list(scope_id)
+    ) -> Option<crate::global::role_program::LaneMask> {
+        self.scope_registry.route_offer_lane_mask(scope_id)
     }
 
     #[inline]
@@ -487,7 +498,8 @@ impl RoleTypestateValue {
         while idx < self.scope_registry.record_count() {
             let record = self.scope_registry.record_at(idx);
             if matches!(record.kind, ScopeKind::Parallel)
-                && super::emit_route::parallel_phase_eff_range(record).is_some()
+                && super::emit_route::parallel_phase_eff_range(&self.scope_registry, idx, record)
+                    .is_some()
             {
                 return true;
             }
@@ -506,7 +518,8 @@ impl RoleTypestateValue {
         while idx < self.scope_registry.record_count() {
             let record = self.scope_registry.record_at(idx);
             if matches!(record.kind, ScopeKind::Parallel)
-                && let Some(range) = super::emit_route::parallel_phase_eff_range(record)
+                && let Some(range) =
+                    super::emit_route::parallel_phase_eff_range(&self.scope_registry, idx, record)
             {
                 if seen == ordinal {
                     return Some(range);
@@ -529,10 +542,15 @@ impl RoleTypestateValue {
                     idx += 1;
                     continue;
                 };
+                let scope_lane_last_eff = self.scope_registry.scope_lane_last_row(idx);
+                let arm0_lane_last_eff = self.scope_registry.route_arm0_lane_last_row(idx);
                 let first_recv_entries = route.first_recv_len as usize;
-                let arm_lane_last_entries = count_arm_lane_last_entries(route);
-                let arm_lane_last_override_entries =
-                    count_arm_lane_last_override_entries(record, route);
+                let arm_lane_last_entries = count_arm_lane_last_entries(arm0_lane_last_eff, route);
+                let arm_lane_last_override_entries = count_arm_lane_last_override_entries(
+                    scope_lane_last_eff,
+                    route,
+                    arm0_lane_last_eff,
+                );
                 let offer_lane_entries = count_offer_lane_entries(route.offer_lanes);
 
                 stats.route_scope_count += 1;
@@ -565,8 +583,10 @@ impl RoleTypestateValue {
         let mut idx = 0usize;
         while idx < self.scope_registry.record_count() {
             let record = self.scope_registry.record_at(idx);
-            let lane_first_entries = count_lane_entries(&record.lane_first_eff);
-            let lane_last_entries = count_lane_entries(&record.lane_last_eff);
+            let lane_first_entries =
+                count_lane_entries(self.scope_registry.scope_lane_first_row(idx));
+            let lane_last_entries =
+                count_lane_entries(self.scope_registry.scope_lane_last_row(idx));
             let arm_entries = count_state_entries(&record.arm_entry);
             let mut passive_arm_scopes = 0usize;
             let mut arm = 0u8;
@@ -655,7 +675,8 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
         while idx < self.scope_registry.record_count() {
             let record = self.scope_registry.record_at(idx);
             if matches!(record.kind, ScopeKind::Parallel)
-                && super::emit_route::parallel_phase_eff_range(record).is_some()
+                && super::emit_route::parallel_phase_eff_range(&self.scope_registry, idx, record)
+                    .is_some()
             {
                 return true;
             }
@@ -674,7 +695,8 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
         while idx < self.scope_registry.record_count() {
             let record = self.scope_registry.record_at(idx);
             if matches!(record.kind, ScopeKind::Parallel)
-                && let Some(range) = super::emit_route::parallel_phase_eff_range(record)
+                && let Some(range) =
+                    super::emit_route::parallel_phase_eff_range(&self.scope_registry, idx, record)
             {
                 if seen == ordinal {
                     return Some(range);
@@ -693,6 +715,10 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
         scope_slots_by_scope: *mut u16,
         route_dense_by_slot: *mut u16,
         route_records: *mut super::registry::RouteScopeRecord,
+        lane_slot_count: usize,
+        scope_lane_first_eff: *mut EffIndex,
+        scope_lane_last_eff: *mut EffIndex,
+        route_arm0_lane_last_eff_by_slot: *mut EffIndex,
         route_scope_cap: usize,
         summary: &LoweringSummary,
         scratch: &mut RoleCompileScratch,
@@ -709,6 +735,10 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                 scope_slots_by_scope,
                 route_dense_by_slot,
                 route_records,
+                lane_slot_count,
+                scope_lane_first_eff,
+                scope_lane_last_eff,
+                route_arm0_lane_last_eff_by_slot,
                 route_scope_cap,
                 summary.view(),
             );

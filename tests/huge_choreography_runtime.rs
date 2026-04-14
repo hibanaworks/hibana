@@ -180,25 +180,19 @@ fn run_attached_sample<Steps>(
     assert_eq!(route_scope_count, expected_acks.len());
 
     runtime_support::with_fixture(|clock, tap_buf, slab| {
-        eprintln!("before transport");
         let transport = TestTransport::default();
-        eprintln!("before kit new");
         let kit = HugeKit::new(clock);
-        eprintln!("before add rendezvous");
         let rv_id = kit
             .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
             .expect("register rendezvous");
-        eprintln!("before enter controller");
         let sid = SessionId::new(0x6000);
         let mut controller = kit
             .enter(rv_id, sid, controller_program, NoBinding)
             .expect("enter controller");
-        eprintln!("before enter worker");
         let mut worker = kit
             .enter(rv_id, sid, worker_program, NoBinding)
             .expect("enter worker");
 
-        eprintln!("before run");
         run(&mut controller, &mut worker);
         assert!(
             transport.queue_is_empty(),

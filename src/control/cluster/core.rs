@@ -107,6 +107,7 @@ use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 use crate::eff::EffIndex;
 #[cfg(test)]
 use crate::global::compiled::CompiledProgramImage;
+use crate::global::role_program::LaneMask;
 #[cfg(test)]
 use crate::global::role_program::RoleFootprint;
 #[cfg(test)]
@@ -130,6 +131,7 @@ const TEST_ENDPOINT_ARENA_SLOTS: usize = 16;
 const TEST_ENDPOINT_ARENA_LAYOUT: crate::endpoint::kernel::EndpointArenaLayout =
     crate::endpoint::kernel::EndpointArenaLayout::from_footprint(
         RoleFootprint::for_endpoint_layout(
+            crate::global::role_program::MAX_LANES,
             crate::global::role_program::MAX_LANES,
             crate::global::role_program::MAX_LANES,
             crate::endpoint::kernel::MAX_ROUTE_ARM_STACK,
@@ -3700,20 +3702,20 @@ where
         sid: SessionId,
         role_count: u8,
         effect_envelope: EffectEnvelopeRef<'_>,
-        active_lane_mask: u8,
-        primary_lane_index: usize,
+        active_lane_mask: LaneMask,
+        logical_lane_count: usize,
+        occupied_lane_index: usize,
     ) -> Result<(), AttachError>
     where
         'cfg: 'lease,
         B: crate::binding::BindingSlot,
         Mint: crate::control::cap::mint::MintConfigMarker,
     {
-        use crate::global::role_program::MAX_LANES;
         let cluster_ref: &'cfg Self = unsafe { &*(self as *const Self) };
 
         let mut logical_idx = 0usize;
-        while logical_idx < MAX_LANES {
-            if logical_idx == primary_lane_index || ((active_lane_mask >> logical_idx) & 1) == 0 {
+        while logical_idx < logical_lane_count {
+            if logical_idx == occupied_lane_index || ((active_lane_mask >> logical_idx) & 1) == 0 {
                 logical_idx += 1;
                 continue;
             }
@@ -3774,28 +3776,37 @@ where
         let program_image = role_image.program();
         let effect_envelope = program_image.effect_envelope();
         let role_count = core::cmp::min(program_image.role_count(), u8::MAX as usize) as u8;
-        let active_lane_mask = role_image.active_lane_mask() | 1;
-        let primary_lane_index = (0..crate::global::role_program::MAX_LANES)
-            .find(|lane_idx| ((active_lane_mask >> lane_idx) & 1) != 0)
-            .unwrap_or(0);
-        let primary_wire_lane = Lane::new(primary_lane_index as u32);
-        self.init_session_effects(rv_id, sid, primary_wire_lane, effect_envelope)?;
-        let primary_lease = cluster_ref
-            .lease_port(rv_id, sid, primary_wire_lane, ROLE, role_count)
+        let active_application_lane_mask = role_image.active_lane_mask();
+        let active_lane_mask = active_application_lane_mask | 1;
+        let logical_lane_count = core::cmp::min(
+            role_image.logical_lane_count().max(1),
+            LaneMask::BITS as usize,
+        );
+        let primary_lane_index = if active_application_lane_mask == 0 {
+            0usize
+        } else {
+            active_application_lane_mask.trailing_zeros() as usize
+        };
+        debug_assert!(primary_lane_index < logical_lane_count);
+        let control_lane_index = 0usize;
+        let control_wire_lane = Lane::new(control_lane_index as u32);
+        self.init_session_effects(rv_id, sid, control_wire_lane, effect_envelope)?;
+        let control_lease = cluster_ref
+            .lease_port(rv_id, sid, control_wire_lane, ROLE, role_count)
             .map_err(AttachError::from)?;
-        let (primary_port, primary_guard, primary_brand) =
-            primary_lease.into_port_guard().map_err(AttachError::from)?;
-        let primary_port: crate::rendezvous::port::Port<
+        let (control_port, control_guard, control_brand) =
+            control_lease.into_port_guard().map_err(AttachError::from)?;
+        let control_port: crate::rendezvous::port::Port<
             'r,
             T,
             crate::control::cap::mint::EpochTbl,
-        > = unsafe { core::mem::transmute(primary_port) };
-        let primary_guard: LaneGuard<'r, T, U, C> = unsafe { core::mem::transmute(primary_guard) };
+        > = unsafe { core::mem::transmute(control_port) };
+        let control_guard: LaneGuard<'r, T, U, C> = unsafe { core::mem::transmute(control_guard) };
         let owner: crate::control::cap::mint::Owner<'r, crate::control::cap::mint::E0> = unsafe {
             core::mem::transmute(crate::control::cap::mint::Owner::<
                 'cfg,
                 crate::control::cap::mint::E0,
-            >::new(primary_brand))
+            >::new(control_brand))
         };
         let epoch = crate::control::cap::mint::EndpointEpoch::new();
         let liveness_policy = self.with_control_mut(|core| {
@@ -3820,7 +3831,7 @@ where
                 crate::control::cap::mint::EpochTbl,
                 MAX_RV,
             >::new(
-                primary_wire_lane,
+                control_wire_lane,
                 Some(cluster_ref),
                 liveness_policy,
                 None,
@@ -3849,13 +3860,13 @@ where
             );
             crate::endpoint::kernel::endpoint_init::write_port_slot(
                 dst,
-                primary_lane_index,
-                primary_port,
+                control_lane_index,
+                control_port,
             );
             crate::endpoint::kernel::endpoint_init::write_guard_slot(
                 dst,
-                primary_lane_index,
-                primary_guard,
+                control_lane_index,
+                control_guard,
             );
         }
 
@@ -3866,7 +3877,8 @@ where
             role_count,
             effect_envelope,
             active_lane_mask,
-            primary_lane_index,
+            logical_lane_count,
+            control_lane_index,
         );
 
         if let Err(err) = init_result {
@@ -4508,7 +4520,8 @@ mod tests {
         <Steps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
             crate::global::steps::StepCount,
     {
-        let projected = role_program::project::<ROLE, _, MintConfig>(program);
+        let projected: role_program::RoleProgram<'_, ROLE, _, MintConfig> =
+            role_program::project(program);
         let lowering = crate::global::lowering_input(&projected);
         let summary = lowering.summary();
         let counts = CompiledProgramImage::counts(&summary);
@@ -4625,10 +4638,10 @@ mod tests {
             || {
                 with_cluster_fixture(|clock, config| {
                     with_test_cluster_1(clock, |cluster| {
-                        let controller_program =
-                            role_program::project::<0, _, MintConfig>(&LINEAR_HEAVY_PROGRAM);
-                        let worker_program =
-                            role_program::project::<1, _, MintConfig>(&LINEAR_HEAVY_PROGRAM);
+                        let controller_program: role_program::RoleProgram<'_, 0, _, MintConfig> =
+                            role_program::project(&LINEAR_HEAVY_PROGRAM);
+                        let worker_program: role_program::RoleProgram<'_, 1, _, MintConfig> =
+                            role_program::project(&LINEAR_HEAVY_PROGRAM);
                         let rv_id = cluster
                             .add_rendezvous_from_config_auto(config, DummyTransport)
                             .expect("register rendezvous");

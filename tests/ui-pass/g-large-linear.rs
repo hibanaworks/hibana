@@ -1,5 +1,5 @@
 use hibana::g;
-use hibana::g::advanced::project;
+use hibana::g::advanced::{RoleProgram, project};
 use hibana::substrate::cap::advanced::MintConfig;
 
 fn main() {
@@ -28,6 +28,6 @@ fn main() {
     let program = g::seq(program, g::send::<g::Role<0>, g::Role<1>, g::Msg<23, u8>, 0>());
     let program = g::seq(program, g::send::<g::Role<1>, g::Role<0>, g::Msg<24, u8>, 0>());
 
-    let _client = project::<0, _, MintConfig>(&program);
-    let _server = project::<1, _, MintConfig>(&program);
+    let _client: RoleProgram<'_, 0, _, MintConfig> = project(&program);
+    let _server: RoleProgram<'_, 1, _, MintConfig> = project(&program);
 }

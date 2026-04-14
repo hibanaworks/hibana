@@ -11,6 +11,8 @@ use super::frontier::{
 #[cfg(test)]
 use super::frontier::{OfferEntrySlot, OfferEntryState, OfferEntryTable};
 use crate::global::const_dsl::ScopeId;
+#[cfg(test)]
+use crate::global::role_program::LaneMask;
 
 pub(super) struct RootFrontierTable {
     ptr: *mut RootFrontierState,
@@ -373,9 +375,9 @@ pub(super) struct FrontierState {
     #[cfg(test)]
     pub(super) global_frontier_observed: ObservedEntrySummary,
     #[cfg(test)]
-    pub(super) global_frontier_observed_offer_lane_mask: u8,
+    pub(super) global_frontier_observed_offer_lane_mask: LaneMask,
     #[cfg(test)]
-    pub(super) global_frontier_observed_binding_nonempty_mask: u8,
+    pub(super) global_frontier_observed_binding_nonempty_mask: LaneMask,
     pub(super) global_frontier_scratch_initialized: bool,
 }
 
@@ -491,7 +493,7 @@ impl FrontierState {
 
     #[cfg(test)]
     #[inline]
-    pub(super) fn set_offer_entry_active_mask(&mut self, entry_idx: usize, active_mask: u8) {
+    pub(super) fn set_offer_entry_active_mask(&mut self, entry_idx: usize, active_mask: LaneMask) {
         if let Some(state) = self.offer_entry_state.get_mut(entry_idx) {
             state.active_mask = active_mask;
         }

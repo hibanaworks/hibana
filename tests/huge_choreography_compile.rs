@@ -11,7 +11,11 @@ mod route_control_kinds;
 #[path = "../internal/pico_smoke/src/scenario.rs"]
 mod scenario;
 
-use hibana::{g, g::advanced::project, substrate::cap::advanced::MintConfig};
+use hibana::{
+    g,
+    g::advanced::{RoleProgram, project},
+    substrate::cap::advanced::MintConfig,
+};
 
 static ROUTE_HEAVY_PROGRAM: g::Program<huge_program::ProgramSteps> = huge_program::PROGRAM;
 static LINEAR_HEAVY_PROGRAM: g::Program<linear_program::ProgramSteps> = linear_program::PROGRAM;
@@ -60,12 +64,12 @@ fn huge_programs_stay_on_direct_program_values() {
 #[test]
 fn huge_program_shape_matrix_projects_both_roles() {
     retain_pico_smoke_fixture_symbols();
-    let route_heavy_controller = project::<0, _, MintConfig>(&ROUTE_HEAVY_PROGRAM);
-    let route_heavy_worker = project::<1, _, MintConfig>(&ROUTE_HEAVY_PROGRAM);
-    let linear_heavy_controller = project::<0, _, MintConfig>(&LINEAR_HEAVY_PROGRAM);
-    let linear_heavy_worker = project::<1, _, MintConfig>(&LINEAR_HEAVY_PROGRAM);
-    let fanout_heavy_controller = project::<0, _, MintConfig>(&FANOUT_HEAVY_PROGRAM);
-    let fanout_heavy_worker = project::<1, _, MintConfig>(&FANOUT_HEAVY_PROGRAM);
+    let route_heavy_controller: RoleProgram<'_, 0, _, MintConfig> = project(&ROUTE_HEAVY_PROGRAM);
+    let route_heavy_worker: RoleProgram<'_, 1, _, MintConfig> = project(&ROUTE_HEAVY_PROGRAM);
+    let linear_heavy_controller: RoleProgram<'_, 0, _, MintConfig> = project(&LINEAR_HEAVY_PROGRAM);
+    let linear_heavy_worker: RoleProgram<'_, 1, _, MintConfig> = project(&LINEAR_HEAVY_PROGRAM);
+    let fanout_heavy_controller: RoleProgram<'_, 0, _, MintConfig> = project(&FANOUT_HEAVY_PROGRAM);
+    let fanout_heavy_worker: RoleProgram<'_, 1, _, MintConfig> = project(&FANOUT_HEAVY_PROGRAM);
 
     let _ = (
         &route_heavy_controller,
