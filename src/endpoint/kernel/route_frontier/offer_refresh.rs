@@ -23,19 +23,9 @@ where
         self.frontier_state.root_frontier_active_entries(root)
     }
 
+    #[cfg(test)]
     #[inline]
-    pub(in crate::endpoint::kernel) fn root_frontier_offer_lane_mask(
-        &self,
-        root: ScopeId,
-    ) -> crate::global::role_program::LaneMask {
-        self.offer_lane_mask_for_active_entries(self.root_frontier_active_entries(root))
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_active_mask(
-        &self,
-        entry_idx: usize,
-    ) -> crate::global::role_program::LaneMask {
+    pub(in crate::endpoint::kernel) fn offer_entry_active_mask(&self, entry_idx: usize) -> u32 {
         self.offer_entry_state_snapshot(entry_idx)
             .map(|state| state.active_mask)
             .unwrap_or(0)
@@ -92,18 +82,22 @@ where
 
     pub(in crate::endpoint::kernel) fn compute_offer_entry_static_summary(
         &self,
-        active_mask: crate::global::role_program::LaneMask,
         entry_idx: usize,
     ) -> OfferEntryStaticSummary {
         let mut summary = OfferEntryStaticSummary::EMPTY;
+        let active_offer_lanes = self.route_state.active_offer_lanes();
+        let lane_limit = self.cursor.logical_lane_count();
         #[cfg(test)]
         let mut matched_lane = false;
-        let mut lane_mask = active_mask;
-        while lane_mask != 0 {
-            let lane_idx = lane_mask.trailing_zeros() as usize;
-            lane_mask &= !crate::global::role_program::lane_mask_bit(lane_idx);
+        let mut lane_idx = 0usize;
+        while lane_idx < lane_limit {
+            if !active_offer_lanes.contains(lane_idx) {
+                lane_idx += 1;
+                continue;
+            }
             let info = self.route_state.lane_offer_state(lane_idx);
             if info.scope.is_none() || state_index_to_usize(info.entry) != entry_idx {
+                lane_idx += 1;
                 continue;
             }
             summary.observe_lane(info);
@@ -111,11 +105,12 @@ where
             {
                 matched_lane = true;
             }
+            lane_idx += 1;
         }
         #[cfg(test)]
         if !matched_lane {
             if let Some(entry_state) = self.offer_entry_state_snapshot(entry_idx) {
-                if entry_state.active_mask == active_mask {
+                if self.offer_entry_has_active_lanes(entry_idx) {
                     return entry_state.summary;
                 }
             }
@@ -129,7 +124,8 @@ where
         entry_idx: usize,
         entry_state: OfferEntryState,
     ) -> u8 {
-        self.compute_offer_entry_static_summary(entry_state.active_mask, entry_idx)
+        let _ = entry_state;
+        self.compute_offer_entry_static_summary(entry_idx)
             .frontier_mask
     }
 
@@ -139,7 +135,7 @@ where
         entry_idx: usize,
     ) -> Option<u8> {
         let entry_state = self.offer_entry_state_snapshot(entry_idx)?;
-        if entry_state.active_mask == 0 {
+        if !self.offer_entry_has_active_lanes(entry_idx) {
             return None;
         }
         Some(self.offer_entry_frontier_mask(entry_idx, entry_state))

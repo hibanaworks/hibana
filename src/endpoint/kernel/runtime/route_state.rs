@@ -4,7 +4,22 @@ use super::evidence::RouteArmState;
 use super::evidence_store::{ScopeEvidenceSlot, ScopeEvidenceTable};
 use super::frontier::LaneOfferState;
 use crate::global::const_dsl::ScopeId;
-use crate::global::role_program::{LaneMask, lane_mask_bit};
+use crate::global::role_program::{LaneSet, LaneSetView, LaneWord};
+const NO_SELECTED_ARM: u8 = u8::MAX;
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub(crate) struct RouteScopeSelectedArmSlot {
+    arm: u8,
+    refs: u16,
+}
+
+impl RouteScopeSelectedArmSlot {
+    const EMPTY: Self = Self {
+        arm: NO_SELECTED_ARM,
+        refs: 0,
+    };
+}
 
 #[derive(Clone, Copy)]
 struct RouteArmStackView {
@@ -162,12 +177,14 @@ pub(super) struct RouteState {
     lane_route_arms: RouteArmStackView,
     lane_offer_states: LaneOfferStateView,
     pub(super) scope_evidence: ScopeEvidenceTable,
+    scope_selected_arms: *mut RouteScopeSelectedArmSlot,
+    scope_selected_arm_count: usize,
     lane_route_arm_lens: *mut u8,
-    pub(super) active_route_lane_mask: LaneMask,
     lane_linger_counts: *mut u8,
-    pub(super) lane_linger_mask: LaneMask,
-    pub(super) lane_offer_linger_mask: LaneMask,
-    pub(super) active_offer_mask: LaneMask,
+    active_route_lanes: LaneSet,
+    lane_linger_lanes: LaneSet,
+    lane_offer_linger_lanes: LaneSet,
+    active_offer_lanes: LaneSet,
 }
 
 impl RouteState {
@@ -176,14 +193,21 @@ impl RouteState {
         route_arm_storage: *mut RouteArmState,
         lane_offer_state_storage: *mut LaneOfferState,
         scope_evidence_slots: *mut ScopeEvidenceSlot,
+        scope_selected_arms: *mut RouteScopeSelectedArmSlot,
         lane_dense_by_lane: *mut u8,
         lane_slot_count: usize,
         lane_route_arm_lens: *mut u8,
         lane_linger_counts: *mut u8,
+        active_route_lane_words: *mut LaneWord,
+        lane_linger_words: *mut LaneWord,
+        lane_offer_linger_words: *mut LaneWord,
+        active_offer_lane_words: *mut LaneWord,
         active_lane_count: usize,
+        lane_word_count: usize,
         lane_offer_state_count: usize,
         route_frame_depth: usize,
         scope_evidence_count: usize,
+        scope_selected_arm_count: usize,
     ) {
         unsafe {
             RouteArmStackView::init(
@@ -206,19 +230,44 @@ impl RouteState {
                 scope_evidence_slots,
                 scope_evidence_count,
             );
+            core::ptr::addr_of_mut!((*dst).scope_selected_arms).write(scope_selected_arms);
+            core::ptr::addr_of_mut!((*dst).scope_selected_arm_count)
+                .write(scope_selected_arm_count);
             core::ptr::addr_of_mut!((*dst).lane_route_arm_lens).write(lane_route_arm_lens);
             core::ptr::addr_of_mut!((*dst).lane_linger_counts).write(lane_linger_counts);
+            LaneSet::init_from_parts(
+                core::ptr::addr_of_mut!((*dst).active_route_lanes),
+                active_route_lane_words,
+                lane_word_count,
+            );
+            LaneSet::init_from_parts(
+                core::ptr::addr_of_mut!((*dst).lane_linger_lanes),
+                lane_linger_words,
+                lane_word_count,
+            );
+            LaneSet::init_from_parts(
+                core::ptr::addr_of_mut!((*dst).lane_offer_linger_lanes),
+                lane_offer_linger_words,
+                lane_word_count,
+            );
+            LaneSet::init_from_parts(
+                core::ptr::addr_of_mut!((*dst).active_offer_lanes),
+                active_offer_lane_words,
+                lane_word_count,
+            );
             let mut lane_idx = 0usize;
             while lane_idx < active_lane_count {
                 lane_route_arm_lens.add(lane_idx).write(0);
                 lane_linger_counts.add(lane_idx).write(0);
                 lane_idx += 1;
             }
-
-            core::ptr::addr_of_mut!((*dst).active_route_lane_mask).write(0);
-            core::ptr::addr_of_mut!((*dst).lane_linger_mask).write(0);
-            core::ptr::addr_of_mut!((*dst).lane_offer_linger_mask).write(0);
-            core::ptr::addr_of_mut!((*dst).active_offer_mask).write(0);
+            let mut scope_idx = 0usize;
+            while scope_idx < scope_selected_arm_count {
+                scope_selected_arms
+                    .add(scope_idx)
+                    .write(RouteScopeSelectedArmSlot::EMPTY);
+                scope_idx += 1;
+            }
         }
     }
 
@@ -234,15 +283,20 @@ impl RouteState {
         &mut self,
         lane_idx: usize,
         scope: ScopeId,
+        scope_slot: usize,
         arm: u8,
         is_linger: bool,
     ) -> Result<(), ()> {
         let len = self.lane_route_arm_len(lane_idx);
         for idx in 0..len {
-            if self.lane_route_arms.get(lane_idx, idx).scope == scope {
+            let current = self.lane_route_arms.get(lane_idx, idx);
+            if current.scope == scope {
+                if current.arm != arm {
+                    self.replace_scope_selected_arm(scope_slot, current.arm, arm)?;
+                }
                 self.lane_route_arms
                     .set(lane_idx, idx, RouteArmState { scope, arm });
-                self.active_route_lane_mask |= lane_mask_bit(lane_idx);
+                self.active_route_lanes.insert(lane_idx);
                 return Ok(());
             }
         }
@@ -250,6 +304,14 @@ impl RouteState {
         if len >= self.lane_route_arms.depth() {
             return Err(());
         }
+        if self
+            .lane_offer_states
+            .lane_dense_ordinal(lane_idx)
+            .is_none()
+        {
+            return Err(());
+        }
+        self.increment_scope_selected_arm(scope_slot, arm)?;
         if !self
             .lane_route_arms
             .set(lane_idx, len, RouteArmState { scope, arm })
@@ -263,7 +325,7 @@ impl RouteState {
             let count = self.lane_route_arm_lens.add(dense);
             count.write((*count).saturating_add(1));
         }
-        self.active_route_lane_mask |= lane_mask_bit(lane_idx);
+        self.active_route_lanes.insert(lane_idx);
         if is_linger {
             self.increment_linger_count(lane_idx);
         }
@@ -274,6 +336,7 @@ impl RouteState {
         &mut self,
         lane_idx: usize,
         scope: ScopeId,
+        scope_slot: usize,
         is_linger: bool,
     ) -> bool {
         let len = self.lane_route_arm_len(lane_idx);
@@ -287,6 +350,7 @@ impl RouteState {
             return false;
         };
 
+        let removed = self.lane_route_arms.get(lane_idx, pos);
         let last = len - 1;
         for idx in pos..last {
             let next = self.lane_route_arms.get(lane_idx, idx + 1);
@@ -301,8 +365,11 @@ impl RouteState {
             let count = self.lane_route_arm_lens.add(dense);
             count.write((*count).saturating_sub(1));
         }
+        if !self.decrement_scope_selected_arm(scope_slot, removed.arm) {
+            return false;
+        }
         if self.lane_route_arm_len(lane_idx) == 0 {
-            self.active_route_lane_mask &= !lane_mask_bit(lane_idx);
+            self.active_route_lanes.remove(lane_idx);
         }
         if is_linger {
             self.decrement_linger_count(lane_idx);
@@ -336,6 +403,19 @@ impl RouteState {
             let slot = self.lane_route_arms.get(lane_idx, idx);
             (slot.scope == scope).then_some(slot.arm)
         })
+    }
+
+    #[inline]
+    pub(super) fn selected_arm_for_scope_slot(&self, scope_slot: usize) -> Option<u8> {
+        if scope_slot >= self.scope_selected_arm_count {
+            return None;
+        }
+        let slot = unsafe { *self.scope_selected_arms.add(scope_slot) };
+        if slot.refs == 0 || slot.arm == NO_SELECTED_ARM {
+            None
+        } else {
+            Some(slot.arm)
+        }
     }
 
     pub(super) fn active_linger_scope_for_lane<F>(
@@ -372,7 +452,7 @@ impl RouteState {
             debug_assert!(*count < u8::MAX);
             *count = count.saturating_add(1);
             if *count == 1 {
-                self.lane_linger_mask |= lane_mask_bit(lane_idx);
+                self.lane_linger_lanes.insert(lane_idx);
             }
         }
     }
@@ -390,7 +470,7 @@ impl RouteState {
             }
             *count = count.saturating_sub(1);
             if *count == 0 {
-                self.lane_linger_mask &= !lane_mask_bit(lane_idx);
+                self.lane_linger_lanes.remove(lane_idx);
             }
         }
     }
@@ -406,14 +486,71 @@ impl RouteState {
     }
 
     #[inline]
+    fn increment_scope_selected_arm(&mut self, scope_slot: usize, arm: u8) -> Result<(), ()> {
+        if scope_slot >= self.scope_selected_arm_count {
+            return Err(());
+        }
+        let slot = unsafe { &mut *self.scope_selected_arms.add(scope_slot) };
+        if slot.refs == 0 {
+            slot.arm = arm;
+            slot.refs = 1;
+            return Ok(());
+        }
+        if slot.arm != arm || slot.refs == u16::MAX {
+            return Err(());
+        }
+        slot.refs += 1;
+        Ok(())
+    }
+
+    #[inline]
+    fn replace_scope_selected_arm(
+        &mut self,
+        scope_slot: usize,
+        old_arm: u8,
+        new_arm: u8,
+    ) -> Result<(), ()> {
+        if scope_slot >= self.scope_selected_arm_count {
+            return Err(());
+        }
+        let slot = unsafe { &mut *self.scope_selected_arms.add(scope_slot) };
+        if slot.refs == 0 || slot.arm != old_arm {
+            return Err(());
+        }
+        if old_arm == new_arm {
+            return Ok(());
+        }
+        if slot.refs != 1 {
+            return Err(());
+        }
+        slot.arm = new_arm;
+        Ok(())
+    }
+
+    #[inline]
+    fn decrement_scope_selected_arm(&mut self, scope_slot: usize, arm: u8) -> bool {
+        if scope_slot >= self.scope_selected_arm_count {
+            return false;
+        }
+        let slot = unsafe { &mut *self.scope_selected_arms.add(scope_slot) };
+        if slot.refs == 0 || slot.arm != arm {
+            return false;
+        }
+        slot.refs -= 1;
+        if slot.refs == 0 {
+            *slot = RouteScopeSelectedArmSlot::EMPTY;
+        }
+        true
+    }
+
+    #[inline]
     pub(super) fn clear_lane_offer_state(&mut self, lane_idx: usize) -> LaneOfferState {
-        let bit = lane_mask_bit(lane_idx);
         let old = self.lane_offer_state(lane_idx);
         if let Some(state) = self.lane_offer_state_mut(lane_idx) {
             *state = LaneOfferState::EMPTY;
         }
-        self.active_offer_mask &= !bit;
-        self.lane_offer_linger_mask &= !bit;
+        self.active_offer_lanes.remove(lane_idx);
+        self.lane_offer_linger_lanes.remove(lane_idx);
         old
     }
 
@@ -424,17 +561,39 @@ impl RouteState {
         info: LaneOfferState,
         is_linger: bool,
     ) {
-        let bit = lane_mask_bit(lane_idx);
         let Some(state) = self.lane_offer_state_mut(lane_idx) else {
             debug_assert!(false, "lane offer state must exist for active lanes");
             return;
         };
         *state = info;
-        self.active_offer_mask |= bit;
+        self.active_offer_lanes.insert(lane_idx);
         if is_linger {
-            self.lane_offer_linger_mask |= bit;
+            self.lane_offer_linger_lanes.insert(lane_idx);
         } else {
-            self.lane_offer_linger_mask &= !bit;
+            self.lane_offer_linger_lanes.remove(lane_idx);
         }
+    }
+
+    #[inline]
+    pub(super) fn active_offer_lanes(&self) -> LaneSetView {
+        self.active_offer_lanes.view()
+    }
+
+    #[inline]
+    pub(super) fn lane_linger_lanes(&self) -> LaneSetView {
+        self.lane_linger_lanes.view()
+    }
+
+    #[inline]
+    pub(super) fn lane_offer_linger_lanes(&self) -> LaneSetView {
+        self.lane_offer_linger_lanes.view()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(super) fn active_offer_mask(&self) -> u32 {
+        self.active_offer_lanes
+            .view()
+            .collect_low_lane_bits(crate::global::role_program::LOW_LANE_TEST_WIDTH)
     }
 }

@@ -1186,14 +1186,14 @@ fn compiled_authority_completion_stays_summary_backed() {
         "RoleProgram must not keep a dead direct compiled-role helper"
     );
     for required in [
-        "fn with_compiled_role_in_slot<const ROLE: u8, Steps, R>(",
-        "crate::global::compiled::with_compiled_role_in_slot::<ROLE, _>(",
+        "fn with_compiled_role_image<const ROLE: u8, Steps, R>(",
+        "crate::global::compiled::with_compiled_role_image::<ROLE, _>(",
         "crate::global::lowering_input(program)",
         "counts: program.summary.role_lowering_counts::<ROLE>(),",
     ] {
         assert!(
             role_program_src.contains(required),
-            "RoleProgram test helpers must delegate compiled-role materialization through the compiled owner: {required}"
+            "RoleProgram test helpers must delegate compiled-role image materialization through the compiled owner: {required}"
         );
     }
     for forbidden in [
@@ -1300,10 +1300,8 @@ fn role_program_projection_metadata_stays_internal() {
     for required in [
         "pub(crate) struct LaneSteps {",
         "pub(crate) struct PhaseRouteGuard {",
-        "pub(crate) struct Phase {",
         "pub(crate) enum LocalDirection {",
         "pub(crate) struct LocalStep {",
-        "pub(crate) struct ProjectedRoleLayout {",
         "pub(crate) const fn stamp(&self) -> ProgramStamp {",
         "pub(crate) fn borrow_id(&self) -> usize {",
         "pub(crate) struct RoleLoweringInput<'prog> {",
@@ -1398,19 +1396,26 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
         "pub(crate) struct LaneSteps {",
         "pub start: u16,",
         "pub len: u16,",
-        "pub(crate) struct Phase {",
-        "pub min_start: u16,",
+        "struct PhaseImageHeader {",
+        "lane_entry_start: u16,",
+        "lane_entry_len: u16,",
+        "lane_word_start: u16,",
+        "lane_word_len: u16,",
+        "min_start: u16,",
+        "struct PhaseLaneEntry {",
+        "lane: u8,",
+        "steps: LaneSteps,",
         "pub(crate) struct RoleFootprint {",
         "pub(crate) scope_count: usize,",
+        "pub(crate) phase_lane_entry_count: usize,",
+        "pub(crate) phase_lane_word_count: usize,",
+        "pub(crate) logical_lane_word_count: usize,",
         "pub(crate) frontier_entry_count: usize,",
         "pub(crate) const fn for_endpoint_layout(",
-        "pub(crate) struct ProjectedRoleLayout {",
-        "local_steps: [LocalStep; MAX_STEPS],",
-        "phases: [Phase; MAX_PHASES],",
     ] {
         assert!(
-            role_program_src.contains(required),
-            "projected role layout should keep compact internal bounds: {required}"
+            role_program_src.contains(required) || compiled_role_src.contains(required),
+            "compiled role image layout should keep compact indexed bounds: {required}"
         );
     }
 
@@ -1457,6 +1462,7 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
         "struct PhaseImageHeader {",
         "struct PhaseLaneEntry {",
         "phase_lane_entry_len: u16,",
+        "phase_lane_words: *const LaneWord,",
     ] {
         assert!(
             compiled_role_src.contains(required) || cursor_src.contains(required),
@@ -1469,6 +1475,7 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
             "pub(crate) struct CompiledRoleImage {
                 phase_headers: *const PhaseImageHeader,
                 phase_lane_entries: *const PhaseLaneEntry,
+                phase_lane_words: *const LaneWord,
                 typestate: *const RoleTypestateValue,
                 eff_index_to_step: *const u16,
                 step_index_to_state: *const StateIndex,
@@ -1483,6 +1490,9 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
             "pub(crate) struct RoleFootprint {
                 pub(crate) scope_count: usize,
                 pub(crate) eff_count: usize,
+                pub(crate) phase_count: usize,
+                pub(crate) phase_lane_entry_count: usize,
+                pub(crate) phase_lane_word_count: usize,
                 pub(crate) parallel_enter_count: usize,
                 pub(crate) route_scope_count: usize,
                 pub(crate) local_step_count: usize,
@@ -1490,6 +1500,7 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
                 pub(crate) active_lane_count: usize,
                 pub(crate) endpoint_lane_slot_count: usize,
                 pub(crate) logical_lane_count: usize,
+                pub(crate) logical_lane_word_count: usize,
                 pub(crate) max_route_stack_depth: usize,
                 pub(crate) scope_evidence_count: usize,
                 pub(crate) frontier_entry_count: usize,
@@ -1529,6 +1540,7 @@ fn exact_layout_owners_stay_footprint_backed() {
         "pub(crate) const fn from_footprint(footprint: RoleFootprint) -> Self {",
         "struct PhaseImageHeader {",
         "struct PhaseLaneEntry {",
+        "phase_lane_words: *const LaneWord,",
     ] {
         assert!(
             role_program_src.contains(required)
@@ -4019,49 +4031,219 @@ fn session_cluster_attach_leases_exact_logical_lane_slots() {
 
     assert!(
         cluster_core_src.contains("logical_lane_count: usize,")
-            && cluster_core_src.contains("active_lane_mask: LaneMask,")
-            && cluster_core_src
-                .contains("let active_application_lane_mask = role_image.active_lane_mask();")
-            && cluster_core_src
-                .contains("let active_lane_mask = active_application_lane_mask | 1;")
+            && cluster_core_src.contains("role_image: RoleImageSlice<ROLE>,")
+            && cluster_core_src.contains("!role_image.has_active_lane(logical_idx)")
+            && cluster_core_src.contains(
+                "let primary_lane_index = role_image.first_active_lane().unwrap_or(0usize);"
+            )
             && !cluster_core_src.contains("let primary_lane_index = 0usize;")
-            && !cluster_core_src.contains("while logical_idx < MAX_LANES"),
+            && !cluster_core_src.contains("while logical_idx < MAX_LANES")
+            && !cluster_core_src.contains("secondary_lane_scan_count")
+            && !cluster_core_src.contains("active_lane_mask: RoleLaneMask,"),
         "session-cluster lane attach must size by exact logical-lane counts instead of the fixed MAX_LANES ceiling"
     );
     assert!(
         cluster_core_ws.contains(
-            "while logical_idx < logical_lane_count { if logical_idx == occupied_lane_index || ((active_lane_mask >> logical_idx) & 1) == 0 {"
+            "while logical_idx < logical_lane_count { if logical_idx == occupied_lane_index || !role_image.has_active_lane(logical_idx) {"
         )
             && cluster_core_ws.contains(
-                "let logical_lane_count = core::cmp::min( role_image.logical_lane_count().max(1), LaneMask::BITS as usize, );"
+                "let logical_lane_count = role_image.logical_lane_count().max(1);"
             )
-            && cluster_core_ws.contains(
-                "let primary_lane_index = if active_application_lane_mask == 0 { 0usize } else { active_application_lane_mask.trailing_zeros() as usize };"
-            )
+            && cluster_core_ws
+                .contains("let primary_lane_index = role_image.first_active_lane().unwrap_or(0usize);")
             && cluster_core_ws.contains("let control_lane_index = 0usize;")
             && cluster_core_ws.contains(
                 "crate::endpoint::kernel::endpoint_init::write_port_slot( dst, control_lane_index, control_port, );"
             )
             && cluster_core_ws.contains(
-                "self.attach_secondary_endpoint_lanes::<ROLE, Mint, B>( dst, rv_id, sid, role_count, effect_envelope, active_lane_mask, logical_lane_count, control_lane_index, );"
+                "self.attach_secondary_endpoint_lanes::<ROLE, Mint, B>( dst, rv_id, sid, role_count, effect_envelope, role_image, logical_lane_count, control_lane_index, );"
             ),
-        "session-cluster attach must iterate exact logical lane slots, keep the widened active-lane mask, and derive primary_lane from the first live application lane"
+        "session-cluster attach must derive primary and secondary lane leasing from the compiled image exact active-lane set"
     );
 }
 
 #[test]
-fn lane_mask_width_stays_uniform_across_build_kinds() {
+fn role_lane_mask_alias_is_gone_and_low_lane_probes_are_explicit() {
     let role_program_src = include_str!("../src/global/role_program.rs");
     let role_program_ws = compact_ws(role_program_src);
 
     assert!(
-        role_program_ws.contains("pub(crate) use core::primitive::u32 as LaneMask;")
-            && !role_program_ws
-                .contains("#[cfg(test)] pub(crate) use core::primitive::u8 as LaneMask;")
-            && !role_program_ws
-                .contains("#[cfg(not(test))] pub(crate) use core::primitive::u32 as LaneMask;"),
-        "LaneMask must keep the widened 32-bit width in both test and non-test builds"
+        !role_program_ws.contains("RoleLaneMask")
+            && !role_program_ws.contains("PUBLIC_LANE_COUNT")
+            && role_program_ws
+                .contains("pub(crate) const LOW_LANE_TEST_WIDTH: usize = u32::BITS as usize;"),
+        "role_program.rs must delete the old RoleLaneMask/PUBLIC_LANE_COUNT ceiling and keep any remaining low-lane probe explicit"
     );
+}
+
+#[test]
+fn lowering_no_longer_caps_lane_indices_to_public_mask_width() {
+    let driver_src = include_str!("../src/global/compiled/lowering/driver.rs");
+    let driver_ws = compact_ws(driver_src);
+
+    assert!(
+        driver_ws.contains(
+            "const fn checked_role_index(role: u8) -> usize { let role = role as usize; if role >= MAX_TRACKED_ROLE_FACTS { panic!(\"role index exceeds tracked lowering facts\"); } role }"
+        ) && driver_ws.contains("let from = checked_role_index(atom.from);")
+            && driver_ws.contains("let to = checked_role_index(atom.to);")
+            && !driver_ws.contains("checked_lane_index(")
+            && !driver_ws.contains("lane index exceeds PUBLIC_LANE_COUNT")
+            && driver_ws.contains(
+                "if let Some(controller_role) = marker.controller_role { let controller_role = checked_role_index(controller_role);"
+            ),
+        "lowering must stop capping lane indices to the projected public mask width once the runtime has widened to exact lane sets"
+    );
+}
+
+#[test]
+fn frontier_cache_revalidation_uses_exact_lane_sets() {
+    let offer_src = include_str!("../src/endpoint/kernel/route_frontier/offer.rs");
+    let frontier_observation_src =
+        include_str!("../src/endpoint/kernel/route_frontier/frontier_observation.rs");
+    let frontier_runtime_ws =
+        compact_ws(include_str!("../src/endpoint/kernel/runtime/frontier.rs"));
+    let runtime_layout_ws = compact_ws(include_str!("../src/endpoint/kernel/runtime/layout.rs"));
+
+    assert!(
+        offer_src.contains("!cached_key.lane_sets_equal(&observation_key)")
+            && !offer_src.contains(
+                "cached_key.offer_lane_mask() != observation_key.offer_lane_mask()"
+            )
+            && !offer_src.contains(
+                "cached_key.binding_nonempty_mask() != observation_key.binding_nonempty_mask()"
+            )
+            && frontier_observation_src.contains("if !cached_key.lane_sets_equal(&observation_key) {")
+            && frontier_runtime_ws
+                .contains("pub(crate) const fn new( max_frontier_entries: usize, logical_lane_count: usize, lane_word_count: usize, ) -> Self {")
+            && frontier_runtime_ws.contains("layout.observation_key_offer_lanes().count(),")
+            && frontier_runtime_ws.contains("layout.cached_observation_key_offer_lanes().count(),")
+            && frontier_runtime_ws.contains("layout.working_observation_key_offer_lanes().count(),")
+            && runtime_layout_ws.contains("frontier_root_observed_offer_lanes")
+            && runtime_layout_ws.contains("frontier_root_observed_binding_nonempty_lanes")
+            && runtime_layout_ws.contains("footprint.logical_lane_word_count"),
+        "frontier cache revalidation must keep exact lane snapshots and size cache storage from logical lane-word counts"
+    );
+}
+
+#[test]
+fn lane_world_does_not_keep_scalar_masks_or_shadow_runtime() {
+    let role_program_src = include_str!("../src/global/role_program.rs");
+    let compiled_role_src = include_str!("../src/global/compiled/images/role.rs");
+    let core_src = include_str!("../src/endpoint/kernel/core.rs");
+    let route_state_src = include_str!("../src/endpoint/kernel/runtime/route_state.rs");
+    let inbox_src = include_str!("../src/endpoint/kernel/runtime/inbox.rs");
+    let frontier_src = include_str!("../src/endpoint/kernel/runtime/frontier.rs");
+    let frontier_state_src = include_str!("../src/endpoint/kernel/runtime/frontier_state.rs");
+    let offer_src = include_str!("../src/endpoint/kernel/route_frontier/offer.rs");
+    let registry_src = include_str!("../src/global/typestate/registry.rs");
+    let registry_ws = compact_ws(registry_src);
+
+    for forbidden in [
+        "pub(crate) const MAX_LANES: usize = 8;",
+        "pub(crate) use core::primitive::u32 as LaneMask;",
+        "pub(crate) struct Phase {",
+        "pub(crate) struct ProjectedRoleLayout {",
+        "phase_upper_bound(self) -> usize",
+    ] {
+        assert!(
+            !role_program_src.contains(forbidden),
+            "role_program.rs must not keep legacy lane ceilings or shadow phase owners: {forbidden}"
+        );
+    }
+
+    assert!(
+        !compiled_role_src.contains("pub(crate) struct CompiledRole {"),
+        "compiled role image must not keep the cfg(test) shadow CompiledRole owner"
+    );
+
+    for forbidden in [
+        "let mut lane_mask = self.route_state.active_route_lane_mask;",
+        "if let Some(arm) = self.route_arm_for(lane_idx as u8, scope) {",
+        "pub(super) fn offer_lanes_for_scope(&self, scope_id: ScopeId) -> ([u8; MAX_LANES], usize) {",
+    ] {
+        assert!(
+            !core_src.contains(forbidden),
+            "core.rs must not keep selected-arm lane scans or MAX_LANES array helpers: {forbidden}"
+        );
+    }
+
+    for forbidden in [
+        "active_route_lane_mask: RoleLaneMask,",
+        "lane_linger_mask: RoleLaneMask,",
+        "lane_offer_linger_mask: RoleLaneMask,",
+        "active_offer_mask: RoleLaneMask,",
+    ] {
+        assert!(
+            !route_state_src.contains(forbidden),
+            "route_state.rs must replace scalar lane masks with exact lane-word owners: {forbidden}"
+        );
+    }
+
+    for forbidden in [
+        "nonempty_mask: RoleLaneMask,",
+        "struct BindingInboxTestStorage {",
+    ] {
+        assert!(
+            !inbox_src.contains(forbidden),
+            "binding inbox must not keep scalar lane masks or MAX_LANES shadow storage: {forbidden}"
+        );
+    }
+
+    for forbidden in [
+        "observed_offer_lane_mask: RoleLaneMask,",
+        "observed_binding_nonempty_mask: RoleLaneMask,",
+        "struct ActiveEntrySetTestStorage {",
+        "struct ObservedEntrySetTestStorage {",
+        "struct FrontierObservationKeyTestStorage {",
+        "masks: [u8; OFFER_LANE_SLOT_CAPACITY],",
+    ] {
+        assert!(
+            !frontier_src.contains(forbidden),
+            "frontier.rs must not keep scalar lane masks or MAX_LANES shadow storage: {forbidden}"
+        );
+    }
+    assert!(
+        frontier_src.contains("offer_lanes: LaneSet,"),
+        "frontier observation key must keep exact offer-lane storage"
+    );
+    assert!(
+        frontier_src.contains("binding_nonempty_lanes: LaneSet,"),
+        "frontier observation key must keep exact binding-lane storage"
+    );
+    assert!(
+        frontier_src.contains("offer_lane_entry_slot_masks: FrontierScratchSection,"),
+        "frontier scratch must size offer-lane slot masks from exact logical-lane counts"
+    );
+
+    assert!(
+        !registry_ws.contains(
+            "pub(crate) struct RouteScopeRecord { pub route_recv: [StateIndex; 2], pub passive_arm_jump: [StateIndex; 2], pub offer_lanes: [LaneWord; MAX_LANE_WORDS],"
+        ) && !registry_ws.contains(
+            "pub(crate) struct RouteScopeRecord { pub route_recv: [StateIndex; 2], pub passive_arm_jump: [StateIndex; 2], pub offer_lane_word_start: u16, pub offer_entry: StateIndex, pub arm1_lanes: [LaneWord; MAX_LANE_WORDS],"
+        ),
+        "typestate route-scope metadata must not keep fixed MAX_LANE_WORDS owners on the final RouteScopeRecord"
+    );
+    assert!(
+        registry_src.contains("pub offer_lane_word_start: u16,")
+            && registry_src.contains("pub arm1_lane_word_start: u16,"),
+        "typestate route-scope metadata must store lane-word slices via compact starts instead of inline arrays"
+    );
+    assert!(
+        !offer_src.contains("binding_demux_lane_words: [[LaneWord; MAX_LANE_WORDS]; 2],")
+            && !offer_src.contains("binding_demux_lane_masks: [u32; 2],")
+            && !offer_src.contains("with_binding_demux_lane_masks("),
+        "offer materialization metadata must not keep fixed binding-demux shadow owners or synthetic mask injection"
+    );
+
+    for forbidden in [
+        "global_frontier_observed_offer_lane_mask: RoleLaneMask,",
+        "global_frontier_observed_binding_nonempty_mask: RoleLaneMask,",
+    ] {
+        assert!(
+            !frontier_state_src.contains(forbidden),
+            "frontier_state.rs must not retain scalar lane-mask cache state: {forbidden}"
+        );
+    }
 }
 
 #[test]
@@ -4328,7 +4510,6 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         "#[cfg(test)]\n    pub(super) lane_idx: u8,",
         "#[cfg(test)]\n    pub(super) scope_id: ScopeId,",
         "#[cfg(test)]\n    pub(super) summary: OfferEntryStaticSummary,",
-        "#[cfg(test)]\n    pub(super) offer_lane_mask: LaneMask,",
         "#[cfg(test)]\n    pub(super) selection_meta: CurrentScopeSelectionMeta,",
         "#[cfg(test)]\n    pub(super) label_meta: ScopeLabelMeta,",
         "#[cfg(test)]\n    pub(super) materialization_meta: ScopeArmMaterializationMeta,",
@@ -4344,10 +4525,13 @@ fn endpoint_kernel_owner_split_stays_explicit() {
     for forbidden in [
         "candidates: [FrontierCandidate; MAX_LANES]",
         "slots: [ScopeId; MAX_LANES]",
+        "test_offer_lane_matches_binding_preference(",
+        "test_binding_demux_contains_lane_for_label_mask(",
+        "#[cfg(test)]\n    pub(super) offer_lane_mask: u32,",
     ] {
         assert!(
-            !frontier_src.contains(forbidden),
-            "frontier snapshot/visit scratch owners must stay pointer-backed instead of fixed MAX_LANES arrays: {forbidden}"
+            !frontier_src.contains(forbidden) && !kernel_core_src.contains(forbidden),
+            "frontier/core test hooks must not regrow fixed-width or synthetic shadow paths: {forbidden}"
         );
     }
     for forbidden in [
@@ -4465,7 +4649,6 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         "fn commit_branch_preview(",
         "fn offer_entry_label_meta(",
         "fn offer_refresh_mask(",
-        "fn frontier_observation_lane_mask(",
         "fn frontier_observation_offer_lane_entry_slot_masks(",
         "fn frontier_observation_key(",
         "fn ensure_global_frontier_scratch_initialized(",
@@ -4623,8 +4806,7 @@ fn endpoint_kernel_owner_split_stays_explicit() {
     assert!(
         route_frontier_owner_script.contains("check_absent_outside_owner")
             && route_frontier_owner_script.contains("\"init_global_frontier_scratch_if_needed(\"")
-            && route_frontier_owner_script
-                .contains("\"frontier_observation_cache_snapshot(\"")
+            && route_frontier_owner_script.contains("\"frontier_observation_cache_snapshot(\"")
             && route_frontier_owner_script.contains("\"write_frontier_observation_snapshot(\"")
             && route_frontier_owner_script
                 .contains("\"reusable_cached_offer_entry_observed_state(\"")
@@ -4844,7 +5026,7 @@ fn phase_cursor_owns_private_machine_facts_without_cache_lease_backpointers() {
             && cursor_src.contains("phase_index: u8,")
             && cursor_src.contains("lane_cursors: *mut u16,")
             && cursor_src.contains("current_step_labels: *mut u8,")
-            && cursor_src.contains("labeled_lane_mask: LaneMask,")
+            && !cursor_src.contains("labeled_lane_mask: RoleLaneMask,")
             && program_image_src.contains("pub(crate) struct ProgramImage {")
             && program_image_src.contains(
                 "pub(crate) fn route_controller_role(&self, scope_id: ScopeId) -> Option<u8> {"
@@ -4863,13 +5045,14 @@ fn phase_cursor_owns_private_machine_facts_without_cache_lease_backpointers() {
         "PhaseCursor must keep shared machine facts in the header and mutable cursor state in the leased arena"
     );
     assert!(
-        cursor_src.contains("pub(crate) fn current_phase_lane_mask(&self) -> LaneMask {")
+        cursor_src.contains("pub(crate) fn current_phase_lane_set(&self) -> LaneSetView {")
             && cursor_src.contains(
                 "pub(crate) fn current_phase_route_guard(&self) -> Option<PhaseRouteGuard> {"
             )
             && cursor_src.contains(
                 "fn current_phase_lane_steps(&self, lane_idx: usize) -> Option<LaneSteps> {"
             )
+            && !cursor_src.contains("role_lane_bit(")
             && !cursor_src.contains("pub(crate) fn current_phase(&self) -> Option<Phase> {")
             && !cursor_src.contains("role_program::{MAX_LANES, Phase}"),
         "PhaseCursor must consume exact phase image accessors instead of whole Phase values"
@@ -5847,6 +6030,8 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
     for required in [
         "bash ./.github/scripts/check_hibana_public_api.sh",
         "bash ./.github/scripts/check_policy_surface_hygiene.sh",
+        "bash ./.github/scripts/check_exact_layout_hygiene.sh",
+        "bash ./.github/scripts/check_route_frontier_owner.sh",
         "bash ./.github/scripts/check_surface_hygiene.sh",
         "bash ./.github/scripts/check_lowering_hygiene.sh",
         "bash ./.github/scripts/check_boundary_contracts.sh",
@@ -5874,6 +6059,8 @@ fn quality_gates_and_docs_keep_canonical_repo_owned_checks() {
         "./.github/scripts/check_mgmt_boundary.sh",
         "./.github/scripts/check_plane_boundaries.sh",
         "./.github/scripts/check_resolver_context_surface.sh",
+        "bash ./.github/scripts/check_exact_layout_hygiene.sh",
+        "bash ./.github/scripts/check_route_frontier_owner.sh",
         "./.github/scripts/check_lowering_hygiene.sh",
         "./.github/scripts/check_surface_hygiene.sh",
         "./.github/scripts/check_warning_free.sh",

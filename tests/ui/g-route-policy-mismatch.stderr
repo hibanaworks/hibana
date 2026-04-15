@@ -37,15 +37,10 @@ note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_rout
   | |         );
   | |_________^
 note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_route_policy_consistency`
- --> $RUST/core/src/panic.rs
-  |
-  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
-  |
- ::: src/global/compiled/lowering/seal.rs
+ --> src/global/compiled/lowering/seal.rs
   |
   |                     panic!("route scope recorded different controller policy ids across arms");
-  |                     -------------------------------------------------------------------------- in this macro invocation
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
 
 note: erroneous constant encountered
  --> src/global/program.rs

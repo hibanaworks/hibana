@@ -65,9 +65,6 @@ where
         #[cfg(test)]
         {
             self.frontier_state.global_frontier_observed.clear();
-            self.frontier_state.global_frontier_observed_offer_lane_mask = 0;
-            self.frontier_state
-                .global_frontier_observed_binding_nonempty_mask = 0;
         }
         #[cfg(not(test))]
         unsafe {
@@ -98,24 +95,11 @@ where
             return FrontierObservationKey::EMPTY;
         }
         let (scratch_ptr, layout, frontier_entry_capacity) = self.global_frontier_scratch_parts();
-        let mut key = frontier_cached_observation_key_view_from_storage(
+        let key = frontier_cached_observation_key_view_from_storage(
             scratch_ptr,
             layout,
             frontier_entry_capacity,
         );
-        #[cfg(test)]
-        {
-            key.offer_lane_mask = self.frontier_state.global_frontier_observed_offer_lane_mask;
-            key.binding_nonempty_mask = self
-                .frontier_state
-                .global_frontier_observed_binding_nonempty_mask;
-        }
-        #[cfg(not(test))]
-        {
-            let global = self.global_frontier_observed_state();
-            key.offer_lane_mask = global.offer_lane_mask;
-            key.binding_nonempty_mask = global.binding_nonempty_mask;
-        }
         key
     }
 
@@ -174,9 +158,6 @@ where
             frontier_entry_capacity,
         );
         cached_key.copy_from(src);
-        self.frontier_state.global_frontier_observed_offer_lane_mask = src.offer_lane_mask;
-        self.frontier_state
-            .global_frontier_observed_binding_nonempty_mask = src.binding_nonempty_mask;
     }
 
     #[cfg(test)]
@@ -370,8 +351,6 @@ where
             cached_key.copy_from(key);
             let global = self.global_frontier_observed_state_mut();
             global.summary = observed_entries.summary();
-            global.offer_lane_mask = key.offer_lane_mask;
-            global.binding_nonempty_mask = key.binding_nonempty_mask;
         }
     }
 
@@ -760,7 +739,7 @@ where
         entry_idx: usize,
     ) -> Option<OfferEntryObservedState> {
         let entry_state = self.offer_entry_state_snapshot(entry_idx)?;
-        if entry_state.active_mask == 0 {
+        if !self.offer_entry_has_active_lanes(entry_idx) {
             return None;
         }
         let (binding_ready, has_ack, has_ready_arm_evidence) =
@@ -784,7 +763,7 @@ where
         entry_idx: usize,
     ) -> Option<OfferEntryObservedState> {
         let state = self.offer_entry_state_snapshot(entry_idx)?;
-        if state.active_mask == 0 {
+        if !self.offer_entry_has_active_lanes(entry_idx) {
             return None;
         }
         #[cfg(test)]
@@ -803,7 +782,7 @@ where
             if cached_bit == 0 {
                 return None;
             }
-            let summary = self.compute_offer_entry_static_summary(state.active_mask, entry_idx);
+            let summary = self.compute_offer_entry_static_summary(entry_idx);
             return Some(cached_offer_entry_observed_state(
                 self.offer_entry_scope_id(entry_idx, state),
                 summary,
@@ -836,7 +815,7 @@ where
                 .slot(observation_slot_idx)
                 .entry_summary_fingerprint
                 != self
-                    .compute_offer_entry_static_summary(entry_state.active_mask, entry_idx)
+                    .compute_offer_entry_static_summary(entry_idx)
                     .observation_fingerprint()
             || observation_key.slot(observation_slot_idx).scope_generation
                 != self.scope_evidence_generation_for_scope(
@@ -845,9 +824,7 @@ where
         {
             return false;
         }
-        let changed_binding_mask =
-            cached_key.binding_nonempty_mask ^ observation_key.binding_nonempty_mask;
-        if (changed_binding_mask & self.offer_entry_offer_lane_mask(entry_idx, *entry_state)) != 0 {
+        if !cached_key.lane_sets_equal(&observation_key) {
             return false;
         }
         let Some(representative_lane) =
@@ -896,7 +873,7 @@ where
         ) {
             return None;
         }
-        let summary = self.compute_offer_entry_static_summary(entry_state.active_mask, entry_idx);
+        let summary = self.compute_offer_entry_static_summary(entry_idx);
         Some(cached_offer_entry_observed_state(
             self.offer_entry_scope_id(entry_idx, *entry_state),
             summary,

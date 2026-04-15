@@ -4,8 +4,6 @@
 //! Crate-private lowering facts stay behind this module and the compiled layer.
 
 use core::marker::PhantomData;
-#[cfg(test)]
-use core::ptr;
 
 use super::compiled::{ProgramStamp, RoleLoweringCounts};
 use super::{
@@ -26,17 +24,227 @@ pub(super) const MAX_STEPS: usize = eff::meta::MAX_EFF_NODES;
 /// Maximum number of parallel phases in a program.
 #[cfg(test)]
 pub(super) const MAX_PHASES: usize = 32;
-/// Fixed-array lane ceiling for compile-time and test-only owners.
-pub(crate) const MAX_LANES: usize = 8;
-pub(crate) use core::primitive::u32 as LaneMask;
+pub(crate) type LaneWord = usize;
 pub(crate) const RESERVED_BINDING_LANES: usize = 2;
+#[cfg(test)]
+pub(crate) const LOW_LANE_TEST_WIDTH: usize = u32::BITS as usize;
 
 #[inline(always)]
-pub(crate) const fn lane_mask_bit(lane: usize) -> LaneMask {
-    if lane >= LaneMask::BITS as usize {
-        panic!("lane exceeds LaneMask width");
+pub(crate) const fn lane_word_count(lane_count: usize) -> usize {
+    if lane_count == 0 {
+        0
+    } else {
+        lane_count.div_ceil(LaneWord::BITS as usize)
     }
-    (1u32 << lane) as LaneMask
+}
+
+#[inline(always)]
+pub(crate) const fn lane_word_index(lane: usize) -> (usize, LaneWord) {
+    let bits = LaneWord::BITS as usize;
+    (lane / bits, 1usize << (lane % bits))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LaneSetView {
+    ptr: *const LaneWord,
+    word_len: u16,
+}
+
+impl LaneSetView {
+    pub(crate) const EMPTY: Self = Self {
+        ptr: core::ptr::null(),
+        word_len: 0,
+    };
+
+    #[inline(always)]
+    pub(crate) const fn from_parts(ptr: *const LaneWord, word_len: usize) -> Self {
+        if word_len > u16::MAX as usize {
+            panic!("lane word count overflow");
+        }
+        Self {
+            ptr,
+            word_len: word_len as u16,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn word_len(self) -> usize {
+        self.word_len as usize
+    }
+
+    #[inline(always)]
+    pub(crate) fn contains(self, lane: usize) -> bool {
+        let (word_idx, bit) = lane_word_index(lane);
+        if word_idx >= self.word_len() {
+            return false;
+        }
+        unsafe { (*self.ptr.add(word_idx) & bit) != 0 }
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_empty(self) -> bool {
+        let mut idx = 0usize;
+        while idx < self.word_len() {
+            if unsafe { *self.ptr.add(idx) } != 0 {
+                return false;
+            }
+            idx += 1;
+        }
+        true
+    }
+
+    #[inline(always)]
+    pub(crate) fn equals(self, other: Self) -> bool {
+        if self.word_len() != other.word_len() {
+            return false;
+        }
+        let mut idx = 0usize;
+        while idx < self.word_len() {
+            let lhs = unsafe { *self.ptr.add(idx) };
+            let rhs = unsafe { *other.ptr.add(idx) };
+            if lhs != rhs {
+                return false;
+            }
+            idx += 1;
+        }
+        true
+    }
+
+    #[inline(always)]
+    pub(crate) fn first_set(self, lane_limit: usize) -> Option<usize> {
+        let mut lane = 0usize;
+        while lane < lane_limit {
+            if self.contains(lane) {
+                return Some(lane);
+            }
+            lane += 1;
+        }
+        None
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) fn collect_low_lane_bits(self, lane_limit: usize) -> u32 {
+        let mut projected = 0u32;
+        let mut lane = 0usize;
+        let projected_limit = core::cmp::min(lane_limit, LOW_LANE_TEST_WIDTH);
+        while lane < projected_limit {
+            if self.contains(lane) {
+                projected |= 1u32 << lane;
+            }
+            lane += 1;
+        }
+        projected
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LaneSet {
+    ptr: *mut LaneWord,
+    word_len: u16,
+}
+
+impl LaneSet {
+    pub(crate) const EMPTY: Self = Self {
+        ptr: core::ptr::null_mut(),
+        word_len: 0,
+    };
+
+    #[inline(always)]
+    pub(crate) const fn from_parts(ptr: *mut LaneWord, word_len: usize) -> Self {
+        if word_len > u16::MAX as usize {
+            panic!("lane word count overflow");
+        }
+        Self {
+            ptr,
+            word_len: word_len as u16,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) unsafe fn init_from_parts(dst: *mut Self, ptr: *mut LaneWord, word_len: usize) {
+        if word_len > u16::MAX as usize {
+            panic!("lane word count overflow");
+        }
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
+            core::ptr::addr_of_mut!((*dst).word_len).write(word_len as u16);
+        }
+        let mut idx = 0usize;
+        while idx < word_len {
+            unsafe {
+                ptr.add(idx).write(0);
+            }
+            idx += 1;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn word_len(self) -> usize {
+        self.word_len as usize
+    }
+
+    #[inline(always)]
+    pub(crate) const fn view(&self) -> LaneSetView {
+        LaneSetView::from_parts(self.ptr.cast_const(), self.word_len())
+    }
+
+    #[inline(always)]
+    pub(crate) fn contains(&self, lane: usize) -> bool {
+        self.view().contains(lane)
+    }
+
+    #[inline(always)]
+    pub(crate) fn clear(&mut self) {
+        let mut idx = 0usize;
+        while idx < self.word_len() {
+            unsafe {
+                self.ptr.add(idx).write(0);
+            }
+            idx += 1;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn insert(&mut self, lane: usize) {
+        let (word_idx, bit) = lane_word_index(lane);
+        if word_idx >= self.word_len() {
+            return;
+        }
+        unsafe {
+            let word = self.ptr.add(word_idx);
+            word.write(word.read() | bit);
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn remove(&mut self, lane: usize) {
+        let (word_idx, bit) = lane_word_index(lane);
+        if word_idx >= self.word_len() {
+            return;
+        }
+        unsafe {
+            let word = self.ptr.add(word_idx);
+            word.write(word.read() & !bit);
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn copy_from(&mut self, src: LaneSetView) {
+        self.clear();
+        let len = if self.word_len() < src.word_len() {
+            self.word_len()
+        } else {
+            src.word_len()
+        };
+        let mut idx = 0usize;
+        while idx < len {
+            unsafe {
+                self.ptr.add(idx).write(*src.ptr.add(idx));
+            }
+            idx += 1;
+        }
+    }
 }
 
 #[inline(always)]
@@ -109,50 +317,6 @@ impl PhaseRouteGuard {
     pub const fn matches(&self, other: Self) -> bool {
         self.scope.raw() == other.scope.raw() && self.arm == other.arm
     }
-}
-
-/// A phase represents a fork-join barrier in the program.
-///
-/// Within a phase, each active lane can proceed independently.
-/// All lanes must complete before advancing to the next phase.
-///
-/// ```text
-/// Phase 0 (Fork):
-///   Lane 0: [A's steps...]  ─┬─→ Barrier
-///   Lane 1: [B's steps...]  ─┘
-///                              │
-/// Phase 1 (Join):              ↓
-///   Lane 0: [C's steps...]
-/// ```
-#[cfg(test)]
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Phase {
-    /// Steps for each lane (up to MAX_LANES).
-    /// Inactive lanes have `LaneSteps::EMPTY`.
-    pub lanes: [LaneSteps; MAX_LANES],
-    /// Active lanes for this phase as a bitmask.
-    pub lane_mask: u8,
-    /// Minimum start index across active lanes, used for phase entry.
-    pub min_start: u16,
-    /// Outermost route scope arm guard for this phase (if any).
-    pub route_guard: PhaseRouteGuard,
-}
-
-#[cfg(test)]
-impl Default for Phase {
-    fn default() -> Self {
-        Self::EMPTY
-    }
-}
-
-#[cfg(test)]
-impl Phase {
-    pub const EMPTY: Self = Self {
-        lanes: [LaneSteps::EMPTY; MAX_LANES],
-        lane_mask: 0,
-        min_start: 0,
-        route_guard: PhaseRouteGuard::EMPTY,
-    };
 }
 
 /// Local direction of a step in the projected program.
@@ -304,86 +468,6 @@ impl LocalStep {
     }
 }
 
-/// Role-specific view over a global effect list.
-///
-/// ## Phased Multi-Lane Architecture
-///
-/// `RoleProgram` is the thin, typed owner of a role projection witness.
-/// Runtime metadata such as local-step tables, phase splits, and typestate
-/// graphs are materialized on demand so that frozen `Program` tokens stay small
-/// and cheap to move.
-#[cfg(test)]
-#[derive(Clone, Debug)]
-pub(crate) struct ProjectedRoleLayout {
-    #[cfg(test)]
-    local_steps: [LocalStep; MAX_STEPS],
-    phases: [Phase; MAX_PHASES],
-}
-
-#[cfg(test)]
-impl ProjectedRoleLayout {
-    #[inline(always)]
-    pub(super) unsafe fn init_from_refs(
-        dst: *mut Self,
-        local_steps: &[LocalStep; MAX_STEPS],
-        _local_len: usize,
-        phases: &[Phase; MAX_PHASES],
-        _phase_len: usize,
-    ) {
-        #[cfg(not(test))]
-        let _ = local_steps;
-        unsafe {
-            #[cfg(test)]
-            ptr::copy_nonoverlapping(
-                local_steps.as_ptr(),
-                ptr::addr_of_mut!((*dst).local_steps).cast::<LocalStep>(),
-                MAX_STEPS,
-            );
-            ptr::copy_nonoverlapping(
-                phases.as_ptr(),
-                ptr::addr_of_mut!((*dst).phases).cast::<Phase>(),
-                MAX_PHASES,
-            );
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn len(&self) -> usize {
-        let mut len = 0usize;
-        while len < MAX_STEPS {
-            if matches!(self.local_steps[len].direction, LocalDirection::None) {
-                break;
-            }
-            len += 1;
-        }
-        len
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) fn steps(&self) -> &[LocalStep] {
-        &self.local_steps[..self.len()]
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) fn phase_count(&self) -> usize {
-        let mut len = 0usize;
-        while len < MAX_PHASES {
-            if self.phases[len].lane_mask == 0 {
-                break;
-            }
-            len += 1;
-        }
-        len
-    }
-
-    #[inline(always)]
-    pub(crate) fn phases(&self) -> &[Phase] {
-        &self.phases[..self.phase_count()]
-    }
-}
-
 /// Erased lowering input derived from a typed `RoleProgram` witness.
 #[derive(Clone, Copy)]
 pub(crate) struct RoleLoweringInput<'prog> {
@@ -414,6 +498,9 @@ where
 pub(crate) struct RoleFootprint {
     pub(crate) scope_count: usize,
     pub(crate) eff_count: usize,
+    pub(crate) phase_count: usize,
+    pub(crate) phase_lane_entry_count: usize,
+    pub(crate) phase_lane_word_count: usize,
     pub(crate) parallel_enter_count: usize,
     pub(crate) route_scope_count: usize,
     pub(crate) local_step_count: usize,
@@ -421,6 +508,7 @@ pub(crate) struct RoleFootprint {
     pub(crate) active_lane_count: usize,
     pub(crate) endpoint_lane_slot_count: usize,
     pub(crate) logical_lane_count: usize,
+    pub(crate) logical_lane_word_count: usize,
     pub(crate) max_route_stack_depth: usize,
     pub(crate) scope_evidence_count: usize,
     pub(crate) frontier_entry_count: usize,
@@ -436,9 +524,23 @@ impl RoleFootprint {
         scope_evidence_count: usize,
         frontier_entry_count: usize,
     ) -> Self {
+        let endpoint_lane_slot_count = if endpoint_lane_slot_count == 0 {
+            1
+        } else {
+            endpoint_lane_slot_count
+        };
+        let logical_lane_seed = if logical_lane_count > endpoint_lane_slot_count {
+            logical_lane_count
+        } else {
+            endpoint_lane_slot_count
+        };
+        let logical_lane_count = logical_lane_count_for_role(active_lane_count, logical_lane_seed);
         Self {
             scope_count: 0,
             eff_count: 0,
+            phase_count: 0,
+            phase_lane_entry_count: 0,
+            phase_lane_word_count: 0,
             parallel_enter_count: 0,
             route_scope_count: 0,
             local_step_count: 0,
@@ -446,26 +548,10 @@ impl RoleFootprint {
             active_lane_count,
             endpoint_lane_slot_count,
             logical_lane_count,
+            logical_lane_word_count: lane_word_count(logical_lane_count),
             max_route_stack_depth,
             scope_evidence_count,
             frontier_entry_count,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn phase_upper_bound(self) -> usize {
-        if self.local_step_count == 0 {
-            0
-        } else {
-            let derived = self
-                .parallel_enter_count
-                .saturating_mul(2)
-                .saturating_add(1);
-            if derived < self.local_step_count {
-                derived
-            } else {
-                self.local_step_count
-            }
         }
     }
 }
@@ -510,6 +596,9 @@ impl<'prog> RoleLoweringInput<'prog> {
         RoleFootprint {
             scope_count: self.counts.scope_count,
             eff_count: self.counts.eff_count,
+            phase_count: self.counts.phase_count,
+            phase_lane_entry_count: self.counts.phase_lane_entry_count,
+            phase_lane_word_count: self.counts.phase_lane_word_count,
             parallel_enter_count: self.counts.parallel_enter_count,
             route_scope_count: self.counts.route_scope_count,
             local_step_count: self.counts.local_step_count,
@@ -517,6 +606,7 @@ impl<'prog> RoleLoweringInput<'prog> {
             active_lane_count: self.counts.active_lane_count,
             endpoint_lane_slot_count: self.counts.endpoint_lane_slot_count,
             logical_lane_count: self.counts.logical_lane_count,
+            logical_lane_word_count: self.counts.logical_lane_word_count,
             max_route_stack_depth: 0,
             scope_evidence_count: 0,
             frontier_entry_count: 0,
@@ -632,67 +722,65 @@ where
 #[cfg(test)]
 mod tests {
     use core::{cell::UnsafeCell, mem::MaybeUninit};
-    use std::{thread::LocalKey, thread_local};
+    use std::thread_local;
 
     use super::*;
     use crate::g::{self, Msg, Role};
-    use crate::global::compiled::CompiledRole;
+    use crate::global::compiled::CompiledRoleImage;
     use crate::global::const_dsl::{ScopeEvent, ScopeKind};
     use crate::global::steps::{self, ParSteps, RouteSteps, SeqSteps, StepCons, StepNil};
     use crate::global::typestate::RoleCompileScratch;
 
+    const COMPILED_ROLE_IMAGE_BYTES: usize = CompiledRoleImage::persistent_bytes_for_counts(
+        crate::eff::meta::MAX_EFF_NODES,
+        crate::eff::meta::MAX_EFF_NODES,
+        crate::eff::meta::MAX_EFF_NODES,
+    );
+    const COMPILED_ROLE_IMAGE_ALIGN: usize = CompiledRoleImage::persistent_align();
+    const COMPILED_ROLE_IMAGE_STORAGE_BYTES: usize =
+        COMPILED_ROLE_IMAGE_BYTES + COMPILED_ROLE_IMAGE_ALIGN;
+
     thread_local! {
-        static COMPILED_ROLE_STORAGE_A: UnsafeCell<MaybeUninit<CompiledRole>> =
-            const { UnsafeCell::new(MaybeUninit::uninit()) };
-        static COMPILED_ROLE_SCRATCH_A: UnsafeCell<MaybeUninit<RoleCompileScratch>> =
-            const { UnsafeCell::new(MaybeUninit::uninit()) };
-        static COMPILED_ROLE_STORAGE_B: UnsafeCell<MaybeUninit<CompiledRole>> =
-            const { UnsafeCell::new(MaybeUninit::uninit()) };
-        static COMPILED_ROLE_SCRATCH_B: UnsafeCell<MaybeUninit<RoleCompileScratch>> =
+        static COMPILED_ROLE_IMAGE_STORAGE: UnsafeCell<[u8; COMPILED_ROLE_IMAGE_STORAGE_BYTES]> =
+            const { UnsafeCell::new([0u8; COMPILED_ROLE_IMAGE_STORAGE_BYTES]) };
+        static COMPILED_ROLE_SCRATCH: UnsafeCell<MaybeUninit<RoleCompileScratch>> =
             const { UnsafeCell::new(MaybeUninit::uninit()) };
     }
 
-    #[test]
-    fn lane_mask_width_matches_production_builds() {
-        assert_eq!(
-            LaneMask::BITS,
-            u32::BITS,
-            "LaneMask must stay widened in test builds so cargo test matches production lane-mask semantics"
-        );
-    }
-
-    fn with_compiled_role_in_slot<const ROLE: u8, Steps, R>(
-        compiled_slot: &'static LocalKey<UnsafeCell<MaybeUninit<CompiledRole>>>,
-        scratch_slot: &'static LocalKey<UnsafeCell<MaybeUninit<RoleCompileScratch>>>,
+    fn with_compiled_role_image<const ROLE: u8, Steps, R>(
         program: &RoleProgram<'_, ROLE, Steps, MintConfig>,
-        f: impl FnOnce(&CompiledRole) -> R,
+        f: impl FnOnce(&CompiledRoleImage) -> R,
     ) -> R {
-        crate::global::compiled::with_compiled_role_in_slot::<ROLE, _>(
-            compiled_slot,
-            scratch_slot,
-            crate::global::lowering_input(program),
-            f,
-        )
+        let lowering = crate::global::lowering_input(program);
+        COMPILED_ROLE_IMAGE_STORAGE.with(|compiled| {
+            COMPILED_ROLE_SCRATCH.with(|scratch| unsafe {
+                let base = (*compiled.get()).as_mut_ptr() as usize;
+                let compiled_ptr = ((base + COMPILED_ROLE_IMAGE_ALIGN - 1)
+                    & !(COMPILED_ROLE_IMAGE_ALIGN - 1))
+                    as *mut CompiledRoleImage;
+                debug_assert!(
+                    (compiled_ptr as usize) + COMPILED_ROLE_IMAGE_BYTES
+                        <= base + COMPILED_ROLE_IMAGE_STORAGE_BYTES
+                );
+                crate::global::compiled::with_compiled_role_image::<ROLE, _>(
+                    compiled_ptr,
+                    lowering,
+                    (*scratch.get()).as_mut_ptr(),
+                    f,
+                )
+            })
+        })
     }
 
-    fn with_compiled_roles<const LEFT_ROLE: u8, const RIGHT_ROLE: u8, LeftSteps, RightSteps, R>(
-        left: &RoleProgram<'_, LEFT_ROLE, LeftSteps, MintConfig>,
-        right: &RoleProgram<'_, RIGHT_ROLE, RightSteps, MintConfig>,
-        f: impl FnOnce(&CompiledRole, &CompiledRole) -> R,
-    ) -> R {
-        with_compiled_role_in_slot::<LEFT_ROLE, LeftSteps, _>(
-            &COMPILED_ROLE_STORAGE_A,
-            &COMPILED_ROLE_SCRATCH_A,
-            left,
-            |left_projection| {
-                with_compiled_role_in_slot::<RIGHT_ROLE, RightSteps, _>(
-                    &COMPILED_ROLE_STORAGE_B,
-                    &COMPILED_ROLE_SCRATCH_B,
-                    right,
-                    |right_projection| f(left_projection, right_projection),
-                )
-            },
-        )
+    fn assert_parallel_phase_shape(image: &CompiledRoleImage) {
+        assert_eq!(image.phase_count(), 1);
+        let phase_lane_set = image.phase_lane_set(0).expect("phase lane set");
+        assert_eq!(
+            phase_lane_set.collect_low_lane_bits(image.logical_lane_count()),
+            (1u32 << 0) | (1u32 << 1)
+        );
+        assert_eq!(image.phase_lane_steps(0, 0).map(|steps| steps.len), Some(1));
+        assert_eq!(image.phase_lane_steps(0, 1).map(|steps| steps.len), Some(1));
     }
 
     type ParallelLane0 = StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil>;
@@ -730,48 +818,8 @@ mod tests {
         let client: RoleProgram<'_, 0, _, MintConfig> = project(&parallel_program);
         let server: RoleProgram<'_, 1, _, MintConfig> = project(&parallel_program);
 
-        with_compiled_roles(&client, &server, |client_projection, server_projection| {
-            assert_eq!(client_projection.layout().phase_count(), 1);
-            assert_eq!(server_projection.layout().phase_count(), 1);
-
-            let client_phase = client_projection.layout().phases()[0];
-            assert!(client_phase.lanes[0].is_active());
-            assert!(client_phase.lanes[1].is_active());
-
-            let server_phase = server_projection.layout().phases()[0];
-            assert!(server_phase.lanes[0].is_active());
-            assert!(server_phase.lanes[1].is_active());
-
-            let client_lane0 = client_projection
-                .layout()
-                .steps()
-                .iter()
-                .filter(|step| step.lane() == 0)
-                .count();
-            let client_lane1 = client_projection
-                .layout()
-                .steps()
-                .iter()
-                .filter(|step| step.lane() == 1)
-                .count();
-            assert_eq!(client_lane0, 1);
-            assert_eq!(client_lane1, 1);
-
-            let server_lane0 = server_projection
-                .layout()
-                .steps()
-                .iter()
-                .filter(|step| step.lane() == 0)
-                .count();
-            let server_lane1 = server_projection
-                .layout()
-                .steps()
-                .iter()
-                .filter(|step| step.lane() == 1)
-                .count();
-            assert_eq!(server_lane0, 1);
-            assert_eq!(server_lane1, 1);
-        });
+        with_compiled_role_image(&client, assert_parallel_phase_shape);
+        with_compiled_role_image(&server, assert_parallel_phase_shape);
     }
 
     #[test]

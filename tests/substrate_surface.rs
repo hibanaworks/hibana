@@ -386,6 +386,8 @@ fn quality_workflow_runs_canonical_validation_suite() {
         "./.github/scripts/check_resolver_context_surface.sh",
         "./.github/scripts/check_lowering_hygiene.sh",
         "./.github/scripts/check_summary_authority_hygiene.sh",
+        "./.github/scripts/check_exact_layout_hygiene.sh",
+        "./.github/scripts/check_route_frontier_owner.sh",
         "./.github/scripts/check_surface_hygiene.sh",
         "./.github/scripts/check_warning_free.sh",
         "./.github/scripts/check_direct_projection_binary.sh",

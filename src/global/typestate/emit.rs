@@ -8,7 +8,7 @@ use super::{
     facts::{LocalAction, LocalNode, StateIndex, state_index_to_usize},
 };
 #[cfg(test)]
-use crate::global::role_program::{LocalStep, MAX_PHASES, MAX_STEPS, Phase, PhaseRouteGuard};
+use crate::global::role_program::{LocalStep, MAX_PHASES, MAX_STEPS, PhaseRouteGuard};
 use crate::{
     eff::EffIndex,
     global::{
@@ -154,6 +154,9 @@ pub(crate) unsafe fn init_value_from_summary_for_role(
     scope_slots_by_scope: *mut u16,
     route_dense_by_slot: *mut u16,
     route_records: *mut super::registry::RouteScopeRecord,
+    route_offer_lane_words: *mut crate::global::role_program::LaneWord,
+    route_arm1_lane_words: *mut crate::global::role_program::LaneWord,
+    route_lane_word_len: usize,
     lane_slot_count: usize,
     scope_lane_first_eff: *mut EffIndex,
     scope_lane_last_eff: *mut EffIndex,
@@ -175,6 +178,9 @@ pub(crate) unsafe fn init_value_from_summary_for_role(
             scope_slots_by_scope,
             route_dense_by_slot,
             route_records,
+            route_offer_lane_words,
+            route_arm1_lane_words,
+            route_lane_word_len,
             lane_slot_count,
             scope_lane_first_eff,
             scope_lane_last_eff,
@@ -214,8 +220,16 @@ pub(crate) struct ScopePayloadStats {
 }
 
 #[cfg(test)]
-const fn count_offer_lane_entries(mask: crate::global::role_program::LaneMask) -> usize {
-    mask.count_ones() as usize
+fn count_offer_lane_entries(lanes: crate::global::role_program::LaneSetView) -> usize {
+    let mut count = 0usize;
+    let mut lane = 0usize;
+    while lane < (u8::MAX as usize + 1) {
+        if lanes.contains(lane) {
+            count += 1;
+        }
+        lane += 1;
+    }
+    count
 }
 
 #[cfg(test)]
@@ -247,9 +261,9 @@ fn count_state_entries(entries: &[StateIndex; 2]) -> usize {
 #[cfg(test)]
 fn count_arm_lane_last_entries(
     arm0_lane_last_eff: &[crate::eff::EffIndex],
-    record: &super::registry::RouteScopeRecord,
+    arm1_lanes: crate::global::role_program::LaneSetView,
 ) -> usize {
-    count_lane_entries(arm0_lane_last_eff) + count_offer_lane_entries(record.arm1_lane_mask)
+    count_lane_entries(arm0_lane_last_eff) + count_offer_lane_entries(arm1_lanes)
 }
 
 #[cfg(test)]
@@ -283,7 +297,6 @@ pub(crate) struct RoleCompileScratch {
     pub(crate) eff_index_to_step: [u16; MAX_STEPS],
     pub(crate) step_index_to_state: [StateIndex; MAX_STEPS],
     pub(crate) route_guards: [PhaseRouteGuard; MAX_STEPS],
-    pub(crate) phases: [Phase; MAX_PHASES],
     pub(crate) parallel_ranges: [(usize, usize); MAX_PHASES],
 }
 
@@ -299,8 +312,32 @@ impl RoleCompileScratch {
             eff_index_to_step: [u16::MAX; MAX_STEPS],
             step_index_to_state: [StateIndex::MAX; MAX_STEPS],
             route_guards: [PhaseRouteGuard::EMPTY; MAX_STEPS],
-            phases: [Phase::EMPTY; MAX_PHASES],
             parallel_ranges: [(0usize, 0usize); MAX_PHASES],
+        }
+    }
+
+    pub(crate) unsafe fn init_empty(dst: *mut Self) {
+        unsafe {
+            RoleTypestateBuildScratch::init_empty(core::ptr::addr_of_mut!((*dst).typestate_build));
+        }
+        let mut idx = 0usize;
+        while idx < MAX_STEPS {
+            unsafe {
+                core::ptr::addr_of_mut!((*dst).by_eff_index[idx]).write(LocalStep::EMPTY);
+                core::ptr::addr_of_mut!((*dst).present[idx]).write(false);
+                core::ptr::addr_of_mut!((*dst).steps[idx]).write(LocalStep::EMPTY);
+                core::ptr::addr_of_mut!((*dst).eff_index_to_step[idx]).write(u16::MAX);
+                core::ptr::addr_of_mut!((*dst).step_index_to_state[idx]).write(StateIndex::MAX);
+                core::ptr::addr_of_mut!((*dst).route_guards[idx]).write(PhaseRouteGuard::EMPTY);
+            }
+            idx += 1;
+        }
+        let mut range_idx = 0usize;
+        while range_idx < MAX_PHASES {
+            unsafe {
+                core::ptr::addr_of_mut!((*dst).parallel_ranges[range_idx]).write((0usize, 0usize));
+            }
+            range_idx += 1;
         }
     }
 }
@@ -371,8 +408,8 @@ impl RoleTypestateValue {
     pub(in crate::global::typestate) fn route_offer_lane_mask(
         &self,
         scope_id: ScopeId,
-    ) -> Option<crate::global::role_program::LaneMask> {
-        self.scope_registry.route_offer_lane_mask(scope_id)
+    ) -> Option<crate::global::role_program::LaneSetView> {
+        self.scope_registry.route_offer_lane_set(scope_id)
     }
 
     #[inline]
@@ -545,13 +582,22 @@ impl RoleTypestateValue {
                 let scope_lane_last_eff = self.scope_registry.scope_lane_last_row(idx);
                 let arm0_lane_last_eff = self.scope_registry.route_arm0_lane_last_row(idx);
                 let first_recv_entries = route.first_recv_len as usize;
-                let arm_lane_last_entries = count_arm_lane_last_entries(arm0_lane_last_eff, route);
+                let arm_lane_last_entries = count_arm_lane_last_entries(
+                    arm0_lane_last_eff,
+                    self.scope_registry
+                        .route_arm1_lane_set(record.scope_id.to_scope_id())
+                        .unwrap_or(crate::global::role_program::LaneSetView::EMPTY),
+                );
                 let arm_lane_last_override_entries = count_arm_lane_last_override_entries(
                     scope_lane_last_eff,
                     route,
                     arm0_lane_last_eff,
                 );
-                let offer_lane_entries = count_offer_lane_entries(route.offer_lanes);
+                let offer_lane_entries = count_offer_lane_entries(
+                    self.scope_registry
+                        .route_offer_lane_set(record.scope_id.to_scope_id())
+                        .unwrap_or(crate::global::role_program::LaneSetView::EMPTY),
+                );
 
                 stats.route_scope_count += 1;
                 stats.total_first_recv_entries += first_recv_entries;
@@ -715,6 +761,9 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
         scope_slots_by_scope: *mut u16,
         route_dense_by_slot: *mut u16,
         route_records: *mut super::registry::RouteScopeRecord,
+        route_offer_lane_words: *mut crate::global::role_program::LaneWord,
+        route_arm1_lane_words: *mut crate::global::role_program::LaneWord,
+        route_lane_word_len: usize,
         lane_slot_count: usize,
         scope_lane_first_eff: *mut EffIndex,
         scope_lane_last_eff: *mut EffIndex,
@@ -735,6 +784,9 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                 scope_slots_by_scope,
                 route_dense_by_slot,
                 route_records,
+                route_offer_lane_words,
+                route_arm1_lane_words,
+                route_lane_word_len,
                 lane_slot_count,
                 scope_lane_first_eff,
                 scope_lane_last_eff,

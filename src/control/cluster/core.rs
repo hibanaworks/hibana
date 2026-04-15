@@ -107,7 +107,6 @@ use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 use crate::eff::EffIndex;
 #[cfg(test)]
 use crate::global::compiled::CompiledProgramImage;
-use crate::global::role_program::LaneMask;
 #[cfg(test)]
 use crate::global::role_program::RoleFootprint;
 #[cfg(test)]
@@ -128,15 +127,17 @@ use std::thread_local;
 #[cfg(test)]
 const TEST_ENDPOINT_ARENA_SLOTS: usize = 16;
 #[cfg(test)]
+const TEST_ENDPOINT_LANE_CAPACITY: usize = crate::global::role_program::LOW_LANE_TEST_WIDTH;
+#[cfg(test)]
 const TEST_ENDPOINT_ARENA_LAYOUT: crate::endpoint::kernel::EndpointArenaLayout =
     crate::endpoint::kernel::EndpointArenaLayout::from_footprint(
         RoleFootprint::for_endpoint_layout(
-            crate::global::role_program::MAX_LANES,
-            crate::global::role_program::MAX_LANES,
-            crate::global::role_program::MAX_LANES,
+            TEST_ENDPOINT_LANE_CAPACITY,
+            TEST_ENDPOINT_LANE_CAPACITY,
+            TEST_ENDPOINT_LANE_CAPACITY,
             crate::endpoint::kernel::MAX_ROUTE_ARM_STACK,
             crate::eff::meta::MAX_EFF_NODES,
-            crate::global::role_program::MAX_LANES,
+            TEST_ENDPOINT_LANE_CAPACITY,
         ),
     );
 #[cfg(test)]
@@ -1837,7 +1838,8 @@ where
         required_align: usize,
     ) -> Option<*mut u8> {
         let mut result = None;
-        TEST_ENDPOINT_ARENA_POOL.with(|storage| unsafe {
+        TEST_ENDPOINT_ARENA_POOL.with(
+            |storage: &UnsafeCell<[[u8; TEST_ENDPOINT_ARENA_BYTES]; TEST_ENDPOINT_ARENA_SLOTS]>| unsafe {
             let slot_idx = usize::from(slot);
             if slot_idx >= TEST_ENDPOINT_ARENA_SLOTS {
                 return;
@@ -1869,6 +1871,11 @@ where
         }
         let lowering = program.lowering_input();
         let summary = lowering.summary();
+        let exact_role_bytes = CompiledRoleImage::persistent_bytes_for_program(lowering.footprint());
+        assert!(
+            exact_role_bytes <= TEST_COMPILED_ROLE_IMAGE_BYTES,
+            "test compiled role image storage is undersized: exact={exact_role_bytes} budget={TEST_COMPILED_ROLE_IMAGE_BYTES}"
+        );
         let mut result = None;
         TEST_COMPILED_PROGRAM_POOL.with(|program_storage| {
             TEST_COMPILED_ROLE_POOL.with(|role_storage| {
@@ -3702,7 +3709,7 @@ where
         sid: SessionId,
         role_count: u8,
         effect_envelope: EffectEnvelopeRef<'_>,
-        active_lane_mask: LaneMask,
+        role_image: RoleImageSlice<ROLE>,
         logical_lane_count: usize,
         occupied_lane_index: usize,
     ) -> Result<(), AttachError>
@@ -3715,7 +3722,7 @@ where
 
         let mut logical_idx = 0usize;
         while logical_idx < logical_lane_count {
-            if logical_idx == occupied_lane_index || ((active_lane_mask >> logical_idx) & 1) == 0 {
+            if logical_idx == occupied_lane_index || !role_image.has_active_lane(logical_idx) {
                 logical_idx += 1;
                 continue;
             }
@@ -3776,17 +3783,8 @@ where
         let program_image = role_image.program();
         let effect_envelope = program_image.effect_envelope();
         let role_count = core::cmp::min(program_image.role_count(), u8::MAX as usize) as u8;
-        let active_application_lane_mask = role_image.active_lane_mask();
-        let active_lane_mask = active_application_lane_mask | 1;
-        let logical_lane_count = core::cmp::min(
-            role_image.logical_lane_count().max(1),
-            LaneMask::BITS as usize,
-        );
-        let primary_lane_index = if active_application_lane_mask == 0 {
-            0usize
-        } else {
-            active_application_lane_mask.trailing_zeros() as usize
-        };
+        let logical_lane_count = role_image.logical_lane_count().max(1);
+        let primary_lane_index = role_image.first_active_lane().unwrap_or(0usize);
         debug_assert!(primary_lane_index < logical_lane_count);
         let control_lane_index = 0usize;
         let control_wire_lane = Lane::new(control_lane_index as u32);
@@ -3876,7 +3874,7 @@ where
             sid,
             role_count,
             effect_envelope,
-            active_lane_mask,
+            role_image,
             logical_lane_count,
             control_lane_index,
         );
@@ -4856,7 +4854,7 @@ mod tests {
                 && lowering_summary_bytes <= 20_000
                 && compiled_program_bytes <= 25_000
                 && compiled_role_bytes <= 25_000
-                && role_compile_scratch_bytes <= 60_000
+                && role_compile_scratch_bytes <= 68_000
                 && endpoint_storage_bytes <= 90_000
                 && rendezvous_header_bytes <= 32_768
                 && route_table_bytes <= 128

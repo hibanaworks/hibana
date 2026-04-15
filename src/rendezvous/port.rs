@@ -162,7 +162,7 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
 
     #[inline(always)]
     const fn frontier_scratch_align() -> usize {
-        FrontierScratchLayout::new(0).total_align()
+        FrontierScratchLayout::new(0, 0, 0).total_align()
     }
 
     #[inline]

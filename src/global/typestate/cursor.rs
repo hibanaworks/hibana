@@ -17,7 +17,7 @@ use crate::{
         LoopControlMeaning,
         compiled::{CompiledRoleImage, ControlSemanticsTable, ProgramImage},
         const_dsl::{PolicyMode, ScopeId, ScopeKind},
-        role_program::{LaneMask, LaneSteps, PhaseRouteGuard, lane_mask_bit},
+        role_program::{LaneSetView, LaneSteps, PhaseRouteGuard},
     },
 };
 
@@ -86,8 +86,8 @@ impl PhaseCursorMachine {
     }
 
     #[inline(always)]
-    fn phase_lane_mask(&self, idx: usize) -> Option<LaneMask> {
-        self.compiled_role().phase_lane_mask(idx)
+    fn phase_lane_set(&self, idx: usize) -> Option<LaneSetView> {
+        self.compiled_role().phase_lane_set(idx)
     }
 
     #[inline(always)]
@@ -153,8 +153,6 @@ pub(crate) struct PhaseCursorState {
     lane_cursors: *mut u16,
     /// Current label for each lane's pending step.
     current_step_labels: *mut u8,
-    /// Bitmask of lanes that currently expose a labeled step.
-    labeled_lane_mask: LaneMask,
 }
 
 impl PhaseCursorState {
@@ -170,7 +168,6 @@ impl PhaseCursorState {
             core::ptr::addr_of_mut!((*dst).phase_index).write(0);
             core::ptr::addr_of_mut!((*dst).lane_cursors).write(lane_cursors);
             core::ptr::addr_of_mut!((*dst).current_step_labels).write(current_step_labels);
-            core::ptr::addr_of_mut!((*dst).labeled_lane_mask).write(0);
             let mut lane_idx = 0usize;
             while lane_idx < logical_lane_count {
                 lane_cursors.add(lane_idx).write(0);
@@ -339,10 +336,10 @@ impl PhaseCursor {
     // =========================================================================
 
     #[inline(always)]
-    pub(crate) fn current_phase_lane_mask(&self) -> LaneMask {
+    pub(crate) fn current_phase_lane_set(&self) -> LaneSetView {
         self.machine()
-            .phase_lane_mask(self.phase_index_usize())
-            .unwrap_or(0)
+            .phase_lane_set(self.phase_index_usize())
+            .unwrap_or(LaneSetView::from_parts(core::ptr::null(), 0))
     }
 
     #[inline(always)]
@@ -377,31 +374,24 @@ impl PhaseCursor {
     }
 
     fn rebuild_current_step_labels(&mut self) {
-        {
-            self.current_step_labels_mut().fill(0);
-            self.state_mut().labeled_lane_mask = 0;
-        }
+        self.current_step_labels_mut().fill(0);
         let lane_limit = self.logical_lane_count();
         let mut lane_idx = 0usize;
         while lane_idx < lane_limit {
             let label = self.resolved_label_for_lane(lane_idx);
             if let Some(label) = label {
                 self.current_step_labels_mut()[lane_idx] = label;
-                self.state_mut().labeled_lane_mask |= lane_mask_bit(lane_idx);
             }
             lane_idx += 1;
         }
     }
 
     fn refresh_current_step_label(&mut self, lane_idx: usize) {
-        let bit = lane_mask_bit(lane_idx);
         let label = self.resolved_label_for_lane(lane_idx);
         if let Some(label) = label {
             self.current_step_labels_mut()[lane_idx] = label;
-            self.state_mut().labeled_lane_mask |= bit;
         } else {
             self.current_step_labels_mut()[lane_idx] = 0;
-            self.state_mut().labeled_lane_mask &= !bit;
         }
     }
 
@@ -415,12 +405,13 @@ impl PhaseCursor {
     ///
     /// Returns `Some((lane_idx, step))` if found, `None` otherwise.
     pub(crate) fn find_step_for_label(&self, target_label: u8) -> Option<(usize, StateIndex)> {
-        let state = self.state();
-        let mut lane_mask = state.labeled_lane_mask;
-        while lane_mask != 0 {
-            let lane_idx = lane_mask.trailing_zeros() as usize;
-            lane_mask &= lane_mask - 1;
+        let phase_idx = self.phase_index_usize();
+        let lane_entries = self.machine().compiled_role().phase_lane_entries(phase_idx);
+        let mut entry_idx = 0usize;
+        while entry_idx < lane_entries.len() {
+            let lane_idx = lane_entries[entry_idx].lane as usize;
             if self.current_step_labels()[lane_idx] != target_label {
+                entry_idx += 1;
                 continue;
             }
             let state_idx = self.step_state_index_at_lane(lane_idx)?;
@@ -589,8 +580,8 @@ impl PhaseCursor {
     }
 
     pub(crate) fn sync_idx_to_phase_start(&mut self) {
-        let phase_lane_mask = self.current_phase_lane_mask();
-        if phase_lane_mask == 0 {
+        let phase_lane_set = self.current_phase_lane_set();
+        if phase_lane_set.word_len() == 0 {
             return;
         }
         let Some(phase_min_start) = self.current_phase_min_start() else {
@@ -611,13 +602,14 @@ impl PhaseCursor {
 
     /// Check if all lanes in current phase are complete.
     pub(crate) fn is_phase_complete(&self) -> bool {
-        let mut lane_mask = self.current_phase_lane_mask();
-        if lane_mask == 0 {
+        let phase_idx = self.phase_index_usize();
+        let lane_entries = self.machine().compiled_role().phase_lane_entries(phase_idx);
+        if lane_entries.is_empty() {
             return true; // No more phases
         }
-        while lane_mask != 0 {
-            let lane_idx = lane_mask.trailing_zeros() as usize;
-            lane_mask &= lane_mask - 1;
+        let mut entry_idx = 0usize;
+        while entry_idx < lane_entries.len() {
+            let lane_idx = lane_entries[entry_idx].lane as usize;
             let Some(lane_steps) = self.current_phase_lane_steps(lane_idx) else {
                 debug_assert!(false, "compiled phase lane mask missing lane entry");
                 return false;
@@ -625,6 +617,7 @@ impl PhaseCursor {
             if (self.lane_cursors()[lane_idx] as usize) < lane_steps.len as usize {
                 return false;
             }
+            entry_idx += 1;
         }
         true
     }
@@ -1129,7 +1122,7 @@ impl PhaseCursor {
     }
 
     /// Get the compiled offer-lane mask for a route scope.
-    pub(crate) fn route_scope_offer_lane_mask(&self, scope_id: ScopeId) -> Option<LaneMask> {
+    pub(crate) fn route_scope_offer_lane_set(&self, scope_id: ScopeId) -> Option<LaneSetView> {
         self.typestate().route_offer_lane_mask(scope_id)
     }
 

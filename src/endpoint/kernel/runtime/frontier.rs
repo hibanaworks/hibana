@@ -12,13 +12,16 @@ use core::{
 #[cfg(test)]
 use super::evidence::ScopeLabelMeta;
 use crate::global::const_dsl::ScopeId;
-use crate::global::role_program::LaneMask;
 #[cfg(test)]
-use crate::global::role_program::MAX_LANES;
+use crate::global::role_program::{LOW_LANE_TEST_WIDTH, lane_word_count};
+use crate::global::role_program::{LaneSet, LaneSetView, LaneWord};
 use crate::global::typestate::{MAX_STATES, StateIndex, state_index_to_usize};
 
 const FRONTIER_SLOT_MASK_BITS: usize = u8::BITS as usize;
-const OFFER_LANE_MASK_LANES: usize = LaneMask::BITS as usize;
+#[cfg(test)]
+const TEST_FRONTIER_ENTRY_CAPACITY: usize = FRONTIER_SLOT_MASK_BITS;
+#[cfg(test)]
+const TEST_LANE_SNAPSHOT_CAPACITY: usize = LOW_LANE_TEST_WIDTH;
 
 #[cfg(test)]
 use super::offer::{CurrentScopeSelectionMeta, ScopeArmMaterializationMeta};
@@ -32,57 +35,65 @@ use std::thread_local;
 const TEST_FRONTIER_POOL_CAPACITY: usize = 4096;
 
 #[cfg(test)]
-const TEST_OFFER_ENTRY_CAPACITY: usize = if MAX_LANES < 8 { 8 } else { MAX_LANES };
+const TEST_OFFER_ENTRY_CAPACITY: usize = if TEST_FRONTIER_ENTRY_CAPACITY < 8 {
+    8
+} else {
+    TEST_FRONTIER_ENTRY_CAPACITY
+};
 
 #[cfg(test)]
 #[derive(Clone, Copy)]
-struct ActiveEntrySetTestStorage {
-    slots: [ActiveEntrySlot; MAX_LANES],
+struct ActiveEntrySetTestArena {
+    slots: [ActiveEntrySlot; TEST_FRONTIER_ENTRY_CAPACITY],
 }
 
 #[cfg(test)]
-impl ActiveEntrySetTestStorage {
+impl ActiveEntrySetTestArena {
     const EMPTY: Self = Self {
-        slots: [ActiveEntrySlot::EMPTY; MAX_LANES],
+        slots: [ActiveEntrySlot::EMPTY; TEST_FRONTIER_ENTRY_CAPACITY],
     };
 }
 
 #[cfg(test)]
 #[derive(Clone, Copy)]
-struct ObservedEntrySetTestStorage {
-    slots: [FrontierObservationSlot; MAX_LANES],
+struct ObservedEntrySetTestArena {
+    slots: [FrontierObservationSlot; TEST_FRONTIER_ENTRY_CAPACITY],
 }
 
 #[cfg(test)]
-impl ObservedEntrySetTestStorage {
+impl ObservedEntrySetTestArena {
     const EMPTY: Self = Self {
-        slots: [FrontierObservationSlot::EMPTY; MAX_LANES],
+        slots: [FrontierObservationSlot::EMPTY; TEST_FRONTIER_ENTRY_CAPACITY],
     };
 }
 
 #[cfg(test)]
 #[derive(Clone, Copy)]
-struct FrontierObservationKeyTestStorage {
-    slots: [FrontierObservationSlot; MAX_LANES],
+struct FrontierObservationKeyTestArena {
+    slots: [FrontierObservationSlot; TEST_FRONTIER_ENTRY_CAPACITY],
+    offer_lane_words: [LaneWord; lane_word_count(TEST_LANE_SNAPSHOT_CAPACITY)],
+    binding_nonempty_lane_words: [LaneWord; lane_word_count(TEST_LANE_SNAPSHOT_CAPACITY)],
 }
 
 #[cfg(test)]
-impl FrontierObservationKeyTestStorage {
+impl FrontierObservationKeyTestArena {
     const EMPTY: Self = Self {
-        slots: [FrontierObservationSlot::EMPTY; MAX_LANES],
+        slots: [FrontierObservationSlot::EMPTY; TEST_FRONTIER_ENTRY_CAPACITY],
+        offer_lane_words: [0; lane_word_count(TEST_LANE_SNAPSHOT_CAPACITY)],
+        binding_nonempty_lane_words: [0; lane_word_count(TEST_LANE_SNAPSHOT_CAPACITY)],
     };
 }
 
 #[cfg(test)]
 thread_local! {
-    static ACTIVE_ENTRY_SET_TEST_POOL: UnsafeCell<[ActiveEntrySetTestStorage; TEST_FRONTIER_POOL_CAPACITY]> =
-        const { UnsafeCell::new([ActiveEntrySetTestStorage::EMPTY; TEST_FRONTIER_POOL_CAPACITY]) };
+    static ACTIVE_ENTRY_SET_TEST_POOL: UnsafeCell<[ActiveEntrySetTestArena; TEST_FRONTIER_POOL_CAPACITY]> =
+        const { UnsafeCell::new([ActiveEntrySetTestArena::EMPTY; TEST_FRONTIER_POOL_CAPACITY]) };
     static ACTIVE_ENTRY_SET_TEST_NEXT: Cell<usize> = const { Cell::new(0) };
-    static OBSERVED_ENTRY_SET_TEST_POOL: UnsafeCell<[ObservedEntrySetTestStorage; TEST_FRONTIER_POOL_CAPACITY]> =
-        const { UnsafeCell::new([ObservedEntrySetTestStorage::EMPTY; TEST_FRONTIER_POOL_CAPACITY]) };
+    static OBSERVED_ENTRY_SET_TEST_POOL: UnsafeCell<[ObservedEntrySetTestArena; TEST_FRONTIER_POOL_CAPACITY]> =
+        const { UnsafeCell::new([ObservedEntrySetTestArena::EMPTY; TEST_FRONTIER_POOL_CAPACITY]) };
     static OBSERVED_ENTRY_SET_TEST_NEXT: Cell<usize> = const { Cell::new(0) };
-    static FRONTIER_OBSERVATION_KEY_TEST_POOL: UnsafeCell<[FrontierObservationKeyTestStorage; TEST_FRONTIER_POOL_CAPACITY]> =
-        const { UnsafeCell::new([FrontierObservationKeyTestStorage::EMPTY; TEST_FRONTIER_POOL_CAPACITY]) };
+    static FRONTIER_OBSERVATION_KEY_TEST_POOL: UnsafeCell<[FrontierObservationKeyTestArena; TEST_FRONTIER_POOL_CAPACITY]> =
+        const { UnsafeCell::new([FrontierObservationKeyTestArena::EMPTY; TEST_FRONTIER_POOL_CAPACITY]) };
     static FRONTIER_OBSERVATION_KEY_TEST_NEXT: Cell<usize> = const { Cell::new(0) };
 }
 
@@ -298,7 +309,7 @@ fn alloc_observed_entry_set_test_storage() -> *mut FrontierObservationSlot {
 }
 
 #[cfg(test)]
-fn alloc_frontier_observation_key_test_storage() -> *mut FrontierObservationSlot {
+fn alloc_frontier_observation_key_test_storage() -> *mut FrontierObservationKeyTestArena {
     FRONTIER_OBSERVATION_KEY_TEST_NEXT.with(|next| {
         FRONTIER_OBSERVATION_KEY_TEST_POOL.with(|pool| {
             let idx = next.get();
@@ -308,7 +319,9 @@ fn alloc_frontier_observation_key_test_storage() -> *mut FrontierObservationSlot
             next.set(idx + 1);
             let storage = unsafe { &mut (*pool.get())[idx] };
             storage.slots.fill(FrontierObservationSlot::EMPTY);
-            storage.slots.as_mut_ptr()
+            storage.offer_lane_words.fill(0);
+            storage.binding_nonempty_lane_words.fill(0);
+            storage as *mut FrontierObservationKeyTestArena
         })
     })
 }
@@ -361,7 +374,7 @@ impl ActiveEntrySet {
             return;
         }
         let slots = alloc_active_entry_set_test_storage();
-        unsafe { Self::init_from_parts(self as *mut Self, slots, MAX_LANES) };
+        unsafe { Self::init_from_parts(self as *mut Self, slots, TEST_FRONTIER_ENTRY_CAPACITY) };
     }
 
     #[inline]
@@ -544,8 +557,6 @@ impl ObservedEntrySummary {
 pub(super) struct GlobalFrontierObservedState {
     pub(super) summary: ObservedEntrySummary,
     pub(super) observation_epoch: u16,
-    pub(super) offer_lane_mask: LaneMask,
-    pub(super) binding_nonempty_mask: LaneMask,
 }
 
 #[cfg(not(test))]
@@ -553,8 +564,6 @@ impl GlobalFrontierObservedState {
     pub(super) const EMPTY: Self = Self {
         summary: ObservedEntrySummary::EMPTY,
         observation_epoch: 0,
-        offer_lane_mask: 0,
-        binding_nonempty_mask: 0,
     };
 }
 
@@ -620,7 +629,7 @@ impl ObservedEntrySet {
             return;
         }
         let slots = alloc_observed_entry_set_test_storage();
-        unsafe { Self::init_from_parts(self as *mut Self, slots, MAX_LANES) };
+        unsafe { Self::init_from_parts(self as *mut Self, slots, TEST_FRONTIER_ENTRY_CAPACITY) };
     }
 
     #[inline]
@@ -1081,18 +1090,44 @@ impl ObservedEntrySet {
 
 #[derive(Clone, Copy)]
 pub(super) struct OfferLaneEntrySlotMasks {
-    masks: [u8; OFFER_LANE_MASK_LANES],
+    ptr: *mut u8,
+    len: u16,
 }
 
 impl OfferLaneEntrySlotMasks {
-    pub(super) const EMPTY: Self = Self {
-        masks: [0; OFFER_LANE_MASK_LANES],
-    };
+    #[inline]
+    pub(super) const fn from_parts(ptr: *mut u8, len: usize) -> Self {
+        if len > u16::MAX as usize {
+            panic!("offer lane slot mask length overflow");
+        }
+        Self {
+            ptr,
+            len: len as u16,
+        }
+    }
+
+    #[inline]
+    pub(super) const fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    #[inline]
+    pub(super) fn clear(&mut self) {
+        let mut idx = 0usize;
+        while idx < self.len() {
+            unsafe {
+                self.ptr.add(idx).write(0);
+            }
+            idx += 1;
+        }
+    }
 
     #[inline]
     pub(super) fn set_logical_mask(&mut self, logical_lane: usize, value: u8) {
-        if logical_lane < self.masks.len() {
-            self.masks[logical_lane] = value;
+        if logical_lane < self.len() {
+            unsafe {
+                self.ptr.add(logical_lane).write(value);
+            }
         }
     }
 }
@@ -1104,7 +1139,11 @@ impl Index<usize> for OfferLaneEntrySlotMasks {
 
     #[inline]
     fn index(&self, index: usize) -> &Self::Output {
-        self.masks.get(index).unwrap_or(&ZERO_LANE_MASK)
+        if index < self.len() {
+            unsafe { &*self.ptr.add(index) }
+        } else {
+            &ZERO_LANE_MASK
+        }
     }
 }
 
@@ -1112,8 +1151,6 @@ impl Index<usize> for OfferLaneEntrySlotMasks {
 pub(super) struct RootFrontierState {
     pub(super) root: ScopeId,
     pub(super) observed_entries: ObservedEntrySummary,
-    pub(super) observed_offer_lane_mask: LaneMask,
-    pub(super) observed_binding_nonempty_mask: LaneMask,
     pub(super) observed_key_present: bool,
     pub(super) active_start: u8,
     pub(super) active_len: u8,
@@ -1123,8 +1160,6 @@ impl RootFrontierState {
     pub(super) const EMPTY: Self = Self {
         root: ScopeId::none(),
         observed_entries: ObservedEntrySummary::EMPTY,
-        observed_offer_lane_mask: 0,
-        observed_binding_nonempty_mask: 0,
         observed_key_present: false,
         active_start: 0,
         active_len: 0,
@@ -1136,27 +1171,9 @@ impl RootFrontierState {
     }
 
     #[inline]
-    pub(super) fn observed_key_offer_lane_mask(self) -> LaneMask {
-        self.observed_offer_lane_mask
-    }
-
-    #[inline]
     pub(super) fn clear_observed_key_cache(&mut self) {
         self.observed_entries = ObservedEntrySummary::EMPTY;
-        self.observed_offer_lane_mask = 0;
-        self.observed_binding_nonempty_mask = 0;
         self.observed_key_present = false;
-    }
-
-    #[inline]
-    pub(super) fn set_observed_key_cache_masks(
-        &mut self,
-        offer_lane_mask: LaneMask,
-        binding_nonempty_mask: LaneMask,
-    ) {
-        self.observed_offer_lane_mask = offer_lane_mask;
-        self.observed_binding_nonempty_mask = binding_nonempty_mask;
-        self.observed_key_present = true;
     }
 }
 
@@ -1191,15 +1208,15 @@ impl FrontierObservationSlot {
 #[derive(Clone, Copy)]
 pub(super) struct FrontierObservationKey {
     pub(super) slots: EntryBuffer<FrontierObservationSlot>,
-    pub(super) offer_lane_mask: LaneMask,
-    pub(super) binding_nonempty_mask: LaneMask,
+    offer_lanes: LaneSet,
+    binding_nonempty_lanes: LaneSet,
 }
 
 impl FrontierObservationKey {
     pub(super) const EMPTY: Self = Self {
         slots: EntryBuffer::EMPTY,
-        offer_lane_mask: 0,
-        binding_nonempty_mask: 0,
+        offer_lanes: LaneSet::EMPTY,
+        binding_nonempty_lanes: LaneSet::EMPTY,
     };
 
     #[cfg(test)]
@@ -1208,11 +1225,22 @@ impl FrontierObservationKey {
         dst: *mut Self,
         slots: *mut FrontierObservationSlot,
         capacity: usize,
+        offer_lane_words: *mut LaneWord,
+        binding_nonempty_lane_words: *mut LaneWord,
+        lane_word_len: usize,
     ) {
         unsafe {
             EntryBuffer::init_from_parts(core::ptr::addr_of_mut!((*dst).slots), slots, capacity);
-            core::ptr::addr_of_mut!((*dst).offer_lane_mask).write(0);
-            core::ptr::addr_of_mut!((*dst).binding_nonempty_mask).write(0);
+            LaneSet::init_from_parts(
+                core::ptr::addr_of_mut!((*dst).offer_lanes),
+                offer_lane_words,
+                lane_word_len,
+            );
+            LaneSet::init_from_parts(
+                core::ptr::addr_of_mut!((*dst).binding_nonempty_lanes),
+                binding_nonempty_lane_words,
+                lane_word_len,
+            );
         }
         let mut idx = 0usize;
         while idx < capacity {
@@ -1224,11 +1252,17 @@ impl FrontierObservationKey {
     }
 
     #[inline]
-    pub(super) const fn from_parts(slots: *mut FrontierObservationSlot, capacity: usize) -> Self {
+    pub(super) const fn from_parts(
+        slots: *mut FrontierObservationSlot,
+        capacity: usize,
+        offer_lane_words: *mut LaneWord,
+        binding_nonempty_lane_words: *mut LaneWord,
+        lane_word_len: usize,
+    ) -> Self {
         Self {
             slots: EntryBuffer::from_parts(slots, capacity),
-            offer_lane_mask: 0,
-            binding_nonempty_mask: 0,
+            offer_lanes: LaneSet::from_parts(offer_lane_words, lane_word_len),
+            binding_nonempty_lanes: LaneSet::from_parts(binding_nonempty_lane_words, lane_word_len),
         }
     }
 
@@ -1237,8 +1271,18 @@ impl FrontierObservationKey {
         if !self.slots.ptr.is_null() {
             return;
         }
-        let slots = alloc_frontier_observation_key_test_storage();
-        unsafe { Self::init_from_parts(self as *mut Self, slots, MAX_LANES) };
+        let storage = alloc_frontier_observation_key_test_storage();
+        let storage_ref = unsafe { &mut *storage };
+        unsafe {
+            Self::init_from_parts(
+                self as *mut Self,
+                storage_ref.slots.as_mut_ptr(),
+                TEST_FRONTIER_ENTRY_CAPACITY,
+                storage_ref.offer_lane_words.as_mut_ptr(),
+                storage_ref.binding_nonempty_lane_words.as_mut_ptr(),
+                lane_word_count(TEST_LANE_SNAPSHOT_CAPACITY),
+            )
+        };
     }
 
     #[cfg(test)]
@@ -1257,8 +1301,8 @@ impl FrontierObservationKey {
             self.slots[idx] = FrontierObservationSlot::EMPTY;
             idx += 1;
         }
-        self.offer_lane_mask = 0;
-        self.binding_nonempty_mask = 0;
+        self.offer_lanes.clear();
+        self.binding_nonempty_lanes.clear();
     }
 
     #[inline]
@@ -1277,8 +1321,9 @@ impl FrontierObservationKey {
             self.slots[idx] = src.slots[idx];
             idx += 1;
         }
-        self.offer_lane_mask = src.offer_lane_mask;
-        self.binding_nonempty_mask = src.binding_nonempty_mask;
+        self.offer_lanes.copy_from(src.offer_lanes());
+        self.binding_nonempty_lanes
+            .copy_from(src.binding_nonempty_lanes());
     }
 
     #[cfg(test)]
@@ -1389,16 +1434,50 @@ impl FrontierObservationKey {
     pub(super) fn slot_mut(&mut self, idx: usize) -> &mut FrontierObservationMetaSlot {
         &mut self.slots[idx].meta
     }
+
+    #[inline]
+    pub(super) fn offer_lanes(&self) -> LaneSetView {
+        self.offer_lanes.view()
+    }
+
+    #[inline]
+    pub(super) fn binding_nonempty_lanes(&self) -> LaneSetView {
+        self.binding_nonempty_lanes.view()
+    }
+
+    #[inline]
+    pub(super) fn lane_sets_equal(&self, other: &Self) -> bool {
+        self.offer_lanes().equals(other.offer_lanes())
+            && self
+                .binding_nonempty_lanes()
+                .equals(other.binding_nonempty_lanes())
+    }
+
+    pub(super) fn set_offer_lanes(&mut self, lanes: LaneSetView) {
+        self.offer_lanes.copy_from(lanes);
+    }
+
+    #[inline]
+    pub(super) fn set_binding_nonempty_lanes(&mut self, lanes: LaneSetView) {
+        self.binding_nonempty_lanes.copy_from(lanes);
+    }
+
+    #[inline]
+    pub(super) fn insert_offer_lane(&mut self, lane_idx: usize) {
+        self.offer_lanes.insert(lane_idx);
+    }
+
+    #[inline]
+    pub(super) fn insert_binding_nonempty_lane(&mut self, lane_idx: usize) {
+        self.binding_nonempty_lanes.insert(lane_idx);
+    }
 }
 
 impl PartialEq for FrontierObservationKey {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         let len = self.len();
-        if len != other.len()
-            || self.offer_lane_mask != other.offer_lane_mask
-            || self.binding_nonempty_mask != other.binding_nonempty_mask
-        {
+        if len != other.len() || !self.lane_sets_equal(other) {
             return false;
         }
         let mut idx = 0usize;
@@ -1482,7 +1561,8 @@ impl OfferEntryStaticSummary {
 
 #[derive(Clone, Copy)]
 pub(super) struct OfferEntryState {
-    pub(super) active_mask: LaneMask,
+    #[cfg(test)]
+    pub(super) active_mask: u32,
     #[cfg(test)]
     pub(super) lane_idx: u8,
     #[cfg(test)]
@@ -1491,8 +1571,6 @@ pub(super) struct OfferEntryState {
     pub(super) frontier: FrontierKind,
     #[cfg(test)]
     pub(super) scope_id: ScopeId,
-    #[cfg(test)]
-    pub(super) offer_lane_mask: LaneMask,
     #[cfg(test)]
     pub(super) selection_meta: CurrentScopeSelectionMeta,
     #[cfg(test)]
@@ -1507,6 +1585,7 @@ pub(super) struct OfferEntryState {
 
 impl OfferEntryState {
     pub(super) const EMPTY: Self = Self {
+        #[cfg(test)]
         active_mask: 0,
         #[cfg(test)]
         lane_idx: u8::MAX,
@@ -1516,8 +1595,6 @@ impl OfferEntryState {
         frontier: FrontierKind::Route,
         #[cfg(test)]
         scope_id: ScopeId::none(),
-        #[cfg(test)]
-        offer_lane_mask: 0,
         #[cfg(test)]
         selection_meta: CurrentScopeSelectionMeta::EMPTY,
         #[cfg(test)]
@@ -1891,7 +1968,6 @@ impl FrontierScratchSection {
         self.offset
     }
 
-    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn count(self) -> usize {
         self.count
@@ -1904,9 +1980,16 @@ pub(crate) struct FrontierScratchLayout {
     global_observed_state: FrontierScratchSection,
     global_active_entry_slots: FrontierScratchSection,
     cached_observation_key_slots: FrontierScratchSection,
+    cached_observation_key_offer_lanes: FrontierScratchSection,
+    cached_observation_key_binding_nonempty_lanes: FrontierScratchSection,
     observation_key_slots: FrontierScratchSection,
+    observation_key_offer_lanes: FrontierScratchSection,
+    observation_key_binding_nonempty_lanes: FrontierScratchSection,
     working_observation_key_slots: FrontierScratchSection,
+    working_observation_key_offer_lanes: FrontierScratchSection,
+    working_observation_key_binding_nonempty_lanes: FrontierScratchSection,
     observed_entry_slots: FrontierScratchSection,
+    offer_lane_entry_slot_masks: FrontierScratchSection,
     candidates: FrontierScratchSection,
     visited_scopes: FrontierScratchSection,
     root_scopes: FrontierScratchSection,
@@ -1916,7 +1999,11 @@ pub(crate) struct FrontierScratchLayout {
 
 impl FrontierScratchLayout {
     #[inline(always)]
-    pub(crate) const fn new(max_frontier_entries: usize) -> Self {
+    pub(crate) const fn new(
+        max_frontier_entries: usize,
+        logical_lane_count: usize,
+        lane_word_count: usize,
+    ) -> Self {
         let mut offset = 0usize;
         let mut total_align = 1usize;
 
@@ -1938,20 +2025,64 @@ impl FrontierScratchLayout {
         offset = cached_observation_key_slots.offset + cached_observation_key_slots.bytes;
         total_align = max_usize(total_align, cached_observation_key_slots.align);
 
+        let cached_observation_key_offer_lanes =
+            Self::section_array::<LaneWord>(offset, lane_word_count);
+        offset =
+            cached_observation_key_offer_lanes.offset + cached_observation_key_offer_lanes.bytes;
+        total_align = max_usize(total_align, cached_observation_key_offer_lanes.align);
+
+        let cached_observation_key_binding_nonempty_lanes =
+            Self::section_array::<LaneWord>(offset, lane_word_count);
+        offset = cached_observation_key_binding_nonempty_lanes.offset
+            + cached_observation_key_binding_nonempty_lanes.bytes;
+        total_align = max_usize(
+            total_align,
+            cached_observation_key_binding_nonempty_lanes.align,
+        );
+
         let observation_key_slots =
             Self::section_array::<FrontierObservationSlot>(offset, max_frontier_entries);
         offset = observation_key_slots.offset + observation_key_slots.bytes;
         total_align = max_usize(total_align, observation_key_slots.align);
+
+        let observation_key_offer_lanes = Self::section_array::<LaneWord>(offset, lane_word_count);
+        offset = observation_key_offer_lanes.offset + observation_key_offer_lanes.bytes;
+        total_align = max_usize(total_align, observation_key_offer_lanes.align);
+
+        let observation_key_binding_nonempty_lanes =
+            Self::section_array::<LaneWord>(offset, lane_word_count);
+        offset = observation_key_binding_nonempty_lanes.offset
+            + observation_key_binding_nonempty_lanes.bytes;
+        total_align = max_usize(total_align, observation_key_binding_nonempty_lanes.align);
 
         let working_observation_key_slots =
             Self::section_array::<FrontierObservationSlot>(offset, max_frontier_entries);
         offset = working_observation_key_slots.offset + working_observation_key_slots.bytes;
         total_align = max_usize(total_align, working_observation_key_slots.align);
 
+        let working_observation_key_offer_lanes =
+            Self::section_array::<LaneWord>(offset, lane_word_count);
+        offset =
+            working_observation_key_offer_lanes.offset + working_observation_key_offer_lanes.bytes;
+        total_align = max_usize(total_align, working_observation_key_offer_lanes.align);
+
+        let working_observation_key_binding_nonempty_lanes =
+            Self::section_array::<LaneWord>(offset, lane_word_count);
+        offset = working_observation_key_binding_nonempty_lanes.offset
+            + working_observation_key_binding_nonempty_lanes.bytes;
+        total_align = max_usize(
+            total_align,
+            working_observation_key_binding_nonempty_lanes.align,
+        );
+
         let observed_entry_slots =
             Self::section_array::<FrontierObservationSlot>(offset, max_frontier_entries);
         offset = observed_entry_slots.offset + observed_entry_slots.bytes;
         total_align = max_usize(total_align, observed_entry_slots.align);
+
+        let offer_lane_entry_slot_masks = Self::section_array::<u8>(offset, logical_lane_count);
+        offset = offer_lane_entry_slot_masks.offset + offer_lane_entry_slot_masks.bytes;
+        total_align = max_usize(total_align, offer_lane_entry_slot_masks.align);
 
         let candidates = Self::section_array::<FrontierCandidate>(offset, max_frontier_entries);
         offset = candidates.offset + candidates.bytes;
@@ -1970,9 +2101,16 @@ impl FrontierScratchLayout {
             global_observed_state,
             global_active_entry_slots,
             cached_observation_key_slots,
+            cached_observation_key_offer_lanes,
+            cached_observation_key_binding_nonempty_lanes,
             observation_key_slots,
+            observation_key_offer_lanes,
+            observation_key_binding_nonempty_lanes,
             working_observation_key_slots,
+            working_observation_key_offer_lanes,
+            working_observation_key_binding_nonempty_lanes,
             observed_entry_slots,
+            offer_lane_entry_slot_masks,
             candidates,
             visited_scopes,
             root_scopes,
@@ -2008,8 +2146,30 @@ impl FrontierScratchLayout {
     }
 
     #[inline(always)]
+    pub(crate) const fn cached_observation_key_offer_lanes(self) -> FrontierScratchSection {
+        self.cached_observation_key_offer_lanes
+    }
+
+    #[inline(always)]
+    pub(crate) const fn cached_observation_key_binding_nonempty_lanes(
+        self,
+    ) -> FrontierScratchSection {
+        self.cached_observation_key_binding_nonempty_lanes
+    }
+
+    #[inline(always)]
     pub(crate) const fn observation_key_slots(self) -> FrontierScratchSection {
         self.observation_key_slots
+    }
+
+    #[inline(always)]
+    pub(crate) const fn observation_key_offer_lanes(self) -> FrontierScratchSection {
+        self.observation_key_offer_lanes
+    }
+
+    #[inline(always)]
+    pub(crate) const fn observation_key_binding_nonempty_lanes(self) -> FrontierScratchSection {
+        self.observation_key_binding_nonempty_lanes
     }
 
     #[inline(always)]
@@ -2018,8 +2178,25 @@ impl FrontierScratchLayout {
     }
 
     #[inline(always)]
+    pub(crate) const fn working_observation_key_offer_lanes(self) -> FrontierScratchSection {
+        self.working_observation_key_offer_lanes
+    }
+
+    #[inline(always)]
+    pub(crate) const fn working_observation_key_binding_nonempty_lanes(
+        self,
+    ) -> FrontierScratchSection {
+        self.working_observation_key_binding_nonempty_lanes
+    }
+
+    #[inline(always)]
     pub(crate) const fn observed_entry_slots(self) -> FrontierScratchSection {
         self.observed_entry_slots
+    }
+
+    #[inline(always)]
+    pub(crate) const fn offer_lane_entry_slot_masks(self) -> FrontierScratchSection {
+        self.offer_lane_entry_slot_masks
     }
 
     #[inline(always)]
@@ -2098,6 +2275,17 @@ pub(super) fn frontier_observation_key_view_from_storage(
                 .cast::<FrontierObservationSlot>()
         },
         frontier_entry_capacity,
+        unsafe {
+            storage
+                .add(layout.observation_key_offer_lanes().offset())
+                .cast::<LaneWord>()
+        },
+        unsafe {
+            storage
+                .add(layout.observation_key_binding_nonempty_lanes().offset())
+                .cast::<LaneWord>()
+        },
+        layout.observation_key_offer_lanes().count(),
     )
 }
 
@@ -2115,6 +2303,21 @@ pub(super) fn frontier_cached_observation_key_view_from_storage(
                 .cast::<FrontierObservationSlot>()
         },
         frontier_entry_capacity,
+        unsafe {
+            storage
+                .add(layout.cached_observation_key_offer_lanes().offset())
+                .cast::<LaneWord>()
+        },
+        unsafe {
+            storage
+                .add(
+                    layout
+                        .cached_observation_key_binding_nonempty_lanes()
+                        .offset(),
+                )
+                .cast::<LaneWord>()
+        },
+        layout.cached_observation_key_offer_lanes().count(),
     )
 }
 
@@ -2132,6 +2335,21 @@ pub(super) fn frontier_working_observation_key_view_from_storage(
                 .cast::<FrontierObservationSlot>()
         },
         frontier_entry_capacity,
+        unsafe {
+            storage
+                .add(layout.working_observation_key_offer_lanes().offset())
+                .cast::<LaneWord>()
+        },
+        unsafe {
+            storage
+                .add(
+                    layout
+                        .working_observation_key_binding_nonempty_lanes()
+                        .offset(),
+                )
+                .cast::<LaneWord>()
+        },
+        layout.working_observation_key_offer_lanes().count(),
     )
 }
 
@@ -2171,6 +2389,24 @@ pub(super) fn frontier_observed_entries_view_from_storage(
     )
 }
 
+#[inline]
+pub(super) fn frontier_offer_lane_entry_slot_masks_view_from_storage(
+    scratch_ptr: *mut [u8],
+    layout: FrontierScratchLayout,
+) -> OfferLaneEntrySlotMasks {
+    let storage = frontier_scratch_storage_ptr(scratch_ptr, layout);
+    let mut masks = OfferLaneEntrySlotMasks::from_parts(
+        unsafe {
+            storage
+                .add(layout.offer_lane_entry_slot_masks().offset())
+                .cast::<u8>()
+        },
+        layout.offer_lane_entry_slot_masks().count(),
+    );
+    masks.clear();
+    masks
+}
+
 impl FrontierScratchView {
     #[inline]
     pub(super) unsafe fn from_parts(
@@ -2189,6 +2425,21 @@ impl FrontierScratchView {
                         .cast::<FrontierObservationSlot>()
                 },
                 frontier_entry_capacity,
+                unsafe {
+                    storage
+                        .add(layout.working_observation_key_offer_lanes().offset())
+                        .cast::<LaneWord>()
+                },
+                unsafe {
+                    storage
+                        .add(
+                            layout
+                                .working_observation_key_binding_nonempty_lanes()
+                                .offset(),
+                        )
+                        .cast::<LaneWord>()
+                },
+                layout.working_observation_key_offer_lanes().count(),
             ),
             candidates: unsafe {
                 storage
@@ -2256,16 +2507,91 @@ pub(super) fn frontier_scratch_view_from_storage(
 
 #[cfg(test)]
 mod tests {
-    use super::FrontierScratchLayout;
+    use std::vec;
+
+    use super::{
+        FrontierObservationKey, FrontierObservationSlot, FrontierScratchLayout,
+        frontier_cached_observation_key_view_from_storage,
+        frontier_observation_key_view_from_storage,
+    };
+    use crate::global::role_program::{LOW_LANE_TEST_WIDTH, LaneWord};
 
     #[test]
     fn global_frontier_scratch_sections_track_max_frontier_entries() {
-        let layout = FrontierScratchLayout::new(5);
+        let layout = FrontierScratchLayout::new(5, 96, 2);
         assert_eq!(layout.global_active_entry_slots().count(), 5);
         assert_eq!(layout.cached_observation_key_slots().count(), 5);
+        assert_eq!(layout.cached_observation_key_offer_lanes().count(), 2);
         assert_eq!(layout.observation_key_slots().count(), 5);
+        assert_eq!(layout.observation_key_offer_lanes().count(), 2);
         assert_eq!(layout.working_observation_key_slots().count(), 5);
+        assert_eq!(layout.working_observation_key_offer_lanes().count(), 2);
         assert_eq!(layout.observed_entry_slots().count(), 5);
+    }
+
+    #[test]
+    fn frontier_observation_key_views_track_layout_lane_word_count() {
+        let layout = FrontierScratchLayout::new(1, 96, 2);
+        let mut scratch = vec![0u8; layout.total_bytes()].into_boxed_slice();
+        let scratch_ptr: *mut [u8] = scratch.as_mut();
+        let mut key = frontier_observation_key_view_from_storage(scratch_ptr, layout, 1);
+        let mut cached = frontier_cached_observation_key_view_from_storage(scratch_ptr, layout, 1);
+        let high_lane = LaneWord::BITS as usize + 1;
+
+        key.clear();
+        cached.clear();
+        key.insert_offer_lane(high_lane);
+        cached.copy_from(key);
+
+        assert!(cached.offer_lanes().contains(high_lane));
+        assert!(cached.lane_sets_equal(&key));
+    }
+
+    #[test]
+    fn frontier_observation_key_keeps_exact_lane_sets_beyond_projected_mask() {
+        let mut slots_a = [FrontierObservationSlot::EMPTY; 1];
+        let mut offer_a = [0usize; 2];
+        let mut binding_a = [0usize; 2];
+        let mut slots_b = [FrontierObservationSlot::EMPTY; 1];
+        let mut offer_b = [0usize; 2];
+        let mut binding_b = [0usize; 2];
+        let mut key_a = FrontierObservationKey::from_parts(
+            slots_a.as_mut_ptr(),
+            1,
+            offer_a.as_mut_ptr(),
+            binding_a.as_mut_ptr(),
+            2,
+        );
+        let mut key_b = FrontierObservationKey::from_parts(
+            slots_b.as_mut_ptr(),
+            1,
+            offer_b.as_mut_ptr(),
+            binding_b.as_mut_ptr(),
+            2,
+        );
+        key_a.clear();
+        key_b.clear();
+        key_a.insert_offer_lane(0);
+        key_b.insert_offer_lane(0);
+        key_a.insert_offer_lane(LOW_LANE_TEST_WIDTH + 1);
+
+        assert_eq!(
+            key_a
+                .offer_lanes()
+                .collect_low_lane_bits(LOW_LANE_TEST_WIDTH),
+            key_b
+                .offer_lanes()
+                .collect_low_lane_bits(LOW_LANE_TEST_WIDTH),
+            "low-lane test probes intentionally ignore lanes above the assertion window"
+        );
+        assert!(
+            !key_a.lane_sets_equal(&key_b),
+            "exact lane snapshots must still distinguish high-lane changes"
+        );
+        assert!(
+            key_a != key_b,
+            "FrontierObservationKey equality must account for exact lane snapshots"
+        );
     }
 }
 

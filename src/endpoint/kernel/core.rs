@@ -26,8 +26,8 @@ use crate::eff::EffIndex;
 use crate::global::LoopControlMeaning;
 use crate::global::const_dsl::{PolicyMode, ScopeId, ScopeKind};
 #[cfg(test)]
-use crate::global::role_program::MAX_LANES;
-use crate::global::role_program::{LaneMask, lane_mask_bit};
+use crate::global::role_program::LOW_LANE_TEST_WIDTH;
+use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
     ARM_SHARED, JumpReason, LoopMetadata, LoopRole, PassiveArmNavigation, PhaseCursor, RecvMeta,
     SendMeta, StateIndex, state_index_to_usize,
@@ -85,6 +85,13 @@ type StoredMint<Mint> = crate::control::cap::mint::MintConfig<
     <Mint as MintConfigMarker>::Spec,
     <Mint as MintConfigMarker>::Policy,
 >;
+
+#[derive(Clone, Copy)]
+enum BindingLanePreference {
+    Any,
+    Arm(u8),
+    LabelMask(u128),
+}
 
 #[cfg(test)]
 use super::authority::resolve_route_decision_handle_with_policy;
@@ -862,8 +869,11 @@ where
             return Err(RecvError::PhaseInvariant);
         }
         let is_linger = self.is_linger_route(scope);
+        let Some(scope_slot) = self.scope_slot_for_route(scope) else {
+            return Err(RecvError::PhaseInvariant);
+        };
         self.route_state
-            .set_route_arm(lane_idx, scope, arm, is_linger)
+            .set_route_arm(lane_idx, scope, scope_slot, arm, is_linger)
             .map_err(|()| RecvError::PhaseInvariant)?;
         self.refresh_lane_offer_state(lane_idx);
         Ok(())
@@ -884,7 +894,13 @@ where
             return;
         }
         let is_linger = self.is_linger_route(scope);
-        if self.route_state.pop_route_arm(lane_idx, scope, is_linger) {
+        let Some(scope_slot) = self.scope_slot_for_route(scope) else {
+            return;
+        };
+        if self
+            .route_state
+            .pop_route_arm(lane_idx, scope, scope_slot, is_linger)
+        {
             self.refresh_lane_offer_state(lane_idx);
         }
     }
@@ -976,15 +992,8 @@ where
         if scope.is_none() {
             return None;
         }
-        let mut lane_mask = self.route_state.active_route_lane_mask;
-        while lane_mask != 0 {
-            let lane_idx = lane_mask.trailing_zeros() as usize;
-            lane_mask &= !lane_mask_bit(lane_idx);
-            if let Some(arm) = self.route_arm_for(lane_idx as u8, scope) {
-                return Some(arm);
-            }
-        }
-        None
+        let scope_slot = self.scope_slot_for_route(scope)?;
+        self.route_state.selected_arm_for_scope_slot(scope_slot)
     }
 
     pub(super) fn route_scope_offer_entry_index(&self, scope_id: ScopeId) -> Option<usize> {
@@ -1049,17 +1058,13 @@ where
         if let Some(arm) = self.selected_arm_for_scope(scope_id) {
             return Some(arm);
         }
-        let offer_lane_mask = self.offer_lane_mask_for_scope(scope_id);
-        if offer_lane_mask == 0 {
+        let offer_lanes = self.offer_lane_set_for_scope(scope_id);
+        let Some(summary_lane_idx) = offer_lanes.first_set(self.cursor.logical_lane_count()) else {
             return None;
-        }
-        self.preview_scope_ack_token_non_consuming(
-            scope_id,
-            offer_lane_mask.trailing_zeros() as usize,
-            offer_lane_mask,
-        )
-        .map(|token| token.arm().as_u8())
-        .or_else(|| self.poll_arm_from_ready_mask(scope_id).map(Arm::as_u8))
+        };
+        self.preview_scope_ack_token_non_consuming(scope_id, summary_lane_idx, offer_lanes)
+            .map(|token| token.arm().as_u8())
+            .or_else(|| self.poll_arm_from_ready_mask(scope_id).map(Arm::as_u8))
     }
 
     fn scope_entry_index(&self, scope_id: ScopeId) -> Option<usize> {
@@ -1676,33 +1681,22 @@ where
         if scope_id.is_none() {
             return None;
         }
-        let mut lane_mask = self.route_state.active_route_lane_mask;
         if let Some((preview_lane, preview_scope, _)) = preview_route_arm
             && preview_scope == scope_id
             && (preview_lane as usize) < self.cursor.logical_lane_count()
         {
-            lane_mask |= lane_mask_bit(preview_lane as usize);
+            return self.preview_route_arm_for(preview_lane, scope_id, preview_route_arm);
         }
-        while lane_mask != 0 {
-            let lane_idx = lane_mask.trailing_zeros() as usize;
-            lane_mask &= !lane_mask_bit(lane_idx);
-            if let Some(arm) =
-                self.preview_route_arm_for(lane_idx as u8, scope_id, preview_route_arm)
-            {
-                return Some(arm);
-            }
+        if let Some(arm) = self.selected_arm_for_scope(scope_id) {
+            return Some(arm);
         }
-        let offer_lane_mask = self.offer_lane_mask_for_scope(scope_id);
-        if offer_lane_mask == 0 {
+        let offer_lanes = self.offer_lane_set_for_scope(scope_id);
+        let Some(summary_lane_idx) = offer_lanes.first_set(self.cursor.logical_lane_count()) else {
             return None;
-        }
-        self.preview_scope_ack_token_non_consuming(
-            scope_id,
-            offer_lane_mask.trailing_zeros() as usize,
-            offer_lane_mask,
-        )
-        .map(|token| token.arm().as_u8())
-        .or_else(|| self.poll_arm_from_ready_mask(scope_id).map(Arm::as_u8))
+        };
+        self.preview_scope_ack_token_non_consuming(scope_id, summary_lane_idx, offer_lanes)
+            .map(|token| token.arm().as_u8())
+            .or_else(|| self.poll_arm_from_ready_mask(scope_id).map(Arm::as_u8))
     }
 
     #[inline]
@@ -1797,17 +1791,17 @@ where
                     }
                 } else if at_decision {
                     let lane_wire = self.lane_for_label_or_offer(scope_id, target_label);
-                    let offer_lane_mask = self.offer_lane_mask_for_scope(scope_id);
-                    let preview_arm = if offer_lane_mask == 0 {
-                        None
-                    } else {
-                        self.preview_scope_ack_token_non_consuming(
-                            scope_id,
-                            offer_lane_mask.trailing_zeros() as usize,
-                            offer_lane_mask,
-                        )
-                        .map(|token| token.arm().as_u8())
-                    };
+                    let offer_lanes = self.offer_lane_set_for_scope(scope_id);
+                    let preview_arm = offer_lanes
+                        .first_set(self.cursor.logical_lane_count())
+                        .and_then(|summary_lane_idx| {
+                            self.preview_scope_ack_token_non_consuming(
+                                scope_id,
+                                summary_lane_idx,
+                                offer_lanes,
+                            )
+                            .map(|token| token.arm().as_u8())
+                        });
                     let selected_arm = preview_arm
                         .or_else(|| {
                             self.preview_selected_arm_for_scope_with_route(
@@ -3792,35 +3786,38 @@ where
     }
 
     #[inline]
-    pub(super) fn offer_lane_mask_for_scope(&self, scope_id: ScopeId) -> LaneMask {
+    pub(super) fn offer_lane_set_for_scope(&self, scope_id: ScopeId) -> LaneSetView {
         self.cursor
-            .route_scope_offer_lane_mask(scope_id)
-            .unwrap_or(0)
+            .route_scope_offer_lane_set(scope_id)
+            .unwrap_or(LaneSetView::EMPTY)
     }
 
     #[cfg(test)]
-    pub(super) fn offer_lanes_for_scope(&self, scope_id: ScopeId) -> ([u8; MAX_LANES], usize) {
-        let mut lanes = [0u8; MAX_LANES];
+    pub(super) fn offer_lanes_for_scope(
+        &self,
+        scope_id: ScopeId,
+    ) -> ([u8; LOW_LANE_TEST_WIDTH], usize) {
+        let mut lanes = [0u8; LOW_LANE_TEST_WIDTH];
         let mut len = 0usize;
-        let mut lane_mask = self.offer_lane_mask_for_scope(scope_id);
-        while lane_mask != 0 {
-            let lane_idx = lane_mask.trailing_zeros() as usize;
-            lane_mask &= !lane_mask_bit(lane_idx);
-            if lane_idx < MAX_LANES {
+        let offer_lanes = self.offer_lane_set_for_scope(scope_id);
+        let mut lane_idx = 0usize;
+        while lane_idx < self.cursor.logical_lane_count() {
+            if offer_lanes.contains(lane_idx) && lane_idx < lanes.len() {
                 lanes[len] = lane_idx as u8;
                 len += 1;
             }
+            lane_idx += 1;
         }
         (lanes, len)
     }
 
     #[inline]
     pub(super) fn offer_lane_for_scope(&self, scope_id: ScopeId) -> u8 {
-        let lane_mask = self.offer_lane_mask_for_scope(scope_id);
-        if lane_mask == 0 {
-            self.primary_lane as u8
+        let offer_lanes = self.offer_lane_set_for_scope(scope_id);
+        if let Some(lane_idx) = offer_lanes.first_set(self.cursor.logical_lane_count()) {
+            lane_idx as u8
         } else {
-            lane_mask.trailing_zeros() as u8
+            self.primary_lane as u8
         }
     }
 
@@ -3940,9 +3937,9 @@ where
         &mut self,
         lane_idx: usize,
     ) -> Option<crate::binding::IncomingClassification> {
-        let previous_nonempty_mask = self.binding_inbox.nonempty_mask;
+        let previous_nonempty = self.binding_inbox.nonempty_lanes().contains(lane_idx);
         let classification = self.binding_inbox.take_or_poll(&mut self.binding, lane_idx);
-        self.refresh_frontier_observation_cache_for_binding_lane(lane_idx, previous_nonempty_mask);
+        self.refresh_frontier_observation_cache_for_binding_lane(lane_idx, previous_nonempty);
         classification
     }
 
@@ -3951,9 +3948,9 @@ where
         lane_idx: usize,
         classification: crate::binding::IncomingClassification,
     ) {
-        let previous_nonempty_mask = self.binding_inbox.nonempty_mask;
+        let previous_nonempty = self.binding_inbox.nonempty_lanes().contains(lane_idx);
         self.binding_inbox.put_back(lane_idx, classification);
-        self.refresh_frontier_observation_cache_for_binding_lane(lane_idx, previous_nonempty_mask);
+        self.refresh_frontier_observation_cache_for_binding_lane(lane_idx, previous_nonempty);
     }
 
     pub(super) fn take_matching_binding_for_lane(
@@ -3961,11 +3958,11 @@ where
         lane_idx: usize,
         expected_label: u8,
     ) -> Option<crate::binding::IncomingClassification> {
-        let previous_nonempty_mask = self.binding_inbox.nonempty_mask;
+        let previous_nonempty = self.binding_inbox.nonempty_lanes().contains(lane_idx);
         let classification =
             self.binding_inbox
                 .take_matching_or_poll(&mut self.binding, lane_idx, expected_label);
-        self.refresh_frontier_observation_cache_for_binding_lane(lane_idx, previous_nonempty_mask);
+        self.refresh_frontier_observation_cache_for_binding_lane(lane_idx, previous_nonempty);
         classification
     }
 
@@ -3976,7 +3973,7 @@ where
         drop_label_mask: u128,
         drop_mismatch: F,
     ) -> Option<crate::binding::IncomingClassification> {
-        let previous_nonempty_mask = self.binding_inbox.nonempty_mask;
+        let previous_nonempty = self.binding_inbox.nonempty_lanes().contains(lane_idx);
         let classification = self.binding_inbox.take_matching_mask_or_poll(
             &mut self.binding,
             lane_idx,
@@ -3984,7 +3981,7 @@ where
             drop_label_mask,
             drop_mismatch,
         );
-        self.refresh_frontier_observation_cache_for_binding_lane(lane_idx, previous_nonempty_mask);
+        self.refresh_frontier_observation_cache_for_binding_lane(lane_idx, previous_nonempty);
         classification
     }
 
@@ -4050,11 +4047,27 @@ where
         &mut self,
         scope_id: ScopeId,
         offer_lane_idx: usize,
-        offer_lane_mask: LaneMask,
         label_meta: ScopeLabelMeta,
         materialization_meta: ScopeArmMaterializationMeta,
     ) -> Option<(usize, crate::binding::IncomingClassification)> {
-        if offer_lane_mask == 0 {
+        self.poll_binding_for_offer_lanes(
+            scope_id,
+            offer_lane_idx,
+            self.offer_lane_set_for_scope(scope_id),
+            label_meta,
+            materialization_meta,
+        )
+    }
+
+    pub(in crate::endpoint::kernel) fn poll_binding_for_offer_lanes(
+        &mut self,
+        scope_id: ScopeId,
+        offer_lane_idx: usize,
+        offer_lanes: LaneSetView,
+        label_meta: ScopeLabelMeta,
+        materialization_meta: ScopeArmMaterializationMeta,
+    ) -> Option<(usize, crate::binding::IncomingClassification)> {
+        if offer_lanes.is_empty() {
             return None;
         }
         let preferred_arm = self
@@ -4068,42 +4081,49 @@ where
         if label_mask == 0 {
             return None;
         }
-        let authoritative_lane_mask = preferred_arm
-            .map(|arm| materialization_meta.binding_demux_lane_mask(Some(arm)) & offer_lane_mask)
-            .unwrap_or(0);
-        let label_lane_mask = materialization_meta
-            .binding_demux_lane_mask_for_label_mask(label_meta, label_mask)
-            & offer_lane_mask;
-        let base_lane_mask = if authoritative_lane_mask != 0 {
-            authoritative_lane_mask
-        } else if label_lane_mask != 0 {
-            label_lane_mask
+        let preference = if let Some(arm) = preferred_arm
+            && self.offer_lanes_contain_binding_preference(
+                offer_lanes,
+                label_meta,
+                materialization_meta,
+                BindingLanePreference::Arm(arm),
+            ) {
+            BindingLanePreference::Arm(arm)
+        } else if self.offer_lanes_contain_binding_preference(
+            offer_lanes,
+            label_meta,
+            materialization_meta,
+            BindingLanePreference::LabelMask(label_mask),
+        ) {
+            BindingLanePreference::LabelMask(label_mask)
         } else {
-            offer_lane_mask
+            BindingLanePreference::Any
         };
         if let Some(expected_label) = label_meta.preferred_binding_label(preferred_arm) {
-            let buffered_lane_mask = self
-                .binding_inbox
-                .buffered_lane_mask_for_labels(ScopeLabelMeta::label_bit(expected_label))
-                & offer_lane_mask;
             if let Some(picked) = self.poll_binding_exact_for_offer(
                 offer_lane_idx,
-                base_lane_mask | buffered_lane_mask,
+                offer_lanes,
                 expected_label,
+                label_meta,
+                materialization_meta,
+                preference,
             ) {
                 return Some(picked);
             }
         }
-        let binding_lane_mask = base_lane_mask
-            | (self.binding_inbox.buffered_lane_mask_for_labels(label_mask) & offer_lane_mask);
-        if let Some(classification) =
-            self.poll_binding_mask_for_offer(offer_lane_idx, binding_lane_mask, label_mask)
-        {
+        if let Some(classification) = self.poll_binding_mask_for_offer(
+            offer_lane_idx,
+            offer_lanes,
+            label_mask,
+            label_meta,
+            materialization_meta,
+            preference,
+        ) {
             return Some(classification);
         }
         if self.static_passive_scope_evidence_materializes_poll(scope_id)
             && let Some((lane_idx, classification)) =
-                self.poll_binding_any_for_offer(offer_lane_idx, offer_lane_mask)
+                self.poll_binding_any_for_offer(offer_lane_idx, offer_lanes)
         {
             if self
                 .static_passive_dispatch_arm_from_exact_label(
@@ -4123,55 +4143,90 @@ where
     fn poll_binding_mask_for_offer(
         &mut self,
         offer_lane_idx: usize,
-        offer_lane_mask: LaneMask,
+        offer_lanes: LaneSetView,
         label_mask: u128,
+        label_meta: ScopeLabelMeta,
+        materialization_meta: ScopeArmMaterializationMeta,
+        preference: BindingLanePreference,
     ) -> Option<(usize, crate::binding::IncomingClassification)> {
         let drop_label_mask = self.loop_control_drop_label_mask();
-        let matching_buffered_lane_mask =
-            self.binding_inbox.buffered_lane_mask_for_labels(label_mask) & offer_lane_mask;
         if let Some(classification) = self.poll_buffered_binding_mask_for_offer(
             offer_lane_idx,
-            matching_buffered_lane_mask,
+            offer_lanes,
+            label_mask,
+            0,
+            false,
             label_mask,
             drop_label_mask,
+            label_meta,
+            materialization_meta,
+            preference,
         ) {
             return Some(classification);
         }
-        let drop_buffered_lane_mask = (self
-            .binding_inbox
-            .buffered_lane_mask_for_labels(drop_label_mask)
-            & offer_lane_mask)
-            & !matching_buffered_lane_mask;
         if let Some(classification) = self.poll_buffered_binding_mask_for_offer(
             offer_lane_idx,
-            drop_buffered_lane_mask,
+            offer_lanes,
+            drop_label_mask,
+            label_mask,
+            true,
             label_mask,
             drop_label_mask,
+            label_meta,
+            materialization_meta,
+            preference,
         ) {
             return Some(classification);
         }
-        self.poll_binding_mask_in_lane_mask(
+        self.poll_binding_mask_in_lane_set(
             offer_lane_idx,
-            offer_lane_mask & !(matching_buffered_lane_mask | drop_buffered_lane_mask),
+            offer_lanes,
             label_mask,
             drop_label_mask,
+            label_meta,
+            materialization_meta,
+            preference,
         )
     }
 
     fn poll_buffered_binding_mask_for_offer(
         &mut self,
         offer_lane_idx: usize,
-        lane_mask: LaneMask,
+        offer_lanes: LaneSetView,
+        buffered_label_mask: u128,
+        excluded_buffered_mask: u128,
+        require_preference: bool,
         label_mask: u128,
         drop_label_mask: u128,
+        label_meta: ScopeLabelMeta,
+        materialization_meta: ScopeArmMaterializationMeta,
+        preference: BindingLanePreference,
     ) -> Option<(usize, crate::binding::IncomingClassification)> {
-        if lane_mask == 0 {
-            return None;
-        }
-        let mut remaining_lane_mask = lane_mask;
-        while let Some(lane_slot) =
-            Self::take_preferred_lane_in_mask(offer_lane_idx, &mut remaining_lane_mask)
-        {
+        let lane_limit = self.cursor.logical_lane_count();
+        let mut scan_idx = 0usize;
+        while let Some(lane_slot) = Self::next_preferred_lane_in_lane_set(
+            offer_lane_idx,
+            offer_lanes,
+            lane_limit,
+            &mut scan_idx,
+        ) {
+            if !self
+                .binding_inbox
+                .lane_has_buffered_label(lane_slot, buffered_label_mask)
+                || (excluded_buffered_mask != 0
+                    && self
+                        .binding_inbox
+                        .lane_has_buffered_label(lane_slot, excluded_buffered_mask))
+                || (require_preference
+                    && !self.offer_lane_matches_binding_preference(
+                        label_meta,
+                        materialization_meta,
+                        preference,
+                        lane_slot,
+                    ))
+            {
+                continue;
+            }
             if let Some(classification) =
                 self.take_binding_mask_ignoring_loop_control(lane_slot, label_mask, drop_label_mask)
             {
@@ -4181,27 +4236,40 @@ where
         None
     }
 
-    fn poll_binding_mask_in_lane_mask(
+    fn poll_binding_mask_in_lane_set(
         &mut self,
         offer_lane_idx: usize,
-        lane_mask: LaneMask,
+        offer_lanes: LaneSetView,
         label_mask: u128,
         drop_label_mask: u128,
+        label_meta: ScopeLabelMeta,
+        materialization_meta: ScopeArmMaterializationMeta,
+        preference: BindingLanePreference,
     ) -> Option<(usize, crate::binding::IncomingClassification)> {
-        if lane_mask == 0 {
-            return None;
-        }
-        let mut selected_lane_mask = lane_mask;
-        let Some(lane_slot) =
-            Self::take_preferred_lane_in_mask(offer_lane_idx, &mut selected_lane_mask)
-        else {
-            return None;
-        };
-        if let Some(classification) =
-            self.take_binding_mask_ignoring_loop_control(lane_slot, label_mask, drop_label_mask)
-        {
-            // Classification is demux evidence only.
-            return Some((lane_slot, classification));
+        let lane_limit = self.cursor.logical_lane_count();
+        let excluded_mask = label_mask | drop_label_mask;
+        let mut scan_idx = 0usize;
+        while let Some(lane_slot) = Self::next_preferred_lane_in_lane_set(
+            offer_lane_idx,
+            offer_lanes,
+            lane_limit,
+            &mut scan_idx,
+        ) {
+            if self
+                .binding_inbox
+                .lane_has_buffered_label(lane_slot, excluded_mask)
+                || !self.offer_lane_matches_binding_preference(
+                    label_meta,
+                    materialization_meta,
+                    preference,
+                    lane_slot,
+                )
+            {
+                continue;
+            }
+            return self
+                .take_binding_mask_ignoring_loop_control(lane_slot, label_mask, drop_label_mask)
+                .map(|classification| (lane_slot, classification));
         }
         None
     }
@@ -4209,41 +4277,73 @@ where
     fn poll_binding_exact_for_offer(
         &mut self,
         offer_lane_idx: usize,
-        offer_lane_mask: LaneMask,
+        offer_lanes: LaneSetView,
         expected_label: u8,
+        label_meta: ScopeLabelMeta,
+        materialization_meta: ScopeArmMaterializationMeta,
+        preference: BindingLanePreference,
     ) -> Option<(usize, crate::binding::IncomingClassification)> {
-        if offer_lane_mask == 0 {
-            return None;
-        }
-        let buffered_lane_mask = self
-            .binding_inbox
-            .buffered_lane_mask_for_labels(ScopeLabelMeta::label_bit(expected_label))
-            & offer_lane_mask;
-        if let Some(classification) =
-            self.poll_binding_exact_in_lane_mask(offer_lane_idx, buffered_lane_mask, expected_label)
-        {
+        let expected_label_mask = ScopeLabelMeta::label_bit(expected_label);
+        if let Some(classification) = self.poll_binding_exact_in_lane_set(
+            offer_lane_idx,
+            offer_lanes,
+            expected_label,
+            expected_label_mask,
+            true,
+            label_meta,
+            materialization_meta,
+            preference,
+        ) {
             return Some(classification);
         }
-        self.poll_binding_exact_in_lane_mask(
+        self.poll_binding_exact_in_lane_set(
             offer_lane_idx,
-            offer_lane_mask & !buffered_lane_mask,
+            offer_lanes,
             expected_label,
+            expected_label_mask,
+            false,
+            label_meta,
+            materialization_meta,
+            preference,
         )
     }
 
-    fn poll_binding_exact_in_lane_mask(
+    fn poll_binding_exact_in_lane_set(
         &mut self,
         offer_lane_idx: usize,
-        lane_mask: LaneMask,
+        offer_lanes: LaneSetView,
         expected_label: u8,
+        expected_label_mask: u128,
+        buffered_only: bool,
+        label_meta: ScopeLabelMeta,
+        materialization_meta: ScopeArmMaterializationMeta,
+        preference: BindingLanePreference,
     ) -> Option<(usize, crate::binding::IncomingClassification)> {
-        if lane_mask == 0 {
-            return None;
-        }
-        let mut remaining_lane_mask = lane_mask;
-        while let Some(lane_idx) =
-            Self::take_preferred_lane_in_mask(offer_lane_idx, &mut remaining_lane_mask)
-        {
+        let lane_limit = self.cursor.logical_lane_count();
+        let mut scan_idx = 0usize;
+        while let Some(lane_idx) = Self::next_preferred_lane_in_lane_set(
+            offer_lane_idx,
+            offer_lanes,
+            lane_limit,
+            &mut scan_idx,
+        ) {
+            let has_buffered = self
+                .binding_inbox
+                .lane_has_buffered_label(lane_idx, expected_label_mask);
+            if buffered_only {
+                if !has_buffered {
+                    continue;
+                }
+            } else if has_buffered
+                || !self.offer_lane_matches_binding_preference(
+                    label_meta,
+                    materialization_meta,
+                    preference,
+                    lane_idx,
+                )
+            {
+                continue;
+            }
             if let Some(classification) =
                 self.take_matching_binding_for_lane(lane_idx, expected_label)
             {
@@ -4256,18 +4356,95 @@ where
     pub(super) fn poll_binding_any_for_offer(
         &mut self,
         offer_lane_idx: usize,
-        offer_lane_mask: LaneMask,
+        offer_lanes: LaneSetView,
     ) -> Option<(usize, crate::binding::IncomingClassification)> {
-        if offer_lane_mask == 0 {
+        if offer_lanes.is_empty() {
             return None;
         }
-        let mut remaining_lane_mask = offer_lane_mask;
-        while let Some(lane_idx) =
-            Self::take_preferred_lane_in_mask(offer_lane_idx, &mut remaining_lane_mask)
-        {
+        let lane_limit = self.cursor.logical_lane_count();
+        let mut scan_idx = 0usize;
+        while let Some(lane_idx) = Self::next_preferred_lane_in_lane_set(
+            offer_lane_idx,
+            offer_lanes,
+            lane_limit,
+            &mut scan_idx,
+        ) {
             if let Some(classification) = self.take_binding_for_lane(lane_idx) {
                 return Some((lane_idx, classification));
             }
+        }
+        None
+    }
+
+    #[inline]
+    fn offer_lanes_contain_binding_preference(
+        &self,
+        offer_lanes: LaneSetView,
+        label_meta: ScopeLabelMeta,
+        materialization_meta: ScopeArmMaterializationMeta,
+        preference: BindingLanePreference,
+    ) -> bool {
+        let lane_limit = self.cursor.logical_lane_count();
+        let mut lane_idx = 0usize;
+        while lane_idx < lane_limit {
+            if offer_lanes.contains(lane_idx)
+                && self.offer_lane_matches_binding_preference(
+                    label_meta,
+                    materialization_meta,
+                    preference,
+                    lane_idx,
+                )
+            {
+                return true;
+            }
+            lane_idx += 1;
+        }
+        false
+    }
+
+    #[inline]
+    fn offer_lane_matches_binding_preference(
+        &self,
+        label_meta: ScopeLabelMeta,
+        materialization_meta: ScopeArmMaterializationMeta,
+        preference: BindingLanePreference,
+        lane_idx: usize,
+    ) -> bool {
+        match preference {
+            BindingLanePreference::Any => true,
+            BindingLanePreference::Arm(arm) => {
+                self.binding_demux_contains_lane(materialization_meta.scope_id, Some(arm), lane_idx)
+            }
+            BindingLanePreference::LabelMask(label_mask) => self
+                .binding_demux_contains_lane_for_label_mask(
+                    materialization_meta.scope_id,
+                    label_meta,
+                    label_mask,
+                    lane_idx,
+                ),
+        }
+    }
+
+    #[inline]
+    fn next_preferred_lane_in_lane_set(
+        preferred_lane_idx: usize,
+        offer_lanes: LaneSetView,
+        lane_limit: usize,
+        scan_idx: &mut usize,
+    ) -> Option<usize> {
+        if *scan_idx == 0 {
+            *scan_idx = 1;
+            if preferred_lane_idx < lane_limit && offer_lanes.contains(preferred_lane_idx) {
+                return Some(preferred_lane_idx);
+            }
+        }
+        let mut lane_idx = scan_idx.saturating_sub(1);
+        while lane_idx < lane_limit {
+            if lane_idx != preferred_lane_idx && offer_lanes.contains(lane_idx) {
+                *scan_idx = lane_idx.saturating_add(2);
+                return Some(lane_idx);
+            }
+            lane_idx += 1;
         }
         None
     }
@@ -4701,9 +4878,20 @@ where
     }
 
     fn has_active_linger_route(&self) -> bool {
-        let phase_mask = self.cursor.current_phase_lane_mask();
-        ((self.route_state.lane_linger_mask | self.route_state.lane_offer_linger_mask) & phase_mask)
-            != 0
+        let phase_lanes = self.cursor.current_phase_lane_set();
+        let logical_lane_count = self.cursor.logical_lane_count();
+        let lane_linger = self.route_state.lane_linger_lanes();
+        let offer_linger = self.route_state.lane_offer_linger_lanes();
+        let mut lane_idx = 0usize;
+        while lane_idx < logical_lane_count {
+            if phase_lanes.contains(lane_idx)
+                && (lane_linger.contains(lane_idx) || offer_linger.contains(lane_idx))
+            {
+                return true;
+            }
+            lane_idx += 1;
+        }
+        false
     }
 }
 

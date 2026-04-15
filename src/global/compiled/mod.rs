@@ -35,8 +35,7 @@ pub(crate) use self::{
 pub(crate) use self::{
     lease::{
         init_compiled_role_image, with_compiled_program, with_compiled_programs,
-        with_compiled_role_image, with_compiled_role_in_slot,
+        with_compiled_role_image,
     },
     program::{CompiledProgram, MAX_COMPILED_PROGRAM_RESOURCES},
-    role::CompiledRole,
 };

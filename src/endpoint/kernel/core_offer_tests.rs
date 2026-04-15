@@ -10,7 +10,9 @@ use crate::control::cap::resource_kinds::{RouteDecisionHandle, RouteDecisionKind
 use crate::control::cluster::core::SessionCluster;
 use crate::g::{self, Msg, Role};
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
-use crate::global::role_program::{RoleProgram, project};
+use crate::global::role_program::{
+    LOW_LANE_TEST_WIDTH, LaneSet, LaneSetView, LaneWord, RoleProgram, lane_word_count, project,
+};
 use crate::global::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
 use crate::global::{CanonicalControl, ControlHandling};
 use crate::observe::core::TapEvent;
@@ -46,6 +48,21 @@ const fn max_usize(values: &[usize]) -> usize {
     max
 }
 
+fn with_test_lane_set<R>(lanes: &[usize], f: impl FnOnce(LaneSetView) -> R) -> R {
+    let mut lane_words = [0 as LaneWord; lane_word_count(LOW_LANE_TEST_WIDTH)];
+    let mut lane_set = LaneSet::from_parts(lane_words.as_mut_ptr(), lane_words.len());
+    let mut idx = 0usize;
+    while idx < lanes.len() {
+        assert!(
+            lanes[idx] < LOW_LANE_TEST_WIDTH,
+            "test lane set exceeds low-lane assertion window"
+        );
+        lane_set.insert(lanes[idx]);
+        idx += 1;
+    }
+    f(lane_set.view())
+}
+
 const fn offer_endpoint_slot_bytes<const ROLE: u8, T, B>() -> usize
 where
     T: Transport + 'static,
@@ -71,7 +88,7 @@ where
         (header_bytes + (port_align.saturating_sub(1))) & !(port_align.saturating_sub(1));
     let port_bytes = size_of::<
         Option<crate::rendezvous::port::Port<'static, T, crate::control::cap::mint::EpochTbl>>,
-    >() * crate::global::role_program::MAX_LANES;
+    >() * crate::global::role_program::LOW_LANE_TEST_WIDTH;
     let guard_align = align_of::<
         Option<crate::endpoint::affine::LaneGuard<'static, T, DefaultLabelUniverse, CounterClock>>,
     >();
@@ -82,7 +99,7 @@ where
             Option<
                 crate::endpoint::affine::LaneGuard<'static, T, DefaultLabelUniverse, CounterClock>,
             >,
-        >() * crate::global::role_program::MAX_LANES
+        >() * crate::global::role_program::LOW_LANE_TEST_WIDTH
 }
 
 type OfferHintCluster =
@@ -771,14 +788,14 @@ fn widen_offer_test_endpoint_lane_slots<'r, const ROLE: u8, T, B>(
     B: BindingSlot,
 {
     let current_len = endpoint.ports.len();
-    if current_len >= crate::global::role_program::MAX_LANES {
+    if current_len >= crate::global::role_program::LOW_LANE_TEST_WIDTH {
         return;
     }
     let mut ports: [Option<crate::rendezvous::port::Port<'r, T, EpochTbl>>;
-        crate::global::role_program::MAX_LANES] = core::array::from_fn(|_| None);
+        crate::global::role_program::LOW_LANE_TEST_WIDTH] = core::array::from_fn(|_| None);
     let mut guards: [Option<
         crate::endpoint::affine::LaneGuard<'r, T, DefaultLabelUniverse, CounterClock>,
-    >; crate::global::role_program::MAX_LANES] = core::array::from_fn(|_| None);
+    >; crate::global::role_program::LOW_LANE_TEST_WIDTH] = core::array::from_fn(|_| None);
     let mut idx = 0usize;
     while idx < current_len {
         ports[idx] = endpoint.ports.get_mut(idx).and_then(Option::take);
@@ -817,7 +834,7 @@ fn widen_offer_test_endpoint_lane_slots<'r, const ROLE: u8, T, B>(
     let guard_offset = offer_storage_align_up(
         port_offset
             + size_of::<Option<crate::rendezvous::port::Port<'r, T, EpochTbl>>>()
-                * crate::global::role_program::MAX_LANES,
+                * crate::global::role_program::LOW_LANE_TEST_WIDTH,
         align_of::<
             Option<crate::endpoint::affine::LaneGuard<'r, T, DefaultLabelUniverse, CounterClock>>,
         >(),
@@ -828,14 +845,14 @@ fn widen_offer_test_endpoint_lane_slots<'r, const ROLE: u8, T, B>(
             storage_base
                 .add(port_offset)
                 .cast::<Option<crate::rendezvous::port::Port<'r, T, EpochTbl>>>(),
-            crate::global::role_program::MAX_LANES,
+            crate::global::role_program::LOW_LANE_TEST_WIDTH,
         );
         super::super::lane_slots::LaneSlotArray::init_from_parts(
             core::ptr::addr_of_mut!((*endpoint_ptr).guards),
             storage_base.add(guard_offset).cast::<Option<
                 crate::endpoint::affine::LaneGuard<'r, T, DefaultLabelUniverse, CounterClock>,
             >>(),
-            crate::global::role_program::MAX_LANES,
+            crate::global::role_program::LOW_LANE_TEST_WIDTH,
         );
     }
     idx = 0usize;
@@ -1041,19 +1058,20 @@ impl Default for TestBinding {
 }
 
 struct LaneAwareTestBinding {
-    incoming: [FixedQueue<IncomingClassification, TEST_BINDING_QUEUE_CAPACITY>; MAX_LANES],
-    polls: [usize; MAX_LANES],
+    incoming:
+        [FixedQueue<IncomingClassification, TEST_BINDING_QUEUE_CAPACITY>; LOW_LANE_TEST_WIDTH],
+    polls: [usize; LOW_LANE_TEST_WIDTH],
 }
 
 impl LaneAwareTestBinding {
     fn with_lane_incoming(incoming: &[(u8, IncomingClassification)]) -> Self {
         let mut binding = Self {
             incoming: core::array::from_fn(|_| FixedQueue::new()),
-            polls: [0; MAX_LANES],
+            polls: [0; LOW_LANE_TEST_WIDTH],
         };
         for (lane, classification) in incoming.iter().copied() {
             let lane_idx = lane as usize;
-            if lane_idx < MAX_LANES {
+            if lane_idx < LOW_LANE_TEST_WIDTH {
                 binding.incoming[lane_idx].push_back(classification);
             }
         }
@@ -1068,7 +1086,7 @@ impl LaneAwareTestBinding {
 impl BindingSlot for LaneAwareTestBinding {
     fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IncomingClassification> {
         let lane_idx = logical_lane as usize;
-        if lane_idx >= MAX_LANES {
+        if lane_idx >= LOW_LANE_TEST_WIDTH {
             return None;
         }
         self.polls[lane_idx] = self.polls[lane_idx].saturating_add(1);
@@ -1655,6 +1673,39 @@ const HINT_ROUTE_PROGRAM: g::Program<HintRouteSteps> = g::route(HINT_LEFT_ARM, H
 static HINT_CONTROLLER_PROGRAM: RoleProgram<'static, 0, HintRouteSteps> =
     project(&HINT_ROUTE_PROGRAM);
 static HINT_WORKER_PROGRAM: RoleProgram<'static, 1, HintRouteSteps> = project(&HINT_ROUTE_PROGRAM);
+type HintSplitLeftSteps = SeqSteps<HintLeftHead, SendOnly<0, Role<0>, Role<1>, Msg<100, u8>>>;
+type HintSplitRightSteps = SeqSteps<HintRightHead, SendOnly<2, Role<0>, Role<1>, Msg<101, u8>>>;
+type HintSplitRouteSteps = RouteSteps<HintSplitLeftSteps, HintSplitRightSteps>;
+const HINT_SPLIT_LEFT_ARM: g::Program<HintSplitLeftSteps> = g::seq(
+    g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { LABEL_ROUTE_DECISION },
+            GenericCapToken<RouteDecisionKind>,
+            CanonicalControl<RouteDecisionKind>,
+        >,
+        0,
+    >()
+    .policy::<HINT_ROUTE_POLICY_ID>(),
+    g::send::<Role<0>, Role<1>, Msg<100, u8>, 0>(),
+);
+const HINT_SPLIT_RIGHT_ARM: g::Program<HintSplitRightSteps> = g::seq(
+    g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>,
+        0,
+    >()
+    .policy::<HINT_ROUTE_POLICY_ID>(),
+    g::send::<Role<0>, Role<1>, Msg<101, u8>, 2>(),
+);
+const HINT_SPLIT_ROUTE_PROGRAM: g::Program<HintSplitRouteSteps> =
+    g::route(HINT_SPLIT_LEFT_ARM, HINT_SPLIT_RIGHT_ARM);
+static HINT_SPLIT_CONTROLLER_PROGRAM: RoleProgram<'static, 0, HintSplitRouteSteps> =
+    project(&HINT_SPLIT_ROUTE_PROGRAM);
+static HINT_SPLIT_WORKER_PROGRAM: RoleProgram<'static, 1, HintSplitRouteSteps> =
+    project(&HINT_SPLIT_ROUTE_PROGRAM);
 const HINT_LEFT_DATA_LABEL: u8 = 100;
 const HINT_RIGHT_DATA_LABEL: u8 = 101;
 
@@ -2409,7 +2460,12 @@ fn refresh_lane_offer_state_caches_scope_label_meta() {
                     offer_lane_mask |= 1 << (offer_lanes[offer_lane_idx] as usize);
                     offer_lane_idx += 1;
                 }
-                assert_eq!(entry_state.offer_lane_mask, offer_lane_mask);
+                assert_eq!(
+                    worker
+                        .offer_lane_set_for_scope(scope)
+                        .collect_low_lane_bits(worker.cursor.logical_lane_count()),
+                    offer_lane_mask
+                );
                 assert_eq!(entry_state.lane_idx, 0);
                 assert_eq!(
                     worker
@@ -2467,35 +2523,43 @@ fn refresh_lane_offer_state_caches_scope_label_meta() {
                                 PassiveArmNavigation::WithinArm { entry } => entry,
                             })
                     );
-                    let mut expected_binding_demux_lane_mask = 0;
-                    if let Some((entry, _)) = worker.cursor.controller_arm_entry_by_arm(scope, arm)
-                        && let Some(recv_meta) =
-                            worker.cursor.try_recv_meta_at(state_index_to_usize(entry))
-                    {
-                        expected_binding_demux_lane_mask |= 1 << (recv_meta.lane as usize);
-                    }
-                    if let Some(entry) = worker.cursor.route_scope_arm_recv_index(scope, arm)
-                        && let Some(recv_meta) = worker.cursor.try_recv_meta_at(entry)
-                    {
-                        expected_binding_demux_lane_mask |= 1 << (recv_meta.lane as usize);
-                    }
-                    let mut dispatch_idx = 0usize;
-                    while let Some((_label, dispatch_arm, target)) = worker
-                        .cursor
-                        .route_scope_first_recv_dispatch_entry(scope, dispatch_idx)
-                    {
-                        if (dispatch_arm == arm || dispatch_arm == ARM_SHARED)
+                    let mut lane_idx = 0usize;
+                    while lane_idx < LOW_LANE_TEST_WIDTH {
+                        let mut expected_binding_demux_lane = false;
+                        if let Some((entry, _)) =
+                            worker.cursor.controller_arm_entry_by_arm(scope, arm)
                             && let Some(recv_meta) =
-                                worker.cursor.try_recv_meta_at(state_index_to_usize(target))
+                                worker.cursor.try_recv_meta_at(state_index_to_usize(entry))
+                            && recv_meta.lane as usize == lane_idx
                         {
-                            expected_binding_demux_lane_mask |= 1 << (recv_meta.lane as usize);
+                            expected_binding_demux_lane = true;
                         }
-                        dispatch_idx += 1;
+                        if let Some(entry) = worker.cursor.route_scope_arm_recv_index(scope, arm)
+                            && let Some(recv_meta) = worker.cursor.try_recv_meta_at(entry)
+                            && recv_meta.lane as usize == lane_idx
+                        {
+                            expected_binding_demux_lane = true;
+                        }
+                        let mut dispatch_idx = 0usize;
+                        while let Some((_label, dispatch_arm, target)) = worker
+                            .cursor
+                            .route_scope_first_recv_dispatch_entry(scope, dispatch_idx)
+                        {
+                            if (dispatch_arm == arm || dispatch_arm == ARM_SHARED)
+                                && let Some(recv_meta) =
+                                    worker.cursor.try_recv_meta_at(state_index_to_usize(target))
+                                && recv_meta.lane as usize == lane_idx
+                            {
+                                expected_binding_demux_lane = true;
+                            }
+                            dispatch_idx += 1;
+                        }
+                        assert_eq!(
+                            worker.binding_demux_contains_lane(scope, Some(arm), lane_idx),
+                            expected_binding_demux_lane
+                        );
+                        lane_idx += 1;
                     }
-                    assert_eq!(
-                        materialization.binding_demux_lane_mask(Some(arm)),
-                        expected_binding_demux_lane_mask
-                    );
                     if arm == 1 {
                         break;
                     }
@@ -3369,7 +3433,7 @@ fn align_cursor_to_selected_scope_ignores_unrelated_lane_frontier_refresh() {
                         }
                         let worker = worker_slot.borrow_mut();
 
-                        if MAX_LANES < 3 {
+                        if LOW_LANE_TEST_WIDTH < 3 {
                             return;
                         }
 
@@ -3759,7 +3823,7 @@ fn rebuild_frontier_observed_entries_reuses_cached_entry_after_slot_shift() {
                                 worker_slot.ptr(),
                                 rv_id,
                                 sid,
-                                &HINT_WORKER_PROGRAM,
+                                &HINT_SPLIT_WORKER_PROGRAM,
                                 NoBinding,
                             )
                             .expect("attach worker endpoint");
@@ -3793,7 +3857,6 @@ fn rebuild_frontier_observed_entries_reuses_cached_entry_after_slot_shift() {
                         parallel_root: current_state.parallel_root,
                         frontier: FrontierKind::Route,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 1,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -3847,11 +3910,8 @@ fn rebuild_frontier_observed_entries_reuses_cached_entry_after_slot_shift() {
 
                     worker.frontier_state.offer_entry_state[current_idx].active_mask = 1 << 1;
                     worker.frontier_state.offer_entry_state[current_idx].lane_idx = 1;
-                    worker.frontier_state.offer_entry_state[current_idx].offer_lane_mask = 1 << 1;
                     worker.frontier_state.offer_entry_state[fake_entry_idx].active_mask = 1 << 0;
                     worker.frontier_state.offer_entry_state[fake_entry_idx].lane_idx = 0;
-                    worker.frontier_state.offer_entry_state[fake_entry_idx].offer_lane_mask =
-                        1 << 0;
 
                     let mut shifted_active_entries = ActiveEntrySet::EMPTY;
                     assert!(shifted_active_entries.insert_entry(fake_entry_idx, 0));
@@ -3936,7 +3996,6 @@ fn refresh_frontier_observation_cache_prewarms_after_active_entry_replacement() 
                         parallel_root: ScopeId::none(),
                         frontier: FrontierKind::Route,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 0,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -4000,7 +4059,6 @@ fn refresh_frontier_observation_cache_prewarms_after_active_entry_replacement() 
                         parallel_root: ScopeId::none(),
                         frontier: FrontierKind::Loop,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 0,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -4137,7 +4195,6 @@ fn patch_frontier_observed_entries_from_cached_structure_handles_cardinality_cha
                         parallel_root: ScopeId::none(),
                         frontier: FrontierKind::Parallel,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 1,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -4151,7 +4208,6 @@ fn patch_frontier_observed_entries_from_cached_structure_handles_cardinality_cha
                         parallel_root: ScopeId::none(),
                         frontier: FrontierKind::Loop,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 0,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -4165,7 +4221,6 @@ fn patch_frontier_observed_entries_from_cached_structure_handles_cardinality_cha
                         parallel_root: ScopeId::none(),
                         frontier: FrontierKind::PassiveObserver,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 1,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -4180,11 +4235,12 @@ fn patch_frontier_observed_entries_from_cached_structure_handles_cardinality_cha
                     assert!(cached_active_entries.insert_entry(third_entry_idx, 0));
                     assert!(cached_active_entries.insert_entry(last_entry_idx, 1));
                     worker.overwrite_global_active_entries_for_test(cached_active_entries);
-                    let cached_key = RouteFrontierMachine::frontier_observation_key(
+                    let mut cached_key = FrontierObservationKey::EMPTY;
+                    cached_key.copy_from(RouteFrontierMachine::frontier_observation_key(
                         &worker,
                         ScopeId::none(),
                         false,
-                    );
+                    ));
 
                     let mut cached_observed_entries = ObservedEntrySet::EMPTY;
                     let (current_bit, inserted_current) = cached_observed_entries
@@ -4254,7 +4310,6 @@ fn patch_frontier_observed_entries_from_cached_structure_handles_cardinality_cha
                         parallel_root: ScopeId::none(),
                         frontier: FrontierKind::Loop,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 0,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -4348,7 +4403,6 @@ fn refresh_frontier_observation_cache_prewarms_after_multi_entry_permutation() {
                         FrontierKind::Route;
                     worker.frontier_state.offer_entry_state[current_idx].active_mask = 1 << 0;
                     worker.frontier_state.offer_entry_state[current_idx].lane_idx = 0;
-                    worker.frontier_state.offer_entry_state[current_idx].offer_lane_mask = 1 << 0;
                     let lane_offer = worker
                         .route_state
                         .lane_offer_state_mut(0)
@@ -4382,7 +4436,6 @@ fn refresh_frontier_observation_cache_prewarms_after_multi_entry_permutation() {
                         parallel_root: ScopeId::none(),
                         frontier: FrontierKind::Parallel,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 1,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -4396,7 +4449,6 @@ fn refresh_frontier_observation_cache_prewarms_after_multi_entry_permutation() {
                         parallel_root: ScopeId::none(),
                         frontier: FrontierKind::Loop,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 0,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -4410,7 +4462,6 @@ fn refresh_frontier_observation_cache_prewarms_after_multi_entry_permutation() {
                         parallel_root: ScopeId::none(),
                         frontier: FrontierKind::PassiveObserver,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 1,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -4494,19 +4545,12 @@ fn refresh_frontier_observation_cache_prewarms_after_multi_entry_permutation() {
 
                     worker.frontier_state.offer_entry_state[current_idx].active_mask = 1 << 1;
                     worker.frontier_state.offer_entry_state[current_idx].lane_idx = 1;
-                    worker.frontier_state.offer_entry_state[current_idx].offer_lane_mask = 1 << 1;
                     worker.frontier_state.offer_entry_state[middle_entry_idx].active_mask = 1 << 0;
                     worker.frontier_state.offer_entry_state[middle_entry_idx].lane_idx = 0;
-                    worker.frontier_state.offer_entry_state[middle_entry_idx].offer_lane_mask =
-                        1 << 0;
                     worker.frontier_state.offer_entry_state[third_entry_idx].active_mask = 1 << 1;
                     worker.frontier_state.offer_entry_state[third_entry_idx].lane_idx = 1;
-                    worker.frontier_state.offer_entry_state[third_entry_idx].offer_lane_mask =
-                        1 << 1;
                     worker.frontier_state.offer_entry_state[last_entry_idx].active_mask = 1 << 0;
                     worker.frontier_state.offer_entry_state[last_entry_idx].lane_idx = 0;
-                    worker.frontier_state.offer_entry_state[last_entry_idx].offer_lane_mask =
-                        1 << 0;
 
                     let mut permuted_active_entries = ActiveEntrySet::EMPTY;
                     assert!(permuted_active_entries.insert_entry(middle_entry_idx, 0));
@@ -4641,7 +4685,6 @@ fn refresh_frontier_observation_cache_prewarms_after_multi_entry_replacement() {
                         FrontierKind::Route;
                     worker.frontier_state.offer_entry_state[current_idx].active_mask = 1 << 0;
                     worker.frontier_state.offer_entry_state[current_idx].lane_idx = 0;
-                    worker.frontier_state.offer_entry_state[current_idx].offer_lane_mask = 1 << 0;
                     let lane_offer = worker
                         .route_state
                         .lane_offer_state_mut(0)
@@ -4688,7 +4731,6 @@ fn refresh_frontier_observation_cache_prewarms_after_multi_entry_replacement() {
                         parallel_root: ScopeId::none(),
                         frontier: FrontierKind::Parallel,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 1,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -4702,7 +4744,6 @@ fn refresh_frontier_observation_cache_prewarms_after_multi_entry_replacement() {
                         parallel_root: ScopeId::none(),
                         frontier: FrontierKind::Loop,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 0,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -4716,7 +4757,6 @@ fn refresh_frontier_observation_cache_prewarms_after_multi_entry_replacement() {
                         parallel_root: ScopeId::none(),
                         frontier: FrontierKind::PassiveObserver,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 1,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -4808,7 +4848,6 @@ fn refresh_frontier_observation_cache_prewarms_after_multi_entry_replacement() {
                         parallel_root: ScopeId::none(),
                         frontier: FrontierKind::Loop,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 0,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -4823,7 +4862,6 @@ fn refresh_frontier_observation_cache_prewarms_after_multi_entry_replacement() {
                             parallel_root: ScopeId::none(),
                             frontier: FrontierKind::PassiveObserver,
                             scope_id: current_state.scope_id,
-                            offer_lane_mask: 1 << 1,
                             selection_meta: current_state.selection_meta,
                             label_meta: current_state.label_meta,
                             materialization_meta: current_state.materialization_meta,
@@ -5346,7 +5384,6 @@ fn refresh_inserted_frontier_observation_entry_updates_cache_in_place() {
                         parallel_root: current_state.parallel_root,
                         frontier: current_state.frontier,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 0,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -5440,7 +5477,6 @@ fn refresh_replaced_frontier_observation_entry_updates_cache_in_place() {
                         parallel_root: current_state.parallel_root,
                         frontier: current_state.frontier,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 0,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -5506,7 +5542,6 @@ fn refresh_replaced_frontier_observation_entry_updates_cache_in_place() {
                         parallel_root: current_state.parallel_root,
                         frontier: FrontierKind::Loop,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 0,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -5615,7 +5650,6 @@ fn refresh_removed_frontier_observation_entry_updates_cache_in_place() {
                         parallel_root: current_state.parallel_root,
                         frontier: current_state.frontier,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 1,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -5772,7 +5806,6 @@ fn scope_evidence_change_prewarms_relevant_frontier_observation_cache() {
                         parallel_root: ScopeId::none(),
                         frontier: FrontierKind::Route,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 0,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -5885,7 +5918,6 @@ fn binding_inbox_change_prewarms_relevant_frontier_observation_cache() {
                     worker.frontier_state.offer_entry_state[current_idx].summary = static_summary;
                     worker.frontier_state.offer_entry_state[current_idx].frontier =
                         FrontierKind::Route;
-                    worker.frontier_state.offer_entry_state[current_idx].offer_lane_mask = 1 << 0;
                     let lane_offer = worker
                         .route_state
                         .lane_offer_state_mut(0)
@@ -5899,7 +5931,6 @@ fn binding_inbox_change_prewarms_relevant_frontier_observation_cache() {
                         parallel_root: ScopeId::none(),
                         frontier: FrontierKind::Route,
                         scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 1,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -6011,7 +6042,6 @@ fn cached_frontier_changed_entry_slot_mask_ignores_non_representative_route_lane
                     worker.refresh_lane_offer_state(0);
                     let current_idx = worker.cursor.index();
                     let state = &mut worker.frontier_state.offer_entry_state[current_idx];
-                    state.offer_lane_mask = (1 << 0) | (1 << 1);
                     state.lane_idx = 0;
 
                     let mut active_entries = ActiveEntrySet::EMPTY;
@@ -6071,31 +6101,42 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
                                 worker_slot.ptr(),
                                 rv_id,
                                 sid,
-                                &HINT_WORKER_PROGRAM,
+                                &HINT_SPLIT_WORKER_PROGRAM,
                                 NoBinding,
                             )
                             .expect("attach worker endpoint");
                     }
                     let worker = worker_slot.borrow_mut();
 
+                    if LOW_LANE_TEST_WIDTH < 3 {
+                        return;
+                    }
+
                     worker.refresh_lane_offer_state(0);
-                    let current_idx = worker.cursor.index();
+                    worker.refresh_lane_offer_state(2);
+                    let current_idx =
+                        state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
                     let fake_entry_idx = current_idx + 1;
                     assert!(fake_entry_idx < crate::global::typestate::MAX_STATES);
-
                     let current_state = worker.frontier_state.offer_entry_state[current_idx];
                     let mut static_summary = OfferEntryStaticSummary::EMPTY;
                     static_summary.observe_lane(LaneOfferState {
                         frontier: FrontierKind::Route,
                         ..LaneOfferState::EMPTY
                     });
-                    let fake_state = OfferEntryState {
-                        active_mask: 1 << 1,
-                        lane_idx: u8::MAX,
-                        parallel_root: ScopeId::none(),
+                    let lane_two_state = worker.route_state.lane_offer_state(2);
+                    let lane_two_offer = worker
+                        .route_state
+                        .lane_offer_state_mut(2)
+                        .expect("lane 2 offer state");
+                    lane_two_offer.entry = checked_state_index(fake_entry_idx)
+                        .expect("fake entry index fits StateIndex");
+                    worker.frontier_state.offer_entry_state[fake_entry_idx] = OfferEntryState {
+                        active_mask: 1 << 2,
+                        lane_idx: 2,
+                        parallel_root: lane_two_state.parallel_root,
                         frontier: FrontierKind::Route,
-                        scope_id: current_state.scope_id,
-                        offer_lane_mask: 1 << 1,
+                        scope_id: lane_two_state.scope,
                         selection_meta: current_state.selection_meta,
                         label_meta: current_state.label_meta,
                         materialization_meta: current_state.materialization_meta,
@@ -6103,17 +6144,17 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
                         observed: OfferEntryObservedState::EMPTY,
                         ..OfferEntryState::EMPTY
                     };
-                    worker.frontier_state.offer_entry_state[fake_entry_idx] = fake_state;
 
                     let mut active_entries = ActiveEntrySet::EMPTY;
                     assert!(active_entries.insert_entry(current_idx, 0));
                     assert!(active_entries.insert_entry(fake_entry_idx, 1));
                     worker.overwrite_global_active_entries_for_test(active_entries);
-                    let cached_key = RouteFrontierMachine::frontier_observation_key(
+                    let mut cached_key = FrontierObservationKey::EMPTY;
+                    cached_key.copy_from(RouteFrontierMachine::frontier_observation_key(
                         &worker,
                         ScopeId::none(),
                         false,
-                    );
+                    ));
                     let cached_observed_entries =
                         observed_entries_with_ready_current(current_idx, fake_entry_idx);
 
@@ -6123,7 +6164,7 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
                         instance: 0,
                         has_fin: false,
                     };
-                    assert!(worker.binding_inbox.push_back(1, buffered));
+                    assert!(worker.binding_inbox.push_back(2, buffered));
                     let observation_key = RouteFrontierMachine::frontier_observation_key(
                         &worker,
                         ScopeId::none(),
@@ -6296,7 +6337,7 @@ fn has_progress_controller_sibling(
 fn passive_frontier_detects_progress_controller_sibling() {
     let current_scope = ScopeId::generic(71);
     let controller_scope = ScopeId::generic(72);
-    let mut candidates = [FrontierCandidate::EMPTY; MAX_LANES];
+    let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
     candidates[0] = FrontierCandidate {
         scope_id: current_scope,
         entry_idx: 63,
@@ -6326,7 +6367,7 @@ fn passive_frontier_detects_progress_controller_sibling() {
 fn passive_frontier_ignores_controller_without_progress_evidence() {
     let current_scope = ScopeId::generic(171);
     let controller_scope = ScopeId::generic(172);
-    let mut candidates = [FrontierCandidate::EMPTY; MAX_LANES];
+    let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
     candidates[0] = FrontierCandidate {
         scope_id: current_scope,
         entry_idx: 63,
@@ -6360,7 +6401,7 @@ fn passive_frontier_ignores_controller_without_progress_evidence() {
 fn passive_frontier_ignores_non_controller_sibling_for_controller_preemption() {
     let current_scope = ScopeId::generic(81);
     let sibling_scope = ScopeId::generic(82);
-    let mut candidates = [FrontierCandidate::EMPTY; MAX_LANES];
+    let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
     candidates[0] = FrontierCandidate {
         scope_id: current_scope,
         entry_idx: 63,
@@ -6392,7 +6433,7 @@ fn passive_frontier_ignores_non_controller_sibling_for_controller_preemption() {
 
 #[test]
 fn frontier_yield_ping_pong_is_bounded() {
-    let mut visited_slots = [ScopeId::none(); MAX_LANES];
+    let mut visited_slots = [ScopeId::none(); LOW_LANE_TEST_WIDTH];
     let mut visited = FrontierVisitSet::test_from_slice(&mut visited_slots);
     let scope_a = ScopeId::generic(31);
     let scope_b = ScopeId::generic(32);
@@ -6408,7 +6449,7 @@ fn frontier_yield_ping_pong_is_bounded() {
 fn route_defer_yields_to_sibling_scope() {
     let current_scope = ScopeId::generic(41);
     let sibling_scope = ScopeId::generic(42);
-    let mut candidates = [FrontierCandidate::EMPTY; MAX_LANES];
+    let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
     candidates[0] = FrontierCandidate {
         scope_id: current_scope,
         entry_idx: 10,
@@ -6442,7 +6483,7 @@ fn route_defer_yields_to_sibling_scope() {
 fn loop_defer_yields_to_sibling_scope() {
     let current_scope = ScopeId::generic(51);
     let sibling_scope = ScopeId::generic(52);
-    let mut candidates = [FrontierCandidate::EMPTY; MAX_LANES];
+    let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
     candidates[0] = FrontierCandidate {
         scope_id: current_scope,
         entry_idx: 20,
@@ -6477,7 +6518,7 @@ fn defer_yields_across_frontier_in_same_parallel_root() {
     let root = ScopeId::generic(55);
     let current_scope = ScopeId::generic(56);
     let sibling_scope = ScopeId::generic(57);
-    let mut candidates = [FrontierCandidate::EMPTY; MAX_LANES];
+    let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
     candidates[0] = FrontierCandidate {
         scope_id: current_scope,
         entry_idx: 20,
@@ -6512,7 +6553,7 @@ fn parallel_frontier_prefers_ready_lane_before_phase_join() {
     let current_scope = ScopeId::generic(61);
     let root = ScopeId::generic(60);
     let ready_scope = ScopeId::generic(62);
-    let mut candidates = [FrontierCandidate::EMPTY; MAX_LANES];
+    let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
     candidates[0] = FrontierCandidate {
         scope_id: current_scope,
         entry_idx: 30,
@@ -6553,7 +6594,7 @@ fn parallel_frontier_prefers_ready_lane_before_phase_join() {
 fn passive_observer_defer_follow_is_progressive() {
     let current_scope = ScopeId::generic(71);
     let sibling_scope = ScopeId::generic(72);
-    let mut candidates = [FrontierCandidate::EMPTY; MAX_LANES];
+    let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
     candidates[0] = FrontierCandidate {
         scope_id: current_scope,
         entry_idx: 40,
@@ -6576,7 +6617,7 @@ fn passive_observer_defer_follow_is_progressive() {
         &mut candidates,
         2,
     );
-    let mut visited_slots = [ScopeId::none(); MAX_LANES];
+    let mut visited_slots = [ScopeId::none(); LOW_LANE_TEST_WIDTH];
     let mut visited = FrontierVisitSet::test_from_slice(&mut visited_slots);
     visited.record(current_scope);
     let picked = snapshot
@@ -6591,7 +6632,7 @@ fn passive_observer_defer_stops_without_progress_evidence() {
     let root = ScopeId::generic(73);
     let current_scope = ScopeId::generic(74);
     let sibling_scope = ScopeId::generic(75);
-    let mut candidates = [FrontierCandidate::EMPTY; MAX_LANES];
+    let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
     candidates[0] = FrontierCandidate {
         scope_id: current_scope,
         entry_idx: 50,
@@ -6614,7 +6655,7 @@ fn passive_observer_defer_stops_without_progress_evidence() {
         &mut candidates,
         2,
     );
-    let mut visited_slots = [ScopeId::none(); MAX_LANES];
+    let mut visited_slots = [ScopeId::none(); LOW_LANE_TEST_WIDTH];
     let mut visited = FrontierVisitSet::test_from_slice(&mut visited_slots);
     visited.record(current_scope);
     assert_eq!(snapshot.select_yield_candidate(visited), None);
@@ -6641,7 +6682,7 @@ fn frontier_arbitration_is_uniform_across_route_loop_parallel_observer() {
         let (parallel_root, frontier) = cases[idx];
         let current_scope = ScopeId::generic((110 + idx) as u16);
         let sibling_scope = ScopeId::generic((120 + idx) as u16);
-        let mut candidates = [FrontierCandidate::EMPTY; MAX_LANES];
+        let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
         candidates[0] = FrontierCandidate {
             scope_id: current_scope,
             entry_idx: (70 + idx) as u16,
@@ -6867,7 +6908,15 @@ fn select_scope_prepass_keeps_pending_scope_evidence_non_consuming() {
                             "matching route hint must remain queued on the port after prepass"
                         );
 
-                        worker.ingest_scope_evidence_for_offer(scope, 0, 1 << 0, true, label_meta);
+                        with_test_lane_set(&[0], |offer_lanes| {
+                            worker.ingest_scope_evidence_for_offer_lanes(
+                                scope,
+                                0,
+                                offer_lanes,
+                                true,
+                                label_meta,
+                            );
+                        });
 
                         assert_eq!(
                             worker
@@ -7041,7 +7090,6 @@ fn preview_offer_entry_evidence_defers_binding_poll_until_selected_scope() {
                         let picked = worker.poll_binding_for_offer(
                             scope,
                             entry_state.lane_idx as usize,
-                            entry_state.offer_lane_mask,
                             entry_state.label_meta,
                             entry_state.materialization_meta,
                         );
@@ -7116,7 +7164,15 @@ fn hint_or_classification_never_writes_ack_authority() {
 
                     let label_meta = endpoint_scope_label_meta(worker, scope, ScopeLoopMeta::EMPTY);
 
-                    worker.ingest_scope_evidence_for_offer(scope, 0, 1 << 0, true, label_meta);
+                    with_test_lane_set(&[0], |offer_lanes| {
+                        worker.ingest_scope_evidence_for_offer_lanes(
+                            scope,
+                            0,
+                            offer_lanes,
+                            true,
+                            label_meta,
+                        );
+                    });
                     assert!(
                         worker.peek_scope_ack(scope).is_none(),
                         "dynamic hint ingest must not mint ack authority"
@@ -7126,7 +7182,6 @@ fn hint_or_classification_never_writes_ack_authority() {
                     worker.cache_binding_classification_for_offer(
                         scope,
                         0,
-                        1 << 0,
                         label_meta,
                         worker.offer_scope_materialization_meta(scope, 0),
                         &mut binding_classification,
@@ -7250,7 +7305,6 @@ fn poll_binding_for_offer_prefers_exact_label_for_ack_arm() {
                         let picked = worker.poll_binding_for_offer(
                             scope,
                             entry_state.lane_idx as usize,
-                            entry_state.offer_lane_mask,
                             label_meta,
                             entry_state.materialization_meta,
                         );
@@ -7349,13 +7403,15 @@ fn poll_binding_for_offer_prefers_buffered_matching_lane_before_empty_poll_lane(
                             RouteDecisionToken::from_ack(Arm::new(1).expect("binary route arm")),
                         );
 
-                        let picked = worker.poll_binding_for_offer(
-                            scope,
-                            0,
-                            (1 << 0) | (1 << 2),
-                            label_meta,
-                            worker.offer_scope_materialization_meta(scope, 0),
-                        );
+                        let picked = with_test_lane_set(&[0, 2], |offer_lanes| {
+                            worker.poll_binding_for_offer_lanes(
+                                scope,
+                                0,
+                                offer_lanes,
+                                label_meta,
+                                worker.offer_scope_materialization_meta(scope, 0),
+                            )
+                        });
                         assert_eq!(
                             picked,
                             Some((2, buffered)),
@@ -7446,22 +7502,22 @@ fn poll_binding_for_offer_skips_non_demux_lanes_for_authoritative_arm() {
                                 | ScopeLabelMeta::FLAG_CONTROLLER_ARM1,
                             ..ScopeLabelMeta::EMPTY
                         };
-                        let materialization_meta = ScopeArmMaterializationMeta {
-                            binding_demux_lane_mask: [0, 1 << 2],
-                            ..ScopeArmMaterializationMeta::EMPTY
-                        };
+                        let materialization_meta =
+                            worker.compute_scope_arm_materialization_meta(scope);
                         worker.record_scope_ack(
                             scope,
                             RouteDecisionToken::from_ack(Arm::new(1).expect("binary route arm")),
                         );
 
-                        let picked = worker.poll_binding_for_offer(
-                            scope,
-                            0,
-                            (1 << 0) | (1 << 2),
-                            label_meta,
-                            materialization_meta,
-                        );
+                        let picked = with_test_lane_set(&[0, 2], |offer_lanes| {
+                            worker.poll_binding_for_offer_lanes(
+                                scope,
+                                0,
+                                offer_lanes,
+                                label_meta,
+                                materialization_meta,
+                            )
+                        });
                         assert_eq!(picked, Some((2, matching)));
                         assert_eq!(
                             worker.binding_inbox.take_matching_or_poll(
@@ -7569,7 +7625,6 @@ fn poll_binding_for_offer_prefers_authoritative_arm_label_mask_when_non_singleto
                         let picked = worker.poll_binding_for_offer(
                             scope,
                             entry_state.lane_idx as usize,
-                            entry_state.offer_lane_mask,
                             label_meta,
                             entry_state.materialization_meta,
                         );
@@ -7663,18 +7718,17 @@ fn poll_binding_for_offer_uses_label_mask_to_skip_other_arm_lanes_without_author
                                 | ScopeLabelMeta::FLAG_CONTROLLER_ARM1,
                             ..ScopeLabelMeta::EMPTY
                         };
-                        let materialization_meta = ScopeArmMaterializationMeta {
-                            binding_demux_lane_mask: [1 << 0, 1 << 2],
-                            ..ScopeArmMaterializationMeta::EMPTY
-                        };
-
-                        let picked = worker.poll_binding_for_offer(
-                            scope,
-                            0,
-                            (1 << 0) | (1 << 2),
-                            label_meta,
-                            materialization_meta,
-                        );
+                        let materialization_meta =
+                            worker.compute_scope_arm_materialization_meta(scope);
+                        let picked = with_test_lane_set(&[0, 2], |offer_lanes| {
+                            worker.poll_binding_for_offer_lanes(
+                                scope,
+                                0,
+                                offer_lanes,
+                                label_meta,
+                                materialization_meta,
+                            )
+                        });
                         assert_eq!(picked, Some((2, matching)));
                         assert_eq!(
                             worker.binding_inbox.take_matching_or_poll(
@@ -7760,18 +7814,17 @@ fn poll_binding_for_offer_buffered_match_skips_drop_only_preferred_lane_for_non_
                                 | ScopeLabelMeta::FLAG_CONTROLLER_ARM1,
                             ..ScopeLabelMeta::EMPTY
                         };
-                        let materialization_meta = ScopeArmMaterializationMeta {
-                            binding_demux_lane_mask: [1 << 0, 1 << 2],
-                            ..ScopeArmMaterializationMeta::EMPTY
-                        };
-
-                        let picked = worker.poll_binding_for_offer(
-                            scope,
-                            0,
-                            (1 << 0) | (1 << 2),
-                            label_meta,
-                            materialization_meta,
-                        );
+                        let materialization_meta =
+                            worker.compute_scope_arm_materialization_meta(scope);
+                        let picked = with_test_lane_set(&[0, 2], |offer_lanes| {
+                            worker.poll_binding_for_offer_lanes(
+                                scope,
+                                0,
+                                offer_lanes,
+                                label_meta,
+                                materialization_meta,
+                            )
+                        });
                         assert_eq!(picked, Some((2, matching)));
                         assert_eq!(
                             worker.binding_inbox.take_matching_or_poll(
@@ -7815,7 +7868,7 @@ fn poll_binding_for_offer_polls_only_selected_lane_for_unbuffered_generic_mask()
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_CONTROLLER_PROGRAM,
+                                    &HINT_SPLIT_CONTROLLER_PROGRAM,
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -7824,7 +7877,7 @@ fn poll_binding_for_offer_polls_only_selected_lane_for_unbuffered_generic_mask()
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_SPLIT_WORKER_PROGRAM,
                                     LaneAwareTestBinding::with_lane_incoming(&[(2, matching)]),
                                 )
                                 .expect("attach worker endpoint");
@@ -7847,18 +7900,18 @@ fn poll_binding_for_offer_polls_only_selected_lane_for_unbuffered_generic_mask()
                                 | ScopeLabelMeta::FLAG_CONTROLLER_ARM1,
                             ..ScopeLabelMeta::EMPTY
                         };
-                        let materialization_meta = ScopeArmMaterializationMeta {
-                            binding_demux_lane_mask: [1 << 0, 1 << 2],
-                            ..ScopeArmMaterializationMeta::EMPTY
-                        };
+                        let materialization_meta =
+                            worker.compute_scope_arm_materialization_meta(scope);
 
-                        let picked = worker.poll_binding_for_offer(
-                            scope,
-                            0,
-                            (1 << 0) | (1 << 2),
-                            label_meta,
-                            materialization_meta,
-                        );
+                        let picked = with_test_lane_set(&[0, 2], |offer_lanes| {
+                            worker.poll_binding_for_offer_lanes(
+                                scope,
+                                0,
+                                offer_lanes,
+                                label_meta,
+                                materialization_meta,
+                            )
+                        });
                         assert_eq!(
                             picked, None,
                             "generic mask path must not probe unbuffered cross-lane bindings before the selected lane"
@@ -7866,13 +7919,15 @@ fn poll_binding_for_offer_polls_only_selected_lane_for_unbuffered_generic_mask()
                         assert_eq!(worker.binding.poll_count_for_lane(0), 1);
                         assert_eq!(worker.binding.poll_count_for_lane(2), 0);
 
-                        let picked = worker.poll_binding_for_offer(
-                            scope,
-                            2,
-                            (1 << 0) | (1 << 2),
-                            label_meta,
-                            materialization_meta,
-                        );
+                        let picked = with_test_lane_set(&[0, 2], |offer_lanes| {
+                            worker.poll_binding_for_offer_lanes(
+                                scope,
+                                2,
+                                offer_lanes,
+                                label_meta,
+                                materialization_meta,
+                            )
+                        });
                         assert_eq!(picked, Some((2, matching)));
                         assert_eq!(worker.binding.poll_count_for_lane(2), 1);
                     });
@@ -7908,7 +7963,7 @@ fn poll_binding_for_offer_polls_authoritative_demux_lane_when_current_lane_is_ex
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_CONTROLLER_PROGRAM,
+                                    &HINT_SPLIT_CONTROLLER_PROGRAM,
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -7917,7 +7972,7 @@ fn poll_binding_for_offer_polls_authoritative_demux_lane_when_current_lane_is_ex
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_SPLIT_WORKER_PROGRAM,
                                     LaneAwareTestBinding::with_lane_incoming(&[(2, matching)]),
                                 )
                                 .expect("attach worker endpoint");
@@ -7939,18 +7994,18 @@ fn poll_binding_for_offer_polls_authoritative_demux_lane_when_current_lane_is_ex
                             flags: ScopeLabelMeta::FLAG_CONTROLLER_ARM1,
                             ..ScopeLabelMeta::EMPTY
                         };
-                        let materialization_meta = ScopeArmMaterializationMeta {
-                            binding_demux_lane_mask: [0, 1 << 2],
-                            ..ScopeArmMaterializationMeta::EMPTY
-                        };
+                        let materialization_meta =
+                            worker.compute_scope_arm_materialization_meta(scope);
 
-                        let picked = worker.poll_binding_for_offer(
-                            scope,
-                            0,
-                            (1 << 0) | (1 << 2),
-                            label_meta,
-                            materialization_meta,
-                        );
+                        let picked = with_test_lane_set(&[0, 2], |offer_lanes| {
+                            worker.poll_binding_for_offer_lanes(
+                                scope,
+                                0,
+                                offer_lanes,
+                                label_meta,
+                                materialization_meta,
+                            )
+                        });
                         assert_eq!(picked, Some((2, matching)));
                         assert_eq!(worker.binding.poll_count_for_lane(0), 0);
                         assert_eq!(worker.binding.poll_count_for_lane(2), 1);
@@ -8150,14 +8205,21 @@ fn static_passive_binding_label_materializes_poll() {
             worker.cache_binding_classification_for_offer(
                 scope,
                 0,
-                1 << 0,
                 label_meta,
                 worker.offer_scope_materialization_meta(scope, 0),
                 &mut binding_classification,
             );
             let classification =
                 binding_classification.expect("binding classification should be staged for poll");
-            worker.ingest_scope_evidence_for_offer(scope, 0, 1 << 0, false, label_meta);
+            with_test_lane_set(&[0], |offer_lanes| {
+                worker.ingest_scope_evidence_for_offer_lanes(
+                    scope,
+                    0,
+                    offer_lanes,
+                    false,
+                    label_meta,
+                );
+            });
             worker.ingest_binding_scope_evidence(scope, classification.label, false, label_meta);
 
             assert!(
@@ -8259,7 +8321,15 @@ fn static_passive_staged_transport_hint_materializes_poll() {
                 );
 
                 let label_meta = endpoint_scope_label_meta(&worker, scope, ScopeLoopMeta::EMPTY);
-                worker.ingest_scope_evidence_for_offer(scope, 0, 1 << 0, false, label_meta);
+                with_test_lane_set(&[0], |offer_lanes| {
+                    worker.ingest_scope_evidence_for_offer_lanes(
+                        scope,
+                        0,
+                        offer_lanes,
+                        false,
+                        label_meta,
+                    );
+                });
 
                 assert_eq!(
                     worker.poll_arm_from_ready_mask(scope),
@@ -8366,13 +8436,15 @@ fn nested_static_passive_binding_dispatch_materializes_poll_on_ancestor_scopes()
                         {
                             let label_meta =
                                 endpoint_scope_label_meta(worker, scope, ScopeLoopMeta::EMPTY);
-                            worker.ingest_scope_evidence_for_offer(
-                                scope,
-                                0,
-                                1 << 0,
-                                false,
-                                label_meta,
-                            );
+                            with_test_lane_set(&[0], |offer_lanes| {
+                                worker.ingest_scope_evidence_for_offer_lanes(
+                                    scope,
+                                    0,
+                                    offer_lanes,
+                                    false,
+                                    label_meta,
+                                );
+                            });
                             worker.ingest_binding_scope_evidence(scope, 0x51, false, label_meta);
                             assert_eq!(
                                 worker.poll_arm_from_ready_mask(scope),
@@ -8475,7 +8547,15 @@ fn deep_right_nested_static_passive_binding_dispatch_materializes_poll_on_all_an
 
                 let label_meta =
                     endpoint_scope_label_meta(worker, outer_scope, ScopeLoopMeta::EMPTY);
-                worker.ingest_scope_evidence_for_offer(outer_scope, 0, 1 << 0, false, label_meta);
+                with_test_lane_set(&[0], |offer_lanes| {
+                    worker.ingest_scope_evidence_for_offer_lanes(
+                        outer_scope,
+                        0,
+                        offer_lanes,
+                        false,
+                        label_meta,
+                    );
+                });
                 worker.ingest_binding_scope_evidence(outer_scope, 0x55, false, label_meta);
 
                 for scope in [outer_scope, middle_scope, third_scope, final_scope] {
@@ -9460,7 +9540,7 @@ fn lane_offer_state_reenters_same_route_scope_using_offer_entry() {
 
                     controller.refresh_lane_offer_state(0);
                     assert_ne!(
-                        controller.route_state.active_offer_mask & 0b0000_0001,
+                        controller.route_state.active_offer_mask() & 0b0000_0001,
                         0,
                         "lane must remain pending while re-entering the same route scope"
                     );

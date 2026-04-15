@@ -9,7 +9,8 @@ use super::{
         state_index_to_usize,
     },
     registry::{
-        CONTROLLER_ROLE_NONE, RouteScopeRecord, SCOPE_LINK_NONE, ScopeRecord, offer_lane_bit,
+        CONTROLLER_ROLE_NONE, RouteScopeRecord, RouteScopeScratchRecord, SCOPE_LINK_NONE,
+        ScopeRecord, insert_offer_lane,
     },
     route_facts::{
         MAX_PREFIX_ACTIONS, PREFIX_KIND_LOCAL, PREFIX_KIND_SEND, PrefixAction,
@@ -46,7 +47,7 @@ pub(crate) struct RoleTypestateBuildScratch {
     pub(super) route_enter_count: [u8; MAX_SCOPE_SCRATCH],
     pub(super) route_passive_arm_start: [[u16; 2]; MAX_SCOPE_SCRATCH],
     pub(super) route_is_passive: [bool; MAX_SCOPE_SCRATCH],
-    pub(super) route_scope_entries: [RouteScopeRecord; MAX_SCOPE_SCRATCH],
+    pub(super) route_scope_entries: [RouteScopeScratchRecord; MAX_SCOPE_SCRATCH],
     pub(super) dispatch_table: [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     pub(super) prefix_actions: [[PrefixAction; MAX_PREFIX_ACTIONS]; 2],
     pub(super) prefix_lens: [usize; 2],
@@ -82,7 +83,7 @@ impl RoleTypestateBuildScratch {
             route_enter_count: [0; MAX_SCOPE_SCRATCH],
             route_passive_arm_start: [[ROUTE_PASSIVE_ARM_UNSET; 2]; MAX_SCOPE_SCRATCH],
             route_is_passive: [false; MAX_SCOPE_SCRATCH],
-            route_scope_entries: [RouteScopeRecord::EMPTY; MAX_SCOPE_SCRATCH],
+            route_scope_entries: [RouteScopeScratchRecord::EMPTY; MAX_SCOPE_SCRATCH],
             dispatch_table: [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH],
             prefix_actions: [[PrefixAction::EMPTY; MAX_PREFIX_ACTIONS]; 2],
             prefix_lens: [0; 2],
@@ -133,7 +134,7 @@ impl RoleTypestateBuildScratch {
             let mut recv_idx = 0usize;
             while recv_idx < MAX_SCOPE_SCRATCH {
                 core::ptr::addr_of_mut!((*dst).route_scope_entries[recv_idx])
-                    .write(RouteScopeRecord::EMPTY);
+                    .write(RouteScopeScratchRecord::EMPTY);
                 recv_idx += 1;
             }
 
@@ -183,6 +184,7 @@ use crate::{
         ControlLabelSpec, LoopControlMeaning,
         compiled::LoweringView,
         const_dsl::{PolicyMode, ScopeEvent, ScopeId, ScopeKind},
+        role_program::LaneWord,
     },
 };
 
@@ -276,6 +278,15 @@ fn clear_visited(visited: &mut [bool; MAX_STATES]) {
     }
 }
 
+#[inline(always)]
+fn route_scope_lane_words_mut(
+    lane_words: &mut [LaneWord],
+    lane_word_start: usize,
+    lane_word_len: usize,
+) -> &mut [LaneWord] {
+    &mut lane_words[lane_word_start..lane_word_start + lane_word_len]
+}
+
 #[inline(never)]
 fn merge_dispatch_entry(
     nodes: &[LocalNode],
@@ -324,7 +335,7 @@ fn merge_nested_dispatch_entries(
     nodes: &[LocalNode],
     scope_end: StateIndex,
     scope_entries: &[ScopeRecord],
-    route_scope_entries: &[RouteScopeRecord],
+    route_scope_entries: &[RouteScopeScratchRecord],
     scope_entries_len: usize,
     nested_ordinal: u16,
     arm: u8,
@@ -358,24 +369,46 @@ fn merge_nested_dispatch_entries(
     false
 }
 
+struct RouteFinalizeCtx<'a> {
+    nodes: &'a mut [LocalNode],
+    scope_entries: &'a mut [ScopeRecord],
+    scope_controller_roles: &'a [u8; MAX_SCOPE_SCRATCH],
+    scope_route_policy_effs: &'a [EffIndex; MAX_SCOPE_SCRATCH],
+    route_scope_entries: &'a mut [RouteScopeScratchRecord],
+    route_scope_offer_lane_words: &'a mut [LaneWord],
+    route_lane_word_len: usize,
+    scope_entries_len: usize,
+    dispatch_table: &'a mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
+    prefix_actions: &'a mut [[PrefixAction; MAX_PREFIX_ACTIONS]; 2],
+    prefix_lens: &'a mut [usize; 2],
+    arm_seen_recv: &'a mut [bool; 2],
+    scan_stack: &'a mut [StateIndex; eff::meta::MAX_EFF_NODES],
+    visited: &'a mut [bool; MAX_STATES],
+}
+
 #[inline(never)]
 fn finalize_route_scope_exit_for_role(
+    ctx: &mut RouteFinalizeCtx<'_>,
     role: u8,
-    nodes: &mut [LocalNode],
     node_len: usize,
     entry_idx: usize,
-    scope_entries: &mut [ScopeRecord],
-    scope_controller_roles: &[u8; MAX_SCOPE_SCRATCH],
-    scope_route_policy_effs: &[EffIndex; MAX_SCOPE_SCRATCH],
-    route_scope_entries: &mut [RouteScopeRecord],
-    scope_entries_len: usize,
-    dispatch_table: &mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
-    prefix_actions: &mut [[PrefixAction; MAX_PREFIX_ACTIONS]; 2],
-    prefix_lens: &mut [usize; 2],
-    arm_seen_recv: &mut [bool; 2],
-    scan_stack: &mut [StateIndex; eff::meta::MAX_EFF_NODES],
-    visited: &mut [bool; MAX_STATES],
 ) -> bool {
+    let RouteFinalizeCtx {
+        nodes,
+        scope_entries,
+        scope_controller_roles,
+        scope_route_policy_effs,
+        route_scope_entries,
+        route_scope_offer_lane_words,
+        route_lane_word_len,
+        scope_entries_len,
+        dispatch_table,
+        prefix_actions,
+        prefix_lens,
+        arm_seen_recv,
+        scan_stack,
+        visited,
+    } = ctx;
     let mut offer_entry_locked = false;
     let scope_id = scope_entries[entry_idx].scope_id.to_scope_id();
     let is_linger = scope_entries[entry_idx].linger;
@@ -453,7 +486,13 @@ fn finalize_route_scope_exit_for_role(
                     }
 
                     route_scope_entries[entry_idx].route_recv = [StateIndex::MAX, StateIndex::MAX];
-                    route_scope_entries[entry_idx].offer_lanes = 0;
+                    let lane_word_start = route_scope_entries[entry_idx].lane_word_start();
+                    route_scope_lane_words_mut(
+                        route_scope_offer_lane_words,
+                        lane_word_start,
+                        *route_lane_word_len,
+                    )
+                    .fill(0);
                     if prefix_end0.raw() != prefix_end1.raw() {
                         let mut arm = 0u8;
                         while arm < 2 {
@@ -467,8 +506,14 @@ fn finalize_route_scope_exit_for_role(
                                 {
                                     route_scope_entries[entry_idx].route_recv[arm as usize] =
                                         arm_entry;
-                                    route_scope_entries[entry_idx].offer_lanes |=
-                                        offer_lane_bit(lane);
+                                    insert_offer_lane(
+                        route_scope_lane_words_mut(
+                            route_scope_offer_lane_words,
+                            lane_word_start,
+                            *route_lane_word_len,
+                        ),
+                        lane,
+                    );
                                 }
                             }
                             arm += 1;
@@ -491,7 +536,7 @@ fn finalize_route_scope_exit_for_role(
 
     if is_controller {
         clear_dispatch_table(dispatch_table);
-        route_scope_entries[entry_idx].first_recv_dispatch = *dispatch_table;
+        route_scope_entries[entry_idx].first_recv_dispatch = **dispatch_table;
         route_scope_entries[entry_idx].first_recv_len = 0;
         return offer_entry_locked;
     }
@@ -500,8 +545,8 @@ fn finalize_route_scope_exit_for_role(
     let mut dispatch_functional = true;
     clear_dispatch_table(dispatch_table);
     clear_prefix_actions(prefix_actions);
-    *prefix_lens = [0; 2];
-    *arm_seen_recv = [false; 2];
+    **prefix_lens = [0; 2];
+    **arm_seen_recv = [false; 2];
 
     let mut arm = 0u8;
     while arm < 2 {
@@ -536,7 +581,7 @@ fn finalize_route_scope_exit_for_role(
                         scope_end,
                         scope_entries,
                         route_scope_entries,
-                        scope_entries_len,
+                        *scope_entries_len,
                         nested_ordinal,
                         arm,
                         dispatch_table,
@@ -571,7 +616,7 @@ fn finalize_route_scope_exit_for_role(
                                 scope_end,
                                 scope_entries,
                                 route_scope_entries,
-                                scope_entries_len,
+                                *scope_entries_len,
                                 nested_ordinal,
                                 arm,
                                 dispatch_table,
@@ -614,7 +659,7 @@ fn finalize_route_scope_exit_for_role(
                                     scope_end,
                                     scope_entries,
                                     route_scope_entries,
-                                    scope_entries_len,
+                                    *scope_entries_len,
                                     nested_ordinal,
                                     arm,
                                     dispatch_table,
@@ -660,7 +705,7 @@ fn finalize_route_scope_exit_for_role(
                                     scope_end,
                                     scope_entries,
                                     route_scope_entries,
-                                    scope_entries_len,
+                                    *scope_entries_len,
                                     nested_ordinal,
                                     arm,
                                     dispatch_table,
@@ -706,7 +751,7 @@ fn finalize_route_scope_exit_for_role(
                                     scope_end,
                                     scope_entries,
                                     route_scope_entries,
-                                    scope_entries_len,
+                                    *scope_entries_len,
                                     nested_ordinal,
                                     arm,
                                     dispatch_table,
@@ -752,26 +797,29 @@ fn finalize_route_scope_exit_for_role(
     if mergeable {
         scope_entries[entry_idx].arm_entry[1] = scope_entries[entry_idx].arm_entry[0];
         clear_dispatch_table(dispatch_table);
-        route_scope_entries[entry_idx].first_recv_dispatch = *dispatch_table;
+        route_scope_entries[entry_idx].first_recv_dispatch = **dispatch_table;
         route_scope_entries[entry_idx].first_recv_len = 0;
     } else if dispatch_functional && dispatch_len > 0 {
-        route_scope_entries[entry_idx].first_recv_dispatch = *dispatch_table;
+        route_scope_entries[entry_idx].first_recv_dispatch = **dispatch_table;
         route_scope_entries[entry_idx].first_recv_len = dispatch_len;
-        let mut offer_lanes = route_scope_entries[entry_idx].offer_lanes;
+        let offer_lanes = route_scope_lane_words_mut(
+            route_scope_offer_lane_words,
+            route_scope_entries[entry_idx].lane_word_start(),
+            *route_lane_word_len,
+        );
         let mut di = 0u8;
         while di < dispatch_len {
             let target_idx = state_index_to_usize(dispatch_table[di as usize].2);
             if target_idx < node_len
                 && let LocalAction::Recv { lane, .. } = nodes[target_idx].action()
             {
-                offer_lanes |= offer_lane_bit(lane);
+                insert_offer_lane(offer_lanes, lane);
             }
             di += 1;
         }
-        route_scope_entries[entry_idx].offer_lanes = offer_lanes;
     } else if scope_route_policy_effs[entry_idx] != EffIndex::MAX {
         clear_dispatch_table(dispatch_table);
-        route_scope_entries[entry_idx].first_recv_dispatch = *dispatch_table;
+        route_scope_entries[entry_idx].first_recv_dispatch = **dispatch_table;
         route_scope_entries[entry_idx].first_recv_len = 0;
     } else {
         panic!(
@@ -780,6 +828,825 @@ fn finalize_route_scope_exit_for_role(
     }
 
     offer_entry_locked
+}
+
+#[inline(never)]
+fn handle_scope_exit_for_role(
+    nodes: &mut [LocalNode],
+    node_len: &mut usize,
+    scope_markers: &[crate::global::const_dsl::ScopeMarker],
+    scope_marker_idx: usize,
+    scope: ScopeId,
+    role: u8,
+    scope_stack: &[ScopeId; MAX_SCOPE_SCRATCH],
+    _scope_stack_kinds: &[ScopeKind; MAX_SCOPE_SCRATCH],
+    scope_stack_entries: &[u16; MAX_SCOPE_SCRATCH],
+    scope_stack_len: &mut usize,
+    scope_entries: &mut [ScopeRecord],
+    scope_entries_len: usize,
+    scope_controller_roles: &[u8; MAX_SCOPE_SCRATCH],
+    scope_route_policy_effs: &[EffIndex; MAX_SCOPE_SCRATCH],
+    route_scope_entries: &mut [RouteScopeScratchRecord],
+    route_scope_offer_lane_words: &mut [LaneWord],
+    route_lane_word_len: usize,
+    linger_arm_len: usize,
+    linger_arm_scope_ids: &[ScopeId; MAX_SCOPE_SCRATCH],
+    linger_arm_last_node: &[[u16; 2]; MAX_SCOPE_SCRATCH],
+    jump_backpatch_indices: &mut [u16; MAX_JUMP_BACKPATCH],
+    jump_backpatch_scopes: &mut [ScopeId; MAX_JUMP_BACKPATCH],
+    jump_backpatch_kinds: &mut [u8; MAX_JUMP_BACKPATCH],
+    jump_backpatch_len: &mut usize,
+    route_arm_last_node: &[[StateIndex; 2]; MAX_SCOPE_SCRATCH],
+    last_step_was_scope: &mut [bool; MAX_SCOPE_SCRATCH],
+    dispatch_table: &mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
+    prefix_actions: &mut [[PrefixAction; MAX_PREFIX_ACTIONS]; 2],
+    prefix_lens: &mut [usize; 2],
+    arm_seen_recv: &mut [bool; 2],
+    scan_stack: &mut [StateIndex; eff::meta::MAX_EFF_NODES],
+    visited: &mut [bool; MAX_STATES],
+) {
+    if *scope_stack_len == 0 {
+        panic!("structured scope stack underflow");
+    }
+    *scope_stack_len -= 1;
+    let expected = scope_stack[*scope_stack_len];
+    if expected.local_ordinal() != scope.local_ordinal() {
+        panic!("structured scope stack mismatch");
+    }
+    let entry_idx = scope_stack_entries[*scope_stack_len] as usize;
+    let is_linger = scope_entries[entry_idx].linger;
+    let mut offer_entry_locked = false;
+
+    let next_marker_idx = scope_marker_idx + 1;
+    let is_immediate_reenter = next_marker_idx < scope_markers.len()
+        && scope_markers[next_marker_idx].offset == scope_markers[scope_marker_idx].offset
+        && matches!(scope_markers[next_marker_idx].event, ScopeEvent::Enter)
+        && scope_markers[next_marker_idx].scope_id.local_ordinal() == scope.local_ordinal();
+
+    if is_linger {
+        let mut linger_idx = 0usize;
+        while linger_idx < linger_arm_len {
+            if linger_arm_scope_ids[linger_idx].local_ordinal() == scope.local_ordinal() {
+                break;
+            }
+            linger_idx += 1;
+        }
+
+        if linger_idx < linger_arm_len {
+            let arm_last = linger_arm_last_node[linger_idx];
+            let loop_start = scope_entries[entry_idx].start;
+            let controller_role = scope_controller_roles[entry_idx];
+            let is_passive = controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
+            let passive_starts = if is_passive {
+                let arm0_start = if !scope_entries[entry_idx].arm_entry[0].is_max() {
+                    state_index_to_usize(scope_entries[entry_idx].arm_entry[0])
+                } else {
+                    usize::from(LINGER_ARM_NO_NODE)
+                };
+                let arm1_start = if !scope_entries[entry_idx].arm_entry[1].is_max() {
+                    state_index_to_usize(scope_entries[entry_idx].arm_entry[1])
+                } else {
+                    usize::from(LINGER_ARM_NO_NODE)
+                };
+                [arm0_start, arm1_start]
+            } else {
+                [usize::from(LINGER_ARM_NO_NODE), usize::from(LINGER_ARM_NO_NODE)]
+            };
+
+            if is_immediate_reenter {
+                if is_passive && passive_starts[0] != usize::from(LINGER_ARM_NO_NODE) {
+                    if *node_len >= MAX_STATES {
+                        panic!(
+                            "node capacity exceeded inserting PassiveObserverBranch Jump for arm 0"
+                        );
+                    }
+                    let continue_target = as_state_index(passive_starts[0]);
+                    let jump_node = LocalNode::jump(
+                        continue_target,
+                        JumpReason::PassiveObserverBranch,
+                        scope,
+                        Some(scope),
+                        Some(0),
+                    );
+                    nodes[*node_len] = jump_node;
+                    route_scope_entries[entry_idx].passive_arm_jump[0] = as_state_index(*node_len);
+                    *node_len += 1;
+                    if arm_last[0] != LINGER_ARM_NO_NODE {
+                        if *node_len >= MAX_STATES {
+                            panic!(
+                                "node capacity exceeded inserting LoopContinue Jump for passive"
+                            );
+                        }
+                        let jump_node = LocalNode::jump(
+                            loop_start,
+                            JumpReason::LoopContinue,
+                            scope,
+                            Some(scope),
+                            Some(0),
+                        );
+                        let prev_idx = arm_last[0] as usize;
+                        nodes[prev_idx] = nodes[prev_idx].with_next(as_state_index(*node_len));
+                        nodes[*node_len] = jump_node;
+                        *node_len += 1;
+                    }
+                } else if arm_last[0] != LINGER_ARM_NO_NODE {
+                    if *node_len >= MAX_STATES {
+                        panic!("node capacity exceeded inserting LoopContinue Jump");
+                    }
+                    let jump_node = LocalNode::jump(
+                        loop_start,
+                        JumpReason::LoopContinue,
+                        scope,
+                        Some(scope),
+                        Some(0),
+                    );
+                    let prev_idx = arm_last[0] as usize;
+                    nodes[prev_idx] = nodes[prev_idx].with_next(as_state_index(*node_len));
+                    nodes[*node_len] = jump_node;
+                    *node_len += 1;
+                } else if passive_starts[0] != usize::from(LINGER_ARM_NO_NODE) {
+                    if *node_len >= MAX_STATES {
+                        panic!(
+                            "node capacity exceeded inserting PassiveObserverBranch Jump for arm 0"
+                        );
+                    }
+                    let continue_target = as_state_index(passive_starts[0]);
+                    let jump_node = LocalNode::jump(
+                        continue_target,
+                        JumpReason::PassiveObserverBranch,
+                        scope,
+                        Some(scope),
+                        Some(0),
+                    );
+                    nodes[*node_len] = jump_node;
+                    route_scope_entries[entry_idx].passive_arm_jump[0] = as_state_index(*node_len);
+                    *node_len += 1;
+                }
+            } else if arm_last[1] != LINGER_ARM_NO_NODE {
+                if *node_len >= MAX_STATES {
+                    panic!("node capacity exceeded inserting LoopBreak Jump");
+                }
+                let jump_node = LocalNode::jump(
+                    StateIndex::ZERO,
+                    JumpReason::LoopBreak,
+                    scope,
+                    Some(scope),
+                    Some(1),
+                );
+                let prev_idx = arm_last[1] as usize;
+                nodes[prev_idx] = nodes[prev_idx].with_next(as_state_index(*node_len));
+                nodes[*node_len] = jump_node;
+                if *jump_backpatch_len >= MAX_JUMP_BACKPATCH {
+                    panic!("jump backpatch capacity exceeded for LoopBreak");
+                }
+                jump_backpatch_indices[*jump_backpatch_len] = *node_len as u16;
+                jump_backpatch_scopes[*jump_backpatch_len] = scope;
+                jump_backpatch_kinds[*jump_backpatch_len] = 1;
+                *jump_backpatch_len += 1;
+                *node_len += 1;
+            } else if is_passive && passive_starts[1] != usize::from(LINGER_ARM_NO_NODE) {
+                if *node_len >= MAX_STATES {
+                    panic!(
+                        "node capacity exceeded inserting PassiveObserverBranch Jump for arm 1"
+                    );
+                }
+                let arm_is_empty = passive_starts[1] == *node_len;
+                if *node_len > 0 && passive_starts[1] < *node_len {
+                    let arm_last_node = *node_len - 1;
+                    if !nodes[arm_last_node].action().is_jump() {
+                        if *jump_backpatch_len >= MAX_JUMP_BACKPATCH {
+                            panic!("jump backpatch capacity exceeded for arm last node");
+                        }
+                        jump_backpatch_indices[*jump_backpatch_len] = arm_last_node as u16;
+                        jump_backpatch_scopes[*jump_backpatch_len] = scope;
+                        jump_backpatch_kinds[*jump_backpatch_len] = 1;
+                        *jump_backpatch_len += 1;
+                    }
+                }
+                let break_target = if arm_is_empty {
+                    StateIndex::ZERO
+                } else {
+                    as_state_index(passive_starts[1])
+                };
+                let jump_node = LocalNode::jump(
+                    break_target,
+                    JumpReason::PassiveObserverBranch,
+                    scope,
+                    Some(scope),
+                    Some(1),
+                );
+                nodes[*node_len] = jump_node;
+                route_scope_entries[entry_idx].passive_arm_jump[1] = as_state_index(*node_len);
+                if arm_is_empty {
+                    if *jump_backpatch_len >= MAX_JUMP_BACKPATCH {
+                        panic!("jump backpatch capacity exceeded for empty arm");
+                    }
+                    jump_backpatch_indices[*jump_backpatch_len] = *node_len as u16;
+                    jump_backpatch_scopes[*jump_backpatch_len] = scope;
+                    jump_backpatch_kinds[*jump_backpatch_len] = 1;
+                    *jump_backpatch_len += 1;
+                }
+                *node_len += 1;
+            }
+        }
+    }
+
+    let controller_role = scope_controller_roles[entry_idx];
+    if !is_linger
+        && matches!(scope_entries[entry_idx].kind, ScopeKind::Route)
+        && is_immediate_reenter
+    {
+        let arm0_is_tau_eliminated = scope_entries[entry_idx].arm_entry[0].is_max();
+        let is_passive = controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
+
+        if *node_len >= MAX_STATES {
+            panic!("node capacity exceeded inserting RouteArmEnd Jump for arm 0");
+        }
+        let jump_node = LocalNode::jump(
+            StateIndex::ZERO,
+            JumpReason::RouteArmEnd,
+            scope,
+            None,
+            Some(0),
+        );
+        nodes[*node_len] = jump_node;
+        if is_passive && arm0_is_tau_eliminated {
+            scope_entries[entry_idx].arm_entry[0] = as_state_index(*node_len);
+        }
+        if *jump_backpatch_len >= MAX_JUMP_BACKPATCH {
+            panic!("jump backpatch capacity exceeded for RouteArmEnd Jump");
+        }
+        jump_backpatch_indices[*jump_backpatch_len] = *node_len as u16;
+        jump_backpatch_scopes[*jump_backpatch_len] = scope;
+        jump_backpatch_kinds[*jump_backpatch_len] = 2;
+        *jump_backpatch_len += 1;
+        *node_len += 1;
+    }
+
+    if !is_linger
+        && matches!(scope_entries[entry_idx].kind, ScopeKind::Route)
+        && !is_immediate_reenter
+    {
+        let arm1_last = route_arm_last_node[*scope_stack_len][1];
+        let last_was_scope = last_step_was_scope[*scope_stack_len];
+        if !arm1_last.is_max() {
+            if *node_len >= MAX_STATES {
+                panic!("node capacity exceeded inserting RouteArmEnd Jump for arm 1");
+            }
+            let jump_node = LocalNode::jump(
+                StateIndex::ZERO,
+                JumpReason::RouteArmEnd,
+                scope,
+                None,
+                Some(1),
+            );
+            if last_was_scope {
+                nodes[*node_len] = jump_node;
+            } else {
+                let prev_idx = state_index_to_usize(arm1_last);
+                nodes[prev_idx] = nodes[prev_idx].with_next(as_state_index(*node_len));
+                nodes[*node_len] = jump_node;
+            }
+            if *jump_backpatch_len >= MAX_JUMP_BACKPATCH {
+                panic!("jump backpatch capacity exceeded for RouteArmEnd Jump (arm 1)");
+            }
+            jump_backpatch_indices[*jump_backpatch_len] = *node_len as u16;
+            jump_backpatch_scopes[*jump_backpatch_len] = scope;
+            jump_backpatch_kinds[*jump_backpatch_len] = 2;
+            *jump_backpatch_len += 1;
+            *node_len += 1;
+        }
+    }
+
+    if matches!(scope_entries[entry_idx].kind, ScopeKind::Route) && !is_immediate_reenter {
+        let arm1_has_content = !scope_entries[entry_idx].arm_entry[1].is_max();
+        let is_passive = controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
+        if !arm1_has_content {
+            if *node_len >= MAX_STATES {
+                panic!("node capacity exceeded inserting ArmEmpty placeholder for arm 1");
+            }
+            let jump_node = if is_linger {
+                LocalNode::jump(
+                    as_state_index(*node_len + 1),
+                    JumpReason::LoopBreak,
+                    scope,
+                    Some(scope),
+                    Some(1),
+                )
+            } else {
+                LocalNode::jump(
+                    as_state_index(*node_len + 1),
+                    JumpReason::RouteArmEnd,
+                    scope,
+                    None,
+                    Some(1),
+                )
+            };
+            nodes[*node_len] = jump_node;
+            if is_passive {
+                scope_entries[entry_idx].arm_entry[1] = as_state_index(*node_len);
+            }
+            *node_len += 1;
+        }
+    }
+
+    if *scope_stack_len > 0 {
+        last_step_was_scope[*scope_stack_len - 1] = true;
+    }
+
+    if matches!(scope_entries[entry_idx].kind, ScopeKind::Route) && !is_immediate_reenter {
+        let mut finalize_ctx = RouteFinalizeCtx {
+            nodes,
+            scope_entries,
+            scope_controller_roles,
+            scope_route_policy_effs,
+            route_scope_entries,
+            route_scope_offer_lane_words,
+            route_lane_word_len,
+            scope_entries_len,
+            dispatch_table,
+            prefix_actions,
+            prefix_lens,
+            arm_seen_recv,
+            scan_stack,
+            visited,
+        };
+        offer_entry_locked =
+            finalize_route_scope_exit_for_role(&mut finalize_ctx, role, *node_len, entry_idx);
+    }
+
+    if matches!(scope_entries[entry_idx].kind, ScopeKind::Route) && !offer_entry_locked {
+        route_scope_entries[entry_idx].offer_entry = if scope_entries[entry_idx].linger {
+            StateIndex::MAX
+        } else {
+            scope_entries[entry_idx].start
+        };
+    }
+
+    scope_entries[entry_idx].end = as_state_index(*node_len);
+}
+
+#[inline(never)]
+fn handle_atom_for_role<P: TypestateProgramView>(
+    program: &P,
+    eff_idx: usize,
+    eff: EffStruct,
+    role: u8,
+    nodes: &mut [LocalNode],
+    node_len_out: &mut usize,
+    current_scope: ScopeId,
+    loop_scope: Option<ScopeId>,
+    scope_stack: &[ScopeId; MAX_SCOPE_SCRATCH],
+    scope_stack_kinds: &[ScopeKind; MAX_SCOPE_SCRATCH],
+    scope_stack_entries: &[u16; MAX_SCOPE_SCRATCH],
+    scope_stack_len: usize,
+    route_current_arm: &[u8; MAX_SCOPE_SCRATCH],
+    scope_controller_roles: &[u8; MAX_SCOPE_SCRATCH],
+    scope_entries: &mut [ScopeRecord],
+    route_scope_entries: &mut [RouteScopeScratchRecord],
+    route_scope_offer_lane_words: &mut [LaneWord],
+    route_scope_arm1_lane_words: &mut [LaneWord],
+    route_lane_word_len: usize,
+    lane_slot_count: usize,
+    scope_lane_first_eff: &mut [EffIndex],
+    scope_lane_last_eff: &mut [EffIndex],
+    route_arm0_lane_last_eff_by_slot: &mut [EffIndex],
+    loop_entry_ids: &mut [ScopeId; MAX_LOOP_TRACKED],
+    loop_entry_states: &mut [StateIndex; MAX_LOOP_TRACKED],
+    loop_entry_len_out: &mut usize,
+    linger_arm_len: usize,
+    linger_arm_scope_ids: &[ScopeId; MAX_SCOPE_SCRATCH],
+    linger_arm_current: &mut [u8; MAX_SCOPE_SCRATCH],
+    linger_arm_last_node: &mut [[u16; 2]; MAX_SCOPE_SCRATCH],
+    last_step_was_scope: &mut [bool; MAX_SCOPE_SCRATCH],
+    route_arm_last_node: &mut [[StateIndex; 2]; MAX_SCOPE_SCRATCH],
+) {
+    let mut node_len = *node_len_out;
+    let mut loop_entry_len = *loop_entry_len_out;
+    let atom = eff.atom_data();
+    let policy = match program.policy_at(eff_idx) {
+        Some(policy) => policy.with_scope(current_scope),
+        None => PolicyMode::Static,
+    };
+    let control_spec = if atom.is_control {
+        program.control_spec_at(eff_idx)
+    } else {
+        None
+    };
+    let loop_control = LoopControlMeaning::from_control_spec(control_spec);
+    let shot = if atom.is_control {
+        match control_spec {
+            Some(spec) => Some(spec.shot),
+            None => None,
+        }
+    } else {
+        None
+    };
+    if scope_stack_len > 0 && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route) {
+        let entry_idx = scope_stack_entries[scope_stack_len - 1] as usize;
+        if policy.is_dynamic() || loop_control.is_some() {
+            insert_offer_lane(
+                route_scope_lane_words_mut(
+                    route_scope_offer_lane_words,
+                    route_scope_entries[entry_idx].lane_word_start(),
+                    route_lane_word_len,
+                ),
+                atom.lane,
+            );
+        }
+    }
+
+    if atom.from == role && atom.to == role {
+        let route_arm = if scope_stack_len > 0
+            && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
+        {
+            let stack_idx = scope_stack_len - 1;
+            let arm = route_current_arm[stack_idx] as usize;
+            let entry_idx = scope_stack_entries[stack_idx] as usize;
+
+            let entry = &mut scope_entries[entry_idx];
+            debug_assert!(
+                !matches!(entry.kind, ScopeKind::Route)
+                    || scope_controller_roles[entry_idx] != CONTROLLER_ROLE_NONE,
+                "route scope missing controller_role"
+            );
+            if arm < 2 && entry.arm_entry[arm].is_max() {
+                entry.arm_entry[arm] = as_state_index(node_len);
+            }
+
+            Some(route_current_arm[stack_idx])
+        } else {
+            None
+        };
+
+        let current_state = as_state_index(node_len);
+        let mut next = as_state_index(node_len + 1);
+        if matches!(loop_control, Some(LoopControlMeaning::Continue))
+            && let Some(scope_id) = loop_scope
+            && let Some(entry) =
+                find_loop_entry_state(loop_entry_ids, loop_entry_states, loop_entry_len, scope_id)
+        {
+            next = entry;
+        }
+
+        nodes[node_len] = LocalNode::local(
+            as_eff_index(eff_idx),
+            atom.label,
+            atom.resource,
+            atom.is_control,
+            shot,
+            policy,
+            atom.lane,
+            next,
+            current_scope,
+            loop_scope,
+            route_arm,
+            false,
+        );
+        let lane_idx = atom.lane as usize;
+        if lane_idx >= lane_slot_count {
+            panic!("scope lane facts missing lane slot capacity");
+        }
+        let mut stack_idx = 0usize;
+        while stack_idx < scope_stack_len {
+            let entry_idx = scope_stack_entries[stack_idx] as usize;
+            let lane_offset = entry_idx * lane_slot_count + lane_idx;
+            if scope_lane_first_eff[lane_offset] == EffIndex::MAX {
+                scope_lane_first_eff[lane_offset] = as_eff_index(eff_idx);
+            }
+            scope_lane_last_eff[lane_offset] = as_eff_index(eff_idx);
+            if matches!(scope_stack_kinds[stack_idx], ScopeKind::Route) {
+                let arm = route_current_arm[stack_idx] as usize;
+                if arm == 0 {
+                    route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
+                } else if arm == 1 {
+                    insert_offer_lane(
+                        route_scope_lane_words_mut(
+                            route_scope_arm1_lane_words,
+                            route_scope_entries[entry_idx].lane_word_start(),
+                            route_lane_word_len,
+                        ),
+                        atom.lane,
+                    );
+                }
+            }
+            stack_idx += 1;
+        }
+        if let Some(scope_id) = loop_scope && loop_control.is_none() {
+            store_loop_entry_if_absent(
+                loop_entry_ids,
+                loop_entry_states,
+                &mut loop_entry_len,
+                scope_id,
+                current_state,
+            );
+        }
+        if let Some(scope_id) = loop_scope {
+            let mut li = 0;
+            while li < linger_arm_len {
+                if linger_arm_scope_ids[li].local_ordinal() == scope_id.local_ordinal() {
+                    if matches!(loop_control, Some(LoopControlMeaning::Break)) {
+                        linger_arm_current[li] = 1;
+                    }
+                    break;
+                }
+                li += 1;
+            }
+        }
+        if linger_arm_len > 0 {
+            let mut stack_idx = 0usize;
+            while stack_idx < scope_stack_len {
+                let entry_idx = scope_stack_entries[stack_idx] as usize;
+                if scope_entries[entry_idx].linger {
+                    let scope_id = scope_stack[stack_idx];
+                    let mut li = 0usize;
+                    while li < linger_arm_len {
+                        if linger_arm_scope_ids[li].local_ordinal() == scope_id.local_ordinal() {
+                            let arm = linger_arm_current[li] as usize;
+                            if arm < 2 {
+                                linger_arm_last_node[li][arm] = node_len as u16;
+                            }
+                            break;
+                        }
+                        li += 1;
+                    }
+                }
+                stack_idx += 1;
+            }
+        }
+        if scope_stack_len > 0 && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
+        {
+            let stack_idx = scope_stack_len - 1;
+            let entry_idx = scope_stack_entries[stack_idx] as usize;
+            if !scope_entries[entry_idx].linger {
+                last_step_was_scope[stack_idx] = false;
+                if let Some(arm) = route_arm && (arm as usize) < 2 {
+                    route_arm_last_node[stack_idx][arm as usize] = as_state_index(node_len);
+                }
+            }
+        }
+        node_len += 1;
+    } else if atom.from == role {
+        let route_arm = if scope_stack_len > 0
+            && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
+        {
+            let stack_idx = scope_stack_len - 1;
+            let arm = route_current_arm[stack_idx];
+            let entry_idx = scope_stack_entries[stack_idx] as usize;
+            let controller_role = scope_controller_roles[entry_idx];
+            let is_passive = controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
+            if (arm as usize) < 2
+                && is_passive
+                && scope_entries[entry_idx].arm_entry[arm as usize].is_max()
+            {
+                scope_entries[entry_idx].arm_entry[arm as usize] = as_state_index(node_len);
+            }
+            Some(arm)
+        } else {
+            None
+        };
+
+        let current_state = as_state_index(node_len);
+        let mut next = as_state_index(node_len + 1);
+        if matches!(loop_control, Some(LoopControlMeaning::Continue))
+            && let Some(scope_id) = loop_scope
+            && let Some(entry) =
+                find_loop_entry_state(loop_entry_ids, loop_entry_states, loop_entry_len, scope_id)
+        {
+            next = entry;
+        }
+
+        nodes[node_len] = LocalNode::send(
+            as_eff_index(eff_idx),
+            atom.to,
+            atom.label,
+            atom.resource,
+            atom.is_control,
+            shot,
+            policy,
+            atom.lane,
+            next,
+            current_scope,
+            loop_scope,
+            route_arm,
+            false,
+        );
+        let lane_idx = atom.lane as usize;
+        if lane_idx >= lane_slot_count {
+            panic!("scope lane facts missing lane slot capacity");
+        }
+        let mut stack_idx = 0usize;
+        while stack_idx < scope_stack_len {
+            let entry_idx = scope_stack_entries[stack_idx] as usize;
+            let lane_offset = entry_idx * lane_slot_count + lane_idx;
+            if scope_lane_first_eff[lane_offset] == EffIndex::MAX {
+                scope_lane_first_eff[lane_offset] = as_eff_index(eff_idx);
+            }
+            scope_lane_last_eff[lane_offset] = as_eff_index(eff_idx);
+            if matches!(scope_stack_kinds[stack_idx], ScopeKind::Route) {
+                let arm = route_current_arm[stack_idx] as usize;
+                if arm == 0 {
+                    route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
+                } else if arm == 1 {
+                    insert_offer_lane(
+                        route_scope_lane_words_mut(
+                            route_scope_arm1_lane_words,
+                            route_scope_entries[entry_idx].lane_word_start(),
+                            route_lane_word_len,
+                        ),
+                        atom.lane,
+                    );
+                }
+            }
+            stack_idx += 1;
+        }
+        if let Some(scope_id) = loop_scope && loop_control.is_none() {
+            store_loop_entry_if_absent(
+                loop_entry_ids,
+                loop_entry_states,
+                &mut loop_entry_len,
+                scope_id,
+                current_state,
+            );
+        }
+        if linger_arm_len > 0 {
+            let mut stack_idx = 0usize;
+            while stack_idx < scope_stack_len {
+                let entry_idx = scope_stack_entries[stack_idx] as usize;
+                if scope_entries[entry_idx].linger {
+                    let scope_id = scope_stack[stack_idx];
+                    let mut li = 0usize;
+                    while li < linger_arm_len {
+                        if linger_arm_scope_ids[li].local_ordinal() == scope_id.local_ordinal() {
+                            let arm = linger_arm_current[li] as usize;
+                            if arm < 2 {
+                                linger_arm_last_node[li][arm] = node_len as u16;
+                            }
+                            break;
+                        }
+                        li += 1;
+                    }
+                }
+                stack_idx += 1;
+            }
+        }
+        if scope_stack_len > 0 && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
+        {
+            let stack_idx = scope_stack_len - 1;
+            let entry_idx = scope_stack_entries[stack_idx] as usize;
+            if !scope_entries[entry_idx].linger {
+                last_step_was_scope[stack_idx] = false;
+                if let Some(arm) = route_arm && (arm as usize) < 2 {
+                    route_arm_last_node[stack_idx][arm as usize] = as_state_index(node_len);
+                }
+            }
+        }
+        node_len += 1;
+    } else if atom.to == role {
+        let (route_arm, is_choice_determinant) = if scope_stack_len > 0
+            && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
+        {
+            let stack_idx = scope_stack_len - 1;
+            let arm = route_current_arm[stack_idx];
+            let entry_idx = scope_stack_entries[stack_idx] as usize;
+            let entry = &mut scope_entries[entry_idx];
+            let route_entry = &mut route_scope_entries[entry_idx];
+            let controller_role = scope_controller_roles[entry_idx];
+            let is_passive = controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
+
+            if (arm as usize) < 2 && is_passive {
+                let existing = entry.arm_entry[arm as usize];
+                let should_set = if existing.is_max() {
+                    true
+                } else {
+                    let existing_node = nodes[state_index_to_usize(existing)];
+                    !matches!(existing_node.action(), LocalAction::Recv { .. })
+                };
+                if should_set {
+                    entry.arm_entry[arm as usize] = as_state_index(node_len);
+                }
+            }
+
+            let is_first_recv_of_arm = arm == route_entry.route_recv_count();
+            if is_first_recv_of_arm && (arm as usize) < 2 {
+                let current_state = as_state_index(node_len);
+                route_entry.route_recv[arm as usize] = current_state;
+                insert_offer_lane(
+                    route_scope_lane_words_mut(
+                        route_scope_offer_lane_words,
+                        route_scope_entries[entry_idx].lane_word_start(),
+                        route_lane_word_len,
+                    ),
+                    atom.lane,
+                );
+                (Some(arm), true)
+            } else {
+                (Some(arm), false)
+            }
+        } else {
+            (None, false)
+        };
+
+        let current_state = as_state_index(node_len);
+        let mut next = as_state_index(node_len + 1);
+        if matches!(loop_control, Some(LoopControlMeaning::Continue))
+            && let Some(scope_id) = loop_scope
+            && let Some(entry) =
+                find_loop_entry_state(loop_entry_ids, loop_entry_states, loop_entry_len, scope_id)
+        {
+            next = entry;
+        }
+
+        nodes[node_len] = LocalNode::recv(
+            as_eff_index(eff_idx),
+            atom.from,
+            atom.label,
+            atom.resource,
+            atom.is_control,
+            shot,
+            policy,
+            atom.lane,
+            next,
+            current_scope,
+            loop_scope,
+            route_arm,
+            is_choice_determinant,
+        );
+        let lane_idx = atom.lane as usize;
+        if lane_idx >= lane_slot_count {
+            panic!("scope lane facts missing lane slot capacity");
+        }
+        let mut stack_idx = 0usize;
+        while stack_idx < scope_stack_len {
+            let entry_idx = scope_stack_entries[stack_idx] as usize;
+            let lane_offset = entry_idx * lane_slot_count + lane_idx;
+            if scope_lane_first_eff[lane_offset] == EffIndex::MAX {
+                scope_lane_first_eff[lane_offset] = as_eff_index(eff_idx);
+            }
+            scope_lane_last_eff[lane_offset] = as_eff_index(eff_idx);
+            if matches!(scope_stack_kinds[stack_idx], ScopeKind::Route) {
+                let arm = route_current_arm[stack_idx] as usize;
+                if arm == 0 {
+                    route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
+                } else if arm == 1 {
+                    insert_offer_lane(
+                        route_scope_lane_words_mut(
+                            route_scope_arm1_lane_words,
+                            route_scope_entries[entry_idx].lane_word_start(),
+                            route_lane_word_len,
+                        ),
+                        atom.lane,
+                    );
+                }
+            }
+            stack_idx += 1;
+        }
+        if let Some(scope_id) = loop_scope && loop_control.is_none() {
+            store_loop_entry_if_absent(
+                loop_entry_ids,
+                loop_entry_states,
+                &mut loop_entry_len,
+                scope_id,
+                current_state,
+            );
+        }
+        if linger_arm_len > 0 {
+            let mut stack_idx = 0usize;
+            while stack_idx < scope_stack_len {
+                let entry_idx = scope_stack_entries[stack_idx] as usize;
+                if scope_entries[entry_idx].linger {
+                    let scope_id = scope_stack[stack_idx];
+                    let mut li = 0usize;
+                    while li < linger_arm_len {
+                        if linger_arm_scope_ids[li].local_ordinal() == scope_id.local_ordinal() {
+                            let arm = linger_arm_current[li] as usize;
+                            if arm < 2 {
+                                linger_arm_last_node[li][arm] = node_len as u16;
+                            }
+                            break;
+                        }
+                        li += 1;
+                    }
+                }
+                stack_idx += 1;
+            }
+        }
+        if scope_stack_len > 0 && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
+        {
+            let stack_idx = scope_stack_len - 1;
+            let entry_idx = scope_stack_entries[stack_idx] as usize;
+            if !scope_entries[entry_idx].linger {
+                last_step_was_scope[stack_idx] = false;
+                if let Some(arm) = route_arm && (arm as usize) < 2 {
+                    route_arm_last_node[stack_idx][arm as usize] = as_state_index(node_len);
+                }
+            }
+        }
+        node_len += 1;
+    }
+
+    *node_len_out = node_len;
+    *loop_entry_len_out = loop_entry_len;
 }
 
 #[inline(never)]
@@ -794,6 +1661,9 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
     scope_slots_by_scope: *mut u16,
     route_dense_by_slot: *mut u16,
     route_records: *mut RouteScopeRecord,
+    route_offer_lane_words: *mut LaneWord,
+    route_arm1_lane_words: *mut LaneWord,
+    route_lane_word_len: usize,
     lane_slot_count: usize,
     scope_lane_first_eff: *mut EffIndex,
     scope_lane_last_eff: *mut EffIndex,
@@ -825,6 +1695,19 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
     scope_lane_first_eff.fill(EffIndex::MAX);
     scope_lane_last_eff.fill(EffIndex::MAX);
     route_arm0_lane_last_eff_by_slot.fill(EffIndex::MAX);
+    let route_lane_word_cap = route_scope_cap.saturating_mul(route_lane_word_len);
+    let route_scope_offer_lane_words = if route_lane_word_cap == 0 {
+        &mut []
+    } else {
+        unsafe { core::slice::from_raw_parts_mut(route_offer_lane_words, route_lane_word_cap) }
+    };
+    let route_scope_arm1_lane_words = if route_lane_word_cap == 0 {
+        &mut []
+    } else {
+        unsafe { core::slice::from_raw_parts_mut(route_arm1_lane_words, route_lane_word_cap) }
+    };
+    route_scope_offer_lane_words.fill(0);
+    route_scope_arm1_lane_words.fill(0);
 
     let loop_entry_ids = &mut scratch.loop_entry_ids;
     let loop_entry_states = &mut scratch.loop_entry_states;
@@ -863,7 +1746,6 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
     // - 1 = scope_end (LoopBreak)
     // - 2 = scope_end (RouteArmEnd)
     // Capacity = MAX_STATES (at most one backpatch per node).
-    const MAX_JUMP_BACKPATCH: usize = MAX_STATES;
     let jump_backpatch_indices = &mut scratch.jump_backpatch_indices;
     let jump_backpatch_scopes = &mut scratch.jump_backpatch_scopes;
     let jump_backpatch_kinds = &mut scratch.jump_backpatch_kinds;
@@ -906,6 +1788,7 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
     let route_scope_entries = &mut scratch.route_scope_entries;
     let mut scope_entries_len = 0usize;
     let mut scope_range_counter: u16 = 0;
+    let mut route_scope_lane_word_cursor = 0usize;
 
     while eff_idx <= slice.len() {
         while scope_marker_idx < scope_markers.len()
@@ -948,6 +1831,34 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                         route_is_passive[scope_stack_len] = false;
                         route_arm_last_node[scope_stack_len] = [StateIndex::MAX, StateIndex::MAX];
                         last_step_was_scope[scope_stack_len] = false;
+                        if matches!(marker.scope_kind, ScopeKind::Route) {
+                            let lane_word_end = route_scope_lane_word_cursor
+                                .checked_add(route_lane_word_len)
+                                .expect("route scope lane-word cursor overflow");
+                            if lane_word_end > route_scope_offer_lane_words.len()
+                                || lane_word_end > route_scope_arm1_lane_words.len()
+                            {
+                                panic!("route scope lane-word scratch overflow");
+                            }
+                            let lane_word_start = route_scope_lane_word_cursor;
+                            if lane_word_start > u16::MAX as usize {
+                                panic!("route scope lane-word start overflow");
+                            }
+                            route_scope_entries[entry_idx].lane_word_start = lane_word_start as u16;
+                            route_scope_lane_words_mut(
+                                route_scope_offer_lane_words,
+                                lane_word_start,
+                                route_lane_word_len,
+                            )
+                            .fill(0);
+                            route_scope_lane_words_mut(
+                                route_scope_arm1_lane_words,
+                                lane_word_start,
+                                route_lane_word_len,
+                            )
+                            .fill(0);
+                            route_scope_lane_word_cursor = lane_word_end;
+                        }
                     }
                     scope_stack_len += 1;
 
@@ -1064,523 +1975,40 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                     }
                 }
                 ScopeEvent::Exit => {
-                    if scope_stack_len == 0 {
-                        panic!("structured scope stack underflow");
-                    }
-                    scope_stack_len -= 1;
-                    let expected = scope_stack[scope_stack_len];
-                    if expected.local_ordinal() != scope.local_ordinal() {
-                        panic!("structured scope stack mismatch");
-                    }
-                    let entry_idx = scope_stack_entries[scope_stack_len] as usize;
-                    let is_linger = scope_entries[entry_idx].linger;
-                    let mut offer_entry_locked = false;
-
-                    // Check if the next scope marker is an Enter for the same scope.
-                    // If so, this is an intermediate Exit between arms in the same binary route.
-                    // We need to insert arm 0's Jump HERE, not at the final Exit.
-                    let next_marker_idx = scope_marker_idx + 1;
-                    let is_immediate_reenter = next_marker_idx < scope_markers.len()
-                        && scope_markers[next_marker_idx].offset
-                            == scope_markers[scope_marker_idx].offset
-                        && matches!(scope_markers[next_marker_idx].event, ScopeEvent::Enter)
-                        && scope_markers[next_marker_idx].scope_id.local_ordinal()
-                            == scope.local_ordinal();
-
-                    // For linger (loop) scopes, insert Jump nodes at arm ends.
-                    // We need to do this BEFORE setting scope_entries[entry_idx].end
-                    // because the Jump nodes become part of the scope.
-                    //
-                    // With a binary route, we get multiple Exit/Enter pairs for the same scope:
-                    // - Intermediate Exit (is_immediate_reenter=true): Insert arm 0's Jump
-                    // - Final Exit (is_immediate_reenter=false): Insert arm 1's Jump
-                    if is_linger {
-                        // Find the linger tracking entry for this scope
-                        let mut linger_idx = 0usize;
-                        while linger_idx < linger_arm_len {
-                            if linger_arm_scope_ids[linger_idx].local_ordinal()
-                                == scope.local_ordinal()
-                            {
-                                break;
-                            }
-                            linger_idx += 1;
-                        }
-
-                        if linger_idx < linger_arm_len {
-                            let arm_last = linger_arm_last_node[linger_idx];
-                            let loop_start = scope_entries[entry_idx].start;
-                            // Passive observer detection uses the route-controller atlas scratch
-                            // seeded from ScopeMarker controller roles.
-                            let controller_role = scope_controller_roles[entry_idx];
-                            let is_passive =
-                                controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
-                            // For passive observers, use passive_arm_entry for arm start positions.
-                            // passive_arm_entry tracks the first cross-role node (Send or Recv)
-                            // of each arm, which is more reliable than any derived recv lookup
-                            // (which only tracks Recv nodes).
-                            let passive_starts = if is_passive {
-                                let arm0_start = if !scope_entries[entry_idx].arm_entry[0].is_max()
-                                {
-                                    state_index_to_usize(scope_entries[entry_idx].arm_entry[0])
-                                } else {
-                                    usize::from(PASSIVE_ARM_UNSET)
-                                };
-                                let arm1_start = if !scope_entries[entry_idx].arm_entry[1].is_max()
-                                {
-                                    state_index_to_usize(scope_entries[entry_idx].arm_entry[1])
-                                } else {
-                                    usize::from(PASSIVE_ARM_UNSET)
-                                };
-                                [arm0_start, arm1_start]
-                            } else {
-                                [
-                                    usize::from(PASSIVE_ARM_UNSET),
-                                    usize::from(PASSIVE_ARM_UNSET),
-                                ]
-                            };
-
-                            // At intermediate Exit: Insert Jump for arm 0 (Continue)
-                            // At final Exit: Insert Jump for arm 1 (Break)
-                            if is_immediate_reenter {
-                                // Insert Jump for Continue arm (arm 0).
-                                // For controller: LoopContinue Jump (rewinding flow)
-                                // For passive observer: PassiveObserverBranch Jump (arm entry navigation)
-                                if is_passive && passive_starts[0] != usize::from(PASSIVE_ARM_UNSET)
-                                {
-                                    // Passive observer: insert PassiveObserverBranch Jump FIRST
-                                    // This takes priority because passive observers don't control
-                                    // the loop - they need arm entry navigation, not rewind logic.
-                                    if node_len >= MAX_STATES {
-                                        panic!(
-                                            "node capacity exceeded inserting PassiveObserverBranch Jump for arm 0"
-                                        );
-                                    }
-                                    let continue_target =
-                                        as_state_index(passive_starts[0] as usize);
-                                    let jump_node = LocalNode::jump(
-                                        continue_target,
-                                        JumpReason::PassiveObserverBranch,
-                                        scope,
-                                        Some(scope),
-                                        Some(0),
-                                    );
-                                    nodes[node_len] = jump_node;
-                                    route_scope_entries[entry_idx].passive_arm_jump[0] =
-                                        as_state_index(node_len);
-                                    node_len += 1;
-                                    // Also insert LoopContinue Jump if there are nodes to connect
-                                    if arm_last[0] != LINGER_ARM_NO_NODE {
-                                        if node_len >= MAX_STATES {
-                                            panic!(
-                                                "node capacity exceeded inserting LoopContinue Jump for passive"
-                                            );
-                                        }
-                                        let jump_node = LocalNode::jump(
-                                            loop_start,
-                                            JumpReason::LoopContinue,
-                                            scope,
-                                            Some(scope),
-                                            Some(0),
-                                        );
-                                        let prev_idx = arm_last[0] as usize;
-                                        nodes[prev_idx] =
-                                            nodes[prev_idx].with_next(as_state_index(node_len));
-                                        nodes[node_len] = jump_node;
-                                        node_len += 1;
-                                    }
-                                } else if arm_last[0] != LINGER_ARM_NO_NODE {
-                                    // Controller: LoopContinue Jump
-                                    if node_len >= MAX_STATES {
-                                        panic!(
-                                            "node capacity exceeded inserting LoopContinue Jump"
-                                        );
-                                    }
-                                    // Create Jump node for LoopContinue
-                                    // Target = loop_start (known at this point)
-                                    let jump_node = LocalNode::jump(
-                                        loop_start,
-                                        JumpReason::LoopContinue,
-                                        scope,
-                                        Some(scope), // loop_scope is this scope
-                                        Some(0),     // arm 0 = Continue
-                                    );
-                                    // Update the previous node's `next` to point to this Jump
-                                    let prev_idx = arm_last[0] as usize;
-                                    nodes[prev_idx] =
-                                        nodes[prev_idx].with_next(as_state_index(node_len));
-                                    nodes[node_len] = jump_node;
-                                    node_len += 1;
-                                } else if passive_starts[0] != usize::from(PASSIVE_ARM_UNSET) {
-                                    if node_len >= MAX_STATES {
-                                        panic!(
-                                            "node capacity exceeded inserting PassiveObserverBranch Jump for arm 0"
-                                        );
-                                    }
-                                    // Passive observer: insert PassiveObserverBranch Jump for arm 0
-                                    // The target should be the start of arm 0's body, which is
-                                    // recorded in passive_starts[0]. This is the index where
-                                    // the first node of arm 0 was created (e.g., Recv BodyMsg).
-                                    //
-                                    // Note: We use passive_starts[0] directly instead of
-                                    // find_loop_entry_state because:
-                                    // 1. Passive observers have nodes inside the scope (arm body)
-                                    // 2. passive_starts[0] was set when the arm boundary was
-                                    //    detected, which is the position where the body starts
-                                    let continue_target =
-                                        as_state_index(passive_starts[0] as usize);
-                                    let jump_node = LocalNode::jump(
-                                        continue_target,
-                                        JumpReason::PassiveObserverBranch,
-                                        scope,
-                                        Some(scope),
-                                        Some(0),
-                                    );
-                                    nodes[node_len] = jump_node;
-                                    route_scope_entries[entry_idx].passive_arm_jump[0] =
-                                        as_state_index(node_len);
-                                    node_len += 1;
-                                }
-                            } else {
-                                // Final Exit: Insert Jump for Break arm (arm 1) if it has nodes
-                                if arm_last[1] != LINGER_ARM_NO_NODE {
-                                    if node_len >= MAX_STATES {
-                                        panic!("node capacity exceeded inserting LoopBreak Jump");
-                                    }
-                                    // Create Jump node for LoopBreak
-                                    // Target = scope_end (needs backpatch)
-                                    let jump_node = LocalNode::jump(
-                                        StateIndex::ZERO, // Sentinel, will be backpatched
-                                        JumpReason::LoopBreak,
-                                        scope,
-                                        Some(scope), // loop_scope is this scope
-                                        Some(1),     // arm 1 = Break
-                                    );
-                                    // Update the previous node's `next` to point to this Jump
-                                    let prev_idx = arm_last[1] as usize;
-                                    nodes[prev_idx] =
-                                        nodes[prev_idx].with_next(as_state_index(node_len));
-                                    nodes[node_len] = jump_node;
-                                    // Record for backpatch
-                                    if jump_backpatch_len >= MAX_JUMP_BACKPATCH {
-                                        panic!("jump backpatch capacity exceeded for LoopBreak");
-                                    }
-                                    jump_backpatch_indices[jump_backpatch_len] = node_len as u16;
-                                    jump_backpatch_scopes[jump_backpatch_len] = scope;
-                                    jump_backpatch_kinds[jump_backpatch_len] = 1; // scope_end
-                                    jump_backpatch_len += 1;
-                                    node_len += 1;
-                                } else if is_passive
-                                    && passive_starts[1] != usize::from(PASSIVE_ARM_UNSET)
-                                {
-                                    if node_len >= MAX_STATES {
-                                        panic!(
-                                            "node capacity exceeded inserting PassiveObserverBranch Jump for arm 1"
-                                        );
-                                    }
-                                    // Passive observer: insert PassiveObserverBranch Jump for arm 1
-                                    // Target = arm 1 body start (passive_starts[1]), similar to arm 0.
-                                    // This handles protocols where the break arm has cross-role
-                                    // messages for the passive observer (e.g., ExitMsg send).
-                                    //
-                                    // If passive_starts[1] == node_len, the break arm is EMPTY
-                                    // (no cross-role content). In that case, the Jump should point
-                                    // directly to scope_end (terminal), not to itself. We use
-                                    // backpatch to set the target to scope_end.
-
-                                    // Determine if the break arm has content for passive observer
-                                    let arm_is_empty = passive_starts[1] as usize == node_len;
-
-                                    // IMPORTANT: Before inserting the PassiveObserverBranch, record the
-                                    // arm's last node for backpatch. This node's `next` currently points
-                                    // to where we're about to insert the PassiveObserverBranch. We need
-                                    // to patch it to point to scope_end instead, so that after completing
-                                    // the break arm, the cursor moves to scope_end (terminal) rather than
-                                    // looping back through the PassiveObserverBranch.
-                                    //
-                                    // The arm's last action is at (node_len - 1) because node_len is
-                                    // where we're about to insert the PassiveObserverBranch.
-                                    if node_len > 0 && (passive_starts[1] as usize) < node_len {
-                                        let arm_last_node = node_len - 1;
-                                        // Only patch if this is an actual action node (not a Jump)
-                                        if !nodes[arm_last_node].action().is_jump() {
-                                            if jump_backpatch_len >= MAX_JUMP_BACKPATCH {
-                                                panic!(
-                                                    "jump backpatch capacity exceeded for arm last node"
-                                                );
-                                            }
-                                            jump_backpatch_indices[jump_backpatch_len] =
-                                                arm_last_node as u16;
-                                            jump_backpatch_scopes[jump_backpatch_len] = scope;
-                                            jump_backpatch_kinds[jump_backpatch_len] = 1; // scope_end
-                                            jump_backpatch_len += 1;
-                                        }
-                                    }
-
-                                    // Target: if arm is empty, use sentinel for backpatch to scope_end
-                                    // Otherwise, use the arm body start
-                                    let break_target = if arm_is_empty {
-                                        StateIndex::ZERO // Sentinel, will be backpatched to scope_end
-                                    } else {
-                                        as_state_index(passive_starts[1] as usize)
-                                    };
-                                    let jump_node = LocalNode::jump(
-                                        break_target,
-                                        JumpReason::PassiveObserverBranch,
-                                        scope,
-                                        Some(scope),
-                                        Some(1),
-                                    );
-                                    nodes[node_len] = jump_node;
-                                    route_scope_entries[entry_idx].passive_arm_jump[1] =
-                                        as_state_index(node_len);
-
-                                    // If arm is empty, backpatch the Jump target to scope_end
-                                    if arm_is_empty {
-                                        if jump_backpatch_len >= MAX_JUMP_BACKPATCH {
-                                            panic!(
-                                                "jump backpatch capacity exceeded for empty arm"
-                                            );
-                                        }
-                                        jump_backpatch_indices[jump_backpatch_len] =
-                                            node_len as u16;
-                                        jump_backpatch_scopes[jump_backpatch_len] = scope;
-                                        jump_backpatch_kinds[jump_backpatch_len] = 1; // scope_end
-                                        jump_backpatch_len += 1;
-                                    }
-
-                                    node_len += 1;
-                                }
-                            }
-                        }
-                    }
-                    // Non-linger Route Jump generation using is_immediate_reenter.
-                    // Arm boundaries are visible via Exit→Enter pairs in ScopeEvent (generated by
-                    // binary route wrapping each arm with with_scope()).
-                    //
-                    // CFG-pure design: arm 0 ends with RouteArmEnd Jump → scope_end, NOT fall-through to arm 1.
-                    // This eliminates sequential layout dependency and runtime arm repositioning.
-                    //
-                    // At intermediate Exit (is_immediate_reenter=true):
-                    //   - Controller: RouteArmEnd Jump → scope_end
-                    //   - Passive observer: PassiveObserverBranch Jump → arm entry
-                    // At final Exit (is_immediate_reenter=false):
-                    //   - Passive observer: PassiveObserverBranch Jump → arm entry
-                    //
-                    // Passive observer detection stays in the shared controller-role scratch.
-                    let controller_role = scope_controller_roles[entry_idx];
-                    let _is_passive_observer =
-                        controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
-
-                    // Generate RouteArmEnd Jump at arm 0's end (intermediate Exit).
-                    // This explicitly exits arm 0 to scope_end, purifying the CFG.
-                    // Both controller and passive observer roles get RouteArmEnd to ensure
-                    // arm completion leads directly to scope_end without passing through
-                    // PassiveObserverBranch nodes (which are decision points, not terminators).
-                    if !is_linger
-                        && matches!(scope_entries[entry_idx].kind, ScopeKind::Route)
-                        && is_immediate_reenter
-                    {
-                        // For τ-eliminated arm 0 (passive observer has no nodes in arm 0),
-                        // this RouteArmEnd also serves as the arm entry placeholder.
-                        let arm0_is_tau_eliminated = scope_entries[entry_idx].arm_entry[0].is_max();
-                        let is_passive =
-                            controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
-
-                        if node_len >= MAX_STATES {
-                            panic!("node capacity exceeded inserting RouteArmEnd Jump for arm 0");
-                        }
-                        // Target is scope_end, which will be backpatched after scope closes.
-                        let jump_node = LocalNode::jump(
-                            StateIndex::ZERO, // Sentinel, will be backpatched to scope_end
-                            JumpReason::RouteArmEnd,
-                            scope,
-                            None, // Not a loop
-                            Some(0),
-                        );
-                        nodes[node_len] = jump_node;
-
-                        // For τ-eliminated arm 0, set passive_arm_entry to this RouteArmEnd.
-                        // This ensures follow_passive_observer_arm_for_scope always returns
-                        // a valid entry (ArmEmpty placeholder).
-                        if is_passive && arm0_is_tau_eliminated {
-                            scope_entries[entry_idx].arm_entry[0] = as_state_index(node_len);
-                        }
-
-                        // Record for backpatch to scope_end
-                        if jump_backpatch_len >= MAX_JUMP_BACKPATCH {
-                            panic!("jump backpatch capacity exceeded for RouteArmEnd Jump");
-                        }
-                        jump_backpatch_indices[jump_backpatch_len] = node_len as u16;
-                        jump_backpatch_scopes[jump_backpatch_len] = scope;
-                        jump_backpatch_kinds[jump_backpatch_len] = 2; // scope_end via RouteArmEnd
-                        jump_backpatch_len += 1;
-
-                        node_len += 1;
-                    }
-
-                    // Generate RouteArmEnd Jump at arm 1's end (final Exit).
-                    // This removes reliance on sequential layout for the last arm and
-                    // ensures both arms explicitly exit to scope_end.
-                    if !is_linger
-                        && matches!(scope_entries[entry_idx].kind, ScopeKind::Route)
-                        && !is_immediate_reenter
-                    {
-                        let arm1_last = route_arm_last_node[scope_stack_len][1];
-                        let last_was_scope = last_step_was_scope[scope_stack_len];
-                        if !arm1_last.is_max() {
-                            if last_was_scope {
-                                // Arm ended with a nested scope; insert RouteArmEnd at scope exit.
-                                if node_len >= MAX_STATES {
-                                    panic!(
-                                        "node capacity exceeded inserting RouteArmEnd Jump for arm 1 (scope exit)"
-                                    );
-                                }
-                                let jump_node = LocalNode::jump(
-                                    StateIndex::ZERO, // Sentinel, will be backpatched to scope_end
-                                    JumpReason::RouteArmEnd,
-                                    scope,
-                                    None, // Not a loop
-                                    Some(1),
-                                );
-                                nodes[node_len] = jump_node;
-                                if jump_backpatch_len >= MAX_JUMP_BACKPATCH {
-                                    panic!(
-                                        "jump backpatch capacity exceeded for RouteArmEnd Jump (arm 1 scope exit)"
-                                    );
-                                }
-                                jump_backpatch_indices[jump_backpatch_len] = node_len as u16;
-                                jump_backpatch_scopes[jump_backpatch_len] = scope;
-                                jump_backpatch_kinds[jump_backpatch_len] = 2; // scope_end via RouteArmEnd
-                                jump_backpatch_len += 1;
-                                node_len += 1;
-                            } else {
-                                if node_len >= MAX_STATES {
-                                    panic!(
-                                        "node capacity exceeded inserting RouteArmEnd Jump for arm 1"
-                                    );
-                                }
-                                let jump_node = LocalNode::jump(
-                                    StateIndex::ZERO, // Sentinel, will be backpatched to scope_end
-                                    JumpReason::RouteArmEnd,
-                                    scope,
-                                    None, // Not a loop
-                                    Some(1),
-                                );
-                                // Patch last node in arm 1 to jump to RouteArmEnd
-                                let prev_idx = state_index_to_usize(arm1_last);
-                                nodes[prev_idx] =
-                                    nodes[prev_idx].with_next(as_state_index(node_len));
-                                nodes[node_len] = jump_node;
-                                if jump_backpatch_len >= MAX_JUMP_BACKPATCH {
-                                    panic!(
-                                        "jump backpatch capacity exceeded for RouteArmEnd Jump (arm 1)"
-                                    );
-                                }
-                                jump_backpatch_indices[jump_backpatch_len] = node_len as u16;
-                                jump_backpatch_scopes[jump_backpatch_len] = scope;
-                                jump_backpatch_kinds[jump_backpatch_len] = 2; // scope_end via RouteArmEnd
-                                jump_backpatch_len += 1;
-                                node_len += 1;
-                            }
-                        }
-                    }
-
-                    // Generate ArmEmpty placeholder for τ-eliminated arm 1 (final Exit).
-                    // This ensures passive observers always have a valid arm entry,
-                    // eliminating the need for runtime ScopeExited recovery.
-                    //
-                    // CFG-pure design: All τ-eliminated arms have ArmEmpty placeholder.
-                    // For both linger (loop) and non-linger routes, passive_arm_entry must be set.
-                    //
-                    // Note: For non-linger routes, ArmEmpty is a RouteArmEnd Jump → scope_end.
-                    // For linger routes, ArmEmpty is a LoopBreak Jump (handled differently).
-                    if matches!(scope_entries[entry_idx].kind, ScopeKind::Route)
-                        && !is_immediate_reenter
-                    {
-                        let arm1_has_content = !scope_entries[entry_idx].arm_entry[1].is_max();
-                        let is_passive =
-                            controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
-                        if !arm1_has_content {
-                            // τ-eliminated arm 1: insert ArmEmpty placeholder
-                            if node_len >= MAX_STATES {
-                                panic!(
-                                    "node capacity exceeded inserting ArmEmpty placeholder for arm 1"
-                                );
-                            }
-
-                            let jump_node = if is_linger {
-                                // Linger scope: ArmEmpty is a LoopBreak Jump → scope start (for loop back)
-                                // Actually for break arm, target is scope_end (exit loop).
-                                LocalNode::jump(
-                                    as_state_index(node_len + 1), // scope_end
-                                    JumpReason::LoopBreak,
-                                    scope,
-                                    Some(scope), // loop scope
-                                    Some(1),
-                                )
-                            } else {
-                                // Non-linger: ArmEmpty is a RouteArmEnd Jump → scope_end
-                                LocalNode::jump(
-                                    as_state_index(node_len + 1), // scope_end
-                                    JumpReason::RouteArmEnd,
-                                    scope,
-                                    None,
-                                    Some(1),
-                                )
-                            };
-                            nodes[node_len] = jump_node;
-                            if is_passive {
-                                scope_entries[entry_idx].arm_entry[1] = as_state_index(node_len);
-                            }
-                            node_len += 1;
-                        }
-                    }
-
-                    // Scope-as-Block: Mark parent scope as "last step was a scope exit".
-                    // This enables correct Jump insertion when the parent scope's arm boundary
-                    // is detected - if this flag is true, we insert a Jump node at the current
-                    // position (Inner.end) instead of patching the previous node's next field.
-                    if scope_stack_len > 0 {
-                        last_step_was_scope[scope_stack_len - 1] = true;
-                    }
-
-                    // FIRST-recv dispatch computation for Route scopes (final Exit only).
-                    // Computes label → (arm, target_idx) mapping for passive observers.
-                    // This enables O(1) nested route resolution in offer().
-                    if matches!(scope_entries[entry_idx].kind, ScopeKind::Route)
-                        && !is_immediate_reenter
-                    {
-                        offer_entry_locked = finalize_route_scope_exit_for_role(
-                            role,
-                            nodes,
-                            node_len,
-                            entry_idx,
-                            scope_entries,
-                            scope_controller_roles,
-                            scope_route_policy_effs,
-                            route_scope_entries,
-                            scope_entries_len,
-                            &mut scratch.dispatch_table,
-                            &mut scratch.prefix_actions,
-                            &mut scratch.prefix_lens,
-                            &mut scratch.arm_seen_recv,
-                            &mut scratch.scan_stack,
-                            &mut scratch.visited,
-                        );
-                    }
-
-                    if matches!(scope_entries[entry_idx].kind, ScopeKind::Route)
-                        && !offer_entry_locked
-                    {
-                        route_scope_entries[entry_idx].offer_entry =
-                            if scope_entries[entry_idx].linger {
-                                StateIndex::MAX
-                            } else {
-                                scope_entries[entry_idx].start
-                            };
-                    }
-
-                    scope_entries[entry_idx].end = as_state_index(node_len);
+                    handle_scope_exit_for_role(
+                        nodes,
+                        &mut node_len,
+                        scope_markers,
+                        scope_marker_idx,
+                        scope,
+                        role,
+                        scope_stack,
+                        scope_stack_kinds,
+                        scope_stack_entries,
+                        &mut scope_stack_len,
+                        scope_entries,
+                        scope_entries_len,
+                        scope_controller_roles,
+                        scope_route_policy_effs,
+                        route_scope_entries,
+                        route_scope_offer_lane_words,
+                        route_lane_word_len,
+                        linger_arm_len,
+                        linger_arm_scope_ids,
+                        linger_arm_last_node,
+                        jump_backpatch_indices,
+                        jump_backpatch_scopes,
+                        jump_backpatch_kinds,
+                        &mut jump_backpatch_len,
+                        route_arm_last_node,
+                        last_step_was_scope,
+                        &mut scratch.dispatch_table,
+                        &mut scratch.prefix_actions,
+                        &mut scratch.prefix_lens,
+                        &mut scratch.arm_seen_recv,
+                        &mut scratch.scan_stack,
+                        &mut scratch.visited,
+                    );
                 }
             }
             scope_marker_idx += 1;
@@ -1618,502 +2046,40 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
 
         let eff = slice[eff_idx];
         if matches!(eff.kind, eff::EffKind::Atom) {
-            let atom = eff.atom_data();
-            let policy = match program.policy_at(eff_idx) {
-                Some(policy) => policy.with_scope(current_scope),
-                None => PolicyMode::Static,
-            };
-            let control_spec = if atom.is_control {
-                program.control_spec_at(eff_idx)
-            } else {
-                None
-            };
-            let loop_control = LoopControlMeaning::from_control_spec(control_spec);
-            let shot = if atom.is_control {
-                match control_spec {
-                    Some(spec) => Some(spec.shot),
-                    None => None,
-                }
-            } else {
-                None
-            };
-            if scope_stack_len > 0
-                && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
-            {
-                let entry_idx = scope_stack_entries[scope_stack_len - 1] as usize;
-                let route_entry = &mut route_scope_entries[entry_idx];
-                if policy.is_dynamic() || loop_control.is_some() {
-                    route_entry.offer_lanes |= offer_lane_bit(atom.lane);
-                }
-            }
-
-            // Passive observer arm tracking is now handled by ScopeMarker Enter events.
-            // The arm index is determined solely by route_enter_count (set in ScopeEvent::Enter).
-            // Passive observer arm start positions are recorded when the first node of each
-            // arm is generated (in Local/Send/Recv processing below).
-            //
-            // Note: We no longer need to track "other role's self-send" here because:
-            // 1. All roles see the same ScopeMarker Enter/Exit events
-            // 2. Arm index is route_current_arm = route_enter_count - 1 (set at Enter)
-            // 3. Passive arm starts are recorded at first node generation per arm
-
-            if atom.from == role && atom.to == role {
-                // Compute route_arm for local actions (self-send).
-                // Arm index is determined solely by ScopeMarker Enter count (binary route).
-                // route_current_arm is set at ScopeEvent::Enter: arm = enter_count - 1.
-                //
-                // Note: Local nodes (self-send) are never choice determinants
-                // (passive observers only see recv nodes on the wire).
-                let route_arm = if scope_stack_len > 0
-                    && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
-                {
-                    let stack_idx = scope_stack_len - 1;
-                    let arm = route_current_arm[stack_idx] as usize;
-                    let entry_idx = scope_stack_entries[stack_idx] as usize;
-
-                    let entry = &mut scope_entries[entry_idx];
-                    debug_assert!(
-                        !matches!(entry.kind, ScopeKind::Route)
-                            || scope_controller_roles[entry_idx] != CONTROLLER_ROLE_NONE,
-                        "route scope missing controller_role"
-                    );
-
-                    // Record arm entry for local actions.
-                    // A projected role is controller-owned or passive-owned per route scope,
-                    // so one shared arm-entry slot is enough here.
-                    if arm < 2 {
-                        if entry.arm_entry[arm].is_max() {
-                            entry.arm_entry[arm] = as_state_index(node_len);
-                        }
-                    }
-
-                    Some(route_current_arm[stack_idx])
-                } else {
-                    None
-                };
-
-                // Update the current_state after potential Jump node insertion
-                let current_state = as_state_index(node_len);
-                let mut next = as_state_index(node_len + 1);
-                // Loop continue decisions jump back to the loop start.
-                if matches!(loop_control, Some(LoopControlMeaning::Continue))
-                    && let Some(scope_id) = loop_scope
-                    && let Some(entry) = find_loop_entry_state(
-                        &loop_entry_ids,
-                        &loop_entry_states,
-                        loop_entry_len,
-                        scope_id,
-                    )
-                {
-                    next = entry;
-                }
-
-                nodes[node_len] = LocalNode::local(
-                    as_eff_index(eff_idx),
-                    atom.label,
-                    atom.resource,
-                    atom.is_control,
-                    shot,
-                    policy,
-                    atom.lane,
-                    next,
-                    current_scope,
-                    loop_scope,
-                    route_arm,
-                    false, // Local nodes are never choice determinants
-                );
-                let lane_idx = atom.lane as usize;
-                if lane_idx >= lane_slot_count {
-                    panic!("scope lane facts missing lane slot capacity");
-                }
-                let mut stack_idx = 0usize;
-                while stack_idx < scope_stack_len {
-                    let entry_idx = scope_stack_entries[stack_idx] as usize;
-                    let lane_offset = entry_idx * lane_slot_count + lane_idx;
-                    if scope_lane_first_eff[lane_offset] == crate::eff::EffIndex::MAX {
-                        scope_lane_first_eff[lane_offset] = as_eff_index(eff_idx);
-                    }
-                    scope_lane_last_eff[lane_offset] = as_eff_index(eff_idx);
-                    if matches!(scope_stack_kinds[stack_idx], ScopeKind::Route) {
-                        let arm = route_current_arm[stack_idx] as usize;
-                        if arm == 0 {
-                            route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
-                        } else if arm == 1 {
-                            route_scope_entries[entry_idx].arm1_lane_mask |=
-                                offer_lane_bit(atom.lane);
-                        }
-                    }
-                    stack_idx += 1;
-                }
-                if let Some(scope_id) = loop_scope
-                    && loop_control.is_none()
-                {
-                    store_loop_entry_if_absent(
-                        loop_entry_ids,
-                        loop_entry_states,
-                        &mut loop_entry_len,
-                        scope_id,
-                        current_state,
-                    );
-                }
-                // Update linger arm tracking for self-send LoopBreak.
-                if let Some(scope_id) = loop_scope {
-                    let mut li = 0;
-                    while li < linger_arm_len {
-                        if linger_arm_scope_ids[li].local_ordinal() == scope_id.local_ordinal() {
-                            if matches!(loop_control, Some(LoopControlMeaning::Break)) {
-                                linger_arm_current[li] = 1;
-                            }
-                            break;
-                        }
-                        li += 1;
-                    }
-                }
-                // Update linger arm tracking for all active linger scopes (outer + inner).
-                if linger_arm_len > 0 {
-                    let mut stack_idx = 0usize;
-                    while stack_idx < scope_stack_len {
-                        let entry_idx = scope_stack_entries[stack_idx] as usize;
-                        if scope_entries[entry_idx].linger {
-                            let scope_id = scope_stack[stack_idx];
-                            let mut li = 0usize;
-                            while li < linger_arm_len {
-                                if linger_arm_scope_ids[li].local_ordinal()
-                                    == scope_id.local_ordinal()
-                                {
-                                    let arm = linger_arm_current[li] as usize;
-                                    if arm < 2 {
-                                        linger_arm_last_node[li][arm] = node_len as u16;
-                                    }
-                                    break;
-                                }
-                                li += 1;
-                            }
-                        }
-                        stack_idx += 1;
-                    }
-                }
-                // Scope-as-Block: Update non-linger Route arm tracking and reset flag.
-                if scope_stack_len > 0
-                    && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
-                {
-                    let stack_idx = scope_stack_len - 1;
-                    let entry_idx = scope_stack_entries[stack_idx] as usize;
-                    if !scope_entries[entry_idx].linger {
-                        // Reset "last step was scope" flag
-                        last_step_was_scope[stack_idx] = false;
-                        // Track last node for current arm
-                        if let Some(arm) = route_arm {
-                            if (arm as usize) < 2 {
-                                route_arm_last_node[stack_idx][arm as usize] =
-                                    as_state_index(node_len);
-                            }
-                        }
-                    }
-                }
-                node_len += 1;
-            } else if atom.from == role {
-                // Compute route_arm for send nodes inside a route scope.
-                // This is needed for linger rewind logic to distinguish arms.
-                //
-                // Arm index is determined solely by ScopeMarker Enter count (binary route).
-                // route_current_arm is set at ScopeEvent::Enter: arm = enter_count - 1.
-                //
-                // Note: Send nodes are never choice determinants (passive observers
-                // only see recv nodes on the wire).
-                let route_arm = if scope_stack_len > 0
-                    && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
-                {
-                    let stack_idx = scope_stack_len - 1;
-                    let arm = route_current_arm[stack_idx];
-                    let entry_idx = scope_stack_entries[stack_idx] as usize;
-                    let controller_role = scope_controller_roles[entry_idx];
-                    let is_passive =
-                        controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
-
-                    // Passive observers need the first cross-role send as the arm entry
-                    // when an arm has no earlier local entry or recv.
-                    if (arm as usize) < 2
-                        && is_passive
-                        && scope_entries[entry_idx].arm_entry[arm as usize].is_max()
-                    {
-                        scope_entries[entry_idx].arm_entry[arm as usize] = as_state_index(node_len);
-                    }
-
-                    Some(arm)
-                } else {
-                    None
-                };
-
-                // Update the current_state after potential Jump node insertion
-                let current_state = as_state_index(node_len);
-                let mut next = as_state_index(node_len + 1);
-                // Loop continue decisions jump back to the loop start.
-                if matches!(loop_control, Some(LoopControlMeaning::Continue))
-                    && let Some(scope_id) = loop_scope
-                    && let Some(entry) = find_loop_entry_state(
-                        &loop_entry_ids,
-                        &loop_entry_states,
-                        loop_entry_len,
-                        scope_id,
-                    )
-                {
-                    next = entry;
-                }
-
-                nodes[node_len] = LocalNode::send(
-                    as_eff_index(eff_idx),
-                    atom.to,
-                    atom.label,
-                    atom.resource,
-                    atom.is_control,
-                    shot,
-                    policy,
-                    atom.lane,
-                    next,
-                    current_scope,
-                    loop_scope,
-                    route_arm,
-                    false, // Send nodes are never choice determinants
-                );
-                let lane_idx = atom.lane as usize;
-                if lane_idx >= lane_slot_count {
-                    panic!("scope lane facts missing lane slot capacity");
-                }
-                let mut stack_idx = 0usize;
-                while stack_idx < scope_stack_len {
-                    let entry_idx = scope_stack_entries[stack_idx] as usize;
-                    let lane_offset = entry_idx * lane_slot_count + lane_idx;
-                    if scope_lane_first_eff[lane_offset] == crate::eff::EffIndex::MAX {
-                        scope_lane_first_eff[lane_offset] = as_eff_index(eff_idx);
-                    }
-                    scope_lane_last_eff[lane_offset] = as_eff_index(eff_idx);
-                    if matches!(scope_stack_kinds[stack_idx], ScopeKind::Route) {
-                        let arm = route_current_arm[stack_idx] as usize;
-                        if arm == 0 {
-                            route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
-                        } else if arm == 1 {
-                            route_scope_entries[entry_idx].arm1_lane_mask |=
-                                offer_lane_bit(atom.lane);
-                        }
-                    }
-                    stack_idx += 1;
-                }
-                if let Some(scope_id) = loop_scope
-                    && loop_control.is_none()
-                {
-                    store_loop_entry_if_absent(
-                        loop_entry_ids,
-                        loop_entry_states,
-                        &mut loop_entry_len,
-                        scope_id,
-                        current_state,
-                    );
-                }
-                // Update linger arm tracking for all active linger scopes (outer + inner).
-                if linger_arm_len > 0 {
-                    let mut stack_idx = 0usize;
-                    while stack_idx < scope_stack_len {
-                        let entry_idx = scope_stack_entries[stack_idx] as usize;
-                        if scope_entries[entry_idx].linger {
-                            let scope_id = scope_stack[stack_idx];
-                            let mut li = 0usize;
-                            while li < linger_arm_len {
-                                if linger_arm_scope_ids[li].local_ordinal()
-                                    == scope_id.local_ordinal()
-                                {
-                                    let arm = linger_arm_current[li] as usize;
-                                    if arm < 2 {
-                                        linger_arm_last_node[li][arm] = node_len as u16;
-                                    }
-                                    break;
-                                }
-                                li += 1;
-                            }
-                        }
-                        stack_idx += 1;
-                    }
-                }
-                // Scope-as-Block: Update non-linger Route arm tracking and reset flag.
-                if scope_stack_len > 0
-                    && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
-                {
-                    let stack_idx = scope_stack_len - 1;
-                    let entry_idx = scope_stack_entries[stack_idx] as usize;
-                    if !scope_entries[entry_idx].linger {
-                        // Reset "last step was scope" flag
-                        last_step_was_scope[stack_idx] = false;
-                        // Track last node for current arm
-                        if let Some(arm) = route_arm {
-                            if (arm as usize) < 2 {
-                                route_arm_last_node[stack_idx][arm as usize] =
-                                    as_state_index(node_len);
-                            }
-                        }
-                    }
-                }
-                node_len += 1;
-            } else if atom.to == role {
-                // Determine route_arm and is_choice_determinant for this recv node.
-                // Arm index is determined solely by ScopeMarker Enter count (binary route).
-                // route_current_arm is set at ScopeEvent::Enter: arm = enter_count - 1.
-                //
-                // is_choice_determinant: The first recv of each arm is a choice determinant
-                // for passive observer mode (allows label-based arm resolution).
-                let (route_arm, is_choice_determinant) = if scope_stack_len > 0
-                    && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
-                {
-                    let stack_idx = scope_stack_len - 1;
-                    let arm = route_current_arm[stack_idx];
-                    let entry_idx = scope_stack_entries[stack_idx] as usize;
-                    let entry = &mut scope_entries[entry_idx];
-                    let route_entry = &mut route_scope_entries[entry_idx];
-                    let controller_role = scope_controller_roles[entry_idx];
-                    let is_passive =
-                        controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
-
-                    // Passive observers use the first recv when it is the first cross-role
-                    // node, or when it must replace an earlier local/send placeholder.
-                    if (arm as usize) < 2 && is_passive {
-                        let existing = entry.arm_entry[arm as usize];
-                        let should_set = if existing.is_max() {
-                            true
-                        } else {
-                            let existing_node = nodes[state_index_to_usize(existing)];
-                            !matches!(existing_node.action(), LocalAction::Recv { .. })
-                        };
-                        if should_set {
-                            entry.arm_entry[arm as usize] = as_state_index(node_len);
-                        }
-                    }
-
-                    // Check if this is the first recv for this arm in this scope.
-                    // For binary routes, recv registration stays contiguous:
-                    // arm 0 may register first, then arm 1 may register second.
-                    let is_first_recv_of_arm = arm == route_entry.route_recv_count();
-
-                    if is_first_recv_of_arm && (arm as usize) < 2 {
-                        let current_state = as_state_index(node_len);
-                        route_entry.route_recv[arm as usize] = current_state;
-                        route_entry.offer_lanes |= offer_lane_bit(atom.lane);
-                        (Some(arm), true) // First recv of arm = choice determinant
-                    } else {
-                        // Subsequent recv within the same arm - not a choice determinant
-                        (Some(arm), false)
-                    }
-                } else {
-                    (None, false)
-                };
-
-                // Update the current_state after potential Jump node insertion
-                let current_state = as_state_index(node_len);
-                let mut next = as_state_index(node_len + 1);
-                // Loop continue decisions jump back to the loop start.
-                if matches!(loop_control, Some(LoopControlMeaning::Continue))
-                    && let Some(scope_id) = loop_scope
-                    && let Some(entry) = find_loop_entry_state(
-                        &loop_entry_ids,
-                        &loop_entry_states,
-                        loop_entry_len,
-                        scope_id,
-                    )
-                {
-                    next = entry;
-                }
-
-                nodes[node_len] = LocalNode::recv(
-                    as_eff_index(eff_idx),
-                    atom.from,
-                    atom.label,
-                    atom.resource,
-                    atom.is_control,
-                    shot,
-                    policy,
-                    atom.lane,
-                    next,
-                    current_scope,
-                    loop_scope,
-                    route_arm,
-                    is_choice_determinant,
-                );
-                let lane_idx = atom.lane as usize;
-                if lane_idx >= lane_slot_count {
-                    panic!("scope lane facts missing lane slot capacity");
-                }
-                let mut stack_idx = 0usize;
-                while stack_idx < scope_stack_len {
-                    let entry_idx = scope_stack_entries[stack_idx] as usize;
-                    let lane_offset = entry_idx * lane_slot_count + lane_idx;
-                    if scope_lane_first_eff[lane_offset] == crate::eff::EffIndex::MAX {
-                        scope_lane_first_eff[lane_offset] = as_eff_index(eff_idx);
-                    }
-                    scope_lane_last_eff[lane_offset] = as_eff_index(eff_idx);
-                    if matches!(scope_stack_kinds[stack_idx], ScopeKind::Route) {
-                        let arm = route_current_arm[stack_idx] as usize;
-                        if arm == 0 {
-                            route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
-                        } else if arm == 1 {
-                            route_scope_entries[entry_idx].arm1_lane_mask |=
-                                offer_lane_bit(atom.lane);
-                        }
-                    }
-                    stack_idx += 1;
-                }
-                if let Some(scope_id) = loop_scope
-                    && loop_control.is_none()
-                {
-                    store_loop_entry_if_absent(
-                        loop_entry_ids,
-                        loop_entry_states,
-                        &mut loop_entry_len,
-                        scope_id,
-                        current_state,
-                    );
-                }
-                // Update linger arm tracking for all active linger scopes (outer + inner).
-                if linger_arm_len > 0 {
-                    let mut stack_idx = 0usize;
-                    while stack_idx < scope_stack_len {
-                        let entry_idx = scope_stack_entries[stack_idx] as usize;
-                        if scope_entries[entry_idx].linger {
-                            let scope_id = scope_stack[stack_idx];
-                            let mut li = 0usize;
-                            while li < linger_arm_len {
-                                if linger_arm_scope_ids[li].local_ordinal()
-                                    == scope_id.local_ordinal()
-                                {
-                                    let arm = linger_arm_current[li] as usize;
-                                    if arm < 2 {
-                                        linger_arm_last_node[li][arm] = node_len as u16;
-                                    }
-                                    break;
-                                }
-                                li += 1;
-                            }
-                        }
-                        stack_idx += 1;
-                    }
-                }
-                // Scope-as-Block: Update non-linger Route arm tracking and reset flag.
-                if scope_stack_len > 0
-                    && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
-                {
-                    let stack_idx = scope_stack_len - 1;
-                    let entry_idx = scope_stack_entries[stack_idx] as usize;
-                    if !scope_entries[entry_idx].linger {
-                        // Reset "last step was scope" flag
-                        last_step_was_scope[stack_idx] = false;
-                        // Track last node for current arm
-                        if let Some(arm) = route_arm {
-                            if (arm as usize) < 2 {
-                                route_arm_last_node[stack_idx][arm as usize] =
-                                    as_state_index(node_len);
-                            }
-                        }
-                    }
-                }
-                node_len += 1;
-            }
+            handle_atom_for_role(
+                &program,
+                eff_idx,
+                eff,
+                role,
+                nodes,
+                &mut node_len,
+                current_scope,
+                loop_scope,
+                scope_stack,
+                scope_stack_kinds,
+                scope_stack_entries,
+                scope_stack_len,
+                route_current_arm,
+                scope_controller_roles,
+                scope_entries,
+                route_scope_entries,
+                route_scope_offer_lane_words,
+                route_scope_arm1_lane_words,
+                route_lane_word_len,
+                lane_slot_count,
+                scope_lane_first_eff,
+                scope_lane_last_eff,
+                route_arm0_lane_last_eff_by_slot,
+                loop_entry_ids,
+                loop_entry_states,
+                &mut loop_entry_len,
+                linger_arm_len,
+                linger_arm_scope_ids,
+                linger_arm_current,
+                linger_arm_last_node,
+                last_step_was_scope,
+                route_arm_last_node,
+            );
         }
         eff_idx += 1;
     }
@@ -2177,6 +2143,9 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
             route_dense_by_slot,
             route_records,
             route_scope_cap,
+            route_offer_lane_words,
+            route_arm1_lane_words,
+            route_lane_word_len,
             route_scope_entries.as_mut_ptr(),
             lane_slot_count,
             scope_lane_first_eff.as_mut_ptr(),

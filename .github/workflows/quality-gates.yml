@@ -25,6 +25,10 @@ jobs:
         run: ./.github/scripts/check_lowering_hygiene.sh
       - name: Summary authority hygiene gate
         run: ./.github/scripts/check_summary_authority_hygiene.sh
+      - name: Exact layout hygiene gate
+        run: bash ./.github/scripts/check_exact_layout_hygiene.sh
+      - name: Route frontier owner gate
+        run: bash ./.github/scripts/check_route_frontier_owner.sh
       - name: Surface hygiene gate
         run: ./.github/scripts/check_surface_hygiene.sh
       - name: Warning-free gate

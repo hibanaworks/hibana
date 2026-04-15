@@ -150,6 +150,10 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
                 arena_layout.lane_offer_state_slots(),
             ),
             section_ptr::<ScopeEvidenceSlot>(arena_storage, arena_layout.scope_evidence_slots()),
+            section_ptr::<crate::endpoint::kernel::route_state::RouteScopeSelectedArmSlot>(
+                arena_storage,
+                arena_layout.route_state_scope_selected_arms(),
+            ),
             active_lane_dense_by_lane,
             arena_layout.route_state_lane_dense_by_lane().count(),
             section_ptr::<u8>(
@@ -157,10 +161,28 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
                 arena_layout.route_state_lane_route_arm_lens(),
             ),
             section_ptr::<u8>(arena_storage, arena_layout.route_state_lane_linger_counts()),
+            section_ptr::<crate::global::role_program::LaneWord>(
+                arena_storage,
+                arena_layout.route_state_active_route_lanes(),
+            ),
+            section_ptr::<crate::global::role_program::LaneWord>(
+                arena_storage,
+                arena_layout.route_state_lane_linger_lanes(),
+            ),
+            section_ptr::<crate::global::role_program::LaneWord>(
+                arena_storage,
+                arena_layout.route_state_lane_offer_linger_lanes(),
+            ),
+            section_ptr::<crate::global::role_program::LaneWord>(
+                arena_storage,
+                arena_layout.route_state_active_offer_lanes(),
+            ),
             active_lane_count,
+            arena_layout.route_state_active_route_lanes().count(),
             arena_layout.lane_offer_state_slots().count(),
             compiled_role.max_route_stack_depth(),
             arena_layout.scope_evidence_slots().count(),
+            arena_layout.route_state_scope_selected_arms().count(),
         );
     }
 }
@@ -200,10 +222,20 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T, U, C, E, const MAX_RV: u
                 arena_storage,
                 arena_layout.frontier_root_observed_key_slots(),
             ),
+            section_ptr::<crate::global::role_program::LaneWord>(
+                arena_storage,
+                arena_layout.frontier_root_observed_offer_lanes(),
+            ),
+            section_ptr::<crate::global::role_program::LaneWord>(
+                arena_storage,
+                arena_layout.frontier_root_observed_binding_nonempty_lanes(),
+            ),
             #[cfg(test)]
             core::ptr::null_mut::<crate::endpoint::kernel::frontier::OfferEntrySlot>(),
             arena_layout.frontier_root_rows().count(),
             arena_layout.frontier_root_active_slots().count(),
+            arena_layout.frontier_root_observed_offer_lanes().count()
+                / arena_layout.frontier_root_rows().count().max(1),
             #[cfg(test)]
             arena_layout.frontier_offer_entry_slots().count(),
         );
@@ -251,8 +283,13 @@ unsafe fn init_endpoint_binding<'r, const ROLE: u8, T, U, C, E, const MAX_RV: us
             ),
             section_ptr::<u8>(arena_storage, arena_layout.binding_len()),
             section_ptr::<u128>(arena_storage, arena_layout.binding_label_masks()),
+            section_ptr::<crate::global::role_program::LaneWord>(
+                arena_storage,
+                arena_layout.binding_nonempty_lanes(),
+            ),
             logical_lane_dense_by_lane,
             logical_lane_count,
+            arena_layout.binding_nonempty_lanes().count(),
         );
     }
 }

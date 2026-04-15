@@ -3,10 +3,295 @@ use crate::{
     global::{
         compiled::LoweringSummary,
         const_dsl::{ScopeEvent, ScopeId, ScopeKind},
+        role_program::{LaneWord, lane_word_count, logical_lane_count_for_role},
     },
 };
 
 pub(crate) struct ProjectionSeal<const ROLE: u8>;
+
+const LANE_FACT_WORDS: usize = lane_word_count(u8::MAX as usize + 1);
+
+#[derive(Clone, Copy)]
+pub(super) struct ExactRolePhaseFacts {
+    pub(super) phase_count: u16,
+    pub(super) phase_lane_entry_count: u16,
+    pub(super) phase_lane_word_count: u16,
+    pub(super) active_lane_count: u16,
+    pub(super) endpoint_lane_slot_count: u16,
+    pub(super) logical_lane_count: u16,
+    pub(super) logical_lane_word_count: u16,
+}
+
+#[inline(always)]
+const fn lane_word_parts(lane: usize) -> (usize, LaneWord) {
+    let bits = LaneWord::BITS as usize;
+    (lane / bits, 1usize << (lane % bits))
+}
+
+#[inline(always)]
+const fn encode_u16_count(value: usize, label: &str) -> u16 {
+    if value > u16::MAX as usize {
+        panic!("{}", label);
+    }
+    value as u16
+}
+
+#[inline(always)]
+const fn insert_lane(words: &mut [LaneWord; LANE_FACT_WORDS], lane: usize) -> bool {
+    let (word_idx, bit) = lane_word_parts(lane);
+    let seen = (words[word_idx] & bit) != 0;
+    if !seen {
+        words[word_idx] |= bit;
+    }
+    !seen
+}
+
+#[inline(always)]
+const fn accumulate_phase_range_facts(
+    local_effs: &[usize; eff::meta::MAX_EFF_NODES],
+    local_lanes: &[u8; eff::meta::MAX_EFF_NODES],
+    local_len: usize,
+    start_eff: usize,
+    end_eff: usize,
+    phase_count: &mut usize,
+    phase_lane_entry_count: &mut usize,
+    phase_lane_word_count: &mut usize,
+) {
+    if start_eff >= end_eff {
+        return;
+    }
+    let mut seen_lanes = [0usize; LANE_FACT_WORDS];
+    let mut phase_max_lane_plus_one = 0usize;
+    let mut any = false;
+    let mut distinct_lane_count = 0usize;
+    let mut idx = 0usize;
+    while idx < local_len {
+        let eff_idx = local_effs[idx];
+        if eff_idx >= start_eff && eff_idx < end_eff {
+            any = true;
+            let lane = local_lanes[idx] as usize;
+            let lane_plus_one = lane.saturating_add(1);
+            if lane_plus_one > phase_max_lane_plus_one {
+                phase_max_lane_plus_one = lane_plus_one;
+            }
+            if insert_lane(&mut seen_lanes, lane) {
+                distinct_lane_count += 1;
+            }
+        }
+        idx += 1;
+    }
+    if !any {
+        return;
+    }
+    *phase_count += 1;
+    *phase_lane_entry_count += distinct_lane_count;
+    *phase_lane_word_count += lane_word_count(phase_max_lane_plus_one);
+    if *phase_count > u16::MAX as usize
+        || *phase_lane_entry_count > u16::MAX as usize
+        || *phase_lane_word_count > u16::MAX as usize
+    {
+        panic!("compiled role phase capacity exceeded");
+    }
+}
+
+pub(super) const fn exact_role_phase_facts(
+    view: crate::global::compiled::LoweringView<'_>,
+    role: u8,
+) -> ExactRolePhaseFacts {
+    let nodes = view.as_slice();
+    let mut local_effs = [0usize; eff::meta::MAX_EFF_NODES];
+    let mut local_lanes = [0u8; eff::meta::MAX_EFF_NODES];
+    let mut active_lanes = [0usize; LANE_FACT_WORDS];
+    let mut local_len = 0usize;
+    let mut active_lane_count = 0usize;
+    let mut endpoint_lane_slot_count = 0usize;
+    let mut idx = 0usize;
+    while idx < nodes.len() {
+        let node = nodes[idx];
+        if matches!(node.kind, EffKind::Atom) {
+            let atom = node.atom_data();
+            if atom.from == role || atom.to == role {
+                if local_len >= eff::meta::MAX_EFF_NODES {
+                    panic!("compiled role local step capacity exceeded");
+                }
+                local_effs[local_len] = idx;
+                local_lanes[local_len] = atom.lane;
+                local_len += 1;
+                let lane = atom.lane as usize;
+                let lane_slot_count = lane.saturating_add(1);
+                if lane_slot_count > endpoint_lane_slot_count {
+                    endpoint_lane_slot_count = lane_slot_count;
+                }
+                if insert_lane(&mut active_lanes, lane) {
+                    active_lane_count += 1;
+                }
+            }
+        }
+        idx += 1;
+    }
+
+    if endpoint_lane_slot_count == 0 {
+        endpoint_lane_slot_count = 1;
+    }
+    let logical_lane_count =
+        logical_lane_count_for_role(active_lane_count, endpoint_lane_slot_count);
+    let logical_lane_word_count = lane_word_count(logical_lane_count);
+
+    if local_len == 0 {
+        return ExactRolePhaseFacts {
+            phase_count: 0,
+            phase_lane_entry_count: 0,
+            phase_lane_word_count: 0,
+            active_lane_count: encode_u16_count(
+                active_lane_count,
+                "compiled role active lane count overflow",
+            ),
+            endpoint_lane_slot_count: encode_u16_count(
+                endpoint_lane_slot_count,
+                "compiled role endpoint lane slot count overflow",
+            ),
+            logical_lane_count: encode_u16_count(
+                logical_lane_count,
+                "compiled role logical lane count overflow",
+            ),
+            logical_lane_word_count: encode_u16_count(
+                logical_lane_word_count,
+                "compiled role logical lane word count overflow",
+            ),
+        };
+    }
+
+    let scope_markers = view.scope_markers();
+    let mut ranges = [(usize::MAX, usize::MAX); eff::meta::MAX_EFF_NODES];
+    let mut range_len = 0usize;
+    let mut marker_idx = 0usize;
+    while marker_idx < scope_markers.len() {
+        let marker = scope_markers[marker_idx];
+        if matches!(marker.scope_kind, ScopeKind::Parallel)
+            && matches!(marker.event, ScopeEvent::Enter)
+        {
+            let mut exit_offset = usize::MAX;
+            let mut exit_idx = marker_idx + 1;
+            while exit_idx < scope_markers.len() {
+                let exit_marker = scope_markers[exit_idx];
+                if matches!(exit_marker.scope_kind, ScopeKind::Parallel)
+                    && matches!(exit_marker.event, ScopeEvent::Exit)
+                    && exit_marker.scope_id.raw() == marker.scope_id.raw()
+                {
+                    exit_offset = exit_marker.offset;
+                    break;
+                }
+                exit_idx += 1;
+            }
+            if exit_offset == usize::MAX {
+                panic!("parallel scope exit missing");
+            }
+            if range_len >= eff::meta::MAX_EFF_NODES {
+                panic!("compiled role phase capacity exceeded");
+            }
+            ranges[range_len] = (marker.offset, exit_offset);
+            range_len += 1;
+        }
+        marker_idx += 1;
+    }
+
+    let mut phase_count = 0usize;
+    let mut phase_lane_entry_count = 0usize;
+    let mut phase_lane_word_count = 0usize;
+    let mut current_eff = 0usize;
+    let mut range_idx = 0usize;
+    while range_idx < range_len {
+        let (enter_eff, exit_eff) = ranges[range_idx];
+        accumulate_phase_range_facts(
+            &local_effs,
+            &local_lanes,
+            local_len,
+            current_eff,
+            enter_eff,
+            &mut phase_count,
+            &mut phase_lane_entry_count,
+            &mut phase_lane_word_count,
+        );
+        let parallel_start = if enter_eff > current_eff {
+            enter_eff
+        } else {
+            current_eff
+        };
+        accumulate_phase_range_facts(
+            &local_effs,
+            &local_lanes,
+            local_len,
+            parallel_start,
+            exit_eff,
+            &mut phase_count,
+            &mut phase_lane_entry_count,
+            &mut phase_lane_word_count,
+        );
+        current_eff = if exit_eff > current_eff {
+            exit_eff
+        } else {
+            current_eff
+        };
+        range_idx += 1;
+    }
+    accumulate_phase_range_facts(
+        &local_effs,
+        &local_lanes,
+        local_len,
+        current_eff,
+        eff::meta::MAX_EFF_NODES,
+        &mut phase_count,
+        &mut phase_lane_entry_count,
+        &mut phase_lane_word_count,
+    );
+    if phase_count == 0 {
+        accumulate_phase_range_facts(
+            &local_effs,
+            &local_lanes,
+            local_len,
+            0,
+            eff::meta::MAX_EFF_NODES,
+            &mut phase_count,
+            &mut phase_lane_entry_count,
+            &mut phase_lane_word_count,
+        );
+    }
+
+    ExactRolePhaseFacts {
+        phase_count: encode_u16_count(phase_count, "compiled role phase capacity exceeded"),
+        phase_lane_entry_count: encode_u16_count(
+            phase_lane_entry_count,
+            "compiled role phase lane-entry capacity exceeded",
+        ),
+        phase_lane_word_count: encode_u16_count(
+            phase_lane_word_count,
+            "compiled role phase lane-word capacity exceeded",
+        ),
+        active_lane_count: encode_u16_count(
+            active_lane_count,
+            "compiled role active lane count overflow",
+        ),
+        endpoint_lane_slot_count: encode_u16_count(
+            endpoint_lane_slot_count,
+            "compiled role endpoint lane slot count overflow",
+        ),
+        logical_lane_count: encode_u16_count(
+            logical_lane_count,
+            "compiled role logical lane count overflow",
+        ),
+        logical_lane_word_count: encode_u16_count(
+            logical_lane_word_count,
+            "compiled role logical lane word count overflow",
+        ),
+    }
+}
+
+pub(super) const fn exact_phase_count_for_role(
+    view: crate::global::compiled::LoweringView<'_>,
+    role: u8,
+) -> u16 {
+    exact_role_phase_facts(view, role).phase_count
+}
 
 #[derive(Clone, Copy)]
 struct LocalSig {
@@ -58,116 +343,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
     }
 
     const fn validate_phase_capacity(view: crate::global::compiled::LoweringView<'_>) {
-        let nodes = view.as_slice();
-        let mut present = [false; eff::meta::MAX_EFF_NODES];
-        let mut local_len = 0usize;
-        let mut idx = 0usize;
-        while idx < nodes.len() {
-            let node = nodes[idx];
-            if matches!(node.kind, EffKind::Atom) {
-                let atom = node.atom_data();
-                if atom.from == ROLE || atom.to == ROLE {
-                    if !present[idx] {
-                        present[idx] = true;
-                        local_len += 1;
-                    }
-                }
-            }
-            idx += 1;
-        }
-        if local_len == 0 {
-            return;
-        }
-
-        let scope_markers = view.scope_markers();
-        let mut ranges = [(usize::MAX, usize::MAX); eff::meta::MAX_EFF_NODES];
-        let mut range_len = 0usize;
-        let mut marker_idx = 0usize;
-        while marker_idx < scope_markers.len() {
-            let marker = scope_markers[marker_idx];
-            if matches!(marker.scope_kind, ScopeKind::Parallel)
-                && matches!(marker.event, ScopeEvent::Enter)
-            {
-                let mut exit_offset = usize::MAX;
-                let mut exit_idx = marker_idx + 1;
-                while exit_idx < scope_markers.len() {
-                    let exit_marker = scope_markers[exit_idx];
-                    if matches!(exit_marker.scope_kind, ScopeKind::Parallel)
-                        && matches!(exit_marker.event, ScopeEvent::Exit)
-                        && exit_marker.scope_id.raw() == marker.scope_id.raw()
-                    {
-                        exit_offset = exit_marker.offset;
-                        break;
-                    }
-                    exit_idx += 1;
-                }
-                if exit_offset == usize::MAX {
-                    panic!("parallel scope exit missing");
-                }
-                if range_len >= eff::meta::MAX_EFF_NODES {
-                    panic!("compiled role phase capacity exceeded");
-                }
-                ranges[range_len] = (marker.offset, exit_offset);
-                range_len += 1;
-            }
-            marker_idx += 1;
-        }
-
-        if range_len == 0 {
-            return;
-        }
-
-        let mut phase_count = 0usize;
-        let mut current_eff = 0usize;
-        let mut range_idx = 0usize;
-        while range_idx < range_len {
-            let (enter_eff, exit_eff) = ranges[range_idx];
-            if Self::has_local_step_in_range(&present, current_eff, enter_eff) {
-                phase_count += 1;
-                if phase_count > u16::MAX as usize {
-                    panic!("compiled role phase capacity exceeded");
-                }
-            }
-            if Self::has_local_step_in_range(&present, enter_eff, exit_eff) {
-                phase_count += 1;
-                if phase_count > u16::MAX as usize {
-                    panic!("compiled role phase capacity exceeded");
-                }
-            }
-            current_eff = if exit_eff > current_eff {
-                exit_eff
-            } else {
-                current_eff
-            };
-            range_idx += 1;
-        }
-        if Self::has_local_step_in_range(&present, current_eff, eff::meta::MAX_EFF_NODES) {
-            phase_count += 1;
-        }
-        if phase_count == 0 {
-            phase_count = 1;
-        }
-        if phase_count > u16::MAX as usize {
-            panic!("compiled role phase capacity exceeded");
-        }
-    }
-
-    const fn has_local_step_in_range(
-        present: &[bool; eff::meta::MAX_EFF_NODES],
-        start: usize,
-        end: usize,
-    ) -> bool {
-        if start >= end {
-            return false;
-        }
-        let mut idx = start;
-        while idx < end && idx < eff::meta::MAX_EFF_NODES {
-            if present[idx] {
-                return true;
-            }
-            idx += 1;
-        }
-        false
+        let _ = exact_phase_count_for_role(view, ROLE);
     }
 
     const fn contains_scope(

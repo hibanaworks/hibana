@@ -4,7 +4,6 @@ use crate::{
     global::{
         ControlLabelSpec,
         const_dsl::{ControlMarker, EffList, PolicyMode, ScopeEvent, ScopeId, ScopeMarker},
-        role_program::logical_lane_count_for_role,
     },
 };
 
@@ -18,6 +17,14 @@ const MAX_LOWERING_NODES: usize = crate::eff::meta::MAX_EFF_NODES;
 const CONTROL_SPEC_MASK_BYTES: usize = (MAX_LOWERING_NODES + 7) / 8;
 const ROUTE_SCOPE_ORDINAL_WORDS: usize = (MAX_LOWERING_NODES + 63) / 64;
 const MAX_TRACKED_ROLE_FACTS: usize = u8::MAX as usize + 1;
+#[inline(always)]
+const fn checked_role_index(role: u8) -> usize {
+    let role = role as usize;
+    if role >= MAX_TRACKED_ROLE_FACTS {
+        panic!("role index exceeds tracked lowering facts");
+    }
+    role
+}
 const EMPTY_CONTROL_SPEC: ControlLabelSpec = ControlLabelSpec {
     label: 0,
     resource_tag: 0,
@@ -170,17 +177,27 @@ impl ProgramLoweringFacts {
 #[derive(Clone, Copy, Default)]
 struct RoleLoweringFacts {
     local_step_count: u16,
+    phase_count: u16,
+    phase_lane_entry_count: u16,
+    phase_lane_word_count: u16,
     passive_linger_route_scope_count: u16,
-    active_lane_mask: u32,
+    active_lane_count: u16,
     endpoint_lane_slot_count: u16,
+    logical_lane_count: u16,
+    logical_lane_word_count: u16,
 }
 
 impl RoleLoweringFacts {
     const EMPTY: Self = Self {
         local_step_count: 0,
+        phase_count: 0,
+        phase_lane_entry_count: 0,
+        phase_lane_word_count: 0,
         passive_linger_route_scope_count: 0,
-        active_lane_mask: 0,
+        active_lane_count: 0,
         endpoint_lane_slot_count: 0,
+        logical_lane_count: 0,
+        logical_lane_word_count: 0,
     };
 }
 
@@ -189,12 +206,16 @@ pub(crate) struct RoleLoweringCounts {
     pub(crate) scope_count: usize,
     pub(crate) eff_count: usize,
     pub(crate) local_step_count: usize,
+    pub(crate) phase_count: usize,
+    pub(crate) phase_lane_entry_count: usize,
+    pub(crate) phase_lane_word_count: usize,
     pub(crate) parallel_enter_count: usize,
     pub(crate) route_scope_count: usize,
     pub(crate) passive_linger_route_scope_count: usize,
     pub(crate) active_lane_count: usize,
     pub(crate) endpoint_lane_slot_count: usize,
     pub(crate) logical_lane_count: usize,
+    pub(crate) logical_lane_word_count: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -415,25 +436,20 @@ impl LoweringRoleData {
         program: ProgramLoweringFacts,
     ) -> RoleLoweringCounts {
         let role = self.facts[ROLE as usize];
-        let active_lane_count = role.active_lane_mask.count_ones() as usize;
-        let endpoint_lane_slot_count = if role.endpoint_lane_slot_count == 0 {
-            1
-        } else {
-            role.endpoint_lane_slot_count as usize
-        };
         RoleLoweringCounts {
             scope_count: program.scope_count as usize,
             eff_count: program.eff_count as usize,
             local_step_count: role.local_step_count as usize,
+            phase_count: role.phase_count as usize,
+            phase_lane_entry_count: role.phase_lane_entry_count as usize,
+            phase_lane_word_count: role.phase_lane_word_count as usize,
             parallel_enter_count: program.parallel_enter_count as usize,
             route_scope_count: program.route_scope_count as usize,
             passive_linger_route_scope_count: role.passive_linger_route_scope_count as usize,
-            active_lane_count,
-            endpoint_lane_slot_count,
-            logical_lane_count: logical_lane_count_for_role(
-                active_lane_count,
-                endpoint_lane_slot_count,
-            ),
+            active_lane_count: role.active_lane_count as usize,
+            endpoint_lane_slot_count: role.endpoint_lane_slot_count as usize,
+            logical_lane_count: role.logical_lane_count as usize,
+            logical_lane_word_count: role.logical_lane_word_count as usize,
         }
     }
 }
@@ -519,33 +535,19 @@ impl LoweringSummary {
             if matches!(node.kind, EffKind::Atom) {
                 let atom = node.atom_data();
                 let policy = summary.validation.policies[idx];
-                let from = atom.from as usize;
-                let to = atom.to as usize;
-                let lane = atom.lane as usize;
-                if lane >= u32::BITS as usize {
-                    panic!("lowering role lane exceeds lane fact mask width");
-                }
-                let lane_bit = 1u32 << lane;
-                let lane_slot_count = lane.saturating_add(1);
+                let from = checked_role_index(atom.from);
+                let to = checked_role_index(atom.to);
                 summary.roles.facts[from].local_step_count =
                     summary.roles.facts[from].local_step_count.saturating_add(1);
-                summary.roles.facts[from].active_lane_mask |= lane_bit;
-                if lane_slot_count > summary.roles.facts[from].endpoint_lane_slot_count as usize {
-                    summary.roles.facts[from].endpoint_lane_slot_count = lane_slot_count as u16;
-                }
                 if to != from {
                     summary.roles.facts[to].local_step_count =
                         summary.roles.facts[to].local_step_count.saturating_add(1);
-                    summary.roles.facts[to].active_lane_mask |= lane_bit;
-                    if lane_slot_count > summary.roles.facts[to].endpoint_lane_slot_count as usize {
-                        summary.roles.facts[to].endpoint_lane_slot_count = lane_slot_count as u16;
-                    }
                 }
-                if atom.from as usize + 1 > role_count {
-                    role_count = atom.from as usize + 1;
+                if from + 1 > role_count {
+                    role_count = from + 1;
                 }
-                if atom.to as usize + 1 > role_count {
-                    role_count = atom.to as usize + 1;
+                if to + 1 > role_count {
+                    role_count = to + 1;
                 }
                 lease_budget = lease_budget.include_atom(atom.label, atom.resource, policy);
                 summary.program.compiled_program_counts.tap_events += 1;
@@ -633,12 +635,32 @@ impl LoweringSummary {
                     None => u8::MAX as u64,
                 },
             );
-            if let Some(controller_role) = marker.controller_role
-                && controller_role as usize + 1 > role_count
-            {
-                role_count = controller_role as usize + 1;
+            if let Some(controller_role) = marker.controller_role {
+                let controller_role = checked_role_index(controller_role);
+                if controller_role + 1 > role_count {
+                    role_count = controller_role + 1;
+                }
             }
             scope_idx += 1;
+        }
+
+        let mut role_idx = 0usize;
+        while role_idx < role_count {
+            let exact_facts = {
+                let view = summary.validation.view();
+                super::seal::exact_role_phase_facts(view, role_idx as u8)
+            };
+            summary.roles.facts[role_idx].phase_count = exact_facts.phase_count;
+            summary.roles.facts[role_idx].phase_lane_entry_count =
+                exact_facts.phase_lane_entry_count;
+            summary.roles.facts[role_idx].phase_lane_word_count = exact_facts.phase_lane_word_count;
+            summary.roles.facts[role_idx].active_lane_count = exact_facts.active_lane_count;
+            summary.roles.facts[role_idx].endpoint_lane_slot_count =
+                exact_facts.endpoint_lane_slot_count;
+            summary.roles.facts[role_idx].logical_lane_count = exact_facts.logical_lane_count;
+            summary.roles.facts[role_idx].logical_lane_word_count =
+                exact_facts.logical_lane_word_count;
+            role_idx += 1;
         }
 
         let src_control_markers = eff_list.control_markers();

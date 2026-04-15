@@ -2589,15 +2589,16 @@ where
     'cfg: 'rv,
 {
     const IMAGE_BANK_EXPANSION_TAIL_FLOOR: usize = 4 * 1024;
+    const PUBLIC_ATTACH_TAIL_FLOOR_LANES: usize = u32::BITS as usize;
     const PUBLIC_ENDPOINT_ATTACH_TAIL_FLOOR: usize = {
         let arena_layout = crate::endpoint::kernel::EndpointArenaLayout::from_footprint(
             crate::global::role_program::RoleFootprint::for_endpoint_layout(
-                crate::global::role_program::MAX_LANES,
-                crate::global::role_program::MAX_LANES,
-                crate::global::role_program::MAX_LANES,
+                Self::PUBLIC_ATTACH_TAIL_FLOOR_LANES,
+                Self::PUBLIC_ATTACH_TAIL_FLOOR_LANES,
+                Self::PUBLIC_ATTACH_TAIL_FLOOR_LANES,
                 crate::endpoint::kernel::MAX_ROUTE_ARM_STACK,
                 crate::eff::meta::MAX_EFF_NODES,
-                crate::global::role_program::MAX_LANES,
+                Self::PUBLIC_ATTACH_TAIL_FLOOR_LANES,
             ),
         );
         crate::endpoint::kernel::cursor_endpoint_storage_layout::<
@@ -2609,7 +2610,7 @@ where
             1,
             crate::control::cap::mint::MintConfig,
             crate::binding::BindingHandle<'cfg>,
-        >(&arena_layout, crate::global::role_program::MAX_LANES)
+        >(&arena_layout, Self::PUBLIC_ATTACH_TAIL_FLOOR_LANES)
         .total_bytes()
     };
 

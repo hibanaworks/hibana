@@ -1,10 +1,13 @@
 use super::{
     builder::encode_typestate_len,
     facts::StateIndex,
-    registry::{RouteScopeRecord, SCOPE_LINK_NONE, ScopeRecord, ScopeRegistry},
+    registry::{
+        RouteScopeRecord, RouteScopeScratchRecord, SCOPE_LINK_NONE, ScopeRecord, ScopeRegistry,
+    },
 };
 use crate::eff::EffIndex;
 use crate::global::const_dsl::{CompactScopeId, ScopeId, ScopeKind};
+use crate::global::role_program::LaneWord;
 
 #[inline(never)]
 pub(super) const fn alloc_scope_record(
@@ -59,7 +62,10 @@ pub(super) unsafe fn init_scope_registry(
     route_dense_by_slot: *mut u16,
     route_records: *mut RouteScopeRecord,
     route_scope_cap: usize,
-    route_records_sparse: *mut RouteScopeRecord,
+    route_offer_lane_words: *mut LaneWord,
+    route_arm1_lane_words: *mut LaneWord,
+    route_lane_word_len: usize,
+    route_records_sparse: *mut RouteScopeScratchRecord,
     lane_slot_count: usize,
     scope_lane_first_eff: *mut EffIndex,
     scope_lane_last_eff: *mut EffIndex,
@@ -78,9 +84,17 @@ pub(super) unsafe fn init_scope_registry(
                 route_dense_by_slot
                     .add(slot_idx)
                     .write(route_scope_len as u16);
-                route_records
-                    .add(route_scope_len)
-                    .write(*route_records_sparse.add(slot_idx));
+                let sparse = &*route_records_sparse.add(slot_idx);
+                let lane_word_start = sparse.lane_word_start();
+                let mut record = RouteScopeRecord::EMPTY;
+                record.route_recv = sparse.route_recv;
+                record.passive_arm_jump = sparse.passive_arm_jump;
+                record.offer_lane_word_start = encode_typestate_len(lane_word_start);
+                record.offer_entry = sparse.offer_entry;
+                record.arm1_lane_word_start = encode_typestate_len(lane_word_start);
+                record.first_recv_dispatch = sparse.first_recv_dispatch;
+                record.first_recv_len = sparse.first_recv_len;
+                route_records.add(route_scope_len).write(record);
             }
             route_scope_len += 1;
         } else {
@@ -119,6 +133,10 @@ pub(super) unsafe fn init_scope_registry(
         core::ptr::addr_of_mut!((*dst).route_records).write(route_records);
         core::ptr::addr_of_mut!((*dst).route_scope_len)
             .write(encode_typestate_len(route_scope_len));
+        core::ptr::addr_of_mut!((*dst).route_offer_lane_words).write(route_offer_lane_words);
+        core::ptr::addr_of_mut!((*dst).route_arm1_lane_words).write(route_arm1_lane_words);
+        core::ptr::addr_of_mut!((*dst).route_lane_word_len)
+            .write(encode_typestate_len(route_lane_word_len));
         core::ptr::addr_of_mut!((*dst).lane_slot_count)
             .write(encode_typestate_len(lane_slot_count));
         core::ptr::addr_of_mut!((*dst).scope_lane_first_eff).write(scope_lane_first_eff);

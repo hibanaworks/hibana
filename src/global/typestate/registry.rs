@@ -6,7 +6,7 @@ use crate::{
     eff::EffIndex,
     global::{
         const_dsl::{CompactScopeId, ScopeId, ScopeKind},
-        role_program::{LaneMask, lane_mask_bit},
+        role_program::{LaneSetView, LaneWord, lane_word_index},
     },
 };
 
@@ -45,9 +45,19 @@ pub(crate) struct ScopeRecord {
 pub(crate) struct RouteScopeRecord {
     pub route_recv: [StateIndex; 2],
     pub passive_arm_jump: [StateIndex; 2],
-    pub offer_lanes: LaneMask,
+    pub offer_lane_word_start: u16,
     pub offer_entry: StateIndex,
-    pub arm1_lane_mask: LaneMask,
+    pub arm1_lane_word_start: u16,
+    pub first_recv_dispatch: [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
+    pub first_recv_len: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct RouteScopeScratchRecord {
+    pub route_recv: [StateIndex; 2],
+    pub passive_arm_jump: [StateIndex; 2],
+    pub lane_word_start: u16,
+    pub offer_entry: StateIndex,
     pub first_recv_dispatch: [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     pub first_recv_len: u8,
 }
@@ -60,6 +70,9 @@ pub(super) struct ScopeRegistry {
     pub(super) route_dense_by_slot: *const u16,
     pub(super) route_records: *const RouteScopeRecord,
     pub(super) route_scope_len: u16,
+    pub(super) route_offer_lane_words: *const LaneWord,
+    pub(super) route_arm1_lane_words: *const LaneWord,
+    pub(super) route_lane_word_len: u16,
     pub(super) lane_slot_count: u16,
     pub(super) scope_lane_first_eff: *const EffIndex,
     pub(super) scope_lane_last_eff: *const EffIndex,
@@ -67,9 +80,12 @@ pub(super) struct ScopeRegistry {
     pub(super) frontier_entry_capacity_value: u8,
 }
 
-#[inline]
-pub(super) const fn offer_lane_bit(lane: u8) -> LaneMask {
-    lane_mask_bit(lane as usize)
+#[inline(always)]
+pub(super) fn insert_offer_lane(words: &mut [LaneWord], lane: u8) {
+    let (word_idx, bit) = lane_word_index(lane as usize);
+    if word_idx < words.len() {
+        words[word_idx] |= bit;
+    }
 }
 
 impl ScopeRecord {
@@ -103,9 +119,9 @@ impl RouteScopeRecord {
     pub(crate) const EMPTY: Self = Self {
         route_recv: [StateIndex::MAX, StateIndex::MAX],
         passive_arm_jump: [StateIndex::MAX, StateIndex::MAX],
-        offer_lanes: 0,
+        offer_lane_word_start: 0,
         offer_entry: StateIndex::MAX,
-        arm1_lane_mask: 0,
+        arm1_lane_word_start: 0,
         first_recv_dispatch: [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH],
         first_recv_len: 0,
     };
@@ -130,6 +146,43 @@ impl RouteScopeRecord {
             return None;
         }
         Some(self.route_recv[arm as usize])
+    }
+
+    #[inline(always)]
+    const fn offer_lane_word_start(&self) -> usize {
+        self.offer_lane_word_start as usize
+    }
+
+    #[inline(always)]
+    const fn arm1_lane_word_start(&self) -> usize {
+        self.arm1_lane_word_start as usize
+    }
+}
+
+impl RouteScopeScratchRecord {
+    pub(crate) const EMPTY: Self = Self {
+        route_recv: [StateIndex::MAX, StateIndex::MAX],
+        passive_arm_jump: [StateIndex::MAX, StateIndex::MAX],
+        lane_word_start: 0,
+        offer_entry: StateIndex::MAX,
+        first_recv_dispatch: [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH],
+        first_recv_len: 0,
+    };
+
+    #[inline(always)]
+    pub(crate) const fn route_recv_count(&self) -> u8 {
+        if self.route_recv[0].is_max() {
+            0
+        } else if self.route_recv[1].is_max() {
+            1
+        } else {
+            2
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn lane_word_start(&self) -> usize {
+        self.lane_word_start as usize
     }
 }
 
@@ -169,6 +222,40 @@ impl ScopeRegistry {
             unsafe {
                 core::slice::from_raw_parts(self.route_records, self.route_scope_len as usize)
             }
+        }
+    }
+
+    #[inline(always)]
+    fn route_lane_word_len(&self) -> usize {
+        self.route_lane_word_len as usize
+    }
+
+    #[inline(always)]
+    fn route_offer_lane_set_for(&self, route: &RouteScopeRecord) -> LaneSetView {
+        let word_len = self.route_lane_word_len();
+        if word_len == 0 {
+            LaneSetView::EMPTY
+        } else {
+            LaneSetView::from_parts(
+                unsafe {
+                    self.route_offer_lane_words
+                        .add(route.offer_lane_word_start())
+                },
+                word_len,
+            )
+        }
+    }
+
+    #[inline(always)]
+    fn route_arm1_lane_set_for(&self, route: &RouteScopeRecord) -> LaneSetView {
+        let word_len = self.route_lane_word_len();
+        if word_len == 0 {
+            LaneSetView::EMPTY
+        } else {
+            LaneSetView::from_parts(
+                unsafe { self.route_arm1_lane_words.add(route.arm1_lane_word_start()) },
+                word_len,
+            )
         }
     }
 
@@ -309,9 +396,16 @@ impl ScopeRegistry {
         Some(route.route_recv_count() as u16)
     }
 
-    pub(super) fn route_offer_lane_mask(&self, scope_id: ScopeId) -> Option<LaneMask> {
+    pub(super) fn route_offer_lane_set(&self, scope_id: ScopeId) -> Option<LaneSetView> {
         let (_record, route) = self.lookup_route_record(scope_id)?;
-        Some(route.offer_lanes)
+        Some(self.route_offer_lane_set_for(route))
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(super) fn route_arm1_lane_set(&self, scope_id: ScopeId) -> Option<LaneSetView> {
+        let (_record, route) = self.lookup_route_record(scope_id)?;
+        Some(self.route_arm1_lane_set_for(route))
     }
 
     pub(super) fn route_offer_entry(&self, scope_id: ScopeId) -> Option<StateIndex> {
@@ -520,7 +614,7 @@ impl ScopeRegistry {
         }
         if arm == 0 {
             self.scope_lane_eff_in_slot(self.route_arm0_lane_last_eff_by_slot, slot, lane)
-        } else if (route.arm1_lane_mask & offer_lane_bit(lane)) == 0 {
+        } else if !self.route_arm1_lane_set_for(route).contains(lane as usize) {
             None
         } else {
             self.scope_lane_eff_in_slot(self.scope_lane_last_eff, slot, lane)

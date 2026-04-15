@@ -9,8 +9,8 @@ use super::frontier::{
 };
 use super::frontier_state::FrontierState;
 use super::inbox::{BindingInbox, PackedIncomingClassification};
-use super::route_state::RouteState;
-use crate::global::role_program::RoleFootprint;
+use super::route_state::{RouteScopeSelectedArmSlot, RouteState};
+use crate::global::role_program::{LaneWord, RoleFootprint, lane_word_count};
 use crate::global::typestate::PhaseCursorState;
 
 pub(super) struct LeasedState<T> {
@@ -78,6 +78,8 @@ pub(crate) struct RouteFrontierArenaLayout {
     frontier_root_rows: EndpointArenaSection,
     frontier_root_active_slots: EndpointArenaSection,
     frontier_root_observed_key_slots: EndpointArenaSection,
+    frontier_root_observed_offer_lanes: EndpointArenaSection,
+    frontier_root_observed_binding_nonempty_lanes: EndpointArenaSection,
     #[cfg(test)]
     frontier_offer_entry_slots: EndpointArenaSection,
     scope_evidence_slots: EndpointArenaSection,
@@ -93,12 +95,18 @@ pub(crate) struct EndpointArenaLayout {
     route_state_lane_dense_by_lane: EndpointArenaSection,
     route_state_lane_route_arm_lens: EndpointArenaSection,
     route_state_lane_linger_counts: EndpointArenaSection,
+    route_state_scope_selected_arms: EndpointArenaSection,
+    route_state_active_route_lanes: EndpointArenaSection,
+    route_state_lane_linger_lanes: EndpointArenaSection,
+    route_state_lane_offer_linger_lanes: EndpointArenaSection,
+    route_state_active_offer_lanes: EndpointArenaSection,
     frontier: RouteFrontierArenaLayout,
     binding_inbox: EndpointArenaSection,
     binding_lane_dense_by_lane: EndpointArenaSection,
     binding_slots: EndpointArenaSection,
     binding_len: EndpointArenaSection,
     binding_label_masks: EndpointArenaSection,
+    binding_nonempty_lanes: EndpointArenaSection,
     total_bytes: usize,
     total_align: usize,
 }
@@ -153,6 +161,35 @@ impl EndpointArenaLayout {
         offset = route_state_lane_linger_counts.offset + route_state_lane_linger_counts.bytes;
         total_align = max_usize(total_align, route_state_lane_linger_counts.align);
 
+        let route_state_scope_selected_arms = Self::section_array::<RouteScopeSelectedArmSlot>(
+            offset,
+            footprint.scope_evidence_count,
+        );
+        offset = route_state_scope_selected_arms.offset + route_state_scope_selected_arms.bytes;
+        total_align = max_usize(total_align, route_state_scope_selected_arms.align);
+
+        let route_state_lane_word_count = footprint.logical_lane_word_count;
+        let route_state_active_route_lanes =
+            Self::section_array::<LaneWord>(offset, route_state_lane_word_count);
+        offset = route_state_active_route_lanes.offset + route_state_active_route_lanes.bytes;
+        total_align = max_usize(total_align, route_state_active_route_lanes.align);
+
+        let route_state_lane_linger_lanes =
+            Self::section_array::<LaneWord>(offset, route_state_lane_word_count);
+        offset = route_state_lane_linger_lanes.offset + route_state_lane_linger_lanes.bytes;
+        total_align = max_usize(total_align, route_state_lane_linger_lanes.align);
+
+        let route_state_lane_offer_linger_lanes =
+            Self::section_array::<LaneWord>(offset, route_state_lane_word_count);
+        offset =
+            route_state_lane_offer_linger_lanes.offset + route_state_lane_offer_linger_lanes.bytes;
+        total_align = max_usize(total_align, route_state_lane_offer_linger_lanes.align);
+
+        let route_state_active_offer_lanes =
+            Self::section_array::<LaneWord>(offset, route_state_lane_word_count);
+        offset = route_state_active_offer_lanes.offset + route_state_active_offer_lanes.bytes;
+        total_align = max_usize(total_align, route_state_active_offer_lanes.align);
+
         let route_arm_stack = Self::section_array::<RouteArmState>(
             offset,
             footprint
@@ -185,6 +222,29 @@ impl EndpointArenaLayout {
             Self::section_array::<FrontierObservationSlot>(offset, footprint.frontier_entry_count);
         offset = frontier_root_observed_key_slots.offset + frontier_root_observed_key_slots.bytes;
         total_align = max_usize(total_align, frontier_root_observed_key_slots.align);
+
+        let frontier_root_observed_offer_lanes = Self::section_array::<LaneWord>(
+            offset,
+            footprint
+                .active_lane_count
+                .saturating_mul(footprint.logical_lane_word_count),
+        );
+        offset =
+            frontier_root_observed_offer_lanes.offset + frontier_root_observed_offer_lanes.bytes;
+        total_align = max_usize(total_align, frontier_root_observed_offer_lanes.align);
+
+        let frontier_root_observed_binding_nonempty_lanes = Self::section_array::<LaneWord>(
+            offset,
+            footprint
+                .active_lane_count
+                .saturating_mul(footprint.logical_lane_word_count),
+        );
+        offset = frontier_root_observed_binding_nonempty_lanes.offset
+            + frontier_root_observed_binding_nonempty_lanes.bytes;
+        total_align = max_usize(
+            total_align,
+            frontier_root_observed_binding_nonempty_lanes.align,
+        );
 
         #[cfg(test)]
         let frontier_offer_entry_slots = {
@@ -224,6 +284,11 @@ impl EndpointArenaLayout {
         offset = binding_label_masks.offset + binding_label_masks.bytes;
         total_align = max_usize(total_align, binding_label_masks.align);
 
+        let binding_nonempty_lanes =
+            Self::section_array::<LaneWord>(offset, lane_word_count(binding_lane_count));
+        offset = binding_nonempty_lanes.offset + binding_nonempty_lanes.bytes;
+        total_align = max_usize(total_align, binding_nonempty_lanes.align);
+
         let scope_evidence_slots =
             Self::section_array::<ScopeEvidenceSlot>(offset, footprint.scope_evidence_count);
         offset = scope_evidence_slots.offset + scope_evidence_slots.bytes;
@@ -238,6 +303,11 @@ impl EndpointArenaLayout {
             route_state_lane_dense_by_lane,
             route_state_lane_route_arm_lens,
             route_state_lane_linger_counts,
+            route_state_scope_selected_arms,
+            route_state_active_route_lanes,
+            route_state_lane_linger_lanes,
+            route_state_lane_offer_linger_lanes,
+            route_state_active_offer_lanes,
             frontier: RouteFrontierArenaLayout {
                 route_arm_stack,
                 lane_offer_state_slots,
@@ -245,6 +315,8 @@ impl EndpointArenaLayout {
                 frontier_root_rows,
                 frontier_root_active_slots,
                 frontier_root_observed_key_slots,
+                frontier_root_observed_offer_lanes,
+                frontier_root_observed_binding_nonempty_lanes,
                 #[cfg(test)]
                 frontier_offer_entry_slots,
                 scope_evidence_slots,
@@ -254,6 +326,7 @@ impl EndpointArenaLayout {
             binding_slots,
             binding_len,
             binding_label_masks,
+            binding_nonempty_lanes,
             total_bytes: offset,
             total_align,
         }
@@ -314,6 +387,31 @@ impl EndpointArenaLayout {
         self.route_state_lane_linger_counts
     }
 
+    #[inline(always)]
+    pub(crate) const fn route_state_scope_selected_arms(&self) -> EndpointArenaSection {
+        self.route_state_scope_selected_arms
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_state_active_route_lanes(&self) -> EndpointArenaSection {
+        self.route_state_active_route_lanes
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_state_lane_linger_lanes(&self) -> EndpointArenaSection {
+        self.route_state_lane_linger_lanes
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_state_lane_offer_linger_lanes(&self) -> EndpointArenaSection {
+        self.route_state_lane_offer_linger_lanes
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_state_active_offer_lanes(&self) -> EndpointArenaSection {
+        self.route_state_active_offer_lanes
+    }
+
     pub(crate) const fn frontier_root_rows(&self) -> EndpointArenaSection {
         self.frontier.frontier_root_rows
     }
@@ -332,6 +430,18 @@ impl EndpointArenaLayout {
     #[inline(always)]
     pub(crate) const fn frontier_offer_entry_slots(&self) -> EndpointArenaSection {
         self.frontier.frontier_offer_entry_slots
+    }
+
+    #[inline(always)]
+    pub(crate) const fn frontier_root_observed_offer_lanes(&self) -> EndpointArenaSection {
+        self.frontier.frontier_root_observed_offer_lanes
+    }
+
+    #[inline(always)]
+    pub(crate) const fn frontier_root_observed_binding_nonempty_lanes(
+        &self,
+    ) -> EndpointArenaSection {
+        self.frontier.frontier_root_observed_binding_nonempty_lanes
     }
 
     #[inline(always)]
@@ -357,6 +467,11 @@ impl EndpointArenaLayout {
     #[inline(always)]
     pub(crate) const fn binding_label_masks(&self) -> EndpointArenaSection {
         self.binding_label_masks
+    }
+
+    #[inline(always)]
+    pub(crate) const fn binding_nonempty_lanes(&self) -> EndpointArenaSection {
+        self.binding_nonempty_lanes
     }
 
     #[inline(always)]
@@ -420,12 +535,25 @@ mod tests {
 
     #[test]
     fn root_frontier_shared_pools_track_max_frontier_entries() {
-        let layout = EndpointArenaLayout::from_footprint(RoleFootprint::for_endpoint_layout(
-            3, 3, 3, 2, 4, 5,
-        ));
+        let footprint = RoleFootprint::for_endpoint_layout(3, 65, 65, 2, 4, 5);
+        let layout = EndpointArenaLayout::from_footprint(footprint);
         assert_eq!(layout.frontier_root_rows().count(), 3);
         assert_eq!(layout.frontier_root_active_slots().count(), 5);
         assert_eq!(layout.frontier_root_observed_key_slots().count(), 5);
+        assert_eq!(
+            layout.frontier_root_observed_offer_lanes().count(),
+            footprint
+                .active_lane_count
+                .saturating_mul(footprint.logical_lane_word_count)
+        );
+        assert_eq!(
+            layout
+                .frontier_root_observed_binding_nonempty_lanes()
+                .count(),
+            footprint
+                .active_lane_count
+                .saturating_mul(footprint.logical_lane_word_count)
+        );
         assert_eq!(layout.frontier_offer_entry_slots().count(), 8);
     }
 }

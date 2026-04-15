@@ -83,11 +83,6 @@ check_required_regex \
   "${OFFER}"
 
 check_required_regex \
-  "fn frontier_observation_lane_mask\\([[:space:]\n]*endpoint: &CursorEndpoint" \
-  "frontier_observation_lane_mask must stay on RouteFrontierMachine" \
-  "${OFFER}"
-
-check_required_regex \
   "fn frontier_observation_offer_lane_entry_slot_masks\\([[:space:]\n]*endpoint: &CursorEndpoint" \
   "frontier_observation_offer_lane_entry_slot_masks must stay on RouteFrontierMachine" \
   "${OFFER}"

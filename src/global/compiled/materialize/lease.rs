@@ -10,14 +10,10 @@ use crate::global::{
 #[cfg(test)]
 use super::program::CompiledProgram;
 use super::program::CompiledProgramImage;
-#[cfg(test)]
-use super::role::CompiledRole;
 use super::role::CompiledRoleImage;
 use super::{LoweringSummary, ProgramStamp};
 #[cfg(test)]
-use core::{cell::UnsafeCell, mem::MaybeUninit, ptr};
-#[cfg(test)]
-use std::thread::LocalKey;
+use core::ptr;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LoweringLeaseMode {
@@ -421,35 +417,13 @@ pub(crate) fn with_compiled_programs<R>(
 }
 
 #[cfg(test)]
-pub(crate) fn with_compiled_role_in_slot<const ROLE: u8, R>(
-    compiled_slot: &'static LocalKey<UnsafeCell<MaybeUninit<CompiledRole>>>,
-    scratch_slot: &'static LocalKey<UnsafeCell<MaybeUninit<RoleCompileScratch>>>,
-    input: RoleLoweringInput<'_>,
-    f: impl FnOnce(&CompiledRole) -> R,
-) -> R {
-    let summary = input.summary();
-    compiled_slot.with(|compiled| {
-        scratch_slot.with(|scratch| unsafe {
-            let compiled_ptr = (*compiled.get()).as_mut_ptr();
-            let scratch_ptr = (*scratch.get()).as_mut_ptr();
-            scratch_ptr.write(RoleCompileScratch::new());
-            CompiledRole::init_from_summary::<ROLE>(compiled_ptr, summary, &mut *scratch_ptr);
-            let result = f(&*compiled_ptr);
-            ptr::drop_in_place(compiled_ptr);
-            ptr::drop_in_place(scratch_ptr);
-            result
-        })
-    })
-}
-
-#[cfg(test)]
 pub(crate) unsafe fn init_compiled_role_image<const ROLE: u8>(
     dst: *mut CompiledRoleImage,
     input: RoleLoweringInput<'_>,
     scratch: *mut RoleCompileScratch,
 ) {
     unsafe {
-        scratch.write(RoleCompileScratch::new());
+        RoleCompileScratch::init_empty(scratch);
         CompiledRoleImage::init_from_summary::<ROLE>(dst, input.summary(), &mut *scratch);
     }
 }
@@ -479,6 +453,9 @@ mod tests {
         let empty = RoleFootprint {
             scope_count: 0,
             eff_count: 0,
+            phase_count: 0,
+            phase_lane_entry_count: 0,
+            phase_lane_word_count: 0,
             parallel_enter_count: 0,
             route_scope_count: 0,
             local_step_count: 0,
@@ -486,6 +463,7 @@ mod tests {
             active_lane_count: 0,
             endpoint_lane_slot_count: 0,
             logical_lane_count: 0,
+            logical_lane_word_count: 0,
             max_route_stack_depth: 0,
             scope_evidence_count: 0,
             frontier_entry_count: 0,
@@ -493,6 +471,9 @@ mod tests {
         let compact = RoleFootprint {
             scope_count: 0,
             eff_count: 3,
+            phase_count: 2,
+            phase_lane_entry_count: 2,
+            phase_lane_word_count: 2,
             parallel_enter_count: 1,
             route_scope_count: 0,
             local_step_count: 2,
@@ -500,6 +481,7 @@ mod tests {
             active_lane_count: 0,
             endpoint_lane_slot_count: 0,
             logical_lane_count: 0,
+            logical_lane_word_count: 0,
             max_route_stack_depth: 0,
             scope_evidence_count: 0,
             frontier_entry_count: 0,

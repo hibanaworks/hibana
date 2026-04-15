@@ -179,7 +179,7 @@ pub(super) fn continuations_equivalent(
     arm_sequences_equal(nodes, scope_end, left_entry, right_entry)
 }
 
-#[inline(never)]
+#[inline(always)]
 pub(super) fn arm_common_prefix_end(
     nodes: &[LocalNode],
     scope: ScopeId,

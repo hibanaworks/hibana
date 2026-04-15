@@ -42,8 +42,23 @@ check_absent \
   src/global/compiled/images/role.rs
 
 check_absent \
+  "pub\\(crate\\) const MAX_LANES: usize =|pub\\(crate\\) use core::primitive::u32 as LaneMask;|pub\\(crate\\) struct Phase \\{|pub\\(crate\\) struct ProjectedRoleLayout \\{|phase_upper_bound\\(self\\) -> usize" \
+  "role_program.rs must not keep legacy lane ceilings or shadow phase owners" \
+  src/global/role_program.rs
+
+check_absent \
   "active_lane_mask_bits|active_lane_count_from_mask\\(" \
   "compiled role image must not regress to mask-derived active lane facts" \
+  src/global/compiled/images/role.rs
+
+check_absent \
+  "active_lane_mask: u32" \
+  "compiled role lowering must not retain the legacy u32 lane-mask fact" \
+  src/global/compiled/lowering/driver.rs
+
+check_absent \
+  "pub\\(crate\\) struct CompiledRole \\{" \
+  "compiled role image must not keep the legacy cfg\\(test\\) shadow owner" \
   src/global/compiled/images/role.rs
 
 check_absent \
@@ -119,6 +134,11 @@ check_absent \
   src/endpoint/kernel/core.rs
 
 check_absent \
+  "let mut lane_mask = self\\.route_state\\.active_route_lane_mask;|if let Some\\(arm\\) = self\\.route_arm_for\\(lane_idx as u8, scope\\)|offer_lanes_for_scope\\(&self, scope_id: ScopeId\\) -> \\(\\[u8; MAX_LANES\\], usize\\)" \
+  "core route lookup helpers must not keep selected-arm lane scans or MAX_LANES array helpers" \
+  src/endpoint/kernel/core.rs
+
+check_absent \
   "use crate::global::role_program::MAX_LANES|0\\.\\.crate::global::role_program::MAX_LANES|while logical_idx < MAX_LANES" \
   "session-cluster lane leasing must use exact compiled lane counts" \
   src/control/cluster/core.rs
@@ -134,6 +154,26 @@ check_absent \
   "summary_lane_idx >= MAX_LANES|preferred_lane_idx < MAX_LANES" \
   "route frontier scope-evidence helpers must not depend on the fixed MAX_LANES ceiling" \
   src/endpoint/kernel/route_frontier/scope_evidence_logic.rs
+
+check_absent \
+  "active_route_lane_mask: RoleLaneMask|lane_linger_mask: RoleLaneMask|lane_offer_linger_mask: RoleLaneMask|active_offer_mask: RoleLaneMask" \
+  "route state must replace scalar lane masks with exact lane-word owners" \
+  src/endpoint/kernel/runtime/route_state.rs
+
+check_absent \
+  "nonempty_mask: RoleLaneMask|struct BindingInboxTestStorage" \
+  "binding inbox must replace scalar lane masks and MAX_LANES shadow storage" \
+  src/endpoint/kernel/runtime/inbox.rs
+
+check_absent \
+  "observed_offer_lane_mask: RoleLaneMask|observed_binding_nonempty_mask: RoleLaneMask|struct ActiveEntrySetTestStorage|struct ObservedEntrySetTestStorage|struct FrontierObservationKeyTestStorage" \
+  "frontier runtime must replace scalar lane masks and MAX_LANES shadow storage" \
+  src/endpoint/kernel/runtime/frontier.rs
+
+check_absent \
+  "global_frontier_observed_offer_lane_mask: RoleLaneMask|global_frontier_observed_binding_nonempty_mask: RoleLaneMask" \
+  "frontier state must not retain scalar lane-mask cache state" \
+  src/endpoint/kernel/runtime/frontier_state.rs
 
 check_absent \
   "allocated_slots\\(" \
@@ -174,6 +214,46 @@ check_required \
   "struct PhaseLaneEntry {" \
   "compiled role exact phase lane-entry owner missing" \
   src/global/compiled/images/role.rs
+
+check_required \
+  "phase_lane_words: *const LaneWord," \
+  "compiled role image must own exact phase lane-word storage" \
+  src/global/compiled/images/role.rs
+
+check_required \
+  "lane_word_start: u16," \
+  "phase image header must track lane-word offsets" \
+  src/global/compiled/images/role.rs
+
+check_required \
+  "lane_word_len: u16," \
+  "phase image header must track lane-word lengths" \
+  src/global/compiled/images/role.rs
+
+check_required \
+  "pub(crate) phase_lane_entry_count: usize," \
+  "RoleFootprint must carry exact phase lane-entry counts" \
+  src/global/role_program.rs
+
+check_required \
+  "pub(crate) phase_lane_word_count: usize," \
+  "RoleFootprint must carry exact phase lane-word counts" \
+  src/global/role_program.rs
+
+check_required \
+  "pub(crate) logical_lane_word_count: usize," \
+  "RoleFootprint must carry exact logical lane-word counts" \
+  src/global/role_program.rs
+
+check_required \
+  "offer_lanes: LaneSet," \
+  "frontier observation key must keep exact offer-lane storage" \
+  src/endpoint/kernel/runtime/frontier.rs
+
+check_required \
+  "binding_nonempty_lanes: LaneSet," \
+  "frontier observation key must keep exact binding-lane storage" \
+  src/endpoint/kernel/runtime/frontier.rs
 
 check_required \
   "pub(crate) struct RoleLoweringScratch<'a> {" \
