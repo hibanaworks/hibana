@@ -781,7 +781,7 @@ mod tests {
             assert!(N <= TEST_SLAB_CAPACITY, "fixture slab 0 too small");
             let tap = unsafe { &mut *self.tap0 };
             let slab = unsafe { &mut *self.slab0 };
-            Config::new(tap, slab)
+            Config::new(tap, slab).with_lane_range(0..3)
         }
 
         fn config1<const N: usize>(
@@ -790,7 +790,7 @@ mod tests {
             assert!(N <= TEST_SLAB_CAPACITY, "fixture slab 1 too small");
             let tap = unsafe { &mut *self.tap1 };
             let slab = unsafe { &mut *self.slab1 };
-            Config::new(tap, slab)
+            Config::new(tap, slab).with_lane_range(0..3)
         }
 
         fn tap0(&mut self) -> &'static mut [TapEvent; RING_EVENTS] {
@@ -945,14 +945,12 @@ mod tests {
 
         with_bundle_runtime(|fixture| {
             let config = fixture.config0::<256>();
+            let lane_slots = config.lane_range().len();
             with_bundle_rendezvous(config, |rendezvous| {
                 rendezvous
                     .ensure_endpoint_resident_budget(
                         crate::rendezvous::core::EndpointResidentBudget::with_route_storage(
-                            0,
-                            crate::runtime::consts::LANES_MAX as usize,
-                            0,
-                            1,
+                            0, lane_slots, 0, 1,
                         ),
                     )
                     .expect("reserve lazy cap storage");

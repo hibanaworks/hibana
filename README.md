@@ -552,7 +552,7 @@ customisation points are:
 
 - `Config::new(tap_buf, slab)` to allocate tap storage and the rendezvous slab
 - `Config::tap_storage()` and `Config::slab()` to inspect or reuse the owned buffers
-- `Config::with_lane_range(range)` to reserve lane space for the transport/appkit split
+- `Config::with_lane_range(range)` to reserve lane space for the transport/appkit split; the configured window must still include reserved control lane `0`
 - `Config::lane_range()` to inspect the configured lane ownership window
 - `Config::with_universe(universe)` to install a custom label universe
 - `Config::universe()` to inspect the active label universe

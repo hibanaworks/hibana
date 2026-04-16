@@ -20,10 +20,6 @@ use super::{
     splice::{DistributedSpliceTable, PendingSplice, SpliceStateTable},
     tables::{CheckpointTable, GenTable, LoopTable, PolicyTable, RouteTable, VmCapsTable},
 };
-#[cfg(test)]
-use crate::global::typestate::RoleCompileScratch;
-#[cfg(test)]
-use crate::runtime::consts::LANES_MAX;
 use crate::{
     control::{
         automaton::txn::{NoopTap, Txn},
@@ -938,6 +934,16 @@ where
         required
     }
 
+    #[inline]
+    fn lane_base(&self) -> u32 {
+        self.lane_range.start
+    }
+
+    #[inline]
+    fn lane_slot_count(&self) -> usize {
+        self.lane_range.end.saturating_sub(self.lane_range.start) as usize
+    }
+
     fn recompute_scratch_reserved_bytes(&mut self) {
         let (slab_ptr, _) = self.slab_ptr_and_len();
         let mut reserved = 0u32;
@@ -967,6 +973,7 @@ where
         required_frame_slots: usize,
         required_lane_slots: usize,
     ) -> Option<()> {
+        let required_lane_slots = core::cmp::max(required_lane_slots, self.lane_slot_count());
         if required_frame_slots == 0
             || (self.routes.route_slots() >= required_frame_slots
                 && self.routes.lane_slots() >= required_lane_slots)
@@ -990,6 +997,7 @@ where
                 self.routes.bind_from_storage_with_layout(
                     storage,
                     required_frame_slots,
+                    self.lane_base(),
                     required_lane_slots,
                     reclaim_delta,
                 );
@@ -999,11 +1007,13 @@ where
                 self.routes.migrate_from_storage(
                     storage,
                     required_frame_slots,
+                    self.lane_base(),
                     required_lane_slots,
                 );
                 self.routes.rebind_from_storage(
                     storage,
                     required_frame_slots,
+                    self.lane_base(),
                     required_lane_slots,
                     reclaim_delta,
                 );
@@ -1014,13 +1024,14 @@ where
     }
 
     fn ensure_loop_table_capacity(&mut self, required_slots: usize) -> Option<()> {
+        let required_lane_slots = self.lane_slot_count();
         if required_slots == 0 || self.loops.loop_slots() >= required_slots {
             return Some(());
         }
         let prior_frontier = self.image_frontier;
         let (storage, storage_offset) = unsafe {
             self.allocate_persistent_sidecar_bytes(
-                LoopTable::storage_bytes(required_slots),
+                LoopTable::storage_bytes(required_slots, required_lane_slots),
                 LoopTable::storage_align(),
             )
         }?;
@@ -1031,16 +1042,103 @@ where
             self.reclaim_offset_for_payload(old_ptr, self.loops.storage_reclaim_delta());
         if self.loops.loop_slots() == 0 {
             unsafe {
-                self.loops
-                    .bind_from_storage(storage, required_slots, reclaim_delta);
+                self.loops.bind_from_storage(
+                    storage,
+                    required_slots,
+                    self.lane_base(),
+                    required_lane_slots,
+                    reclaim_delta,
+                );
             }
         } else {
             unsafe {
-                self.loops.migrate_from_storage(storage, required_slots);
-                self.loops
-                    .rebind_from_storage(storage, required_slots, reclaim_delta);
+                self.loops.migrate_from_storage(
+                    storage,
+                    required_slots,
+                    self.lane_base(),
+                    required_lane_slots,
+                );
+                self.loops.rebind_from_storage(
+                    storage,
+                    required_slots,
+                    self.lane_base(),
+                    required_lane_slots,
+                    reclaim_delta,
+                );
             }
             self.free_bound_persistent_region(old_reclaim_offset, old_ptr, old_bytes);
+        }
+        Some(())
+    }
+
+    fn ensure_generation_table_storage(&mut self) -> Option<()> {
+        if self.r#gen.is_bound() || self.lane_slot_count() == 0 {
+            return Some(());
+        }
+        let lane_slots = self.lane_slot_count();
+        let (storage, _) = unsafe {
+            self.allocate_persistent_sidecar_bytes(
+                GenTable::storage_bytes(lane_slots),
+                GenTable::storage_align(),
+            )
+        }?;
+        unsafe {
+            self.r#gen
+                .bind_from_storage(storage, self.lane_base(), lane_slots);
+        }
+        Some(())
+    }
+
+    fn ensure_assoc_table_storage(&mut self) -> Option<()> {
+        if self.assoc.is_bound() || self.lane_slot_count() == 0 {
+            return Some(());
+        }
+        let lane_slots = self.lane_slot_count();
+        let (storage, _) = unsafe {
+            self.allocate_persistent_sidecar_bytes(
+                AssocTable::storage_bytes(lane_slots),
+                AssocTable::storage_align(),
+            )
+        }?;
+        unsafe {
+            self.assoc
+                .bind_from_storage(storage, self.lane_base(), lane_slots);
+        }
+        Some(())
+    }
+
+    fn ensure_checkpoint_table_storage(&mut self) -> Option<()> {
+        if self.checkpoints.is_bound() || self.lane_slot_count() == 0 {
+            return Some(());
+        }
+        let lane_slots = self.lane_slot_count();
+        let (storage, _) = unsafe {
+            self.allocate_persistent_sidecar_bytes(
+                CheckpointTable::storage_bytes(lane_slots),
+                CheckpointTable::storage_align(),
+            )
+        }?;
+        unsafe {
+            self.checkpoints
+                .bind_from_storage(storage, self.lane_base(), lane_slots);
+        }
+        Some(())
+    }
+
+    fn ensure_vm_caps_table_storage(&mut self) -> Option<()> {
+        if self.vm_caps.is_bound() || self.lane_slot_count() == 0 {
+            return Some(());
+        }
+        let lane_slots = self.lane_slot_count();
+        let (storage, _) = unsafe {
+            self.allocate_persistent_sidecar_bytes(
+                VmCapsTable::storage_bytes(lane_slots),
+                VmCapsTable::storage_align(),
+            )
+        }?;
+        unsafe {
+            self.vm_caps
+                .bind_from_storage(storage, self.lane_base(), lane_slots);
         }
         Some(())
     }
@@ -1089,14 +1187,16 @@ where
         if self.splice.is_bound() {
             return Some(());
         }
+        let lane_slots = self.lane_slot_count();
         let (storage, _) = unsafe {
             self.allocate_persistent_sidecar_bytes(
-                SpliceStateTable::storage_bytes(),
+                SpliceStateTable::storage_bytes(lane_slots),
                 SpliceStateTable::storage_align(),
             )
         }?;
         unsafe {
-            self.splice.bind_from_storage(storage);
+            self.splice
+                .bind_from_storage(storage, self.lane_base(), lane_slots);
         }
         Some(())
     }
@@ -1133,16 +1233,79 @@ where
         if self.policies.is_bound() {
             return Some(());
         }
+        let lane_slots = self.lane_slot_count();
         let (storage, _) = unsafe {
             self.allocate_persistent_sidecar_bytes(
-                PolicyTable::storage_bytes(),
+                PolicyTable::storage_bytes(lane_slots),
                 PolicyTable::storage_align(),
             )
         }?;
         unsafe {
-            self.policies.bind_from_storage(storage);
+            self.policies
+                .bind_from_storage(storage, self.lane_base(), lane_slots);
         }
         Some(())
+    }
+
+    fn ensure_core_lane_storage(&mut self) -> Option<()> {
+        self.ensure_generation_table_storage()?;
+        self.ensure_assoc_table_storage()?;
+        self.ensure_checkpoint_table_storage()?;
+        self.ensure_vm_caps_table_storage()?;
+        self.ensure_policy_table_storage()?;
+        Some(())
+    }
+
+    fn free_bound_core_lane_storage(&mut self) {
+        if self.policies.is_bound() {
+            self.free_external_persistent_sidecar_bytes(
+                self.policies.storage_ptr(),
+                self.policies.storage_bytes_current(),
+                0,
+            );
+            self.policies = PolicyTable::empty();
+        }
+        if self.vm_caps.is_bound() {
+            self.free_external_persistent_sidecar_bytes(
+                self.vm_caps.storage_ptr(),
+                self.vm_caps.storage_bytes_current(),
+                0,
+            );
+            self.vm_caps = VmCapsTable::empty();
+        }
+        if self.checkpoints.is_bound() {
+            self.free_external_persistent_sidecar_bytes(
+                self.checkpoints.storage_ptr(),
+                self.checkpoints.storage_bytes_current(),
+                0,
+            );
+            self.checkpoints = CheckpointTable::empty();
+        }
+        if self.assoc.is_bound() {
+            self.free_external_persistent_sidecar_bytes(
+                self.assoc.storage_ptr(),
+                self.assoc.storage_bytes_current(),
+                0,
+            );
+            self.assoc = AssocTable::empty();
+        }
+        if self.r#gen.is_bound() {
+            self.free_external_persistent_sidecar_bytes(
+                self.r#gen.storage_ptr(),
+                self.r#gen.storage_bytes_current(),
+                0,
+            );
+            self.r#gen = GenTable::empty();
+        }
+    }
+
+    unsafe fn cleanup_failed_public_init(dst: *mut Self) {
+        let rv = unsafe { &mut *dst };
+        rv.free_bound_core_lane_storage();
+        unsafe {
+            core::ptr::drop_in_place(core::ptr::addr_of_mut!((*dst).clock));
+            core::ptr::drop_in_place(core::ptr::addr_of_mut!((*dst).transport));
+        }
     }
 
     #[cfg(test)]
@@ -1184,19 +1347,6 @@ where
         self.ensure_loop_table_capacity(loop_slots)?;
         self.ensure_cap_table_capacity(cap_entries)?;
         Some(())
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn record_endpoint_resident_budget(
-        &mut self,
-        lease_slot: EndpointLeaseId,
-        generation: u32,
-        budget: EndpointResidentBudget,
-    ) {
-        if let Some(slot) = self.endpoint_lease_mut(lease_slot, generation) {
-            slot.resident_budget = budget;
-        }
     }
 
     fn trim_resident_headers_to_live_budget(&mut self) {
@@ -1483,43 +1633,28 @@ where
     }
 
     #[cfg(test)]
-    #[inline(never)]
-    unsafe fn materialize_new_role_image_from_summary<const ROLE: u8>(
-        &mut self,
-        insert_idx: usize,
-        stamp: ProgramStamp,
+    fn role_footprint_from_summary<const ROLE: u8>(
         summary: &LoweringSummary,
-        scratch: &mut RoleCompileScratch,
-    ) -> Option<*const CompiledRoleImage> {
-        let scope_count = summary.stamp().scope_count();
-        let eff_count = summary.view().as_slice().len();
-        let bytes =
-            CompiledRoleImage::persistent_bytes_for_counts(scope_count, scope_count, eff_count);
-        let (ptr, offset) = unsafe {
-            self.allocate_persistent_image_bytes(bytes, CompiledRoleImage::persistent_align())
-        }?;
-        unsafe {
-            CompiledRoleImage::init_from_summary::<ROLE>(
-                ptr.cast::<CompiledRoleImage>(),
-                summary,
-                scratch,
-            );
+    ) -> crate::global::role_program::RoleFootprint {
+        let counts = summary.role_lowering_counts::<ROLE>();
+        crate::global::role_program::RoleFootprint {
+            scope_count: counts.scope_count,
+            eff_count: counts.eff_count,
+            phase_count: counts.phase_count,
+            phase_lane_entry_count: counts.phase_lane_entry_count,
+            phase_lane_word_count: counts.phase_lane_word_count,
+            parallel_enter_count: counts.parallel_enter_count,
+            route_scope_count: counts.route_scope_count,
+            local_step_count: counts.local_step_count,
+            passive_linger_route_scope_count: counts.passive_linger_route_scope_count,
+            active_lane_count: counts.active_lane_count,
+            endpoint_lane_slot_count: counts.endpoint_lane_slot_count,
+            logical_lane_count: counts.logical_lane_count,
+            logical_lane_word_count: counts.logical_lane_word_count,
+            max_route_stack_depth: 0,
+            scope_evidence_count: 0,
+            frontier_entry_count: 0,
         }
-        let reserved = Self::frontier_scratch_guard_bytes(unsafe {
-            (*ptr.cast::<CompiledRoleImage>()).frontier_scratch_layout()
-        }) as u32;
-        self.reserve_scratch_reserved_bytes(reserved);
-        let slot = unsafe { &mut *self.role_images.add(insert_idx) };
-        debug_assert!(!slot.occupied);
-        *slot = RoleImageSlot {
-            stamp,
-            role: ROLE,
-            offset,
-            len: bytes as u32,
-            pins: 0,
-            occupied: true,
-        };
-        Some(ptr.cast::<CompiledRoleImage>())
     }
 
     #[inline(never)]
@@ -1566,22 +1701,24 @@ where
         &mut self,
         stamp: ProgramStamp,
         summary: &LoweringSummary,
-        scratch: &mut RoleCompileScratch,
     ) -> Option<*const CompiledRoleImage> {
-        if let Some(idx) = self.role_image_slot_index::<ROLE>(stamp) {
-            let slot = unsafe { &*self.role_images.add(idx) };
-            return Some(unsafe { self.pinned_role_image_from_slot::<ROLE>(slot) });
-        }
-        let Some(insert_idx) = self.first_free_role_image_slot() else {
-            return unsafe {
-                self.recycle_role_image_from_summary::<ROLE>(stamp, summary, scratch)
-            };
-        };
+        let footprint = Self::role_footprint_from_summary::<ROLE>(summary);
+        let scratch_bytes = crate::global::compiled::role_lowering_scratch_storage_bytes(footprint);
+        let mut scratch_storage = std::vec::Vec::with_capacity(scratch_bytes);
+        scratch_storage.resize(scratch_bytes, 0u8);
         unsafe {
-            self.materialize_new_role_image_from_summary::<ROLE>(
-                insert_idx, stamp, summary, scratch,
+            crate::global::compiled::with_role_lowering_scratch_storage(
+                footprint,
+                scratch_storage.as_mut_ptr(),
+                scratch_storage.len(),
+                |scratch| {
+                    self.materialize_role_image_from_summary_for_program::<ROLE>(
+                        stamp, summary, scratch, footprint,
+                    )
+                },
             )
         }
+        .flatten()
     }
 
     #[inline(never)]
@@ -1608,87 +1745,6 @@ where
                 insert_idx, stamp, summary, scratch, footprint,
             )
         }
-    }
-
-    #[cfg(test)]
-    #[cold]
-    #[inline(never)]
-    unsafe fn recycle_role_image_from_summary<const ROLE: u8>(
-        &mut self,
-        stamp: ProgramStamp,
-        summary: &LoweringSummary,
-        scratch: &mut RoleCompileScratch,
-    ) -> Option<*const CompiledRoleImage> {
-        let scope_count = summary.stamp().scope_count();
-        let eff_count = summary.view().as_slice().len();
-        let bytes =
-            CompiledRoleImage::persistent_bytes_for_counts(scope_count, scope_count, eff_count);
-        if let Some(insert_idx) = self.first_reusable_role_image_slot(bytes) {
-            let slot = unsafe { &mut *self.role_images.add(insert_idx) };
-            let ptr = unsafe {
-                self.slab_ptr_and_len()
-                    .0
-                    .add(slot.offset as usize)
-                    .cast::<CompiledRoleImage>()
-            };
-            unsafe {
-                CompiledRoleImage::init_from_summary::<ROLE>(ptr, summary, scratch);
-            }
-            let reserved =
-                Self::frontier_scratch_guard_bytes(unsafe { (*ptr).frontier_scratch_layout() })
-                    as u32;
-            self.reserve_scratch_reserved_bytes(reserved);
-            slot.stamp = stamp;
-            slot.role = ROLE;
-            slot.occupied = true;
-            debug_assert_eq!(slot.pins, 0);
-            return Some(ptr.cast_const());
-        }
-        let insert_idx = self.first_unpinned_role_image_slot()?;
-        let (ptr, offset, reserved_len, released_region) = {
-            let slot = unsafe { &*self.role_images.add(insert_idx) };
-            if (slot.len as usize) >= bytes {
-                let ptr = unsafe {
-                    self.slab_ptr_and_len()
-                        .0
-                        .add(slot.offset as usize)
-                        .cast::<CompiledRoleImage>()
-                };
-                (ptr.cast::<u8>(), slot.offset, slot.len, None)
-            } else {
-                let (ptr, offset) = unsafe {
-                    self.allocate_persistent_image_bytes(
-                        bytes,
-                        CompiledRoleImage::persistent_align(),
-                    )
-                }?;
-                (ptr, offset, bytes as u32, Some((slot.offset, slot.len)))
-            }
-        };
-        unsafe {
-            CompiledRoleImage::init_from_summary::<ROLE>(
-                ptr.cast::<CompiledRoleImage>(),
-                summary,
-                scratch,
-            );
-        }
-        let reserved = Self::frontier_scratch_guard_bytes(unsafe {
-            (*ptr.cast::<CompiledRoleImage>()).frontier_scratch_layout()
-        }) as u32;
-        self.reserve_scratch_reserved_bytes(reserved);
-        if let Some((old_offset, old_len)) = released_region {
-            self.release_persistent_region(old_offset, old_len);
-        }
-        let slot = unsafe { &mut *self.role_images.add(insert_idx) };
-        *slot = RoleImageSlot {
-            stamp,
-            role: ROLE,
-            offset,
-            len: reserved_len,
-            pins: 0,
-            occupied: true,
-        };
-        Some(ptr.cast::<CompiledRoleImage>())
     }
 
     #[cold]
@@ -1863,18 +1919,6 @@ where
             candidate_end = unsafe { (*self.endpoint_leases.add(idx)).offset as usize };
         }
         None
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn reserve_endpoint_lease(
-        &mut self,
-        resident_budget: EndpointResidentBudget,
-    ) -> Option<(EndpointLeaseId, u32)> {
-        unsafe {
-            self.allocate_endpoint_lease(1, 1, resident_budget)
-                .map(|(slot, generation, _, _)| (slot, generation))
-        }
     }
 
     #[inline]
@@ -2991,6 +3035,12 @@ where
             core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
             core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
         }
+        unsafe {
+            if (&mut *dst).ensure_core_lane_storage().is_none() {
+                Self::cleanup_failed_public_init(dst);
+                return None;
+            }
+        }
         Some(dst)
     }
 
@@ -3066,6 +3116,12 @@ where
             core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
             core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
         }
+        unsafe {
+            if (&mut *dst).ensure_core_lane_storage().is_none() {
+                Self::cleanup_failed_public_init(dst);
+                return None;
+            }
+        }
         Some(dst)
     }
 
@@ -3100,6 +3156,10 @@ where
                 transport,
                 endpoint_slots,
             );
+            if (&mut *dst).ensure_core_lane_storage().is_none() {
+                Self::cleanup_failed_public_init(dst);
+                panic!("rendezvous test init must allocate lane-scoped storage");
+            }
         }
     }
 }
@@ -4212,13 +4272,13 @@ mod epf_tests {
         control::cluster::core::{CpCommand, EffectRunner},
         control::types::{Lane, SessionId},
         g::{self, Msg, Role},
-        global::{compiled::LoweringSummary, typestate::RoleCompileScratch},
+        global::compiled::LoweringSummary,
         observe::core::TapEvent,
         runtime::{config::Config, consts::RING_EVENTS},
         transport::{Transport, TransportError, wire::Payload},
     };
     use core::{
-        cell::UnsafeCell,
+        cell::{Cell, UnsafeCell},
         future::{Ready, ready},
         mem::MaybeUninit,
         ptr,
@@ -4281,6 +4341,82 @@ mod epf_tests {
         fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
     }
 
+    struct DropTransport;
+
+    impl Drop for DropTransport {
+        fn drop(&mut self) {
+            DROP_TRANSPORT_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+        }
+    }
+
+    impl Transport for DropTransport {
+        type Error = TransportError;
+        type Tx<'a>
+            = ()
+        where
+            Self: 'a;
+        type Rx<'a>
+            = ()
+        where
+            Self: 'a;
+        type Send<'a>
+            = Ready<Result<(), Self::Error>>
+        where
+            Self: 'a;
+        type Recv<'a>
+            = Ready<Result<Payload<'a>, Self::Error>>
+        where
+            Self: 'a;
+        type Metrics = ();
+
+        fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
+            ((), ())
+        }
+
+        fn send<'a, 'f>(
+            &'a self,
+            _tx: &'a mut Self::Tx<'a>,
+            _outgoing: crate::transport::Outgoing<'f>,
+        ) -> Self::Send<'a>
+        where
+            'a: 'f,
+        {
+            ready(Ok(()))
+        }
+
+        fn recv<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
+            ready(Err(TransportError::Offline))
+        }
+
+        fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
+
+        fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
+
+        fn recv_label_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<u8> {
+            None
+        }
+
+        fn metrics(&self) -> Self::Metrics {
+            ()
+        }
+
+        fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
+    }
+
+    struct DropClock;
+
+    impl crate::runtime::config::Clock for DropClock {
+        fn now32(&self) -> u32 {
+            0
+        }
+    }
+
+    impl Drop for DropClock {
+        fn drop(&mut self) {
+            DROP_CLOCK_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+        }
+    }
+
     type TestRendezvous = Rendezvous<
         'static,
         'static,
@@ -4289,18 +4425,45 @@ mod epf_tests {
         crate::runtime::config::CounterClock,
         crate::control::cap::mint::EpochTbl,
     >;
+    type DropTestRendezvous = Rendezvous<
+        'static,
+        'static,
+        DropTransport,
+        crate::runtime::consts::DefaultLabelUniverse,
+        DropClock,
+        crate::control::cap::mint::EpochTbl,
+    >;
 
     thread_local! {
         static EPF_TEST_TAP: UnsafeCell<[TapEvent; RING_EVENTS]> =
             const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
-        static EPF_TEST_SLAB: UnsafeCell<[u8; 256]> =
-            const { UnsafeCell::new([0u8; 256]) };
+        static EPF_TEST_SLAB: UnsafeCell<[u8; 32768]> =
+            const { UnsafeCell::new([0u8; 32768]) };
         static EPF_TEST_RENDEZVOUS: UnsafeCell<MaybeUninit<TestRendezvous>> =
             const { UnsafeCell::new(MaybeUninit::uninit()) };
         static IMAGE_TEST_SLAB: UnsafeCell<[u8; 32768]> =
             const { UnsafeCell::new([0u8; 32768]) };
         static IMAGE_TEST_RENDEZVOUS: UnsafeCell<MaybeUninit<TestRendezvous>> =
             const { UnsafeCell::new(MaybeUninit::uninit()) };
+        static DROP_TEST_TAP: UnsafeCell<[TapEvent; RING_EVENTS]> =
+            const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
+        static DROP_TEST_SLAB: UnsafeCell<[u8; core::mem::size_of::<DropTestRendezvous>()
+            + core::mem::align_of::<DropTestRendezvous>()]> =
+            const { UnsafeCell::new([0u8; core::mem::size_of::<DropTestRendezvous>()
+                + core::mem::align_of::<DropTestRendezvous>()]) };
+        static DROP_TRANSPORT_COUNT: Cell<u32> = const { Cell::new(0) };
+        static DROP_CLOCK_COUNT: Cell<u32> = const { Cell::new(0) };
+    }
+
+    fn reset_drop_counts() {
+        DROP_TRANSPORT_COUNT.with(|count| count.set(0));
+        DROP_CLOCK_COUNT.with(|count| count.set(0));
+    }
+
+    fn drop_counts() -> (u32, u32) {
+        let transport = DROP_TRANSPORT_COUNT.with(Cell::get);
+        let clock = DROP_CLOCK_COUNT.with(Cell::get);
+        (transport, clock)
     }
 
     fn with_epf_test_rendezvous<R>(f: impl FnOnce(&mut TestRendezvous) -> R) -> R {
@@ -4311,7 +4474,7 @@ mod epf_tests {
                     tap.fill(TapEvent::zero());
                     let slab = &mut *slab.get();
                     slab.fill(0);
-                    let config = Config::new(tap, slab);
+                    let config = Config::new(tap, slab).with_lane_range(0..2);
                     let ptr = (*rendezvous.get()).as_mut_ptr();
                     let rv_id = RendezvousId::new(1);
                     TestRendezvous::init_from_config(ptr, rv_id, config, DummyTransport, 0);
@@ -4334,7 +4497,7 @@ mod epf_tests {
                     tap.fill(TapEvent::zero());
                     let slab = &mut *slab.get();
                     slab.fill(0);
-                    let config = Config::new(tap, slab);
+                    let config = Config::new(tap, slab).with_lane_range(0..1);
                     let ptr = (*rendezvous.get()).as_mut_ptr();
                     let rv_id = RendezvousId::new(2);
                     TestRendezvous::init_from_config(
@@ -4366,7 +4529,7 @@ mod epf_tests {
                 tap.fill(TapEvent::zero());
                 let slab = &mut *slab.get();
                 slab.fill(0);
-                let config = Config::new(tap, slab);
+                let config = Config::new(tap, slab).with_lane_range(0..1);
                 let rv_id = RendezvousId::new(3);
                 let ptr =
                     TestRendezvous::init_in_slab(rv_id, config, DummyTransport, endpoint_slots)
@@ -4376,6 +4539,53 @@ mod epf_tests {
                 result
             })
         })
+    }
+
+    #[test]
+    fn init_in_slab_failure_drops_transport_and_clock() {
+        reset_drop_counts();
+        DROP_TEST_TAP.with(|tap| {
+            DROP_TEST_SLAB.with(|slab| unsafe {
+                let tap = &mut *tap.get();
+                tap.fill(TapEvent::zero());
+                let slab = &mut *slab.get();
+                slab.fill(0);
+                let config = Config::new(tap, slab).with_lane_range(0..1).with_clock(DropClock);
+                let rv =
+                    DropTestRendezvous::init_in_slab(RendezvousId::new(91), config, DropTransport, 0);
+                assert!(rv.is_none(), "undersized slab must fail public-path rendezvous init");
+            });
+        });
+        assert_eq!(
+            drop_counts(),
+            (1, 1),
+            "failed init_in_slab must drop moved transport and clock exactly once"
+        );
+    }
+
+    #[test]
+    fn init_in_slab_auto_failure_drops_transport_and_clock() {
+        reset_drop_counts();
+        DROP_TEST_TAP.with(|tap| {
+            DROP_TEST_SLAB.with(|slab| unsafe {
+                let tap = &mut *tap.get();
+                tap.fill(TapEvent::zero());
+                let slab = &mut *slab.get();
+                slab.fill(0);
+                let config = Config::new(tap, slab).with_lane_range(0..1).with_clock(DropClock);
+                let rv =
+                    DropTestRendezvous::init_in_slab_auto(RendezvousId::new(92), config, DropTransport);
+                assert!(
+                    rv.is_none(),
+                    "undersized slab must fail public-path auto rendezvous init"
+                );
+            });
+        });
+        assert_eq!(
+            drop_counts(),
+            (1, 1),
+            "failed init_in_slab_auto must drop moved transport and clock exactly once"
+        );
     }
 
     fn route_summary() -> LoweringSummary {
@@ -4474,10 +4684,9 @@ mod epf_tests {
             let initial_scratch = rendezvous.scratch_reserved_bytes;
             let initial_floor = rendezvous.endpoint_lease_floor();
 
-            let mut scratch = RoleCompileScratch::new();
             assert!(
                 rendezvous
-                    .materialize_role_image_from_summary::<0>(stamp, &summary, &mut scratch)
+                    .materialize_role_image_from_summary::<0>(stamp, &summary)
                     .is_none(),
                 "slot exhaustion should reject role image materialization"
             );
@@ -4495,10 +4704,9 @@ mod epf_tests {
                 "role image slot exhaustion must not shrink endpoint lease capacity"
             );
 
-            let mut scratch = RoleCompileScratch::new();
             assert!(
                 rendezvous
-                    .materialize_role_image_from_summary::<0>(stamp, &summary, &mut scratch)
+                    .materialize_role_image_from_summary::<0>(stamp, &summary)
                     .is_none(),
                 "repeated slot exhaustion should keep rejecting role image materialization"
             );
@@ -4565,10 +4773,7 @@ mod epf_tests {
             let initial_frontier = rendezvous.image_frontier;
             rendezvous
                 .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
-                    2,
-                    LANES_MAX as usize,
-                    3,
-                    8,
+                    2, 3, 3, 8,
                 ))
                 .expect("resident sidecars should bind");
             assert!(
@@ -4594,10 +4799,7 @@ mod epf_tests {
         with_image_test_rendezvous_slots(1, |rendezvous| unsafe {
             rendezvous
                 .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
-                    2,
-                    LANES_MAX as usize,
-                    3,
-                    8,
+                    2, 3, 3, 8,
                 ))
                 .expect("resident sidecars should bind");
             let frontier_after_sidecars = rendezvous.image_frontier;
@@ -4619,10 +4821,7 @@ mod epf_tests {
 
             rendezvous
                 .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
-                    2,
-                    LANES_MAX as usize,
-                    3,
-                    8,
+                    2, 3, 3, 8,
                 ))
                 .expect("resident sidecars should rebind from freed regions");
             assert_eq!(
@@ -4714,13 +4913,8 @@ mod epf_tests {
             let image_a = rendezvous
                 .materialize_program_image_from_summary(summary_a.stamp(), &summary_a)
                 .expect("materialize first program image");
-            let mut scratch = RoleCompileScratch::new();
             rendezvous
-                .materialize_role_image_from_summary::<0>(
-                    summary_a.stamp(),
-                    &summary_a,
-                    &mut scratch,
-                )
+                .materialize_role_image_from_summary::<0>(summary_a.stamp(), &summary_a)
                 .expect("materialize first role image");
             let (lease_slot, generation, _, _) = rendezvous
                 .allocate_endpoint_lease(7, 1, EndpointResidentBudget::ZERO)

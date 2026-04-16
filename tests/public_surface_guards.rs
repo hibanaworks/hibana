@@ -4039,7 +4039,8 @@ fn session_cluster_attach_leases_exact_logical_lane_slots() {
             && !cluster_core_src.contains("let primary_lane_index = 0usize;")
             && !cluster_core_src.contains("while logical_idx < MAX_LANES")
             && !cluster_core_src.contains("secondary_lane_scan_count")
-            && !cluster_core_src.contains("active_lane_mask: RoleLaneMask,"),
+            && !cluster_core_src.contains("active_lane_mask: RoleLaneMask,")
+            && !cluster_core_src.contains("CachedSpliceOperandsMap"),
         "session-cluster lane attach must size by exact logical-lane counts instead of the fixed MAX_LANES ceiling"
     );
     assert!(
@@ -4063,16 +4064,16 @@ fn session_cluster_attach_leases_exact_logical_lane_slots() {
 }
 
 #[test]
-fn role_lane_mask_alias_is_gone_and_low_lane_probes_are_explicit() {
+fn role_lane_mask_alias_and_low_lane_test_probes_are_gone() {
     let role_program_src = include_str!("../src/global/role_program.rs");
     let role_program_ws = compact_ws(role_program_src);
 
     assert!(
         !role_program_ws.contains("RoleLaneMask")
             && !role_program_ws.contains("PUBLIC_LANE_COUNT")
-            && role_program_ws
-                .contains("pub(crate) const LOW_LANE_TEST_WIDTH: usize = u32::BITS as usize;"),
-        "role_program.rs must delete the old RoleLaneMask/PUBLIC_LANE_COUNT ceiling and keep any remaining low-lane probe explicit"
+            && !role_program_ws.contains("LOW_LANE_TEST_WIDTH")
+            && !role_program_ws.contains("collect_low_lane_bits("),
+        "role_program.rs must delete the old RoleLaneMask/PUBLIC_LANE_COUNT ceiling and remove low-lane test probes"
     );
 }
 
@@ -4889,6 +4890,7 @@ fn typestate_builder_stays_a_facade_and_emit_owns_lowering_walk() {
     let emit_route_src = include_str!("../src/global/typestate/emit_route.rs");
     let registry_src = include_str!("../src/global/typestate/registry.rs");
     let route_facts_src = include_str!("../src/global/typestate/route_facts.rs");
+    let check_src = include_str!("../src/observe/check.rs");
 
     for forbidden in [
         "struct ScopeEntry {",
@@ -4928,8 +4930,27 @@ fn typestate_builder_stays_a_facade_and_emit_owns_lowering_walk() {
             "emit.rs must stay a lowering facade instead of reabsorbing walk internals: {forbidden}"
         );
     }
-    for required in [
+    for forbidden in [
         "pub(crate) struct RoleCompileScratch {",
+        "ROLE_COMPILE_SCRATCH_MAX_",
+    ] {
+        assert!(
+            !emit_src.contains(forbidden),
+            "emit.rs must not keep the deleted test-only lowering scratch owner or renamed MAX_* ceilings: {forbidden}"
+        );
+    }
+    for forbidden in [
+        "LANES_MAX_USIZE",
+        "zero_u64_cell_array(",
+        "zero_u32_cell_array(",
+        "struct CheckState {",
+    ] {
+        assert!(
+            !check_src.contains(forbidden),
+            "observe/check.rs must derive summaries from actual tap storage instead of fixed-width lane shadow state: {forbidden}"
+        );
+    }
+    for required in [
         "pub(crate) unsafe fn init_value_from_summary_for_role(",
         "super::emit_walk::init_role_typestate_value(",
         "fn passive_arm_scope_by_arm_for_scope_registry(",

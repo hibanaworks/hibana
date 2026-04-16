@@ -6,8 +6,6 @@ use crate::global::role_program::{
     LaneSetView, LaneSteps, LaneWord, LocalStep, PhaseRouteGuard, RoleFootprint, lane_word_count,
     logical_lane_count_for_role,
 };
-#[cfg(test)]
-use crate::global::typestate::RoleCompileScratch;
 use crate::global::typestate::{
     LocalAction, LocalNode, RoleTypestateValue, RouteScopeRecord, ScopeRecord, StateIndex,
 };
@@ -1298,42 +1296,6 @@ impl CompiledRoleImage {
         }
     }
 
-    #[cfg(test)]
-    #[inline(never)]
-    pub(crate) unsafe fn init_from_summary<const ROLE: u8>(
-        dst: *mut Self,
-        summary: &LoweringSummary,
-        scratch: &mut RoleCompileScratch,
-    ) {
-        let mut scratch = RoleLoweringScratch::from_compile_scratch(scratch);
-        let counts = summary.role_lowering_counts::<ROLE>();
-        unsafe {
-            Self::init_from_summary_with_layout::<ROLE>(
-                dst,
-                summary,
-                &mut scratch,
-                RoleFootprint {
-                    scope_count: counts.scope_count,
-                    eff_count: counts.eff_count,
-                    phase_count: counts.phase_count,
-                    phase_lane_entry_count: counts.phase_lane_entry_count,
-                    phase_lane_word_count: counts.phase_lane_word_count,
-                    parallel_enter_count: counts.parallel_enter_count,
-                    route_scope_count: counts.route_scope_count,
-                    local_step_count: counts.local_step_count,
-                    passive_linger_route_scope_count: counts.passive_linger_route_scope_count,
-                    active_lane_count: counts.active_lane_count,
-                    endpoint_lane_slot_count: counts.endpoint_lane_slot_count,
-                    logical_lane_count: counts.logical_lane_count,
-                    logical_lane_word_count: counts.logical_lane_word_count,
-                    max_route_stack_depth: 0,
-                    scope_evidence_count: 0,
-                    frontier_entry_count: 0,
-                },
-            )
-        };
-    }
-
     #[inline(never)]
     pub(crate) unsafe fn init_from_summary_for_program<const ROLE: u8>(
         dst: *mut Self,
@@ -1620,14 +1582,16 @@ impl CompiledRoleImage {
 
     #[inline(always)]
     pub(crate) fn route_table_frame_slots(&self) -> usize {
-        let floor = usize::from(self.typestate_ref().route_scope_count() != 0);
-        let depth = self.max_route_stack_depth();
-        if depth > floor { depth } else { floor }
+        let lane_slots = self.route_table_lane_slots();
+        if lane_slots == 0 {
+            return 0;
+        }
+        lane_slots.saturating_mul(self.max_route_stack_depth().max(1))
     }
 
     #[inline(always)]
     pub(crate) fn route_table_lane_slots(&self) -> usize {
-        if self.route_table_frame_slots() == 0 {
+        if self.typestate_ref().route_scope_count() == 0 {
             0
         } else {
             self.endpoint_lane_slot_count()
@@ -1791,9 +1755,6 @@ impl CompiledRoleImage {
 
 #[cfg(test)]
 mod tests {
-    use core::{cell::UnsafeCell, mem::MaybeUninit};
-    use std::thread_local;
-
     extern crate self as hibana;
 
     mod fanout_program {
@@ -1817,6 +1778,13 @@ mod tests {
             "/internal/pico_smoke/src/linear_program.rs"
         ));
     }
+    mod localside {
+        extern crate self as hibana;
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/internal/pico_smoke/src/localside.rs"
+        ));
+    }
     mod route_control_kinds {
         extern crate self as hibana;
         include!(concat!(
@@ -1824,32 +1792,9 @@ mod tests {
             "/internal/pico_smoke/src/route_control_kinds.rs"
         ));
     }
-    mod scenario {
-        extern crate self as hibana;
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/scenario.rs"
-        ));
-    }
 
-    fn retain_pico_smoke_fixture_symbols() {
-        let _ = fanout_program::ROUTE_SCOPE_COUNT;
-        let _ = fanout_program::EXPECTED_WORKER_BRANCH_LABELS;
-        let _ = fanout_program::ACK_LABELS;
-        let _ = fanout_program::run::<scenario::FixtureHarness>;
-        let _ = huge_program::ROUTE_SCOPE_COUNT;
-        let _ = huge_program::EXPECTED_WORKER_BRANCH_LABELS;
-        let _ = huge_program::ACK_LABELS;
-        let _ = huge_program::run::<scenario::FixtureHarness>;
-        let _ = linear_program::ROUTE_SCOPE_COUNT;
-        let _ = linear_program::EXPECTED_WORKER_BRANCH_LABELS;
-        let _ = linear_program::ACK_LABELS;
-        let _ = linear_program::run::<scenario::FixtureHarness>;
-    }
-
-    #[test]
-    fn pico_smoke_fixture_symbols_are_reachable() {
-        retain_pico_smoke_fixture_symbols();
+    fn drive<F: core::future::Future>(future: F) -> F::Output {
+        futures::executor::block_on(future)
     }
 
     use super::{CompiledRoleImage, LoweringSummary};
@@ -1866,7 +1811,13 @@ mod tests {
         global::{
             CanonicalControl, ControlHandling, role_program,
             steps::{RouteSteps, SendStep, SeqSteps, StepCons, StepNil},
-            typestate::{JumpReason, LocalAction, RoleCompileScratch},
+            typestate::{JumpReason, LocalAction},
+        },
+        runtime::{config::CounterClock, consts::DefaultLabelUniverse},
+        substrate::{
+            Transport,
+            transport::{Outgoing, TransportError, TransportEvent},
+            wire::Payload,
         },
     };
 
@@ -1935,6 +1886,145 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy, Debug, Default)]
+    struct DummyTransport;
+
+    impl Transport for DummyTransport {
+        type Error = TransportError;
+        type Tx<'a>
+            = ()
+        where
+            Self: 'a;
+        type Rx<'a>
+            = ()
+        where
+            Self: 'a;
+        type Send<'a>
+            = core::future::Ready<Result<(), Self::Error>>
+        where
+            Self: 'a;
+        type Recv<'a>
+            = core::future::Ready<Result<Payload<'a>, Self::Error>>
+        where
+            Self: 'a;
+        type Metrics = ();
+
+        fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
+            ((), ())
+        }
+
+        fn send<'a, 'f>(
+            &'a self,
+            _tx: &'a mut Self::Tx<'a>,
+            _outgoing: Outgoing<'f>,
+        ) -> Self::Send<'a>
+        where
+            'a: 'f,
+        {
+            core::future::ready(Ok(()))
+        }
+
+        fn recv<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
+            core::future::ready(Err(TransportError::Failed))
+        }
+
+        fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
+
+        fn drain_events(&self, _emit: &mut dyn FnMut(TransportEvent)) {}
+
+        fn recv_label_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<u8> {
+            None
+        }
+
+        fn metrics(&self) -> Self::Metrics {}
+
+        fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
+    }
+
+    fn retain_pico_smoke_fixture_symbols() {
+        let _ = fanout_program::ROUTE_SCOPE_COUNT;
+        let _ = fanout_program::EXPECTED_WORKER_BRANCH_LABELS;
+        let _ = fanout_program::ACK_LABELS;
+        let _ = huge_program::ROUTE_SCOPE_COUNT;
+        let _ = huge_program::EXPECTED_WORKER_BRANCH_LABELS;
+        let _ = huge_program::ACK_LABELS;
+        let _ = linear_program::ROUTE_SCOPE_COUNT;
+        let _ = linear_program::EXPECTED_WORKER_BRANCH_LABELS;
+        let _ = linear_program::ACK_LABELS;
+        let _ = huge_program::run::<DummyTransport, DefaultLabelUniverse, CounterClock, 2>
+            as fn(
+                &mut localside::ControllerEndpoint<
+                    '_,
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+                &mut localside::WorkerEndpoint<
+                    '_,
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+            );
+        let _ = linear_program::run::<DummyTransport, DefaultLabelUniverse, CounterClock, 2>
+            as fn(
+                &mut localside::ControllerEndpoint<
+                    '_,
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+                &mut localside::WorkerEndpoint<
+                    '_,
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+            );
+        let _ = fanout_program::run::<DummyTransport, DefaultLabelUniverse, CounterClock, 2>
+            as fn(
+                &mut localside::ControllerEndpoint<
+                    '_,
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+                &mut localside::WorkerEndpoint<
+                    '_,
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+            );
+        let _ = localside::worker_offer_decode_u8::<
+            0,
+            DummyTransport,
+            DefaultLabelUniverse,
+            CounterClock,
+            2,
+        >
+            as fn(
+                &mut localside::WorkerEndpoint<
+                    '_,
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+            ) -> u8;
+    }
+
+    #[test]
+    fn pico_smoke_fixture_symbols_are_reachable() {
+        retain_pico_smoke_fixture_symbols();
+    }
+
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct CheckpointKind;
 
@@ -1992,46 +2082,14 @@ mod tests {
     type SendOnly<const LANE: u8, S, D, M> = StepCons<SendStep<S, D, M, LANE>, StepNil>;
     type BranchSteps<L, R> = RouteSteps<L, R>;
 
-    const COMPILED_ROLE_IMAGE_BYTES: usize = CompiledRoleImage::persistent_bytes_for_counts(
-        crate::eff::meta::MAX_EFF_NODES,
-        crate::eff::meta::MAX_EFF_NODES,
-        crate::eff::meta::MAX_EFF_NODES,
-    );
-    const COMPILED_ROLE_IMAGE_ALIGN: usize = CompiledRoleImage::persistent_align();
-    const COMPILED_ROLE_IMAGE_STORAGE_BYTES: usize =
-        COMPILED_ROLE_IMAGE_BYTES + COMPILED_ROLE_IMAGE_ALIGN;
-
-    thread_local! {
-        static COMPILED_ROLE_IMAGE_STORAGE: UnsafeCell<[u8; COMPILED_ROLE_IMAGE_STORAGE_BYTES]> =
-            const { UnsafeCell::new([0u8; COMPILED_ROLE_IMAGE_STORAGE_BYTES]) };
-        static COMPILED_ROLE_SCRATCH: UnsafeCell<MaybeUninit<RoleCompileScratch>> =
-            const { UnsafeCell::new(MaybeUninit::uninit()) };
-    }
-
     fn with_compiled_role_image<const ROLE: u8, Steps, R>(
         program: &role_program::RoleProgram<'_, ROLE, Steps, MintConfig>,
         f: impl FnOnce(&CompiledRoleImage) -> R,
     ) -> R {
-        let lowering = crate::global::lowering_input(program);
-        COMPILED_ROLE_IMAGE_STORAGE.with(|compiled| {
-            COMPILED_ROLE_SCRATCH.with(|scratch| unsafe {
-                let base = (*compiled.get()).as_mut_ptr() as usize;
-                let compiled_ptr = ((base + COMPILED_ROLE_IMAGE_ALIGN - 1)
-                    & !(COMPILED_ROLE_IMAGE_ALIGN - 1))
-                    as *mut CompiledRoleImage;
-                debug_assert!(
-                    (compiled_ptr as usize) + COMPILED_ROLE_IMAGE_BYTES
-                        <= base + COMPILED_ROLE_IMAGE_STORAGE_BYTES
-                );
-                let scratch_ptr = (*scratch.get()).as_mut_ptr();
-                crate::global::compiled::with_compiled_role_image::<ROLE, _>(
-                    compiled_ptr,
-                    lowering,
-                    scratch_ptr,
-                    f,
-                )
-            })
-        })
+        crate::global::compiled::with_compiled_role_image::<ROLE, _>(
+            crate::global::lowering_input(program),
+            f,
+        )
     }
 
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

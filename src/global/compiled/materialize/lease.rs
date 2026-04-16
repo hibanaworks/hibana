@@ -1,7 +1,5 @@
 use core::{marker::PhantomData, ptr::NonNull};
 
-#[cfg(test)]
-use crate::global::typestate::RoleCompileScratch;
 use crate::global::{
     role_program::{LocalStep, PhaseRouteGuard, RoleFootprint, RoleLoweringInput},
     typestate::{RoleTypestateBuildScratch, StateIndex},
@@ -41,29 +39,6 @@ pub(crate) struct RoleLoweringScratch<'a> {
 }
 
 impl<'a> RoleLoweringScratch<'a> {
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) fn from_compile_scratch(scratch: &'a mut RoleCompileScratch) -> Self {
-        Self {
-            typestate_build: &mut scratch.typestate_build,
-            by_eff_index: scratch.by_eff_index.as_mut_ptr(),
-            by_eff_index_len: scratch.by_eff_index.len(),
-            present: scratch.present.as_mut_ptr(),
-            present_len: scratch.present.len(),
-            steps: scratch.steps.as_mut_ptr(),
-            steps_len: scratch.steps.len(),
-            eff_index_to_step: scratch.eff_index_to_step.as_mut_ptr(),
-            eff_index_to_step_len: scratch.eff_index_to_step.len(),
-            step_index_to_state: scratch.step_index_to_state.as_mut_ptr(),
-            step_index_to_state_len: scratch.step_index_to_state.len(),
-            route_guards: scratch.route_guards.as_mut_ptr(),
-            route_guards_len: scratch.route_guards.len(),
-            parallel_ranges: scratch.parallel_ranges.as_mut_ptr(),
-            parallel_ranges_len: scratch.parallel_ranges.len(),
-            _marker: PhantomData,
-        }
-    }
-
     #[inline(always)]
     fn ptr_or_dangling<T>(ptr: usize, len: usize) -> *mut T {
         if len == 0 {
@@ -355,6 +330,68 @@ impl<'a> TransientLoweringLeaseStorage<'a> {
     }
 }
 
+#[inline(always)]
+#[cfg(test)]
+const fn lowering_lease_storage_align() -> usize {
+    let mut align = core::mem::align_of::<LoweringSummary>();
+    if core::mem::align_of::<RoleTypestateBuildScratch>() > align {
+        align = core::mem::align_of::<RoleTypestateBuildScratch>();
+    }
+    if core::mem::align_of::<LocalStep>() > align {
+        align = core::mem::align_of::<LocalStep>();
+    }
+    if core::mem::align_of::<bool>() > align {
+        align = core::mem::align_of::<bool>();
+    }
+    if core::mem::align_of::<u16>() > align {
+        align = core::mem::align_of::<u16>();
+    }
+    if core::mem::align_of::<StateIndex>() > align {
+        align = core::mem::align_of::<StateIndex>();
+    }
+    if core::mem::align_of::<PhaseRouteGuard>() > align {
+        align = core::mem::align_of::<PhaseRouteGuard>();
+    }
+    if core::mem::align_of::<(usize, usize)>() > align {
+        align = core::mem::align_of::<(usize, usize)>();
+    }
+    align
+}
+
+#[cfg(test)]
+pub(crate) const fn lowering_lease_storage_bytes(
+    footprint: RoleFootprint,
+    mode: LoweringLeaseMode,
+) -> usize {
+    let max_align = lowering_lease_storage_align();
+    let mut max_required = 0usize;
+    let mut base = 0usize;
+    while base < max_align {
+        let required =
+            TransientLoweringLeaseStorage::required_bytes_from_base(base, mode, footprint);
+        if required > max_required {
+            max_required = required;
+        }
+        base += 1;
+    }
+    max_required
+}
+
+#[cfg(test)]
+pub(crate) const fn role_lowering_scratch_storage_bytes(footprint: RoleFootprint) -> usize {
+    let max_align = lowering_lease_storage_align();
+    let mut max_required = 0usize;
+    let mut base = 0usize;
+    while base < max_align {
+        let required = RoleLoweringScratchLayout::from_start(base, footprint).end - base;
+        if required > max_required {
+            max_required = required;
+        }
+        base += 1;
+    }
+    max_required
+}
+
 #[inline]
 pub(crate) unsafe fn with_lowering_lease<R>(
     input: RoleLoweringInput<'_>,
@@ -368,6 +405,26 @@ pub(crate) unsafe fn with_lowering_lease<R>(
     }?;
     let lease = unsafe { storage.init(input.summary(), input.stamp()) };
     Some(f(lease))
+}
+
+#[cfg(test)]
+pub(crate) unsafe fn with_role_lowering_scratch_storage<R>(
+    footprint: RoleFootprint,
+    storage: *mut u8,
+    len: usize,
+    f: impl FnOnce(&mut RoleLoweringScratch<'_>) -> R,
+) -> Option<R> {
+    let base = storage as usize;
+    let layout = RoleLoweringScratchLayout::from_start(base, footprint);
+    let required = layout.end - base;
+    if required > len {
+        return None;
+    }
+    let mut scratch = unsafe { layout.scratch(footprint) };
+    unsafe {
+        scratch.init_empty();
+    }
+    Some(f(&mut scratch))
 }
 
 pub(crate) unsafe fn init_compiled_program_image_from_summary(
@@ -417,31 +474,55 @@ pub(crate) fn with_compiled_programs<R>(
 }
 
 #[cfg(test)]
-pub(crate) unsafe fn init_compiled_role_image<const ROLE: u8>(
-    dst: *mut CompiledRoleImage,
+pub(crate) fn with_role_lowering_scratch<R>(
     input: RoleLoweringInput<'_>,
-    scratch: *mut RoleCompileScratch,
-) {
+    f: impl FnOnce(&LoweringSummary, &mut RoleLoweringScratch<'_>) -> R,
+) -> R {
+    let footprint = input.footprint();
+    let mut storage = std::vec::Vec::with_capacity(lowering_lease_storage_bytes(
+        footprint,
+        LoweringLeaseMode::SummaryAndRoleScratch,
+    ));
+    storage.resize(
+        lowering_lease_storage_bytes(footprint, LoweringLeaseMode::SummaryAndRoleScratch),
+        0u8,
+    );
     unsafe {
-        RoleCompileScratch::init_empty(scratch);
-        CompiledRoleImage::init_from_summary::<ROLE>(dst, input.summary(), &mut *scratch);
+        with_lowering_lease(
+            input,
+            storage.as_mut_ptr(),
+            storage.len(),
+            LoweringLeaseMode::SummaryAndRoleScratch,
+            |lease| {
+                let (summary, role_lowering_scratch) = lease.into_parts();
+                let scratch = role_lowering_scratch
+                    .expect("summary-and-scratch lowering lease must provide role scratch");
+                f(summary, &mut { scratch })
+            },
+        )
+        .expect("exact lowering scratch storage must fit derived footprint")
     }
 }
 
 #[cfg(test)]
-pub(crate) unsafe fn with_compiled_role_image<const ROLE: u8, R>(
-    dst: *mut CompiledRoleImage,
+pub(crate) fn with_compiled_role_image<const ROLE: u8, R>(
     input: RoleLoweringInput<'_>,
-    scratch: *mut RoleCompileScratch,
     f: impl FnOnce(&CompiledRoleImage) -> R,
 ) -> R {
-    unsafe {
-        init_compiled_role_image::<ROLE>(dst, input, scratch);
-        let result = f(&*dst);
-        ptr::drop_in_place(dst);
-        ptr::drop_in_place(scratch);
+    let footprint = input.footprint();
+    let bytes = CompiledRoleImage::persistent_bytes_for_program(footprint);
+    let align = CompiledRoleImage::persistent_align();
+    let mut storage = std::vec::Vec::with_capacity(bytes + align);
+    storage.resize(bytes + align, 0u8);
+    let base = storage.as_mut_ptr() as usize;
+    let aligned = TransientLoweringLeaseStorage::align_up(base, align) as *mut CompiledRoleImage;
+    debug_assert!((aligned as usize) + bytes <= base + storage.len());
+    with_role_lowering_scratch(input, |summary, scratch| unsafe {
+        init_compiled_role_image_from_summary::<ROLE>(aligned, summary, scratch, footprint);
+        let result = f(&*aligned);
+        ptr::drop_in_place(aligned);
         result
-    }
+    })
 }
 
 #[cfg(test)]
@@ -487,13 +568,13 @@ mod tests {
             frontier_entry_count: 0,
         };
         let base = 0usize;
-        let summary_end = TransientLoweringLeaseStorage::lowering_offset(base)
+        let _summary_end = TransientLoweringLeaseStorage::lowering_offset(base)
             + core::mem::size_of::<LoweringSummary>();
-        let legacy_required = TransientLoweringLeaseStorage::align_up(
-            summary_end,
-            core::mem::align_of::<RoleCompileScratch>(),
-        ) + core::mem::size_of::<RoleCompileScratch>()
-            - base;
+        let summary_only_required = TransientLoweringLeaseStorage::required_bytes_from_base(
+            base,
+            LoweringLeaseMode::SummaryOnly,
+            compact,
+        );
         let empty_required = TransientLoweringLeaseStorage::required_bytes_from_base(
             base,
             LoweringLeaseMode::SummaryAndRoleScratch,
@@ -506,12 +587,8 @@ mod tests {
         );
 
         assert!(
-            empty_required < legacy_required,
-            "empty footprint must not reserve the legacy whole-role scratch owner"
-        );
-        assert!(
-            compact_required < legacy_required,
-            "exact lowering scratch should stay smaller than the legacy whole-role scratch owner"
+            compact_required > summary_only_required,
+            "role-local lowering scratch must reserve additional bytes beyond the summary clone"
         );
         assert!(
             compact_required > empty_required,

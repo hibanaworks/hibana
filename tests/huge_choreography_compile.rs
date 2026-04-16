@@ -1,39 +1,111 @@
 #![cfg(feature = "std")]
 
+mod common;
 #[path = "../internal/pico_smoke/src/fanout_program.rs"]
 mod fanout_program;
 #[path = "../internal/pico_smoke/src/huge_program.rs"]
 mod huge_program;
 #[path = "../internal/pico_smoke/src/linear_program.rs"]
 mod linear_program;
+#[path = "../internal/pico_smoke/src/localside.rs"]
+mod localside;
 #[path = "../internal/pico_smoke/src/route_control_kinds.rs"]
 mod route_control_kinds;
-#[path = "../internal/pico_smoke/src/scenario.rs"]
-mod scenario;
 
 use hibana::{
     g,
     g::advanced::{RoleProgram, project},
-    substrate::cap::advanced::MintConfig,
+    substrate::{
+        cap::advanced::MintConfig,
+        runtime::{CounterClock, DefaultLabelUniverse},
+    },
 };
 
 static ROUTE_HEAVY_PROGRAM: g::Program<huge_program::ProgramSteps> = huge_program::PROGRAM;
 static LINEAR_HEAVY_PROGRAM: g::Program<linear_program::ProgramSteps> = linear_program::PROGRAM;
 static FANOUT_HEAVY_PROGRAM: g::Program<fanout_program::ProgramSteps> = fanout_program::PROGRAM;
 
+fn drive<F: core::future::Future>(future: F) -> F::Output {
+    futures::executor::block_on(future)
+}
+
 fn retain_pico_smoke_fixture_symbols() {
     let _ = fanout_program::ROUTE_SCOPE_COUNT;
     let _ = fanout_program::EXPECTED_WORKER_BRANCH_LABELS;
     let _ = fanout_program::ACK_LABELS;
-    let _ = fanout_program::run::<scenario::FixtureHarness>;
     let _ = huge_program::ROUTE_SCOPE_COUNT;
     let _ = huge_program::EXPECTED_WORKER_BRANCH_LABELS;
     let _ = huge_program::ACK_LABELS;
-    let _ = huge_program::run::<scenario::FixtureHarness>;
     let _ = linear_program::ROUTE_SCOPE_COUNT;
     let _ = linear_program::EXPECTED_WORKER_BRANCH_LABELS;
     let _ = linear_program::ACK_LABELS;
-    let _ = linear_program::run::<scenario::FixtureHarness>;
+    let _ = huge_program::run::<common::TestTransport, DefaultLabelUniverse, CounterClock, 2>
+        as fn(
+            &mut localside::ControllerEndpoint<
+                '_,
+                common::TestTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                2,
+            >,
+            &mut localside::WorkerEndpoint<
+                '_,
+                common::TestTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                2,
+            >,
+        );
+    let _ = linear_program::run::<common::TestTransport, DefaultLabelUniverse, CounterClock, 2>
+        as fn(
+            &mut localside::ControllerEndpoint<
+                '_,
+                common::TestTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                2,
+            >,
+            &mut localside::WorkerEndpoint<
+                '_,
+                common::TestTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                2,
+            >,
+        );
+    let _ = fanout_program::run::<common::TestTransport, DefaultLabelUniverse, CounterClock, 2>
+        as fn(
+            &mut localside::ControllerEndpoint<
+                '_,
+                common::TestTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                2,
+            >,
+            &mut localside::WorkerEndpoint<
+                '_,
+                common::TestTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                2,
+            >,
+        );
+    let _ = localside::worker_offer_decode_u8::<
+        0,
+        common::TestTransport,
+        DefaultLabelUniverse,
+        CounterClock,
+        2,
+    >
+        as fn(
+            &mut localside::WorkerEndpoint<
+                '_,
+                common::TestTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                2,
+            >,
+        ) -> u8;
 }
 
 #[test]

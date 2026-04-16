@@ -57,42 +57,6 @@ pub(crate) struct RoleTypestateBuildScratch {
 }
 
 impl RoleTypestateBuildScratch {
-    #[cfg(test)]
-    pub(crate) const fn new() -> Self {
-        Self {
-            loop_entry_ids: [ScopeId::generic(0); MAX_LOOP_TRACKED],
-            loop_entry_states: [StateIndex::MAX; MAX_LOOP_TRACKED],
-            linger_arm_last_node: [[LINGER_ARM_NO_NODE; 2]; MAX_SCOPE_SCRATCH],
-            linger_arm_scope_ids: [ScopeId::generic(0); MAX_SCOPE_SCRATCH],
-            linger_arm_current: [0; MAX_SCOPE_SCRATCH],
-            linger_passive_arm_start: [[LINGER_ARM_NO_NODE; 2]; MAX_SCOPE_SCRATCH],
-            linger_is_passive: [false; MAX_SCOPE_SCRATCH],
-            jump_backpatch_indices: [0; MAX_JUMP_BACKPATCH],
-            jump_backpatch_scopes: [ScopeId::generic(0); MAX_JUMP_BACKPATCH],
-            jump_backpatch_kinds: [0; MAX_JUMP_BACKPATCH],
-            scope_stack: [ScopeId::none(); MAX_SCOPE_SCRATCH],
-            scope_stack_kinds: [ScopeKind::Generic; MAX_SCOPE_SCRATCH],
-            scope_stack_entries: [0; MAX_SCOPE_SCRATCH],
-            route_current_arm: [0; MAX_SCOPE_SCRATCH],
-            scope_controller_roles: [CONTROLLER_ROLE_NONE; MAX_SCOPE_SCRATCH],
-            scope_route_policy_tags: [0; MAX_SCOPE_SCRATCH],
-            scope_route_policy_ids: [u16::MAX; MAX_SCOPE_SCRATCH],
-            scope_route_policy_effs: [EffIndex::MAX; MAX_SCOPE_SCRATCH],
-            last_step_was_scope: [false; MAX_SCOPE_SCRATCH],
-            route_arm_last_node: [[StateIndex::MAX; 2]; MAX_SCOPE_SCRATCH],
-            route_enter_count: [0; MAX_SCOPE_SCRATCH],
-            route_passive_arm_start: [[ROUTE_PASSIVE_ARM_UNSET; 2]; MAX_SCOPE_SCRATCH],
-            route_is_passive: [false; MAX_SCOPE_SCRATCH],
-            route_scope_entries: [RouteScopeScratchRecord::EMPTY; MAX_SCOPE_SCRATCH],
-            dispatch_table: [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH],
-            prefix_actions: [[PrefixAction::EMPTY; MAX_PREFIX_ACTIONS]; 2],
-            prefix_lens: [0; 2],
-            arm_seen_recv: [false; 2],
-            scan_stack: [StateIndex::MAX; MAX_SCOPE_SCRATCH],
-            visited: [false; MAX_STATES],
-        }
-    }
-
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
         unsafe {
             let mut loop_idx = 0usize;
@@ -507,13 +471,13 @@ fn finalize_route_scope_exit_for_role(
                                     route_scope_entries[entry_idx].route_recv[arm as usize] =
                                         arm_entry;
                                     insert_offer_lane(
-                        route_scope_lane_words_mut(
-                            route_scope_offer_lane_words,
-                            lane_word_start,
-                            *route_lane_word_len,
-                        ),
-                        lane,
-                    );
+                                        route_scope_lane_words_mut(
+                                            route_scope_offer_lane_words,
+                                            lane_word_start,
+                                            *route_lane_word_len,
+                                        ),
+                                        lane,
+                                    );
                                 }
                             }
                             arm += 1;
@@ -910,7 +874,10 @@ fn handle_scope_exit_for_role(
                 };
                 [arm0_start, arm1_start]
             } else {
-                [usize::from(LINGER_ARM_NO_NODE), usize::from(LINGER_ARM_NO_NODE)]
+                [
+                    usize::from(LINGER_ARM_NO_NODE),
+                    usize::from(LINGER_ARM_NO_NODE),
+                ]
             };
 
             if is_immediate_reenter {
@@ -1006,9 +973,7 @@ fn handle_scope_exit_for_role(
                 *node_len += 1;
             } else if is_passive && passive_starts[1] != usize::from(LINGER_ARM_NO_NODE) {
                 if *node_len >= MAX_STATES {
-                    panic!(
-                        "node capacity exceeded inserting PassiveObserverBranch Jump for arm 1"
-                    );
+                    panic!("node capacity exceeded inserting PassiveObserverBranch Jump for arm 1");
                 }
                 let arm_is_empty = passive_starts[1] == *node_len;
                 if *node_len > 0 && passive_starts[1] < *node_len {
@@ -1332,7 +1297,9 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             }
             stack_idx += 1;
         }
-        if let Some(scope_id) = loop_scope && loop_control.is_none() {
+        if let Some(scope_id) = loop_scope
+            && loop_control.is_none()
+        {
             store_loop_entry_if_absent(
                 loop_entry_ids,
                 loop_entry_states,
@@ -1380,7 +1347,9 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             let entry_idx = scope_stack_entries[stack_idx] as usize;
             if !scope_entries[entry_idx].linger {
                 last_step_was_scope[stack_idx] = false;
-                if let Some(arm) = route_arm && (arm as usize) < 2 {
+                if let Some(arm) = route_arm
+                    && (arm as usize) < 2
+                {
                     route_arm_last_node[stack_idx][arm as usize] = as_state_index(node_len);
                 }
             }
@@ -1460,7 +1429,9 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             }
             stack_idx += 1;
         }
-        if let Some(scope_id) = loop_scope && loop_control.is_none() {
+        if let Some(scope_id) = loop_scope
+            && loop_control.is_none()
+        {
             store_loop_entry_if_absent(
                 loop_entry_ids,
                 loop_entry_states,
@@ -1496,7 +1467,9 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             let entry_idx = scope_stack_entries[stack_idx] as usize;
             if !scope_entries[entry_idx].linger {
                 last_step_was_scope[stack_idx] = false;
-                if let Some(arm) = route_arm && (arm as usize) < 2 {
+                if let Some(arm) = route_arm
+                    && (arm as usize) < 2
+                {
                     route_arm_last_node[stack_idx][arm as usize] = as_state_index(node_len);
                 }
             }
@@ -1601,7 +1574,9 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             }
             stack_idx += 1;
         }
-        if let Some(scope_id) = loop_scope && loop_control.is_none() {
+        if let Some(scope_id) = loop_scope
+            && loop_control.is_none()
+        {
             store_loop_entry_if_absent(
                 loop_entry_ids,
                 loop_entry_states,
@@ -1637,7 +1612,9 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             let entry_idx = scope_stack_entries[stack_idx] as usize;
             if !scope_entries[entry_idx].linger {
                 last_step_was_scope[stack_idx] = false;
-                if let Some(arm) = route_arm && (arm as usize) < 2 {
+                if let Some(arm) = route_arm
+                    && (arm as usize) < 2
+                {
                     route_arm_last_node[stack_idx][arm as usize] = as_state_index(node_len);
                 }
             }

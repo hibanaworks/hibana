@@ -140,6 +140,7 @@ impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
     /// Remove a key-value pair.
     ///
     /// Returns the value if the key was present, or `None` otherwise.
+    #[cfg(test)]
     pub(crate) fn remove(&mut self, key: &K) -> Option<V> {
         for i in 0..self.len {
             // SAFETY: entries[0..len] are initialized

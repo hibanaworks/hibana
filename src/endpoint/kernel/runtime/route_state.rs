@@ -588,12 +588,4 @@ impl RouteState {
     pub(super) fn lane_offer_linger_lanes(&self) -> LaneSetView {
         self.lane_offer_linger_lanes.view()
     }
-
-    #[cfg(test)]
-    #[inline]
-    pub(super) fn active_offer_mask(&self) -> u32 {
-        self.active_offer_lanes
-            .view()
-            .collect_low_lane_bits(crate::global::role_program::LOW_LANE_TEST_WIDTH)
-    }
 }

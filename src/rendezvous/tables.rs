@@ -18,49 +18,163 @@ use crate::{
     },
     eff::EffIndex,
     global::const_dsl::{PolicyMode, ScopeId, ScopeKind},
-    runtime::consts::LANES_MAX,
 };
 
-const ROLE_SLOTS: usize = LANES_MAX as usize;
+const MAX_TRACKED_ROLES: usize = u16::BITS as usize;
 #[cfg(test)]
 const ROUTE_SLOTS: usize = crate::eff::meta::MAX_EFF_NODES;
 const CONTROL_PLAN_SLOTS: usize = 128;
+
+#[inline]
+const fn lane_storage_align() -> usize {
+    let u16_align = core::mem::align_of::<u16>();
+    let u8_align = core::mem::align_of::<u8>();
+    if u16_align > u8_align {
+        u16_align
+    } else {
+        u8_align
+    }
+}
+
+#[inline]
+const fn align_up(value: usize, align: usize) -> usize {
+    let mask = align.saturating_sub(1);
+    (value + mask) & !mask
+}
 
 /// Generation counter table (per-lane).
 ///
 /// Tracks the last seen generation number for each lane to ensure monotonic updates.
 pub(crate) struct GenTable {
-    lanes: UnsafeCell<[u16; LANES_MAX as usize]>,
-    present_mask: UnsafeCell<u8>,
+    lane_base: u32,
+    lane_slots: u16,
+    lanes: UnsafeCell<*mut u16>,
+    present: UnsafeCell<*mut u8>,
     _no_send_sync: PhantomData<*mut ()>,
 }
 
 impl Default for GenTable {
     fn default() -> Self {
-        Self::new()
+        Self::empty()
     }
 }
 
 impl GenTable {
-    pub(crate) const fn new() -> Self {
+    pub(crate) const fn empty() -> Self {
         Self {
-            lanes: UnsafeCell::new([0; LANES_MAX as usize]),
-            present_mask: UnsafeCell::new(0),
+            lane_base: 0,
+            lane_slots: 0,
+            lanes: UnsafeCell::new(core::ptr::null_mut()),
+            present: UnsafeCell::new(core::ptr::null_mut()),
             _no_send_sync: PhantomData,
         }
     }
 
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
         unsafe {
-            let lanes_ptr = core::ptr::addr_of_mut!((*dst).lanes).cast::<u16>();
-            let mut idx = 0usize;
-            while idx < LANES_MAX as usize {
-                lanes_ptr.add(idx).write(0);
-                idx += 1;
-            }
-            core::ptr::addr_of_mut!((*dst).present_mask).write(UnsafeCell::new(0));
+            core::ptr::addr_of_mut!((*dst).lane_base).write(0);
+            core::ptr::addr_of_mut!((*dst).lane_slots).write(0);
+            core::ptr::addr_of_mut!((*dst).lanes).write(UnsafeCell::new(core::ptr::null_mut()));
+            core::ptr::addr_of_mut!((*dst).present).write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
         }
+    }
+
+    #[inline]
+    pub(crate) const fn storage_align() -> usize {
+        lane_storage_align()
+    }
+
+    #[inline]
+    pub(crate) const fn storage_bytes(lane_slots: usize) -> usize {
+        let lanes_bytes = lane_slots.saturating_mul(core::mem::size_of::<u16>());
+        let present_offset = align_up(lanes_bytes, core::mem::align_of::<u8>());
+        present_offset.saturating_add(lane_slots.saturating_mul(core::mem::size_of::<u8>()))
+    }
+
+    unsafe fn bind_storage(
+        &mut self,
+        lanes: *mut u16,
+        present: *mut u8,
+        lane_base: u32,
+        lane_slots: usize,
+    ) {
+        let mut idx = 0usize;
+        while idx < lane_slots {
+            unsafe {
+                lanes.add(idx).write(0);
+                present.add(idx).write(0);
+            }
+            idx += 1;
+        }
+        self.lane_base = lane_base;
+        self.lane_slots = lane_slots as u16;
+        *self.lanes.get_mut() = lanes;
+        *self.present.get_mut() = present;
+    }
+
+    pub(crate) unsafe fn bind_from_storage(
+        &mut self,
+        storage: *mut u8,
+        lane_base: u32,
+        lane_slots: usize,
+    ) {
+        let lanes = storage.cast::<u16>();
+        let present_offset = align_up(
+            storage as usize + lane_slots.saturating_mul(core::mem::size_of::<u16>()),
+            core::mem::align_of::<u8>(),
+        ) - storage as usize;
+        let present = unsafe { storage.add(present_offset) }.cast::<u8>();
+        unsafe {
+            self.bind_storage(lanes, present, lane_base, lane_slots);
+        }
+    }
+
+    #[inline]
+    fn lanes_ptr(&self) -> *mut u16 {
+        unsafe { *self.lanes.get() }
+    }
+
+    #[inline]
+    fn present_ptr(&self) -> *mut u8 {
+        unsafe { *self.present.get() }
+    }
+
+    #[inline]
+    pub(crate) fn is_bound(&self) -> bool {
+        !self.lanes_ptr().is_null()
+    }
+
+    #[inline]
+    pub(crate) fn storage_ptr(&self) -> *mut u8 {
+        self.lanes_ptr().cast::<u8>()
+    }
+
+    #[inline]
+    pub(crate) const fn storage_bytes_current(&self) -> usize {
+        Self::storage_bytes(self.lane_slots as usize)
+    }
+
+    #[inline]
+    fn lane_slot(&self, lane: Lane) -> Option<usize> {
+        let lane_raw = lane.raw();
+        if lane_raw < self.lane_base {
+            return None;
+        }
+        let slot = (lane_raw - self.lane_base) as usize;
+        (slot < self.lane_slots as usize).then_some(slot)
+    }
+
+    #[cfg(test)]
+    fn new_for_test(lane_slots: usize) -> Self {
+        let mut table = Self::empty();
+        let bytes = Self::storage_bytes(lane_slots);
+        let mut storage = std::vec![0u8; bytes].into_boxed_slice();
+        unsafe {
+            table.bind_from_storage(storage.as_mut_ptr(), 0, lane_slots);
+        }
+        let _ = std::boxed::Box::leak(storage);
+        table
     }
 
     /// Check and update generation for a lane.
@@ -69,20 +183,21 @@ impl GenTable {
     /// Rendezvous/Port are !Send/!Sync; writer is single-producer.
     #[inline]
     pub(crate) fn check_and_update(&self, lane: Lane, new: Generation) -> Result<(), GenError> {
-        let idx = lane.raw() as usize;
-        let lane_bit = 1u8 << lane.raw();
+        let Some(idx) = self.lane_slot(lane) else {
+            return Err(GenError::InvalidInitial { lane, new });
+        };
         unsafe {
-            let lanes = &mut *self.lanes.get();
-            let present_mask = &mut *self.present_mask.get();
-            if (*present_mask & lane_bit) == 0 {
+            let lanes = self.lanes_ptr();
+            let present = self.present_ptr();
+            if *present.add(idx) == 0 {
                 if new.raw() == 0 {
-                    lanes[idx] = new.raw();
-                    *present_mask |= lane_bit;
+                    lanes.add(idx).write(new.raw());
+                    present.add(idx).write(1);
                     return Ok(());
                 }
                 return Err(GenError::InvalidInitial { lane, new });
             }
-            let prev = lanes[idx];
+            let prev = *lanes.add(idx);
             if prev == u16::MAX {
                 return Err(GenError::Overflow {
                     lane,
@@ -90,7 +205,7 @@ impl GenTable {
                 });
             }
             if new.raw() > prev {
-                lanes[idx] = new.raw();
+                lanes.add(idx).write(new.raw());
                 return Ok(());
             }
             Err(GenError::StaleOrDuplicate(GenerationRecord {
@@ -104,22 +219,22 @@ impl GenTable {
     /// Get last generation for a lane.
     #[inline]
     pub(crate) fn last(&self, lane: Lane) -> Option<Generation> {
-        let idx = lane.raw() as usize;
-        let lane_bit = 1u8 << lane.raw();
+        let idx = self.lane_slot(lane)?;
         unsafe {
-            ((*self.present_mask.get() & lane_bit) != 0)
-                .then_some(Generation::new((*self.lanes.get())[idx]))
+            (*self.present_ptr().add(idx) != 0)
+                .then_some(Generation::new(*self.lanes_ptr().add(idx)))
         }
     }
 
     /// Reset lane (for release).
     #[inline]
     pub(crate) fn reset_lane(&self, lane: Lane) {
-        let idx = lane.raw() as usize;
-        let lane_bit = 1u8 << lane.raw();
+        let Some(idx) = self.lane_slot(lane) else {
+            return;
+        };
         unsafe {
-            (*self.lanes.get())[idx] = 0;
-            *self.present_mask.get() &= !lane_bit;
+            self.lanes_ptr().add(idx).write(0);
+            self.present_ptr().add(idx).write(0);
         }
     }
 }
@@ -175,6 +290,8 @@ impl LoopFrame {
 pub(crate) struct LoopTable {
     frames: UnsafeCell<*mut LoopFrame>,
     loop_slots: usize,
+    lane_base: u32,
+    lane_slots: u16,
     lane_heads: UnsafeCell<*mut u16>,
     free_head: UnsafeCell<*mut u16>,
     _no_send_sync: PhantomData<*mut ()>,
@@ -200,6 +317,8 @@ impl LoopTable {
         Self {
             frames: UnsafeCell::new(core::ptr::null_mut()),
             loop_slots: 0,
+            lane_base: 0,
+            lane_slots: 0,
             lane_heads: UnsafeCell::new(core::ptr::null_mut()),
             free_head: UnsafeCell::new(core::ptr::null_mut()),
             _no_send_sync: PhantomData,
@@ -210,6 +329,8 @@ impl LoopTable {
         unsafe {
             core::ptr::addr_of_mut!((*dst).frames).write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst).loop_slots).write(0);
+            core::ptr::addr_of_mut!((*dst).lane_base).write(0);
+            core::ptr::addr_of_mut!((*dst).lane_slots).write(0);
             core::ptr::addr_of_mut!((*dst).lane_heads)
                 .write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst).free_head).write(UnsafeCell::new(core::ptr::null_mut()));
@@ -234,7 +355,7 @@ impl LoopTable {
 
     #[inline]
     pub(crate) const fn storage_bytes_current(&self) -> usize {
-        Self::storage_bytes(self.loop_slots)
+        Self::storage_bytes(self.loop_slots, self.lane_slots as usize)
     }
 
     #[inline]
@@ -249,13 +370,13 @@ impl LoopTable {
     }
 
     #[inline]
-    pub(crate) const fn storage_bytes(loop_slots: usize) -> usize {
+    pub(crate) const fn storage_bytes(loop_slots: usize, lane_slots: usize) -> usize {
         if loop_slots == 0 {
             return 0;
         }
         let frames_bytes = loop_slots.saturating_mul(core::mem::size_of::<LoopFrame>());
         let lane_heads_offset = Self::align_up(frames_bytes, core::mem::align_of::<u16>());
-        let lane_heads_bytes = (LANES_MAX as usize).saturating_mul(core::mem::size_of::<u16>());
+        let lane_heads_bytes = lane_slots.saturating_mul(core::mem::size_of::<u16>());
         let free_head_offset = Self::align_up(
             lane_heads_offset.saturating_add(lane_heads_bytes),
             core::mem::align_of::<u16>(),
@@ -278,6 +399,8 @@ impl LoopTable {
         &mut self,
         frames: *mut LoopFrame,
         loop_slots: usize,
+        lane_base: u32,
+        lane_slots: usize,
         lane_heads: *mut u16,
         free_head: *mut u16,
         reclaim_delta: usize,
@@ -295,7 +418,7 @@ impl LoopTable {
             frame_idx += 1;
         }
         let mut lane_idx = 0usize;
-        while lane_idx < LANES_MAX as usize {
+        while lane_idx < lane_slots {
             unsafe {
                 lane_heads.add(lane_idx).write(Self::NO_FRAME);
             }
@@ -306,6 +429,8 @@ impl LoopTable {
         }
         *self.frames.get_mut() = Self::encode_frames_ptr(frames, reclaim_delta);
         self.loop_slots = loop_slots;
+        self.lane_base = lane_base;
+        self.lane_slots = lane_slots as u16;
         *self.lane_heads.get_mut() = lane_heads;
         *self.free_head.get_mut() = free_head;
     }
@@ -314,12 +439,16 @@ impl LoopTable {
         &mut self,
         frames: *mut LoopFrame,
         loop_slots: usize,
+        lane_base: u32,
+        lane_slots: usize,
         lane_heads: *mut u16,
         free_head: *mut u16,
         reclaim_delta: usize,
     ) {
         *self.frames.get_mut() = Self::encode_frames_ptr(frames, reclaim_delta);
         self.loop_slots = loop_slots;
+        self.lane_base = lane_base;
+        self.lane_slots = lane_slots as u16;
         *self.lane_heads.get_mut() = lane_heads;
         *self.free_head.get_mut() = free_head;
     }
@@ -328,6 +457,8 @@ impl LoopTable {
         &self,
         frames: *mut LoopFrame,
         loop_slots: usize,
+        lane_base: u32,
+        lane_slots: usize,
         lane_heads: *mut u16,
         free_head: *mut u16,
     ) {
@@ -344,7 +475,7 @@ impl LoopTable {
             frame_idx += 1;
         }
         let mut lane_idx = 0usize;
-        while lane_idx < LANES_MAX as usize {
+        while lane_idx < lane_slots {
             unsafe {
                 lane_heads.add(lane_idx).write(Self::NO_FRAME);
             }
@@ -359,7 +490,7 @@ impl LoopTable {
         let src_frames = self.frames_ptr();
         let src_lane_heads = unsafe { *self.lane_heads.get() };
         let mut lane_idx = 0usize;
-        while lane_idx < LANES_MAX as usize {
+        while lane_idx < self.lane_slots as usize {
             let mut current = unsafe { *src_lane_heads.add(lane_idx) };
             while current != Self::NO_FRAME {
                 let src_idx = current as usize;
@@ -379,6 +510,7 @@ impl LoopTable {
             }
             lane_idx += 1;
         }
+        debug_assert_eq!(self.lane_base, lane_base);
         unsafe {
             if loop_slots == 0 || *free_head == Self::NO_FRAME {
                 free_head.write(Self::NO_FRAME);
@@ -390,6 +522,8 @@ impl LoopTable {
         &mut self,
         storage: *mut u8,
         loop_slots: usize,
+        lane_base: u32,
+        lane_slots: usize,
         reclaim_delta: usize,
     ) {
         let frames = storage.cast::<LoopFrame>();
@@ -401,16 +535,30 @@ impl LoopTable {
         let free_head_offset = Self::align_up(
             storage as usize
                 + lane_heads_offset
-                + (LANES_MAX as usize).saturating_mul(core::mem::size_of::<u16>()),
+                + lane_slots.saturating_mul(core::mem::size_of::<u16>()),
             core::mem::align_of::<u16>(),
         ) - storage as usize;
         let free_head = unsafe { storage.add(free_head_offset) }.cast::<u16>();
         unsafe {
-            self.bind_storage(frames, loop_slots, lane_heads, free_head, reclaim_delta);
+            self.bind_storage(
+                frames,
+                loop_slots,
+                lane_base,
+                lane_slots,
+                lane_heads,
+                free_head,
+                reclaim_delta,
+            );
         }
     }
 
-    pub(crate) unsafe fn migrate_from_storage(&self, storage: *mut u8, loop_slots: usize) {
+    pub(crate) unsafe fn migrate_from_storage(
+        &self,
+        storage: *mut u8,
+        loop_slots: usize,
+        lane_base: u32,
+        lane_slots: usize,
+    ) {
         let frames = storage.cast::<LoopFrame>();
         let lane_heads_offset = Self::align_up(
             storage as usize + loop_slots.saturating_mul(core::mem::size_of::<LoopFrame>()),
@@ -420,12 +568,14 @@ impl LoopTable {
         let free_head_offset = Self::align_up(
             storage as usize
                 + lane_heads_offset
-                + (LANES_MAX as usize).saturating_mul(core::mem::size_of::<u16>()),
+                + lane_slots.saturating_mul(core::mem::size_of::<u16>()),
             core::mem::align_of::<u16>(),
         ) - storage as usize;
         let free_head = unsafe { storage.add(free_head_offset) }.cast::<u16>();
         unsafe {
-            self.migrate_to(frames, loop_slots, lane_heads, free_head);
+            self.migrate_to(
+                frames, loop_slots, lane_base, lane_slots, lane_heads, free_head,
+            );
         }
     }
 
@@ -433,6 +583,8 @@ impl LoopTable {
         &mut self,
         storage: *mut u8,
         loop_slots: usize,
+        lane_base: u32,
+        lane_slots: usize,
         reclaim_delta: usize,
     ) {
         let frames = storage.cast::<LoopFrame>();
@@ -444,12 +596,20 @@ impl LoopTable {
         let free_head_offset = Self::align_up(
             storage as usize
                 + lane_heads_offset
-                + (LANES_MAX as usize).saturating_mul(core::mem::size_of::<u16>()),
+                + lane_slots.saturating_mul(core::mem::size_of::<u16>()),
             core::mem::align_of::<u16>(),
         ) - storage as usize;
         let free_head = unsafe { storage.add(free_head_offset) }.cast::<u16>();
         unsafe {
-            self.rebind_storage(frames, loop_slots, lane_heads, free_head, reclaim_delta);
+            self.rebind_storage(
+                frames,
+                loop_slots,
+                lane_base,
+                lane_slots,
+                lane_heads,
+                free_head,
+                reclaim_delta,
+            );
         }
     }
 
@@ -470,8 +630,11 @@ impl LoopTable {
     }
 
     #[inline]
-    fn lane_idx(lane: Lane) -> usize {
-        lane.raw() as usize
+    fn lane_idx(&self, lane: Lane) -> usize {
+        debug_assert!(lane.raw() >= self.lane_base);
+        let lane_idx = (lane.raw() - self.lane_base) as usize;
+        debug_assert!(lane_idx < self.lane_slots as usize);
+        lane_idx
     }
 
     #[inline]
@@ -551,7 +714,7 @@ impl LoopTable {
         disposition: LoopDisposition,
     ) -> u16 {
         assert!(self.loop_slots != 0, "loop table storage must be bound");
-        let lane_idx = Self::lane_idx(lane);
+        let lane_idx = self.lane_idx(lane);
         let frame_idx = self.frame_or_alloc(lane_idx, idx);
         let entry = &mut self.frame_mut(frame_idx).entry;
         let mut epoch = entry.epoch.wrapping_add(1);
@@ -561,7 +724,7 @@ impl LoopTable {
         entry.epoch = epoch;
         entry.decision = disposition;
         entry.seen_mask = 0;
-        if (role_from as usize) < ROLE_SLOTS {
+        if (role_from as usize) < MAX_TRACKED_ROLES {
             entry.seen_mask |= Self::seen_bit(role_from as usize);
         }
 
@@ -569,13 +732,13 @@ impl LoopTable {
     }
 
     pub(crate) fn acknowledge(&self, lane: Lane, role: u8, idx: u8) {
-        if (role as usize) >= ROLE_SLOTS {
+        if (role as usize) >= MAX_TRACKED_ROLES {
             return;
         }
         if self.loop_slots == 0 {
             return;
         }
-        let lane_idx = Self::lane_idx(lane);
+        let lane_idx = self.lane_idx(lane);
         let Some(frame_idx) = self.frame_for_idx(lane_idx, idx) else {
             return;
         };
@@ -590,7 +753,7 @@ impl LoopTable {
         if self.loop_slots == 0 {
             return;
         }
-        let lane_idx = Self::lane_idx(lane);
+        let lane_idx = self.lane_idx(lane);
         let mut current = unsafe { *self.lane_heads_ptr().add(lane_idx) };
         unsafe {
             *self.lane_heads_ptr().add(lane_idx) = Self::NO_FRAME;
@@ -610,7 +773,7 @@ impl LoopTable {
         if self.loop_slots == 0 {
             return false;
         }
-        let lane_idx = Self::lane_idx(lane);
+        let lane_idx = self.lane_idx(lane);
         let Some(frame_idx) = self.frame_for_idx(lane_idx, idx) else {
             return false;
         };
@@ -679,7 +842,8 @@ impl RouteFrame {
 pub(crate) struct RouteTable {
     frames: UnsafeCell<*mut RouteFrame>,
     route_slots: usize,
-    lane_slots: u8,
+    lane_base: u32,
+    lane_slots: u16,
     lane_heads: UnsafeCell<*mut u16>,
     free_head: UnsafeCell<*mut u16>,
     pending_hint_label_masks: UnsafeCell<*mut u128>,
@@ -708,6 +872,7 @@ impl RouteTable {
         Self {
             frames: UnsafeCell::new(core::ptr::null_mut()),
             route_slots: 0,
+            lane_base: 0,
             lane_slots: 0,
             lane_heads: UnsafeCell::new(core::ptr::null_mut()),
             free_head: UnsafeCell::new(core::ptr::null_mut()),
@@ -722,6 +887,7 @@ impl RouteTable {
         unsafe {
             core::ptr::addr_of_mut!((*dst).frames).write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst).route_slots).write(0);
+            core::ptr::addr_of_mut!((*dst).lane_base).write(0);
             core::ptr::addr_of_mut!((*dst).lane_slots).write(0);
             core::ptr::addr_of_mut!((*dst).lane_heads)
                 .write(UnsafeCell::new(core::ptr::null_mut()));
@@ -751,18 +917,13 @@ impl RouteTable {
     }
 
     #[cfg(test)]
-    fn build_test_table(route_slots: usize, lane_slots: usize) -> Self {
+    fn build_test_table(route_slots: usize, lane_base: u32, lane_slots: usize) -> Self {
         let mut table = Self::empty();
         let storage = Self::allocate_test_storage(route_slots, lane_slots);
         unsafe {
-            table.bind_from_storage_with_layout(storage, route_slots, lane_slots, 0);
+            table.bind_from_storage_with_layout(storage, route_slots, lane_base, lane_slots, 0);
         }
         table
-    }
-
-    #[cfg(test)]
-    pub(crate) fn new() -> Self {
-        Self::build_test_table(ROUTE_SLOTS, LANES_MAX as usize)
     }
 
     #[inline]
@@ -830,7 +991,7 @@ impl RouteTable {
         );
         waiters_offset.saturating_add(
             lane_slots
-                .saturating_mul(ROLE_SLOTS)
+                .saturating_mul(MAX_TRACKED_ROLES)
                 .saturating_mul(core::mem::size_of::<Option<Waker>>()),
         )
     }
@@ -855,6 +1016,7 @@ impl RouteTable {
         &mut self,
         frames: *mut RouteFrame,
         route_slots: usize,
+        lane_base: u32,
         lane_slots: usize,
         lane_heads: *mut u16,
         free_head: *mut u16,
@@ -892,7 +1054,7 @@ impl RouteTable {
             hint_idx += 1;
         }
         let mut waiter_idx = 0usize;
-        while waiter_idx < lane_slots.saturating_mul(ROLE_SLOTS) {
+        while waiter_idx < lane_slots.saturating_mul(MAX_TRACKED_ROLES) {
             unsafe {
                 waiters.add(waiter_idx).write(None);
             }
@@ -900,8 +1062,8 @@ impl RouteTable {
         }
         *self.frames.get_mut() = Self::encode_frames_ptr(frames, reclaim_delta);
         self.route_slots = route_slots;
-        debug_assert!(lane_slots <= u8::MAX as usize);
-        self.lane_slots = lane_slots as u8;
+        self.lane_base = lane_base;
+        self.lane_slots = lane_slots as u16;
         *self.lane_heads.get_mut() = lane_heads;
         *self.free_head.get_mut() = free_head;
         *self.pending_hint_label_masks.get_mut() = pending_hint_label_masks;
@@ -913,6 +1075,7 @@ impl RouteTable {
         &mut self,
         frames: *mut RouteFrame,
         route_slots: usize,
+        lane_base: u32,
         lane_slots: usize,
         lane_heads: *mut u16,
         free_head: *mut u16,
@@ -922,8 +1085,8 @@ impl RouteTable {
     ) {
         *self.frames.get_mut() = Self::encode_frames_ptr(frames, reclaim_delta);
         self.route_slots = route_slots;
-        debug_assert!(lane_slots <= u8::MAX as usize);
-        self.lane_slots = lane_slots as u8;
+        self.lane_base = lane_base;
+        self.lane_slots = lane_slots as u16;
         *self.lane_heads.get_mut() = lane_heads;
         *self.free_head.get_mut() = free_head;
         *self.pending_hint_label_masks.get_mut() = pending_hint_label_masks;
@@ -956,6 +1119,7 @@ impl RouteTable {
         &self,
         frames: *mut RouteFrame,
         route_slots: usize,
+        lane_base: u32,
         lane_slots: usize,
         lane_heads: *mut u16,
         free_head: *mut u16,
@@ -1001,8 +1165,8 @@ impl RouteTable {
             hint_idx += 1;
         }
         let mut waiter_idx = 0usize;
-        let waiter_count = lane_slots.saturating_mul(ROLE_SLOTS);
-        let src_waiter_count = self.lane_slots().saturating_mul(ROLE_SLOTS);
+        let waiter_count = lane_slots.saturating_mul(MAX_TRACKED_ROLES);
+        let src_waiter_count = self.lane_slots().saturating_mul(MAX_TRACKED_ROLES);
         while waiter_idx < src_waiter_count {
             unsafe {
                 let src_waiter = &mut *self.waiters_ptr().add(waiter_idx);
@@ -1047,12 +1211,14 @@ impl RouteTable {
             }
             lane_idx += 1;
         }
+        debug_assert_eq!(self.lane_base, lane_base);
     }
 
     pub(crate) unsafe fn bind_from_storage_with_layout(
         &mut self,
         storage: *mut u8,
         route_slots: usize,
+        lane_base: u32,
         lane_slots: usize,
         reclaim_delta: usize,
     ) {
@@ -1084,6 +1250,7 @@ impl RouteTable {
             self.bind_storage(
                 frames,
                 route_slots,
+                lane_base,
                 lane_slots,
                 lane_heads,
                 free_head,
@@ -1098,6 +1265,7 @@ impl RouteTable {
         &self,
         storage: *mut u8,
         route_slots: usize,
+        lane_base: u32,
         lane_slots: usize,
     ) {
         let frames = storage.cast::<RouteFrame>();
@@ -1128,6 +1296,7 @@ impl RouteTable {
             self.migrate_to(
                 frames,
                 route_slots,
+                lane_base,
                 lane_slots,
                 lane_heads,
                 free_head,
@@ -1141,6 +1310,7 @@ impl RouteTable {
         &mut self,
         storage: *mut u8,
         route_slots: usize,
+        lane_base: u32,
         lane_slots: usize,
         reclaim_delta: usize,
     ) {
@@ -1172,6 +1342,7 @@ impl RouteTable {
             self.rebind_storage(
                 frames,
                 route_slots,
+                lane_base,
                 lane_slots,
                 lane_heads,
                 free_head,
@@ -1209,13 +1380,9 @@ impl RouteTable {
     }
 
     #[inline]
-    fn lane_idx(lane: Lane) -> usize {
-        lane.raw() as usize
-    }
-
-    #[inline]
     fn lane_slot(&self, lane: Lane) -> usize {
-        let lane_idx = Self::lane_idx(lane);
+        debug_assert!(lane.raw() >= self.lane_base);
+        let lane_idx = (lane.raw() - self.lane_base) as usize;
         debug_assert!(
             lane_idx < self.lane_slots(),
             "route lane must fit bound lane span"
@@ -1225,7 +1392,7 @@ impl RouteTable {
 
     #[inline]
     fn role_slot_count(role_count: u8) -> usize {
-        core::cmp::min(role_count as usize, ROLE_SLOTS)
+        core::cmp::min(role_count as usize, MAX_TRACKED_ROLES)
     }
 
     #[inline]
@@ -1311,11 +1478,6 @@ impl RouteTable {
     }
 
     #[inline]
-    fn pending_lane_mask_bit(lane_idx: usize) -> u16 {
-        1u16 << lane_idx
-    }
-
-    #[inline]
     fn seen_bit(role_idx: usize) -> u16 {
         debug_assert!(role_idx < u16::BITS as usize);
         1u16 << (role_idx as u32)
@@ -1368,8 +1530,8 @@ impl RouteTable {
 
         let waiters = self.waiters_ptr();
         let mut role_idx = 0usize;
-        while role_idx < ROLE_SLOTS {
-            let waiter = unsafe { &mut *waiters.add(lane_idx * ROLE_SLOTS + role_idx) };
+        while role_idx < MAX_TRACKED_ROLES {
+            let waiter = unsafe { &mut *waiters.add(lane_idx * MAX_TRACKED_ROLES + role_idx) };
             if let Some(waker) = waiter.take() {
                 waker.wake();
             }
@@ -1407,7 +1569,7 @@ impl RouteTable {
         }
 
         let waiters = self.waiters_ptr();
-        let slot = unsafe { &mut *waiters.add(lane_idx * ROLE_SLOTS + role as usize) };
+        let slot = unsafe { &mut *waiters.add(lane_idx * MAX_TRACKED_ROLES + role as usize) };
         *slot = Some(cx.waker().clone());
         Poll::Pending
     }
@@ -1460,33 +1622,28 @@ impl RouteTable {
         (entry.epoch != 0 && (entry.seen_mask & role_bit) == 0).then_some(entry.arm)
     }
 
-    pub(crate) fn pending_lane_mask_with_role_count(
+    pub(crate) fn has_pending_lane_with_role_count(
         &self,
         role_count: u8,
         role: u8,
         scope: ScopeId,
-    ) -> u16 {
+        lane: Lane,
+    ) -> bool {
         let role_slots = Self::role_slot_count(role_count);
         if (role as usize) >= role_slots {
-            return 0;
+            return false;
         }
         let coord = match ScopeCoord::from_scope(scope) {
             Some(coord) => coord,
-            None => return 0,
+            None => return false,
         };
         let role_bit = Self::seen_bit(role as usize);
-        let mut lanes = 0u16;
-        let mut lane_idx = 0usize;
-        while lane_idx < self.lane_slots() {
-            if let Some(slot_idx) = Self::slot_for_scope(self, lane_idx, coord) {
-                let entry = self.frame_ref(slot_idx).entry;
-                if entry.epoch != 0 && (entry.seen_mask & role_bit) == 0 {
-                    lanes |= Self::pending_lane_mask_bit(lane_idx);
-                }
-            }
-            lane_idx += 1;
+        let lane_idx = self.lane_slot(lane);
+        if let Some(slot_idx) = Self::slot_for_scope(self, lane_idx, coord) {
+            let entry = self.frame_ref(slot_idx).entry;
+            return entry.epoch != 0 && (entry.seen_mask & role_bit) == 0;
         }
-        lanes
+        false
     }
 
     #[inline]
@@ -1509,20 +1666,12 @@ impl RouteTable {
         self.bump_change_epoch();
     }
 
-    pub(crate) fn pending_hint_lane_mask_for_labels(&self, label_mask: u128) -> u16 {
+    pub(crate) fn has_pending_hint_for_lane(&self, lane: Lane, label_mask: u128) -> bool {
         if self.route_slots == 0 {
-            return 0;
+            return false;
         }
-        let mut lanes = 0u16;
-        let pending_hint_label_masks = self.pending_hint_label_masks_ptr();
-        let mut lane_idx = 0usize;
-        while lane_idx < self.lane_slots() {
-            if (unsafe { *pending_hint_label_masks.add(lane_idx) } & label_mask) != 0 {
-                lanes |= Self::pending_lane_mask_bit(lane_idx);
-            }
-            lane_idx += 1;
-        }
-        lanes
+        let lane_idx = self.lane_slot(lane);
+        (unsafe { *self.pending_hint_label_masks_ptr().add(lane_idx) } & label_mask) != 0
     }
 
     pub(crate) fn reset_lane(&self, lane: Lane) {
@@ -1548,9 +1697,11 @@ impl RouteTable {
         }
         let waiters = self.waiters_ptr();
         let mut role_idx = 0usize;
-        while role_idx < ROLE_SLOTS {
+        while role_idx < MAX_TRACKED_ROLES {
             unsafe {
-                waiters.add(lane_idx * ROLE_SLOTS + role_idx).write(None);
+                waiters
+                    .add(lane_idx * MAX_TRACKED_ROLES + role_idx)
+                    .write(None);
             }
             role_idx += 1;
         }
@@ -1570,13 +1721,15 @@ mod tests {
     fn tiny_loop_table(loop_slots: usize) -> LoopTable {
         let mut table = LoopTable::empty();
         let frames = std::vec![LoopFrame::free(LoopTable::NO_FRAME); loop_slots].into_boxed_slice();
-        let lane_heads =
-            std::vec![LoopTable::NO_FRAME; super::LANES_MAX as usize].into_boxed_slice();
+        let lane_slots = 4usize;
+        let lane_heads = std::vec![LoopTable::NO_FRAME; lane_slots].into_boxed_slice();
         let free_head = std::boxed::Box::new(LoopTable::NO_FRAME);
         unsafe {
             table.bind_storage(
                 std::boxed::Box::leak(frames).as_mut_ptr(),
                 loop_slots,
+                0,
+                lane_slots,
                 std::boxed::Box::leak(lane_heads).as_mut_ptr(),
                 std::boxed::Box::leak(free_head),
                 0,
@@ -1586,13 +1739,20 @@ mod tests {
     }
 
     fn tiny_route_table(route_slots: usize) -> RouteTable {
-        let lane_slots = super::LANES_MAX as usize;
-        RouteTable::build_test_table(route_slots, lane_slots)
+        RouteTable::build_test_table(route_slots, 0, 4)
+    }
+
+    fn route_table() -> RouteTable {
+        RouteTable::build_test_table(super::ROUTE_SLOTS, 0, 4)
+    }
+
+    fn gen_table() -> GenTable {
+        GenTable::new_for_test(4)
     }
 
     #[test]
     fn gen_table_tracks_presence_with_explicit_mask() {
-        let table = GenTable::new();
+        let table = gen_table();
         let lane = Lane::new(0);
 
         assert_eq!(table.last(lane), None);
@@ -1613,7 +1773,7 @@ mod tests {
 
     #[test]
     fn gen_table_preserves_stale_and_overflow_semantics() {
-        let table = GenTable::new();
+        let table = gen_table();
         let lane = Lane::new(2);
 
         assert_eq!(table.check_and_update(lane, Generation::ZERO), Ok(()));
@@ -1639,7 +1799,7 @@ mod tests {
 
     #[test]
     fn route_table_peek_is_non_consuming() {
-        let table = RouteTable::new();
+        let table = route_table();
         let lane = Lane::new(0);
         let scope = ScopeId::route(9);
 
@@ -1662,47 +1822,39 @@ mod tests {
 
     #[test]
     fn route_table_pending_lane_mask_tracks_unacked_decisions() {
-        let table = RouteTable::new();
+        let table = route_table();
         let lane0 = Lane::new(0);
         let lane2 = Lane::new(2);
         let scope = ScopeId::route(9);
 
         assert_eq!(
-            table.pending_lane_mask_with_role_count(ROLE_COUNT, 1, scope),
-            0
+            table.has_pending_lane_with_role_count(ROLE_COUNT, 1, scope, lane0),
+            false
         );
 
         table.record_with_role_count(lane0, ROLE_COUNT, 0, scope, 1);
         table.record_with_role_count(lane2, ROLE_COUNT, 0, scope, 1);
         assert_eq!(
-            table.pending_lane_mask_with_role_count(ROLE_COUNT, 0, scope),
-            0
+            table.has_pending_lane_with_role_count(ROLE_COUNT, 0, scope, lane0),
+            false
         );
-        assert_eq!(
-            table.pending_lane_mask_with_role_count(ROLE_COUNT, 1, scope),
-            (1u16 << 0) | (1u16 << 2)
-        );
+        assert!(table.has_pending_lane_with_role_count(ROLE_COUNT, 1, scope, lane0));
+        assert!(table.has_pending_lane_with_role_count(ROLE_COUNT, 1, scope, lane2));
 
         assert_eq!(
             table.acknowledge_with_role_count(lane0, ROLE_COUNT, 1, scope),
             Some(1)
         );
-        assert_eq!(
-            table.pending_lane_mask_with_role_count(ROLE_COUNT, 1, scope),
-            1u16 << 2
-        );
+        assert!(!table.has_pending_lane_with_role_count(ROLE_COUNT, 1, scope, lane0));
+        assert!(table.has_pending_lane_with_role_count(ROLE_COUNT, 1, scope, lane2));
 
         table.record_with_role_count(lane0, ROLE_COUNT, 0, scope, 0);
-        assert_eq!(
-            table.pending_lane_mask_with_role_count(ROLE_COUNT, 1, scope),
-            (1u16 << 0) | (1u16 << 2)
-        );
+        assert!(table.has_pending_lane_with_role_count(ROLE_COUNT, 1, scope, lane0));
+        assert!(table.has_pending_lane_with_role_count(ROLE_COUNT, 1, scope, lane2));
 
         table.reset_lane(lane2);
-        assert_eq!(
-            table.pending_lane_mask_with_role_count(ROLE_COUNT, 1, scope),
-            1u16 << 0
-        );
+        assert!(table.has_pending_lane_with_role_count(ROLE_COUNT, 1, scope, lane0));
+        assert!(!table.has_pending_lane_with_role_count(ROLE_COUNT, 1, scope, lane2));
     }
 
     #[test]
@@ -1713,33 +1865,24 @@ mod tests {
         let scope_b = ScopeId::route(10);
 
         table.record_with_role_count(lane, ROLE_COUNT, 0, scope_a, 1);
-        assert_eq!(
-            table.pending_lane_mask_with_role_count(ROLE_COUNT, 1, scope_a),
-            1u16 << 0
-        );
+        assert!(table.has_pending_lane_with_role_count(ROLE_COUNT, 1, scope_a, lane));
         assert_eq!(
             table.acknowledge_with_role_count(lane, ROLE_COUNT, 1, scope_a),
             Some(1)
         );
-        assert_eq!(
-            table.pending_lane_mask_with_role_count(ROLE_COUNT, 1, scope_a),
-            0
-        );
+        assert!(!table.has_pending_lane_with_role_count(ROLE_COUNT, 1, scope_a, lane));
 
         table.record_with_role_count(lane, ROLE_COUNT, 0, scope_b, 2);
         assert_eq!(
             table.peek_with_role_count(lane, ROLE_COUNT, 1, scope_b),
             Some(2)
         );
-        assert_eq!(
-            table.pending_lane_mask_with_role_count(ROLE_COUNT, 1, scope_b),
-            1u16 << 0
-        );
+        assert!(table.has_pending_lane_with_role_count(ROLE_COUNT, 1, scope_b, lane));
     }
 
     #[test]
     fn route_table_change_epoch_tracks_route_and_hint_updates() {
-        let table = RouteTable::new();
+        let table = route_table();
         let lane = Lane::new(0);
         let scope = ScopeId::route(9);
 
@@ -1781,45 +1924,33 @@ mod tests {
 
     #[test]
     fn loop_table_empty_layout_has_no_resident_bytes() {
-        assert_eq!(LoopTable::storage_bytes(0), 0);
+        assert_eq!(LoopTable::storage_bytes(0, 4), 0);
     }
 
     #[test]
     fn route_table_hint_lane_mask_tracks_buffered_labels() {
-        let table = RouteTable::new();
+        let table = route_table();
         let lane0 = Lane::new(0);
         let lane2 = Lane::new(2);
 
-        assert_eq!(table.pending_hint_lane_mask_for_labels(1u128 << 25), 0);
+        assert!(!table.has_pending_hint_for_lane(lane0, 1u128 << 25));
 
         table.update_pending_hint_lane_masks(lane0, 0, (1u128 << 25) | (1u128 << 41));
-        assert_eq!(
-            table.pending_hint_lane_mask_for_labels(1u128 << 25),
-            1u16 << 0
-        );
-        assert_eq!(
-            table.pending_hint_lane_mask_for_labels((1u128 << 25) | (1u128 << 41)),
-            1u16 << 0
-        );
+        assert!(table.has_pending_hint_for_lane(lane0, 1u128 << 25));
+        assert!(table.has_pending_hint_for_lane(lane0, (1u128 << 25) | (1u128 << 41)));
 
         table.update_pending_hint_lane_masks(lane2, 0, 1u128 << 41);
-        assert_eq!(
-            table.pending_hint_lane_mask_for_labels(1u128 << 41),
-            (1u16 << 0) | (1u16 << 2)
-        );
+        assert!(table.has_pending_hint_for_lane(lane0, 1u128 << 41));
+        assert!(table.has_pending_hint_for_lane(lane2, 1u128 << 41));
 
         table.update_pending_hint_lane_masks(lane0, (1u128 << 25) | (1u128 << 41), 1u128 << 41);
-        assert_eq!(table.pending_hint_lane_mask_for_labels(1u128 << 25), 0);
-        assert_eq!(
-            table.pending_hint_lane_mask_for_labels(1u128 << 41),
-            (1u16 << 0) | (1u16 << 2)
-        );
+        assert!(!table.has_pending_hint_for_lane(lane0, 1u128 << 25));
+        assert!(table.has_pending_hint_for_lane(lane0, 1u128 << 41));
+        assert!(table.has_pending_hint_for_lane(lane2, 1u128 << 41));
 
         table.reset_lane(lane2);
-        assert_eq!(
-            table.pending_hint_lane_mask_for_labels(1u128 << 41),
-            1u16 << 0
-        );
+        assert!(table.has_pending_hint_for_lane(lane0, 1u128 << 41));
+        assert!(!table.has_pending_hint_for_lane(lane2, 1u128 << 41));
     }
 }
 
@@ -1861,6 +1992,8 @@ impl PolicySlot {
 }
 
 pub(crate) struct PolicyTable {
+    lane_base: u32,
+    lane_slots: u16,
     lanes: UnsafeCell<*mut PolicySlot>,
     _no_send_sync: PhantomData<*mut ()>,
 }
@@ -1874,6 +2007,8 @@ impl Default for PolicyTable {
 impl PolicyTable {
     pub(crate) const fn empty() -> Self {
         Self {
+            lane_base: 0,
+            lane_slots: 0,
             lanes: UnsafeCell::new(core::ptr::null_mut()),
             _no_send_sync: PhantomData,
         }
@@ -1881,6 +2016,8 @@ impl PolicyTable {
 
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
         unsafe {
+            core::ptr::addr_of_mut!((*dst).lane_base).write(0);
+            core::ptr::addr_of_mut!((*dst).lane_slots).write(0);
             core::ptr::addr_of_mut!((*dst).lanes).write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
         }
@@ -1892,24 +2029,31 @@ impl PolicyTable {
     }
 
     #[inline]
-    pub(crate) const fn storage_bytes() -> usize {
-        (LANES_MAX as usize).saturating_mul(core::mem::size_of::<PolicySlot>())
+    pub(crate) const fn storage_bytes(lane_slots: usize) -> usize {
+        lane_slots.saturating_mul(core::mem::size_of::<PolicySlot>())
     }
 
-    unsafe fn bind_storage(&mut self, lanes: *mut PolicySlot) {
+    unsafe fn bind_storage(&mut self, lanes: *mut PolicySlot, lane_base: u32, lane_slots: usize) {
         let mut idx = 0usize;
-        while idx < LANES_MAX as usize {
+        while idx < lane_slots {
             unsafe {
                 PolicySlot::init_empty(lanes.add(idx));
             }
             idx += 1;
         }
+        self.lane_base = lane_base;
+        self.lane_slots = lane_slots as u16;
         *self.lanes.get_mut() = lanes;
     }
 
-    pub(crate) unsafe fn bind_from_storage(&mut self, storage: *mut u8) {
+    pub(crate) unsafe fn bind_from_storage(
+        &mut self,
+        storage: *mut u8,
+        lane_base: u32,
+        lane_slots: usize,
+    ) {
         unsafe {
-            self.bind_storage(storage.cast::<PolicySlot>());
+            self.bind_storage(storage.cast::<PolicySlot>(), lane_base, lane_slots);
         }
     }
 
@@ -1923,6 +2067,26 @@ impl PolicyTable {
         !self.lanes_ptr().is_null()
     }
 
+    #[inline]
+    pub(crate) fn storage_ptr(&self) -> *mut u8 {
+        self.lanes_ptr().cast::<u8>()
+    }
+
+    #[inline]
+    pub(crate) const fn storage_bytes_current(&self) -> usize {
+        Self::storage_bytes(self.lane_slots as usize)
+    }
+
+    #[inline]
+    fn lane_slot(&self, lane: Lane) -> Option<usize> {
+        let lane_raw = lane.raw();
+        if lane_raw < self.lane_base {
+            return None;
+        }
+        let slot = (lane_raw - self.lane_base) as usize;
+        (slot < self.lane_slots as usize).then_some(slot)
+    }
+
     pub(crate) fn register(
         &self,
         lane: Lane,
@@ -1933,83 +2097,144 @@ impl PolicyTable {
         if policy.is_static() {
             return Ok(());
         }
-        if self.lanes_ptr().is_null() {
+        let Some(slot) = self.lane_slot(lane) else {
             return Err(policy);
-        }
-        unsafe {
-            (&mut *self.lanes_ptr().add(lane.raw() as usize)).register(eff_index, tag, policy)
-        }
+        };
+        unsafe { (&mut *self.lanes_ptr().add(slot)).register(eff_index, tag, policy) }
     }
 
     pub(crate) fn get(&self, lane: Lane, eff_index: EffIndex, tag: u8) -> Option<PolicyMode> {
-        if self.lanes_ptr().is_null() {
-            return None;
-        }
-        unsafe { (&*self.lanes_ptr().add(lane.raw() as usize)).get(eff_index, tag) }
+        let slot = self.lane_slot(lane)?;
+        unsafe { (&*self.lanes_ptr().add(slot)).get(eff_index, tag) }
     }
 
     pub(crate) fn reset_lane(&self, lane: Lane) {
-        if self.lanes_ptr().is_null() {
+        let Some(slot) = self.lane_slot(lane) else {
             return;
-        }
+        };
         unsafe {
-            (&mut *self.lanes_ptr().add(lane.raw() as usize)).reset();
+            (&mut *self.lanes_ptr().add(slot)).reset();
         }
     }
 }
 
 /// Per-lane capability table for the effect VM.
 pub(crate) struct VmCapsTable {
-    lanes: UnsafeCell<[CapsMask; LANES_MAX as usize]>,
+    lane_base: u32,
+    lane_slots: u16,
+    lanes: UnsafeCell<*mut CapsMask>,
     _no_send_sync: PhantomData<*mut ()>,
 }
 
 impl Default for VmCapsTable {
     fn default() -> Self {
-        Self::new()
+        Self::empty()
     }
 }
 
 impl VmCapsTable {
-    pub(crate) const fn new() -> Self {
+    pub(crate) const fn empty() -> Self {
         Self {
-            lanes: UnsafeCell::new([CapsMask::allow_all(); LANES_MAX as usize]),
+            lane_base: 0,
+            lane_slots: 0,
+            lanes: UnsafeCell::new(core::ptr::null_mut()),
             _no_send_sync: PhantomData,
         }
     }
 
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
         unsafe {
-            let lanes_ptr = core::ptr::addr_of_mut!((*dst).lanes).cast::<CapsMask>();
-            let mut idx = 0usize;
-            while idx < LANES_MAX as usize {
-                lanes_ptr.add(idx).write(CapsMask::allow_all());
-                idx += 1;
-            }
+            core::ptr::addr_of_mut!((*dst).lane_base).write(0);
+            core::ptr::addr_of_mut!((*dst).lane_slots).write(0);
+            core::ptr::addr_of_mut!((*dst).lanes).write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
         }
+    }
+
+    #[inline]
+    pub(crate) const fn storage_align() -> usize {
+        core::mem::align_of::<CapsMask>()
+    }
+
+    #[inline]
+    pub(crate) const fn storage_bytes(lane_slots: usize) -> usize {
+        lane_slots.saturating_mul(core::mem::size_of::<CapsMask>())
+    }
+
+    pub(crate) unsafe fn bind_from_storage(
+        &mut self,
+        storage: *mut u8,
+        lane_base: u32,
+        lane_slots: usize,
+    ) {
+        let lanes = storage.cast::<CapsMask>();
+        let mut idx = 0usize;
+        while idx < lane_slots {
+            unsafe {
+                lanes.add(idx).write(CapsMask::allow_all());
+            }
+            idx += 1;
+        }
+        self.lane_base = lane_base;
+        self.lane_slots = lane_slots as u16;
+        *self.lanes.get_mut() = lanes;
+    }
+
+    #[inline]
+    pub(crate) fn is_bound(&self) -> bool {
+        !unsafe { *self.lanes.get() }.is_null()
+    }
+
+    #[inline]
+    pub(crate) fn storage_ptr(&self) -> *mut u8 {
+        self.lanes_ptr().cast::<u8>()
+    }
+
+    #[inline]
+    pub(crate) const fn storage_bytes_current(&self) -> usize {
+        Self::storage_bytes(self.lane_slots as usize)
+    }
+
+    #[inline]
+    fn lanes_ptr(&self) -> *mut CapsMask {
+        unsafe { *self.lanes.get() }
+    }
+
+    #[inline]
+    fn lane_slot(&self, lane: Lane) -> Option<usize> {
+        let lane_raw = lane.raw();
+        if lane_raw < self.lane_base {
+            return None;
+        }
+        let slot = (lane_raw - self.lane_base) as usize;
+        (slot < self.lane_slots as usize).then_some(slot)
     }
 
     /// Set capability bits for a lane.
     #[inline]
     pub(crate) fn set(&self, lane: Lane, caps: CapsMask) {
-        unsafe {
-            (*self.lanes.get())[lane.raw() as usize] = caps;
-        }
+        let Some(slot) = self.lane_slot(lane) else {
+            return;
+        };
+        unsafe { self.lanes_ptr().add(slot).write(caps) }
     }
 
     /// Get capability bits for a lane.
     #[inline]
     pub(crate) fn get(&self, lane: Lane) -> CapsMask {
-        unsafe { (*self.lanes.get())[lane.raw() as usize] }
+        let Some(slot) = self.lane_slot(lane) else {
+            return CapsMask::allow_all();
+        };
+        unsafe { *self.lanes_ptr().add(slot) }
     }
 
     /// Reset lane (clear permissions).
     #[inline]
     pub(crate) fn reset_lane(&self, lane: Lane) {
-        unsafe {
-            (*self.lanes.get())[lane.raw() as usize] = CapsMask::allow_all();
-        }
+        let Some(slot) = self.lane_slot(lane) else {
+            return;
+        };
+        unsafe { self.lanes_ptr().add(slot).write(CapsMask::allow_all()) }
     }
 }
 
@@ -2017,90 +2242,186 @@ impl VmCapsTable {
 ///
 /// Tracks last checkpoint epoch and consumption status for rollback operations.
 pub(crate) struct CheckpointTable {
-    last_checkpoint: UnsafeCell<[u16; LANES_MAX as usize]>,
-    present_mask: UnsafeCell<u8>,
-    consumed_mask: UnsafeCell<u8>,
+    lane_base: u32,
+    lane_slots: u16,
+    last_checkpoint: UnsafeCell<*mut u16>,
+    present: UnsafeCell<*mut u8>,
+    consumed: UnsafeCell<*mut u8>,
     _no_send_sync: PhantomData<*mut ()>,
 }
 
 impl Default for CheckpointTable {
     fn default() -> Self {
-        Self::new()
+        Self::empty()
     }
 }
 
 impl CheckpointTable {
-    pub(crate) const fn new() -> Self {
+    pub(crate) const fn empty() -> Self {
         Self {
-            last_checkpoint: UnsafeCell::new([0; LANES_MAX as usize]),
-            present_mask: UnsafeCell::new(0),
-            consumed_mask: UnsafeCell::new(0),
+            lane_base: 0,
+            lane_slots: 0,
+            last_checkpoint: UnsafeCell::new(core::ptr::null_mut()),
+            present: UnsafeCell::new(core::ptr::null_mut()),
+            consumed: UnsafeCell::new(core::ptr::null_mut()),
             _no_send_sync: PhantomData,
         }
     }
 
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
         unsafe {
-            let last_checkpoint_ptr = core::ptr::addr_of_mut!((*dst).last_checkpoint).cast::<u16>();
-            let mut idx = 0usize;
-            while idx < LANES_MAX as usize {
-                last_checkpoint_ptr.add(idx).write(0);
-                idx += 1;
-            }
-            core::ptr::addr_of_mut!((*dst).present_mask).write(UnsafeCell::new(0));
-            core::ptr::addr_of_mut!((*dst).consumed_mask).write(UnsafeCell::new(0));
+            core::ptr::addr_of_mut!((*dst).lane_base).write(0);
+            core::ptr::addr_of_mut!((*dst).lane_slots).write(0);
+            core::ptr::addr_of_mut!((*dst).last_checkpoint)
+                .write(UnsafeCell::new(core::ptr::null_mut()));
+            core::ptr::addr_of_mut!((*dst).present).write(UnsafeCell::new(core::ptr::null_mut()));
+            core::ptr::addr_of_mut!((*dst).consumed).write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
         }
+    }
+
+    #[inline]
+    pub(crate) const fn storage_align() -> usize {
+        lane_storage_align()
+    }
+
+    #[inline]
+    pub(crate) const fn storage_bytes(lane_slots: usize) -> usize {
+        let checkpoints_bytes = lane_slots.saturating_mul(core::mem::size_of::<u16>());
+        let present_offset = align_up(checkpoints_bytes, core::mem::align_of::<u8>());
+        let consumed_offset = align_up(
+            present_offset.saturating_add(lane_slots.saturating_mul(core::mem::size_of::<u8>())),
+            core::mem::align_of::<u8>(),
+        );
+        consumed_offset.saturating_add(lane_slots.saturating_mul(core::mem::size_of::<u8>()))
+    }
+
+    pub(crate) unsafe fn bind_from_storage(
+        &mut self,
+        storage: *mut u8,
+        lane_base: u32,
+        lane_slots: usize,
+    ) {
+        let checkpoints = storage.cast::<u16>();
+        let present_offset = align_up(
+            storage as usize + lane_slots.saturating_mul(core::mem::size_of::<u16>()),
+            core::mem::align_of::<u8>(),
+        ) - storage as usize;
+        let present = unsafe { storage.add(present_offset) }.cast::<u8>();
+        let consumed_offset = align_up(
+            storage as usize
+                + present_offset
+                + lane_slots.saturating_mul(core::mem::size_of::<u8>()),
+            core::mem::align_of::<u8>(),
+        ) - storage as usize;
+        let consumed = unsafe { storage.add(consumed_offset) }.cast::<u8>();
+        let mut idx = 0usize;
+        while idx < lane_slots {
+            unsafe {
+                checkpoints.add(idx).write(0);
+                present.add(idx).write(0);
+                consumed.add(idx).write(0);
+            }
+            idx += 1;
+        }
+        self.lane_base = lane_base;
+        self.lane_slots = lane_slots as u16;
+        *self.last_checkpoint.get_mut() = checkpoints;
+        *self.present.get_mut() = present;
+        *self.consumed.get_mut() = consumed;
+    }
+
+    #[inline]
+    fn last_checkpoint_ptr(&self) -> *mut u16 {
+        unsafe { *self.last_checkpoint.get() }
+    }
+
+    #[inline]
+    fn present_ptr(&self) -> *mut u8 {
+        unsafe { *self.present.get() }
+    }
+
+    #[inline]
+    fn consumed_ptr(&self) -> *mut u8 {
+        unsafe { *self.consumed.get() }
+    }
+
+    #[inline]
+    pub(crate) fn is_bound(&self) -> bool {
+        !self.last_checkpoint_ptr().is_null()
+    }
+
+    #[inline]
+    pub(crate) fn storage_ptr(&self) -> *mut u8 {
+        self.last_checkpoint_ptr().cast::<u8>()
+    }
+
+    #[inline]
+    pub(crate) const fn storage_bytes_current(&self) -> usize {
+        Self::storage_bytes(self.lane_slots as usize)
+    }
+
+    #[inline]
+    fn lane_slot(&self, lane: Lane) -> Option<usize> {
+        let lane_raw = lane.raw();
+        if lane_raw < self.lane_base {
+            return None;
+        }
+        let slot = (lane_raw - self.lane_base) as usize;
+        (slot < self.lane_slots as usize).then_some(slot)
     }
 
     /// Record a checkpoint.
     #[inline]
     pub(crate) fn record(&self, lane: Lane, checkpoint: Generation) {
-        let lane_idx = lane.raw() as usize;
-        let lane_bit = 1u8 << lane.raw();
+        let Some(slot) = self.lane_slot(lane) else {
+            return;
+        };
         unsafe {
-            (*self.last_checkpoint.get())[lane_idx] = checkpoint.raw();
-            *self.present_mask.get() |= lane_bit;
-            *self.consumed_mask.get() &= !lane_bit;
+            self.last_checkpoint_ptr().add(slot).write(checkpoint.raw());
+            self.present_ptr().add(slot).write(1);
+            self.consumed_ptr().add(slot).write(0);
         }
     }
 
     /// Get last checkpoint for a lane.
     #[inline]
     pub(crate) fn last(&self, lane: Lane) -> Option<Generation> {
-        let lane_idx = lane.raw() as usize;
-        let lane_bit = 1u8 << lane.raw();
+        let slot = self.lane_slot(lane)?;
         unsafe {
-            ((*self.present_mask.get() & lane_bit) != 0)
-                .then_some(Generation::new((*self.last_checkpoint.get())[lane_idx]))
+            (*self.present_ptr().add(slot) != 0)
+                .then_some(Generation::new(*self.last_checkpoint_ptr().add(slot)))
         }
     }
 
     /// Mark checkpoint as consumed.
     #[inline]
     pub(crate) fn mark_consumed(&self, lane: Lane) {
-        let lane_bit = 1u8 << lane.raw();
-        unsafe {
-            *self.consumed_mask.get() |= lane_bit;
-        }
+        let Some(slot) = self.lane_slot(lane) else {
+            return;
+        };
+        unsafe { self.consumed_ptr().add(slot).write(1) }
     }
 
     /// Check if checkpoint is consumed.
     #[inline]
     pub(crate) fn is_consumed(&self, lane: Lane) -> bool {
-        let lane_bit = 1u8 << lane.raw();
-        unsafe { (*self.consumed_mask.get() & lane_bit) != 0 }
+        let Some(slot) = self.lane_slot(lane) else {
+            return false;
+        };
+        unsafe { *self.consumed_ptr().add(slot) != 0 }
     }
 
     /// Reset lane.
     #[inline]
     pub(crate) fn reset_lane(&self, lane: Lane) {
-        let lane_idx = lane.raw() as usize;
-        let lane_bit = 1u8 << lane.raw();
+        let Some(slot) = self.lane_slot(lane) else {
+            return;
+        };
         unsafe {
-            (*self.last_checkpoint.get())[lane_idx] = 0;
-            *self.present_mask.get() &= !lane_bit;
-            *self.consumed_mask.get() &= !lane_bit;
+            self.last_checkpoint_ptr().add(slot).write(0);
+            self.present_ptr().add(slot).write(0);
+            self.consumed_ptr().add(slot).write(0);
         }
     }
 }

@@ -1,9 +1,13 @@
 use hibana::g::advanced::CanonicalControl;
 use hibana::g::advanced::steps::{RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
 use hibana::g::{self, Msg, Role};
-use hibana::substrate::cap::GenericCapToken;
+use hibana::substrate::{
+    Transport,
+    cap::GenericCapToken,
+    runtime::{Clock, LabelUniverse},
+};
 
-use super::{route_control_kinds, scenario::ScenarioHarness};
+use super::{localside, route_control_kinds};
 
 type U8Send<const FROM: u8, const TO: u8, const LABEL: u8> =
     StepCons<SendStep<Role<FROM>, Role<TO>, Msg<LABEL, u8>>, StepNil>;
@@ -215,152 +219,320 @@ pub const PROGRAM: g::Program<ProgramSteps> = g::seq(
     ),
 );
 
-pub fn run<H: ScenarioHarness>(
-    controller: &mut H::ControllerEndpoint<'_>,
-    worker: &mut H::WorkerEndpoint<'_>,
-) {
-    run_prefix::<H>(controller, worker);
-    run_routes::<H>(controller, worker);
-    run_suffix::<H>(controller, worker);
+pub fn run<T, U, C, const MAX_RV: usize>(
+    controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
+    worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
+) where
+    T: Transport + 'static,
+    U: LabelUniverse + 'static,
+    C: Clock + 'static,
+{
+    run_prefix(controller, worker);
+    run_routes(controller, worker);
+    run_suffix(controller, worker);
 }
 
-fn run_prefix<H: ScenarioHarness>(
-    controller: &mut H::ControllerEndpoint<'_>,
-    worker: &mut H::WorkerEndpoint<'_>,
-) {
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 1);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 1);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 2);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 2);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 3);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 3);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 4);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 4);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 5);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 5);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 6);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 6);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 7);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 7);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 8);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 8);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 9);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 9);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 10);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 10);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 11);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 11);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 12);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 12);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 13);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 13);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 14);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 14);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 15);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 15);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 16);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 16);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 17);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 17);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 18);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 18);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 19);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 19);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 20);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 20);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 21);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 21);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 22);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 22);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 23);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 23);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 24);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 24);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 25);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 25);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 26);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 26);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 27);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 27);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 28);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 28);
+fn run_prefix<T, U, C, const MAX_RV: usize>(
+    controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
+    worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
+) where
+    T: Transport + 'static,
+    U: LabelUniverse + 'static,
+    C: Clock + 'static,
+{
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 1);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        1
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 2);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        2
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 3);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        3
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 4);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        4
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 5);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        5
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 6);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        6
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 7);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        7
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 8);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        8
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 9);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        9
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 10);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        10
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 11);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        11
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 12);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        12
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 13);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        13
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 14);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        14
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 15);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        15
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 16);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        16
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 17);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        17
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 18);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        18
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 19);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        19
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 20);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        20
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 21);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        21
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 22);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        22
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 23);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        23
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 24);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        24
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 25);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        25
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 26);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        26
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 27);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        27
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 28);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        28
+    );
 }
 
-fn run_routes<H: ScenarioHarness>(
-    controller: &mut H::ControllerEndpoint<'_>,
-    worker: &mut H::WorkerEndpoint<'_>,
-) {
-    H::controller_select::<{ LABEL_ROUTE_LEFT_CTRL }, RouteLeftKind>(controller);
-    H::controller_send_u32::<{ LABEL_ROUTE_LEFT_U32 }>(controller, 0);
+fn run_routes<T, U, C, const MAX_RV: usize>(
+    controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
+    worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
+) where
+    T: Transport + 'static,
+    U: LabelUniverse + 'static,
+    C: Clock + 'static,
+{
+    localside::controller_select::<{ LABEL_ROUTE_LEFT_CTRL }, RouteLeftKind, _, _, _, MAX_RV>(
+        controller,
+    );
+    localside::controller_send_u32::<{ LABEL_ROUTE_LEFT_U32 }, _, _, _, MAX_RV>(controller, 0);
     assert_eq!(
-        H::worker_offer_decode_u32::<{ LABEL_ROUTE_LEFT_U32 }>(worker),
+        localside::worker_offer_decode_u32::<{ LABEL_ROUTE_LEFT_U32 }, _, _, _, MAX_RV>(worker),
         0
     );
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 92);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 92);
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 92);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        92
+    );
 
-    H::controller_select::<{ LABEL_ROUTE_RIGHT_CTRL }, RouteRightKind>(controller);
-    H::controller_send_u32::<{ LABEL_ROUTE_RIGHT_U32 }>(controller, 0);
+    localside::controller_select::<{ LABEL_ROUTE_RIGHT_CTRL }, RouteRightKind, _, _, _, MAX_RV>(
+        controller,
+    );
+    localside::controller_send_u32::<{ LABEL_ROUTE_RIGHT_U32 }, _, _, _, MAX_RV>(controller, 0);
     assert_eq!(
-        H::worker_offer_decode_u32::<{ LABEL_ROUTE_RIGHT_U32 }>(worker),
+        localside::worker_offer_decode_u32::<{ LABEL_ROUTE_RIGHT_U32 }, _, _, _, MAX_RV>(worker),
         0
     );
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 93);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 93);
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 93);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        93
+    );
 
-    H::controller_select::<{ LABEL_ROUTE_LEFT_CTRL }, RouteLeftKind>(controller);
-    H::controller_send_u32::<{ LABEL_ROUTE_LEFT_U32 }>(controller, 0);
+    localside::controller_select::<{ LABEL_ROUTE_LEFT_CTRL }, RouteLeftKind, _, _, _, MAX_RV>(
+        controller,
+    );
+    localside::controller_send_u32::<{ LABEL_ROUTE_LEFT_U32 }, _, _, _, MAX_RV>(controller, 0);
     assert_eq!(
-        H::worker_offer_decode_u32::<{ LABEL_ROUTE_LEFT_U32 }>(worker),
+        localside::worker_offer_decode_u32::<{ LABEL_ROUTE_LEFT_U32 }, _, _, _, MAX_RV>(worker),
         0
     );
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 94);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 94);
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 94);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        94
+    );
 
-    H::controller_select::<{ LABEL_ROUTE_RIGHT_CTRL }, RouteRightKind>(controller);
-    H::controller_send_u32::<{ LABEL_ROUTE_RIGHT_U32 }>(controller, 0);
+    localside::controller_select::<{ LABEL_ROUTE_RIGHT_CTRL }, RouteRightKind, _, _, _, MAX_RV>(
+        controller,
+    );
+    localside::controller_send_u32::<{ LABEL_ROUTE_RIGHT_U32 }, _, _, _, MAX_RV>(controller, 0);
     assert_eq!(
-        H::worker_offer_decode_u32::<{ LABEL_ROUTE_RIGHT_U32 }>(worker),
+        localside::worker_offer_decode_u32::<{ LABEL_ROUTE_RIGHT_U32 }, _, _, _, MAX_RV>(worker),
         0
     );
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 95);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 95);
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 95);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        95
+    );
 }
 
-fn run_suffix<H: ScenarioHarness>(
-    controller: &mut H::ControllerEndpoint<'_>,
-    worker: &mut H::WorkerEndpoint<'_>,
-) {
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 96);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 96);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 97);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 97);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 98);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 98);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 99);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 99);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 100);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 100);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 101);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 101);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 102);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 102);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 103);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 103);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 104);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 104);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 105);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 105);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 106);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 106);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 107);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 107);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 108);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 108);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 109);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 109);
-    H::controller_send_u8::<{ LABEL_C2W_U8 }>(controller, 110);
-    assert_eq!(H::worker_recv_u8::<{ LABEL_C2W_U8 }>(worker), 110);
-    H::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 111);
-    assert_eq!(H::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 111);
+fn run_suffix<T, U, C, const MAX_RV: usize>(
+    controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
+    worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
+) where
+    T: Transport + 'static,
+    U: LabelUniverse + 'static,
+    C: Clock + 'static,
+{
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 96);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        96
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 97);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        97
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 98);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        98
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 99);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        99
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 100);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        100
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 101);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        101
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 102);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        102
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 103);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        103
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 104);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        104
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 105);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        105
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 106);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        106
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 107);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        107
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 108);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        108
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 109);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        109
+    );
+    localside::controller_send_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(controller, 110);
+    assert_eq!(
+        localside::worker_recv_u8::<{ LABEL_C2W_U8 }, _, _, _, MAX_RV>(worker),
+        110
+    );
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(worker, 111);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
+        111
+    );
 }

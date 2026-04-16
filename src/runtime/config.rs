@@ -139,14 +139,18 @@ impl<'a, U: LabelUniverse, C: Clock> Config<'a, U, C> {
 
     /// Configures the subset of lanes allowed for rendezvous operations.
     ///
-    /// Callers should stay within `[0, LANES_MAX)` to match the rendezvous
-    /// bookkeeping layout.
+    /// The canonical public attach path always realises control traffic on lane
+    /// `0`, so the configured window must include that reserved control lane.
     pub fn with_lane_range(mut self, range: Range<u8>) -> Self {
         assert!(
-            range.start <= range.end && range.end <= LANES_MAX,
-            "lane range {:?} must be within [0, {})",
-            range,
-            LANES_MAX
+            range.start <= range.end,
+            "lane range {:?} must satisfy start <= end",
+            range
+        );
+        assert!(
+            range.start == 0 && range.end > 0,
+            "lane range {:?} must include reserved control lane 0 for SessionKit attach",
+            range
         );
         self.lane_range = range;
         self
@@ -216,4 +220,35 @@ pub(crate) struct ConfigParts<'a, C: Clock> {
     pub(crate) lane_range: Range<u8>,
     pub(crate) clock: C,
     pub(crate) liveness_policy: LivenessPolicy,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    #[test]
+    fn with_lane_range_rejects_windows_without_control_lane_zero() {
+        let mut tap_buf = [TapEvent::zero(); RING_EVENTS];
+        let mut slab = [0u8; 256];
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            let _ = Config::new(&mut tap_buf, &mut slab).with_lane_range(32..35);
+        }));
+        assert!(
+            panic.is_err(),
+            "public SessionKit config must reject lane windows that exclude reserved control lane 0"
+        );
+    }
+
+    #[test]
+    fn with_lane_range_accepts_zero_based_high_lane_windows() {
+        let mut tap_buf = [TapEvent::zero(); RING_EVENTS];
+        let mut slab = [0u8; 256];
+        let config = Config::new(&mut tap_buf, &mut slab).with_lane_range(0..35);
+        assert_eq!(
+            config.lane_range(),
+            0..35,
+            "public SessionKit config must keep accepting zero-based high-lane windows"
+        );
+    }
 }

@@ -7,121 +7,36 @@ mod fanout_program;
 mod huge_program;
 #[path = "../internal/pico_smoke/src/linear_program.rs"]
 mod linear_program;
+#[path = "../internal/pico_smoke/src/localside.rs"]
+mod localside;
 #[path = "../internal/pico_smoke/src/route_control_kinds.rs"]
 mod route_control_kinds;
 #[path = "support/runtime.rs"]
 mod runtime_support;
-#[path = "../internal/pico_smoke/src/scenario.rs"]
-mod scenario;
 
 use common::TestTransport;
 use hibana::{
     Endpoint, g,
-    g::advanced::{CanonicalControl, project},
+    g::advanced::{
+        CanonicalControl, project,
+        steps::{RouteSteps, SendStep, SeqSteps, StepCons, StepNil},
+    },
+    g::{Msg, Role},
     substrate::{
         SessionId, SessionKit,
         binding::NoBinding,
-        cap::advanced::{ControlMint, MintConfig},
-        cap::{ControlResourceKind, GenericCapToken, ResourceKind},
+        cap::GenericCapToken,
+        cap::advanced::MintConfig,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
     },
 };
-use scenario::ScenarioHarness;
 
 type HugeKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
 type ControllerEndpoint<'a> = Endpoint<'a, 0, HugeKit, MintConfig>;
 type WorkerEndpoint<'a> = Endpoint<'a, 1, HugeKit, MintConfig>;
 
-fn controller_send_u8<const LABEL: u8>(controller: &mut ControllerEndpoint<'_>, value: u8) {
-    let flow = controller
-        .flow::<g::Msg<LABEL, u8>>()
-        .expect("controller flow<u8>");
-    futures::executor::block_on(flow.send(&value)).expect("controller send<u8>");
-}
-
-fn controller_send_u32<const LABEL: u8>(controller: &mut ControllerEndpoint<'_>, value: u32) {
-    let flow = controller
-        .flow::<g::Msg<LABEL, u32>>()
-        .expect("controller flow<u32>");
-    futures::executor::block_on(flow.send(&value)).expect("controller send<u32>");
-}
-
-fn worker_send_u8<const LABEL: u8>(worker: &mut WorkerEndpoint<'_>, value: u8) {
-    let flow = worker.flow::<g::Msg<LABEL, u8>>().expect("worker flow<u8>");
-    futures::executor::block_on(flow.send(&value)).expect("worker send<u8>");
-}
-
-fn worker_recv_u8<const LABEL: u8>(worker: &mut WorkerEndpoint<'_>) -> u8 {
-    futures::executor::block_on(worker.recv::<g::Msg<LABEL, u8>>()).expect("worker recv<u8>")
-}
-
-fn controller_recv_u8<const LABEL: u8>(controller: &mut ControllerEndpoint<'_>) -> u8 {
-    futures::executor::block_on(controller.recv::<g::Msg<LABEL, u8>>())
-        .expect("controller recv<u8>")
-}
-
-fn controller_select<'a, const LABEL: u8, K>(controller: &mut ControllerEndpoint<'_>)
-where
-    K: ResourceKind + ControlResourceKind + ControlMint + 'a + 'static,
-{
-    let outcome = futures::executor::block_on(
-        controller
-            .flow::<g::Msg<LABEL, GenericCapToken<K>, CanonicalControl<K>>>()
-            .expect("controller control flow")
-            .send(()),
-    )
-    .expect("controller control send");
-    assert!(outcome.is_canonical());
-}
-
-fn worker_offer_decode_u32<const LABEL: u8>(worker: &mut WorkerEndpoint<'_>) -> u32 {
-    let branch = futures::executor::block_on(worker.offer()).expect("worker offer");
-    assert_eq!(branch.label(), LABEL);
-    futures::executor::block_on(branch.decode::<g::Msg<LABEL, u32>>()).expect("worker decode<u32>")
-}
-
-struct RuntimeHarness;
-
-impl ScenarioHarness for RuntimeHarness {
-    type ControllerEndpoint<'a> = ControllerEndpoint<'a>;
-    type WorkerEndpoint<'a> = WorkerEndpoint<'a>;
-
-    fn controller_send_u8<const LABEL: u8>(
-        controller: &mut Self::ControllerEndpoint<'_>,
-        value: u8,
-    ) {
-        controller_send_u8::<LABEL>(controller, value);
-    }
-
-    fn controller_send_u32<const LABEL: u8>(
-        controller: &mut Self::ControllerEndpoint<'_>,
-        value: u32,
-    ) {
-        controller_send_u32::<LABEL>(controller, value);
-    }
-
-    fn worker_send_u8<const LABEL: u8>(worker: &mut Self::WorkerEndpoint<'_>, value: u8) {
-        worker_send_u8::<LABEL>(worker, value);
-    }
-
-    fn worker_recv_u8<const LABEL: u8>(worker: &mut Self::WorkerEndpoint<'_>) -> u8 {
-        worker_recv_u8::<LABEL>(worker)
-    }
-
-    fn controller_recv_u8<const LABEL: u8>(controller: &mut Self::ControllerEndpoint<'_>) -> u8 {
-        controller_recv_u8::<LABEL>(controller)
-    }
-
-    fn controller_select<'a, const LABEL: u8, K>(controller: &mut Self::ControllerEndpoint<'a>)
-    where
-        K: ResourceKind + ControlResourceKind + ControlMint + 'a + 'static,
-    {
-        controller_select::<LABEL, K>(controller);
-    }
-
-    fn worker_offer_decode_u32<const LABEL: u8>(worker: &mut Self::WorkerEndpoint<'_>) -> u32 {
-        worker_offer_decode_u32::<LABEL>(worker)
-    }
+fn drive<F: core::future::Future>(future: F) -> F::Output {
+    futures::executor::block_on(future)
 }
 
 static ROUTE_HEAVY_PROGRAM: g::Program<huge_program::ProgramSteps> = huge_program::PROGRAM;
@@ -164,6 +79,144 @@ static FANOUT_HEAVY_WORKER_PROGRAM: hibana::g::advanced::RoleProgram<
     MintConfig,
 > = project(&FANOUT_HEAVY_PROGRAM);
 
+const HIGH_LANE_LEFT_CTRL: u8 = 122;
+const HIGH_LANE_RIGHT_CTRL: u8 = 123;
+const HIGH_LANE_LEFT_LABEL: u8 = 124;
+const HIGH_LANE_RIGHT_LABEL: u8 = 125;
+const HIGH_LANE_LEFT_REPLY_LABEL: u8 = 126;
+const HIGH_LANE_RIGHT_REPLY_LABEL: u8 = 127;
+const HIGH_LANE_LEFT: u8 = 33;
+const HIGH_LANE_RIGHT: u8 = 34;
+
+type HighLaneLeftKind = route_control_kinds::RouteControl<HIGH_LANE_LEFT_CTRL, 0>;
+type HighLaneRightKind = route_control_kinds::RouteControl<HIGH_LANE_RIGHT_CTRL, 1>;
+type HighLaneLeftHead = StepCons<
+    SendStep<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { HIGH_LANE_LEFT_CTRL },
+            GenericCapToken<HighLaneLeftKind>,
+            CanonicalControl<HighLaneLeftKind>,
+        >,
+    >,
+    StepNil,
+>;
+type HighLaneRightHead = StepCons<
+    SendStep<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { HIGH_LANE_RIGHT_CTRL },
+            GenericCapToken<HighLaneRightKind>,
+            CanonicalControl<HighLaneRightKind>,
+        >,
+    >,
+    StepNil,
+>;
+type HighLaneLeftSteps = SeqSteps<
+    HighLaneLeftHead,
+    SeqSteps<
+        StepCons<
+            SendStep<Role<0>, Role<1>, Msg<{ HIGH_LANE_LEFT_LABEL }, u8>, HIGH_LANE_LEFT>,
+            StepNil,
+        >,
+        StepCons<
+            SendStep<
+                Role<1>,
+                Role<0>,
+                Msg<{ HIGH_LANE_LEFT_REPLY_LABEL }, u8>,
+                HIGH_LANE_LEFT,
+            >,
+            StepNil,
+        >,
+    >,
+>;
+type HighLaneRightSteps = SeqSteps<
+    HighLaneRightHead,
+    SeqSteps<
+        StepCons<
+            SendStep<Role<0>, Role<1>, Msg<{ HIGH_LANE_RIGHT_LABEL }, u8>, HIGH_LANE_RIGHT>,
+            StepNil,
+        >,
+        StepCons<
+            SendStep<
+                Role<1>,
+                Role<0>,
+                Msg<{ HIGH_LANE_RIGHT_REPLY_LABEL }, u8>,
+                HIGH_LANE_RIGHT,
+            >,
+            StepNil,
+        >,
+    >,
+>;
+type HighLaneRouteProgramSteps = RouteSteps<HighLaneLeftSteps, HighLaneRightSteps>;
+
+const HIGH_LANE_LEFT_PROGRAM: g::Program<HighLaneLeftSteps> = {
+    let program = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { HIGH_LANE_LEFT_CTRL },
+            GenericCapToken<HighLaneLeftKind>,
+            CanonicalControl<HighLaneLeftKind>,
+        >,
+        0,
+    >();
+    g::seq(
+        program,
+        g::seq(
+            g::send::<Role<0>, Role<1>, Msg<{ HIGH_LANE_LEFT_LABEL }, u8>, HIGH_LANE_LEFT>(),
+            g::send::<
+                Role<1>,
+                Role<0>,
+                Msg<{ HIGH_LANE_LEFT_REPLY_LABEL }, u8>,
+                HIGH_LANE_LEFT,
+            >(),
+        ),
+    )
+};
+
+const HIGH_LANE_RIGHT_PROGRAM: g::Program<HighLaneRightSteps> = {
+    let program = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { HIGH_LANE_RIGHT_CTRL },
+            GenericCapToken<HighLaneRightKind>,
+            CanonicalControl<HighLaneRightKind>,
+        >,
+        0,
+    >();
+    g::seq(
+        program,
+        g::seq(
+            g::send::<Role<0>, Role<1>, Msg<{ HIGH_LANE_RIGHT_LABEL }, u8>, HIGH_LANE_RIGHT>(),
+            g::send::<
+                Role<1>,
+                Role<0>,
+                Msg<{ HIGH_LANE_RIGHT_REPLY_LABEL }, u8>,
+                HIGH_LANE_RIGHT,
+            >(),
+        ),
+    )
+};
+
+const HIGH_LANE_ROUTE_PROGRAM: g::Program<HighLaneRouteProgramSteps> =
+    g::route(HIGH_LANE_LEFT_PROGRAM, HIGH_LANE_RIGHT_PROGRAM);
+static HIGH_LANE_CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<
+    'static,
+    0,
+    HighLaneRouteProgramSteps,
+    MintConfig,
+> = project(&HIGH_LANE_ROUTE_PROGRAM);
+static HIGH_LANE_WORKER_PROGRAM: hibana::g::advanced::RoleProgram<
+    'static,
+    1,
+    HighLaneRouteProgramSteps,
+    MintConfig,
+> = project(&HIGH_LANE_ROUTE_PROGRAM);
+
 #[inline(never)]
 fn run_attached_sample<Steps>(
     controller_program: &'static hibana::g::advanced::RoleProgram<'static, 0, Steps, MintConfig>,
@@ -171,10 +224,7 @@ fn run_attached_sample<Steps>(
     route_scope_count: usize,
     expected_branch_labels: &'static [u8],
     expected_acks: &'static [u8],
-    run: fn(
-        &mut <RuntimeHarness as ScenarioHarness>::ControllerEndpoint<'_>,
-        &mut <RuntimeHarness as ScenarioHarness>::WorkerEndpoint<'_>,
-    ),
+    run: fn(&mut ControllerEndpoint<'_>, &mut WorkerEndpoint<'_>),
 ) {
     assert_eq!(route_scope_count, expected_branch_labels.len());
     assert_eq!(route_scope_count, expected_acks.len());
@@ -220,7 +270,7 @@ fn huge_choreography_shape_matrix_runs_to_completion_on_small_stack() {
             huge_program::ROUTE_SCOPE_COUNT,
             &huge_program::EXPECTED_WORKER_BRANCH_LABELS,
             &huge_program::ACK_LABELS,
-            huge_program::run::<RuntimeHarness>,
+            huge_program::run,
         );
     });
 
@@ -231,7 +281,7 @@ fn huge_choreography_shape_matrix_runs_to_completion_on_small_stack() {
             linear_program::ROUTE_SCOPE_COUNT,
             &linear_program::EXPECTED_WORKER_BRANCH_LABELS,
             &linear_program::ACK_LABELS,
-            linear_program::run::<RuntimeHarness>,
+            linear_program::run,
         );
     });
 
@@ -242,7 +292,96 @@ fn huge_choreography_shape_matrix_runs_to_completion_on_small_stack() {
             fanout_program::ROUTE_SCOPE_COUNT,
             &fanout_program::EXPECTED_WORKER_BRANCH_LABELS,
             &fanout_program::ACK_LABELS,
-            fanout_program::run::<RuntimeHarness>,
+            fanout_program::run,
+        );
+    });
+}
+
+#[test]
+fn high_lane_route_runs_to_completion_on_actual_localside() {
+    runtime_support::with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        let kit = HugeKit::new(clock);
+        let rv_id = kit
+            .add_rendezvous_from_config(
+                Config::new(tap_buf, slab).with_lane_range(0..35),
+                transport.clone(),
+            )
+            .expect("register rendezvous");
+
+        let mut controller = kit
+            .enter(
+                rv_id,
+                SessionId::new(0x6100),
+                &HIGH_LANE_CONTROLLER_PROGRAM,
+                NoBinding,
+            )
+            .expect("enter controller-left");
+        let mut worker = kit
+            .enter(
+                rv_id,
+                SessionId::new(0x6100),
+                &HIGH_LANE_WORKER_PROGRAM,
+                NoBinding,
+            )
+            .expect("enter worker-left");
+        localside::controller_select::<{ HIGH_LANE_LEFT_CTRL }, HighLaneLeftKind, _, _, _, 2>(
+            &mut controller,
+        );
+        localside::controller_send_u8::<{ HIGH_LANE_LEFT_LABEL }, _, _, _, 2>(&mut controller, 7);
+        assert_eq!(
+            localside::worker_offer_decode_u8::<{ HIGH_LANE_LEFT_LABEL }, _, _, _, 2>(&mut worker,),
+            7,
+            "lane 33 route payload must survive exact lane-set runtime selection"
+        );
+        localside::worker_send_u8::<{ HIGH_LANE_LEFT_REPLY_LABEL }, _, _, _, 2>(&mut worker, 17);
+        assert_eq!(
+            localside::controller_recv_u8::<{ HIGH_LANE_LEFT_REPLY_LABEL }, _, _, _, 2>(
+                &mut controller
+            ),
+            17,
+            "lane 33 reply payload must roundtrip through SessionKit localside"
+        );
+        drop(worker);
+        drop(controller);
+
+        let mut controller = kit
+            .enter(
+                rv_id,
+                SessionId::new(0x6101),
+                &HIGH_LANE_CONTROLLER_PROGRAM,
+                NoBinding,
+            )
+            .expect("enter controller-right");
+        let mut worker = kit
+            .enter(
+                rv_id,
+                SessionId::new(0x6101),
+                &HIGH_LANE_WORKER_PROGRAM,
+                NoBinding,
+            )
+            .expect("enter worker-right");
+        localside::controller_select::<{ HIGH_LANE_RIGHT_CTRL }, HighLaneRightKind, _, _, _, 2>(
+            &mut controller,
+        );
+        localside::controller_send_u8::<{ HIGH_LANE_RIGHT_LABEL }, _, _, _, 2>(&mut controller, 9);
+        assert_eq!(
+            localside::worker_offer_decode_u8::<{ HIGH_LANE_RIGHT_LABEL }, _, _, _, 2>(&mut worker,),
+            9,
+            "lane 34 route payload must survive exact lane-set runtime selection"
+        );
+        localside::worker_send_u8::<{ HIGH_LANE_RIGHT_REPLY_LABEL }, _, _, _, 2>(&mut worker, 19);
+        assert_eq!(
+            localside::controller_recv_u8::<{ HIGH_LANE_RIGHT_REPLY_LABEL }, _, _, _, 2>(
+                &mut controller
+            ),
+            19,
+            "lane 34 reply payload must roundtrip through SessionKit localside"
+        );
+
+        assert!(
+            transport.queue_is_empty(),
+            "high-lane localside route test must drain every transport frame"
         );
     });
 }

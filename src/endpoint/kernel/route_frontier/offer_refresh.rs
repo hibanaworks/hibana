@@ -23,14 +23,6 @@ where
         self.frontier_state.root_frontier_active_entries(root)
     }
 
-    #[cfg(test)]
-    #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_active_mask(&self, entry_idx: usize) -> u32 {
-        self.offer_entry_state_snapshot(entry_idx)
-            .map(|state| state.active_mask)
-            .unwrap_or(0)
-    }
-
     #[inline]
     pub(in crate::endpoint::kernel) fn active_frontier_entries(
         &self,
@@ -80,15 +72,13 @@ where
             .detach_offer_entry_from_root_frontier(entry_idx, root);
     }
 
-    pub(in crate::endpoint::kernel) fn compute_offer_entry_static_summary(
+    pub(in crate::endpoint::kernel) fn compute_offer_entry_static_summary_from_route_state(
         &self,
         entry_idx: usize,
     ) -> OfferEntryStaticSummary {
         let mut summary = OfferEntryStaticSummary::EMPTY;
         let active_offer_lanes = self.route_state.active_offer_lanes();
         let lane_limit = self.cursor.logical_lane_count();
-        #[cfg(test)]
-        let mut matched_lane = false;
         let mut lane_idx = 0usize;
         while lane_idx < lane_limit {
             if !active_offer_lanes.contains(lane_idx) {
@@ -101,14 +91,18 @@ where
                 continue;
             }
             summary.observe_lane(info);
-            #[cfg(test)]
-            {
-                matched_lane = true;
-            }
             lane_idx += 1;
         }
+        summary
+    }
+
+    pub(in crate::endpoint::kernel) fn compute_offer_entry_static_summary(
+        &self,
+        entry_idx: usize,
+    ) -> OfferEntryStaticSummary {
+        let summary = self.compute_offer_entry_static_summary_from_route_state(entry_idx);
         #[cfg(test)]
-        if !matched_lane {
+        if summary.frontier_mask == 0 {
             if let Some(entry_state) = self.offer_entry_state_snapshot(entry_idx) {
                 if self.offer_entry_has_active_lanes(entry_idx) {
                     return entry_state.summary;
@@ -158,6 +152,12 @@ where
         eff_index: EffIndex,
     ) {
         self.cursor.advance_lane_to_eff_index(lane_idx, eff_index);
+        self.refresh_lane_offer_state(lane_idx);
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn complete_lane_phase(&mut self, lane_idx: usize) {
+        self.cursor.complete_lane_phase(lane_idx);
         self.refresh_lane_offer_state(lane_idx);
     }
 

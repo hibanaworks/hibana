@@ -6,15 +6,12 @@
 use core::{cell::UnsafeCell, marker::PhantomData};
 
 use super::error::SpliceError;
-use crate::{
-    control::{
-        automaton::distributed::SpliceIntent,
-        automaton::txn::InAcked,
-        types::{
-            AtMostOnceCommit, Generation, Lane, NoCrossLaneAliasing, One, RendezvousId, SessionId,
-        },
+use crate::control::{
+    automaton::distributed::SpliceIntent,
+    automaton::txn::InAcked,
+    types::{
+        AtMostOnceCommit, Generation, Lane, NoCrossLaneAliasing, One, RendezvousId, SessionId,
     },
-    runtime::consts::LANES_MAX,
 };
 
 /// Invariant marker for local splice transactions evaluated inside a rendezvous.
@@ -77,19 +74,23 @@ impl core::fmt::Debug for PendingSplice {
 ///
 /// Tracks pending splice operations within a single Rendezvous instance.
 pub(super) struct SpliceStateTable {
+    lane_base: u32,
+    lane_slots: u16,
     lanes: UnsafeCell<*mut Option<PendingSplice>>,
     _no_send_sync: PhantomData<*mut ()>,
 }
 
 impl Default for SpliceStateTable {
     fn default() -> Self {
-        Self::new()
+        Self::empty()
     }
 }
 
 impl SpliceStateTable {
-    pub(super) const fn new() -> Self {
+    pub(super) const fn empty() -> Self {
         Self {
+            lane_base: 0,
+            lane_slots: 0,
             lanes: UnsafeCell::new(core::ptr::null_mut()),
             _no_send_sync: PhantomData,
         }
@@ -97,6 +98,8 @@ impl SpliceStateTable {
 
     pub(super) unsafe fn init_empty(dst: *mut Self) {
         unsafe {
+            core::ptr::addr_of_mut!((*dst).lane_base).write(0);
+            core::ptr::addr_of_mut!((*dst).lane_slots).write(0);
             core::ptr::addr_of_mut!((*dst).lanes).write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
         }
@@ -108,19 +111,26 @@ impl SpliceStateTable {
     }
 
     #[inline]
-    pub(super) const fn storage_bytes() -> usize {
-        LANES_MAX as usize * core::mem::size_of::<Option<PendingSplice>>()
+    pub(super) const fn storage_bytes(lane_slots: usize) -> usize {
+        lane_slots.saturating_mul(core::mem::size_of::<Option<PendingSplice>>())
     }
 
-    pub(super) unsafe fn bind_from_storage(&mut self, storage: *mut u8) {
+    pub(super) unsafe fn bind_from_storage(
+        &mut self,
+        storage: *mut u8,
+        lane_base: u32,
+        lane_slots: usize,
+    ) {
         let lanes = storage.cast::<Option<PendingSplice>>();
         let mut idx = 0usize;
-        while idx < LANES_MAX as usize {
+        while idx < lane_slots {
             unsafe {
                 lanes.add(idx).write(None);
             }
             idx += 1;
         }
+        self.lane_base = lane_base;
+        self.lane_slots = lane_slots as u16;
         *self.lanes.get_mut() = lanes;
     }
 
@@ -134,14 +144,23 @@ impl SpliceStateTable {
         unsafe { *self.lanes.get() }
     }
 
+    #[inline]
+    fn lane_slot(&self, lane: Lane) -> Option<usize> {
+        let lane_raw = lane.raw();
+        if lane_raw < self.lane_base {
+            return None;
+        }
+        let slot = (lane_raw - self.lane_base) as usize;
+        (slot < self.lane_slots as usize).then_some(slot)
+    }
+
     /// Begin a splice operation.
     pub(super) fn begin(&self, lane: Lane, pending: PendingSplice) -> Result<(), SpliceError> {
         let slots = self.lanes_ptr();
-        if slots.is_null() {
+        let Some(idx) = self.lane_slot(lane) else {
             return Err(SpliceError::PendingTableFull);
-        }
+        };
         unsafe {
-            let idx = lane.raw() as usize;
             let slot = &mut *slots.add(idx);
             if slot.is_some() {
                 return Err(SpliceError::InProgress { lane });
@@ -154,23 +173,18 @@ impl SpliceStateTable {
     /// Take (consume) pending splice.
     pub(super) fn take(&self, lane: Lane) -> Option<PendingSplice> {
         let slots = self.lanes_ptr();
-        if slots.is_null() {
-            return None;
-        }
-        unsafe {
-            let idx = lane.raw() as usize;
-            (*slots.add(idx)).take()
-        }
+        let idx = self.lane_slot(lane)?;
+        unsafe { (*slots.add(idx)).take() }
     }
 
     /// Reset lane (clear pending splice).
     pub(super) fn reset_lane(&self, lane: Lane) {
         let slots = self.lanes_ptr();
-        if slots.is_null() {
+        let Some(idx) = self.lane_slot(lane) else {
             return;
-        }
+        };
         unsafe {
-            *slots.add(lane.raw() as usize) = None;
+            *slots.add(idx) = None;
         }
     }
 
@@ -179,11 +193,10 @@ impl SpliceStateTable {
     /// This validates that the pending splice matches the given sid and clears it.
     pub(super) fn commit(&self, lane: Lane, sid: SessionId) -> Result<(), SpliceError> {
         let slots = self.lanes_ptr();
-        if slots.is_null() {
+        let Some(idx) = self.lane_slot(lane) else {
             return Err(SpliceError::NoPending { lane });
-        }
+        };
         unsafe {
-            let idx = lane.raw() as usize;
             let slot = &mut *slots.add(idx);
             match slot {
                 Some(pending) if pending.sid == sid => {
@@ -330,7 +343,7 @@ mod tests {
 
     #[test]
     fn splice_state_table_unbound_reads_as_empty() {
-        let table = SpliceStateTable::new();
+        let table = SpliceStateTable::empty();
         let lane = Lane::new(0);
         let sid = SessionId::new(7);
 

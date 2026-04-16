@@ -42,8 +42,8 @@ check_absent \
   src/global/compiled/images/role.rs
 
 check_absent \
-  "pub\\(crate\\) const MAX_LANES: usize =|pub\\(crate\\) use core::primitive::u32 as LaneMask;|pub\\(crate\\) struct Phase \\{|pub\\(crate\\) struct ProjectedRoleLayout \\{|phase_upper_bound\\(self\\) -> usize" \
-  "role_program.rs must not keep legacy lane ceilings or shadow phase owners" \
+  "pub\\(crate\\) const MAX_LANES: usize =|pub\\(crate\\) use core::primitive::u32 as LaneMask;|pub\\(crate\\) struct Phase \\{|pub\\(crate\\) struct ProjectedRoleLayout \\{|phase_upper_bound\\(self\\) -> usize|LOW_LANE_TEST_WIDTH|collect_low_lane_bits\\(" \
+  "role_program.rs must not keep legacy lane ceilings, low-lane probes, or shadow phase owners" \
   src/global/role_program.rs
 
 check_absent \
@@ -76,6 +76,19 @@ check_absent \
   "exact lowering validation must not reintroduce fixed MAX_* caps" \
   src/global/compiled/lowering/seal.rs \
   src/global/compiled/materialize/lease.rs
+
+check_absent \
+  "RoleCompileScratch|ROLE_COMPILE_SCRATCH_MAX_|OFFER_TEST_LANE_CAPACITY|TEST_ENDPOINT_LANE_CAPACITY|TEST_LANE_CAPACITY|TEST_LANE_SNAPSHOT_CAPACITY|BindingInboxTestArena|FrontierObservationKeyTestArena|ObservedKeyTestArena|CachedSpliceOperandsMap|with_test_lane_set\\(|FixtureHarness|run::<scenario::FixtureHarness>" \
+  "test-only exact-world cleanup must not regress to renamed ceilings, shared arenas, low-lane helpers, or compile-only shadow harnesses" \
+  src \
+  tests \
+  internal \
+  --glob '!tests/public_surface_guards.rs'
+
+check_absent \
+  "LANES_MAX_USIZE|zero_u64_cell_array\\(|zero_u32_cell_array\\(|struct CheckState \\{" \
+  "observe checker must derive summaries from actual tap storage instead of fixed-width lane state" \
+  src/observe/check.rs
 
 check_absent \
   "role_program::\\{MAX_LANES, Phase\\}" \

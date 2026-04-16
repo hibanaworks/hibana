@@ -278,12 +278,6 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         unsafe { &*self.routes }
     }
 
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn vm_caps_table(&self) -> &VmCapsTable {
-        unsafe { &*self.vm_caps }
-    }
-
     #[inline]
     pub(crate) fn record_loop_decision(&self, idx: u8, disposition: LoopDisposition) -> u16 {
         self.loop_table()
@@ -325,9 +319,18 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     }
 
     #[inline]
-    pub(crate) fn pending_route_decision_lane_mask(&self, scope: ScopeId, role: u8) -> u16 {
-        self.route_table()
-            .pending_lane_mask_with_role_count(self.role_count, role, scope)
+    pub(crate) fn has_pending_route_decision_for_lane(
+        &self,
+        scope: ScopeId,
+        role: u8,
+        target_lane: Lane,
+    ) -> bool {
+        self.route_table().has_pending_lane_with_role_count(
+            self.role_count,
+            role,
+            scope,
+            target_lane,
+        )
     }
 
     #[inline]
@@ -360,14 +363,18 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     }
 
     #[inline]
-    pub(crate) fn pending_route_hint_lane_mask_for_label_mask(&self, label_mask: u128) -> u16 {
+    pub(crate) fn has_pending_route_hint_for_lane(
+        &self,
+        label_mask: u128,
+        target_lane: Lane,
+    ) -> bool {
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
         let rx = unsafe { &*self.rx.get() };
         hints.drain_from_transport(self.transport(), rx);
         self.sync_pending_route_hint_lane_masks(before, hints.present_mask);
         self.route_table()
-            .pending_hint_lane_mask_for_labels(label_mask)
+            .has_pending_hint_for_lane(target_lane, label_mask)
     }
 
     #[inline]
@@ -425,26 +432,6 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
             core::cmp::min(Self::align_up(start, Self::frontier_scratch_align()), end);
         let len = end.saturating_sub(scratch_start);
         unsafe { core::ptr::slice_from_raw_parts_mut(ptr.add(scratch_start), len) }
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn scratch_ledger_parts(
-        &self,
-    ) -> (
-        *mut [u8],
-        *const u32,
-        *const u32,
-        *const super::core::EndpointLeaseSlot,
-        super::core::EndpointLeaseId,
-    ) {
-        (
-            self.slab,
-            self.image_frontier,
-            self.scratch_reserved_bytes,
-            self.endpoint_leases,
-            self.endpoint_lease_capacity,
-        )
     }
 
     #[inline]

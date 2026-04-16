@@ -11,7 +11,7 @@ use crate::control::cluster::core::SessionCluster;
 use crate::g::{self, Msg, Role};
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 use crate::global::role_program::{
-    LOW_LANE_TEST_WIDTH, LaneSet, LaneSetView, LaneWord, RoleProgram, lane_word_count, project,
+    LaneSet, LaneSetView, LaneWord, RoleProgram, lane_word_count, project,
 };
 use crate::global::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
 use crate::global::{CanonicalControl, ControlHandling};
@@ -35,6 +35,7 @@ use std::{task::Waker, thread_local};
 type SendOnly<const LANE: u8, S, D, M> = StepCons<SendStep<S, D, M, LANE>, StepNil>;
 type BranchSteps<L, R> = RouteSteps<L, R>;
 const OFFER_FIXTURE_SLAB_CAPACITY: usize = 262_144;
+
 const fn max_usize(values: &[usize]) -> usize {
     let mut idx = 0usize;
     let mut max = 0usize;
@@ -48,22 +49,196 @@ const fn max_usize(values: &[usize]) -> usize {
     max
 }
 
-fn with_test_lane_set<R>(lanes: &[usize], f: impl FnOnce(LaneSetView) -> R) -> R {
-    let mut lane_words = [0 as LaneWord; lane_word_count(LOW_LANE_TEST_WIDTH)];
+fn with_lane_set_view<R>(lanes: &[usize], f: impl FnOnce(LaneSetView) -> R) -> R {
+    let lane_limit = max_usize(lanes).saturating_add(1).max(1);
+    let mut lane_words = std::vec![0 as LaneWord; lane_word_count(lane_limit)];
     let mut lane_set = LaneSet::from_parts(lane_words.as_mut_ptr(), lane_words.len());
     let mut idx = 0usize;
     while idx < lanes.len() {
-        assert!(
-            lanes[idx] < LOW_LANE_TEST_WIDTH,
-            "test lane set exceeds low-lane assertion window"
-        );
         lane_set.insert(lanes[idx]);
         idx += 1;
     }
     f(lane_set.view())
 }
 
-const fn offer_endpoint_slot_bytes<const ROLE: u8, T, B>() -> usize
+fn assert_lane_set_eq(set: LaneSetView, lane_limit: usize, expected: &[u8]) {
+    let mut lanes = std::vec![u8::MAX; lane_limit.max(expected.len()).max(1)];
+    let len = set.write_lane_indices(lane_limit, &mut lanes);
+    assert_eq!(len, expected.len(), "lane-set length mismatch");
+    assert_eq!(&lanes[..len], expected, "lane-set contents mismatch");
+}
+
+#[test]
+fn with_lane_set_view_keeps_sparse_high_lane_indices_exact() {
+    with_lane_set_view(&[33], |set| {
+        assert_lane_set_eq(set, 34, &[33]);
+    });
+    with_lane_set_view(&[0, 65], |set| {
+        assert_lane_set_eq(set, 66, &[0, 65]);
+    });
+}
+
+fn assert_buffered_lanes_eq(inbox: &BindingInbox, label_mask: u128, expected: &[u8]) {
+    let mut lanes = std::vec![u8::MAX; expected.len().max(1)];
+    let len = inbox.buffered_lanes_for_labels(label_mask, &mut lanes);
+    assert_eq!(len, expected.len(), "buffered lane count mismatch");
+    assert_eq!(&lanes[..len], expected, "buffered lanes mismatch");
+}
+
+fn with_test_binding_inbox<const ACTIVE_LANES: usize, R>(
+    f: impl FnOnce(&mut BindingInbox) -> R,
+) -> R {
+    let mut lane_dense_by_lane: [u8; ACTIVE_LANES] =
+        core::array::from_fn(|lane_idx| lane_idx as u8);
+    let mut slots = [[[0u32; 3]; BindingInbox::PER_LANE_CAPACITY]; ACTIVE_LANES];
+    let mut len = [0u8; ACTIVE_LANES];
+    let mut label_masks = [0u128; ACTIVE_LANES];
+    let mut nonempty_lane_words = std::vec![0 as LaneWord; lane_word_count(ACTIVE_LANES)];
+    let mut inbox = MaybeUninit::<BindingInbox>::uninit();
+    unsafe {
+        BindingInbox::init_empty(
+            inbox.as_mut_ptr(),
+            slots.as_mut_ptr().cast(),
+            len.as_mut_ptr(),
+            label_masks.as_mut_ptr(),
+            nonempty_lane_words.as_mut_ptr(),
+            lane_dense_by_lane.as_mut_ptr(),
+            ACTIVE_LANES,
+            nonempty_lane_words.len(),
+        );
+        let mut inbox = inbox.assume_init();
+        f(&mut inbox)
+    }
+}
+
+fn assert_nonempty_lanes_eq(inbox: &BindingInbox, lane_limit: usize, expected: &[u8]) {
+    let mut lanes = std::vec![u8::MAX; lane_limit.max(expected.len()).max(1)];
+    let len = inbox
+        .nonempty_lanes()
+        .write_lane_indices(lane_limit, &mut lanes);
+    assert_eq!(len, expected.len(), "nonempty lane count mismatch");
+    assert_eq!(&lanes[..len], expected, "nonempty lane contents mismatch");
+}
+
+fn with_active_entry_set_storage<R>(
+    capacity: usize,
+    f: impl FnOnce(&mut ActiveEntrySet) -> R,
+) -> R {
+    let mut slots = std::vec![ActiveEntrySlot::EMPTY; capacity.max(1)];
+    let mut entries = ActiveEntrySet::from_parts(slots.as_mut_ptr(), slots.len());
+    entries.clear();
+    f(&mut entries)
+}
+
+fn active_entry_set_storage(capacity: usize) -> (std::vec::Vec<ActiveEntrySlot>, ActiveEntrySet) {
+    let mut slots = std::vec![ActiveEntrySlot::EMPTY; capacity.max(1)];
+    let mut entries = ActiveEntrySet::from_parts(slots.as_mut_ptr(), slots.len());
+    entries.clear();
+    (slots, entries)
+}
+
+fn active_entry_set_from_pairs(
+    entries: &[(usize, u8)],
+) -> (std::vec::Vec<ActiveEntrySlot>, ActiveEntrySet) {
+    let (slots, mut active_entries) = active_entry_set_storage(entries.len());
+    for &(entry_idx, lane_idx) in entries {
+        assert!(active_entries.insert_entry(entry_idx, lane_idx));
+    }
+    (slots, active_entries)
+}
+
+fn observed_entry_set_storage(
+    capacity: usize,
+) -> (std::vec::Vec<FrontierObservationSlot>, ObservedEntrySet) {
+    let mut slots = std::vec![FrontierObservationSlot::EMPTY; capacity.max(1)];
+    let mut entries = ObservedEntrySet::from_parts(slots.as_mut_ptr(), slots.len());
+    entries.clear();
+    (slots, entries)
+}
+
+fn observed_entry_set_from_states(
+    entries: &[(usize, OfferEntryObservedState)],
+) -> (std::vec::Vec<FrontierObservationSlot>, ObservedEntrySet) {
+    let (slots, mut observed_entries) = observed_entry_set_storage(entries.len());
+    for &(entry_idx, observed_state) in entries {
+        let (entry_bit, inserted) = observed_entries
+            .insert_entry(entry_idx)
+            .expect("insert entry");
+        assert!(inserted);
+        observed_entries.observe(entry_bit, observed_state);
+    }
+    (slots, observed_entries)
+}
+
+fn frontier_observation_key_storage(
+    slot_capacity: usize,
+    lane_limit: usize,
+) -> (
+    std::vec::Vec<FrontierObservationSlot>,
+    std::vec::Vec<LaneWord>,
+    std::vec::Vec<LaneWord>,
+    FrontierObservationKey,
+) {
+    let mut slots = std::vec![FrontierObservationSlot::EMPTY; slot_capacity.max(1)];
+    let mut offer_lane_words = std::vec![0 as LaneWord; lane_word_count(lane_limit.max(1))];
+    let mut binding_nonempty_lane_words =
+        std::vec![0 as LaneWord; lane_word_count(lane_limit.max(1))];
+    let mut key = FrontierObservationKey::from_parts(
+        slots.as_mut_ptr(),
+        slots.len(),
+        offer_lane_words.as_mut_ptr(),
+        binding_nonempty_lane_words.as_mut_ptr(),
+        offer_lane_words.len(),
+    );
+    key.clear();
+    (slots, offer_lane_words, binding_nonempty_lane_words, key)
+}
+
+fn copied_frontier_observation_key_storage(
+    src: FrontierObservationKey,
+    slot_capacity: usize,
+    lane_limit: usize,
+) -> (
+    std::vec::Vec<FrontierObservationSlot>,
+    std::vec::Vec<LaneWord>,
+    std::vec::Vec<LaneWord>,
+    FrontierObservationKey,
+) {
+    let (slots, offer_lane_words, binding_nonempty_lane_words, mut key) =
+        frontier_observation_key_storage(slot_capacity, lane_limit);
+    key.copy_from(src);
+    (slots, offer_lane_words, binding_nonempty_lane_words, key)
+}
+
+fn with_frontier_observation_key_storage<R>(
+    slot_capacity: usize,
+    lane_limit: usize,
+    f: impl FnOnce(&mut FrontierObservationKey) -> R,
+) -> R {
+    let mut slots = std::vec![FrontierObservationSlot::EMPTY; slot_capacity.max(1)];
+    let mut offer_lane_words = std::vec![0 as LaneWord; lane_word_count(lane_limit.max(1))];
+    let mut binding_nonempty_lane_words =
+        std::vec![0 as LaneWord; lane_word_count(lane_limit.max(1))];
+    let mut key = FrontierObservationKey::from_parts(
+        slots.as_mut_ptr(),
+        slots.len(),
+        offer_lane_words.as_mut_ptr(),
+        binding_nonempty_lane_words.as_mut_ptr(),
+        offer_lane_words.len(),
+    );
+    key.clear();
+    f(&mut key)
+}
+
+fn frontier_candidates<const N: usize>() -> [FrontierCandidate; N] {
+    [FrontierCandidate::EMPTY; N]
+}
+
+fn frontier_visit_slots<const N: usize>() -> [ScopeId; N] {
+    [ScopeId::none(); N]
+}
+
+const fn offer_endpoint_slot_bytes<const ROLE: u8, T, B>(lane_capacity: usize) -> usize
 where
     T: Transport + 'static,
     B: crate::binding::BindingSlot,
@@ -88,7 +263,7 @@ where
         (header_bytes + (port_align.saturating_sub(1))) & !(port_align.saturating_sub(1));
     let port_bytes = size_of::<
         Option<crate::rendezvous::port::Port<'static, T, crate::control::cap::mint::EpochTbl>>,
-    >() * crate::global::role_program::LOW_LANE_TEST_WIDTH;
+    >() * lane_capacity;
     let guard_align = align_of::<
         Option<crate::endpoint::affine::LaneGuard<'static, T, DefaultLabelUniverse, CounterClock>>,
     >();
@@ -99,7 +274,7 @@ where
             Option<
                 crate::endpoint::affine::LaneGuard<'static, T, DefaultLabelUniverse, CounterClock>,
             >,
-        >() * crate::global::role_program::LOW_LANE_TEST_WIDTH
+        >() * lane_capacity
 }
 
 type OfferHintCluster =
@@ -479,8 +654,6 @@ type PendingControllerEndpoint = CursorEndpoint<
     crate::control::cap::mint::MintConfig,
     NoBinding,
 >;
-type DeferredCluster =
-    SessionCluster<'static, DeferredIngressTransport, DefaultLabelUniverse, CounterClock, 4>;
 type HintPendingControllerEndpoint = CursorEndpoint<
     'static,
     0,
@@ -507,21 +680,24 @@ const OFFER_CLUSTER_SLOT_BYTES: usize = max_usize(&[
     size_of::<OfferHintCluster>(),
     size_of::<PendingOfferCluster>(),
     size_of::<HintPendingOfferCluster>(),
-    size_of::<DeferredCluster>(),
+    size_of::<
+        SessionCluster<'static, DeferredIngressTransport, DefaultLabelUniverse, CounterClock, 4>,
+    >(),
 ]);
 const OFFER_VALUE_SLOT_BYTES: usize = max_usize(&[
-    offer_endpoint_slot_bytes::<0, HintOnlyTransport, NoBinding>(),
-    offer_endpoint_slot_bytes::<1, HintOnlyTransport, NoBinding>(),
-    offer_endpoint_slot_bytes::<1, HintOnlyTransport, TestBinding>(),
-    offer_endpoint_slot_bytes::<1, HintOnlyTransport, LaneAwareTestBinding>(),
-    offer_endpoint_slot_bytes::<0, PendingTransport, NoBinding>(),
-    offer_endpoint_slot_bytes::<1, PendingTransport, NoBinding>(),
-    offer_endpoint_slot_bytes::<0, HintPendingTransport, NoBinding>(),
-    offer_endpoint_slot_bytes::<1, HintPendingTransport, NoBinding>(),
+    offer_endpoint_slot_bytes::<0, HintOnlyTransport, NoBinding>(1),
+    offer_endpoint_slot_bytes::<1, HintOnlyTransport, NoBinding>(4),
+    offer_endpoint_slot_bytes::<0, HintOnlyTransport, TestBinding>(4),
+    offer_endpoint_slot_bytes::<1, HintOnlyTransport, TestBinding>(4),
+    offer_endpoint_slot_bytes::<1, HintOnlyTransport, LaneAwareTestBinding>(3),
+    offer_endpoint_slot_bytes::<0, PendingTransport, NoBinding>(1),
+    offer_endpoint_slot_bytes::<1, PendingTransport, NoBinding>(1),
+    offer_endpoint_slot_bytes::<0, HintPendingTransport, NoBinding>(1),
+    offer_endpoint_slot_bytes::<1, HintPendingTransport, NoBinding>(1),
     size_of::<PendingTransportState>(),
     size_of::<DeferredIngressState>(),
-    offer_endpoint_slot_bytes::<0, DeferredIngressTransport, NoBinding>(),
-    offer_endpoint_slot_bytes::<1, DeferredIngressTransport, DeferredIngressBinding>(),
+    offer_endpoint_slot_bytes::<0, DeferredIngressTransport, NoBinding>(1),
+    offer_endpoint_slot_bytes::<1, DeferredIngressTransport, DeferredIngressBinding>(1),
 ]);
 type PendingWorkerEndpoint = CursorEndpoint<
     'static,
@@ -766,186 +942,6 @@ where
     }
 }
 
-fn offer_storage_align_up(value: usize, align: usize) -> usize {
-    let mask = align.saturating_sub(1);
-    (value + mask) & !mask
-}
-
-fn widen_offer_test_endpoint_lane_slots<'r, const ROLE: u8, T, B>(
-    endpoint: &mut CursorEndpoint<
-        'r,
-        ROLE,
-        T,
-        DefaultLabelUniverse,
-        CounterClock,
-        EpochTbl,
-        4,
-        crate::control::cap::mint::MintConfig,
-        B,
-    >,
-) where
-    T: Transport + 'r,
-    B: BindingSlot,
-{
-    let current_len = endpoint.ports.len();
-    if current_len >= crate::global::role_program::LOW_LANE_TEST_WIDTH {
-        return;
-    }
-    let mut ports: [Option<crate::rendezvous::port::Port<'r, T, EpochTbl>>;
-        crate::global::role_program::LOW_LANE_TEST_WIDTH] = core::array::from_fn(|_| None);
-    let mut guards: [Option<
-        crate::endpoint::affine::LaneGuard<'r, T, DefaultLabelUniverse, CounterClock>,
-    >; crate::global::role_program::LOW_LANE_TEST_WIDTH] = core::array::from_fn(|_| None);
-    let mut idx = 0usize;
-    while idx < current_len {
-        ports[idx] = endpoint.ports.get_mut(idx).and_then(Option::take);
-        guards[idx] = endpoint.guards.get_mut(idx).and_then(Option::take);
-        idx += 1;
-    }
-    let endpoint_ptr = endpoint
-        as *mut CursorEndpoint<
-            'r,
-            ROLE,
-            T,
-            DefaultLabelUniverse,
-            CounterClock,
-            EpochTbl,
-            4,
-            crate::control::cap::mint::MintConfig,
-            B,
-        >;
-    let storage_base = endpoint_ptr.cast::<u8>();
-    let port_offset = offer_storage_align_up(
-        size_of::<
-            CursorEndpoint<
-                'r,
-                ROLE,
-                T,
-                DefaultLabelUniverse,
-                CounterClock,
-                EpochTbl,
-                4,
-                crate::control::cap::mint::MintConfig,
-                B,
-            >,
-        >(),
-        align_of::<Option<crate::rendezvous::port::Port<'r, T, EpochTbl>>>(),
-    );
-    let guard_offset = offer_storage_align_up(
-        port_offset
-            + size_of::<Option<crate::rendezvous::port::Port<'r, T, EpochTbl>>>()
-                * crate::global::role_program::LOW_LANE_TEST_WIDTH,
-        align_of::<
-            Option<crate::endpoint::affine::LaneGuard<'r, T, DefaultLabelUniverse, CounterClock>>,
-        >(),
-    );
-    unsafe {
-        super::super::lane_slots::LaneSlotArray::init_from_parts(
-            core::ptr::addr_of_mut!((*endpoint_ptr).ports),
-            storage_base
-                .add(port_offset)
-                .cast::<Option<crate::rendezvous::port::Port<'r, T, EpochTbl>>>(),
-            crate::global::role_program::LOW_LANE_TEST_WIDTH,
-        );
-        super::super::lane_slots::LaneSlotArray::init_from_parts(
-            core::ptr::addr_of_mut!((*endpoint_ptr).guards),
-            storage_base.add(guard_offset).cast::<Option<
-                crate::endpoint::affine::LaneGuard<'r, T, DefaultLabelUniverse, CounterClock>,
-            >>(),
-            crate::global::role_program::LOW_LANE_TEST_WIDTH,
-        );
-    }
-    idx = 0usize;
-    while idx < current_len {
-        endpoint.ports[idx] = ports[idx].take();
-        endpoint.guards[idx] = guards[idx].take();
-        idx += 1;
-    }
-}
-
-fn install_offer_hint_worker_lane_one<'r, B>(
-    worker: &mut CursorEndpoint<
-        'r,
-        1,
-        HintOnlyTransport,
-        DefaultLabelUniverse,
-        CounterClock,
-        EpochTbl,
-        4,
-        crate::control::cap::mint::MintConfig,
-        B,
-    >,
-) where
-    B: BindingSlot,
-{
-    widen_offer_test_endpoint_lane_slots(worker);
-    let (
-        worker_transport,
-        worker_tap,
-        worker_clock,
-        worker_vm_caps,
-        worker_loops,
-        worker_routes,
-        worker_host_slots,
-        worker_slab,
-        worker_image_frontier,
-        worker_scratch_reserved_bytes,
-        worker_endpoint_leases,
-        worker_endpoint_lease_capacity,
-        worker_rv_id,
-    ) = {
-        let base_port = worker.ports[0]
-            .as_ref()
-            .expect("worker lane 0 port must exist")
-            as *const crate::rendezvous::port::Port<'_, HintOnlyTransport, EpochTbl>;
-        unsafe {
-            (
-                (*base_port).transport() as *const HintOnlyTransport,
-                (*base_port).tap() as *const crate::observe::core::TapRing<'_>,
-                (*base_port).clock() as *const dyn crate::runtime::config::Clock,
-                (*base_port).vm_caps_table() as *const crate::rendezvous::tables::VmCapsTable,
-                (*base_port).loop_table() as *const crate::rendezvous::tables::LoopTable,
-                (*base_port).route_table() as *const crate::rendezvous::tables::RouteTable,
-                (*base_port).host_slots() as *const crate::epf::host::HostSlots<'_>,
-                (*base_port).scratch_ledger_parts().0,
-                (*base_port).scratch_ledger_parts().1,
-                (*base_port).scratch_ledger_parts().2,
-                (*base_port).scratch_ledger_parts().3,
-                (*base_port).scratch_ledger_parts().4,
-                (*base_port).rv_id(),
-            )
-        }
-    };
-    let worker_transport = unsafe { &*worker_transport };
-    let worker_tap = unsafe { &*worker_tap };
-    let worker_clock = unsafe { &*worker_clock };
-    let worker_vm_caps = unsafe { &*worker_vm_caps };
-    let worker_loops = unsafe { &*worker_loops };
-    let worker_routes = unsafe { &*worker_routes };
-    let worker_host_slots = unsafe { &*worker_host_slots };
-    let (worker_tx1, worker_rx1) = worker_transport.open(1, worker.sid.raw());
-    worker.ports[1] = Some(crate::rendezvous::port::Port::new(
-        worker_transport,
-        worker_tap,
-        worker_clock,
-        worker_vm_caps,
-        worker_loops,
-        worker_routes,
-        worker_host_slots,
-        worker_slab,
-        worker_image_frontier,
-        worker_scratch_reserved_bytes,
-        worker_endpoint_leases,
-        worker_endpoint_lease_capacity.into(),
-        Lane::new(1),
-        1,
-        2,
-        worker_rv_id,
-        worker_tx1,
-        worker_rx1,
-    ));
-}
-
 fn run_offer_regression_test<F>(name: &'static str, test: F)
 where
     F: FnOnce() + Send + 'static,
@@ -1058,20 +1054,26 @@ impl Default for TestBinding {
 }
 
 struct LaneAwareTestBinding {
-    incoming:
-        [FixedQueue<IncomingClassification, TEST_BINDING_QUEUE_CAPACITY>; LOW_LANE_TEST_WIDTH],
-    polls: [usize; LOW_LANE_TEST_WIDTH],
+    incoming: std::vec::Vec<FixedQueue<IncomingClassification, TEST_BINDING_QUEUE_CAPACITY>>,
+    polls: std::vec::Vec<usize>,
 }
 
 impl LaneAwareTestBinding {
     fn with_lane_incoming(incoming: &[(u8, IncomingClassification)]) -> Self {
+        let lane_capacity = incoming
+            .iter()
+            .map(|(lane, _)| usize::from(*lane).saturating_add(1))
+            .max()
+            .unwrap_or(1);
         let mut binding = Self {
-            incoming: core::array::from_fn(|_| FixedQueue::new()),
-            polls: [0; LOW_LANE_TEST_WIDTH],
+            incoming: std::iter::repeat_with(FixedQueue::new)
+                .take(lane_capacity)
+                .collect(),
+            polls: std::vec![0; lane_capacity],
         };
         for (lane, classification) in incoming.iter().copied() {
             let lane_idx = lane as usize;
-            if lane_idx < LOW_LANE_TEST_WIDTH {
+            if lane_idx < binding.incoming.len() {
                 binding.incoming[lane_idx].push_back(classification);
             }
         }
@@ -1086,7 +1088,7 @@ impl LaneAwareTestBinding {
 impl BindingSlot for LaneAwareTestBinding {
     fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IncomingClassification> {
         let lane_idx = logical_lane as usize;
-        if lane_idx >= LOW_LANE_TEST_WIDTH {
+        if lane_idx >= self.incoming.len() {
             return None;
         }
         self.polls[lane_idx] = self.polls[lane_idx].saturating_add(1);
@@ -1708,6 +1710,46 @@ static HINT_SPLIT_WORKER_PROGRAM: RoleProgram<'static, 1, HintSplitRouteSteps> =
     project(&HINT_SPLIT_ROUTE_PROGRAM);
 const HINT_LEFT_DATA_LABEL: u8 = 100;
 const HINT_RIGHT_DATA_LABEL: u8 = 101;
+type MultiSendRouteLeftMsg = Msg<
+    { LABEL_ROUTE_DECISION },
+    GenericCapToken<RouteDecisionKind>,
+    CanonicalControl<RouteDecisionKind>,
+>;
+type MultiSendRouteRightMsg =
+    Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>;
+type MultiSendLeftPayloadMsg = Msg<0x59, u8>;
+type MultiSendRightFirstMsg = Msg<0x5a, u8>;
+type MultiSendRightSecondMsg = Msg<0x5b, u8>;
+type MultiSendRightPayloadSteps = SeqSteps<
+    SendOnly<0, Role<0>, Role<1>, MultiSendRightFirstMsg>,
+    SendOnly<0, Role<0>, Role<1>, MultiSendRightSecondMsg>,
+>;
+type MultiSendLeftSteps = SeqSteps<
+    SendOnly<0, Role<0>, Role<0>, MultiSendRouteLeftMsg>,
+    SendOnly<0, Role<0>, Role<1>, MultiSendLeftPayloadMsg>,
+>;
+type MultiSendRightSteps = SeqSteps<
+    SendOnly<0, Role<0>, Role<0>, MultiSendRouteRightMsg>,
+    MultiSendRightPayloadSteps,
+>;
+type MultiSendRouteSteps = BranchSteps<MultiSendLeftSteps, MultiSendRightSteps>;
+const MULTI_SEND_ROUTE_PROGRAM: g::Program<MultiSendRouteSteps> = g::route(
+    g::seq(
+        g::send::<Role<0>, Role<0>, MultiSendRouteLeftMsg, 0>(),
+        g::send::<Role<0>, Role<1>, MultiSendLeftPayloadMsg, 0>(),
+    ),
+    g::seq(
+        g::send::<Role<0>, Role<0>, MultiSendRouteRightMsg, 0>(),
+        g::seq(
+            g::send::<Role<0>, Role<1>, MultiSendRightFirstMsg, 0>(),
+            g::send::<Role<0>, Role<1>, MultiSendRightSecondMsg, 0>(),
+        ),
+    ),
+);
+static MULTI_SEND_ROUTE_CONTROLLER_PROGRAM: RoleProgram<'static, 0, MultiSendRouteSteps> =
+    project(&MULTI_SEND_ROUTE_PROGRAM);
+static MULTI_SEND_ROUTE_WORKER_PROGRAM: RoleProgram<'static, 1, MultiSendRouteSteps> =
+    project(&MULTI_SEND_ROUTE_PROGRAM);
 
 const ENTRY_ARM0_PROGRAM: g::Program<
     SeqSteps<
@@ -1775,13 +1817,13 @@ fn binding_inbox_take_is_one_shot() {
         channel: Channel::new(1),
     };
     let mut binding = TestBinding::with_incoming(&[classification]);
-    let mut inbox = BindingInbox::test_empty();
+    with_test_binding_inbox::<1, _>(|inbox| {
+        assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(classification));
+        assert_eq!(inbox.take_or_poll(&mut binding, 0), None);
 
-    assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(classification));
-    assert_eq!(inbox.take_or_poll(&mut binding, 0), None);
-
-    inbox.put_back(0, classification);
-    assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(classification));
+        inbox.put_back(0, classification);
+        assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(classification));
+    });
 }
 
 #[test]
@@ -1799,11 +1841,11 @@ fn binding_inbox_take_matching_skips_head_mismatch() {
         channel: Channel::new(2),
     };
     let mut binding = TestBinding::with_incoming(&[head, expected]);
-    let mut inbox = BindingInbox::test_empty();
-
-    let picked = inbox.take_matching_or_poll(&mut binding, 0, expected.label);
-    assert_eq!(picked, Some(expected));
-    assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(head));
+    with_test_binding_inbox::<1, _>(|inbox| {
+        let picked = inbox.take_matching_or_poll(&mut binding, 0, expected.label);
+        assert_eq!(picked, Some(expected));
+        assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(head));
+    });
 }
 
 #[test]
@@ -1827,15 +1869,16 @@ fn binding_inbox_take_matching_scans_buffered_entries() {
         channel: Channel::new(13),
     };
     let mut binding = TestBinding::default();
-    let mut inbox = BindingInbox::test_empty();
-    assert!(inbox.push_back(0, first));
-    assert!(inbox.push_back(0, second));
-    assert!(inbox.push_back(0, expected));
+    with_test_binding_inbox::<1, _>(|inbox| {
+        assert!(inbox.push_back(0, first));
+        assert!(inbox.push_back(0, second));
+        assert!(inbox.push_back(0, expected));
 
-    let picked = inbox.take_matching_or_poll(&mut binding, 0, expected.label);
-    assert_eq!(picked, Some(expected));
-    assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(first));
-    assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(second));
+        let picked = inbox.take_matching_or_poll(&mut binding, 0, expected.label);
+        assert_eq!(picked, Some(expected));
+        assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(first));
+        assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(second));
+    });
 }
 
 #[test]
@@ -1853,25 +1896,24 @@ fn binding_inbox_nonempty_mask_tracks_buffered_lanes() {
         channel: Channel::new(12),
     };
     let mut binding = TestBinding::default();
-    let mut inbox = BindingInbox::test_empty();
-    assert!(!inbox.has_buffered_for_lane_mask((1 << 0) | (1 << 2)));
+    with_test_binding_inbox::<3, _>(|inbox| {
+        assert_nonempty_lanes_eq(inbox, 3, &[]);
 
-    assert!(inbox.push_back(0, first));
-    assert!(inbox.has_buffered_for_lane_mask(1 << 0));
-    assert!(!inbox.has_buffered_for_lane_mask(1 << 2));
+        assert!(inbox.push_back(0, first));
+        assert_nonempty_lanes_eq(inbox, 3, &[0]);
 
-    assert!(inbox.push_back(2, second));
-    assert!(inbox.has_buffered_for_lane_mask((1 << 0) | (1 << 2)));
+        assert!(inbox.push_back(2, second));
+        assert_nonempty_lanes_eq(inbox, 3, &[0, 2]);
 
-    assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(first));
-    assert!(!inbox.has_buffered_for_lane_mask(1 << 0));
-    assert!(inbox.has_buffered_for_lane_mask(1 << 2));
+        assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(first));
+        assert_nonempty_lanes_eq(inbox, 3, &[2]);
 
-    assert_eq!(
-        inbox.take_matching_or_poll(&mut binding, 2, second.label),
-        Some(second)
-    );
-    assert!(!inbox.has_buffered_for_lane_mask(1 << 2));
+        assert_eq!(
+            inbox.take_matching_or_poll(&mut binding, 2, second.label),
+            Some(second)
+        );
+        assert_nonempty_lanes_eq(inbox, 3, &[]);
+    });
 }
 
 #[test]
@@ -1895,50 +1937,35 @@ fn binding_inbox_label_masks_track_buffered_labels_exactly() {
         channel: Channel::new(13),
     };
     let mut binding = TestBinding::default();
-    let mut inbox = BindingInbox::test_empty();
+    with_test_binding_inbox::<3, _>(|inbox| {
+        assert!(inbox.push_back(0, first));
+        assert!(inbox.push_back(0, second));
+        assert!(inbox.push_back(2, third));
+        assert_eq!(
+            inbox.buffered_label_mask_for_lane(0),
+            ScopeLabelMeta::label_bit(first.label) | ScopeLabelMeta::label_bit(second.label)
+        );
+        assert_eq!(
+            inbox.buffered_label_mask_for_lane(2),
+            ScopeLabelMeta::label_bit(third.label)
+        );
+        assert_buffered_lanes_eq(inbox, ScopeLabelMeta::label_bit(first.label), &[0]);
+        assert_buffered_lanes_eq(inbox, ScopeLabelMeta::label_bit(second.label), &[0]);
+        assert_buffered_lanes_eq(inbox, ScopeLabelMeta::label_bit(third.label), &[2]);
 
-    assert!(inbox.push_back(0, first));
-    assert!(inbox.push_back(0, second));
-    assert!(inbox.push_back(2, third));
-    assert_eq!(
-        inbox.buffered_label_mask_for_lane(0),
-        ScopeLabelMeta::label_bit(first.label) | ScopeLabelMeta::label_bit(second.label)
-    );
-    assert_eq!(
-        inbox.buffered_label_mask_for_lane(2),
-        ScopeLabelMeta::label_bit(third.label)
-    );
-    assert_eq!(
-        inbox.buffered_lane_mask_for_labels(ScopeLabelMeta::label_bit(first.label)),
-        1 << 0
-    );
-    assert_eq!(
-        inbox.buffered_lane_mask_for_labels(ScopeLabelMeta::label_bit(second.label)),
-        1 << 0
-    );
-    assert_eq!(
-        inbox.buffered_lane_mask_for_labels(ScopeLabelMeta::label_bit(third.label)),
-        1 << 2
-    );
-
-    assert_eq!(
-        inbox.take_matching_or_poll(&mut binding, 0, second.label),
-        Some(second)
-    );
-    assert_eq!(
-        inbox.buffered_label_mask_for_lane(0),
-        ScopeLabelMeta::label_bit(first.label)
-    );
-    assert_eq!(
-        inbox.buffered_lane_mask_for_labels(ScopeLabelMeta::label_bit(second.label)),
-        0
-    );
-    assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(first));
-    assert_eq!(inbox.buffered_label_mask_for_lane(0), 0);
-    assert_eq!(
-        inbox.buffered_lane_mask_for_labels(ScopeLabelMeta::label_bit(first.label)),
-        0
-    );
+        assert_eq!(
+            inbox.take_matching_or_poll(&mut binding, 0, second.label),
+            Some(second)
+        );
+        assert_eq!(
+            inbox.buffered_label_mask_for_lane(0),
+            ScopeLabelMeta::label_bit(first.label)
+        );
+        assert_buffered_lanes_eq(inbox, ScopeLabelMeta::label_bit(second.label), &[]);
+        assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(first));
+        assert_eq!(inbox.buffered_label_mask_for_lane(0), 0);
+        assert_buffered_lanes_eq(inbox, ScopeLabelMeta::label_bit(first.label), &[]);
+    });
 }
 
 #[test]
@@ -1962,22 +1989,22 @@ fn binding_inbox_take_matching_mask_drops_buffered_loop_control_labels() {
         channel: Channel::new(13),
     };
     let mut binding = TestBinding::with_incoming(&[expected]);
-    let mut inbox = BindingInbox::test_empty();
+    with_test_binding_inbox::<1, _>(|inbox| {
+        assert!(inbox.push_back(0, loop_control));
+        assert!(inbox.push_back(0, deferred));
 
-    assert!(inbox.push_back(0, loop_control));
-    assert!(inbox.push_back(0, deferred));
-
-    let picked = inbox.take_matching_mask_or_poll(
-        &mut binding,
-        0,
-        ScopeLabelMeta::label_bit(expected.label),
-        ScopeLabelMeta::label_bit(LABEL_LOOP_CONTINUE)
-            | ScopeLabelMeta::label_bit(LABEL_LOOP_BREAK),
-        |label| matches!(label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK),
-    );
-    assert_eq!(picked, Some(expected));
-    assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(deferred));
-    assert_eq!(inbox.take_or_poll(&mut binding, 0), None);
+        let picked = inbox.take_matching_mask_or_poll(
+            &mut binding,
+            0,
+            ScopeLabelMeta::label_bit(expected.label),
+            ScopeLabelMeta::label_bit(LABEL_LOOP_CONTINUE)
+                | ScopeLabelMeta::label_bit(LABEL_LOOP_BREAK),
+            |label| matches!(label, LABEL_LOOP_CONTINUE | LABEL_LOOP_BREAK),
+        );
+        assert_eq!(picked, Some(expected));
+        assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(deferred));
+        assert_eq!(inbox.take_or_poll(&mut binding, 0), None);
+    });
 }
 
 #[test]
@@ -2001,16 +2028,16 @@ fn binding_mismatch_scan_finds_later_matching_label() {
         channel: Channel::new(23),
     };
     let mut binding = TestBinding::with_incoming(&[first, second, expected]);
-    let mut inbox = BindingInbox::test_empty();
-
-    let picked = inbox.take_matching_or_poll(&mut binding, 0, expected.label);
-    assert_eq!(
-        picked,
-        Some(expected),
-        "scan must continue past mismatched head entries"
-    );
-    assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(first));
-    assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(second));
+    with_test_binding_inbox::<1, _>(|inbox| {
+        let picked = inbox.take_matching_or_poll(&mut binding, 0, expected.label);
+        assert_eq!(
+            picked,
+            Some(expected),
+            "scan must continue past mismatched head entries"
+        );
+        assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(first));
+        assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(second));
+    });
 }
 
 #[test]
@@ -2404,7 +2431,9 @@ fn refresh_lane_offer_state_caches_scope_label_meta() {
 
                 worker.refresh_lane_offer_state(0);
                 let entry_idx = state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
-                let entry_state = worker.frontier_state.offer_entry_state[entry_idx];
+                let entry_state = worker
+                    .offer_entry_state_snapshot(entry_idx)
+                    .expect("offer entry state snapshot");
                 let cached =
                     RouteFrontierMachine::offer_entry_label_meta(&worker, scope, entry_idx)
                         .expect("cached offer-entry label metadata");
@@ -2450,21 +2479,13 @@ fn refresh_lane_offer_state_caches_scope_label_meta() {
                     .recompute_offer_entry_observed_state_non_consuming(entry_idx)
                     .expect("observed state");
                 assert_eq!(
-                    worker.frontier_state.offer_entry_state[entry_idx].observed,
-                    observed
+                    worker.offer_entry_observed_state_cached(entry_idx),
+                    Some(observed)
                 );
-                let (offer_lanes, offer_lanes_len) = worker.offer_lanes_for_scope(scope);
-                let mut offer_lane_mask = 0;
-                let mut offer_lane_idx = 0usize;
-                while offer_lane_idx < offer_lanes_len {
-                    offer_lane_mask |= 1 << (offer_lanes[offer_lane_idx] as usize);
-                    offer_lane_idx += 1;
-                }
-                assert_eq!(
-                    worker
-                        .offer_lane_set_for_scope(scope)
-                        .collect_low_lane_bits(worker.cursor.logical_lane_count()),
-                    offer_lane_mask
+                assert_lane_set_eq(
+                    worker.offer_lane_set_for_scope(scope),
+                    worker.cursor.logical_lane_count(),
+                    &[0],
                 );
                 assert_eq!(entry_state.lane_idx, 0);
                 assert_eq!(
@@ -2524,7 +2545,7 @@ fn refresh_lane_offer_state_caches_scope_label_meta() {
                             })
                     );
                     let mut lane_idx = 0usize;
-                    while lane_idx < LOW_LANE_TEST_WIDTH {
+                    while lane_idx < worker.cursor.logical_lane_count() {
                         let mut expected_binding_demux_lane = false;
                         if let Some((entry, _)) =
                             worker.cursor.controller_arm_entry_by_arm(scope, arm)
@@ -2822,9 +2843,7 @@ fn scope_arm_materialization_meta_caches_passive_recv_meta_exactly() {
                     worker.refresh_lane_offer_state(0);
                     let offer_lane = worker.offer_lane_for_scope(scope);
                     let passive_recv_meta = worker.compute_scope_passive_recv_meta(
-                        worker.frontier_state.offer_entry_state
-                            [state_index_to_usize(worker.route_state.lane_offer_state(0).entry)]
-                        .materialization_meta,
+                        worker.compute_scope_arm_materialization_meta(scope),
                         scope,
                         offer_lane,
                     );
@@ -3087,13 +3106,12 @@ fn align_cursor_to_selected_scope_reuses_cached_multi_entry_observation() {
                         let fake_entry_idx = current_idx + 1;
                         assert!(fake_entry_idx < crate::global::typestate::MAX_STATES);
 
-                        let mut active_entries = ActiveEntrySet::EMPTY;
-                        assert!(active_entries.insert_entry(current_idx, 0));
-                        assert!(active_entries.insert_entry(fake_entry_idx, 1));
+                        let (_active_slots, active_entries) =
+                            active_entry_set_from_pairs(&[(current_idx, 0), (fake_entry_idx, 1)]);
                         worker.overwrite_global_active_entries_for_test(active_entries);
-                        worker.overwrite_global_frontier_observed_for_test(
-                            observed_entries_with_ready_current(current_idx, fake_entry_idx),
-                        );
+                        let (_observed_slots, observed_entries) =
+                            observed_entries_with_ready_current(current_idx, fake_entry_idx);
+                        worker.overwrite_global_frontier_observed_for_test(observed_entries);
                         let stored_key = RouteFrontierMachine::frontier_observation_key(
                             &worker,
                             ScopeId::none(),
@@ -3164,13 +3182,12 @@ fn align_cursor_to_selected_scope_ignores_unrelated_lane_binding_changes() {
                         let fake_entry_idx = current_idx + 1;
                         assert!(fake_entry_idx < crate::global::typestate::MAX_STATES);
 
-                        let mut active_entries = ActiveEntrySet::EMPTY;
-                        assert!(active_entries.insert_entry(current_idx, 0));
-                        assert!(active_entries.insert_entry(fake_entry_idx, 1));
+                        let (_active_slots, active_entries) =
+                            active_entry_set_from_pairs(&[(current_idx, 0), (fake_entry_idx, 1)]);
                         worker.overwrite_global_active_entries_for_test(active_entries);
-                        worker.overwrite_global_frontier_observed_for_test(
-                            observed_entries_with_ready_current(current_idx, fake_entry_idx),
-                        );
+                        let (_observed_slots, observed_entries) =
+                            observed_entries_with_ready_current(current_idx, fake_entry_idx);
+                        worker.overwrite_global_frontier_observed_for_test(observed_entries);
                         let stored_key = RouteFrontierMachine::frontier_observation_key(
                             &worker,
                             ScopeId::none(),
@@ -3251,13 +3268,12 @@ fn align_cursor_to_selected_scope_ignores_relevant_lane_binding_content_changes(
                         let fake_entry_idx = current_idx + 1;
                         assert!(fake_entry_idx < crate::global::typestate::MAX_STATES);
 
-                        let mut active_entries = ActiveEntrySet::EMPTY;
-                        assert!(active_entries.insert_entry(current_idx, 0));
-                        assert!(active_entries.insert_entry(fake_entry_idx, 1));
+                        let (_active_slots, active_entries) =
+                            active_entry_set_from_pairs(&[(current_idx, 0), (fake_entry_idx, 1)]);
                         worker.overwrite_global_active_entries_for_test(active_entries);
-                        worker.overwrite_global_frontier_observed_for_test(
-                            observed_entries_with_ready_current(current_idx, fake_entry_idx),
-                        );
+                        let (_observed_slots, observed_entries) =
+                            observed_entries_with_ready_current(current_idx, fake_entry_idx);
+                        worker.overwrite_global_frontier_observed_for_test(observed_entries);
 
                         let first = crate::binding::IncomingClassification {
                             label: 31,
@@ -3348,13 +3364,12 @@ fn align_cursor_to_selected_scope_ignores_unrelated_scope_evidence_changes() {
                         let fake_entry_idx = current_idx + 1;
                         assert!(fake_entry_idx < crate::global::typestate::MAX_STATES);
 
-                        let mut active_entries = ActiveEntrySet::EMPTY;
-                        assert!(active_entries.insert_entry(current_idx, 0));
-                        assert!(active_entries.insert_entry(fake_entry_idx, 1));
+                        let (_active_slots, active_entries) =
+                            active_entry_set_from_pairs(&[(current_idx, 0), (fake_entry_idx, 1)]);
                         worker.overwrite_global_active_entries_for_test(active_entries);
-                        worker.overwrite_global_frontier_observed_for_test(
-                            observed_entries_with_ready_current(current_idx, fake_entry_idx),
-                        );
+                        let (_observed_slots, observed_entries) =
+                            observed_entries_with_ready_current(current_idx, fake_entry_idx);
+                        worker.overwrite_global_frontier_observed_for_test(observed_entries);
                         let stored_key = RouteFrontierMachine::frontier_observation_key(
                             &worker,
                             ScopeId::none(),
@@ -3433,22 +3448,19 @@ fn align_cursor_to_selected_scope_ignores_unrelated_lane_frontier_refresh() {
                         }
                         let worker = worker_slot.borrow_mut();
 
-                        if LOW_LANE_TEST_WIDTH < 3 {
-                            return;
-                        }
+                        assert!(worker.cursor.logical_lane_count() > 2);
 
                         worker.refresh_lane_offer_state(0);
                         let current_idx = worker.cursor.index();
                         let fake_entry_idx = current_idx + 1;
                         assert!(fake_entry_idx < crate::global::typestate::MAX_STATES);
 
-                        let mut active_entries = ActiveEntrySet::EMPTY;
-                        assert!(active_entries.insert_entry(current_idx, 0));
-                        assert!(active_entries.insert_entry(fake_entry_idx, 1));
+                        let (_active_slots, active_entries) =
+                            active_entry_set_from_pairs(&[(current_idx, 0), (fake_entry_idx, 1)]);
                         worker.overwrite_global_active_entries_for_test(active_entries);
-                        worker.overwrite_global_frontier_observed_for_test(
-                            observed_entries_with_ready_current(current_idx, fake_entry_idx),
-                        );
+                        let (_observed_slots, observed_entries) =
+                            observed_entries_with_ready_current(current_idx, fake_entry_idx);
+                        worker.overwrite_global_frontier_observed_for_test(observed_entries);
                         let stored_key = RouteFrontierMachine::frontier_observation_key(
                             &worker,
                             ScopeId::none(),
@@ -3577,7 +3589,7 @@ fn align_cursor_to_selected_scope_keeps_descended_nested_route_entry_authoritati
 
 #[test]
 fn active_entry_set_orders_entries_by_representative_lane() {
-    let mut entries = ActiveEntrySet::EMPTY;
+    let (_entry_slots, mut entries) = active_entry_set_storage(3);
     assert!(entries.insert_entry(9, 4));
     assert!(entries.insert_entry(3, 1));
     assert!(entries.insert_entry(7, 1));
@@ -3672,7 +3684,7 @@ fn cached_offer_entry_observed_state_preserves_arbitration_bits() {
         ..LaneOfferState::EMPTY
     });
     let observed = offer_entry_observed_state(ScopeId::generic(51), summary, true, false, true);
-    let mut observed_entries = ObservedEntrySet::EMPTY;
+    let (_observed_slots, mut observed_entries) = observed_entry_set_storage(1);
     let (observed_bit, inserted) = observed_entries.insert_entry(17).expect("insert entry");
     assert!(inserted);
     observed_entries.observe(observed_bit, observed);
@@ -3727,7 +3739,7 @@ fn cached_offer_entry_observed_state_preserves_arbitration_bits() {
 
 #[test]
 fn observed_entry_set_entry_bit_tracks_inserted_entries_exactly() {
-    let mut observed_entries = ObservedEntrySet::EMPTY;
+    let (_observed_slots, mut observed_entries) = observed_entry_set_storage(2);
     let (first_bit, inserted_first) = observed_entries.insert_entry(17).expect("insert first");
     assert!(inserted_first);
     let (second_bit, inserted_second) = observed_entries.insert_entry(3).expect("insert second");
@@ -3743,1229 +3755,25 @@ fn observed_entry_set_entry_bit_tracks_inserted_entries_exactly() {
 fn observed_entries_with_ready_current(
     current_idx: usize,
     fake_entry_idx: usize,
-) -> ObservedEntrySet {
-    let mut observed_entries = ObservedEntrySet::EMPTY;
-    let (current_bit, inserted_current) = observed_entries
-        .insert_entry(current_idx)
-        .expect("insert current entry");
-    assert!(inserted_current);
-    let (fake_bit, inserted_fake) = observed_entries
-        .insert_entry(fake_entry_idx)
-        .expect("insert fake entry");
-    assert!(inserted_fake);
-    observed_entries.observe(
-        current_bit,
-        OfferEntryObservedState {
-            scope_id: ScopeId::generic(7),
-            frontier_mask: FrontierKind::Route.bit(),
-            flags: OfferEntryObservedState::FLAG_READY,
-        },
-    );
-    observed_entries.observe(
-        fake_bit,
-        OfferEntryObservedState {
-            scope_id: ScopeId::generic(8),
-            frontier_mask: FrontierKind::Route.bit(),
-            flags: 0,
-        },
-    );
-    observed_entries
-}
-
-fn observed_entries_with_route_entries(
-    current_idx: usize,
-    fake_entry_idx: usize,
-) -> ObservedEntrySet {
-    let mut observed_entries = ObservedEntrySet::EMPTY;
-    let (current_bit, inserted_current) = observed_entries
-        .insert_entry(current_idx)
-        .expect("insert current entry");
-    assert!(inserted_current);
-    let (fake_bit, inserted_fake) = observed_entries
-        .insert_entry(fake_entry_idx)
-        .expect("insert fake entry");
-    assert!(inserted_fake);
-    observed_entries.observe(
-        current_bit,
-        OfferEntryObservedState {
-            scope_id: ScopeId::generic(7),
-            frontier_mask: FrontierKind::Route.bit(),
-            flags: 0,
-        },
-    );
-    observed_entries.observe(
-        fake_bit,
-        OfferEntryObservedState {
-            scope_id: ScopeId::generic(8),
-            frontier_mask: FrontierKind::Route.bit(),
-            flags: 0,
-        },
-    );
-    observed_entries
-}
-
-#[test]
-fn rebuild_frontier_observed_entries_reuses_cached_entry_after_slot_shift() {
-    run_offer_regression_test(
-        "rebuild_frontier_observed_entries_reuses_cached_entry_after_slot_shift",
-        || {
-            offer_fixture!(2048, clock, config);
-            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
-                with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
-                    let transport = HintOnlyTransport::new(HINT_NONE);
-                    let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
-                        .expect("register rendezvous");
-                    let sid = SessionId::new(1004);
-                    unsafe {
-                        cluster_ref
-                            .attach_endpoint_into::<1, _, _, _>(
-                                worker_slot.ptr(),
-                                rv_id,
-                                sid,
-                                &HINT_SPLIT_WORKER_PROGRAM,
-                                NoBinding,
-                            )
-                            .expect("attach worker endpoint");
-                    }
-                    let worker = worker_slot.borrow_mut();
-
-                    worker.refresh_lane_offer_state(0);
-                    let current_idx = worker.cursor.index();
-                    let fake_entry_idx = current_idx + 1;
-                    assert!(fake_entry_idx < crate::global::typestate::MAX_STATES);
-
-                    let mut static_summary = OfferEntryStaticSummary::EMPTY;
-                    static_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::Route,
-                        ..LaneOfferState::EMPTY
-                    });
-                    worker.frontier_state.offer_entry_state[current_idx].summary = static_summary;
-                    worker.frontier_state.offer_entry_state[current_idx].frontier =
-                        FrontierKind::Route;
-                    let lane_offer = worker
-                        .route_state
-                        .lane_offer_state_mut(0)
-                        .expect("lane 0 offer state");
-                    lane_offer.frontier = FrontierKind::Route;
-                    lane_offer.flags = 0;
-                    lane_offer.static_ready = false;
-                    let current_state = worker.frontier_state.offer_entry_state[current_idx];
-                    let fake_state = OfferEntryState {
-                        active_mask: 1 << 1,
-                        lane_idx: 1,
-                        parallel_root: current_state.parallel_root,
-                        frontier: FrontierKind::Route,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        summary: static_summary,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-                    worker.frontier_state.offer_entry_state[fake_entry_idx] = fake_state;
-
-                    let mut cached_active_entries = ActiveEntrySet::EMPTY;
-                    assert!(cached_active_entries.insert_entry(current_idx, 0));
-                    assert!(cached_active_entries.insert_entry(fake_entry_idx, 1));
-                    worker.overwrite_global_active_entries_for_test(cached_active_entries);
-                    let cached_key = worker.frontier_scratch_view().working_observation_key_from(
-                        RouteFrontierMachine::frontier_observation_key(
-                            &worker,
-                            ScopeId::none(),
-                            false,
-                        ),
-                    );
-
-                    let mut cached_observed_entries = ObservedEntrySet::EMPTY;
-                    let (current_bit, inserted_current) = cached_observed_entries
-                        .insert_entry(current_idx)
-                        .expect("insert current cached entry");
-                    assert!(inserted_current);
-                    cached_observed_entries.observe(
-                        current_bit,
-                        offer_entry_observed_state(
-                            current_state.scope_id,
-                            current_state.summary,
-                            false,
-                            false,
-                            true,
-                        ),
-                    );
-                    let (fake_bit, inserted_fake) = cached_observed_entries
-                        .insert_entry(fake_entry_idx)
-                        .expect("insert fake cached entry");
-                    assert!(inserted_fake);
-                    cached_observed_entries.observe(
-                        fake_bit,
-                        offer_entry_observed_state(
-                            fake_state.scope_id,
-                            fake_state.summary,
-                            false,
-                            false,
-                            false,
-                        ),
-                    );
-
-                    worker.frontier_state.offer_entry_state[current_idx].active_mask = 1 << 1;
-                    worker.frontier_state.offer_entry_state[current_idx].lane_idx = 1;
-                    worker.frontier_state.offer_entry_state[fake_entry_idx].active_mask = 1 << 0;
-                    worker.frontier_state.offer_entry_state[fake_entry_idx].lane_idx = 0;
-
-                    let mut shifted_active_entries = ActiveEntrySet::EMPTY;
-                    assert!(shifted_active_entries.insert_entry(fake_entry_idx, 0));
-                    assert!(shifted_active_entries.insert_entry(current_idx, 1));
-                    worker.overwrite_global_active_entries_for_test(shifted_active_entries);
-
-                    let observation_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    );
-                    let current_shifted_state =
-                        worker.frontier_state.offer_entry_state[current_idx];
-                    let cached_current =
-                        RouteFrontierMachine::cached_offer_entry_observed_state_for_rebuild(
-                            &worker,
-                            current_idx,
-                            &current_shifted_state,
-                            observation_key,
-                            cached_key,
-                            cached_observed_entries,
-                        );
-                    assert!(
-                        cached_current.is_some(),
-                        "entry cache should survive slot shifts inside the active frontier"
-                    );
-
-                    let rebuilt = worker.refresh_frontier_observed_entries(
-                        ScopeId::none(),
-                        false,
-                        shifted_active_entries,
-                        observation_key,
-                        cached_key,
-                        cached_observed_entries,
-                    );
-                    let current_shifted_bit = rebuilt.entry_bit(current_idx);
-                    assert_ne!(current_shifted_bit, 0);
-                    assert_eq!(current_shifted_bit, 1u8 << 1);
-                    assert_ne!(rebuilt.ready_mask & current_shifted_bit, 0);
-                });
-            });
-        },
-    );
-}
-
-#[test]
-fn refresh_frontier_observation_cache_prewarms_after_active_entry_replacement() {
-    run_offer_regression_test(
-        "refresh_frontier_observation_cache_prewarms_after_active_entry_replacement",
-        || {
-            offer_fixture!(2048, clock, config);
-            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
-                with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
-                    let transport = HintOnlyTransport::new(HINT_NONE);
-                    let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
-                        .expect("register rendezvous");
-                    let sid = SessionId::new(1012);
-                    unsafe {
-                        cluster_ref
-                            .attach_endpoint_into::<1, _, _, _>(
-                                worker_slot.ptr(),
-                                rv_id,
-                                sid,
-                                &HINT_WORKER_PROGRAM,
-                                NoBinding,
-                            )
-                            .expect("attach worker endpoint");
-                    }
-                    let worker = worker_slot.borrow_mut();
-
-                    worker.refresh_lane_offer_state(0);
-                    let current_idx = worker.cursor.index();
-                    let old_entry_idx = current_idx + 1;
-                    let new_entry_idx = current_idx + 2;
-                    assert!(new_entry_idx < crate::global::typestate::MAX_STATES);
-
-                    let current_state = worker.frontier_state.offer_entry_state[current_idx];
-                    worker.frontier_state.offer_entry_state[old_entry_idx] = OfferEntryState {
-                        active_mask: 1 << 0,
-                        lane_idx: 0,
-                        parallel_root: ScopeId::none(),
-                        frontier: FrontierKind::Route,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-
-                    let mut cached_active_entries = ActiveEntrySet::EMPTY;
-                    assert!(cached_active_entries.insert_entry(current_idx, 0));
-                    assert!(cached_active_entries.insert_entry(old_entry_idx, 0));
-                    worker.overwrite_global_active_entries_for_test(cached_active_entries);
-                    let mut cached_observed_entries = ObservedEntrySet::EMPTY;
-                    let (current_bit, inserted_current) = cached_observed_entries
-                        .insert_entry(current_idx)
-                        .expect("insert current entry");
-                    assert!(inserted_current);
-                    cached_observed_entries.observe(
-                        current_bit,
-                        offer_entry_observed_state(
-                            current_state.scope_id,
-                            current_state.summary,
-                            false,
-                            false,
-                            true,
-                        ),
-                    );
-                    let (old_bit, inserted_old) = cached_observed_entries
-                        .insert_entry(old_entry_idx)
-                        .expect("insert old entry");
-                    assert!(inserted_old);
-                    cached_observed_entries.observe(
-                        old_bit,
-                        offer_entry_observed_state(
-                            current_state.scope_id,
-                            OfferEntryStaticSummary::EMPTY,
-                            false,
-                            false,
-                            false,
-                        ),
-                    );
-                    worker.overwrite_global_frontier_observed_for_test(cached_observed_entries);
-                    let stored_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    );
-                    worker.overwrite_global_frontier_observed_key_for_test(stored_key);
-                    worker.frontier_state.frontier_observation_epoch = 37;
-
-                    let mut ready_summary = OfferEntryStaticSummary::EMPTY;
-                    ready_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::Loop,
-                        flags: LaneOfferState::FLAG_DYNAMIC,
-                        static_ready: true,
-                        ..LaneOfferState::EMPTY
-                    });
-                    worker.frontier_state.offer_entry_state[old_entry_idx] = OfferEntryState::EMPTY;
-                    worker.frontier_state.offer_entry_state[new_entry_idx] = OfferEntryState {
-                        active_mask: 1 << 0,
-                        lane_idx: 0,
-                        parallel_root: ScopeId::none(),
-                        frontier: FrontierKind::Loop,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        summary: ready_summary,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-
-                    let mut replaced_active_entries = ActiveEntrySet::EMPTY;
-                    assert!(replaced_active_entries.insert_entry(current_idx, 0));
-                    assert!(replaced_active_entries.insert_entry(new_entry_idx, 0));
-                    worker.overwrite_global_active_entries_for_test(replaced_active_entries);
-
-                    let updated_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    );
-                    assert!(
-                        worker
-                            .cached_frontier_observed_entries(ScopeId::none(), false, updated_key)
-                            .is_none(),
-                        "entry replacement should invalidate the previous cache key before warm-up",
-                    );
-
-                    RouteFrontierMachine::refresh_frontier_observation_cache(
-                        worker,
-                        ScopeId::none(),
-                        false,
-                    );
-
-                    assert!(
-                        worker.global_frontier_observed_key_for_test() == updated_key,
-                        "frontier refresh should publish the replaced active-entry observation under the new key",
-                    );
-                    assert_eq!(
-                        worker.global_frontier_observed_entry_bit_for_test(old_entry_idx),
-                        0
-                    );
-                    assert_eq!(
-                        worker.global_frontier_observed_entry_bit_for_test(new_entry_idx),
-                        1u8 << 1
-                    );
-                    assert_ne!(
-                        worker.frontier_state.global_frontier_observed.ready_mask
-                            & worker.global_frontier_observed_entry_bit_for_test(new_entry_idx),
-                        0,
-                    );
-                    assert_eq!(
-                        worker
-                            .frontier_state
-                            .global_frontier_observed_entries(
-                                worker.global_frontier_observed_key_for_test(),
-                            )
-                            .frontier_mask(FrontierKind::Loop)
-                            & worker.global_frontier_observed_entry_bit_for_test(new_entry_idx),
-                        1u8 << 1,
-                    );
-                    assert!(
-                        worker.frontier_state.frontier_observation_epoch > 37,
-                        "prewarm should publish a fresh frontier observation epoch",
-                    );
-                });
-            });
-        },
-    );
-}
-
-#[test]
-fn patch_frontier_observed_entries_from_cached_structure_handles_cardinality_change() {
-    run_offer_regression_test(
-        "patch_frontier_observed_entries_from_cached_structure_handles_cardinality_change",
-        || {
-            offer_fixture!(2048, clock, config);
-            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
-                with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
-                    let transport = HintOnlyTransport::new(HINT_NONE);
-                    let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
-                        .expect("register rendezvous");
-                    let sid = SessionId::new(1024);
-                    unsafe {
-                        cluster_ref
-                            .attach_endpoint_into::<1, _, _, _>(
-                                worker_slot.ptr(),
-                                rv_id,
-                                sid,
-                                &HINT_WORKER_PROGRAM,
-                                NoBinding,
-                            )
-                            .expect("attach worker endpoint");
-                    }
-                    let worker = worker_slot.borrow_mut();
-                    install_offer_hint_worker_lane_one(worker);
-
-                    worker.refresh_lane_offer_state(0);
-                    let current_idx = worker.cursor.index();
-                    let middle_entry_idx = current_idx + 1;
-                    let third_entry_idx = current_idx + 2;
-                    let last_entry_idx = current_idx + 3;
-                    let new_loop_entry_idx = current_idx + 4;
-                    assert!(new_loop_entry_idx < crate::global::typestate::MAX_STATES);
-
-                    let current_state = worker.frontier_state.offer_entry_state[current_idx];
-                    let mut middle_summary = OfferEntryStaticSummary::EMPTY;
-                    middle_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::Parallel,
-                        flags: LaneOfferState::FLAG_CONTROLLER,
-                        ..LaneOfferState::EMPTY
-                    });
-                    let mut third_summary = OfferEntryStaticSummary::EMPTY;
-                    third_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::Loop,
-                        flags: LaneOfferState::FLAG_CONTROLLER | LaneOfferState::FLAG_DYNAMIC,
-                        static_ready: true,
-                        ..LaneOfferState::EMPTY
-                    });
-                    let mut last_summary = OfferEntryStaticSummary::EMPTY;
-                    last_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::PassiveObserver,
-                        ..LaneOfferState::EMPTY
-                    });
-                    let mut new_loop_summary = OfferEntryStaticSummary::EMPTY;
-                    new_loop_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::Loop,
-                        flags: LaneOfferState::FLAG_CONTROLLER | LaneOfferState::FLAG_DYNAMIC,
-                        static_ready: true,
-                        ..LaneOfferState::EMPTY
-                    });
-
-                    worker.frontier_state.offer_entry_state[middle_entry_idx] = OfferEntryState {
-                        active_mask: 1 << 1,
-                        lane_idx: 1,
-                        parallel_root: ScopeId::none(),
-                        frontier: FrontierKind::Parallel,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        summary: middle_summary,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-                    worker.frontier_state.offer_entry_state[third_entry_idx] = OfferEntryState {
-                        active_mask: 1 << 0,
-                        lane_idx: 0,
-                        parallel_root: ScopeId::none(),
-                        frontier: FrontierKind::Loop,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        summary: third_summary,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-                    worker.frontier_state.offer_entry_state[last_entry_idx] = OfferEntryState {
-                        active_mask: 1 << 1,
-                        lane_idx: 1,
-                        parallel_root: ScopeId::none(),
-                        frontier: FrontierKind::PassiveObserver,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        summary: last_summary,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-
-                    let mut cached_active_entries = ActiveEntrySet::EMPTY;
-                    assert!(cached_active_entries.insert_entry(current_idx, 0));
-                    assert!(cached_active_entries.insert_entry(middle_entry_idx, 1));
-                    assert!(cached_active_entries.insert_entry(third_entry_idx, 0));
-                    assert!(cached_active_entries.insert_entry(last_entry_idx, 1));
-                    worker.overwrite_global_active_entries_for_test(cached_active_entries);
-                    let mut cached_key = FrontierObservationKey::EMPTY;
-                    cached_key.copy_from(RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    ));
-
-                    let mut cached_observed_entries = ObservedEntrySet::EMPTY;
-                    let (current_bit, inserted_current) = cached_observed_entries
-                        .insert_entry(current_idx)
-                        .expect("insert current entry");
-                    assert!(inserted_current);
-                    cached_observed_entries.observe(
-                        current_bit,
-                        offer_entry_observed_state(
-                            current_state.scope_id,
-                            current_state.summary,
-                            false,
-                            false,
-                            true,
-                        ),
-                    );
-                    let (third_bit, inserted_third) = cached_observed_entries
-                        .insert_entry(third_entry_idx)
-                        .expect("insert third entry");
-                    assert!(inserted_third);
-                    cached_observed_entries.observe(
-                        third_bit,
-                        offer_entry_observed_state(
-                            current_state.scope_id,
-                            third_summary,
-                            false,
-                            true,
-                            true,
-                        ),
-                    );
-                    let (middle_bit, inserted_middle) = cached_observed_entries
-                        .insert_entry(middle_entry_idx)
-                        .expect("insert middle entry");
-                    assert!(inserted_middle);
-                    cached_observed_entries.observe(
-                        middle_bit,
-                        offer_entry_observed_state(
-                            current_state.scope_id,
-                            middle_summary,
-                            false,
-                            false,
-                            false,
-                        ),
-                    );
-                    let (last_bit, inserted_last) = cached_observed_entries
-                        .insert_entry(last_entry_idx)
-                        .expect("insert last entry");
-                    assert!(inserted_last);
-                    cached_observed_entries.observe(
-                        last_bit,
-                        offer_entry_observed_state(
-                            current_state.scope_id,
-                            last_summary,
-                            false,
-                            false,
-                            false,
-                        ),
-                    );
-
-                    worker.frontier_state.offer_entry_state[third_entry_idx] =
-                        OfferEntryState::EMPTY;
-                    worker.frontier_state.offer_entry_state[last_entry_idx] =
-                        OfferEntryState::EMPTY;
-                    worker.frontier_state.offer_entry_state[new_loop_entry_idx] = OfferEntryState {
-                        active_mask: 1 << 0,
-                        lane_idx: 0,
-                        parallel_root: ScopeId::none(),
-                        frontier: FrontierKind::Loop,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        summary: new_loop_summary,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-                    let mut active_entries = ActiveEntrySet::EMPTY;
-                    assert!(active_entries.insert_entry(current_idx, 0));
-                    assert!(active_entries.insert_entry(new_loop_entry_idx, 0));
-                    assert!(active_entries.insert_entry(middle_entry_idx, 1));
-                    worker.overwrite_global_active_entries_for_test(active_entries);
-
-                    let observation_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    );
-                    let patched = worker
-                        .patch_frontier_observed_entries_from_cached_structure(
-                            active_entries,
-                            observation_key,
-                            cached_key,
-                            cached_observed_entries,
-                        )
-                        .expect("cardinality change should patch cached frontier observations");
-
-                    assert_eq!(patched.entry_bit(current_idx), 1u8 << 0);
-                    assert_eq!(patched.entry_bit(new_loop_entry_idx), 1u8 << 1);
-                    assert_eq!(patched.entry_bit(middle_entry_idx), 1u8 << 2);
-                    assert_eq!(patched.entry_bit(third_entry_idx), 0);
-                    assert_eq!(patched.entry_bit(last_entry_idx), 0);
-                    assert_ne!(
-                        patched.frontier_mask(FrontierKind::Loop)
-                            & patched.entry_bit(new_loop_entry_idx),
-                        0
-                    );
-                    assert_ne!(
-                        patched.frontier_mask(FrontierKind::Parallel)
-                            & patched.entry_bit(middle_entry_idx),
-                        0
-                    );
-                });
-            });
-        },
-    );
-}
-
-#[test]
-fn refresh_frontier_observation_cache_prewarms_after_multi_entry_permutation() {
-    run_offer_regression_test(
-        "refresh_frontier_observation_cache_prewarms_after_multi_entry_permutation",
-        || {
-            offer_fixture!(2048, clock, config);
-            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
-                with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
-                    let transport = HintOnlyTransport::new(HINT_NONE);
-                    let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
-                        .expect("register rendezvous");
-                    let sid = SessionId::new(1013);
-                    unsafe {
-                        cluster_ref
-                            .attach_endpoint_into::<1, _, _, _>(
-                                worker_slot.ptr(),
-                                rv_id,
-                                sid,
-                                &HINT_WORKER_PROGRAM,
-                                NoBinding,
-                            )
-                            .expect("attach worker endpoint");
-                    }
-                    let worker = worker_slot.borrow_mut();
-                    install_offer_hint_worker_lane_one(worker);
-
-                    worker.refresh_lane_offer_state(0);
-                    let current_idx = worker.cursor.index();
-                    let middle_entry_idx = current_idx + 1;
-                    let third_entry_idx = current_idx + 2;
-                    let last_entry_idx = current_idx + 3;
-                    assert!(last_entry_idx < crate::global::typestate::MAX_STATES);
-
-                    let mut current_summary = OfferEntryStaticSummary::EMPTY;
-                    current_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::Route,
-                        static_ready: true,
-                        ..LaneOfferState::EMPTY
-                    });
-                    worker.frontier_state.offer_entry_state[current_idx].summary = current_summary;
-                    worker.frontier_state.offer_entry_state[current_idx].frontier =
-                        FrontierKind::Route;
-                    worker.frontier_state.offer_entry_state[current_idx].active_mask = 1 << 0;
-                    worker.frontier_state.offer_entry_state[current_idx].lane_idx = 0;
-                    let lane_offer = worker
-                        .route_state
-                        .lane_offer_state_mut(0)
-                        .expect("lane 0 offer state");
-                    lane_offer.frontier = FrontierKind::Route;
-                    lane_offer.flags = 0;
-                    lane_offer.static_ready = true;
-                    let current_state = worker.frontier_state.offer_entry_state[current_idx];
-                    let mut middle_summary = OfferEntryStaticSummary::EMPTY;
-                    middle_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::Parallel,
-                        flags: LaneOfferState::FLAG_CONTROLLER,
-                        ..LaneOfferState::EMPTY
-                    });
-                    let mut third_summary = OfferEntryStaticSummary::EMPTY;
-                    third_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::Loop,
-                        flags: LaneOfferState::FLAG_CONTROLLER | LaneOfferState::FLAG_DYNAMIC,
-                        static_ready: true,
-                        ..LaneOfferState::EMPTY
-                    });
-                    let mut last_summary = OfferEntryStaticSummary::EMPTY;
-                    last_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::PassiveObserver,
-                        ..LaneOfferState::EMPTY
-                    });
-
-                    worker.frontier_state.offer_entry_state[middle_entry_idx] = OfferEntryState {
-                        active_mask: 1 << 1,
-                        lane_idx: 1,
-                        parallel_root: ScopeId::none(),
-                        frontier: FrontierKind::Parallel,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        summary: middle_summary,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-                    worker.frontier_state.offer_entry_state[third_entry_idx] = OfferEntryState {
-                        active_mask: 1 << 0,
-                        lane_idx: 0,
-                        parallel_root: ScopeId::none(),
-                        frontier: FrontierKind::Loop,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        summary: third_summary,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-                    worker.frontier_state.offer_entry_state[last_entry_idx] = OfferEntryState {
-                        active_mask: 1 << 1,
-                        lane_idx: 1,
-                        parallel_root: ScopeId::none(),
-                        frontier: FrontierKind::PassiveObserver,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        summary: last_summary,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-
-                    let mut cached_active_entries = ActiveEntrySet::EMPTY;
-                    assert!(cached_active_entries.insert_entry(current_idx, 0));
-                    assert!(cached_active_entries.insert_entry(middle_entry_idx, 1));
-                    assert!(cached_active_entries.insert_entry(third_entry_idx, 0));
-                    assert!(cached_active_entries.insert_entry(last_entry_idx, 1));
-                    worker.overwrite_global_active_entries_for_test(cached_active_entries);
-
-                    let mut cached_observed_entries = ObservedEntrySet::EMPTY;
-                    let (current_bit, inserted_current) = cached_observed_entries
-                        .insert_entry(current_idx)
-                        .expect("insert current entry");
-                    assert!(inserted_current);
-                    cached_observed_entries.observe(
-                        current_bit,
-                        offer_entry_observed_state(
-                            current_state.scope_id,
-                            current_summary,
-                            false,
-                            false,
-                            true,
-                        ),
-                    );
-                    let (third_bit, inserted_third) = cached_observed_entries
-                        .insert_entry(third_entry_idx)
-                        .expect("insert third entry");
-                    assert!(inserted_third);
-                    cached_observed_entries.observe(
-                        third_bit,
-                        offer_entry_observed_state(
-                            current_state.scope_id,
-                            third_summary,
-                            false,
-                            true,
-                            true,
-                        ),
-                    );
-                    let (middle_bit, inserted_middle) = cached_observed_entries
-                        .insert_entry(middle_entry_idx)
-                        .expect("insert middle entry");
-                    assert!(inserted_middle);
-                    cached_observed_entries.observe(
-                        middle_bit,
-                        offer_entry_observed_state(
-                            current_state.scope_id,
-                            middle_summary,
-                            false,
-                            false,
-                            false,
-                        ),
-                    );
-                    let (last_bit, inserted_last) = cached_observed_entries
-                        .insert_entry(last_entry_idx)
-                        .expect("insert last entry");
-                    assert!(inserted_last);
-                    cached_observed_entries.observe(
-                        last_bit,
-                        offer_entry_observed_state(
-                            current_state.scope_id,
-                            last_summary,
-                            false,
-                            false,
-                            false,
-                        ),
-                    );
-                    worker.overwrite_global_frontier_observed_for_test(cached_observed_entries);
-                    let stored_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    );
-                    worker.overwrite_global_frontier_observed_key_for_test(stored_key);
-                    worker.frontier_state.frontier_observation_epoch = 41;
-
-                    worker.frontier_state.offer_entry_state[current_idx].active_mask = 1 << 1;
-                    worker.frontier_state.offer_entry_state[current_idx].lane_idx = 1;
-                    worker.frontier_state.offer_entry_state[middle_entry_idx].active_mask = 1 << 0;
-                    worker.frontier_state.offer_entry_state[middle_entry_idx].lane_idx = 0;
-                    worker.frontier_state.offer_entry_state[third_entry_idx].active_mask = 1 << 1;
-                    worker.frontier_state.offer_entry_state[third_entry_idx].lane_idx = 1;
-                    worker.frontier_state.offer_entry_state[last_entry_idx].active_mask = 1 << 0;
-                    worker.frontier_state.offer_entry_state[last_entry_idx].lane_idx = 0;
-
-                    let mut permuted_active_entries = ActiveEntrySet::EMPTY;
-                    assert!(permuted_active_entries.insert_entry(middle_entry_idx, 0));
-                    assert!(permuted_active_entries.insert_entry(third_entry_idx, 1));
-                    assert!(permuted_active_entries.insert_entry(last_entry_idx, 0));
-                    assert!(permuted_active_entries.insert_entry(current_idx, 1));
-                    worker.overwrite_global_active_entries_for_test(permuted_active_entries);
-
-                    let updated_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    );
-                    RouteFrontierMachine::refresh_frontier_observation_cache(
-                        worker,
-                        ScopeId::none(),
-                        false,
-                    );
-
-                    assert!(
-                        worker.global_frontier_observed_key_for_test() == updated_key,
-                        "permutation prewarm should publish the permuted frontier observation under the new key",
-                    );
-                    assert_eq!(
-                        worker.global_frontier_observed_entry_bit_for_test(middle_entry_idx),
-                        1u8 << 0
-                    );
-                    assert_eq!(
-                        worker.global_frontier_observed_entry_bit_for_test(last_entry_idx),
-                        1u8 << 1
-                    );
-                    assert_eq!(
-                        worker.global_frontier_observed_entry_bit_for_test(current_idx),
-                        1u8 << 2
-                    );
-                    assert_eq!(
-                        worker.global_frontier_observed_entry_bit_for_test(third_entry_idx),
-                        1u8 << 3
-                    );
-                    assert_eq!(
-                        worker
-                            .frontier_state
-                            .global_frontier_observed
-                            .dynamic_controller_mask,
-                        1u8 << 3
-                    );
-                    assert_eq!(
-                        worker
-                            .frontier_state
-                            .global_frontier_observed
-                            .controller_mask,
-                        (1u8 << 0) | (1u8 << 3)
-                    );
-                    assert_eq!(
-                        worker.frontier_state.global_frontier_observed.progress_mask,
-                        1u8 << 2
-                    );
-                    assert_eq!(
-                        worker.frontier_state.global_frontier_observed.ready_mask,
-                        (1u8 << 2) | (1u8 << 3)
-                    );
-                    let observed_entries = worker.frontier_state.global_frontier_observed_entries(
-                        worker.global_frontier_observed_key_for_test(),
-                    );
-                    assert_eq!(observed_entries.frontier_mask(FrontierKind::Loop), 1u8 << 3);
-                    assert_eq!(
-                        observed_entries.frontier_mask(FrontierKind::Parallel),
-                        1u8 << 0
-                    );
-                    assert_eq!(
-                        observed_entries.frontier_mask(FrontierKind::PassiveObserver),
-                        1u8 << 1
-                    );
-                    assert_eq!(
-                        observed_entries.frontier_mask(FrontierKind::Route),
-                        1u8 << 2
-                    );
-                    assert!(
-                        worker.frontier_state.frontier_observation_epoch > 41,
-                        "permutation prewarm should publish a fresh frontier observation epoch",
-                    );
-                });
-            });
-        },
-    );
-}
-
-#[test]
-fn refresh_frontier_observation_cache_prewarms_after_multi_entry_replacement() {
-    run_offer_regression_test(
-        "refresh_frontier_observation_cache_prewarms_after_multi_entry_replacement",
-        || {
-            offer_fixture!(2048, clock, config);
-            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
-                with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
-                    let transport = HintOnlyTransport::new(HINT_NONE);
-                    let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
-                        .expect("register rendezvous");
-                    let sid = SessionId::new(1014);
-                    unsafe {
-                        cluster_ref
-                            .attach_endpoint_into::<1, _, _, _>(
-                                worker_slot.ptr(),
-                                rv_id,
-                                sid,
-                                &HINT_WORKER_PROGRAM,
-                                NoBinding,
-                            )
-                            .expect("attach worker endpoint");
-                    }
-                    let worker = worker_slot.borrow_mut();
-                    install_offer_hint_worker_lane_one(worker);
-
-                    worker.refresh_lane_offer_state(0);
-                    let current_idx = worker.cursor.index();
-                    let middle_entry_idx = current_idx + 1;
-                    let third_entry_idx = current_idx + 2;
-                    let last_entry_idx = current_idx + 3;
-                    let new_loop_entry_idx = current_idx + 4;
-                    let new_passive_entry_idx = current_idx + 5;
-                    assert!(new_passive_entry_idx < crate::global::typestate::MAX_STATES);
-
-                    let mut current_summary = OfferEntryStaticSummary::EMPTY;
-                    current_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::Route,
-                        static_ready: true,
-                        ..LaneOfferState::EMPTY
-                    });
-                    worker.frontier_state.offer_entry_state[current_idx].summary = current_summary;
-                    worker.frontier_state.offer_entry_state[current_idx].frontier =
-                        FrontierKind::Route;
-                    worker.frontier_state.offer_entry_state[current_idx].active_mask = 1 << 0;
-                    worker.frontier_state.offer_entry_state[current_idx].lane_idx = 0;
-                    let lane_offer = worker
-                        .route_state
-                        .lane_offer_state_mut(0)
-                        .expect("lane 0 offer state");
-                    lane_offer.frontier = FrontierKind::Route;
-                    lane_offer.flags = 0;
-                    lane_offer.static_ready = true;
-                    let current_state = worker.frontier_state.offer_entry_state[current_idx];
-
-                    let mut middle_summary = OfferEntryStaticSummary::EMPTY;
-                    middle_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::Parallel,
-                        flags: LaneOfferState::FLAG_CONTROLLER,
-                        ..LaneOfferState::EMPTY
-                    });
-                    let mut third_summary = OfferEntryStaticSummary::EMPTY;
-                    third_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::Loop,
-                        flags: LaneOfferState::FLAG_CONTROLLER | LaneOfferState::FLAG_DYNAMIC,
-                        static_ready: true,
-                        ..LaneOfferState::EMPTY
-                    });
-                    let mut last_summary = OfferEntryStaticSummary::EMPTY;
-                    last_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::PassiveObserver,
-                        ..LaneOfferState::EMPTY
-                    });
-                    let mut new_loop_summary = OfferEntryStaticSummary::EMPTY;
-                    new_loop_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::Loop,
-                        flags: LaneOfferState::FLAG_CONTROLLER | LaneOfferState::FLAG_DYNAMIC,
-                        static_ready: true,
-                        ..LaneOfferState::EMPTY
-                    });
-                    let mut new_passive_summary = OfferEntryStaticSummary::EMPTY;
-                    new_passive_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::PassiveObserver,
-                        ..LaneOfferState::EMPTY
-                    });
-
-                    worker.frontier_state.offer_entry_state[middle_entry_idx] = OfferEntryState {
-                        active_mask: 1 << 1,
-                        lane_idx: 1,
-                        parallel_root: ScopeId::none(),
-                        frontier: FrontierKind::Parallel,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        summary: middle_summary,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-                    worker.frontier_state.offer_entry_state[third_entry_idx] = OfferEntryState {
-                        active_mask: 1 << 0,
-                        lane_idx: 0,
-                        parallel_root: ScopeId::none(),
-                        frontier: FrontierKind::Loop,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        summary: third_summary,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-                    worker.frontier_state.offer_entry_state[last_entry_idx] = OfferEntryState {
-                        active_mask: 1 << 1,
-                        lane_idx: 1,
-                        parallel_root: ScopeId::none(),
-                        frontier: FrontierKind::PassiveObserver,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        summary: last_summary,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-
-                    let mut cached_active_entries = ActiveEntrySet::EMPTY;
-                    assert!(cached_active_entries.insert_entry(current_idx, 0));
-                    assert!(cached_active_entries.insert_entry(middle_entry_idx, 1));
-                    assert!(cached_active_entries.insert_entry(third_entry_idx, 0));
-                    assert!(cached_active_entries.insert_entry(last_entry_idx, 1));
-                    worker.overwrite_global_active_entries_for_test(cached_active_entries);
-
-                    let mut cached_observed_entries = ObservedEntrySet::EMPTY;
-                    let (current_bit, inserted_current) = cached_observed_entries
-                        .insert_entry(current_idx)
-                        .expect("insert current entry");
-                    assert!(inserted_current);
-                    cached_observed_entries.observe(
-                        current_bit,
-                        offer_entry_observed_state(
-                            current_state.scope_id,
-                            current_summary,
-                            false,
-                            false,
-                            true,
-                        ),
-                    );
-                    let (middle_bit, inserted_middle) = cached_observed_entries
-                        .insert_entry(middle_entry_idx)
-                        .expect("insert middle entry");
-                    assert!(inserted_middle);
-                    cached_observed_entries.observe(
-                        middle_bit,
-                        offer_entry_observed_state(
-                            current_state.scope_id,
-                            middle_summary,
-                            false,
-                            false,
-                            false,
-                        ),
-                    );
-                    let (third_bit, inserted_third) = cached_observed_entries
-                        .insert_entry(third_entry_idx)
-                        .expect("insert third entry");
-                    assert!(inserted_third);
-                    cached_observed_entries.observe(
-                        third_bit,
-                        offer_entry_observed_state(
-                            current_state.scope_id,
-                            third_summary,
-                            false,
-                            true,
-                            true,
-                        ),
-                    );
-                    let (last_bit, inserted_last) = cached_observed_entries
-                        .insert_entry(last_entry_idx)
-                        .expect("insert last entry");
-                    assert!(inserted_last);
-                    cached_observed_entries.observe(
-                        last_bit,
-                        offer_entry_observed_state(
-                            current_state.scope_id,
-                            last_summary,
-                            false,
-                            false,
-                            false,
-                        ),
-                    );
-                    worker.overwrite_global_frontier_observed_for_test(cached_observed_entries);
-                    let stored_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    );
-                    worker.overwrite_global_frontier_observed_key_for_test(stored_key);
-                    worker.frontier_state.frontier_observation_epoch = 53;
-
-                    worker.frontier_state.offer_entry_state[third_entry_idx] =
-                        OfferEntryState::EMPTY;
-                    worker.frontier_state.offer_entry_state[last_entry_idx] =
-                        OfferEntryState::EMPTY;
-                    worker.frontier_state.offer_entry_state[new_loop_entry_idx] = OfferEntryState {
-                        active_mask: 1 << 0,
-                        lane_idx: 0,
-                        parallel_root: ScopeId::none(),
-                        frontier: FrontierKind::Loop,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        summary: new_loop_summary,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-                    worker.frontier_state.offer_entry_state[new_passive_entry_idx] =
-                        OfferEntryState {
-                            active_mask: 1 << 1,
-                            lane_idx: 1,
-                            parallel_root: ScopeId::none(),
-                            frontier: FrontierKind::PassiveObserver,
-                            scope_id: current_state.scope_id,
-                            selection_meta: current_state.selection_meta,
-                            label_meta: current_state.label_meta,
-                            materialization_meta: current_state.materialization_meta,
-                            summary: new_passive_summary,
-                            observed: OfferEntryObservedState::EMPTY,
-                            ..OfferEntryState::EMPTY
-                        };
-
-                    let mut replaced_active_entries = ActiveEntrySet::EMPTY;
-                    assert!(replaced_active_entries.insert_entry(current_idx, 0));
-                    assert!(replaced_active_entries.insert_entry(middle_entry_idx, 1));
-                    assert!(replaced_active_entries.insert_entry(new_loop_entry_idx, 0));
-                    assert!(replaced_active_entries.insert_entry(new_passive_entry_idx, 1));
-                    worker.overwrite_global_active_entries_for_test(replaced_active_entries);
-
-                    let updated_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    );
-                    assert!(
-                        worker.refresh_structural_frontier_observation_cache(
-                            ScopeId::none(),
-                            false,
-                            worker.global_active_entries(),
-                            worker.global_frontier_observed_key_for_test(),
-                        ),
-                        "multi-entry replacement should patch the cached frontier observation without falling back to generic rebuild",
-                    );
-
-                    assert!(
-                        worker.global_frontier_observed_key_for_test() == updated_key,
-                        "multi-entry replacement should publish the refreshed frontier observation under the new key",
-                    );
-                    assert_eq!(
-                        worker.global_frontier_observed_entry_bit_for_test(current_idx),
-                        1u8 << 0
-                    );
-                    assert_eq!(
-                        worker.global_frontier_observed_entry_bit_for_test(new_loop_entry_idx),
-                        1u8 << 1
-                    );
-                    assert_eq!(
-                        worker.global_frontier_observed_entry_bit_for_test(middle_entry_idx),
-                        1u8 << 2
-                    );
-                    assert_eq!(
-                        worker.global_frontier_observed_entry_bit_for_test(new_passive_entry_idx),
-                        1u8 << 3
-                    );
-                    assert_eq!(
-                        worker.global_frontier_observed_entry_bit_for_test(third_entry_idx),
-                        0
-                    );
-                    assert_eq!(
-                        worker.global_frontier_observed_entry_bit_for_test(last_entry_idx),
-                        0
-                    );
-                    assert_eq!(
-                        worker
-                            .frontier_state
-                            .global_frontier_observed
-                            .dynamic_controller_mask,
-                        1u8 << 1
-                    );
-                    assert_eq!(
-                        worker
-                            .frontier_state
-                            .global_frontier_observed
-                            .controller_mask,
-                        (1u8 << 1) | (1u8 << 2)
-                    );
-                    assert_eq!(
-                        worker.frontier_state.global_frontier_observed.progress_mask,
-                        1u8 << 0
-                    );
-                    assert_eq!(
-                        worker.frontier_state.global_frontier_observed.ready_mask,
-                        (1u8 << 0) | (1u8 << 1)
-                    );
-                    let observed_entries = worker.frontier_state.global_frontier_observed_entries(
-                        worker.global_frontier_observed_key_for_test(),
-                    );
-                    assert_eq!(observed_entries.frontier_mask(FrontierKind::Loop), 1u8 << 1);
-                    assert_eq!(
-                        observed_entries.frontier_mask(FrontierKind::Parallel),
-                        1u8 << 2
-                    );
-                    assert_eq!(
-                        observed_entries.frontier_mask(FrontierKind::PassiveObserver),
-                        1u8 << 3
-                    );
-                    assert_eq!(
-                        observed_entries.frontier_mask(FrontierKind::Route),
-                        1u8 << 0
-                    );
-                    assert!(
-                        worker.frontier_state.frontier_observation_epoch > 53,
-                        "multi-entry replacement prewarm should publish a fresh frontier observation epoch",
-                    );
-                });
-            });
-        },
-    );
+) -> (std::vec::Vec<FrontierObservationSlot>, ObservedEntrySet) {
+    observed_entry_set_from_states(&[
+        (
+            current_idx,
+            OfferEntryObservedState {
+                scope_id: ScopeId::generic(7),
+                frontier_mask: FrontierKind::Route.bit(),
+                flags: OfferEntryObservedState::FLAG_READY,
+            },
+        ),
+        (
+            fake_entry_idx,
+            OfferEntryObservedState {
+                scope_id: ScopeId::generic(8),
+                frontier_mask: FrontierKind::Route.bit(),
+                flags: 0,
+            },
+        ),
+    ])
 }
 
 #[test]
@@ -4996,16 +3804,15 @@ fn refresh_cached_frontier_observation_entry_updates_stable_slot_in_place() {
 
                     worker.refresh_lane_offer_state(0);
                     let current_idx = worker.cursor.index();
-                    let mut summary = worker.frontier_state.offer_entry_state[current_idx].summary;
+                    let mut summary = worker.compute_offer_entry_static_summary(current_idx);
                     summary.flags &= !OfferEntryStaticSummary::FLAG_STATIC_READY;
-                    worker.frontier_state.offer_entry_state[current_idx].summary = summary;
                     worker
                         .route_state
                         .lane_offer_state_mut(0)
                         .expect("lane 0 offer state")
                         .static_ready = false;
 
-                    let mut observed_entries = ObservedEntrySet::EMPTY;
+                    let (_observed_slots, mut observed_entries) = observed_entry_set_storage(1);
                     let (observed_bit, inserted) = observed_entries
                         .insert_entry(current_idx)
                         .expect("insert current entry");
@@ -5013,7 +3820,10 @@ fn refresh_cached_frontier_observation_entry_updates_stable_slot_in_place() {
                     observed_entries.observe(
                         observed_bit,
                         offer_entry_observed_state(
-                            worker.frontier_state.offer_entry_state[current_idx].scope_id,
+                            worker
+                                .offer_entry_state_snapshot(current_idx)
+                                .expect("offer entry state snapshot")
+                                .scope_id,
                             summary,
                             false,
                             false,
@@ -5033,9 +3843,6 @@ fn refresh_cached_frontier_observation_entry_updates_stable_slot_in_place() {
                         0
                     );
 
-                    worker.frontier_state.offer_entry_state[current_idx]
-                        .summary
-                        .flags |= OfferEntryStaticSummary::FLAG_STATIC_READY;
                     worker
                         .route_state
                         .lane_offer_state_mut(0)
@@ -5087,7 +3894,7 @@ fn refresh_cached_frontier_observation_entry_updates_stable_slot_in_place() {
 fn observed_entry_set_move_entry_slot_remaps_masks_exactly() {
     let current_idx = 17usize;
     let fake_entry_idx = 23usize;
-    let mut observed_entries = ObservedEntrySet::EMPTY;
+    let (_observed_slots, mut observed_entries) = observed_entry_set_storage(2);
     let (current_bit, inserted_current) = observed_entries
         .insert_entry(current_idx)
         .expect("insert current entry");
@@ -5133,7 +3940,7 @@ fn observed_entry_set_move_entry_slot_remaps_masks_exactly() {
 fn observed_entry_set_insert_observation_at_slot_remaps_masks_exactly() {
     let current_idx = 17usize;
     let fake_entry_idx = 23usize;
-    let mut observed_entries = ObservedEntrySet::EMPTY;
+    let (_observed_slots, mut observed_entries) = observed_entry_set_storage(2);
     let (current_bit, inserted_current) = observed_entries
         .insert_entry(current_idx)
         .expect("insert current entry");
@@ -5179,7 +3986,7 @@ fn observed_entry_set_insert_observation_at_slot_remaps_masks_exactly() {
 fn observed_entry_set_remove_observation_remaps_masks_exactly() {
     let current_idx = 17usize;
     let fake_entry_idx = 23usize;
-    let mut observed_entries = ObservedEntrySet::EMPTY;
+    let (_observed_slots, mut observed_entries) = observed_entry_set_storage(2);
     let (current_bit, inserted_current) = observed_entries
         .insert_entry(current_idx)
         .expect("insert current entry");
@@ -5221,7 +4028,7 @@ fn observed_entry_set_replace_entry_at_slot_remaps_masks_exactly() {
     let current_idx = 17usize;
     let old_entry_idx = 23usize;
     let new_entry_idx = 29usize;
-    let mut observed_entries = ObservedEntrySet::EMPTY;
+    let (_observed_slots, mut observed_entries) = observed_entry_set_storage(2);
     let (current_bit, inserted_current) = observed_entries
         .insert_entry(current_idx)
         .expect("insert current entry");
@@ -5276,741 +4083,92 @@ fn observed_entry_set_replace_entry_at_slot_remaps_masks_exactly() {
 
 #[test]
 fn frontier_observation_structural_entry_detection_is_exact() {
-    let mut cached_entries = ActiveEntrySet::EMPTY;
-    assert!(cached_entries.insert_entry(11, 0));
-    assert!(cached_entries.insert_entry(17, 0));
+    with_active_entry_set_storage(2, |cached_entries| {
+        assert!(cached_entries.insert_entry(11, 0));
+        assert!(cached_entries.insert_entry(17, 0));
 
-    let mut inserted_entries = ActiveEntrySet::EMPTY;
-    inserted_entries.copy_from(cached_entries);
-    assert!(inserted_entries.insert_entry(23, 0));
-    let cached_key = FrontierObservationKey::from_active_entries_for_test(cached_entries);
-    assert_eq!(
-            CursorEndpoint::<1, HintOnlyTransport, DefaultLabelUniverse, CounterClock, EpochTbl, 4>::
-                structural_inserted_entry_idx(inserted_entries, cached_key),
-            Some(23)
-        );
-    let inserted_key = FrontierObservationKey::from_active_entries_for_test(inserted_entries);
-    assert_eq!(
-            CursorEndpoint::<1, HintOnlyTransport, DefaultLabelUniverse, CounterClock, EpochTbl, 4>::
-                structural_removed_entry_idx(cached_entries, inserted_key),
-            Some(23)
-        );
+        with_frontier_observation_key_storage(2, 1, |cached_key| {
+            cached_key.set_active_entries_from(*cached_entries);
 
-    let mut replaced_entries = ActiveEntrySet::EMPTY;
-    assert!(replaced_entries.insert_entry(11, 0));
-    assert!(replaced_entries.insert_entry(19, 0));
-    assert_eq!(
-            CursorEndpoint::<1, HintOnlyTransport, DefaultLabelUniverse, CounterClock, EpochTbl, 4>::
-                structural_replaced_entry_idx(replaced_entries, cached_key),
-            Some(19)
-        );
+            with_active_entry_set_storage(3, |inserted_entries| {
+                inserted_entries.copy_from(*cached_entries);
+                assert!(inserted_entries.insert_entry(23, 0));
+                assert_eq!(
+                    CursorEndpoint::<
+                        1,
+                        HintOnlyTransport,
+                        DefaultLabelUniverse,
+                        CounterClock,
+                        EpochTbl,
+                        4,
+                    >::structural_inserted_entry_idx(
+                        *inserted_entries, *cached_key
+                    ),
+                    Some(23)
+                );
 
-    let mut shifted_entries = ActiveEntrySet::EMPTY;
-    assert!(shifted_entries.insert_entry(17, 0));
-    assert!(shifted_entries.insert_entry(11, 1));
-    let mut shifted_cached_entries = ActiveEntrySet::EMPTY;
-    assert!(shifted_cached_entries.insert_entry(11, 0));
-    assert!(shifted_cached_entries.insert_entry(17, 1));
-    let shifted_cached_key =
-        FrontierObservationKey::from_active_entries_for_test(shifted_cached_entries);
-    assert_eq!(
-            CursorEndpoint::<1, HintOnlyTransport, DefaultLabelUniverse, CounterClock, EpochTbl, 4>::
-                structural_shifted_entry_idx(shifted_entries, shifted_cached_key),
-            Some(17)
-        );
-}
-
-#[test]
-fn refresh_inserted_frontier_observation_entry_updates_cache_in_place() {
-    run_offer_regression_test(
-        "refresh_inserted_frontier_observation_entry_updates_cache_in_place",
-        || {
-            offer_fixture!(2048, clock, config);
-            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
-                with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
-                    let transport = HintOnlyTransport::new(HINT_NONE);
-                    let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
-                        .expect("register rendezvous");
-                    let sid = SessionId::new(1015);
-                    unsafe {
-                        cluster_ref
-                            .attach_endpoint_into::<1, _, _, _>(
-                                worker_slot.ptr(),
-                                rv_id,
-                                sid,
-                                &HINT_WORKER_PROGRAM,
-                                NoBinding,
-                            )
-                            .expect("attach worker endpoint");
-                    }
-                    let worker = worker_slot.borrow_mut();
-
-                    worker.refresh_lane_offer_state(0);
-                    let current_idx = worker.cursor.index();
-                    let fake_entry_idx = current_idx + 1;
-                    assert!(fake_entry_idx < crate::global::typestate::MAX_STATES);
-
-                    let current_state = worker.frontier_state.offer_entry_state[current_idx];
-                    let mut current_observed = ObservedEntrySet::EMPTY;
-                    let (current_bit, inserted_current) = current_observed
-                        .insert_entry(current_idx)
-                        .expect("insert current entry");
-                    assert!(inserted_current);
-                    current_observed.observe(
-                        current_bit,
-                        offer_entry_observed_state(
-                            current_state.scope_id,
-                            current_state.summary,
-                            false,
-                            false,
-                            true,
-                        ),
-                    );
-                    worker.overwrite_global_active_entries_for_test(ActiveEntrySet::EMPTY);
-                    assert!(worker.insert_global_active_entry_for_test(current_idx, 0));
-                    worker.overwrite_global_frontier_observed_for_test(current_observed);
-                    let stored_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    );
-                    worker.overwrite_global_frontier_observed_key_for_test(stored_key);
-                    worker.frontier_state.frontier_observation_epoch = 59;
-
-                    worker.frontier_state.offer_entry_state[fake_entry_idx] = OfferEntryState {
-                        active_mask: 1 << 0,
-                        lane_idx: 0,
-                        parallel_root: current_state.parallel_root,
-                        frontier: current_state.frontier,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        ..OfferEntryState::EMPTY
-                    };
-                    assert!(worker.insert_global_active_entry_for_test(fake_entry_idx, 0));
-
-                    let updated_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    );
-                    assert!(
-                        worker
-                            .cached_frontier_observed_entries(ScopeId::none(), false, updated_key)
-                            .is_none(),
-                        "entry insertion should invalidate the previous cache key before patching",
-                    );
-                    assert!(
-                        worker.refresh_inserted_frontier_observation_entry(
-                            ScopeId::none(),
-                            false,
-                            fake_entry_idx
-                        ),
-                        "single entry insertion should patch the cached frontier observation in place",
-                    );
-                    assert!(
-                        worker.global_frontier_observed_key_for_test() == updated_key,
-                        "insert patch should publish the refreshed observation under the new key",
-                    );
+                with_frontier_observation_key_storage(3, 1, |inserted_key| {
+                    inserted_key.set_active_entries_from(*inserted_entries);
                     assert_eq!(
-                        worker.global_frontier_observed_entry_bit_for_test(current_idx),
-                        1u8 << 0
-                    );
-                    assert_eq!(
-                        worker.global_frontier_observed_entry_bit_for_test(fake_entry_idx),
-                        1u8 << 1
-                    );
-                    assert_ne!(
-                        worker.frontier_state.global_frontier_observed.ready_mask
-                            & worker.global_frontier_observed_entry_bit_for_test(current_idx),
-                        0,
-                        "existing current observation should survive entry insertion",
-                    );
-                    assert!(
-                        worker.frontier_state.frontier_observation_epoch > 59,
-                        "insert patch should publish a fresh frontier observation epoch",
+                        CursorEndpoint::<
+                            1,
+                            HintOnlyTransport,
+                            DefaultLabelUniverse,
+                            CounterClock,
+                            EpochTbl,
+                            4,
+                        >::structural_removed_entry_idx(
+                            *cached_entries, *inserted_key
+                        ),
+                        Some(23)
                     );
                 });
             });
-        },
-    );
-}
 
-#[test]
-fn refresh_replaced_frontier_observation_entry_updates_cache_in_place() {
-    run_offer_regression_test(
-        "refresh_replaced_frontier_observation_entry_updates_cache_in_place",
-        || {
-            offer_fixture!(2048, clock, config);
-            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
-                with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
-                    let transport = HintOnlyTransport::new(HINT_NONE);
-                    let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
-                        .expect("register rendezvous");
-                    let sid = SessionId::new(1017);
-                    unsafe {
-                        cluster_ref
-                            .attach_endpoint_into::<1, _, _, _>(
-                                worker_slot.ptr(),
-                                rv_id,
-                                sid,
-                                &HINT_WORKER_PROGRAM,
-                                NoBinding,
-                            )
-                            .expect("attach worker endpoint");
-                    }
-                    let worker = worker_slot.borrow_mut();
-
-                    worker.refresh_lane_offer_state(0);
-                    let current_idx = worker.cursor.index();
-                    let old_entry_idx = current_idx + 1;
-                    let new_entry_idx = current_idx + 2;
-                    assert!(new_entry_idx < crate::global::typestate::MAX_STATES);
-
-                    let current_state = worker.frontier_state.offer_entry_state[current_idx];
-                    let old_state = OfferEntryState {
-                        active_mask: 1 << 0,
-                        lane_idx: 0,
-                        parallel_root: current_state.parallel_root,
-                        frontier: current_state.frontier,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-                    worker.frontier_state.offer_entry_state[old_entry_idx] = old_state;
-
-                    let mut cached_active_entries = ActiveEntrySet::EMPTY;
-                    assert!(cached_active_entries.insert_entry(current_idx, 0));
-                    assert!(cached_active_entries.insert_entry(old_entry_idx, 0));
-                    worker.overwrite_global_active_entries_for_test(cached_active_entries);
-
-                    let mut cached_observed_entries = ObservedEntrySet::EMPTY;
-                    let (current_bit, inserted_current) = cached_observed_entries
-                        .insert_entry(current_idx)
-                        .expect("insert current entry");
-                    assert!(inserted_current);
-                    cached_observed_entries.observe(
-                        current_bit,
-                        offer_entry_observed_state(
-                            current_state.scope_id,
-                            current_state.summary,
-                            false,
-                            false,
-                            true,
-                        ),
-                    );
-                    let (old_bit, inserted_old) = cached_observed_entries
-                        .insert_entry(old_entry_idx)
-                        .expect("insert old entry");
-                    assert!(inserted_old);
-                    cached_observed_entries.observe(
-                        old_bit,
-                        offer_entry_observed_state(
-                            old_state.scope_id,
-                            old_state.summary,
-                            false,
-                            false,
-                            false,
-                        ),
-                    );
-                    worker.overwrite_global_frontier_observed_for_test(cached_observed_entries);
-                    let stored_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    );
-                    worker.overwrite_global_frontier_observed_key_for_test(stored_key);
-                    worker.frontier_state.frontier_observation_epoch = 67;
-
-                    let mut ready_summary = OfferEntryStaticSummary::EMPTY;
-                    ready_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::Loop,
-                        flags: LaneOfferState::FLAG_DYNAMIC,
-                        static_ready: true,
-                        ..LaneOfferState::EMPTY
-                    });
-                    worker.frontier_state.offer_entry_state[old_entry_idx] = OfferEntryState::EMPTY;
-                    worker.frontier_state.offer_entry_state[new_entry_idx] = OfferEntryState {
-                        active_mask: 1 << 0,
-                        lane_idx: 0,
-                        parallel_root: current_state.parallel_root,
-                        frontier: FrontierKind::Loop,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        summary: ready_summary,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-                    let mut replaced_active_entries = ActiveEntrySet::EMPTY;
-                    assert!(replaced_active_entries.insert_entry(current_idx, 0));
-                    assert!(replaced_active_entries.insert_entry(new_entry_idx, 0));
-                    worker.overwrite_global_active_entries_for_test(replaced_active_entries);
-
-                    let updated_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    );
-                    assert!(
-                        worker
-                            .cached_frontier_observed_entries(ScopeId::none(), false, updated_key)
-                            .is_none(),
-                        "entry replacement should invalidate the previous cache key before patching",
-                    );
-                    assert!(
-                        worker.refresh_replaced_frontier_observation_entry(
-                            ScopeId::none(),
-                            false,
-                            new_entry_idx
-                        ),
-                        "single slot replacement should patch the cached frontier observation in place",
-                    );
-                    assert!(
-                        worker.global_frontier_observed_key_for_test() == updated_key,
-                        "replace patch should publish the refreshed observation under the new key",
-                    );
-                    assert_eq!(
-                        worker.global_frontier_observed_entry_bit_for_test(old_entry_idx),
-                        0
-                    );
-                    assert_eq!(
-                        worker.global_frontier_observed_entry_bit_for_test(new_entry_idx),
-                        1u8 << 1
-                    );
-                    assert_ne!(
-                        worker.frontier_state.global_frontier_observed.ready_mask
-                            & worker.global_frontier_observed_entry_bit_for_test(new_entry_idx),
-                        0,
-                        "replacement observation should reflect the new entry readiness",
-                    );
-                    assert_eq!(
-                        worker
-                            .frontier_state
-                            .global_frontier_observed_entries(
-                                worker.global_frontier_observed_key_for_test(),
-                            )
-                            .frontier_mask(FrontierKind::Loop)
-                            & worker.global_frontier_observed_entry_bit_for_test(new_entry_idx),
-                        1u8 << 1,
-                        "replacement observation should publish the new frontier bit",
-                    );
-                    assert!(
-                        worker.frontier_state.frontier_observation_epoch > 67,
-                        "replace patch should publish a fresh frontier observation epoch",
-                    );
-                });
+            with_active_entry_set_storage(2, |replaced_entries| {
+                assert!(replaced_entries.insert_entry(11, 0));
+                assert!(replaced_entries.insert_entry(19, 0));
+                assert_eq!(
+                    CursorEndpoint::<
+                        1,
+                        HintOnlyTransport,
+                        DefaultLabelUniverse,
+                        CounterClock,
+                        EpochTbl,
+                        4,
+                    >::structural_replaced_entry_idx(
+                        *replaced_entries, *cached_key
+                    ),
+                    Some(19)
+                );
             });
-        },
-    );
-}
+        });
+    });
 
-#[test]
-fn refresh_removed_frontier_observation_entry_updates_cache_in_place() {
-    run_offer_regression_test(
-        "refresh_removed_frontier_observation_entry_updates_cache_in_place",
-        || {
-            offer_fixture!(2048, clock, config);
-            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
-                with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
-                    let transport = HintOnlyTransport::new(HINT_NONE);
-                    let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
-                        .expect("register rendezvous");
-                    let sid = SessionId::new(1016);
-                    unsafe {
-                        cluster_ref
-                            .attach_endpoint_into::<1, _, _, _>(
-                                worker_slot.ptr(),
-                                rv_id,
-                                sid,
-                                &HINT_WORKER_PROGRAM,
-                                NoBinding,
-                            )
-                            .expect("attach worker endpoint");
-                    }
-                    let worker = worker_slot.borrow_mut();
-
-                    worker.refresh_lane_offer_state(0);
-                    let current_idx = worker.cursor.index();
-                    let fake_entry_idx = current_idx + 1;
-                    assert!(fake_entry_idx < crate::global::typestate::MAX_STATES);
-
-                    let current_state = worker.frontier_state.offer_entry_state[current_idx];
-                    let fake_state = OfferEntryState {
-                        active_mask: 1 << 1,
-                        lane_idx: 1,
-                        parallel_root: current_state.parallel_root,
-                        frontier: current_state.frontier,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-                    worker.frontier_state.offer_entry_state[fake_entry_idx] = fake_state;
-
-                    let mut cached_active_entries = ActiveEntrySet::EMPTY;
-                    assert!(cached_active_entries.insert_entry(current_idx, 0));
-                    assert!(cached_active_entries.insert_entry(fake_entry_idx, 1));
-                    worker.overwrite_global_active_entries_for_test(cached_active_entries);
-
-                    let mut cached_observed_entries = ObservedEntrySet::EMPTY;
-                    let (current_bit, inserted_current) = cached_observed_entries
-                        .insert_entry(current_idx)
-                        .expect("insert current entry");
-                    assert!(inserted_current);
-                    cached_observed_entries.observe(
-                        current_bit,
-                        offer_entry_observed_state(
-                            current_state.scope_id,
-                            current_state.summary,
-                            false,
-                            false,
-                            true,
-                        ),
-                    );
-                    let (fake_bit, inserted_fake) = cached_observed_entries
-                        .insert_entry(fake_entry_idx)
-                        .expect("insert fake entry");
-                    assert!(inserted_fake);
-                    cached_observed_entries.observe(
-                        fake_bit,
-                        offer_entry_observed_state(
-                            fake_state.scope_id,
-                            fake_state.summary,
-                            false,
-                            false,
-                            false,
-                        ),
-                    );
-                    worker.overwrite_global_frontier_observed_for_test(cached_observed_entries);
-                    let stored_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    );
-                    worker.overwrite_global_frontier_observed_key_for_test(stored_key);
-                    worker.frontier_state.frontier_observation_epoch = 61;
-
-                    worker.frontier_state.offer_entry_state[fake_entry_idx] =
-                        OfferEntryState::EMPTY;
-                    assert!(worker.remove_global_active_entry_for_test(fake_entry_idx));
-
-                    let updated_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    );
-                    assert!(
-                        worker
-                            .cached_frontier_observed_entries(ScopeId::none(), false, updated_key)
-                            .is_none(),
-                        "entry removal should invalidate the previous cache key before patching",
-                    );
-                    assert!(
-                        worker.refresh_removed_frontier_observation_entry(
-                            ScopeId::none(),
-                            false,
-                            fake_entry_idx
-                        ),
-                        "single entry removal should patch the cached frontier observation in place",
-                    );
-                    assert!(
-                        worker.global_frontier_observed_key_for_test() == updated_key,
-                        "remove patch should publish the refreshed observation under the new key",
-                    );
-                    assert_eq!(
-                        worker.global_frontier_observed_entry_bit_for_test(current_idx),
-                        1u8 << 0
-                    );
-                    assert_eq!(
-                        worker.global_frontier_observed_entry_bit_for_test(fake_entry_idx),
-                        0
-                    );
-                    assert_ne!(
-                        worker.frontier_state.global_frontier_observed.ready_mask
-                            & worker.global_frontier_observed_entry_bit_for_test(current_idx),
-                        0,
-                        "current observation should survive entry removal",
-                    );
-                    assert!(
-                        worker.frontier_state.frontier_observation_epoch > 61,
-                        "remove patch should publish a fresh frontier observation epoch",
-                    );
-                });
+    with_active_entry_set_storage(2, |shifted_entries| {
+        assert!(shifted_entries.insert_entry(17, 0));
+        assert!(shifted_entries.insert_entry(11, 1));
+        with_active_entry_set_storage(2, |shifted_cached_entries| {
+            assert!(shifted_cached_entries.insert_entry(11, 0));
+            assert!(shifted_cached_entries.insert_entry(17, 1));
+            with_frontier_observation_key_storage(2, 1, |shifted_cached_key| {
+                shifted_cached_key.set_active_entries_from(*shifted_cached_entries);
+                assert_eq!(
+                    CursorEndpoint::<
+                        1,
+                        HintOnlyTransport,
+                        DefaultLabelUniverse,
+                        CounterClock,
+                        EpochTbl,
+                        4,
+                    >::structural_shifted_entry_idx(
+                        *shifted_entries, *shifted_cached_key
+                    ),
+                    Some(17)
+                );
             });
-        },
-    );
-}
-
-#[test]
-fn scope_evidence_change_prewarms_relevant_frontier_observation_cache() {
-    run_offer_regression_test(
-        "scope_evidence_change_prewarms_relevant_frontier_observation_cache",
-        || {
-            offer_fixture!(2048, clock, config);
-            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
-                with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
-                    let transport = HintOnlyTransport::new(HINT_NONE);
-                    let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
-                        .expect("register rendezvous");
-                    let sid = SessionId::new(1013);
-                    unsafe {
-                        cluster_ref
-                            .attach_endpoint_into::<1, _, _, _>(
-                                worker_slot.ptr(),
-                                rv_id,
-                                sid,
-                                &HINT_WORKER_PROGRAM,
-                                NoBinding,
-                            )
-                            .expect("attach worker endpoint");
-                    }
-                    let worker = worker_slot.borrow_mut();
-
-                    worker.refresh_lane_offer_state(0);
-                    let current_idx = worker.cursor.index();
-                    let current_scope = worker.cursor.node_scope_id();
-                    let fake_entry_idx = current_idx + 1;
-                    assert!(fake_entry_idx < crate::global::typestate::MAX_STATES);
-
-                    let current_state = worker.frontier_state.offer_entry_state[current_idx];
-                    let mut static_summary = OfferEntryStaticSummary::EMPTY;
-                    static_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::Route,
-                        ..LaneOfferState::EMPTY
-                    });
-                    worker.frontier_state.offer_entry_state[current_idx].summary = static_summary;
-                    worker.frontier_state.offer_entry_state[current_idx].frontier =
-                        FrontierKind::Route;
-                    let lane_offer = worker
-                        .route_state
-                        .lane_offer_state_mut(0)
-                        .expect("lane 0 offer state");
-                    lane_offer.frontier = FrontierKind::Route;
-                    lane_offer.flags = 0;
-                    lane_offer.static_ready = false;
-                    worker.frontier_state.offer_entry_state[fake_entry_idx] = OfferEntryState {
-                        active_mask: 1 << 0,
-                        lane_idx: 0,
-                        parallel_root: ScopeId::none(),
-                        frontier: FrontierKind::Route,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        summary: static_summary,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-
-                    let mut active_entries = ActiveEntrySet::EMPTY;
-                    assert!(active_entries.insert_entry(current_idx, 0));
-                    assert!(active_entries.insert_entry(fake_entry_idx, 1));
-                    worker.overwrite_global_active_entries_for_test(active_entries);
-                    worker.overwrite_global_frontier_observed_for_test(
-                        observed_entries_with_route_entries(current_idx, fake_entry_idx),
-                    );
-                    let stored_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    );
-                    worker.overwrite_global_frontier_observed_key_for_test(stored_key);
-                    worker.frontier_state.frontier_observation_epoch = 41;
-
-                    worker.mark_scope_ready_arm(current_scope, 0);
-
-                    let warmed_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    );
-                    assert!(
-                        worker
-                            .cached_frontier_observed_entries(ScopeId::none(), false, warmed_key)
-                            .is_some(),
-                        "scope evidence update should prewarm the relevant cached observation",
-                    );
-                    let current_bit =
-                        worker.global_frontier_observed_entry_bit_for_test(current_idx);
-                    assert_ne!(current_bit, 0);
-                    assert_ne!(
-                        worker
-                            .frontier_state
-                            .global_frontier_observed
-                            .ready_arm_mask
-                            & current_bit,
-                        0,
-                        "ready-arm evidence should update the cached observation for the changed scope",
-                    );
-                    assert_ne!(
-                        worker.frontier_state.global_frontier_observed.progress_mask & current_bit,
-                        0,
-                        "ready-arm evidence should also publish progress evidence in the cached observation",
-                    );
-                    assert!(
-                        worker.frontier_state.frontier_observation_epoch > 41,
-                        "targeted cache refresh should publish a new frontier observation epoch",
-                    );
-
-                    let warmed_epoch = worker.frontier_state.frontier_observation_epoch;
-                    RouteFrontierMachine::new(&mut *worker).align_cursor_to_selected_scope().expect(
-                        "prewarmed scope evidence should keep align on the cached observation path",
-                    );
-                    assert_eq!(
-                        worker.frontier_state.frontier_observation_epoch, warmed_epoch,
-                        "align should hit the warmed cache instead of rebuilding the frontier observation",
-                    );
-                });
-            });
-        },
-    );
-}
-
-#[test]
-fn binding_inbox_change_prewarms_relevant_frontier_observation_cache() {
-    run_offer_regression_test(
-        "binding_inbox_change_prewarms_relevant_frontier_observation_cache",
-        || {
-            offer_fixture!(2048, clock, config);
-            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
-                with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
-                    let transport = HintOnlyTransport::new(HINT_NONE);
-                    let rv_id = cluster_ref
-                        .add_rendezvous_from_config(config, transport)
-                        .expect("register rendezvous");
-                    let sid = SessionId::new(1014);
-                    unsafe {
-                        cluster_ref
-                            .attach_endpoint_into::<1, _, _, _>(
-                                worker_slot.ptr(),
-                                rv_id,
-                                sid,
-                                &HINT_WORKER_PROGRAM,
-                                NoBinding,
-                            )
-                            .expect("attach worker endpoint");
-                    }
-                    let worker = worker_slot.borrow_mut();
-
-                    worker.refresh_lane_offer_state(0);
-                    let current_idx = worker.cursor.index();
-                    let fake_entry_idx = current_idx + 1;
-                    assert!(fake_entry_idx < crate::global::typestate::MAX_STATES);
-
-                    let current_state = worker.frontier_state.offer_entry_state[current_idx];
-                    let mut static_summary = OfferEntryStaticSummary::EMPTY;
-                    static_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::Route,
-                        ..LaneOfferState::EMPTY
-                    });
-                    worker.frontier_state.offer_entry_state[current_idx].summary = static_summary;
-                    worker.frontier_state.offer_entry_state[current_idx].frontier =
-                        FrontierKind::Route;
-                    let lane_offer = worker
-                        .route_state
-                        .lane_offer_state_mut(0)
-                        .expect("lane 0 offer state");
-                    lane_offer.frontier = FrontierKind::Route;
-                    lane_offer.flags = 0;
-                    lane_offer.static_ready = false;
-                    worker.frontier_state.offer_entry_state[fake_entry_idx] = OfferEntryState {
-                        active_mask: 1 << 1,
-                        lane_idx: 1,
-                        parallel_root: ScopeId::none(),
-                        frontier: FrontierKind::Route,
-                        scope_id: current_state.scope_id,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        summary: static_summary,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
-
-                    let mut active_entries = ActiveEntrySet::EMPTY;
-                    assert!(active_entries.insert_entry(current_idx, 0));
-                    assert!(active_entries.insert_entry(fake_entry_idx, 1));
-                    worker.overwrite_global_active_entries_for_test(active_entries);
-                    worker.overwrite_global_frontier_observed_for_test(
-                        observed_entries_with_route_entries(current_idx, fake_entry_idx),
-                    );
-                    let stored_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    );
-                    worker.overwrite_global_frontier_observed_key_for_test(stored_key);
-                    worker.frontier_state.frontier_observation_epoch = 43;
-
-                    worker.put_back_binding_for_lane(
-                        0,
-                        crate::binding::IncomingClassification {
-                            label: current_state.label_meta.recv_label,
-                            instance: 11,
-                            has_fin: false,
-                            channel: Channel::new(7),
-                        },
-                    );
-
-                    let warmed_key = RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    );
-                    assert!(
-                        worker
-                            .cached_frontier_observed_entries(ScopeId::none(), false, warmed_key,)
-                            .is_some(),
-                        "binding inbox update should prewarm the relevant cached observation",
-                    );
-                    let current_bit =
-                        worker.global_frontier_observed_entry_bit_for_test(current_idx);
-                    let fake_bit =
-                        worker.global_frontier_observed_entry_bit_for_test(fake_entry_idx);
-                    assert_ne!(
-                        worker.frontier_state.global_frontier_observed.ready_mask & current_bit,
-                        0,
-                        "buffered binding should mark the affected entry ready in the cached observation",
-                    );
-                    assert_ne!(
-                        worker.frontier_state.global_frontier_observed.progress_mask & current_bit,
-                        0,
-                        "buffered binding should publish progress evidence for the affected entry",
-                    );
-                    assert_eq!(
-                        worker.frontier_state.global_frontier_observed.ready_mask & fake_bit,
-                        0,
-                        "unrelated offer lanes must stay untouched by the targeted binding refresh",
-                    );
-                    assert!(
-                        worker.frontier_state.frontier_observation_epoch > 43,
-                        "targeted binding refresh should publish a new frontier observation epoch",
-                    );
-
-                    let warmed_epoch = worker.frontier_state.frontier_observation_epoch;
-                    RouteFrontierMachine::new(&mut *worker).align_cursor_to_selected_scope().expect(
-                        "prewarmed binding change should keep align on the cached observation path",
-                    );
-                    assert_eq!(
-                        worker.frontier_state.frontier_observation_epoch, warmed_epoch,
-                        "align should hit the warmed binding cache instead of rebuilding the frontier observation",
-                    );
-                });
-            });
-        },
-    );
+        });
+    });
 }
 
 #[test]
@@ -6041,12 +4199,8 @@ fn cached_frontier_changed_entry_slot_mask_ignores_non_representative_route_lane
 
                     worker.refresh_lane_offer_state(0);
                     let current_idx = worker.cursor.index();
-                    let state = &mut worker.frontier_state.offer_entry_state[current_idx];
-                    state.lane_idx = 0;
-
-                    let mut active_entries = ActiveEntrySet::EMPTY;
-                    assert!(active_entries.insert_entry(current_idx, 0));
-                    let _ = state;
+                    let (_active_slots, active_entries) =
+                        active_entry_set_from_pairs(&[(current_idx, 0)]);
                     worker.overwrite_global_active_entries_for_test(active_entries);
 
                     let cached_key = worker.frontier_scratch_view().working_observation_key_from(
@@ -6108,9 +4262,7 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
                     }
                     let worker = worker_slot.borrow_mut();
 
-                    if LOW_LANE_TEST_WIDTH < 3 {
-                        return;
-                    }
+                    assert!(worker.cursor.logical_lane_count() > 2);
 
                     worker.refresh_lane_offer_state(0);
                     worker.refresh_lane_offer_state(2);
@@ -6118,44 +4270,31 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
                         state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
                     let fake_entry_idx = current_idx + 1;
                     assert!(fake_entry_idx < crate::global::typestate::MAX_STATES);
-                    let current_state = worker.frontier_state.offer_entry_state[current_idx];
-                    let mut static_summary = OfferEntryStaticSummary::EMPTY;
-                    static_summary.observe_lane(LaneOfferState {
-                        frontier: FrontierKind::Route,
-                        ..LaneOfferState::EMPTY
-                    });
-                    let lane_two_state = worker.route_state.lane_offer_state(2);
                     let lane_two_offer = worker
                         .route_state
                         .lane_offer_state_mut(2)
                         .expect("lane 2 offer state");
                     lane_two_offer.entry = checked_state_index(fake_entry_idx)
                         .expect("fake entry index fits StateIndex");
-                    worker.frontier_state.offer_entry_state[fake_entry_idx] = OfferEntryState {
-                        active_mask: 1 << 2,
-                        lane_idx: 2,
-                        parallel_root: lane_two_state.parallel_root,
-                        frontier: FrontierKind::Route,
-                        scope_id: lane_two_state.scope,
-                        selection_meta: current_state.selection_meta,
-                        label_meta: current_state.label_meta,
-                        materialization_meta: current_state.materialization_meta,
-                        summary: static_summary,
-                        observed: OfferEntryObservedState::EMPTY,
-                        ..OfferEntryState::EMPTY
-                    };
 
-                    let mut active_entries = ActiveEntrySet::EMPTY;
-                    assert!(active_entries.insert_entry(current_idx, 0));
-                    assert!(active_entries.insert_entry(fake_entry_idx, 1));
+                    let (_active_slots, active_entries) =
+                        active_entry_set_from_pairs(&[(current_idx, 0), (fake_entry_idx, 1)]);
                     worker.overwrite_global_active_entries_for_test(active_entries);
-                    let mut cached_key = FrontierObservationKey::EMPTY;
-                    cached_key.copy_from(RouteFrontierMachine::frontier_observation_key(
-                        &worker,
-                        ScopeId::none(),
-                        false,
-                    ));
-                    let cached_observed_entries =
+                    let (
+                        _cached_key_slots,
+                        _cached_offer_lane_words,
+                        _cached_binding_lane_words,
+                        cached_key,
+                    ) = copied_frontier_observation_key_storage(
+                        RouteFrontierMachine::frontier_observation_key(
+                            &worker,
+                            ScopeId::none(),
+                            false,
+                        ),
+                        2,
+                        worker.cursor.logical_lane_count(),
+                    );
+                    let (_cached_observed_slots, cached_observed_entries) =
                         observed_entries_with_ready_current(current_idx, fake_entry_idx);
 
                     let buffered = crate::binding::IncomingClassification {
@@ -6337,7 +4476,7 @@ fn has_progress_controller_sibling(
 fn passive_frontier_detects_progress_controller_sibling() {
     let current_scope = ScopeId::generic(71);
     let controller_scope = ScopeId::generic(72);
-    let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
+    let mut candidates = frontier_candidates::<3>();
     candidates[0] = FrontierCandidate {
         scope_id: current_scope,
         entry_idx: 63,
@@ -6367,7 +4506,7 @@ fn passive_frontier_detects_progress_controller_sibling() {
 fn passive_frontier_ignores_controller_without_progress_evidence() {
     let current_scope = ScopeId::generic(171);
     let controller_scope = ScopeId::generic(172);
-    let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
+    let mut candidates = frontier_candidates::<3>();
     candidates[0] = FrontierCandidate {
         scope_id: current_scope,
         entry_idx: 63,
@@ -6401,7 +4540,7 @@ fn passive_frontier_ignores_controller_without_progress_evidence() {
 fn passive_frontier_ignores_non_controller_sibling_for_controller_preemption() {
     let current_scope = ScopeId::generic(81);
     let sibling_scope = ScopeId::generic(82);
-    let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
+    let mut candidates = frontier_candidates::<2>();
     candidates[0] = FrontierCandidate {
         scope_id: current_scope,
         entry_idx: 63,
@@ -6433,7 +4572,7 @@ fn passive_frontier_ignores_non_controller_sibling_for_controller_preemption() {
 
 #[test]
 fn frontier_yield_ping_pong_is_bounded() {
-    let mut visited_slots = [ScopeId::none(); LOW_LANE_TEST_WIDTH];
+    let mut visited_slots = frontier_visit_slots::<2>();
     let mut visited = FrontierVisitSet::test_from_slice(&mut visited_slots);
     let scope_a = ScopeId::generic(31);
     let scope_b = ScopeId::generic(32);
@@ -6449,7 +4588,7 @@ fn frontier_yield_ping_pong_is_bounded() {
 fn route_defer_yields_to_sibling_scope() {
     let current_scope = ScopeId::generic(41);
     let sibling_scope = ScopeId::generic(42);
-    let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
+    let mut candidates = frontier_candidates::<2>();
     candidates[0] = FrontierCandidate {
         scope_id: current_scope,
         entry_idx: 10,
@@ -6483,7 +4622,7 @@ fn route_defer_yields_to_sibling_scope() {
 fn loop_defer_yields_to_sibling_scope() {
     let current_scope = ScopeId::generic(51);
     let sibling_scope = ScopeId::generic(52);
-    let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
+    let mut candidates = frontier_candidates::<2>();
     candidates[0] = FrontierCandidate {
         scope_id: current_scope,
         entry_idx: 20,
@@ -6518,7 +4657,7 @@ fn defer_yields_across_frontier_in_same_parallel_root() {
     let root = ScopeId::generic(55);
     let current_scope = ScopeId::generic(56);
     let sibling_scope = ScopeId::generic(57);
-    let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
+    let mut candidates = frontier_candidates::<3>();
     candidates[0] = FrontierCandidate {
         scope_id: current_scope,
         entry_idx: 20,
@@ -6553,7 +4692,7 @@ fn parallel_frontier_prefers_ready_lane_before_phase_join() {
     let current_scope = ScopeId::generic(61);
     let root = ScopeId::generic(60);
     let ready_scope = ScopeId::generic(62);
-    let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
+    let mut candidates = frontier_candidates::<3>();
     candidates[0] = FrontierCandidate {
         scope_id: current_scope,
         entry_idx: 30,
@@ -6594,7 +4733,7 @@ fn parallel_frontier_prefers_ready_lane_before_phase_join() {
 fn passive_observer_defer_follow_is_progressive() {
     let current_scope = ScopeId::generic(71);
     let sibling_scope = ScopeId::generic(72);
-    let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
+    let mut candidates = frontier_candidates::<2>();
     candidates[0] = FrontierCandidate {
         scope_id: current_scope,
         entry_idx: 40,
@@ -6617,7 +4756,7 @@ fn passive_observer_defer_follow_is_progressive() {
         &mut candidates,
         2,
     );
-    let mut visited_slots = [ScopeId::none(); LOW_LANE_TEST_WIDTH];
+    let mut visited_slots = frontier_visit_slots::<1>();
     let mut visited = FrontierVisitSet::test_from_slice(&mut visited_slots);
     visited.record(current_scope);
     let picked = snapshot
@@ -6632,7 +4771,7 @@ fn passive_observer_defer_stops_without_progress_evidence() {
     let root = ScopeId::generic(73);
     let current_scope = ScopeId::generic(74);
     let sibling_scope = ScopeId::generic(75);
-    let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
+    let mut candidates = frontier_candidates::<2>();
     candidates[0] = FrontierCandidate {
         scope_id: current_scope,
         entry_idx: 50,
@@ -6655,7 +4794,7 @@ fn passive_observer_defer_stops_without_progress_evidence() {
         &mut candidates,
         2,
     );
-    let mut visited_slots = [ScopeId::none(); LOW_LANE_TEST_WIDTH];
+    let mut visited_slots = frontier_visit_slots::<1>();
     let mut visited = FrontierVisitSet::test_from_slice(&mut visited_slots);
     visited.record(current_scope);
     assert_eq!(snapshot.select_yield_candidate(visited), None);
@@ -6682,7 +4821,7 @@ fn frontier_arbitration_is_uniform_across_route_loop_parallel_observer() {
         let (parallel_root, frontier) = cases[idx];
         let current_scope = ScopeId::generic((110 + idx) as u16);
         let sibling_scope = ScopeId::generic((120 + idx) as u16);
-        let mut candidates = [FrontierCandidate::EMPTY; LOW_LANE_TEST_WIDTH];
+        let mut candidates = frontier_candidates::<2>();
         candidates[0] = FrontierCandidate {
             scope_id: current_scope,
             entry_idx: (70 + idx) as u16,
@@ -6871,7 +5010,9 @@ fn select_scope_prepass_keeps_pending_scope_evidence_non_consuming() {
                         worker.refresh_lane_offer_state(0);
                         let entry_idx =
                             state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
-                        let entry_state = worker.frontier_state.offer_entry_state[entry_idx];
+                        let entry_state = worker
+                            .offer_entry_state_snapshot(entry_idx)
+                            .expect("offer entry state snapshot");
                         let (_binding_ready, has_ack, has_ready_arm_evidence) = worker
                             .preview_offer_entry_evidence_non_consuming(entry_idx, entry_state);
                         assert!(has_ack, "prepass may observe pending ACK authority");
@@ -6908,7 +5049,7 @@ fn select_scope_prepass_keeps_pending_scope_evidence_non_consuming() {
                             "matching route hint must remain queued on the port after prepass"
                         );
 
-                        with_test_lane_set(&[0], |offer_lanes| {
+                        with_lane_set_view(&[0], |offer_lanes| {
                             worker.ingest_scope_evidence_for_offer_lanes(
                                 scope,
                                 0,
@@ -6996,7 +5137,9 @@ fn preview_offer_entry_evidence_skips_binding_probe_when_ack_already_progresses_
                         worker.refresh_lane_offer_state(0);
                         let entry_idx =
                             state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
-                        let entry_state = worker.frontier_state.offer_entry_state[entry_idx];
+                        let entry_state = worker
+                            .offer_entry_state_snapshot(entry_idx)
+                            .expect("offer entry state snapshot");
                         let (binding_ready, has_ack, has_ready_arm_evidence) = worker
                             .preview_offer_entry_evidence_non_consuming(entry_idx, entry_state);
 
@@ -7065,7 +5208,9 @@ fn preview_offer_entry_evidence_defers_binding_poll_until_selected_scope() {
                         worker.refresh_lane_offer_state(0);
                         let entry_idx =
                             state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
-                        let entry_state = worker.frontier_state.offer_entry_state[entry_idx];
+                        let entry_state = worker
+                            .offer_entry_state_snapshot(entry_idx)
+                            .expect("offer entry state snapshot");
                         let (binding_ready, has_ack, has_ready_arm_evidence) = worker
                             .preview_offer_entry_evidence_non_consuming(entry_idx, entry_state);
 
@@ -7164,7 +5309,7 @@ fn hint_or_classification_never_writes_ack_authority() {
 
                     let label_meta = endpoint_scope_label_meta(worker, scope, ScopeLoopMeta::EMPTY);
 
-                    with_test_lane_set(&[0], |offer_lanes| {
+                    with_lane_set_view(&[0], |offer_lanes| {
                         worker.ingest_scope_evidence_for_offer_lanes(
                             scope,
                             0,
@@ -7278,7 +5423,9 @@ fn poll_binding_for_offer_prefers_exact_label_for_ack_arm() {
                         worker.refresh_lane_offer_state(0);
                         let entry_idx =
                             state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
-                        let entry_state = worker.frontier_state.offer_entry_state[entry_idx];
+                        let entry_state = worker
+                            .offer_entry_state_snapshot(entry_idx)
+                            .expect("offer entry state snapshot");
                         let label_meta = ScopeLabelMeta {
                             controller_labels: [HINT_LEFT_DATA_LABEL, HINT_RIGHT_DATA_LABEL],
                             arm_label_masks: [
@@ -7403,7 +5550,7 @@ fn poll_binding_for_offer_prefers_buffered_matching_lane_before_empty_poll_lane(
                             RouteDecisionToken::from_ack(Arm::new(1).expect("binary route arm")),
                         );
 
-                        let picked = with_test_lane_set(&[0, 2], |offer_lanes| {
+                        let picked = with_lane_set_view(&[0, 2], |offer_lanes| {
                             worker.poll_binding_for_offer_lanes(
                                 scope,
                                 0,
@@ -7509,7 +5656,7 @@ fn poll_binding_for_offer_skips_non_demux_lanes_for_authoritative_arm() {
                             RouteDecisionToken::from_ack(Arm::new(1).expect("binary route arm")),
                         );
 
-                        let picked = with_test_lane_set(&[0, 2], |offer_lanes| {
+                        let picked = with_lane_set_view(&[0, 2], |offer_lanes| {
                             worker.poll_binding_for_offer_lanes(
                                 scope,
                                 0,
@@ -7589,7 +5736,9 @@ fn poll_binding_for_offer_prefers_authoritative_arm_label_mask_when_non_singleto
                         worker.refresh_lane_offer_state(0);
                         let entry_idx =
                             state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
-                        let entry_state = worker.frontier_state.offer_entry_state[entry_idx];
+                        let entry_state = worker
+                            .offer_entry_state_snapshot(entry_idx)
+                            .expect("offer entry state snapshot");
                         let extra_label = 99;
                         let label_meta = ScopeLabelMeta {
                             recv_label: extra_label,
@@ -7720,7 +5869,7 @@ fn poll_binding_for_offer_uses_label_mask_to_skip_other_arm_lanes_without_author
                         };
                         let materialization_meta =
                             worker.compute_scope_arm_materialization_meta(scope);
-                        let picked = with_test_lane_set(&[0, 2], |offer_lanes| {
+                        let picked = with_lane_set_view(&[0, 2], |offer_lanes| {
                             worker.poll_binding_for_offer_lanes(
                                 scope,
                                 0,
@@ -7816,7 +5965,7 @@ fn poll_binding_for_offer_buffered_match_skips_drop_only_preferred_lane_for_non_
                         };
                         let materialization_meta =
                             worker.compute_scope_arm_materialization_meta(scope);
-                        let picked = with_test_lane_set(&[0, 2], |offer_lanes| {
+                        let picked = with_lane_set_view(&[0, 2], |offer_lanes| {
                             worker.poll_binding_for_offer_lanes(
                                 scope,
                                 0,
@@ -7903,7 +6052,7 @@ fn poll_binding_for_offer_polls_only_selected_lane_for_unbuffered_generic_mask()
                         let materialization_meta =
                             worker.compute_scope_arm_materialization_meta(scope);
 
-                        let picked = with_test_lane_set(&[0, 2], |offer_lanes| {
+                        let picked = with_lane_set_view(&[0, 2], |offer_lanes| {
                             worker.poll_binding_for_offer_lanes(
                                 scope,
                                 0,
@@ -7919,7 +6068,7 @@ fn poll_binding_for_offer_polls_only_selected_lane_for_unbuffered_generic_mask()
                         assert_eq!(worker.binding.poll_count_for_lane(0), 1);
                         assert_eq!(worker.binding.poll_count_for_lane(2), 0);
 
-                        let picked = with_test_lane_set(&[0, 2], |offer_lanes| {
+                        let picked = with_lane_set_view(&[0, 2], |offer_lanes| {
                             worker.poll_binding_for_offer_lanes(
                                 scope,
                                 2,
@@ -7997,7 +6146,7 @@ fn poll_binding_for_offer_polls_authoritative_demux_lane_when_current_lane_is_ex
                         let materialization_meta =
                             worker.compute_scope_arm_materialization_meta(scope);
 
-                        let picked = with_test_lane_set(&[0, 2], |offer_lanes| {
+                        let picked = with_lane_set_view(&[0, 2], |offer_lanes| {
                             worker.poll_binding_for_offer_lanes(
                                 scope,
                                 0,
@@ -8009,6 +6158,83 @@ fn poll_binding_for_offer_polls_authoritative_demux_lane_when_current_lane_is_ex
                         assert_eq!(picked, Some((2, matching)));
                         assert_eq!(worker.binding.poll_count_for_lane(0), 0);
                         assert_eq!(worker.binding.poll_count_for_lane(2), 1);
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn record_route_decision_for_scope_lanes_refreshes_sibling_frontier_cache() {
+    run_offer_regression_test(
+        "record_route_decision_for_scope_lanes_refreshes_sibling_frontier_cache",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
+                with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(OfferHintLaneAwareWorkerEndpoint, worker_slot, {
+                        let transport = HintOnlyTransport::new(HINT_NONE);
+                        let rv_id = cluster_ref
+                            .add_rendezvous_from_config(config, transport)
+                            .expect("register rendezvous");
+                        let sid = SessionId::new(9054);
+                        let matching = IncomingClassification {
+                            label: HINT_RIGHT_DATA_LABEL,
+                            instance: 12,
+                            has_fin: false,
+                            channel: Channel::new(6),
+                        };
+                        unsafe {
+                            cluster_ref
+                                .attach_endpoint_into::<0, _, _, _>(
+                                    controller_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &HINT_SPLIT_CONTROLLER_PROGRAM,
+                                    NoBinding,
+                                )
+                                .expect("attach controller endpoint");
+                            cluster_ref
+                                .attach_endpoint_into::<1, _, _, _>(
+                                    worker_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &HINT_SPLIT_WORKER_PROGRAM,
+                                    LaneAwareTestBinding::with_lane_incoming(&[(2, matching)]),
+                                )
+                                .expect("attach worker endpoint");
+                        }
+
+                        let worker = worker_slot.borrow_mut();
+                        let scope = worker.cursor.node_scope_id();
+                        assert!(!scope.is_none(), "worker must start at route scope");
+
+                        let mut cx = Context::from_waker(noop_waker_ref());
+                        {
+                            let mut offer = pin!(worker.offer());
+                            assert!(
+                                matches!(offer.as_mut().poll(&mut cx), Poll::Pending),
+                                "unresolved split-lane route must cache a pending frontier observation before the decision arrives"
+                            );
+                        }
+
+                        worker.record_route_decision_for_scope_lanes(scope, 1, 0);
+                        worker.record_scope_ack(
+                            scope,
+                            RouteDecisionToken::from_ack(
+                                Arm::new(1).expect("binary route arm"),
+                            ),
+                        );
+
+                        let mut offer = pin!(worker.offer());
+                        let branch =
+                            poll_ready_ok(&mut cx, offer.as_mut(), "split-lane sibling offer");
+                        assert_eq!(
+                            branch.label(),
+                            HINT_RIGHT_DATA_LABEL,
+                            "broadcast route decisions must invalidate sibling-lane frontier caches immediately"
+                        );
                     });
                 });
             });
@@ -8125,6 +6351,87 @@ fn take_binding_for_selected_arm_preserves_cached_other_arm_classification() {
 }
 
 #[test]
+fn selected_route_arm_keeps_later_same_lane_sends_available() {
+    run_offer_regression_test(
+        "selected_route_arm_keeps_later_same_lane_sends_available",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
+                with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(OfferHintWorkerBindingEndpoint, worker_slot, {
+                        let transport = HintOnlyTransport::new(HINT_NONE);
+                        let rv_id = cluster_ref
+                            .add_rendezvous_from_config(config, transport)
+                            .expect("register rendezvous");
+                        let sid = SessionId::new(9055);
+                        unsafe {
+                            cluster_ref
+                                .attach_endpoint_into::<0, _, _, _>(
+                                    controller_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &MULTI_SEND_ROUTE_CONTROLLER_PROGRAM,
+                                    NoBinding,
+                                )
+                                .expect("attach controller endpoint");
+                            cluster_ref
+                                .attach_endpoint_into::<1, _, _, _>(
+                                    worker_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &MULTI_SEND_ROUTE_WORKER_PROGRAM,
+                                    TestBinding::default(),
+                                )
+                                .expect("attach worker endpoint");
+                        }
+
+                        let controller = controller_slot.borrow_mut();
+                        let mut cx = Context::from_waker(noop_waker_ref());
+
+                        {
+                            let mut route_right =
+                                pin!(controller.send_direct::<MultiSendRouteRightMsg, _>(()));
+                            let _ =
+                                poll_ready_ok(&mut cx, route_right.as_mut(), "route-right send");
+                        }
+
+                        assert!(
+                            controller.preview_flow_meta::<MultiSendRightFirstMsg>().is_ok(),
+                            "first payload send must remain available after choosing the route arm"
+                        );
+                        {
+                            let mut first_payload =
+                                pin!(controller.send_direct::<MultiSendRightFirstMsg, _>(&1));
+                            let _ = poll_ready_ok(
+                                &mut cx,
+                                first_payload.as_mut(),
+                                "first payload send",
+                            );
+                        }
+
+                        assert!(
+                            controller
+                                .preview_flow_meta::<MultiSendRightSecondMsg>()
+                                .is_ok(),
+                            "later payload send on the same route arm must remain available after the first send"
+                        );
+                        {
+                            let mut second_payload =
+                                pin!(controller.send_direct::<MultiSendRightSecondMsg, _>(&2));
+                            let _ = poll_ready_ok(
+                                &mut cx,
+                                second_payload.as_mut(),
+                                "second payload send",
+                            );
+                        }
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
 fn static_passive_binding_label_materializes_poll() {
     run_offer_regression_test("static_passive_binding_label_materializes_poll", || {
         let entry_route_program = ENTRY_ROUTE_PROGRAM;
@@ -8211,7 +6518,7 @@ fn static_passive_binding_label_materializes_poll() {
             );
             let classification =
                 binding_classification.expect("binding classification should be staged for poll");
-            with_test_lane_set(&[0], |offer_lanes| {
+            with_lane_set_view(&[0], |offer_lanes| {
                 worker.ingest_scope_evidence_for_offer_lanes(
                     scope,
                     0,
@@ -8321,7 +6628,7 @@ fn static_passive_staged_transport_hint_materializes_poll() {
                 );
 
                 let label_meta = endpoint_scope_label_meta(&worker, scope, ScopeLoopMeta::EMPTY);
-                with_test_lane_set(&[0], |offer_lanes| {
+                with_lane_set_view(&[0], |offer_lanes| {
                     worker.ingest_scope_evidence_for_offer_lanes(
                         scope,
                         0,
@@ -8436,7 +6743,7 @@ fn nested_static_passive_binding_dispatch_materializes_poll_on_ancestor_scopes()
                         {
                             let label_meta =
                                 endpoint_scope_label_meta(worker, scope, ScopeLoopMeta::EMPTY);
-                            with_test_lane_set(&[0], |offer_lanes| {
+                            with_lane_set_view(&[0], |offer_lanes| {
                                 worker.ingest_scope_evidence_for_offer_lanes(
                                     scope,
                                     0,
@@ -8547,7 +6854,7 @@ fn deep_right_nested_static_passive_binding_dispatch_materializes_poll_on_all_an
 
                 let label_meta =
                     endpoint_scope_label_meta(worker, outer_scope, ScopeLoopMeta::EMPTY);
-                with_test_lane_set(&[0], |offer_lanes| {
+                with_lane_set_view(&[0], |offer_lanes| {
                     worker.ingest_scope_evidence_for_offer_lanes(
                         outer_scope,
                         0,
@@ -9539,9 +7846,8 @@ fn lane_offer_state_reenters_same_route_scope_using_offer_entry() {
                     );
 
                     controller.refresh_lane_offer_state(0);
-                    assert_ne!(
-                        controller.route_state.active_offer_mask() & 0b0000_0001,
-                        0,
+                    assert!(
+                        controller.route_state.active_offer_lanes().contains(0),
                         "lane must remain pending while re-entering the same route scope"
                     );
                     assert_eq!(
@@ -9550,16 +7856,17 @@ fn lane_offer_state_reenters_same_route_scope_using_offer_entry() {
                         "lane offer state must normalize to canonical route offer_entry"
                     );
                     assert_eq!(
-                        controller.frontier_state.offer_entry_state
-                            [state_index_to_usize(offer_entry)]
-                        .lane_idx,
-                        0,
+                        controller.offer_entry_representative_lane_idx(
+                            state_index_to_usize(offer_entry),
+                            controller
+                                .offer_entry_state_snapshot(state_index_to_usize(offer_entry))
+                                .expect("offer entry state snapshot"),
+                        ),
+                        Some(0),
                         "offer entry index must cache a representative lane for direct lookup"
                     );
-                    assert_ne!(
-                        controller.offer_entry_active_mask(state_index_to_usize(offer_entry))
-                            & 0b0000_0001,
-                        0,
+                    assert!(
+                        controller.offer_entry_has_active_lanes(state_index_to_usize(offer_entry)),
                         "offer entry index must track active lanes while the route remains pending"
                     );
                     assert_eq!(
@@ -9568,10 +7875,8 @@ fn lane_offer_state_reenters_same_route_scope_using_offer_entry() {
                         "global active-entry index must point at the canonical offer entry"
                     );
                     controller.clear_lane_offer_state(0);
-                    assert_eq!(
-                        controller.offer_entry_active_mask(state_index_to_usize(offer_entry))
-                            & 0b0000_0001,
-                        0,
+                    assert!(
+                        !controller.offer_entry_has_active_lanes(state_index_to_usize(offer_entry)),
                         "clearing lane offer state must detach the lane from the offer entry index"
                     );
                     assert_eq!(

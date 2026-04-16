@@ -2130,19 +2130,22 @@ where
             _ => {}
         }
 
+        if self.endpoint.selected_arm_for_scope(scope_id) != Some(selected_arm) {
+            self.endpoint
+                .clear_scope_route_state_for_other_lanes(scope_id, lane_wire);
+        }
         self.endpoint
             .skip_unselected_arm_lanes(scope_id, selected_arm, lane_wire);
-        self.endpoint
-            .set_route_arm(lane_wire, scope_id, selected_arm)?;
+        self.endpoint.set_route_arm(lane_wire, scope_id, selected_arm)?;
         self.endpoint
             .set_cursor_index(state_index_to_usize(preview.cursor_index));
 
         let meta = if preview.branch_meta.kind == BranchKind::WireRecv {
-            let mut meta = self
-                .endpoint
-                .cursor
-                .try_recv_meta()
-                .ok_or(RecvError::PhaseInvariant)?;
+            let mut meta = if let Some(meta) = self.endpoint.cursor.try_recv_meta() {
+                meta
+            } else {
+                return Err(RecvError::PhaseInvariant);
+            };
             if meta.route_arm.is_none() {
                 meta.route_arm = Some(selected_arm);
             }
@@ -3868,14 +3871,11 @@ where
         #[cfg(test)]
         let test_summary = self.endpoint.compute_offer_entry_static_summary(entry_idx);
         #[cfg(test)]
+        if let Some(state) = self
+            .endpoint
+            .frontier_state
+            .offer_entry_state_mut(entry_idx)
         {
-            let Some(state) = self
-                .endpoint
-                .frontier_state
-                .offer_entry_state_mut(entry_idx)
-            else {
-                return;
-            };
             state.lane_idx = lane_idx as u8;
             state.parallel_root = info.parallel_root;
             state.frontier = info.frontier;
@@ -3920,21 +3920,21 @@ where
         if info.entry.is_max() || entry_idx >= crate::global::typestate::MAX_STATES {
             return;
         }
-        let Some(entry_state) = self.endpoint.offer_entry_state_snapshot(entry_idx) else {
-            return;
-        };
-        let parallel_root = self
-            .endpoint
-            .offer_entry_parallel_root_from_state(entry_idx, entry_state)
-            .unwrap_or(ScopeId::none());
         let remaining_active_lanes = self
             .endpoint
             .offer_entry_has_other_active_lanes(entry_idx, lane_idx);
-        #[cfg(test)]
-        let bit = 1u32 << lane_idx;
-        #[cfg(test)]
-        let active_mask = entry_state.active_mask & !bit;
         if !remaining_active_lanes {
+            let parallel_root = if info.parallel_root.is_none() {
+                self.endpoint
+                    .offer_entry_state_snapshot(entry_idx)
+                    .and_then(|entry_state| {
+                        self.endpoint
+                            .offer_entry_parallel_root_from_state(entry_idx, entry_state)
+                    })
+                    .unwrap_or(ScopeId::none())
+            } else {
+                info.parallel_root
+            };
             self.endpoint
                 .detach_offer_entry_from_root_frontier(entry_idx, parallel_root);
             Self::ensure_global_frontier_scratch_initialized(self.endpoint);
@@ -3951,10 +3951,9 @@ where
             );
             return;
         }
-        #[cfg(test)]
-        self.endpoint
-            .frontier_state
-            .set_offer_entry_active_mask(entry_idx, active_mask);
+        let Some(_entry_state) = self.endpoint.offer_entry_state_snapshot(entry_idx) else {
+            return;
+        };
         self.refresh_offer_entry_state(entry_idx);
     }
 
@@ -3966,24 +3965,11 @@ where
         #[cfg(not(test))]
         let was_inactive = !self.endpoint.offer_entry_has_active_lanes(entry_idx);
         #[cfg(test)]
-        let was_inactive = if let Some(state) = self
+        let was_inactive = self
             .endpoint
-            .frontier_state
-            .offer_entry_state_mut(entry_idx)
-        {
-            let bit = 1u32 << lane_idx;
-            let was_inactive = state.active_mask == 0;
-            state.active_mask |= bit;
-            was_inactive
-        } else {
-            let mut state = OfferEntryState::EMPTY;
-            let bit = 1u32 << lane_idx;
-            state.active_mask = bit;
-            self.endpoint
-                .frontier_state
-                .set_offer_entry_state(entry_idx, state);
-            true
-        };
+            .global_active_entries()
+            .slot_for_entry(entry_idx)
+            .is_none();
         if was_inactive {
             Self::ensure_global_frontier_scratch_initialized(self.endpoint);
             let mut global_active_entries = self.endpoint.global_active_entries();
@@ -4465,22 +4451,6 @@ where
     }
 
     #[cfg(test)]
-    pub(in crate::endpoint::kernel) fn refresh_structural_frontier_observation_cache(
-        &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
-        active_entries: ActiveEntrySet,
-        cached_key: FrontierObservationKey,
-    ) -> bool {
-        RouteFrontierMachine::new(self).refresh_structural_frontier_observation_cache(
-            current_parallel_root,
-            use_root_observed_entries,
-            active_entries,
-            cached_key,
-        )
-    }
-
-    #[cfg(test)]
     pub(in crate::endpoint::kernel) fn cached_frontier_changed_entry_slot_mask(
         &mut self,
         current_parallel_root: ScopeId,
@@ -4517,44 +4487,6 @@ where
     }
 
     #[cfg(test)]
-    pub(in crate::endpoint::kernel) fn refresh_frontier_observed_entries(
-        &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
-        active_entries: ActiveEntrySet,
-        observation_key: FrontierObservationKey,
-        cached_key: FrontierObservationKey,
-        cached_observed_entries: ObservedEntrySet,
-    ) -> ObservedEntrySet {
-        RouteFrontierMachine::new(self).refresh_frontier_observed_entries(
-            current_parallel_root,
-            use_root_observed_entries,
-            active_entries,
-            observation_key,
-            cached_key,
-            cached_observed_entries,
-        )
-    }
-
-    #[cfg(test)]
-    pub(in crate::endpoint::kernel) fn patch_frontier_observed_entries_from_cached_structure(
-        &mut self,
-        active_entries: ActiveEntrySet,
-        observation_key: FrontierObservationKey,
-        cached_key: FrontierObservationKey,
-        cached_observed_entries: ObservedEntrySet,
-    ) -> Option<ObservedEntrySet> {
-        Some(
-            RouteFrontierMachine::new(self).compose_frontier_observed_entries(
-                active_entries,
-                observation_key,
-                cached_key,
-                cached_observed_entries,
-            ),
-        )
-    }
-
-    #[cfg(test)]
     pub(in crate::endpoint::kernel) fn refresh_cached_frontier_observation_entry(
         &mut self,
         current_parallel_root: ScopeId,
@@ -4562,48 +4494,6 @@ where
         entry_idx: usize,
     ) -> bool {
         RouteFrontierMachine::new(self).refresh_cached_frontier_observation_entry(
-            current_parallel_root,
-            use_root_observed_entries,
-            entry_idx,
-        )
-    }
-
-    #[cfg(test)]
-    pub(in crate::endpoint::kernel) fn refresh_inserted_frontier_observation_entry(
-        &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
-        entry_idx: usize,
-    ) -> bool {
-        RouteFrontierMachine::new(self).refresh_inserted_frontier_observation_entry(
-            current_parallel_root,
-            use_root_observed_entries,
-            entry_idx,
-        )
-    }
-
-    #[cfg(test)]
-    pub(in crate::endpoint::kernel) fn refresh_removed_frontier_observation_entry(
-        &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
-        entry_idx: usize,
-    ) -> bool {
-        RouteFrontierMachine::new(self).refresh_removed_frontier_observation_entry(
-            current_parallel_root,
-            use_root_observed_entries,
-            entry_idx,
-        )
-    }
-
-    #[cfg(test)]
-    pub(in crate::endpoint::kernel) fn refresh_replaced_frontier_observation_entry(
-        &mut self,
-        current_parallel_root: ScopeId,
-        use_root_observed_entries: bool,
-        entry_idx: usize,
-    ) -> bool {
-        RouteFrontierMachine::new(self).refresh_replaced_frontier_observation_entry(
             current_parallel_root,
             use_root_observed_entries,
             entry_idx,

@@ -71,8 +71,7 @@ where
         let mut active_mask = 0u32;
         let lane_limit = self.cursor.logical_lane_count();
         let active_offer_lanes = self.route_state.active_offer_lanes();
-        let projected_lane_limit =
-            core::cmp::min(lane_limit, crate::global::role_program::LOW_LANE_TEST_WIDTH);
+        let projected_lane_limit = core::cmp::min(lane_limit, u32::BITS as usize);
         let mut lane_idx = 0usize;
         while lane_idx < projected_lane_limit {
             if !active_offer_lanes.contains(lane_idx) {
@@ -96,18 +95,16 @@ where
         let has_active_lanes = self.offer_entry_has_active_lanes(entry_idx);
         #[cfg(test)]
         {
-            let active_mask = self.offer_entry_active_mask_from_route_state(entry_idx);
-            if let Some(mut state) = self
+            if let Some(state) = self.offer_entry_state_from_route_state(entry_idx) {
+                return Some(state);
+            }
+            if let Some(state) = self
                 .frontier_state
                 .offer_entry_state
                 .get(entry_idx)
                 .copied()
             {
                 if state.active_mask != 0 || has_active_lanes {
-                    return Some(state);
-                }
-                if active_mask != 0 || has_active_lanes {
-                    state.active_mask = active_mask;
                     return Some(state);
                 }
                 return None;
@@ -125,6 +122,57 @@ where
                 ..OfferEntryState::EMPTY
             })
         }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn offer_entry_state_from_route_state(&self, entry_idx: usize) -> Option<OfferEntryState> {
+        let lane_limit = self.cursor.logical_lane_count();
+        let active_offer_lanes = self.route_state.active_offer_lanes();
+        let mut lane_idx = 0usize;
+        while lane_idx < lane_limit {
+            if !active_offer_lanes.contains(lane_idx) {
+                lane_idx += 1;
+                continue;
+            }
+            let info = self.route_state.lane_offer_state(lane_idx);
+            if info.scope.is_none() || state_index_to_usize(info.entry) != entry_idx {
+                lane_idx += 1;
+                continue;
+            }
+            let selection_meta = self.compute_offer_entry_selection_meta(
+                info.scope,
+                info,
+                !self.offer_lane_set_for_scope(info.scope).is_empty(),
+            );
+            let representative_idx = state_index_to_usize(info.entry);
+            let loop_meta = Self::scope_loop_meta_at(
+                &self.cursor,
+                &self.control_semantics(),
+                info.scope,
+                representative_idx,
+            );
+            let label_meta = Self::scope_label_meta_at(
+                &self.cursor,
+                &self.control_semantics(),
+                info.scope,
+                loop_meta,
+                representative_idx,
+            );
+            return Some(OfferEntryState {
+                active_mask: self.offer_entry_active_mask_from_route_state(entry_idx),
+                lane_idx: lane_idx as u8,
+                parallel_root: info.parallel_root,
+                frontier: info.frontier,
+                scope_id: info.scope,
+                selection_meta,
+                label_meta,
+                materialization_meta: self.compute_scope_arm_materialization_meta(info.scope),
+                summary: self.compute_offer_entry_static_summary_from_route_state(entry_idx),
+                observed: OfferEntryObservedState::EMPTY,
+            });
+        }
+        None
     }
 
     #[inline]

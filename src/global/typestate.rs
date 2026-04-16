@@ -15,8 +15,6 @@ mod facts;
 mod registry;
 mod route_facts;
 
-#[cfg(test)]
-pub(crate) use self::emit::RoleCompileScratch;
 pub use self::facts::StateIndex;
 pub(crate) use self::registry::{RouteScopeRecord, ScopeRecord};
 #[cfg(test)]
@@ -66,8 +64,7 @@ pub(crate) fn try_local_meta(&self) -> Option<LocalMeta>
 
 #[cfg(test)]
 mod tests {
-    use core::{cell::UnsafeCell, mem::MaybeUninit};
-    use std::thread_local;
+    use core::mem::MaybeUninit;
 
     use super::{LocalAction, StateIndex};
     use crate::control::cap::mint::GenericCapToken;
@@ -79,25 +76,8 @@ mod tests {
     use crate::global::role_program;
     use crate::global::role_program::{RoleProgram, project};
     use crate::global::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
-    use crate::global::typestate::RoleCompileScratch;
     use crate::global::{CanonicalControl, MessageSpec};
     use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
-
-    const COMPILED_ROLE_IMAGE_BYTES: usize = CompiledRoleImage::persistent_bytes_for_counts(
-        crate::eff::meta::MAX_EFF_NODES,
-        crate::eff::meta::MAX_EFF_NODES,
-        crate::eff::meta::MAX_EFF_NODES,
-    );
-    const COMPILED_ROLE_IMAGE_ALIGN: usize = CompiledRoleImage::persistent_align();
-    const COMPILED_ROLE_IMAGE_STORAGE_BYTES: usize =
-        COMPILED_ROLE_IMAGE_BYTES + COMPILED_ROLE_IMAGE_ALIGN;
-
-    thread_local! {
-        static COMPILED_ROLE_IMAGE_STORAGE: UnsafeCell<[u8; COMPILED_ROLE_IMAGE_STORAGE_BYTES]> =
-            const { UnsafeCell::new([0u8; COMPILED_ROLE_IMAGE_STORAGE_BYTES]) };
-        static COMPILED_ROLE_SCRATCH: UnsafeCell<MaybeUninit<RoleCompileScratch>> =
-            const { UnsafeCell::new(MaybeUninit::uninit()) };
-    }
 
     #[test]
     fn typed_typestate_shell_items_remain_reachable_for_internal_guards() {
@@ -120,25 +100,10 @@ mod tests {
     where
         Mint: crate::control::cap::mint::MintConfigMarker,
     {
-        let lowering = crate::global::lowering_input(program);
-        COMPILED_ROLE_IMAGE_STORAGE.with(|compiled| {
-            COMPILED_ROLE_SCRATCH.with(|scratch| unsafe {
-                let base = (*compiled.get()).as_mut_ptr() as usize;
-                let compiled_ptr = ((base + COMPILED_ROLE_IMAGE_ALIGN - 1)
-                    & !(COMPILED_ROLE_IMAGE_ALIGN - 1))
-                    as *mut CompiledRoleImage;
-                debug_assert!(
-                    (compiled_ptr as usize) + COMPILED_ROLE_IMAGE_BYTES
-                        <= base + COMPILED_ROLE_IMAGE_STORAGE_BYTES
-                );
-                crate::global::compiled::with_compiled_role_image::<ROLE, _>(
-                    compiled_ptr,
-                    lowering,
-                    (*scratch.get()).as_mut_ptr(),
-                    f,
-                )
-            })
-        })
+        crate::global::compiled::with_compiled_role_image::<ROLE, _>(
+            crate::global::lowering_input(program),
+            f,
+        )
     }
 
     const BODY: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>> =

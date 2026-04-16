@@ -1,7 +1,5 @@
 //! Binding inbox helpers for endpoint demux.
 
-#[cfg(test)]
-use crate::global::role_program::LOW_LANE_TEST_WIDTH;
 use crate::{
     binding::{BindingSlot, IncomingClassification},
     global::role_program::{LaneSet, LaneSetView, LaneWord},
@@ -16,20 +14,6 @@ const fn label_bit(label: u8) -> u128 {
     }
 }
 
-#[cfg(test)]
-const TEST_LANE_CAPACITY: usize = LOW_LANE_TEST_WIDTH;
-
-#[cfg(test)]
-const fn identity_lane_dense_by_lane() -> [u8; TEST_LANE_CAPACITY] {
-    let mut lanes = [u8::MAX; TEST_LANE_CAPACITY];
-    let mut idx = 0usize;
-    while idx < TEST_LANE_CAPACITY {
-        lanes[idx] = idx as u8;
-        idx += 1;
-    }
-    lanes
-}
-
 #[derive(Clone, Copy)]
 struct DenseLaneIndex {
     lane_dense_by_lane: *mut u8,
@@ -37,12 +21,6 @@ struct DenseLaneIndex {
 }
 
 impl DenseLaneIndex {
-    #[cfg(test)]
-    const EMPTY: Self = Self {
-        lane_dense_by_lane: core::ptr::null_mut(),
-        active_lane_count: 0,
-    };
-
     unsafe fn init_from_parts(
         dst: *mut Self,
         lane_dense_by_lane: *mut u8,
@@ -82,11 +60,6 @@ struct DenseLaneU8Array {
 }
 
 impl DenseLaneU8Array {
-    #[cfg(test)]
-    const EMPTY: Self = Self {
-        ptr: core::ptr::null_mut(),
-    };
-
     unsafe fn init_from_parts(dst: *mut Self, ptr: *mut u8, active_lane_count: usize) {
         unsafe {
             core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
@@ -126,11 +99,6 @@ pub(super) struct DenseLaneU128Array {
 }
 
 impl DenseLaneU128Array {
-    #[cfg(test)]
-    const EMPTY: Self = Self {
-        ptr: core::ptr::null_mut(),
-    };
-
     unsafe fn init_from_parts(dst: *mut Self, ptr: *mut u128, active_lane_count: usize) {
         unsafe {
             core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
@@ -223,11 +191,6 @@ struct DenseLaneSlots {
 }
 
 impl DenseLaneSlots {
-    #[cfg(test)]
-    const EMPTY: Self = Self {
-        ptr: core::ptr::null_mut(),
-    };
-
     unsafe fn init_from_parts(
         dst: *mut Self,
         ptr: *mut PackedIncomingClassification,
@@ -298,34 +261,6 @@ impl DenseLaneSlots {
     }
 }
 
-#[cfg(test)]
-struct BindingInboxTestArena {
-    lane_dense_by_lane: [u8; TEST_LANE_CAPACITY],
-    slots: [[PackedIncomingClassification; BindingInbox::PER_LANE_CAPACITY]; TEST_LANE_CAPACITY],
-    len: [u8; TEST_LANE_CAPACITY],
-    label_masks: [u128; TEST_LANE_CAPACITY],
-    nonempty_lane_words:
-        [LaneWord; crate::global::role_program::lane_word_count(TEST_LANE_CAPACITY)],
-}
-
-#[cfg(test)]
-impl BindingInboxTestArena {
-    const EMPTY: Self = Self {
-        lane_dense_by_lane: [u8::MAX; TEST_LANE_CAPACITY],
-        slots: [[PackedIncomingClassification::EMPTY; BindingInbox::PER_LANE_CAPACITY];
-            TEST_LANE_CAPACITY],
-        len: [0; TEST_LANE_CAPACITY],
-        label_masks: [0; TEST_LANE_CAPACITY],
-        nonempty_lane_words: [0; crate::global::role_program::lane_word_count(TEST_LANE_CAPACITY)],
-    };
-}
-
-#[cfg(test)]
-std::thread_local! {
-    static TEST_BINDING_INBOX_STORAGE: core::cell::UnsafeCell<BindingInboxTestArena> =
-        const { core::cell::UnsafeCell::new(BindingInboxTestArena::EMPTY) };
-}
-
 pub(super) struct BindingInbox {
     lanes: DenseLaneIndex,
     slots: DenseLaneSlots,
@@ -376,55 +311,6 @@ impl BindingInbox {
         }
     }
 
-    #[cfg(test)]
-    pub(super) fn test_empty() -> Self {
-        TEST_BINDING_INBOX_STORAGE.with(|storage| {
-            let storage = unsafe { &mut *storage.get() };
-            *storage = BindingInboxTestArena::EMPTY;
-
-            let lane_dense_by_lane = identity_lane_dense_by_lane();
-            storage.lane_dense_by_lane = lane_dense_by_lane;
-            let mut inbox = Self {
-                lanes: DenseLaneIndex::EMPTY,
-                slots: DenseLaneSlots::EMPTY,
-                len: DenseLaneU8Array::EMPTY,
-                nonempty_lanes: LaneSet::EMPTY,
-                label_masks: DenseLaneU128Array::EMPTY,
-            };
-            unsafe {
-                DenseLaneIndex::init_from_parts(
-                    core::ptr::addr_of_mut!(inbox.lanes),
-                    storage.lane_dense_by_lane.as_mut_ptr(),
-                    TEST_LANE_CAPACITY,
-                );
-                DenseLaneSlots::init_from_parts(
-                    core::ptr::addr_of_mut!(inbox.slots),
-                    storage
-                        .slots
-                        .as_mut_ptr()
-                        .cast::<PackedIncomingClassification>(),
-                    TEST_LANE_CAPACITY,
-                );
-                DenseLaneU8Array::init_from_parts(
-                    core::ptr::addr_of_mut!(inbox.len),
-                    storage.len.as_mut_ptr(),
-                    TEST_LANE_CAPACITY,
-                );
-                DenseLaneU128Array::init_from_parts(
-                    core::ptr::addr_of_mut!(inbox.label_masks),
-                    storage.label_masks.as_mut_ptr(),
-                    TEST_LANE_CAPACITY,
-                );
-                LaneSet::init_from_parts(
-                    core::ptr::addr_of_mut!(inbox.nonempty_lanes),
-                    storage.nonempty_lane_words.as_mut_ptr(),
-                    crate::global::role_program::lane_word_count(TEST_LANE_CAPACITY),
-                );
-            }
-            inbox
-        })
-    }
-
     #[inline]
     pub(super) fn nonempty_lanes(&self) -> LaneSetView {
         self.nonempty_lanes.view()
@@ -454,22 +340,6 @@ impl BindingInbox {
         (self.label_masks.get_value(&self.lanes, lane_idx) & label_mask) != 0
     }
 
-    #[cfg(test)]
-    #[cfg(test)]
-    #[inline]
-    pub(super) fn nonempty_lane_mask_for_role_mask(&self, lane_mask: u32) -> u32 {
-        let mut projected = 0u32;
-        let mut remaining = lane_mask;
-        while remaining != 0 {
-            let lane_idx = remaining.trailing_zeros() as usize;
-            remaining &= !(1u32 << lane_idx);
-            if self.nonempty_lanes.contains(lane_idx) {
-                projected |= 1u32 << lane_idx;
-            }
-        }
-        projected
-    }
-
     #[inline]
     pub(super) fn update_nonempty_lanes(&mut self, lane_idx: usize) {
         if !self.lanes.contains_lane(lane_idx) {
@@ -480,13 +350,6 @@ impl BindingInbox {
         } else {
             self.nonempty_lanes.insert(lane_idx);
         }
-    }
-
-    #[cfg(test)]
-    #[cfg(test)]
-    #[inline]
-    pub(super) fn has_buffered_for_lane_mask(&self, lane_mask: u32) -> bool {
-        self.nonempty_lane_mask_for_role_mask(lane_mask) != 0
     }
 
     #[inline]
@@ -515,19 +378,23 @@ impl BindingInbox {
     }
 
     #[cfg(test)]
-    #[cfg(test)]
     #[inline]
-    pub(super) fn buffered_lane_mask_for_labels(&self, label_mask: u128) -> u32 {
-        let mut lane_mask = 0u32;
+    pub(super) fn buffered_lanes_for_labels(&self, label_mask: u128, dst: &mut [u8]) -> usize {
+        let mut len = 0usize;
         let lane_limit = self.lanes.active_lane_count as usize;
         let mut lane_idx = 0usize;
-        while lane_idx < lane_limit && lane_idx < TEST_LANE_CAPACITY {
+        while lane_idx < lane_limit {
             if (self.label_masks.get_value(&self.lanes, lane_idx) & label_mask) != 0 {
-                lane_mask |= 1u32 << lane_idx;
+                assert!(
+                    len < dst.len(),
+                    "lane-index destination is too small for buffered label matches"
+                );
+                dst[len] = lane_idx as u8;
+                len += 1;
             }
             lane_idx += 1;
         }
-        lane_mask
+        len
     }
 
     #[inline]

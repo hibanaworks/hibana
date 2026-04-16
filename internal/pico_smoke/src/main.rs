@@ -7,9 +7,9 @@ mod fanout_program;
 mod huge_program;
 #[cfg(feature = "linear-heavy")]
 mod linear_program;
+mod localside;
 #[cfg(not(feature = "linear-heavy"))]
 mod route_control_kinds;
-mod scenario;
 
 use core::{
     arch::asm,
@@ -21,13 +21,12 @@ use core::{
 };
 
 use hibana::{
-    Endpoint, g,
+    Endpoint,
+    g,
     g::advanced::project,
     substrate::{
         SessionId, SessionKit, Transport,
         binding::NoBinding,
-        cap::{ControlResourceKind, ResourceKind},
-        cap::advanced::ControlMint,
         cap::advanced::MintConfig,
         mgmt::tap::TapEvent,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
@@ -35,12 +34,6 @@ use hibana::{
         wire::Payload,
     },
 };
-#[cfg(not(feature = "linear-heavy"))]
-use hibana::{
-    g::advanced::CanonicalControl,
-    substrate::cap::GenericCapToken,
-};
-use scenario::ScenarioHarness;
 
 #[cfg(all(feature = "linear-heavy", feature = "fanout-heavy"))]
 compile_error!("pico smoke accepts at most one alternate huge choreography shape feature");
@@ -463,141 +456,8 @@ fn block_on<F: Future>(mut future: F) -> F::Output {
     }
 }
 
-fn controller_send_u8<const LABEL: u8>(controller: &mut ControllerEndpoint, value: u8) {
-    let flow = controller
-        .flow::<g::Msg<LABEL, u8>>()
-        .expect("controller flow<u8>");
-    let _ = must(block_on(flow.send(&value)));
-}
-
-fn controller_send_u32<const LABEL: u8>(controller: &mut ControllerEndpoint, value: u32) {
-    #[cfg(not(feature = "linear-heavy"))]
-    {
-        let flow = controller
-            .flow::<g::Msg<LABEL, u32>>()
-            .expect("controller flow<u32>");
-        let _ = block_on(flow.send(&value)).expect("controller send");
-    }
-    #[cfg(feature = "linear-heavy")]
-    {
-        let _ = controller;
-        let _ = value;
-        loop {
-            core::hint::spin_loop();
-        }
-    }
-}
-
-fn worker_send_u8<const LABEL: u8>(worker: &mut WorkerEndpoint, value: u8) {
-    let flow = worker.flow::<g::Msg<LABEL, u8>>().expect("worker flow<u8>");
-    let _ = must(block_on(flow.send(&value)));
-}
-
-fn worker_recv_u8<const LABEL: u8>(worker: &mut WorkerEndpoint) -> u8 {
-    must(block_on(worker.recv::<g::Msg<LABEL, u8>>()))
-}
-
-fn controller_recv_u8<const LABEL: u8>(controller: &mut ControllerEndpoint) -> u8 {
-    must(block_on(controller.recv::<g::Msg<LABEL, u8>>()))
-}
-
-fn controller_select<'a, const LABEL: u8, K>(controller: &mut ControllerEndpoint)
-where
-    K: ResourceKind + ControlResourceKind + ControlMint + 'a + 'static,
-{
-    #[cfg(not(feature = "linear-heavy"))]
-    {
-        let outcome = must(block_on(
-            controller
-                .flow::<g::Msg<LABEL, GenericCapToken<K>, CanonicalControl<K>>>()
-                .expect("controller control flow")
-                .send(()),
-        ));
-        assert!(outcome.is_canonical());
-    }
-    #[cfg(feature = "linear-heavy")]
-    {
-        let _ = controller;
-        loop {
-            core::hint::spin_loop();
-        }
-    }
-}
-
-fn worker_offer_decode_u32<const LABEL: u8>(worker: &mut WorkerEndpoint) -> u32 {
-    #[cfg(not(feature = "linear-heavy"))]
-    {
-        let branch = must(block_on(worker.offer()));
-        assert_eq!(branch.label(), LABEL);
-        must(block_on(branch.decode::<g::Msg<LABEL, u32>>()))
-    }
-    #[cfg(feature = "linear-heavy")]
-    {
-        let _ = worker;
-        loop {
-            core::hint::spin_loop();
-        }
-    }
-}
-
-struct PicoHarness;
-
-#[cfg(feature = "linear-heavy")]
-const _: () = {
-    let _ = controller_send_u32::<0> as fn(&mut ControllerEndpoint, u32);
-    let _ = controller_select::<0, hibana::substrate::cap::advanced::RouteDecisionKind>
-        as fn(&mut ControllerEndpoint);
-    let _ = worker_offer_decode_u32::<0> as fn(&mut WorkerEndpoint) -> u32;
-    let _ = <PicoHarness as ScenarioHarness>::controller_send_u32::<0>
-        as fn(&mut ControllerEndpoint, u32);
-    let _ = <PicoHarness as ScenarioHarness>::controller_select::<
-        0,
-        hibana::substrate::cap::advanced::RouteDecisionKind,
-    > as fn(&mut ControllerEndpoint);
-    let _ = <PicoHarness as ScenarioHarness>::worker_offer_decode_u32::<0>
-        as fn(&mut WorkerEndpoint) -> u32;
-};
-
-impl ScenarioHarness for PicoHarness {
-    type ControllerEndpoint<'a> = ControllerEndpoint;
-    type WorkerEndpoint<'a> = WorkerEndpoint;
-
-    fn controller_send_u8<const LABEL: u8>(
-        controller: &mut Self::ControllerEndpoint<'_>,
-        value: u8,
-    ) {
-        controller_send_u8::<LABEL>(controller, value);
-    }
-
-    fn controller_send_u32<const LABEL: u8>(
-        controller: &mut Self::ControllerEndpoint<'_>,
-        value: u32,
-    ) {
-        controller_send_u32::<LABEL>(controller, value);
-    }
-
-    fn worker_send_u8<const LABEL: u8>(worker: &mut Self::WorkerEndpoint<'_>, value: u8) {
-        worker_send_u8::<LABEL>(worker, value);
-    }
-
-    fn worker_recv_u8<const LABEL: u8>(worker: &mut Self::WorkerEndpoint<'_>) -> u8 {
-        worker_recv_u8::<LABEL>(worker)
-    }
-
-    fn controller_recv_u8<const LABEL: u8>(controller: &mut Self::ControllerEndpoint<'_>) -> u8 {
-        controller_recv_u8::<LABEL>(controller)
-    }
-
-    fn controller_select<'a, const LABEL: u8, K>(controller: &mut Self::ControllerEndpoint<'a>)
-    where
-        K: ResourceKind + ControlResourceKind + ControlMint + 'a + 'static,
-    {
-        controller_select::<LABEL, K>(controller);
-    }
-
-    fn worker_offer_decode_u32<const LABEL: u8>(worker: &mut Self::WorkerEndpoint<'_>) -> u32 {
-        worker_offer_decode_u32::<LABEL>(worker)
-    }
+fn drive<F: Future>(future: F) -> F::Output {
+    block_on(future)
 }
 
 fn transport_queue_is_empty() -> bool {
@@ -605,7 +465,20 @@ fn transport_queue_is_empty() -> bool {
     state.roles.iter().all(|role| role.queue.len == 0)
 }
 
+fn retain_fixture_symbols() {
+    let _ = localside::worker_offer_decode_u8::<
+        0,
+        PicoTransport,
+        DefaultLabelUniverse,
+        CounterClock,
+        1,
+    > as fn(
+        &mut localside::WorkerEndpoint<'_, PicoTransport, DefaultLabelUniverse, CounterClock, 1>,
+    ) -> u8;
+}
+
 fn run_smoke() {
+    retain_fixture_symbols();
     assert_eq!(sample_program::ROUTE_SCOPE_COUNT, sample_program::ACK_LABELS.len());
     assert_eq!(
         sample_program::ROUTE_SCOPE_COUNT,
@@ -630,7 +503,7 @@ fn run_smoke() {
         let worker_ptr = storage.worker_storage.as_mut_ptr();
         worker_ptr.write(must(kit.enter(rv_id, sid, &WORKER_PROGRAM, NoBinding)));
         let worker = &mut *worker_ptr;
-        sample_program::run::<PicoHarness>(controller, worker);
+        sample_program::run(controller, worker);
         assert!(transport_queue_is_empty());
 
         core::ptr::drop_in_place(worker_ptr);

@@ -11,23 +11,14 @@ use super::{
     steps::ProjectRole,
 };
 use crate::control::cap::mint::{CapShot, MintConfig, MintConfigMarker};
-#[cfg(test)]
-use crate::eff;
 use crate::{
     eff::EffIndex,
     global::const_dsl::{CompactScopeId, EffList, ScopeId},
     global::{KnownRole, Role},
 };
 
-#[cfg(test)]
-pub(super) const MAX_STEPS: usize = eff::meta::MAX_EFF_NODES;
-/// Maximum number of parallel phases in a program.
-#[cfg(test)]
-pub(super) const MAX_PHASES: usize = 32;
 pub(crate) type LaneWord = usize;
 pub(crate) const RESERVED_BINDING_LANES: usize = 2;
-#[cfg(test)]
-pub(crate) const LOW_LANE_TEST_WIDTH: usize = u32::BITS as usize;
 
 #[inline(always)]
 pub(crate) const fn lane_word_count(lane_count: usize) -> usize {
@@ -124,17 +115,21 @@ impl LaneSetView {
 
     #[cfg(test)]
     #[inline(always)]
-    pub(crate) fn collect_low_lane_bits(self, lane_limit: usize) -> u32 {
-        let mut projected = 0u32;
+    pub(crate) fn write_lane_indices(self, lane_limit: usize, dst: &mut [u8]) -> usize {
+        let mut written = 0usize;
         let mut lane = 0usize;
-        let projected_limit = core::cmp::min(lane_limit, LOW_LANE_TEST_WIDTH);
-        while lane < projected_limit {
+        while lane < lane_limit {
             if self.contains(lane) {
-                projected |= 1u32 << lane;
+                assert!(
+                    written < dst.len(),
+                    "lane-index destination is too small for the exact lane set"
+                );
+                dst[written] = u8::try_from(lane).expect("lane index exceeds public lane width");
+                written += 1;
             }
             lane += 1;
         }
-        projected
+        written
     }
 }
 
@@ -721,64 +716,31 @@ where
 
 #[cfg(test)]
 mod tests {
-    use core::{cell::UnsafeCell, mem::MaybeUninit};
-    use std::thread_local;
-
     use super::*;
     use crate::g::{self, Msg, Role};
     use crate::global::compiled::CompiledRoleImage;
     use crate::global::const_dsl::{ScopeEvent, ScopeKind};
     use crate::global::steps::{self, ParSteps, RouteSteps, SeqSteps, StepCons, StepNil};
-    use crate::global::typestate::RoleCompileScratch;
-
-    const COMPILED_ROLE_IMAGE_BYTES: usize = CompiledRoleImage::persistent_bytes_for_counts(
-        crate::eff::meta::MAX_EFF_NODES,
-        crate::eff::meta::MAX_EFF_NODES,
-        crate::eff::meta::MAX_EFF_NODES,
-    );
-    const COMPILED_ROLE_IMAGE_ALIGN: usize = CompiledRoleImage::persistent_align();
-    const COMPILED_ROLE_IMAGE_STORAGE_BYTES: usize =
-        COMPILED_ROLE_IMAGE_BYTES + COMPILED_ROLE_IMAGE_ALIGN;
-
-    thread_local! {
-        static COMPILED_ROLE_IMAGE_STORAGE: UnsafeCell<[u8; COMPILED_ROLE_IMAGE_STORAGE_BYTES]> =
-            const { UnsafeCell::new([0u8; COMPILED_ROLE_IMAGE_STORAGE_BYTES]) };
-        static COMPILED_ROLE_SCRATCH: UnsafeCell<MaybeUninit<RoleCompileScratch>> =
-            const { UnsafeCell::new(MaybeUninit::uninit()) };
-    }
 
     fn with_compiled_role_image<const ROLE: u8, Steps, R>(
         program: &RoleProgram<'_, ROLE, Steps, MintConfig>,
         f: impl FnOnce(&CompiledRoleImage) -> R,
     ) -> R {
-        let lowering = crate::global::lowering_input(program);
-        COMPILED_ROLE_IMAGE_STORAGE.with(|compiled| {
-            COMPILED_ROLE_SCRATCH.with(|scratch| unsafe {
-                let base = (*compiled.get()).as_mut_ptr() as usize;
-                let compiled_ptr = ((base + COMPILED_ROLE_IMAGE_ALIGN - 1)
-                    & !(COMPILED_ROLE_IMAGE_ALIGN - 1))
-                    as *mut CompiledRoleImage;
-                debug_assert!(
-                    (compiled_ptr as usize) + COMPILED_ROLE_IMAGE_BYTES
-                        <= base + COMPILED_ROLE_IMAGE_STORAGE_BYTES
-                );
-                crate::global::compiled::with_compiled_role_image::<ROLE, _>(
-                    compiled_ptr,
-                    lowering,
-                    (*scratch.get()).as_mut_ptr(),
-                    f,
-                )
-            })
-        })
+        crate::global::compiled::with_compiled_role_image::<ROLE, _>(
+            crate::global::lowering_input(program),
+            f,
+        )
     }
 
     fn assert_parallel_phase_shape(image: &CompiledRoleImage) {
         assert_eq!(image.phase_count(), 1);
         let phase_lane_set = image.phase_lane_set(0).expect("phase lane set");
+        let mut lanes = [u8::MAX; 2];
         assert_eq!(
-            phase_lane_set.collect_low_lane_bits(image.logical_lane_count()),
-            (1u32 << 0) | (1u32 << 1)
+            phase_lane_set.write_lane_indices(image.logical_lane_count(), &mut lanes),
+            2
         );
+        assert_eq!(lanes, [0, 1]);
         assert_eq!(image.phase_lane_steps(0, 0).map(|steps| steps.len), Some(1));
         assert_eq!(image.phase_lane_steps(0, 1).map(|steps| steps.len), Some(1));
     }

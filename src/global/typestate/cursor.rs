@@ -570,6 +570,51 @@ impl PhaseCursor {
         }
     }
 
+    pub(crate) fn current_phase_contains_eff_index(
+        &self,
+        lane_idx: usize,
+        eff_index: EffIndex,
+    ) -> bool {
+        if lane_idx >= self.logical_lane_count() {
+            return false;
+        }
+        let Some(lane_steps) = self.current_phase_lane_steps(lane_idx) else {
+            return false;
+        };
+        if !lane_steps.is_active() {
+            return false;
+        }
+        let eff_idx = eff_index.as_usize();
+        if eff_idx >= PHASE_CURSOR_MAX_STEPS {
+            return false;
+        }
+        let step_idx = self.machine().eff_index_to_step()[eff_idx];
+        if step_idx == PHASE_CURSOR_NO_STEP {
+            return false;
+        }
+        let step_idx = step_idx as usize;
+        if step_idx >= self.local_steps_len() {
+            return false;
+        }
+        let start = lane_steps.start as usize;
+        let end = start.saturating_add(lane_steps.len as usize);
+        step_idx >= start && step_idx < end
+    }
+
+    pub(crate) fn complete_lane_phase(&mut self, lane_idx: usize) {
+        if lane_idx >= self.logical_lane_count() {
+            return;
+        }
+        let Some(lane_steps) = self.current_phase_lane_steps(lane_idx) else {
+            return;
+        };
+        if !lane_steps.is_active() {
+            return;
+        }
+        self.lane_cursors_mut()[lane_idx] = Self::encode_index(lane_steps.len as usize);
+        self.refresh_current_step_label(lane_idx);
+    }
+
     /// Advance to next phase without syncing the primary typestate index.
     #[inline]
     pub(crate) fn advance_phase_without_sync(&mut self) {
@@ -1123,7 +1168,7 @@ impl PhaseCursor {
 
     /// Get the compiled offer-lane mask for a route scope.
     pub(crate) fn route_scope_offer_lane_set(&self, scope_id: ScopeId) -> Option<LaneSetView> {
-        self.typestate().route_offer_lane_mask(scope_id)
+        self.typestate().route_offer_lane_set(scope_id)
     }
 
     /// Get offer entry index for a route scope.

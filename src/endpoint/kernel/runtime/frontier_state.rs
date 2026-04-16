@@ -550,6 +550,9 @@ impl FrontierState {
         &mut self,
         entry_idx: usize,
     ) -> Option<&mut OfferEntryState> {
+        if !self.offer_entry_state.has_storage() {
+            return None;
+        }
         self.offer_entry_state.get_mut(entry_idx)
     }
 
@@ -562,15 +565,7 @@ impl FrontierState {
     #[cfg(test)]
     #[inline]
     pub(super) fn clear_offer_entry_state(&mut self, entry_idx: usize) {
-        self.offer_entry_state.clear(entry_idx);
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(super) fn set_offer_entry_active_mask(&mut self, entry_idx: usize, active_mask: u32) {
-        if let Some(state) = self.offer_entry_state.get_mut(entry_idx) {
-            state.active_mask = active_mask;
-        }
+        self.set_offer_entry_state(entry_idx, OfferEntryState::EMPTY);
     }
 
     #[cfg(test)]
@@ -580,6 +575,9 @@ impl FrontierState {
         entry_idx: usize,
         observed: super::frontier::OfferEntryObservedState,
     ) {
+        if !self.offer_entry_state.has_storage() {
+            return;
+        }
         if let Some(state) = self.offer_entry_state.get_mut(entry_idx) {
             state.observed = observed;
         }
@@ -786,78 +784,48 @@ impl FrontierState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::cell::{Cell, UnsafeCell};
     use core::mem::MaybeUninit;
 
     use crate::global::const_dsl::ScopeId;
-    use crate::global::role_program::{LOW_LANE_TEST_WIDTH, lane_word_count};
-    use std::thread_local;
-
-    const TEST_LANE_CAPACITY: usize = LOW_LANE_TEST_WIDTH;
-    const TEST_OBSERVED_KEY_SLOT_CAPACITY: usize = u8::BITS as usize;
-    const OBSERVED_KEY_TEST_POOL_CAPACITY: usize = 32;
-
-    #[derive(Clone, Copy)]
-    struct ObservedKeyTestArena {
-        slots: [FrontierObservationSlot; TEST_OBSERVED_KEY_SLOT_CAPACITY],
-        offer_lanes: [LaneWord; lane_word_count(TEST_LANE_CAPACITY)],
-        binding_nonempty_lanes: [LaneWord; lane_word_count(TEST_LANE_CAPACITY)],
-    }
-
-    impl ObservedKeyTestArena {
-        const EMPTY: Self = Self {
-            slots: [FrontierObservationSlot::EMPTY; TEST_OBSERVED_KEY_SLOT_CAPACITY],
-            offer_lanes: [0; lane_word_count(TEST_LANE_CAPACITY)],
-            binding_nonempty_lanes: [0; lane_word_count(TEST_LANE_CAPACITY)],
-        };
-    }
-
-    thread_local! {
-        static OBSERVED_KEY_TEST_POOL: UnsafeCell<[ObservedKeyTestArena; OBSERVED_KEY_TEST_POOL_CAPACITY]> =
-            const { UnsafeCell::new([ObservedKeyTestArena::EMPTY; OBSERVED_KEY_TEST_POOL_CAPACITY]) };
-        static OBSERVED_KEY_TEST_NEXT: Cell<usize> = const { Cell::new(0) };
-    }
-
-    fn alloc_observed_key_test_storage() -> *mut ObservedKeyTestArena {
-        OBSERVED_KEY_TEST_NEXT.with(|next| {
-            OBSERVED_KEY_TEST_POOL.with(|pool| {
-                let idx = next.get();
-                if idx >= OBSERVED_KEY_TEST_POOL_CAPACITY {
-                    panic!("frontier state observed key test storage exhausted");
-                }
-                next.set(idx + 1);
-                let storage = unsafe { &mut (*pool.get())[idx] };
-                storage.slots.fill(FrontierObservationSlot::EMPTY);
-                storage.offer_lanes.fill(0);
-                storage.binding_nonempty_lanes.fill(0);
-                storage as *mut ObservedKeyTestArena
-            })
-        })
-    }
+    use crate::global::role_program::lane_word_count;
 
     fn test_scope(raw: u64) -> ScopeId {
         ScopeId::from_raw(raw)
     }
 
-    fn observed_key(entries: &[usize]) -> FrontierObservationKey {
-        let mut active = ActiveEntrySet::EMPTY;
+    fn observed_key_storage(
+        entries: &[usize],
+    ) -> (
+        std::vec::Vec<FrontierObservationSlot>,
+        std::vec::Vec<usize>,
+        std::vec::Vec<usize>,
+        FrontierObservationKey,
+    ) {
+        let mut active_slots = std::vec::Vec::with_capacity(entries.len().max(1));
+        active_slots.resize(entries.len().max(1), ActiveEntrySlot::EMPTY);
+        let mut active = ActiveEntrySet::from_parts(active_slots.as_mut_ptr(), active_slots.len());
+        active.clear();
         let mut idx = 0usize;
         while idx < entries.len() {
             assert!(active.insert_entry(entries[idx], idx as u8));
             idx += 1;
         }
-        let storage = alloc_observed_key_test_storage();
-        let storage = unsafe { &mut *storage };
+        let mut key_slots = std::vec::Vec::with_capacity(entries.len().max(1));
+        key_slots.resize(entries.len().max(1), FrontierObservationSlot::EMPTY);
+        let mut offer_lanes = std::vec::Vec::with_capacity(lane_word_count(1));
+        offer_lanes.resize(lane_word_count(1), 0usize);
+        let mut binding_nonempty_lanes = std::vec::Vec::with_capacity(lane_word_count(1));
+        binding_nonempty_lanes.resize(lane_word_count(1), 0usize);
         let mut key = FrontierObservationKey::from_parts(
-            storage.slots.as_mut_ptr(),
-            storage.slots.len(),
-            storage.offer_lanes.as_mut_ptr(),
-            storage.binding_nonempty_lanes.as_mut_ptr(),
-            lane_word_count(TEST_LANE_CAPACITY),
+            key_slots.as_mut_ptr(),
+            key_slots.len(),
+            offer_lanes.as_mut_ptr(),
+            binding_nonempty_lanes.as_mut_ptr(),
+            lane_word_count(1),
         );
         key.clear();
         key.set_active_entries_from(active);
-        key
+        (key_slots, offer_lanes, binding_nonempty_lanes, key)
     }
 
     #[test]
@@ -882,15 +850,13 @@ mod tests {
     #[test]
     fn global_frontier_cache_uses_external_key_storage() {
         let mut global_observed = [FrontierObservationSlot::EMPTY; 4];
-        let mut global_observed_offer_lanes = [0usize; lane_word_count(TEST_LANE_CAPACITY)];
-        let mut global_observed_binding_nonempty_lanes =
-            [0usize; lane_word_count(TEST_LANE_CAPACITY)];
+        let mut global_observed_offer_lanes = [0usize; lane_word_count(1)];
+        let mut global_observed_binding_nonempty_lanes = [0usize; lane_word_count(1)];
         let mut root_rows = [RootFrontierState::EMPTY; 2];
         let mut root_active = [ActiveEntrySlot::EMPTY; 4];
         let mut root_observed = [FrontierObservationSlot::EMPTY; 4];
-        let mut root_observed_offer_lanes = [0usize; 2 * lane_word_count(TEST_LANE_CAPACITY)];
-        let mut root_observed_binding_nonempty_lanes =
-            [0usize; 2 * lane_word_count(TEST_LANE_CAPACITY)];
+        let mut root_observed_offer_lanes = [0usize; 2 * lane_word_count(1)];
+        let mut root_observed_binding_nonempty_lanes = [0usize; 2 * lane_word_count(1)];
         let mut offer_slots = [OfferEntrySlot::EMPTY; 4];
         let mut observed_slots = [FrontierObservationSlot::EMPTY; 4];
         let mut frontier_state = MaybeUninit::<FrontierState>::uninit();
@@ -905,18 +871,19 @@ mod tests {
                 offer_slots.as_mut_ptr(),
                 2,
                 4,
-                lane_word_count(TEST_LANE_CAPACITY),
+                lane_word_count(1),
                 4,
             );
         }
         let mut frontier_state = unsafe { frontier_state.assume_init() };
-        let cached_key = observed_key(&[7, 9]);
+        let (_cached_key_slots, _cached_offer_lanes, _cached_binding_nonempty_lanes, cached_key) =
+            observed_key_storage(&[7, 9]);
         let mut stored_key = FrontierObservationKey::from_parts(
             global_observed.as_mut_ptr(),
             4,
             global_observed_offer_lanes.as_mut_ptr(),
             global_observed_binding_nonempty_lanes.as_mut_ptr(),
-            lane_word_count(TEST_LANE_CAPACITY),
+            lane_word_count(1),
         );
         stored_key.clear();
         let mut observed_entries = ObservedEntrySet::from_parts(observed_slots.as_mut_ptr(), 4);
@@ -953,8 +920,8 @@ mod tests {
         let mut rows = [RootFrontierState::EMPTY; 4];
         let mut active = [ActiveEntrySlot::EMPTY; 8];
         let mut observed = [FrontierObservationSlot::EMPTY; 8];
-        let mut observed_offer_lanes = [0usize; 3 * lane_word_count(TEST_LANE_CAPACITY)];
-        let mut observed_binding_nonempty_lanes = [0usize; 3 * lane_word_count(TEST_LANE_CAPACITY)];
+        let mut observed_offer_lanes = [0usize; 3 * lane_word_count(1)];
+        let mut observed_binding_nonempty_lanes = [0usize; 3 * lane_word_count(1)];
         let mut table = MaybeUninit::<RootFrontierTable>::uninit();
         unsafe {
             RootFrontierTable::init_from_parts(
@@ -966,7 +933,7 @@ mod tests {
                 observed_binding_nonempty_lanes.as_mut_ptr(),
                 3,
                 4,
-                lane_word_count(TEST_LANE_CAPACITY),
+                lane_word_count(1),
             );
         }
         let mut table = unsafe { table.assume_init() };
@@ -995,8 +962,8 @@ mod tests {
         let mut rows = [RootFrontierState::EMPTY; 4];
         let mut active = [ActiveEntrySlot::EMPTY; 8];
         let mut observed = [FrontierObservationSlot::EMPTY; 8];
-        let mut observed_offer_lanes = [0usize; 3 * lane_word_count(TEST_LANE_CAPACITY)];
-        let mut observed_binding_nonempty_lanes = [0usize; 3 * lane_word_count(TEST_LANE_CAPACITY)];
+        let mut observed_offer_lanes = [0usize; 3 * lane_word_count(1)];
+        let mut observed_binding_nonempty_lanes = [0usize; 3 * lane_word_count(1)];
         let mut table = MaybeUninit::<RootFrontierTable>::uninit();
         unsafe {
             RootFrontierTable::init_from_parts(
@@ -1008,7 +975,7 @@ mod tests {
                 observed_binding_nonempty_lanes.as_mut_ptr(),
                 3,
                 4,
-                lane_word_count(TEST_LANE_CAPACITY),
+                lane_word_count(1),
             );
         }
         let mut table = unsafe { table.assume_init() };
@@ -1018,8 +985,12 @@ mod tests {
         assert!(table.insert_root_active_entry(0, 10, 0));
         assert!(table.insert_root_active_entry(0, 11, 1));
         assert!(table.insert_root_active_entry(1, 20, 0));
-        table.replace_root_observed_key(0, observed_key(&[10, 11]));
-        table.replace_root_observed_key(1, observed_key(&[20]));
+        let (_key0_slots, _key0_offer_lanes, _key0_binding_nonempty_lanes, key0) =
+            observed_key_storage(&[10, 11]);
+        let (_key1_slots, _key1_offer_lanes, _key1_binding_nonempty_lanes, key1) =
+            observed_key_storage(&[20]);
+        table.replace_root_observed_key(0, key0);
+        table.replace_root_observed_key(1, key1);
 
         assert_eq!(table.active_pool_used(), 3);
         assert_eq!(table[0].active_start, 0);
@@ -1042,8 +1013,8 @@ mod tests {
         let mut rows = [RootFrontierState::EMPTY; 4];
         let mut active = [ActiveEntrySlot::EMPTY; 8];
         let mut observed = [FrontierObservationSlot::EMPTY; 8];
-        let mut observed_offer_lanes = [0usize; 3 * lane_word_count(TEST_LANE_CAPACITY)];
-        let mut observed_binding_nonempty_lanes = [0usize; 3 * lane_word_count(TEST_LANE_CAPACITY)];
+        let mut observed_offer_lanes = [0usize; 3 * lane_word_count(1)];
+        let mut observed_binding_nonempty_lanes = [0usize; 3 * lane_word_count(1)];
         let mut table = MaybeUninit::<RootFrontierTable>::uninit();
         unsafe {
             RootFrontierTable::init_from_parts(
@@ -1055,14 +1026,16 @@ mod tests {
                 observed_binding_nonempty_lanes.as_mut_ptr(),
                 3,
                 4,
-                lane_word_count(TEST_LANE_CAPACITY),
+                lane_word_count(1),
             );
         }
         let mut table = unsafe { table.assume_init() };
 
         table.prepare_row(0, test_scope(1));
         assert!(table.insert_root_active_entry(0, 10, 0));
-        table.replace_root_observed_key(0, observed_key(&[10]));
+        let (_key_slots, _key_offer_lanes, _key_binding_nonempty_lanes, key) =
+            observed_key_storage(&[10]);
+        table.replace_root_observed_key(0, key);
         assert_eq!(table.observed_key(0).len(), 1);
 
         assert!(table.insert_root_active_entry(0, 11, 1));
@@ -1073,15 +1046,13 @@ mod tests {
     #[test]
     fn next_observation_epoch_wrap_clears_shared_root_observed_pool() {
         let mut global_observed = [FrontierObservationSlot::EMPTY; 4];
-        let mut global_observed_offer_lanes = [0usize; lane_word_count(TEST_LANE_CAPACITY)];
-        let mut global_observed_binding_nonempty_lanes =
-            [0usize; lane_word_count(TEST_LANE_CAPACITY)];
+        let mut global_observed_offer_lanes = [0usize; lane_word_count(1)];
+        let mut global_observed_binding_nonempty_lanes = [0usize; lane_word_count(1)];
         let mut root_rows = [RootFrontierState::EMPTY; 2];
         let mut root_active = [ActiveEntrySlot::EMPTY; 4];
         let mut root_observed = [FrontierObservationSlot::EMPTY; 4];
-        let mut root_observed_offer_lanes = [0usize; 2 * lane_word_count(TEST_LANE_CAPACITY)];
-        let mut root_observed_binding_nonempty_lanes =
-            [0usize; 2 * lane_word_count(TEST_LANE_CAPACITY)];
+        let mut root_observed_offer_lanes = [0usize; 2 * lane_word_count(1)];
+        let mut root_observed_binding_nonempty_lanes = [0usize; 2 * lane_word_count(1)];
         let mut offer_slots = [OfferEntrySlot::EMPTY; 4];
         let mut frontier_state = MaybeUninit::<FrontierState>::uninit();
         unsafe {
@@ -1095,7 +1066,7 @@ mod tests {
                 offer_slots.as_mut_ptr(),
                 2,
                 4,
-                lane_word_count(TEST_LANE_CAPACITY),
+                lane_word_count(1),
                 4,
             );
         }
@@ -1105,7 +1076,7 @@ mod tests {
             4,
             global_observed_offer_lanes.as_mut_ptr(),
             global_observed_binding_nonempty_lanes.as_mut_ptr(),
-            lane_word_count(TEST_LANE_CAPACITY),
+            lane_word_count(1),
         );
         global_frontier_observed_key.clear();
         frontier_state
@@ -1121,9 +1092,11 @@ mod tests {
                 .root_frontier_state
                 .insert_root_active_entry(0, 5, 1)
         );
+        let (_root_key_slots, _root_key_offer_lanes, _root_key_binding_nonempty_lanes, root_key) =
+            observed_key_storage(&[3, 5]);
         frontier_state
             .root_frontier_state
-            .replace_root_observed_key(0, observed_key(&[3, 5]));
+            .replace_root_observed_key(0, root_key);
         frontier_state.root_frontier_state[0].observed_entries = ObservedEntrySummary {
             controller_mask: 1,
             dynamic_controller_mask: 1,
@@ -1131,7 +1104,13 @@ mod tests {
             ready_arm_mask: 1,
             ready_mask: 1,
         };
-        global_frontier_observed_key.copy_from(observed_key(&[7]));
+        let (
+            _global_key_slots,
+            _global_key_offer_lanes,
+            _global_key_binding_nonempty_lanes,
+            global_key,
+        ) = observed_key_storage(&[7]);
+        global_frontier_observed_key.copy_from(global_key);
         frontier_state.global_frontier_observed = ObservedEntrySummary {
             controller_mask: 1,
             dynamic_controller_mask: 0,

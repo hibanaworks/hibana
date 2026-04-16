@@ -555,15 +555,15 @@ where
         scope_id: ScopeId,
         offer_lane_idx: usize,
     ) -> bool {
-        if offer_lane_idx >= u16::BITS as usize {
-            return false;
-        }
         self.ports
             .get(lane_idx)
             .and_then(|port| port.as_ref())
             .map(|port| {
-                let pending = port.pending_route_decision_lane_mask(scope_id, ROLE);
-                (pending & (1u16 << offer_lane_idx)) != 0
+                port.has_pending_route_decision_for_lane(
+                    scope_id,
+                    ROLE,
+                    Lane::new(offer_lane_idx as u32),
+                )
             })
             .unwrap_or(false)
     }
@@ -575,9 +575,6 @@ where
         offer_lane_idx: usize,
         label_meta: ScopeLabelMeta,
     ) -> bool {
-        if offer_lane_idx >= u16::BITS as usize {
-            return false;
-        }
         let previous_change_epoch = self
             .ports
             .get(lane_idx)
@@ -587,11 +584,12 @@ where
         let Some(port) = self.ports.get(lane_idx).and_then(|port| port.as_ref()) else {
             return false;
         };
-        let pending = port
-            .pending_route_hint_lane_mask_for_label_mask(label_meta.hint_label_mask())
-            & (1u16 << offer_lane_idx);
+        let pending = port.has_pending_route_hint_for_lane(
+            label_meta.hint_label_mask(),
+            Lane::new(offer_lane_idx as u32),
+        );
         self.refresh_frontier_observation_cache_for_route_lane(lane_idx, previous_change_epoch);
-        pending != 0
+        pending
     }
 
     #[inline]

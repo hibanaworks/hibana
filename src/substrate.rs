@@ -279,18 +279,16 @@ mod tests {
 
     use crate::{
         Endpoint, g,
-        g::advanced::{CanonicalControl, project},
+        g::advanced::project,
         substrate::{
             SessionId, SessionKit, Transport,
             binding::NoBinding,
-            cap::advanced::{ControlMint, MintConfig},
-            cap::{ControlResourceKind, GenericCapToken, ResourceKind},
+            cap::advanced::MintConfig,
             runtime::{Config, CounterClock, DefaultLabelUniverse},
             transport::{Outgoing, TransportError, TransportEvent},
             wire::Payload,
         },
     };
-    use scenario::ScenarioHarness;
     mod fanout_program {
         extern crate self as hibana;
         include!(concat!(
@@ -312,18 +310,18 @@ mod tests {
             "/internal/pico_smoke/src/linear_program.rs"
         ));
     }
+    mod localside {
+        extern crate self as hibana;
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/internal/pico_smoke/src/localside.rs"
+        ));
+    }
     mod route_control_kinds {
         extern crate self as hibana;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/internal/pico_smoke/src/route_control_kinds.rs"
-        ));
-    }
-    mod scenario {
-        extern crate self as hibana;
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/scenario.rs"
         ));
     }
 
@@ -341,6 +339,81 @@ mod tests {
     static ROUTE_HEAVY_PROGRAM: g::Program<huge_program::ProgramSteps> = huge_program::PROGRAM;
     static LINEAR_HEAVY_PROGRAM: g::Program<linear_program::ProgramSteps> = linear_program::PROGRAM;
     static FANOUT_HEAVY_PROGRAM: g::Program<fanout_program::ProgramSteps> = fanout_program::PROGRAM;
+
+    fn retain_pico_smoke_fixture_symbols() {
+        let _ = huge_program::run::<PicoTransport, DefaultLabelUniverse, CounterClock, 2>
+            as fn(
+                &mut localside::ControllerEndpoint<
+                    '_,
+                    PicoTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+                &mut localside::WorkerEndpoint<
+                    '_,
+                    PicoTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+            );
+        let _ = linear_program::run::<PicoTransport, DefaultLabelUniverse, CounterClock, 2>
+            as fn(
+                &mut localside::ControllerEndpoint<
+                    '_,
+                    PicoTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+                &mut localside::WorkerEndpoint<
+                    '_,
+                    PicoTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+            );
+        let _ = fanout_program::run::<PicoTransport, DefaultLabelUniverse, CounterClock, 2>
+            as fn(
+                &mut localside::ControllerEndpoint<
+                    '_,
+                    PicoTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+                &mut localside::WorkerEndpoint<
+                    '_,
+                    PicoTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+            );
+        let _ = localside::worker_offer_decode_u8::<
+            0,
+            PicoTransport,
+            DefaultLabelUniverse,
+            CounterClock,
+            2,
+        >
+            as fn(
+                &mut localside::WorkerEndpoint<
+                    '_,
+                    PicoTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+            ) -> u8;
+    }
+
+    #[test]
+    fn pico_smoke_fixture_symbols_are_reachable() {
+        retain_pico_smoke_fixture_symbols();
+    }
 
     std::thread_local! {
         static FIXTURE_CLOCK: CounterClock = const { CounterClock::new() };
@@ -646,66 +719,8 @@ mod tests {
         }
     }
 
-    struct PicoHarness;
-
-    impl ScenarioHarness for PicoHarness {
-        type ControllerEndpoint<'a> = Endpoint<'a, 0, PicoKit>;
-        type WorkerEndpoint<'a> = Endpoint<'a, 1, PicoKit>;
-
-        fn controller_send_u8<const LABEL: u8>(
-            controller: &mut Self::ControllerEndpoint<'_>,
-            value: u8,
-        ) {
-            let flow = controller
-                .flow::<g::Msg<LABEL, u8>>()
-                .expect("controller flow<u8>");
-            let _ = block_on(flow.send(&value)).expect("controller send");
-        }
-
-        fn controller_send_u32<const LABEL: u8>(
-            controller: &mut Self::ControllerEndpoint<'_>,
-            value: u32,
-        ) {
-            let flow = controller
-                .flow::<g::Msg<LABEL, u32>>()
-                .expect("controller flow<u32>");
-            let _ = block_on(flow.send(&value)).expect("controller send");
-        }
-
-        fn worker_send_u8<const LABEL: u8>(worker: &mut Self::WorkerEndpoint<'_>, value: u8) {
-            let flow = worker.flow::<g::Msg<LABEL, u8>>().expect("worker flow<u8>");
-            let _ = block_on(flow.send(&value)).expect("worker send");
-        }
-
-        fn worker_recv_u8<const LABEL: u8>(worker: &mut Self::WorkerEndpoint<'_>) -> u8 {
-            block_on(worker.recv::<g::Msg<LABEL, u8>>()).expect("worker recv")
-        }
-
-        fn controller_recv_u8<const LABEL: u8>(
-            controller: &mut Self::ControllerEndpoint<'_>,
-        ) -> u8 {
-            block_on(controller.recv::<g::Msg<LABEL, u8>>()).expect("controller recv")
-        }
-
-        fn controller_select<'a, const LABEL: u8, K>(controller: &mut Self::ControllerEndpoint<'a>)
-        where
-            K: ResourceKind + ControlResourceKind + ControlMint + 'a,
-        {
-            let outcome = block_on(
-                controller
-                    .flow::<g::Msg<LABEL, GenericCapToken<K>, CanonicalControl<K>>>()
-                    .expect("controller control flow")
-                    .send(()),
-            )
-            .expect("controller control send");
-            assert!(outcome.is_canonical());
-        }
-
-        fn worker_offer_decode_u32<const LABEL: u8>(worker: &mut Self::WorkerEndpoint<'_>) -> u32 {
-            let branch = block_on(worker.offer()).expect("worker offer");
-            assert_eq!(branch.label(), LABEL);
-            block_on(branch.decode::<g::Msg<LABEL, u32>>()).expect("worker decode")
-        }
+    fn drive<F: core::future::Future>(future: F) -> F::Output {
+        block_on(future)
     }
 
     fn with_pico_fixture<R>(
@@ -815,10 +830,7 @@ mod tests {
         route_scope_count: usize,
         expected_branch_labels: &'static [u8],
         expected_acks: &'static [u8],
-        run: fn(
-            &mut <PicoHarness as ScenarioHarness>::ControllerEndpoint<'_>,
-            &mut <PicoHarness as ScenarioHarness>::WorkerEndpoint<'_>,
-        ),
+        run: fn(&mut Endpoint<'_, 0, PicoKit>, &mut Endpoint<'_, 1, PicoKit>),
     ) -> RuntimeShapeMetrics
     where
         Steps: crate::global::program::BuildProgramSource
@@ -911,7 +923,7 @@ mod tests {
                 huge_program::ROUTE_SCOPE_COUNT,
                 &huge_program::EXPECTED_WORKER_BRANCH_LABELS,
                 &huge_program::ACK_LABELS,
-                huge_program::run::<PicoHarness>,
+                huge_program::run,
             ),
         );
     }
@@ -926,7 +938,7 @@ mod tests {
                 linear_program::ROUTE_SCOPE_COUNT,
                 &linear_program::EXPECTED_WORKER_BRANCH_LABELS,
                 &linear_program::ACK_LABELS,
-                linear_program::run::<PicoHarness>,
+                linear_program::run,
             ),
         );
     }
@@ -941,7 +953,7 @@ mod tests {
                 fanout_program::ROUTE_SCOPE_COUNT,
                 &fanout_program::EXPECTED_WORKER_BRANCH_LABELS,
                 &fanout_program::ACK_LABELS,
-                fanout_program::run::<PicoHarness>,
+                fanout_program::run,
             ),
         );
     }

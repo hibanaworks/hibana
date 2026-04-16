@@ -7,8 +7,6 @@ use super::{
     emit_walk::RoleTypestateBuildScratch,
     facts::{LocalAction, LocalNode, StateIndex, state_index_to_usize},
 };
-#[cfg(test)]
-use crate::global::role_program::{LocalStep, MAX_PHASES, MAX_STEPS, PhaseRouteGuard};
 use crate::{
     eff::EffIndex,
     global::{
@@ -284,64 +282,6 @@ fn count_arm_lane_last_override_entries(
     count
 }
 
-/// Reusable runtime scratch owner for role-local lowering.
-///
-/// This keeps the canonical `no_std`/`no_alloc` path off the call stack by
-/// moving builder workspaces into a stable owner held by the control plane.
-#[cfg(test)]
-pub(crate) struct RoleCompileScratch {
-    pub(crate) typestate_build: RoleTypestateBuildScratch,
-    pub(crate) by_eff_index: [LocalStep; MAX_STEPS],
-    pub(crate) present: [bool; MAX_STEPS],
-    pub(crate) steps: [LocalStep; MAX_STEPS],
-    pub(crate) eff_index_to_step: [u16; MAX_STEPS],
-    pub(crate) step_index_to_state: [StateIndex; MAX_STEPS],
-    pub(crate) route_guards: [PhaseRouteGuard; MAX_STEPS],
-    pub(crate) parallel_ranges: [(usize, usize); MAX_PHASES],
-}
-
-#[cfg(test)]
-impl RoleCompileScratch {
-    #[cfg(test)]
-    pub(crate) const fn new() -> Self {
-        Self {
-            typestate_build: RoleTypestateBuildScratch::new(),
-            by_eff_index: [LocalStep::EMPTY; MAX_STEPS],
-            present: [false; MAX_STEPS],
-            steps: [LocalStep::EMPTY; MAX_STEPS],
-            eff_index_to_step: [u16::MAX; MAX_STEPS],
-            step_index_to_state: [StateIndex::MAX; MAX_STEPS],
-            route_guards: [PhaseRouteGuard::EMPTY; MAX_STEPS],
-            parallel_ranges: [(0usize, 0usize); MAX_PHASES],
-        }
-    }
-
-    pub(crate) unsafe fn init_empty(dst: *mut Self) {
-        unsafe {
-            RoleTypestateBuildScratch::init_empty(core::ptr::addr_of_mut!((*dst).typestate_build));
-        }
-        let mut idx = 0usize;
-        while idx < MAX_STEPS {
-            unsafe {
-                core::ptr::addr_of_mut!((*dst).by_eff_index[idx]).write(LocalStep::EMPTY);
-                core::ptr::addr_of_mut!((*dst).present[idx]).write(false);
-                core::ptr::addr_of_mut!((*dst).steps[idx]).write(LocalStep::EMPTY);
-                core::ptr::addr_of_mut!((*dst).eff_index_to_step[idx]).write(u16::MAX);
-                core::ptr::addr_of_mut!((*dst).step_index_to_state[idx]).write(StateIndex::MAX);
-                core::ptr::addr_of_mut!((*dst).route_guards[idx]).write(PhaseRouteGuard::EMPTY);
-            }
-            idx += 1;
-        }
-        let mut range_idx = 0usize;
-        while range_idx < MAX_PHASES {
-            unsafe {
-                core::ptr::addr_of_mut!((*dst).parallel_ranges[range_idx]).write((0usize, 0usize));
-            }
-            range_idx += 1;
-        }
-    }
-}
-
 impl RoleTypestateValue {
     #[inline(always)]
     pub(crate) const fn len(&self) -> usize {
@@ -405,7 +345,7 @@ impl RoleTypestateValue {
     }
 
     #[inline]
-    pub(in crate::global::typestate) fn route_offer_lane_mask(
+    pub(in crate::global::typestate) fn route_offer_lane_set(
         &self,
         scope_id: ScopeId,
     ) -> Option<crate::global::role_program::LaneSetView> {
@@ -770,7 +710,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
         route_arm0_lane_last_eff_by_slot: *mut EffIndex,
         route_scope_cap: usize,
         summary: &LoweringSummary,
-        scratch: &mut RoleCompileScratch,
+        scratch: &mut RoleTypestateBuildScratch,
     ) {
         unsafe {
             super::emit_walk::init_role_typestate_value(
@@ -779,7 +719,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                 core::ptr::addr_of_mut!((*dst).len),
                 core::ptr::addr_of_mut!((*dst).scope_registry),
                 ROLE,
-                &mut scratch.typestate_build,
+                scratch,
                 scope_records,
                 scope_slots_by_scope,
                 route_dense_by_slot,

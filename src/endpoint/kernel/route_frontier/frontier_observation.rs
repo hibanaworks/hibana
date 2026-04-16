@@ -121,31 +121,6 @@ where
 
     #[cfg(test)]
     #[inline]
-    pub(in crate::endpoint::kernel) fn insert_global_active_entry_for_test(
-        &mut self,
-        entry_idx: usize,
-        lane_idx: u8,
-    ) -> bool {
-        self.init_global_frontier_scratch_if_needed();
-        let mut active_entries = self.global_active_entries();
-        active_entries.insert_entry(entry_idx, lane_idx)
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(in crate::endpoint::kernel) fn remove_global_active_entry_for_test(
-        &mut self,
-        entry_idx: usize,
-    ) -> bool {
-        if !self.frontier_state.global_frontier_scratch_initialized {
-            return false;
-        }
-        let mut active_entries = self.global_active_entries();
-        active_entries.remove_entry(entry_idx)
-    }
-
-    #[cfg(test)]
-    #[inline]
     pub(in crate::endpoint::kernel) fn overwrite_global_frontier_observed_key_for_test(
         &mut self,
         src: FrontierObservationKey,
@@ -751,9 +726,6 @@ where
             has_ack,
             has_ready_arm_evidence,
         );
-        #[cfg(test)]
-        self.frontier_state
-            .set_offer_entry_observed(entry_idx, observed);
         Some(observed)
     }
 
@@ -766,30 +738,23 @@ where
         if !self.offer_entry_has_active_lanes(entry_idx) {
             return None;
         }
-        #[cfg(test)]
-        {
-            return (state.observed != OfferEntryObservedState::EMPTY).then_some(state.observed);
+        let parallel_root = self
+            .offer_entry_parallel_root_from_state(entry_idx, state)
+            .unwrap_or(ScopeId::none());
+        let use_root_observed_entries = !parallel_root.is_none();
+        let (_, cached_observed_entries) =
+            self.frontier_observation_cache_snapshot(parallel_root, use_root_observed_entries);
+        let cached_bit = cached_observed_entries.entry_bit(entry_idx);
+        if cached_bit == 0 {
+            return None;
         }
-        #[cfg(not(test))]
-        {
-            let parallel_root = self
-                .offer_entry_parallel_root_from_state(entry_idx, state)
-                .unwrap_or(ScopeId::none());
-            let use_root_observed_entries = !parallel_root.is_none();
-            let (_, cached_observed_entries) =
-                self.frontier_observation_cache_snapshot(parallel_root, use_root_observed_entries);
-            let cached_bit = cached_observed_entries.entry_bit(entry_idx);
-            if cached_bit == 0 {
-                return None;
-            }
-            let summary = self.compute_offer_entry_static_summary(entry_idx);
-            return Some(cached_offer_entry_observed_state(
-                self.offer_entry_scope_id(entry_idx, state),
-                summary,
-                cached_observed_entries,
-                cached_bit,
-            ));
-        }
+        let summary = self.compute_offer_entry_static_summary(entry_idx);
+        Some(cached_offer_entry_observed_state(
+            self.offer_entry_scope_id(entry_idx, state),
+            summary,
+            cached_observed_entries,
+            cached_bit,
+        ))
     }
 
     #[inline]

@@ -19,7 +19,6 @@ mod inbox;
 #[path = "runtime/lane_port.rs"]
 mod lane_port;
 mod lane_slots {
-    #[derive(Clone, Copy)]
     pub(super) struct LaneSlotArray<T> {
         ptr: *mut Option<T>,
         len: u8,
@@ -87,6 +86,18 @@ mod lane_slots {
         fn index_mut(&mut self, index: usize) -> &mut Self::Output {
             self.get_mut(index)
                 .unwrap_or_else(|| panic!("lane slot index {index} out of range"))
+        }
+    }
+
+    impl<T> Drop for LaneSlotArray<T> {
+        fn drop(&mut self) {
+            let mut idx = 0usize;
+            while idx < self.len() {
+                unsafe {
+                    core::ptr::drop_in_place(self.ptr.add(idx));
+                }
+                idx += 1;
+            }
         }
     }
 }

@@ -5,8 +5,6 @@
 
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
-#[cfg(test)]
-use core::mem::MaybeUninit;
 
 #[cfg(test)]
 use crate::control::automaton::splice::SpliceLeaseSpec;
@@ -38,7 +36,6 @@ use crate::control::lease::{
         RegisterRendezvousError,
     },
     graph::{LeaseFacet, LeaseGraph, LeaseGraphError, LeaseSpec},
-    map::ArrayMap,
     planner::{
         DELEGATION_CHILD_SET_CAPACITY, LeaseFacetNeeds, facet_needs, facets_caps_delegation,
         facets_caps_splice,
@@ -47,8 +44,6 @@ use crate::control::lease::{
 use crate::endpoint::affine::LaneGuard;
 use crate::global::const_dsl::ControlScopeKind;
 
-type CachedSpliceOperandsMap =
-    ArrayMap<SessionId, SpliceOperands, { crate::runtime::consts::LANES_MAX as usize }>;
 type PublicEndpointKernel<'r, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint> =
     crate::endpoint::kernel::CursorEndpoint<
         'r,
@@ -107,10 +102,6 @@ use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 use crate::eff::EffIndex;
 #[cfg(test)]
 use crate::global::compiled::CompiledProgramImage;
-#[cfg(test)]
-use crate::global::role_program::RoleFootprint;
-#[cfg(test)]
-use crate::global::typestate::RoleCompileScratch;
 use crate::global::{
     compiled::{CompiledRoleImage, ProgramImage, RoleImageSlice},
     const_dsl::{PolicyMode, ScopeId},
@@ -123,45 +114,6 @@ use crate::transport::{TransportAlgorithm, TransportSnapshot};
 
 #[cfg(test)]
 use std::thread_local;
-
-#[cfg(test)]
-const TEST_ENDPOINT_ARENA_SLOTS: usize = 16;
-#[cfg(test)]
-const TEST_ENDPOINT_LANE_CAPACITY: usize = crate::global::role_program::LOW_LANE_TEST_WIDTH;
-#[cfg(test)]
-const TEST_ENDPOINT_ARENA_LAYOUT: crate::endpoint::kernel::EndpointArenaLayout =
-    crate::endpoint::kernel::EndpointArenaLayout::from_footprint(
-        RoleFootprint::for_endpoint_layout(
-            TEST_ENDPOINT_LANE_CAPACITY,
-            TEST_ENDPOINT_LANE_CAPACITY,
-            TEST_ENDPOINT_LANE_CAPACITY,
-            crate::endpoint::kernel::MAX_ROUTE_ARM_STACK,
-            crate::eff::meta::MAX_EFF_NODES,
-            TEST_ENDPOINT_LANE_CAPACITY,
-        ),
-    );
-#[cfg(test)]
-const TEST_ENDPOINT_ARENA_BYTES: usize =
-    TEST_ENDPOINT_ARENA_LAYOUT.total_bytes() + TEST_ENDPOINT_ARENA_LAYOUT.total_align();
-#[cfg(test)]
-const TEST_COMPILED_PROGRAM_IMAGE_BYTES: usize = CompiledProgramImage::max_persistent_bytes();
-#[cfg(test)]
-const TEST_COMPILED_PROGRAM_IMAGE_ALIGN: usize = CompiledProgramImage::persistent_align();
-#[cfg(test)]
-const TEST_COMPILED_PROGRAM_IMAGE_STORAGE_BYTES: usize =
-    TEST_COMPILED_PROGRAM_IMAGE_BYTES + TEST_COMPILED_PROGRAM_IMAGE_ALIGN;
-#[cfg(test)]
-const TEST_COMPILED_ROLE_IMAGE_BYTES: usize = CompiledRoleImage::persistent_bytes_for_counts(
-    crate::eff::meta::MAX_EFF_NODES,
-    crate::eff::meta::MAX_EFF_NODES,
-    crate::eff::meta::MAX_EFF_NODES,
-);
-#[cfg(test)]
-const TEST_COMPILED_ROLE_IMAGE_ALIGN: usize = CompiledRoleImage::persistent_align();
-#[cfg(test)]
-const TEST_COMPILED_ROLE_IMAGE_STORAGE_BYTES: usize =
-    TEST_COMPILED_ROLE_IMAGE_BYTES + TEST_COMPILED_ROLE_IMAGE_ALIGN;
-
 /// Control-plane effect envelope encompassing the effect and its operands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SpliceOperands {
@@ -867,18 +819,6 @@ const TEST_TRANSIENT_GRAPH_SCRATCH_BYTES: usize = 16_384;
 thread_local! {
     static TEST_TRANSIENT_GRAPH_SCRATCH: UnsafeCell<[u8; TEST_TRANSIENT_GRAPH_SCRATCH_BYTES]> =
         const { UnsafeCell::new([0; TEST_TRANSIENT_GRAPH_SCRATCH_BYTES]) };
-    static TEST_ENDPOINT_ARENA_POOL: UnsafeCell<
-        [[u8; TEST_ENDPOINT_ARENA_BYTES]; TEST_ENDPOINT_ARENA_SLOTS]
-    > = const { UnsafeCell::new([[0; TEST_ENDPOINT_ARENA_BYTES]; TEST_ENDPOINT_ARENA_SLOTS]) };
-    static TEST_COMPILED_PROGRAM_POOL: UnsafeCell<
-        [[u8; TEST_COMPILED_PROGRAM_IMAGE_STORAGE_BYTES]; TEST_ENDPOINT_ARENA_SLOTS]
-    > = const { UnsafeCell::new([[0; TEST_COMPILED_PROGRAM_IMAGE_STORAGE_BYTES]; TEST_ENDPOINT_ARENA_SLOTS]) };
-    static TEST_COMPILED_ROLE_POOL: UnsafeCell<
-        [[u8; TEST_COMPILED_ROLE_IMAGE_STORAGE_BYTES]; TEST_ENDPOINT_ARENA_SLOTS]
-    > = const { UnsafeCell::new([[0; TEST_COMPILED_ROLE_IMAGE_STORAGE_BYTES]; TEST_ENDPOINT_ARENA_SLOTS]) };
-    static TEST_ROLE_COMPILE_SCRATCH_POOL: UnsafeCell<
-        [MaybeUninit<RoleCompileScratch>; TEST_ENDPOINT_ARENA_SLOTS]
-    > = const { UnsafeCell::new([const { MaybeUninit::uninit() }; TEST_ENDPOINT_ARENA_SLOTS]) };
 }
 
 /// Validate that the resource tag represents a supported dynamic control operation.
@@ -1434,6 +1374,244 @@ impl<const MAX: usize> DistributedSpliceState<MAX> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct CachedSpliceBucketEntry {
+    sid: SessionId,
+    operands: SpliceOperands,
+}
+
+#[derive(Clone, Copy)]
+struct CachedSpliceBucket {
+    entries: *mut Option<CachedSpliceBucketEntry>,
+    capacity: usize,
+    _no_send_sync: PhantomData<*mut ()>,
+}
+
+impl CachedSpliceBucket {
+    const STORAGE_TAG_MASK: usize = Self::storage_align().saturating_sub(1);
+
+    unsafe fn init_empty(dst: *mut Self) {
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).entries).write(core::ptr::null_mut());
+            core::ptr::addr_of_mut!((*dst).capacity).write(0);
+            core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
+        }
+    }
+
+    #[inline]
+    const fn storage_align() -> usize {
+        core::mem::align_of::<Option<CachedSpliceBucketEntry>>()
+    }
+
+    #[inline]
+    const fn storage_bytes(capacity: usize) -> usize {
+        capacity.saturating_mul(core::mem::size_of::<Option<CachedSpliceBucketEntry>>())
+    }
+
+    #[inline]
+    fn raw_entries(&self) -> *mut Option<CachedSpliceBucketEntry> {
+        self.entries
+    }
+
+    #[inline]
+    fn entries_ptr(&self) -> *mut Option<CachedSpliceBucketEntry> {
+        self.raw_entries()
+            .map_addr(|addr| addr & !Self::STORAGE_TAG_MASK)
+    }
+
+    #[inline]
+    fn encode_entries_ptr(
+        entries: *mut Option<CachedSpliceBucketEntry>,
+        reclaim_delta: usize,
+    ) -> *mut Option<CachedSpliceBucketEntry> {
+        debug_assert_eq!(entries.addr() & Self::STORAGE_TAG_MASK, 0);
+        debug_assert!(reclaim_delta <= Self::STORAGE_TAG_MASK);
+        entries.map_addr(|addr| addr | reclaim_delta)
+    }
+
+    #[inline]
+    fn storage_ptr(&self) -> *mut u8 {
+        self.entries_ptr().cast::<u8>()
+    }
+
+    #[inline]
+    fn storage_reclaim_delta(&self) -> usize {
+        self.raw_entries().addr() & Self::STORAGE_TAG_MASK
+    }
+
+    #[inline]
+    fn storage_len(&self) -> usize {
+        Self::storage_bytes(self.capacity)
+    }
+
+    #[inline]
+    fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    fn occupied_len(&self) -> usize {
+        let entries = self.entries_ptr();
+        if entries.is_null() {
+            return 0;
+        }
+        let mut idx = 0usize;
+        let mut occupied = 0usize;
+        while idx < self.capacity {
+            unsafe {
+                if (*entries.add(idx)).is_some() {
+                    occupied += 1;
+                }
+            }
+            idx += 1;
+        }
+        occupied
+    }
+
+    unsafe fn bind_from_storage(
+        &mut self,
+        storage: *mut u8,
+        capacity: usize,
+        reclaim_delta: usize,
+    ) {
+        let entries = storage.cast::<Option<CachedSpliceBucketEntry>>();
+        let mut idx = 0usize;
+        while idx < capacity {
+            unsafe {
+                entries.add(idx).write(None);
+            }
+            idx += 1;
+        }
+        self.entries = Self::encode_entries_ptr(entries, reclaim_delta);
+        self.capacity = capacity;
+    }
+
+    unsafe fn rebind_from_storage(
+        &mut self,
+        storage: *mut u8,
+        new_capacity: usize,
+        reclaim_delta: usize,
+    ) {
+        let old_entries = self.entries_ptr();
+        let old_capacity = self.capacity;
+        let new_entries = storage.cast::<Option<CachedSpliceBucketEntry>>();
+        let mut idx = 0usize;
+        while idx < new_capacity {
+            unsafe {
+                new_entries.add(idx).write(None);
+            }
+            idx += 1;
+        }
+
+        if !old_entries.is_null() {
+            let mut next = 0usize;
+            let mut old_idx = 0usize;
+            while old_idx < old_capacity {
+                unsafe {
+                    if let Some(entry) = (*old_entries.add(old_idx)).take() {
+                        debug_assert!(next < new_capacity, "cached splice bucket rebind overflow");
+                        new_entries.add(next).write(Some(entry));
+                        next += 1;
+                    }
+                }
+                old_idx += 1;
+            }
+        }
+
+        self.entries = Self::encode_entries_ptr(new_entries, reclaim_delta);
+        self.capacity = new_capacity;
+    }
+
+    fn contains_sid(&self, sid: SessionId) -> bool {
+        let entries = self.entries_ptr();
+        if entries.is_null() {
+            return false;
+        }
+        let mut idx = 0usize;
+        while idx < self.capacity {
+            unsafe {
+                if let Some(stored) = (&*entries.add(idx)).as_ref()
+                    && stored.sid == sid
+                {
+                    return true;
+                }
+            }
+            idx += 1;
+        }
+        false
+    }
+
+    fn get(&self, sid: SessionId) -> Option<&SpliceOperands> {
+        let entries = self.entries_ptr();
+        if entries.is_null() {
+            return None;
+        }
+        let mut idx = 0usize;
+        while idx < self.capacity {
+            unsafe {
+                if let Some(stored) = (&*entries.add(idx)).as_ref()
+                    && stored.sid == sid
+                {
+                    return Some(&stored.operands);
+                }
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    fn insert(&mut self, sid: SessionId, operands: SpliceOperands) -> Result<(), CpError> {
+        let entries = self.entries_ptr();
+        if entries.is_null() {
+            return Err(CpError::ResourceExhausted);
+        }
+        let mut first_empty = None;
+        let mut idx = 0usize;
+        while idx < self.capacity {
+            unsafe {
+                let slot = &mut *entries.add(idx);
+                match slot {
+                    Some(stored) if stored.sid == sid => {
+                        stored.operands = operands;
+                        return Ok(());
+                    }
+                    None if first_empty.is_none() => first_empty = Some(idx),
+                    _ => {}
+                }
+            }
+            idx += 1;
+        }
+        let Some(idx) = first_empty else {
+            return Err(CpError::ResourceExhausted);
+        };
+        unsafe {
+            entries
+                .add(idx)
+                .write(Some(CachedSpliceBucketEntry { sid, operands }));
+        }
+        Ok(())
+    }
+
+    fn remove(&mut self, sid: SessionId) -> Option<SpliceOperands> {
+        let entries = self.entries_ptr();
+        if entries.is_null() {
+            return None;
+        }
+        let mut idx = 0usize;
+        while idx < self.capacity {
+            unsafe {
+                if let Some(stored) = (&mut *entries.add(idx)).take() {
+                    if stored.sid == sid {
+                        return Some(stored.operands);
+                    }
+                    entries.add(idx).write(Some(stored));
+                }
+            }
+            idx += 1;
+        }
+        None
+    }
+}
+
 /// SessionCluster - Coordinates multiple Rendezvous instances.
 ///
 /// This is the top-level local control-plane coordinator. It manages:
@@ -1492,7 +1670,7 @@ where
     splice_state: DistributedSpliceState<MAX_RV>,
 
     /// Cached operands staged between minting intent and ack tokens.
-    cached_operands: [CachedSpliceOperandsMap; MAX_RV],
+    cached_operands: [CachedSpliceBucket; MAX_RV],
 
     /// Number of active lane leases (affine witness count).
     active_leases: core::cell::Cell<u32>,
@@ -1514,7 +1692,9 @@ where
             core::ptr::addr_of_mut!((*dst).active_leases).write(core::cell::Cell::new(0));
             let mut slot = 0usize;
             while slot < MAX_RV {
-                ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).cached_operands[slot]));
+                CachedSpliceBucket::init_empty(core::ptr::addr_of_mut!(
+                    (*dst).cached_operands[slot]
+                ));
                 slot += 1;
             }
         }
@@ -1525,26 +1705,25 @@ where
         cluster_rendezvous_slot::<MAX_RV>(rv_id)
     }
 
-    fn cached_operands_bucket_mut(
-        &mut self,
-        rv_id: RendezvousId,
-    ) -> Option<&mut CachedSpliceOperandsMap> {
-        let slot = Self::cached_operands_slot(rv_id)?;
-        if !self.locals.is_registered(&rv_id) {
-            return None;
-        }
-        Some(&mut self.cached_operands[slot])
-    }
-
     fn cached_operands_get(&self, sid: SessionId) -> Option<&SpliceOperands> {
         let mut slot = 0usize;
         while slot < MAX_RV {
-            if let Some(operands) = self.cached_operands[slot].get(&sid) {
+            if let Some(operands) = self.cached_operands[slot].get(sid) {
                 return Some(operands);
             }
             slot += 1;
         }
         None
+    }
+
+    fn cached_operands_remove_other_shards(&mut self, sid: SessionId, keep_slot: usize) {
+        let mut slot = 0usize;
+        while slot < MAX_RV {
+            if slot != keep_slot {
+                self.cached_operands[slot].remove(sid);
+            }
+            slot += 1;
+        }
     }
 
     fn cached_operands_insert(
@@ -1552,24 +1731,94 @@ where
         sid: SessionId,
         operands: SpliceOperands,
     ) -> Result<(), CpError> {
-        self.cached_operands_bucket_mut(operands.src_rv)
-            .ok_or(CpError::RendezvousMismatch {
+        let target_slot = Self::cached_operands_slot(operands.src_rv).ok_or(CpError::RendezvousMismatch {
+            expected: operands.src_rv.raw(),
+            actual: 0,
+        })?;
+        if !self.locals.is_registered(&operands.src_rv) {
+            return Err(CpError::RendezvousMismatch {
                 expected: operands.src_rv.raw(),
                 actual: 0,
-            })?
-            .insert(sid, operands)
-            .map_err(|_| CpError::ResourceExhausted)
+            });
+        }
+        let additional_entries = usize::from(
+            !self.cached_operands[target_slot].contains_sid(sid),
+        );
+        self.ensure_cached_operands_capacity(operands.src_rv, additional_entries)?;
+        self.cached_operands_remove_other_shards(sid, target_slot);
+        self.cached_operands[target_slot].insert(sid, operands)
     }
 
     fn cached_operands_remove(&mut self, sid: SessionId) -> Option<SpliceOperands> {
         let mut slot = 0usize;
         while slot < MAX_RV {
-            if let Some(operands) = self.cached_operands[slot].remove(&sid) {
+            if let Some(operands) = self.cached_operands[slot].remove(sid) {
                 return Some(operands);
             }
             slot += 1;
         }
         None
+    }
+
+    fn ensure_cached_operands_capacity(
+        &mut self,
+        rv_id: RendezvousId,
+        additional_entries: usize,
+    ) -> Result<(), CpError> {
+        if additional_entries == 0 {
+            return Ok(());
+        }
+        let slot = Self::cached_operands_slot(rv_id).ok_or(CpError::RendezvousMismatch {
+            expected: rv_id.raw(),
+            actual: 0,
+        })?;
+        if !self.locals.is_registered(&rv_id) {
+            return Err(CpError::RendezvousMismatch {
+                expected: rv_id.raw(),
+                actual: 0,
+            });
+        }
+        let bucket_ptr = core::ptr::addr_of_mut!(self.cached_operands[slot]);
+        let bucket = unsafe { &mut *bucket_ptr };
+        let required = bucket
+            .occupied_len()
+            .checked_add(additional_entries)
+            .ok_or(CpError::ResourceExhausted)?;
+        if bucket.capacity() >= required {
+            return Ok(());
+        }
+
+        let rv = self
+            .locals
+            .get_mut(&rv_id)
+            .ok_or(CpError::RendezvousMismatch {
+                expected: rv_id.raw(),
+                actual: 0,
+            })?;
+        let rv_ptr = core::ptr::from_mut(rv);
+        let old_ptr = bucket.storage_ptr();
+        let old_len = bucket.storage_len();
+        let old_reclaim_delta = bucket.storage_reclaim_delta();
+        let (storage, reclaim_delta) = unsafe {
+            (&mut *rv_ptr).allocate_external_persistent_sidecar_bytes(
+                CachedSpliceBucket::storage_bytes(required),
+                CachedSpliceBucket::storage_align(),
+            )
+        }
+        .ok_or(CpError::ResourceExhausted)?;
+        unsafe {
+            if old_ptr.is_null() {
+                bucket.bind_from_storage(storage, required, reclaim_delta);
+            } else {
+                bucket.rebind_from_storage(storage, required, reclaim_delta);
+                (&mut *rv_ptr).free_external_persistent_sidecar_bytes(
+                    old_ptr,
+                    old_len,
+                    old_reclaim_delta,
+                );
+            }
+        }
+        Ok(())
     }
 
     fn ensure_distributed_splice_capacity(
@@ -1829,94 +2078,6 @@ where
             return None;
         }
         Some(aligned as *mut LeaseGraph<'cfg, Spec>)
-    }
-
-    #[cfg(test)]
-    fn allocate_test_endpoint_arena(
-        slot: EndpointLeaseId,
-        required_bytes: usize,
-        required_align: usize,
-    ) -> Option<*mut u8> {
-        let mut result = None;
-        TEST_ENDPOINT_ARENA_POOL.with(
-            |storage: &UnsafeCell<[[u8; TEST_ENDPOINT_ARENA_BYTES]; TEST_ENDPOINT_ARENA_SLOTS]>| unsafe {
-            let slot_idx = usize::from(slot);
-            if slot_idx >= TEST_ENDPOINT_ARENA_SLOTS {
-                return;
-            }
-            let slots = &mut *storage.get();
-            let base = slots[slot_idx].as_mut_ptr() as usize;
-            let aligned = Self::align_up(base, required_align);
-            let offset = aligned.wrapping_sub(base);
-            if offset + required_bytes > TEST_ENDPOINT_ARENA_BYTES {
-                return;
-            }
-            result = Some(aligned as *mut u8);
-        });
-        result
-    }
-
-    #[cfg(test)]
-    fn materialize_test_role_image<'prog, const ROLE: u8, P, Mint>(
-        slot: EndpointLeaseId,
-        program: &P,
-    ) -> Option<RoleImageSlice<ROLE>>
-    where
-        Mint: MintConfigMarker,
-        P: crate::global::RoleProgramView<'prog, ROLE, Mint>,
-    {
-        let slot_idx = usize::from(slot);
-        if slot_idx >= TEST_ENDPOINT_ARENA_SLOTS {
-            return None;
-        }
-        let lowering = program.lowering_input();
-        let summary = lowering.summary();
-        let exact_role_bytes = CompiledRoleImage::persistent_bytes_for_program(lowering.footprint());
-        assert!(
-            exact_role_bytes <= TEST_COMPILED_ROLE_IMAGE_BYTES,
-            "test compiled role image storage is undersized: exact={exact_role_bytes} budget={TEST_COMPILED_ROLE_IMAGE_BYTES}"
-        );
-        let mut result = None;
-        TEST_COMPILED_PROGRAM_POOL.with(|program_storage| {
-            TEST_COMPILED_ROLE_POOL.with(|role_storage| {
-                TEST_ROLE_COMPILE_SCRATCH_POOL.with(|scratch_storage| unsafe {
-                    let program_slot = &mut (&mut *program_storage.get())[slot_idx];
-                    let program_base = program_slot.as_mut_ptr() as usize;
-                    let program_aligned =
-                        Self::align_up(program_base, TEST_COMPILED_PROGRAM_IMAGE_ALIGN);
-                    debug_assert!(
-                        program_aligned + TEST_COMPILED_PROGRAM_IMAGE_BYTES
-                            <= program_base + TEST_COMPILED_PROGRAM_IMAGE_STORAGE_BYTES
-                    );
-                    let program_ptr = program_aligned as *mut CompiledProgramImage;
-                    let role_slot = &mut (&mut *role_storage.get())[slot_idx];
-                    let role_base = role_slot.as_mut_ptr() as usize;
-                    let role_aligned = Self::align_up(role_base, TEST_COMPILED_ROLE_IMAGE_ALIGN);
-                    debug_assert!(
-                        role_aligned + TEST_COMPILED_ROLE_IMAGE_BYTES
-                            <= role_base + TEST_COMPILED_ROLE_IMAGE_STORAGE_BYTES
-                    );
-                    let role_ptr = role_aligned as *mut CompiledRoleImage;
-                    let scratch_ptr = (&mut *scratch_storage.get())[slot_idx].as_mut_ptr();
-                    crate::global::compiled::init_compiled_program_image_from_summary(
-                        program_ptr,
-                        summary,
-                    );
-                    crate::global::compiled::init_compiled_role_image::<ROLE>(
-                        role_ptr,
-                        lowering,
-                        scratch_ptr,
-                    );
-                    let program_image =
-                        ProgramImage::from_raw(program.stamp(), program_ptr.cast_const());
-                    result = Some(RoleImageSlice::from_raw(
-                        program_image,
-                        role_ptr.cast_const(),
-                    ));
-                });
-            });
-        });
-        result
     }
 
     #[inline(always)]
@@ -2183,6 +2344,19 @@ where
         }
         .flatten()
         .ok_or(AttachError::Control(CpError::ResourceExhausted))
+    }
+
+    #[cfg(test)]
+    fn materialize_test_role_image<'prog, const ROLE: u8, P, Mint>(
+        &self,
+        rv_id: RendezvousId,
+        program: &P,
+    ) -> Result<RoleImageSlice<ROLE>, AttachError>
+    where
+        Mint: MintConfigMarker,
+        P: crate::global::RoleProgramView<'prog, ROLE, Mint>,
+    {
+        self.ensure_role_image_slice(rv_id, program)
     }
 
     unsafe fn public_endpoint_storage_ptr<'r, const ROLE: u8, Mint>(
@@ -4002,55 +4176,16 @@ where
         Mint: crate::control::cap::mint::MintConfigMarker,
         P: crate::global::RoleProgramView<'prog, ROLE, Mint>,
     {
-        let lease = self.with_control_mut(|core| {
-            let rv = core.locals.get_mut(&rv_id)?;
-            rv.reserve_endpoint_lease(crate::rendezvous::core::EndpointResidentBudget::ZERO)
-        });
-        let Some((slot, generation)) = lease else {
-            return Err(AttachError::Control(CpError::ResourceExhausted));
-        };
-        let Some(role_image) = Self::materialize_test_role_image(slot, program) else {
-            self.with_control_mut(|core| {
-                if let Some(rv) = core.locals.get_mut(&rv_id) {
-                    rv.release_endpoint_lease(slot, generation);
-                }
-            });
-            return Err(AttachError::Control(CpError::ResourceExhausted));
-        };
+        let role_image = self.ensure_role_image_slice::<ROLE, _, Mint>(rv_id, program)?;
         let binding_enabled = true;
         let resident_budget = Self::public_endpoint_resident_budget(role_image);
-        let resident_ready = self.with_control_mut(|core| {
-            let Some(rv) = core.locals.get_mut(&rv_id) else {
-                return false;
-            };
-            if rv
-                .ensure_endpoint_resident_budget(resident_budget)
-                .is_none()
-            {
-                return false;
-            }
-            rv.record_endpoint_resident_budget(slot, generation, resident_budget);
-            true
-        });
-        if !resident_ready {
-            self.with_control_mut(|core| {
-                if let Some(rv) = core.locals.get_mut(&rv_id) {
-                    rv.release_endpoint_lease(slot, generation);
-                }
-            });
-            return Err(AttachError::Control(CpError::ResourceExhausted));
-        }
         let arena_layout = role_image.endpoint_arena_layout_for_binding(binding_enabled);
-        let Some(arena_storage) = Self::allocate_test_endpoint_arena(
-            slot,
+        let Some((slot, generation, arena_storage)) = self.allocate_storage_for_rv(
+            rv_id,
             arena_layout.total_bytes(),
             arena_layout.total_align(),
+            resident_budget,
         ) else {
-            self.with_control_mut(|core| {
-                if let Some(rv) = core.locals.get_mut(&rv_id) {
-                    rv.release_endpoint_lease(slot, generation);
-                }
-            });
             return Err(AttachError::Control(CpError::ResourceExhausted));
         };
         let init_result = unsafe {
@@ -4260,6 +4395,13 @@ mod tests {
             "/internal/pico_smoke/src/linear_program.rs"
         ));
     }
+    mod localside {
+        extern crate self as hibana;
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/internal/pico_smoke/src/localside.rs"
+        ));
+    }
     mod route_control_kinds {
         extern crate self as hibana;
         include!(concat!(
@@ -4267,32 +4409,9 @@ mod tests {
             "/internal/pico_smoke/src/route_control_kinds.rs"
         ));
     }
-    mod scenario {
-        extern crate self as hibana;
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/internal/pico_smoke/src/scenario.rs"
-        ));
-    }
 
-    fn retain_pico_smoke_fixture_symbols() {
-        let _ = fanout_program::ROUTE_SCOPE_COUNT;
-        let _ = fanout_program::EXPECTED_WORKER_BRANCH_LABELS;
-        let _ = fanout_program::ACK_LABELS;
-        let _ = fanout_program::run::<scenario::FixtureHarness>;
-        let _ = huge_program::ROUTE_SCOPE_COUNT;
-        let _ = huge_program::EXPECTED_WORKER_BRANCH_LABELS;
-        let _ = huge_program::ACK_LABELS;
-        let _ = huge_program::run::<scenario::FixtureHarness>;
-        let _ = linear_program::ROUTE_SCOPE_COUNT;
-        let _ = linear_program::EXPECTED_WORKER_BRANCH_LABELS;
-        let _ = linear_program::ACK_LABELS;
-        let _ = linear_program::run::<scenario::FixtureHarness>;
-    }
-
-    #[test]
-    fn pico_smoke_fixture_symbols_are_reachable() {
-        retain_pico_smoke_fixture_symbols();
+    fn drive<F: core::future::Future>(future: F) -> F::Output {
+        futures::executor::block_on(future)
     }
 
     use crate::control::cap::mint::ResourceKind;
@@ -4305,7 +4424,6 @@ mod tests {
     use crate::global::program::Program;
     use crate::global::role_program;
     use crate::global::steps::{PolicySteps, SendStep, StepCons, StepNil};
-    use crate::global::typestate::RoleCompileScratch;
     use crate::observe::core::TapEvent;
     use crate::runtime::config::{Config, CounterClock};
     use crate::runtime::consts::{DefaultLabelUniverse, LABEL_ROUTE_DECISION, RING_EVENTS};
@@ -4446,6 +4564,90 @@ mod tests {
         fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
     }
 
+    fn retain_pico_smoke_fixture_symbols() {
+        let _ = fanout_program::ROUTE_SCOPE_COUNT;
+        let _ = fanout_program::EXPECTED_WORKER_BRANCH_LABELS;
+        let _ = fanout_program::ACK_LABELS;
+        let _ = huge_program::ROUTE_SCOPE_COUNT;
+        let _ = huge_program::EXPECTED_WORKER_BRANCH_LABELS;
+        let _ = huge_program::ACK_LABELS;
+        let _ = linear_program::ROUTE_SCOPE_COUNT;
+        let _ = linear_program::EXPECTED_WORKER_BRANCH_LABELS;
+        let _ = linear_program::ACK_LABELS;
+        let _ = huge_program::run::<DummyTransport, DefaultLabelUniverse, CounterClock, 2>
+            as fn(
+                &mut localside::ControllerEndpoint<
+                    '_,
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+                &mut localside::WorkerEndpoint<
+                    '_,
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+            );
+        let _ = linear_program::run::<DummyTransport, DefaultLabelUniverse, CounterClock, 2>
+            as fn(
+                &mut localside::ControllerEndpoint<
+                    '_,
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+                &mut localside::WorkerEndpoint<
+                    '_,
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+            );
+        let _ = fanout_program::run::<DummyTransport, DefaultLabelUniverse, CounterClock, 2>
+            as fn(
+                &mut localside::ControllerEndpoint<
+                    '_,
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+                &mut localside::WorkerEndpoint<
+                    '_,
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+            );
+        let _ = localside::worker_offer_decode_u8::<
+            0,
+            DummyTransport,
+            DefaultLabelUniverse,
+            CounterClock,
+            2,
+        >
+            as fn(
+                &mut localside::WorkerEndpoint<
+                    '_,
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    2,
+                >,
+            ) -> u8;
+    }
+
+    #[test]
+    fn pico_smoke_fixture_symbols_are_reachable() {
+        retain_pico_smoke_fixture_symbols();
+    }
+
     #[test]
     fn session_caps_mask_yields_checkpoint_permission() {
         let lane = Lane::new(0);
@@ -4509,7 +4711,6 @@ mod tests {
     }
 
     fn measure_huge_shape<const ROLE: u8, Steps>(
-        slot: u8,
         program: &crate::g::Program<Steps>,
     ) -> MeasuredResidentShape
     where
@@ -4518,92 +4719,100 @@ mod tests {
         <Steps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
             crate::global::steps::StepCount,
     {
-        let projected: role_program::RoleProgram<'_, ROLE, _, MintConfig> =
-            role_program::project(program);
-        let lowering = crate::global::lowering_input(&projected);
-        let summary = lowering.summary();
-        let counts = CompiledProgramImage::counts(&summary);
-        let role_image = SessionCluster::<
-            'static,
-            DummyTransport,
-            DefaultLabelUniverse,
-            CounterClock,
-            4,
-        >::materialize_test_role_image(slot.into(), &projected)
-        .expect("materialize huge choreography compiled image");
-        let compiled_role = unsafe { &*role_image.compiled_ptr() };
-        let active_lane_count = compiled_role.active_lane_count();
-        let endpoint_layout = role_image.endpoint_arena_layout_for_binding(false);
-        let endpoint_storage =
-            StaticTestCluster::<4>::public_endpoint_storage_requirement(role_image, false);
-        let endpoint_section_bytes = endpoint_layout.phase_cursor_state().bytes()
-            + endpoint_layout.route_state().bytes()
-            + endpoint_layout.route_arm_stack().bytes()
-            + endpoint_layout.lane_offer_state_slots().bytes()
-            + endpoint_layout.frontier_state().bytes()
-            + endpoint_layout.frontier_root_rows().bytes()
-            + endpoint_layout.frontier_root_active_slots().bytes()
-            + endpoint_layout.frontier_root_observed_key_slots().bytes()
-            + endpoint_layout.frontier_offer_entry_slots().bytes()
-            + endpoint_layout.binding_inbox().bytes()
-            + endpoint_layout.binding_slots().bytes()
-            + endpoint_layout.binding_len().bytes()
-            + endpoint_layout.binding_label_masks().bytes()
-            + endpoint_layout.scope_evidence_slots().bytes();
+        with_cluster_fixture(|clock, config| {
+            with_test_cluster(clock, |cluster| {
+                let rv_id = cluster
+                    .add_rendezvous_from_config(config, DummyTransport)
+                    .expect("register rendezvous");
+                let projected: role_program::RoleProgram<'_, ROLE, _, MintConfig> =
+                    role_program::project(program);
+                let lowering = crate::global::lowering_input(&projected);
+                let summary = lowering.summary();
+                let counts = CompiledProgramImage::counts(&summary);
+                let program_bytes = CompiledProgramImage::persistent_bytes_for_counts(counts);
+                let role_image = cluster
+                    .materialize_test_role_image::<ROLE, _, MintConfig>(rv_id, &projected)
+                    .expect("materialize actual role image");
+                let compiled_role = unsafe { &*role_image.compiled_ptr() };
+                let active_lane_count = compiled_role.active_lane_count();
+                let endpoint_layout = role_image.endpoint_arena_layout_for_binding(false);
+                let endpoint_storage =
+                    StaticTestCluster::<4>::public_endpoint_storage_requirement(role_image, false);
+                let endpoint_section_bytes = endpoint_layout.phase_cursor_state().bytes()
+                    + endpoint_layout.route_state().bytes()
+                    + endpoint_layout.route_arm_stack().bytes()
+                    + endpoint_layout.lane_offer_state_slots().bytes()
+                    + endpoint_layout.frontier_state().bytes()
+                    + endpoint_layout.frontier_root_rows().bytes()
+                    + endpoint_layout.frontier_root_active_slots().bytes()
+                    + endpoint_layout.frontier_root_observed_key_slots().bytes()
+                    + endpoint_layout.frontier_offer_entry_slots().bytes()
+                    + endpoint_layout.binding_inbox().bytes()
+                    + endpoint_layout.binding_slots().bytes()
+                    + endpoint_layout.binding_len().bytes()
+                    + endpoint_layout.binding_label_masks().bytes()
+                    + endpoint_layout.scope_evidence_slots().bytes();
 
-        MeasuredResidentShape {
-            route_scope_count: compiled_role.route_scope_count(),
-            active_lane_count,
-            max_route_stack_depth: compiled_role.max_route_stack_depth(),
-            max_loop_stack_depth: compiled_role.max_loop_stack_depth(),
-            route_bytes: crate::rendezvous::tables::RouteTable::storage_bytes(
-                compiled_role.route_table_frame_slots(),
-                compiled_role.route_table_lane_slots(),
-            ),
-            loop_bytes: crate::rendezvous::tables::LoopTable::storage_bytes(
-                compiled_role.loop_table_slots(),
-            ),
-            cap_bytes: crate::rendezvous::capability::CapTable::storage_bytes(
-                compiled_role.resident_cap_entries(),
-            ),
-            endpoint_bytes: endpoint_layout.total_bytes(),
-            endpoint_header_bytes: endpoint_storage.header_bytes,
-            endpoint_port_slots_bytes: endpoint_storage.port_slots_bytes,
-            endpoint_guard_slots_bytes: endpoint_storage.guard_slots_bytes,
-            endpoint_header_padding_bytes: endpoint_storage.header_padding_bytes,
-            compiled_program_header_bytes: size_of::<CompiledProgramImage>(),
-            compiled_role_header_bytes: size_of::<CompiledRoleImage>(),
-            compiled_program_persistent_bytes: CompiledProgramImage::persistent_bytes_for_counts(
-                counts,
-            ),
-            compiled_role_persistent_bytes: CompiledRoleImage::persistent_bytes_for_program(
-                lowering.footprint(),
-            ),
-            endpoint_phase_cursor_state_bytes: endpoint_layout.phase_cursor_state().bytes(),
-            endpoint_route_state_bytes: endpoint_layout.route_state().bytes(),
-            endpoint_route_arm_stack_bytes: endpoint_layout.route_arm_stack().bytes(),
-            endpoint_lane_offer_state_slots_bytes: endpoint_layout.lane_offer_state_slots().bytes(),
-            endpoint_frontier_state_bytes: endpoint_layout.frontier_state().bytes(),
-            endpoint_frontier_root_rows_bytes: endpoint_layout.frontier_root_rows().bytes(),
-            endpoint_frontier_root_active_slots_bytes: endpoint_layout
-                .frontier_root_active_slots()
-                .bytes(),
-            endpoint_frontier_root_observed_key_slots_bytes: endpoint_layout
-                .frontier_root_observed_key_slots()
-                .bytes(),
-            endpoint_frontier_offer_entry_slots_bytes: endpoint_layout
-                .frontier_offer_entry_slots()
-                .bytes(),
-            endpoint_binding_inbox_bytes: endpoint_layout.binding_inbox().bytes(),
-            endpoint_binding_slots_bytes: endpoint_layout.binding_slots().bytes(),
-            endpoint_binding_len_bytes: endpoint_layout.binding_len().bytes(),
-            endpoint_binding_label_masks_bytes: endpoint_layout.binding_label_masks().bytes(),
-            endpoint_scope_evidence_store_bytes: 0,
-            endpoint_scope_evidence_slots_bytes: endpoint_layout.scope_evidence_slots().bytes(),
-            endpoint_padding_bytes: endpoint_layout
-                .total_bytes()
-                .saturating_sub(endpoint_section_bytes),
-        }
+                MeasuredResidentShape {
+                    route_scope_count: compiled_role.route_scope_count(),
+                    active_lane_count,
+                    max_route_stack_depth: compiled_role.max_route_stack_depth(),
+                    max_loop_stack_depth: compiled_role.max_loop_stack_depth(),
+                    route_bytes: crate::rendezvous::tables::RouteTable::storage_bytes(
+                        compiled_role.route_table_frame_slots(),
+                        compiled_role.route_table_lane_slots(),
+                    ),
+                    loop_bytes: crate::rendezvous::tables::LoopTable::storage_bytes(
+                        compiled_role.loop_table_slots(),
+                        compiled_role.route_table_lane_slots(),
+                    ),
+                    cap_bytes: crate::rendezvous::capability::CapTable::storage_bytes(
+                        compiled_role.resident_cap_entries(),
+                    ),
+                    endpoint_bytes: endpoint_layout.total_bytes(),
+                    endpoint_header_bytes: endpoint_storage.header_bytes,
+                    endpoint_port_slots_bytes: endpoint_storage.port_slots_bytes,
+                    endpoint_guard_slots_bytes: endpoint_storage.guard_slots_bytes,
+                    endpoint_header_padding_bytes: endpoint_storage.header_padding_bytes,
+                    compiled_program_header_bytes: size_of::<CompiledProgramImage>(),
+                    compiled_role_header_bytes: size_of::<CompiledRoleImage>(),
+                    compiled_program_persistent_bytes: program_bytes,
+                    compiled_role_persistent_bytes: CompiledRoleImage::persistent_bytes_for_program(
+                        lowering.footprint(),
+                    ),
+                    endpoint_phase_cursor_state_bytes: endpoint_layout.phase_cursor_state().bytes(),
+                    endpoint_route_state_bytes: endpoint_layout.route_state().bytes(),
+                    endpoint_route_arm_stack_bytes: endpoint_layout.route_arm_stack().bytes(),
+                    endpoint_lane_offer_state_slots_bytes: endpoint_layout
+                        .lane_offer_state_slots()
+                        .bytes(),
+                    endpoint_frontier_state_bytes: endpoint_layout.frontier_state().bytes(),
+                    endpoint_frontier_root_rows_bytes: endpoint_layout.frontier_root_rows().bytes(),
+                    endpoint_frontier_root_active_slots_bytes: endpoint_layout
+                        .frontier_root_active_slots()
+                        .bytes(),
+                    endpoint_frontier_root_observed_key_slots_bytes: endpoint_layout
+                        .frontier_root_observed_key_slots()
+                        .bytes(),
+                    endpoint_frontier_offer_entry_slots_bytes: endpoint_layout
+                        .frontier_offer_entry_slots()
+                        .bytes(),
+                    endpoint_binding_inbox_bytes: endpoint_layout.binding_inbox().bytes(),
+                    endpoint_binding_slots_bytes: endpoint_layout.binding_slots().bytes(),
+                    endpoint_binding_len_bytes: endpoint_layout.binding_len().bytes(),
+                    endpoint_binding_label_masks_bytes: endpoint_layout
+                        .binding_label_masks()
+                        .bytes(),
+                    endpoint_scope_evidence_store_bytes: 0,
+                    endpoint_scope_evidence_slots_bytes: endpoint_layout
+                        .scope_evidence_slots()
+                        .bytes(),
+                    endpoint_padding_bytes: endpoint_layout
+                        .total_bytes()
+                        .saturating_sub(endpoint_section_bytes),
+                }
+            })
+        })
     }
 
     #[test]
@@ -4798,7 +5007,13 @@ mod tests {
         let lowering_summary_bytes = size_of::<LoweringSummary>();
         let compiled_program_bytes = size_of::<CompiledProgramImage>();
         let compiled_role_bytes = size_of::<CompiledRoleImage>();
-        let role_compile_scratch_bytes = size_of::<RoleCompileScratch>();
+        let role_compile_scratch_bytes =
+            crate::global::compiled::role_lowering_scratch_storage_bytes(
+                crate::global::lowering_input(&role_program::project::<1, _, MintConfig>(
+                    &ROUTE_HEAVY_PROGRAM,
+                ))
+                .footprint(),
+            );
         let endpoint_storage_bytes = size_of::<
             ErasedPublicEndpointKernel<
                 'static,
@@ -4870,9 +5085,9 @@ mod tests {
 
     #[test]
     fn huge_shape_matrix_resident_bytes_stay_measured_and_local() {
-        let route = measure_huge_shape::<1, _>(0, &ROUTE_HEAVY_PROGRAM);
-        let linear = measure_huge_shape::<1, _>(1, &LINEAR_HEAVY_PROGRAM);
-        let fanout = measure_huge_shape::<1, _>(2, &FANOUT_HEAVY_PROGRAM);
+        let route = measure_huge_shape::<1, _>(&ROUTE_HEAVY_PROGRAM);
+        let linear = measure_huge_shape::<1, _>(&LINEAR_HEAVY_PROGRAM);
+        let fanout = measure_huge_shape::<1, _>(&FANOUT_HEAVY_PROGRAM);
 
         for (name, measured) in [
             ("route_heavy", route),
@@ -5655,6 +5870,64 @@ mod tests {
                 });
             });
         });
+    }
+
+    #[test]
+    fn cached_splice_operands_replace_same_session_across_rendezvous_shards() {
+        run_on_transient_compiled_test_stack(
+            "cached_splice_operands_replace_same_session_across_rendezvous_shards",
+            || {
+                with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
+                    with_test_cluster(clock, |cluster| {
+                        let src_id = cluster
+                            .add_rendezvous_from_config(src_cfg, DummyTransport)
+                            .expect("register src");
+                        let dst_id = cluster
+                            .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                            .expect("register dst");
+
+                        let sid = SessionId::new(23);
+                        let ops0 = SpliceOperands::new(
+                            src_id,
+                            dst_id,
+                            Lane::new(0),
+                            Lane::new(1),
+                            Generation::new(0),
+                            Generation::new(1),
+                            0,
+                            0,
+                        );
+                        let ops1 = SpliceOperands::new(
+                            dst_id,
+                            src_id,
+                            Lane::new(1),
+                            Lane::new(0),
+                            Generation::new(2),
+                            Generation::new(3),
+                            1,
+                            1,
+                        );
+
+                        cluster
+                            .cache_splice_operands(sid, ops0)
+                            .expect("cache first shard");
+                        assert_eq!(cluster.distributed_operands(sid), Some(ops0));
+
+                        cluster
+                            .cache_splice_operands(sid, ops1)
+                            .expect("replace cached operands on second shard");
+
+                        assert_eq!(
+                            cluster.distributed_operands(sid),
+                            Some(ops1),
+                            "same-session cached splice operands must stay globally unique across rendezvous shards"
+                        );
+                        assert_eq!(cluster.take_cached_splice_operands(sid), Some(ops1));
+                        assert!(cluster.distributed_operands(sid).is_none());
+                    });
+                });
+            },
+        );
     }
 
     #[test]

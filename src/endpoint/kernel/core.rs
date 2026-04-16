@@ -25,8 +25,6 @@ use crate::eff::EffIndex;
 #[cfg(test)]
 use crate::global::LoopControlMeaning;
 use crate::global::const_dsl::{PolicyMode, ScopeId, ScopeKind};
-#[cfg(test)]
-use crate::global::role_program::LOW_LANE_TEST_WIDTH;
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
     ARM_SHARED, JumpReason, LoopMetadata, LoopRole, PassiveArmNavigation, PhaseCursor, RecvMeta,
@@ -590,7 +588,7 @@ enum StagedSendControl {
     },
 }
 
-type MintSendTokenFn<E> = fn(&E, SendMeta) -> SendResult<Option<ErasedCapFlowToken>>;
+type MintSendTokenFn<E> = fn(&mut E, SendMeta) -> SendResult<Option<ErasedCapFlowToken>>;
 type DispatchSendTokenFn<E> = fn(&E, ErasedCapFlowToken) -> SendResult<DispatchSendTokenResult>;
 
 enum DispatchSendTokenResult {
@@ -965,6 +963,26 @@ where
         }
     }
 
+    pub(in crate::endpoint::kernel) fn clear_scope_route_state_for_other_lanes(
+        &mut self,
+        scope: ScopeId,
+        keep_lane: u8,
+    ) {
+        if scope.is_none() || scope.kind() != ScopeKind::Route {
+            return;
+        }
+        let lane_limit = self.cursor.logical_lane_count();
+        let mut lane_idx = 0usize;
+        while lane_idx < lane_limit {
+            if lane_idx != keep_lane as usize {
+                let lane_wire = lane_idx as u8;
+                self.clear_descendant_route_state_for_lane(lane_wire, scope);
+                self.pop_route_arm(lane_wire, scope);
+            }
+            lane_idx += 1;
+        }
+    }
+
     pub(super) fn is_linger_route(&self, scope: ScopeId) -> bool {
         self.cursor
             .scope_region_by_id(scope)
@@ -1248,6 +1266,9 @@ where
         let Some(current_arm) = self.cursor.typestate_node(self.cursor.index()).route_arm() else {
             return Ok(None);
         };
+        if self.cursor.index() == region.start && self.cursor.is_route_controller(region.scope_id) {
+            return Ok(None);
+        }
         if let Some(selected_arm) = self.selected_arm_for_scope(region.scope_id) {
             return Ok((selected_arm == current_arm).then_some(false));
         }
@@ -2553,11 +2574,12 @@ where
         let selected_label_meta = self.selection_label_meta(selection);
         let materialization_meta = self.selection_materialization_meta(selection);
         let passive_recv_meta = self.selection_passive_recv_meta(selection, materialization_meta);
-        let controller_arm_entry = if selection.at_route_offer_entry {
-            materialization_meta.controller_arm_entry(selected_arm)
-        } else {
-            None
-        };
+        let controller_arm_entry =
+            if selection.at_route_offer_entry && self.cursor.is_route_controller(scope_id) {
+                materialization_meta.controller_arm_entry(selected_arm)
+            } else {
+                None
+            };
         let dispatch_meta = if controller_arm_entry.is_none() {
             self.select_cached_dispatch_recv_meta(
                 materialization_meta,
@@ -2678,6 +2700,38 @@ where
         emit(port.tap(), event);
     }
 
+    #[inline]
+    fn record_route_decision_for_scope_lanes(
+        &mut self,
+        scope_id: ScopeId,
+        arm: u8,
+        fallback_lane: u8,
+    ) {
+        if scope_id.is_none() || scope_id.kind() != ScopeKind::Route {
+            self.record_route_decision_for_lane(fallback_lane as usize, scope_id, arm);
+            return;
+        }
+
+        let logical_lane_count = self.cursor.logical_lane_count();
+        let mut recorded = false;
+        let mut lane_idx = 0usize;
+        while lane_idx < logical_lane_count {
+            if self
+                .cursor
+                .scope_lane_last_eff_for_arm(scope_id, arm, lane_idx as u8)
+                .is_some()
+            {
+                self.record_route_decision_for_lane(lane_idx, scope_id, arm);
+                recorded = true;
+            }
+            lane_idx += 1;
+        }
+
+        if !recorded && (fallback_lane as usize) < logical_lane_count {
+            self.record_route_decision_for_lane(fallback_lane as usize, scope_id, arm);
+        }
+    }
+
     pub(super) fn prepare_route_decision_from_resolver(
         &mut self,
         scope_id: ScopeId,
@@ -2700,7 +2754,7 @@ where
         match self.evaluate_route_arm_from_epf(scope_id, offer_lane, policy_id, signals) {
             RoutePolicyDecision::RouteArm(arm) => {
                 let arm = Arm::new(arm).ok_or(RecvError::PhaseInvariant)?;
-                self.record_route_decision_for_lane(offer_lane as usize, scope_id, arm.as_u8());
+                self.record_route_decision_for_scope_lanes(scope_id, arm.as_u8(), offer_lane);
                 self.record_scope_ack(scope_id, RouteDecisionToken::from_resolver(arm));
                 self.emit_route_decision(
                     scope_id,
@@ -2754,7 +2808,7 @@ where
             _ => return Err(RecvError::PhaseInvariant),
         };
         let arm = Arm::new(arm).ok_or(RecvError::PhaseInvariant)?;
-        self.record_route_decision_for_lane(offer_lane as usize, scope_id, arm.as_u8());
+        self.record_route_decision_for_scope_lanes(scope_id, arm.as_u8(), offer_lane);
         self.record_scope_ack(scope_id, RouteDecisionToken::from_resolver(arm));
         self.emit_route_decision(
             scope_id,
@@ -2797,11 +2851,7 @@ where
         match self.evaluate_route_arm_from_epf(scope_id, local_meta.lane, policy_id, signals) {
             RoutePolicyDecision::RouteArm(arm) => {
                 let arm = Arm::new(arm).ok_or(RecvError::PhaseInvariant)?;
-                self.record_route_decision_for_lane(
-                    local_meta.lane as usize,
-                    scope_id,
-                    arm.as_u8(),
-                );
+                self.record_route_decision_for_scope_lanes(scope_id, arm.as_u8(), local_meta.lane);
                 self.record_scope_ack(scope_id, RouteDecisionToken::from_resolver(arm));
                 self.emit_route_decision(
                     scope_id,
@@ -2858,7 +2908,7 @@ where
             _ => return Err(RecvError::PhaseInvariant),
         };
         let arm = Arm::new(arm).ok_or(RecvError::PhaseInvariant)?;
-        self.record_route_decision_for_lane(local_meta.lane as usize, scope_id, arm.as_u8());
+        self.record_route_decision_for_scope_lanes(scope_id, arm.as_u8(), local_meta.lane);
         self.record_scope_ack(scope_id, RouteDecisionToken::from_resolver(arm));
         self.emit_route_decision(
             scope_id,
@@ -2908,7 +2958,14 @@ where
     #[inline(never)]
     fn commit_send_progress(&mut self, meta: SendMeta) {
         let lane_idx = meta.lane as usize;
-        self.advance_lane_cursor(lane_idx, meta.eff_index);
+        if self
+            .cursor
+            .current_phase_contains_eff_index(lane_idx, meta.eff_index)
+        {
+            self.advance_lane_cursor(lane_idx, meta.eff_index);
+        } else {
+            self.complete_lane_phase(lane_idx);
+        }
         self.maybe_skip_remaining_route_arm(meta.scope, meta.lane, meta.route_arm, meta.eff_index);
         self.settle_scope_after_action(meta.scope, meta.route_arm, Some(meta.eff_index), meta.lane);
         self.maybe_advance_phase();
@@ -3025,7 +3082,7 @@ where
 
     #[inline(always)]
     fn mint_no_send_token(
-        _endpoint: &Self,
+        _endpoint: &mut Self,
         _meta: SendMeta,
     ) -> SendResult<Option<ErasedCapFlowToken>> {
         Ok(None)
@@ -3040,7 +3097,10 @@ where
     }
 
     #[inline(always)]
-    fn mint_send_token<M>(endpoint: &Self, meta: SendMeta) -> SendResult<Option<ErasedCapFlowToken>>
+    fn mint_send_token<M>(
+        endpoint: &mut Self,
+        meta: SendMeta,
+    ) -> SendResult<Option<ErasedCapFlowToken>>
     where
         M: MessageSpec + SendableLabel,
         M::Payload: WireEncode,
@@ -3321,7 +3381,7 @@ where
     }
 
     fn record_loop_decision(
-        &self,
+        &mut self,
         metadata: &LoopMetadata,
         decision: LoopDecision,
         lane: u8,
@@ -3354,14 +3414,16 @@ where
         );
         emit(port.tap(), event);
         if metadata.scope.kind() == ScopeKind::Route {
-            self.port_for_lane(lane as usize)
-                .record_route_decision(metadata.scope, arm);
+            self.record_route_decision_for_scope_lanes(metadata.scope, arm, lane);
             self.emit_route_decision(metadata.scope, arm, RouteDecisionSource::Ack, lane);
         }
         Ok(())
     }
 
-    pub(crate) fn canonical_control_token<K>(&self, meta: &SendMeta) -> SendResult<CapFlowToken<K>>
+    pub(crate) fn canonical_control_token<K>(
+        &mut self,
+        meta: &SendMeta,
+    ) -> SendResult<CapFlowToken<K>>
     where
         K: ResourceKind + ControlMint,
         <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
@@ -3397,8 +3459,7 @@ where
                     return Err(SendError::PhaseInvariant);
                 }
                 if !recorded_via_loop_metadata && loop_scope.kind() == ScopeKind::Route {
-                    self.port_for_lane(meta.lane as usize)
-                        .record_route_decision(loop_scope, 0);
+                    self.record_route_decision_for_scope_lanes(loop_scope, 0, meta.lane);
                     self.emit_route_decision(loop_scope, 0, RouteDecisionSource::Ack, meta.lane);
                 }
                 let scope = loop_scope;
@@ -3431,8 +3492,7 @@ where
                     return Err(SendError::PhaseInvariant);
                 }
                 if !recorded_via_loop_metadata && loop_scope.kind() == ScopeKind::Route {
-                    self.port_for_lane(meta.lane as usize)
-                        .record_route_decision(loop_scope, 1);
+                    self.record_route_decision_for_scope_lanes(loop_scope, 1, meta.lane);
                     self.emit_route_decision(loop_scope, 1, RouteDecisionSource::Ack, meta.lane);
                 }
                 let scope = loop_scope;
@@ -3485,8 +3545,7 @@ where
                     return Err(SendError::PhaseInvariant);
                 }
                 let handle = RouteDecisionHandle { scope, arm };
-                self.port_for_lane(meta.lane as usize)
-                    .record_route_decision(scope, arm);
+                self.record_route_decision_for_scope_lanes(scope, arm, meta.lane);
                 self.emit_route_decision(scope, arm, RouteDecisionSource::Resolver, meta.lane);
                 self.mint_control_token_with_handle::<RouteDecisionKind>(
                     meta.peer, shot, lane, handle,
@@ -3792,25 +3851,6 @@ where
             .unwrap_or(LaneSetView::EMPTY)
     }
 
-    #[cfg(test)]
-    pub(super) fn offer_lanes_for_scope(
-        &self,
-        scope_id: ScopeId,
-    ) -> ([u8; LOW_LANE_TEST_WIDTH], usize) {
-        let mut lanes = [0u8; LOW_LANE_TEST_WIDTH];
-        let mut len = 0usize;
-        let offer_lanes = self.offer_lane_set_for_scope(scope_id);
-        let mut lane_idx = 0usize;
-        while lane_idx < self.cursor.logical_lane_count() {
-            if offer_lanes.contains(lane_idx) && lane_idx < lanes.len() {
-                lanes[len] = lane_idx as u8;
-                len += 1;
-            }
-            lane_idx += 1;
-        }
-        (lanes, len)
-    }
-
     #[inline]
     pub(super) fn offer_lane_for_scope(&self, scope_id: ScopeId) -> u8 {
         let offer_lanes = self.offer_lane_set_for_scope(scope_id);
@@ -3883,7 +3923,7 @@ where
         };
         self.record_scope_ack(parent_scope, RouteDecisionToken::from_ack(parent_arm));
         let parent_lane = self.offer_lane_for_scope(parent_scope);
-        self.record_route_decision_for_lane(parent_lane as usize, parent_scope, parent_arm.as_u8());
+        self.record_route_decision_for_scope_lanes(parent_scope, parent_arm.as_u8(), parent_lane);
         self.emit_route_decision(
             parent_scope,
             parent_arm.as_u8(),
@@ -4847,7 +4887,7 @@ where
             if last_arm_eff == eff_index {
                 if let Some(scope_last) = self.cursor.scope_lane_last_eff(scope, lane) {
                     if scope_last != last_arm_eff {
-                        self.advance_lane_cursor(lane as usize, scope_last);
+                        self.complete_lane_phase(lane as usize);
                     }
                 }
             }
@@ -5019,7 +5059,7 @@ where
     B: BindingSlot,
 {
     fn into_token(
-        endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        endpoint: &mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
         meta: &SendMeta,
     ) -> SendResult<
         Option<CapFlowToken<<<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>>,
@@ -5039,7 +5079,7 @@ where
 {
     #[inline(always)]
     fn into_token(
-        _endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        _endpoint: &mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
         _meta: &SendMeta,
     ) -> SendResult<
         Option<CapFlowToken<<<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>>,
@@ -5072,7 +5112,7 @@ where
     ///   Caller provides the token/payload directly; no auto-minting.
     #[inline(always)]
     fn into_token(
-        endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        endpoint: &mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
         meta: &SendMeta,
     ) -> SendResult<
         Option<CapFlowToken<<<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>>,
@@ -5108,7 +5148,7 @@ where
 {
     #[inline(always)]
     fn into_token(
-        endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        endpoint: &mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
         meta: &SendMeta,
     ) -> SendResult<
         Option<CapFlowToken<<<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>>,

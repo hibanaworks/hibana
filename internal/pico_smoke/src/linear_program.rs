@@ -1,6 +1,11 @@
-use super::scenario::ScenarioHarness;
 use hibana::g::advanced::steps::{SendStep, SeqSteps, StepCons, StepNil};
 use hibana::g::{self, Msg, Role};
+use hibana::substrate::{
+    Transport,
+    runtime::{Clock, LabelUniverse},
+};
+
+use super::localside;
 
 type U8Send<const FROM: u8, const TO: u8, const LABEL: u8> =
     StepCons<SendStep<Role<FROM>, Role<TO>, Msg<LABEL, u8>>, StepNil>;
@@ -140,146 +145,252 @@ const fn segment_f() -> g::Program<SegmentF> {
     g::seq(program, g::send::<Role<1>, Role<0>, Msg<104, u8>, 0>())
 }
 
-pub fn run<H: ScenarioHarness>(
-    controller: &mut H::ControllerEndpoint<'_>,
-    worker: &mut H::WorkerEndpoint<'_>,
-) {
-    run_segment_a::<H>(controller, worker);
-    run_segment_b::<H>(controller, worker);
-    run_segment_c::<H>(controller, worker);
-    run_segment_d::<H>(controller, worker);
-    run_segment_e::<H>(controller, worker);
-    run_segment_f::<H>(controller, worker);
+pub fn run<T, U, C, const MAX_RV: usize>(
+    controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
+    worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
+) where
+    T: Transport + 'static,
+    U: LabelUniverse + 'static,
+    C: Clock + 'static,
+{
+    run_segment_a(controller, worker);
+    run_segment_b(controller, worker);
+    run_segment_c(controller, worker);
+    run_segment_d(controller, worker);
+    run_segment_e(controller, worker);
+    run_segment_f(controller, worker);
 }
 
-fn run_segment_a<H: ScenarioHarness>(
-    controller: &mut H::ControllerEndpoint<'_>,
-    worker: &mut H::WorkerEndpoint<'_>,
-) {
-    H::controller_send_u8::<1>(controller, 1);
-    assert_eq!(H::worker_recv_u8::<1>(worker), 1);
-    H::worker_send_u8::<2>(worker, 2);
-    assert_eq!(H::controller_recv_u8::<2>(controller), 2);
-    H::controller_send_u8::<3>(controller, 3);
-    assert_eq!(H::worker_recv_u8::<3>(worker), 3);
-    H::worker_send_u8::<4>(worker, 4);
-    assert_eq!(H::controller_recv_u8::<4>(controller), 4);
-    H::controller_send_u8::<5>(controller, 5);
-    assert_eq!(H::worker_recv_u8::<5>(worker), 5);
-    H::worker_send_u8::<6>(worker, 6);
-    assert_eq!(H::controller_recv_u8::<6>(controller), 6);
-    H::controller_send_u8::<7>(controller, 7);
-    assert_eq!(H::worker_recv_u8::<7>(worker), 7);
-    H::worker_send_u8::<8>(worker, 8);
-    assert_eq!(H::controller_recv_u8::<8>(controller), 8);
+fn run_segment_a<T, U, C, const MAX_RV: usize>(
+    controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
+    worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
+) where
+    T: Transport + 'static,
+    U: LabelUniverse + 'static,
+    C: Clock + 'static,
+{
+    localside::controller_send_u8::<1, _, _, _, MAX_RV>(controller, 1);
+    assert_eq!(localside::worker_recv_u8::<1, _, _, _, MAX_RV>(worker), 1);
+    localside::worker_send_u8::<2, _, _, _, MAX_RV>(worker, 2);
+    assert_eq!(
+        localside::controller_recv_u8::<2, _, _, _, MAX_RV>(controller),
+        2
+    );
+    localside::controller_send_u8::<3, _, _, _, MAX_RV>(controller, 3);
+    assert_eq!(localside::worker_recv_u8::<3, _, _, _, MAX_RV>(worker), 3);
+    localside::worker_send_u8::<4, _, _, _, MAX_RV>(worker, 4);
+    assert_eq!(
+        localside::controller_recv_u8::<4, _, _, _, MAX_RV>(controller),
+        4
+    );
+    localside::controller_send_u8::<5, _, _, _, MAX_RV>(controller, 5);
+    assert_eq!(localside::worker_recv_u8::<5, _, _, _, MAX_RV>(worker), 5);
+    localside::worker_send_u8::<6, _, _, _, MAX_RV>(worker, 6);
+    assert_eq!(
+        localside::controller_recv_u8::<6, _, _, _, MAX_RV>(controller),
+        6
+    );
+    localside::controller_send_u8::<7, _, _, _, MAX_RV>(controller, 7);
+    assert_eq!(localside::worker_recv_u8::<7, _, _, _, MAX_RV>(worker), 7);
+    localside::worker_send_u8::<8, _, _, _, MAX_RV>(worker, 8);
+    assert_eq!(
+        localside::controller_recv_u8::<8, _, _, _, MAX_RV>(controller),
+        8
+    );
 }
 
-fn run_segment_b<H: ScenarioHarness>(
-    controller: &mut H::ControllerEndpoint<'_>,
-    worker: &mut H::WorkerEndpoint<'_>,
-) {
-    H::controller_send_u8::<9>(controller, 9);
-    assert_eq!(H::worker_recv_u8::<9>(worker), 9);
-    H::worker_send_u8::<10>(worker, 10);
-    assert_eq!(H::controller_recv_u8::<10>(controller), 10);
-    H::controller_send_u8::<11>(controller, 11);
-    assert_eq!(H::worker_recv_u8::<11>(worker), 11);
-    H::worker_send_u8::<12>(worker, 12);
-    assert_eq!(H::controller_recv_u8::<12>(controller), 12);
-    H::controller_send_u8::<13>(controller, 13);
-    assert_eq!(H::worker_recv_u8::<13>(worker), 13);
-    H::worker_send_u8::<14>(worker, 14);
-    assert_eq!(H::controller_recv_u8::<14>(controller), 14);
-    H::controller_send_u8::<15>(controller, 15);
-    assert_eq!(H::worker_recv_u8::<15>(worker), 15);
-    H::worker_send_u8::<16>(worker, 16);
-    assert_eq!(H::controller_recv_u8::<16>(controller), 16);
+fn run_segment_b<T, U, C, const MAX_RV: usize>(
+    controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
+    worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
+) where
+    T: Transport + 'static,
+    U: LabelUniverse + 'static,
+    C: Clock + 'static,
+{
+    localside::controller_send_u8::<9, _, _, _, MAX_RV>(controller, 9);
+    assert_eq!(localside::worker_recv_u8::<9, _, _, _, MAX_RV>(worker), 9);
+    localside::worker_send_u8::<10, _, _, _, MAX_RV>(worker, 10);
+    assert_eq!(
+        localside::controller_recv_u8::<10, _, _, _, MAX_RV>(controller),
+        10
+    );
+    localside::controller_send_u8::<11, _, _, _, MAX_RV>(controller, 11);
+    assert_eq!(localside::worker_recv_u8::<11, _, _, _, MAX_RV>(worker), 11);
+    localside::worker_send_u8::<12, _, _, _, MAX_RV>(worker, 12);
+    assert_eq!(
+        localside::controller_recv_u8::<12, _, _, _, MAX_RV>(controller),
+        12
+    );
+    localside::controller_send_u8::<13, _, _, _, MAX_RV>(controller, 13);
+    assert_eq!(localside::worker_recv_u8::<13, _, _, _, MAX_RV>(worker), 13);
+    localside::worker_send_u8::<14, _, _, _, MAX_RV>(worker, 14);
+    assert_eq!(
+        localside::controller_recv_u8::<14, _, _, _, MAX_RV>(controller),
+        14
+    );
+    localside::controller_send_u8::<15, _, _, _, MAX_RV>(controller, 15);
+    assert_eq!(localside::worker_recv_u8::<15, _, _, _, MAX_RV>(worker), 15);
+    localside::worker_send_u8::<16, _, _, _, MAX_RV>(worker, 16);
+    assert_eq!(
+        localside::controller_recv_u8::<16, _, _, _, MAX_RV>(controller),
+        16
+    );
 }
 
-fn run_segment_c<H: ScenarioHarness>(
-    controller: &mut H::ControllerEndpoint<'_>,
-    worker: &mut H::WorkerEndpoint<'_>,
-) {
-    H::controller_send_u8::<17>(controller, 17);
-    assert_eq!(H::worker_recv_u8::<17>(worker), 17);
-    H::worker_send_u8::<18>(worker, 18);
-    assert_eq!(H::controller_recv_u8::<18>(controller), 18);
-    H::controller_send_u8::<19>(controller, 19);
-    assert_eq!(H::worker_recv_u8::<19>(worker), 19);
-    H::worker_send_u8::<20>(worker, 20);
-    assert_eq!(H::controller_recv_u8::<20>(controller), 20);
-    H::controller_send_u8::<21>(controller, 21);
-    assert_eq!(H::worker_recv_u8::<21>(worker), 21);
-    H::worker_send_u8::<22>(worker, 22);
-    assert_eq!(H::controller_recv_u8::<22>(controller), 22);
-    H::controller_send_u8::<23>(controller, 23);
-    assert_eq!(H::worker_recv_u8::<23>(worker), 23);
-    H::worker_send_u8::<24>(worker, 24);
-    assert_eq!(H::controller_recv_u8::<24>(controller), 24);
+fn run_segment_c<T, U, C, const MAX_RV: usize>(
+    controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
+    worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
+) where
+    T: Transport + 'static,
+    U: LabelUniverse + 'static,
+    C: Clock + 'static,
+{
+    localside::controller_send_u8::<17, _, _, _, MAX_RV>(controller, 17);
+    assert_eq!(localside::worker_recv_u8::<17, _, _, _, MAX_RV>(worker), 17);
+    localside::worker_send_u8::<18, _, _, _, MAX_RV>(worker, 18);
+    assert_eq!(
+        localside::controller_recv_u8::<18, _, _, _, MAX_RV>(controller),
+        18
+    );
+    localside::controller_send_u8::<19, _, _, _, MAX_RV>(controller, 19);
+    assert_eq!(localside::worker_recv_u8::<19, _, _, _, MAX_RV>(worker), 19);
+    localside::worker_send_u8::<20, _, _, _, MAX_RV>(worker, 20);
+    assert_eq!(
+        localside::controller_recv_u8::<20, _, _, _, MAX_RV>(controller),
+        20
+    );
+    localside::controller_send_u8::<21, _, _, _, MAX_RV>(controller, 21);
+    assert_eq!(localside::worker_recv_u8::<21, _, _, _, MAX_RV>(worker), 21);
+    localside::worker_send_u8::<22, _, _, _, MAX_RV>(worker, 22);
+    assert_eq!(
+        localside::controller_recv_u8::<22, _, _, _, MAX_RV>(controller),
+        22
+    );
+    localside::controller_send_u8::<23, _, _, _, MAX_RV>(controller, 23);
+    assert_eq!(localside::worker_recv_u8::<23, _, _, _, MAX_RV>(worker), 23);
+    localside::worker_send_u8::<24, _, _, _, MAX_RV>(worker, 24);
+    assert_eq!(
+        localside::controller_recv_u8::<24, _, _, _, MAX_RV>(controller),
+        24
+    );
 }
 
-fn run_segment_d<H: ScenarioHarness>(
-    controller: &mut H::ControllerEndpoint<'_>,
-    worker: &mut H::WorkerEndpoint<'_>,
-) {
-    H::controller_send_u8::<81>(controller, 81);
-    assert_eq!(H::worker_recv_u8::<81>(worker), 81);
-    H::worker_send_u8::<82>(worker, 82);
-    assert_eq!(H::controller_recv_u8::<82>(controller), 82);
-    H::controller_send_u8::<83>(controller, 83);
-    assert_eq!(H::worker_recv_u8::<83>(worker), 83);
-    H::worker_send_u8::<84>(worker, 84);
-    assert_eq!(H::controller_recv_u8::<84>(controller), 84);
-    H::controller_send_u8::<85>(controller, 85);
-    assert_eq!(H::worker_recv_u8::<85>(worker), 85);
-    H::worker_send_u8::<86>(worker, 86);
-    assert_eq!(H::controller_recv_u8::<86>(controller), 86);
-    H::controller_send_u8::<87>(controller, 87);
-    assert_eq!(H::worker_recv_u8::<87>(worker), 87);
-    H::worker_send_u8::<88>(worker, 88);
-    assert_eq!(H::controller_recv_u8::<88>(controller), 88);
+fn run_segment_d<T, U, C, const MAX_RV: usize>(
+    controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
+    worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
+) where
+    T: Transport + 'static,
+    U: LabelUniverse + 'static,
+    C: Clock + 'static,
+{
+    localside::controller_send_u8::<81, _, _, _, MAX_RV>(controller, 81);
+    assert_eq!(localside::worker_recv_u8::<81, _, _, _, MAX_RV>(worker), 81);
+    localside::worker_send_u8::<82, _, _, _, MAX_RV>(worker, 82);
+    assert_eq!(
+        localside::controller_recv_u8::<82, _, _, _, MAX_RV>(controller),
+        82
+    );
+    localside::controller_send_u8::<83, _, _, _, MAX_RV>(controller, 83);
+    assert_eq!(localside::worker_recv_u8::<83, _, _, _, MAX_RV>(worker), 83);
+    localside::worker_send_u8::<84, _, _, _, MAX_RV>(worker, 84);
+    assert_eq!(
+        localside::controller_recv_u8::<84, _, _, _, MAX_RV>(controller),
+        84
+    );
+    localside::controller_send_u8::<85, _, _, _, MAX_RV>(controller, 85);
+    assert_eq!(localside::worker_recv_u8::<85, _, _, _, MAX_RV>(worker), 85);
+    localside::worker_send_u8::<86, _, _, _, MAX_RV>(worker, 86);
+    assert_eq!(
+        localside::controller_recv_u8::<86, _, _, _, MAX_RV>(controller),
+        86
+    );
+    localside::controller_send_u8::<87, _, _, _, MAX_RV>(controller, 87);
+    assert_eq!(localside::worker_recv_u8::<87, _, _, _, MAX_RV>(worker), 87);
+    localside::worker_send_u8::<88, _, _, _, MAX_RV>(worker, 88);
+    assert_eq!(
+        localside::controller_recv_u8::<88, _, _, _, MAX_RV>(controller),
+        88
+    );
 }
 
-fn run_segment_e<H: ScenarioHarness>(
-    controller: &mut H::ControllerEndpoint<'_>,
-    worker: &mut H::WorkerEndpoint<'_>,
-) {
-    H::controller_send_u8::<89>(controller, 89);
-    assert_eq!(H::worker_recv_u8::<89>(worker), 89);
-    H::worker_send_u8::<90>(worker, 90);
-    assert_eq!(H::controller_recv_u8::<90>(controller), 90);
-    H::controller_send_u8::<91>(controller, 91);
-    assert_eq!(H::worker_recv_u8::<91>(worker), 91);
-    H::worker_send_u8::<92>(worker, 92);
-    assert_eq!(H::controller_recv_u8::<92>(controller), 92);
-    H::controller_send_u8::<93>(controller, 93);
-    assert_eq!(H::worker_recv_u8::<93>(worker), 93);
-    H::worker_send_u8::<94>(worker, 94);
-    assert_eq!(H::controller_recv_u8::<94>(controller), 94);
-    H::controller_send_u8::<95>(controller, 95);
-    assert_eq!(H::worker_recv_u8::<95>(worker), 95);
-    H::worker_send_u8::<96>(worker, 96);
-    assert_eq!(H::controller_recv_u8::<96>(controller), 96);
+fn run_segment_e<T, U, C, const MAX_RV: usize>(
+    controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
+    worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
+) where
+    T: Transport + 'static,
+    U: LabelUniverse + 'static,
+    C: Clock + 'static,
+{
+    localside::controller_send_u8::<89, _, _, _, MAX_RV>(controller, 89);
+    assert_eq!(localside::worker_recv_u8::<89, _, _, _, MAX_RV>(worker), 89);
+    localside::worker_send_u8::<90, _, _, _, MAX_RV>(worker, 90);
+    assert_eq!(
+        localside::controller_recv_u8::<90, _, _, _, MAX_RV>(controller),
+        90
+    );
+    localside::controller_send_u8::<91, _, _, _, MAX_RV>(controller, 91);
+    assert_eq!(localside::worker_recv_u8::<91, _, _, _, MAX_RV>(worker), 91);
+    localside::worker_send_u8::<92, _, _, _, MAX_RV>(worker, 92);
+    assert_eq!(
+        localside::controller_recv_u8::<92, _, _, _, MAX_RV>(controller),
+        92
+    );
+    localside::controller_send_u8::<93, _, _, _, MAX_RV>(controller, 93);
+    assert_eq!(localside::worker_recv_u8::<93, _, _, _, MAX_RV>(worker), 93);
+    localside::worker_send_u8::<94, _, _, _, MAX_RV>(worker, 94);
+    assert_eq!(
+        localside::controller_recv_u8::<94, _, _, _, MAX_RV>(controller),
+        94
+    );
+    localside::controller_send_u8::<95, _, _, _, MAX_RV>(controller, 95);
+    assert_eq!(localside::worker_recv_u8::<95, _, _, _, MAX_RV>(worker), 95);
+    localside::worker_send_u8::<96, _, _, _, MAX_RV>(worker, 96);
+    assert_eq!(
+        localside::controller_recv_u8::<96, _, _, _, MAX_RV>(controller),
+        96
+    );
 }
 
-fn run_segment_f<H: ScenarioHarness>(
-    controller: &mut H::ControllerEndpoint<'_>,
-    worker: &mut H::WorkerEndpoint<'_>,
-) {
-    H::controller_send_u8::<97>(controller, 97);
-    assert_eq!(H::worker_recv_u8::<97>(worker), 97);
-    H::worker_send_u8::<98>(worker, 98);
-    assert_eq!(H::controller_recv_u8::<98>(controller), 98);
-    H::controller_send_u8::<99>(controller, 99);
-    assert_eq!(H::worker_recv_u8::<99>(worker), 99);
-    H::worker_send_u8::<100>(worker, 100);
-    assert_eq!(H::controller_recv_u8::<100>(controller), 100);
-    H::controller_send_u8::<101>(controller, 101);
-    assert_eq!(H::worker_recv_u8::<101>(worker), 101);
-    H::worker_send_u8::<102>(worker, 102);
-    assert_eq!(H::controller_recv_u8::<102>(controller), 102);
-    H::controller_send_u8::<103>(controller, 103);
-    assert_eq!(H::worker_recv_u8::<103>(worker), 103);
-    H::worker_send_u8::<104>(worker, 104);
-    assert_eq!(H::controller_recv_u8::<104>(controller), 104);
+fn run_segment_f<T, U, C, const MAX_RV: usize>(
+    controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
+    worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
+) where
+    T: Transport + 'static,
+    U: LabelUniverse + 'static,
+    C: Clock + 'static,
+{
+    localside::controller_send_u8::<97, _, _, _, MAX_RV>(controller, 97);
+    assert_eq!(localside::worker_recv_u8::<97, _, _, _, MAX_RV>(worker), 97);
+    localside::worker_send_u8::<98, _, _, _, MAX_RV>(worker, 98);
+    assert_eq!(
+        localside::controller_recv_u8::<98, _, _, _, MAX_RV>(controller),
+        98
+    );
+    localside::controller_send_u8::<99, _, _, _, MAX_RV>(controller, 99);
+    assert_eq!(localside::worker_recv_u8::<99, _, _, _, MAX_RV>(worker), 99);
+    localside::worker_send_u8::<100, _, _, _, MAX_RV>(worker, 100);
+    assert_eq!(
+        localside::controller_recv_u8::<100, _, _, _, MAX_RV>(controller),
+        100
+    );
+    localside::controller_send_u8::<101, _, _, _, MAX_RV>(controller, 101);
+    assert_eq!(
+        localside::worker_recv_u8::<101, _, _, _, MAX_RV>(worker),
+        101
+    );
+    localside::worker_send_u8::<102, _, _, _, MAX_RV>(worker, 102);
+    assert_eq!(
+        localside::controller_recv_u8::<102, _, _, _, MAX_RV>(controller),
+        102
+    );
+    localside::controller_send_u8::<103, _, _, _, MAX_RV>(controller, 103);
+    assert_eq!(
+        localside::worker_recv_u8::<103, _, _, _, MAX_RV>(worker),
+        103
+    );
+    localside::worker_send_u8::<104, _, _, _, MAX_RV>(worker, 104);
+    assert_eq!(
+        localside::controller_recv_u8::<104, _, _, _, MAX_RV>(controller),
+        104
+    );
 }

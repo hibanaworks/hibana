@@ -199,10 +199,11 @@ where
             super::offer::BranchKind::WireRecv => {}
         }
 
-        let meta = self
-            .cursor
-            .try_recv_meta()
-            .ok_or_else(decode_phase_invariant)?;
+        let meta = if let Some(meta) = self.cursor.try_recv_meta() {
+            meta
+        } else {
+            return Err(decode_phase_invariant());
+        };
         let control_handling = <M::ControlKind as ControlPayloadKind>::HANDLING;
         let expects_control = !matches!(control_handling, ControlHandling::None);
         if meta.is_control != expects_control {
@@ -326,13 +327,15 @@ where
             return Err(err);
         }
 
-        let meta = self
-            .commit_branch_preview(&branch)?
-            .ok_or_else(decode_phase_invariant)?;
+        let meta = match self.commit_branch_preview(&branch) {
+            Ok(Some(meta)) => meta,
+            Ok(None) => return Err(decode_phase_invariant()),
+            Err(err) => return Err(err),
+        };
 
-        self.cursor
-            .try_advance_past_jumps_in_place()
-            .map_err(|_| decode_phase_invariant())?;
+        if self.cursor.try_advance_past_jumps_in_place().is_err() {
+            return Err(decode_phase_invariant());
+        }
 
         let decode_lane_idx = meta.lane as usize;
         self.advance_lane_cursor(decode_lane_idx, meta.eff_index);

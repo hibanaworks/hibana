@@ -12,90 +12,13 @@ use core::{
 #[cfg(test)]
 use super::evidence::ScopeLabelMeta;
 use crate::global::const_dsl::ScopeId;
-#[cfg(test)]
-use crate::global::role_program::{LOW_LANE_TEST_WIDTH, lane_word_count};
 use crate::global::role_program::{LaneSet, LaneSetView, LaneWord};
 use crate::global::typestate::{MAX_STATES, StateIndex, state_index_to_usize};
 
 const FRONTIER_SLOT_MASK_BITS: usize = u8::BITS as usize;
-#[cfg(test)]
-const TEST_FRONTIER_ENTRY_CAPACITY: usize = FRONTIER_SLOT_MASK_BITS;
-#[cfg(test)]
-const TEST_LANE_SNAPSHOT_CAPACITY: usize = LOW_LANE_TEST_WIDTH;
 
 #[cfg(test)]
 use super::offer::{CurrentScopeSelectionMeta, ScopeArmMaterializationMeta};
-
-#[cfg(test)]
-use core::cell::{Cell, UnsafeCell};
-#[cfg(test)]
-use std::thread_local;
-
-#[cfg(test)]
-const TEST_FRONTIER_POOL_CAPACITY: usize = 4096;
-
-#[cfg(test)]
-const TEST_OFFER_ENTRY_CAPACITY: usize = if TEST_FRONTIER_ENTRY_CAPACITY < 8 {
-    8
-} else {
-    TEST_FRONTIER_ENTRY_CAPACITY
-};
-
-#[cfg(test)]
-#[derive(Clone, Copy)]
-struct ActiveEntrySetTestArena {
-    slots: [ActiveEntrySlot; TEST_FRONTIER_ENTRY_CAPACITY],
-}
-
-#[cfg(test)]
-impl ActiveEntrySetTestArena {
-    const EMPTY: Self = Self {
-        slots: [ActiveEntrySlot::EMPTY; TEST_FRONTIER_ENTRY_CAPACITY],
-    };
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy)]
-struct ObservedEntrySetTestArena {
-    slots: [FrontierObservationSlot; TEST_FRONTIER_ENTRY_CAPACITY],
-}
-
-#[cfg(test)]
-impl ObservedEntrySetTestArena {
-    const EMPTY: Self = Self {
-        slots: [FrontierObservationSlot::EMPTY; TEST_FRONTIER_ENTRY_CAPACITY],
-    };
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy)]
-struct FrontierObservationKeyTestArena {
-    slots: [FrontierObservationSlot; TEST_FRONTIER_ENTRY_CAPACITY],
-    offer_lane_words: [LaneWord; lane_word_count(TEST_LANE_SNAPSHOT_CAPACITY)],
-    binding_nonempty_lane_words: [LaneWord; lane_word_count(TEST_LANE_SNAPSHOT_CAPACITY)],
-}
-
-#[cfg(test)]
-impl FrontierObservationKeyTestArena {
-    const EMPTY: Self = Self {
-        slots: [FrontierObservationSlot::EMPTY; TEST_FRONTIER_ENTRY_CAPACITY],
-        offer_lane_words: [0; lane_word_count(TEST_LANE_SNAPSHOT_CAPACITY)],
-        binding_nonempty_lane_words: [0; lane_word_count(TEST_LANE_SNAPSHOT_CAPACITY)],
-    };
-}
-
-#[cfg(test)]
-thread_local! {
-    static ACTIVE_ENTRY_SET_TEST_POOL: UnsafeCell<[ActiveEntrySetTestArena; TEST_FRONTIER_POOL_CAPACITY]> =
-        const { UnsafeCell::new([ActiveEntrySetTestArena::EMPTY; TEST_FRONTIER_POOL_CAPACITY]) };
-    static ACTIVE_ENTRY_SET_TEST_NEXT: Cell<usize> = const { Cell::new(0) };
-    static OBSERVED_ENTRY_SET_TEST_POOL: UnsafeCell<[ObservedEntrySetTestArena; TEST_FRONTIER_POOL_CAPACITY]> =
-        const { UnsafeCell::new([ObservedEntrySetTestArena::EMPTY; TEST_FRONTIER_POOL_CAPACITY]) };
-    static OBSERVED_ENTRY_SET_TEST_NEXT: Cell<usize> = const { Cell::new(0) };
-    static FRONTIER_OBSERVATION_KEY_TEST_POOL: UnsafeCell<[FrontierObservationKeyTestArena; TEST_FRONTIER_POOL_CAPACITY]> =
-        const { UnsafeCell::new([FrontierObservationKeyTestArena::EMPTY; TEST_FRONTIER_POOL_CAPACITY]) };
-    static FRONTIER_OBSERVATION_KEY_TEST_NEXT: Cell<usize> = const { Cell::new(0) };
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FrontierKind {
@@ -276,56 +199,6 @@ where
     }
 }
 
-#[cfg(test)]
-fn alloc_active_entry_set_test_storage() -> *mut ActiveEntrySlot {
-    ACTIVE_ENTRY_SET_TEST_NEXT.with(|next| {
-        ACTIVE_ENTRY_SET_TEST_POOL.with(|pool| {
-            let idx = next.get();
-            if idx >= TEST_FRONTIER_POOL_CAPACITY {
-                panic!("active entry set test storage exhausted");
-            }
-            next.set(idx + 1);
-            let storage = unsafe { &mut (*pool.get())[idx] };
-            storage.slots.fill(ActiveEntrySlot::EMPTY);
-            storage.slots.as_mut_ptr()
-        })
-    })
-}
-
-#[cfg(test)]
-fn alloc_observed_entry_set_test_storage() -> *mut FrontierObservationSlot {
-    OBSERVED_ENTRY_SET_TEST_NEXT.with(|next| {
-        OBSERVED_ENTRY_SET_TEST_POOL.with(|pool| {
-            let idx = next.get();
-            if idx >= TEST_FRONTIER_POOL_CAPACITY {
-                panic!("observed entry set test storage exhausted");
-            }
-            next.set(idx + 1);
-            let storage = unsafe { &mut (*pool.get())[idx] };
-            storage.slots.fill(FrontierObservationSlot::EMPTY);
-            storage.slots.as_mut_ptr()
-        })
-    })
-}
-
-#[cfg(test)]
-fn alloc_frontier_observation_key_test_storage() -> *mut FrontierObservationKeyTestArena {
-    FRONTIER_OBSERVATION_KEY_TEST_NEXT.with(|next| {
-        FRONTIER_OBSERVATION_KEY_TEST_POOL.with(|pool| {
-            let idx = next.get();
-            if idx >= TEST_FRONTIER_POOL_CAPACITY {
-                panic!("frontier observation key test storage exhausted");
-            }
-            next.set(idx + 1);
-            let storage = unsafe { &mut (*pool.get())[idx] };
-            storage.slots.fill(FrontierObservationSlot::EMPTY);
-            storage.offer_lane_words.fill(0);
-            storage.binding_nonempty_lane_words.fill(0);
-            storage as *mut FrontierObservationKeyTestArena
-        })
-    })
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct ActiveEntrySlot {
     pub(super) entry: StateIndex,
@@ -351,6 +224,14 @@ impl ActiveEntrySet {
 
     #[cfg(test)]
     #[inline]
+    pub(super) const fn from_parts(slots: *mut ActiveEntrySlot, capacity: usize) -> Self {
+        Self {
+            slots: EntryBuffer::from_parts(slots, capacity),
+        }
+    }
+
+    #[cfg(test)]
+    #[inline]
     pub(super) unsafe fn init_from_parts(
         dst: *mut Self,
         slots: *mut ActiveEntrySlot,
@@ -368,19 +249,8 @@ impl ActiveEntrySet {
         }
     }
 
-    #[cfg(test)]
-    fn ensure_test_storage(&mut self) {
-        if !self.slots.ptr.is_null() {
-            return;
-        }
-        let slots = alloc_active_entry_set_test_storage();
-        unsafe { Self::init_from_parts(self as *mut Self, slots, TEST_FRONTIER_ENTRY_CAPACITY) };
-    }
-
     #[inline]
     pub(super) fn clear(&mut self) {
-        #[cfg(test)]
-        self.ensure_test_storage();
         let capacity = self.slots.capacity();
         let mut idx = 0usize;
         while idx < capacity {
@@ -392,8 +262,6 @@ impl ActiveEntrySet {
     #[cfg(test)]
     #[inline]
     pub(super) fn copy_from(&mut self, src: Self) {
-        #[cfg(test)]
-        self.ensure_test_storage();
         self.clear();
         let len = src.len();
         let mut idx = 0usize;
@@ -461,8 +329,6 @@ impl ActiveEntrySet {
     }
 
     pub(super) fn insert_entry(&mut self, entry_idx: usize, lane_idx: u8) -> bool {
-        #[cfg(test)]
-        self.ensure_test_storage();
         let Some(entry) = checked_state_index(entry_idx) else {
             return false;
         };
@@ -493,8 +359,6 @@ impl ActiveEntrySet {
     }
 
     pub(super) fn remove_entry(&mut self, entry_idx: usize) -> bool {
-        #[cfg(test)]
-        self.ensure_test_storage();
         let Ok(entry) = u16::try_from(entry_idx) else {
             return false;
         };
@@ -577,31 +441,6 @@ impl ObservedEntrySet {
         ready_mask: 0,
     };
 
-    #[cfg(test)]
-    #[cfg(test)]
-    #[inline]
-    pub(super) unsafe fn init_from_parts(
-        dst: *mut Self,
-        slots: *mut FrontierObservationSlot,
-        capacity: usize,
-    ) {
-        unsafe {
-            EntryBuffer::init_from_parts(core::ptr::addr_of_mut!((*dst).slots), slots, capacity);
-            core::ptr::addr_of_mut!((*dst).controller_mask).write(0);
-            core::ptr::addr_of_mut!((*dst).dynamic_controller_mask).write(0);
-            core::ptr::addr_of_mut!((*dst).progress_mask).write(0);
-            core::ptr::addr_of_mut!((*dst).ready_arm_mask).write(0);
-            core::ptr::addr_of_mut!((*dst).ready_mask).write(0);
-        }
-        let mut idx = 0usize;
-        while idx < capacity {
-            unsafe {
-                slots.add(idx).write(FrontierObservationSlot::EMPTY);
-            }
-            idx += 1;
-        }
-    }
-
     #[inline]
     pub(super) const fn from_parts(slots: *mut FrontierObservationSlot, capacity: usize) -> Self {
         Self::from_parts_with_summary(slots, capacity, ObservedEntrySummary::EMPTY)
@@ -623,19 +462,8 @@ impl ObservedEntrySet {
         }
     }
 
-    #[cfg(test)]
-    fn ensure_test_storage(&mut self) {
-        if !self.slots.ptr.is_null() {
-            return;
-        }
-        let slots = alloc_observed_entry_set_test_storage();
-        unsafe { Self::init_from_parts(self as *mut Self, slots, TEST_FRONTIER_ENTRY_CAPACITY) };
-    }
-
     #[inline]
     pub(super) fn clear(&mut self) {
-        #[cfg(test)]
-        self.ensure_test_storage();
         let mut idx = 0usize;
         while idx < self.slots.capacity() {
             self.slots[idx] = FrontierObservationSlot::EMPTY;
@@ -661,8 +489,6 @@ impl ObservedEntrySet {
 
     #[inline]
     pub(super) fn copy_from(&mut self, src: Self) {
-        #[cfg(test)]
-        self.ensure_test_storage();
         self.clear();
         let len = src.len();
         let mut idx = 0usize;
@@ -721,8 +547,6 @@ impl ObservedEntrySet {
     }
 
     pub(super) fn insert_entry(&mut self, entry_idx: usize) -> Option<(u8, bool)> {
-        #[cfg(test)]
-        self.ensure_test_storage();
         if entry_idx >= MAX_STATES {
             return None;
         }
@@ -765,8 +589,6 @@ impl ObservedEntrySet {
         observed: OfferEntryObservedState,
         frontier_mask: u8,
     ) {
-        #[cfg(test)]
-        self.ensure_test_storage();
         if observed.is_controller() {
             self.controller_mask |= observed_bit;
         }
@@ -804,8 +626,6 @@ impl ObservedEntrySet {
         observed: OfferEntryObservedState,
         frontier_mask: u8,
     ) -> bool {
-        #[cfg(test)]
-        self.ensure_test_storage();
         let observed_bit = self.entry_bit(entry_idx);
         if observed_bit == 0 {
             return false;
@@ -820,8 +640,6 @@ impl ObservedEntrySet {
     }
 
     pub(super) fn move_entry_slot(&mut self, entry_idx: usize, new_slot_idx: usize) -> bool {
-        #[cfg(test)]
-        self.ensure_test_storage();
         let Some(old_slot_idx) = self.slot_for_entry(entry_idx) else {
             return false;
         };
@@ -871,8 +689,6 @@ impl ObservedEntrySet {
         observed: OfferEntryObservedState,
         frontier_mask: u8,
     ) -> bool {
-        #[cfg(test)]
-        self.ensure_test_storage();
         if entry_idx >= MAX_STATES {
             return false;
         }
@@ -922,8 +738,6 @@ impl ObservedEntrySet {
     }
 
     pub(super) fn remove_observation(&mut self, entry_idx: usize) -> bool {
-        #[cfg(test)]
-        self.ensure_test_storage();
         let Some(slot_idx) = self.slot_for_entry(entry_idx) else {
             return false;
         };
@@ -960,8 +774,6 @@ impl ObservedEntrySet {
         observed: OfferEntryObservedState,
         frontier_mask: u8,
     ) -> bool {
-        #[cfg(test)]
-        self.ensure_test_storage();
         if old_entry_idx >= MAX_STATES || new_entry_idx >= MAX_STATES {
             return false;
         }
@@ -1219,38 +1031,6 @@ impl FrontierObservationKey {
         binding_nonempty_lanes: LaneSet::EMPTY,
     };
 
-    #[cfg(test)]
-    #[inline]
-    pub(super) unsafe fn init_from_parts(
-        dst: *mut Self,
-        slots: *mut FrontierObservationSlot,
-        capacity: usize,
-        offer_lane_words: *mut LaneWord,
-        binding_nonempty_lane_words: *mut LaneWord,
-        lane_word_len: usize,
-    ) {
-        unsafe {
-            EntryBuffer::init_from_parts(core::ptr::addr_of_mut!((*dst).slots), slots, capacity);
-            LaneSet::init_from_parts(
-                core::ptr::addr_of_mut!((*dst).offer_lanes),
-                offer_lane_words,
-                lane_word_len,
-            );
-            LaneSet::init_from_parts(
-                core::ptr::addr_of_mut!((*dst).binding_nonempty_lanes),
-                binding_nonempty_lane_words,
-                lane_word_len,
-            );
-        }
-        let mut idx = 0usize;
-        while idx < capacity {
-            unsafe {
-                slots.add(idx).write(FrontierObservationSlot::EMPTY);
-            }
-            idx += 1;
-        }
-    }
-
     #[inline]
     pub(super) const fn from_parts(
         slots: *mut FrontierObservationSlot,
@@ -1266,36 +1046,8 @@ impl FrontierObservationKey {
         }
     }
 
-    #[cfg(test)]
-    fn ensure_test_storage(&mut self) {
-        if !self.slots.ptr.is_null() {
-            return;
-        }
-        let storage = alloc_frontier_observation_key_test_storage();
-        let storage_ref = unsafe { &mut *storage };
-        unsafe {
-            Self::init_from_parts(
-                self as *mut Self,
-                storage_ref.slots.as_mut_ptr(),
-                TEST_FRONTIER_ENTRY_CAPACITY,
-                storage_ref.offer_lane_words.as_mut_ptr(),
-                storage_ref.binding_nonempty_lane_words.as_mut_ptr(),
-                lane_word_count(TEST_LANE_SNAPSHOT_CAPACITY),
-            )
-        };
-    }
-
-    #[cfg(test)]
-    pub(super) fn from_active_entries_for_test(src: ActiveEntrySet) -> Self {
-        let mut key = Self::EMPTY;
-        key.set_active_entries_from(src);
-        key
-    }
-
     #[inline]
     pub(super) fn clear(&mut self) {
-        #[cfg(test)]
-        self.ensure_test_storage();
         let mut idx = 0usize;
         while idx < self.slots.capacity() {
             self.slots[idx] = FrontierObservationSlot::EMPTY;
@@ -1312,8 +1064,6 @@ impl FrontierObservationKey {
 
     #[inline]
     pub(super) fn copy_from(&mut self, src: Self) {
-        #[cfg(test)]
-        self.ensure_test_storage();
         self.clear();
         let len = cached_frontier_observation_slots_len(src.slots);
         let mut idx = 0usize;
@@ -1329,8 +1079,6 @@ impl FrontierObservationKey {
     #[cfg(test)]
     #[inline]
     pub(super) fn copy_slots_from_observed_entries(&mut self, src: ObservedEntrySet) {
-        #[cfg(test)]
-        self.ensure_test_storage();
         let capacity = self.slots.capacity();
         let mut idx = 0usize;
         while idx < capacity {
@@ -1347,8 +1095,6 @@ impl FrontierObservationKey {
 
     #[inline]
     pub(super) fn set_active_entries_from(&mut self, src: ActiveEntrySet) {
-        #[cfg(test)]
-        self.ensure_test_storage();
         let mut idx = 0usize;
         while idx < self.slots.capacity() {
             self.slots[idx] = FrontierObservationSlot::EMPTY;
@@ -1625,52 +1371,17 @@ impl OfferEntrySlot {
 
 #[cfg(test)]
 #[derive(Clone, Copy)]
-struct OfferEntryTableTestStorage {
-    slots: [OfferEntrySlot; TEST_OFFER_ENTRY_CAPACITY],
-}
-
-#[cfg(test)]
-impl OfferEntryTableTestStorage {
-    const EMPTY: Self = Self {
-        slots: [OfferEntrySlot::EMPTY; TEST_OFFER_ENTRY_CAPACITY],
-    };
-}
-
-#[cfg(test)]
-thread_local! {
-    static OFFER_ENTRY_TABLE_TEST_POOL: UnsafeCell<[OfferEntryTableTestStorage; TEST_FRONTIER_POOL_CAPACITY]> =
-        const { UnsafeCell::new([OfferEntryTableTestStorage::EMPTY; TEST_FRONTIER_POOL_CAPACITY]) };
-    static OFFER_ENTRY_TABLE_TEST_NEXT: Cell<usize> = const { Cell::new(0) };
-}
-
-#[cfg(test)]
-fn alloc_offer_entry_table_test_storage(capacity: usize) -> *mut OfferEntrySlot {
-    assert!(
-        capacity <= TEST_OFFER_ENTRY_CAPACITY,
-        "offer entry table capacity {capacity} exceeds test storage {TEST_OFFER_ENTRY_CAPACITY}"
-    );
-    OFFER_ENTRY_TABLE_TEST_NEXT.with(|next| {
-        OFFER_ENTRY_TABLE_TEST_POOL.with(|pool| {
-            let idx = next.get();
-            if idx >= TEST_FRONTIER_POOL_CAPACITY {
-                panic!("offer entry table test storage exhausted");
-            }
-            next.set(idx + 1);
-            let storage = unsafe { &mut (*pool.get())[idx] };
-            storage.slots.fill(OfferEntrySlot::EMPTY);
-            storage.slots.as_mut_ptr()
-        })
-    })
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy)]
 pub(super) struct OfferEntryTable {
     slots: EntryBuffer<OfferEntrySlot>,
 }
 
 #[cfg(test)]
 impl OfferEntryTable {
+    #[inline]
+    pub(super) const fn has_storage(&self) -> bool {
+        !self.slots.ptr.is_null() && self.slots.capacity() != 0
+    }
+
     pub(super) unsafe fn init_from_parts(
         dst: *mut Self,
         slots: *mut OfferEntrySlot,
@@ -1705,19 +1416,6 @@ impl OfferEntryTable {
         len
     }
 
-    #[cfg(test)]
-    fn ensure_test_storage(&mut self) {
-        if !self.slots.ptr.is_null() {
-            return;
-        }
-        let capacity = self.slots.capacity();
-        if capacity == 0 {
-            return;
-        }
-        let slots = alloc_offer_entry_table_test_storage(capacity);
-        unsafe { Self::init_from_parts(self as *mut Self, slots, capacity) };
-    }
-
     #[inline]
     fn slot_for_entry(&self, entry_idx: usize) -> Option<usize> {
         let entry = checked_state_index(entry_idx)?;
@@ -1741,14 +1439,18 @@ impl OfferEntryTable {
     #[cfg(test)]
     #[inline]
     pub(super) fn get_mut(&mut self, entry_idx: usize) -> Option<&mut OfferEntryState> {
-        self.ensure_test_storage();
+        if !self.has_storage() {
+            return None;
+        }
         let slot_idx = self.slot_for_entry(entry_idx)?;
         Some(&mut self.slots[slot_idx].state)
     }
 
     #[cfg(test)]
     pub(super) fn set(&mut self, entry_idx: usize, state: OfferEntryState) {
-        self.ensure_test_storage();
+        if !self.has_storage() {
+            return;
+        }
         if state.active_mask == 0 {
             self.clear(entry_idx);
             return;
@@ -1759,7 +1461,9 @@ impl OfferEntryTable {
 
     #[cfg(test)]
     pub(super) fn clear(&mut self, entry_idx: usize) {
-        self.ensure_test_storage();
+        if !self.has_storage() {
+            return;
+        }
         let Some(slot_idx) = self.slot_for_entry(entry_idx) else {
             return;
         };
@@ -1776,7 +1480,10 @@ impl OfferEntryTable {
 
     #[cfg(test)]
     fn ensure_entry_mut(&mut self, entry_idx: usize) -> &mut OfferEntryState {
-        self.ensure_test_storage();
+        assert!(
+            self.has_storage(),
+            "offer entry table mutation requires caller-owned storage"
+        );
         if let Some(slot_idx) = self.slot_for_entry(entry_idx) {
             return &mut self.slots[slot_idx].state;
         }
@@ -2514,7 +2221,7 @@ mod tests {
         frontier_cached_observation_key_view_from_storage,
         frontier_observation_key_view_from_storage,
     };
-    use crate::global::role_program::{LOW_LANE_TEST_WIDTH, LaneWord};
+    use crate::global::role_program::LaneWord;
 
     #[test]
     fn global_frontier_scratch_sections_track_max_frontier_entries() {
@@ -2573,17 +2280,25 @@ mod tests {
         key_b.clear();
         key_a.insert_offer_lane(0);
         key_b.insert_offer_lane(0);
-        key_a.insert_offer_lane(LOW_LANE_TEST_WIDTH + 1);
+        let high_lane = LaneWord::BITS as usize + 1;
+        key_a.insert_offer_lane(high_lane);
 
+        let mut lanes_a = [u8::MAX; 2];
+        let mut lanes_b = [u8::MAX; 1];
         assert_eq!(
             key_a
                 .offer_lanes()
-                .collect_low_lane_bits(LOW_LANE_TEST_WIDTH),
+                .write_lane_indices(high_lane + 1, &mut lanes_a),
+            2
+        );
+        assert_eq!(
             key_b
                 .offer_lanes()
-                .collect_low_lane_bits(LOW_LANE_TEST_WIDTH),
-            "low-lane test probes intentionally ignore lanes above the assertion window"
+                .write_lane_indices(high_lane + 1, &mut lanes_b),
+            1
         );
+        assert_eq!(lanes_a, [0, high_lane as u8]);
+        assert_eq!(lanes_b, [0]);
         assert!(
             !key_a.lane_sets_equal(&key_b),
             "exact lane snapshots must still distinguish high-lane changes"
