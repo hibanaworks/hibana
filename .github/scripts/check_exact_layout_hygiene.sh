@@ -52,6 +52,12 @@ check_absent \
   src/global/compiled/images/role.rs
 
 check_absent \
+  "TEST_FRONTIER_ENTRY_FLOOR|test_frontier_entry_capacity\\(" \
+  "compiled role image and endpoint layout must not keep test-only frontier capacity floors" \
+  src/global/compiled/images/role.rs \
+  src/endpoint/kernel/runtime/layout.rs
+
+check_absent \
   "active_lane_mask: u32" \
   "compiled role lowering must not retain the legacy u32 lane-mask fact" \
   src/global/compiled/lowering/driver.rs

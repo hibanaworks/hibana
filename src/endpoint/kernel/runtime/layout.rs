@@ -122,9 +122,6 @@ impl EndpointArenaLayout {
         footprint: RoleFootprint,
         binding_enabled: bool,
     ) -> Self {
-        #[cfg(test)]
-        let offer_entry_capacity =
-            max_usize(footprint.frontier_entry_count, TEST_FRONTIER_ENTRY_FLOOR);
         let mut offset = 0usize;
         let mut total_align = 1usize;
 
@@ -252,7 +249,7 @@ impl EndpointArenaLayout {
                 offset,
                 align: core::mem::align_of::<OfferEntrySlot>(),
                 bytes: 0,
-                count: offer_entry_capacity,
+                count: footprint.frontier_entry_count,
             }
         };
 
@@ -519,9 +516,6 @@ const fn max_usize(lhs: usize, rhs: usize) -> usize {
     if lhs > rhs { lhs } else { rhs }
 }
 
-#[cfg(test)]
-const TEST_FRONTIER_ENTRY_FLOOR: usize = 8;
-
 #[inline(always)]
 const fn align_up(value: usize, align: usize) -> usize {
     let mask = align.saturating_sub(1);
@@ -554,6 +548,9 @@ mod tests {
                 .active_lane_count
                 .saturating_mul(footprint.logical_lane_word_count)
         );
-        assert_eq!(layout.frontier_offer_entry_slots().count(), 8);
+        assert_eq!(
+            layout.frontier_offer_entry_slots().count(),
+            footprint.frontier_entry_count
+        );
     }
 }

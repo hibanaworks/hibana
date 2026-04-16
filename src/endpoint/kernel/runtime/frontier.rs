@@ -1936,8 +1936,6 @@ impl FrontierScratchLayout {
 
 #[derive(Clone, Copy)]
 pub(super) struct FrontierScratchView {
-    #[cfg(test)]
-    working_observation_key: FrontierObservationKey,
     candidates: *mut FrontierCandidate,
     frontier_entry_capacity: u8,
     visited_scopes: *mut ScopeId,
@@ -2124,30 +2122,6 @@ impl FrontierScratchView {
     ) -> Self {
         let _ = _logical_lane_count;
         Self {
-            #[cfg(test)]
-            working_observation_key: FrontierObservationKey::from_parts(
-                unsafe {
-                    storage
-                        .add(layout.working_observation_key_slots().offset())
-                        .cast::<FrontierObservationSlot>()
-                },
-                frontier_entry_capacity,
-                unsafe {
-                    storage
-                        .add(layout.working_observation_key_offer_lanes().offset())
-                        .cast::<LaneWord>()
-                },
-                unsafe {
-                    storage
-                        .add(
-                            layout
-                                .working_observation_key_binding_nonempty_lanes()
-                                .offset(),
-                        )
-                        .cast::<LaneWord>()
-                },
-                layout.working_observation_key_offer_lanes().count(),
-            ),
             candidates: unsafe {
                 storage
                     .add(layout.candidates().offset())
@@ -2161,17 +2135,6 @@ impl FrontierScratchView {
             },
             root_scopes: unsafe { storage.add(layout.root_scopes().offset()).cast::<ScopeId>() },
         }
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(super) fn working_observation_key_from(
-        &mut self,
-        src: FrontierObservationKey,
-    ) -> FrontierObservationKey {
-        let key = &mut self.working_observation_key;
-        key.copy_from(src);
-        *key
     }
 
     #[inline]

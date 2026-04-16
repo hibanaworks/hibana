@@ -4067,6 +4067,8 @@ fn session_cluster_attach_leases_exact_logical_lane_slots() {
 fn role_lane_mask_alias_and_low_lane_test_probes_are_gone() {
     let role_program_src = include_str!("../src/global/role_program.rs");
     let role_program_ws = compact_ws(role_program_src);
+    let compiled_role_src = include_str!("../src/global/compiled/images/role.rs");
+    let runtime_layout_src = include_str!("../src/endpoint/kernel/runtime/layout.rs");
 
     assert!(
         !role_program_ws.contains("RoleLaneMask")
@@ -4074,6 +4076,12 @@ fn role_lane_mask_alias_and_low_lane_test_probes_are_gone() {
             && !role_program_ws.contains("LOW_LANE_TEST_WIDTH")
             && !role_program_ws.contains("collect_low_lane_bits("),
         "role_program.rs must delete the old RoleLaneMask/PUBLIC_LANE_COUNT ceiling and remove low-lane test probes"
+    );
+    assert!(
+        !compiled_role_src.contains("TEST_FRONTIER_ENTRY_FLOOR")
+            && !compiled_role_src.contains("test_frontier_entry_capacity(")
+            && !runtime_layout_src.contains("TEST_FRONTIER_ENTRY_FLOOR"),
+        "compiled role images and endpoint layout must not keep test-only frontier entry floors"
     );
 }
 

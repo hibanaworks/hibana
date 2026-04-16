@@ -13,24 +13,6 @@ use crate::global::typestate::{
 use super::{LoweringSummary, lease::RoleLoweringScratch};
 
 const MACHINE_NO_STEP: u16 = u16::MAX;
-#[cfg(test)]
-const TEST_FRONTIER_ENTRY_FLOOR: usize = 8;
-
-#[inline(always)]
-const fn test_frontier_entry_capacity(compiled: usize) -> usize {
-    #[cfg(test)]
-    {
-        if compiled > TEST_FRONTIER_ENTRY_FLOOR {
-            compiled
-        } else {
-            TEST_FRONTIER_ENTRY_FLOOR
-        }
-    }
-    #[cfg(not(test))]
-    {
-        compiled
-    }
-}
 
 #[inline(always)]
 const fn encode_compact_step_index(value: usize) -> u16 {
@@ -1610,12 +1592,7 @@ impl CompiledRoleImage {
 
     #[inline(always)]
     pub(crate) fn max_frontier_entries(&self) -> usize {
-        let compiled = self.compiled_frontier_entry_capacity();
-        if cfg!(test) {
-            test_frontier_entry_capacity(compiled)
-        } else {
-            compiled
-        }
+        self.compiled_frontier_entry_capacity()
     }
 
     #[inline(always)]
@@ -1642,19 +1619,11 @@ impl CompiledRoleImage {
 
     #[inline(always)]
     pub(crate) fn frontier_scratch_layout(&self) -> FrontierScratchLayout {
-        if cfg!(test) {
-            FrontierScratchLayout::new(
-                test_frontier_entry_capacity(self.max_frontier_entries()),
-                self.logical_lane_count(),
-                self.logical_lane_word_count(),
-            )
-        } else {
-            FrontierScratchLayout::new(
-                self.max_frontier_entries(),
-                self.logical_lane_count(),
-                self.logical_lane_word_count(),
-            )
-        }
+        FrontierScratchLayout::new(
+            self.max_frontier_entries(),
+            self.logical_lane_count(),
+            self.logical_lane_word_count(),
+        )
     }
 
     #[cfg(test)]
@@ -1680,17 +1649,13 @@ impl CompiledRoleImage {
 
     #[inline(always)]
     pub(crate) fn endpoint_layout_footprint(&self) -> RoleFootprint {
-        #[cfg(test)]
-        let frontier_entry_count = self.compiled_max_frontier_entries();
-        #[cfg(not(test))]
-        let frontier_entry_count = self.max_frontier_entries();
         RoleFootprint::for_endpoint_layout(
             self.active_lane_count(),
             self.endpoint_lane_slot_count(),
             self.logical_lane_count(),
             self.max_route_stack_depth(),
             self.scope_evidence_count(),
-            frontier_entry_count,
+            self.max_frontier_entries(),
         )
     }
 
@@ -2511,6 +2476,11 @@ mod tests {
                 expected_frontier_entries,
                 "frontier bound must stay tied to branch-local fan-out"
             );
+            assert_eq!(
+                image.max_frontier_entries(),
+                image.compiled_max_frontier_entries(),
+                "test-visible frontier capacity must match the compiled exact count"
+            );
             assert!(
                 image.compiled_max_frontier_entries() < image.local_len().max(1),
                 "frontier bound must not grow with the full local prefix"
@@ -2561,8 +2531,8 @@ mod tests {
             );
             assert_eq!(
                 layout.frontier_offer_entry_slots().count(),
-                image.max_frontier_entries(),
-                "offer entry storage must stay tied to the test-visible simultaneous frontier bound"
+                image.compiled_max_frontier_entries(),
+                "offer entry storage must stay tied to the compiled simultaneous frontier bound"
             );
         });
     }

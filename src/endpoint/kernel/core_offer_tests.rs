@@ -3103,14 +3103,11 @@ fn align_cursor_to_selected_scope_reuses_cached_multi_entry_observation() {
 
                         worker.refresh_lane_offer_state(0);
                         let current_idx = worker.cursor.index();
-                        let fake_entry_idx = current_idx + 1;
-                        assert!(fake_entry_idx < crate::global::typestate::MAX_STATES);
-
                         let (_active_slots, active_entries) =
-                            active_entry_set_from_pairs(&[(current_idx, 0), (fake_entry_idx, 1)]);
+                            active_entry_set_from_pairs(&[(current_idx, 0)]);
                         worker.overwrite_global_active_entries_for_test(active_entries);
                         let (_observed_slots, observed_entries) =
-                            observed_entries_with_ready_current(current_idx, fake_entry_idx);
+                            observed_entries_with_ready_current_only(current_idx);
                         worker.overwrite_global_frontier_observed_for_test(observed_entries);
                         let stored_key = RouteFrontierMachine::frontier_observation_key(
                             &worker,
@@ -3179,14 +3176,11 @@ fn align_cursor_to_selected_scope_ignores_unrelated_lane_binding_changes() {
 
                         worker.refresh_lane_offer_state(0);
                         let current_idx = worker.cursor.index();
-                        let fake_entry_idx = current_idx + 1;
-                        assert!(fake_entry_idx < crate::global::typestate::MAX_STATES);
-
                         let (_active_slots, active_entries) =
-                            active_entry_set_from_pairs(&[(current_idx, 0), (fake_entry_idx, 1)]);
+                            active_entry_set_from_pairs(&[(current_idx, 0)]);
                         worker.overwrite_global_active_entries_for_test(active_entries);
                         let (_observed_slots, observed_entries) =
-                            observed_entries_with_ready_current(current_idx, fake_entry_idx);
+                            observed_entries_with_ready_current_only(current_idx);
                         worker.overwrite_global_frontier_observed_for_test(observed_entries);
                         let stored_key = RouteFrontierMachine::frontier_observation_key(
                             &worker,
@@ -3265,14 +3259,11 @@ fn align_cursor_to_selected_scope_ignores_relevant_lane_binding_content_changes(
 
                         worker.refresh_lane_offer_state(0);
                         let current_idx = worker.cursor.index();
-                        let fake_entry_idx = current_idx + 1;
-                        assert!(fake_entry_idx < crate::global::typestate::MAX_STATES);
-
                         let (_active_slots, active_entries) =
-                            active_entry_set_from_pairs(&[(current_idx, 0), (fake_entry_idx, 1)]);
+                            active_entry_set_from_pairs(&[(current_idx, 0)]);
                         worker.overwrite_global_active_entries_for_test(active_entries);
                         let (_observed_slots, observed_entries) =
-                            observed_entries_with_ready_current(current_idx, fake_entry_idx);
+                            observed_entries_with_ready_current_only(current_idx);
                         worker.overwrite_global_frontier_observed_for_test(observed_entries);
 
                         let first = crate::binding::IncomingClassification {
@@ -3361,14 +3352,11 @@ fn align_cursor_to_selected_scope_ignores_unrelated_scope_evidence_changes() {
 
                         worker.refresh_lane_offer_state(0);
                         let current_idx = worker.cursor.index();
-                        let fake_entry_idx = current_idx + 1;
-                        assert!(fake_entry_idx < crate::global::typestate::MAX_STATES);
-
                         let (_active_slots, active_entries) =
-                            active_entry_set_from_pairs(&[(current_idx, 0), (fake_entry_idx, 1)]);
+                            active_entry_set_from_pairs(&[(current_idx, 0)]);
                         worker.overwrite_global_active_entries_for_test(active_entries);
                         let (_observed_slots, observed_entries) =
-                            observed_entries_with_ready_current(current_idx, fake_entry_idx);
+                            observed_entries_with_ready_current_only(current_idx);
                         worker.overwrite_global_frontier_observed_for_test(observed_entries);
                         let stored_key = RouteFrontierMachine::frontier_observation_key(
                             &worker,
@@ -3452,14 +3440,11 @@ fn align_cursor_to_selected_scope_ignores_unrelated_lane_frontier_refresh() {
 
                         worker.refresh_lane_offer_state(0);
                         let current_idx = worker.cursor.index();
-                        let fake_entry_idx = current_idx + 1;
-                        assert!(fake_entry_idx < crate::global::typestate::MAX_STATES);
-
                         let (_active_slots, active_entries) =
-                            active_entry_set_from_pairs(&[(current_idx, 0), (fake_entry_idx, 1)]);
+                            active_entry_set_from_pairs(&[(current_idx, 0)]);
                         worker.overwrite_global_active_entries_for_test(active_entries);
                         let (_observed_slots, observed_entries) =
-                            observed_entries_with_ready_current(current_idx, fake_entry_idx);
+                            observed_entries_with_ready_current_only(current_idx);
                         worker.overwrite_global_frontier_observed_for_test(observed_entries);
                         let stored_key = RouteFrontierMachine::frontier_observation_key(
                             &worker,
@@ -3752,28 +3737,17 @@ fn observed_entry_set_entry_bit_tracks_inserted_entries_exactly() {
     assert_eq!(observed_entries.entry_bit(9), 0);
 }
 
-fn observed_entries_with_ready_current(
+fn observed_entries_with_ready_current_only(
     current_idx: usize,
-    fake_entry_idx: usize,
 ) -> (std::vec::Vec<FrontierObservationSlot>, ObservedEntrySet) {
-    observed_entry_set_from_states(&[
-        (
-            current_idx,
-            OfferEntryObservedState {
-                scope_id: ScopeId::generic(7),
-                frontier_mask: FrontierKind::Route.bit(),
-                flags: OfferEntryObservedState::FLAG_READY,
-            },
-        ),
-        (
-            fake_entry_idx,
-            OfferEntryObservedState {
-                scope_id: ScopeId::generic(8),
-                frontier_mask: FrontierKind::Route.bit(),
-                flags: 0,
-            },
-        ),
-    ])
+    observed_entry_set_from_states(&[(
+        current_idx,
+        OfferEntryObservedState {
+            scope_id: ScopeId::generic(7),
+            frontier_mask: FrontierKind::Route.bit(),
+            flags: OfferEntryObservedState::FLAG_READY,
+        },
+    )])
 }
 
 #[test]
@@ -4197,25 +4171,39 @@ fn cached_frontier_changed_entry_slot_mask_ignores_non_representative_route_lane
                     }
                     let worker = worker_slot.borrow_mut();
 
+                    assert!(worker.cursor.logical_lane_count() > 2);
                     worker.refresh_lane_offer_state(0);
                     let current_idx = worker.cursor.index();
                     let (_active_slots, active_entries) =
                         active_entry_set_from_pairs(&[(current_idx, 0)]);
                     worker.overwrite_global_active_entries_for_test(active_entries);
 
-                    let cached_key = worker.frontier_scratch_view().working_observation_key_from(
+                    let (
+                        _cached_key_slots,
+                        _cached_offer_lane_words,
+                        _cached_binding_lane_words,
+                        cached_key,
+                    ) = copied_frontier_observation_key_storage(
                         RouteFrontierMachine::frontier_observation_key(
                             &worker,
                             ScopeId::none(),
                             false,
                         ),
+                        worker.cursor.max_frontier_entries(),
+                        worker.cursor.logical_lane_count(),
                     );
-                    let mut observation_key = cached_key;
-                    observation_key.slot_mut(1).route_change_epoch =
-                        observation_key.slot(1).route_change_epoch.wrapping_add(1);
-                    if observation_key.slot(1).route_change_epoch == 0 {
-                        observation_key.slot_mut(1).route_change_epoch = 1;
-                    }
+                    let unrelated = crate::binding::IncomingClassification {
+                        label: 91,
+                        channel: crate::binding::Channel::new(7),
+                        instance: 7,
+                        has_fin: false,
+                    };
+                    assert!(worker.binding_inbox.push_back(2, unrelated));
+                    let observation_key = RouteFrontierMachine::frontier_observation_key(
+                        &worker,
+                        ScopeId::none(),
+                        false,
+                    );
 
                     let changed_slot_mask = worker
                         .cached_frontier_changed_entry_slot_mask(
@@ -4241,6 +4229,59 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
     run_offer_regression_test(
         "refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots",
         || {
+            const OUTER_LEFT_LABEL: u8 = 0x61;
+            const OUTER_RIGHT_LABEL: u8 = 0x62;
+            const OUTER_LEFT_DATA_LABEL: u8 = 0x71;
+            const INNER_LEFT_LABEL: u8 = 0x63;
+            const INNER_RIGHT_LABEL: u8 = 0x64;
+            const INNER_LEFT_DATA_LABEL: u8 = 0x73;
+            const INNER_RIGHT_DATA_LABEL: u8 = 0x74;
+            const INNER_REPLY_DATA_LABEL: u8 = 0x75;
+
+            type InnerArm0 = SeqSteps<
+                SendOnly<2, Role<0>, Role<0>, Msg<INNER_LEFT_LABEL, u8>>,
+                SeqSteps<
+                    SendOnly<2, Role<0>, Role<1>, Msg<INNER_LEFT_DATA_LABEL, u8>>,
+                    SendOnly<2, Role<1>, Role<0>, Msg<INNER_REPLY_DATA_LABEL, u8>>,
+                >,
+            >;
+            type InnerArm1 = SeqSteps<
+                SendOnly<2, Role<0>, Role<0>, Msg<INNER_RIGHT_LABEL, u8>>,
+                SendOnly<2, Role<0>, Role<1>, Msg<INNER_RIGHT_DATA_LABEL, u8>>,
+            >;
+            type InnerRouteSteps = RouteSteps<InnerArm0, InnerArm1>;
+            type OuterLeftSteps = SeqSteps<
+                SendOnly<0, Role<0>, Role<0>, Msg<OUTER_LEFT_LABEL, u8>>,
+                SendOnly<0, Role<0>, Role<1>, Msg<OUTER_LEFT_DATA_LABEL, u8>>,
+            >;
+            type OuterRightSteps =
+                SeqSteps<SendOnly<0, Role<0>, Role<0>, Msg<OUTER_RIGHT_LABEL, u8>>, InnerRouteSteps>;
+            type NestedSplitRouteSteps = RouteSteps<OuterLeftSteps, OuterRightSteps>;
+
+            const INNER_ARM0_PROGRAM: g::Program<InnerArm0> = g::seq(
+                g::send::<Role<0>, Role<0>, Msg<INNER_LEFT_LABEL, u8>, 2>(),
+                g::seq(
+                    g::send::<Role<0>, Role<1>, Msg<INNER_LEFT_DATA_LABEL, u8>, 2>(),
+                    g::send::<Role<1>, Role<0>, Msg<INNER_REPLY_DATA_LABEL, u8>, 2>(),
+                ),
+            );
+            const INNER_ARM1_PROGRAM: g::Program<InnerArm1> = g::seq(
+                g::send::<Role<0>, Role<0>, Msg<INNER_RIGHT_LABEL, u8>, 2>(),
+                g::send::<Role<0>, Role<1>, Msg<INNER_RIGHT_DATA_LABEL, u8>, 2>(),
+            );
+            const INNER_ROUTE_PROGRAM: g::Program<InnerRouteSteps> =
+                g::route(INNER_ARM0_PROGRAM, INNER_ARM1_PROGRAM);
+            const OUTER_LEFT_PROGRAM: g::Program<OuterLeftSteps> = g::seq(
+                g::send::<Role<0>, Role<0>, Msg<OUTER_LEFT_LABEL, u8>, 0>(),
+                g::send::<Role<0>, Role<1>, Msg<OUTER_LEFT_DATA_LABEL, u8>, 0>(),
+            );
+            const OUTER_RIGHT_PROGRAM: g::Program<OuterRightSteps> = g::seq(
+                g::send::<Role<0>, Role<0>, Msg<OUTER_RIGHT_LABEL, u8>, 0>(),
+                INNER_ROUTE_PROGRAM,
+            );
+            const NESTED_SPLIT_ROUTE_PROGRAM: g::Program<NestedSplitRouteSteps> =
+                g::route(OUTER_LEFT_PROGRAM, OUTER_RIGHT_PROGRAM);
+
             offer_fixture!(2048, clock, config);
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
                 with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
@@ -4249,37 +4290,55 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
                         .add_rendezvous_from_config(config, transport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(1008);
+                    let worker_program: RoleProgram<'_, 1, NestedSplitRouteSteps> =
+                        project(&NESTED_SPLIT_ROUTE_PROGRAM);
                     unsafe {
                         cluster_ref
                             .attach_endpoint_into::<1, _, _, _>(
                                 worker_slot.ptr(),
                                 rv_id,
                                 sid,
-                                &HINT_SPLIT_WORKER_PROGRAM,
+                                &worker_program,
                                 NoBinding,
                             )
-                            .expect("attach worker endpoint");
+                            .expect("attach nested worker endpoint");
                     }
                     let worker = worker_slot.borrow_mut();
 
-                    assert!(worker.cursor.logical_lane_count() > 2);
+                    let outer_scope = worker.cursor.node_scope_id();
+                    assert!(!outer_scope.is_none(), "worker must start at outer route scope");
+                    let nested_scope = worker
+                        .cursor
+                        .seek_label_index(INNER_LEFT_DATA_LABEL)
+                        .map(|idx| worker.cursor.node_scope_id_at(idx))
+                        .expect("nested route recv label must exist");
+                    let left_entry = worker.cursor.index();
+                    let right_entry = worker
+                        .route_scope_offer_entry_index(nested_scope)
+                        .expect("nested route must retain an offer entry");
 
+                    worker
+                        .set_route_arm(0, outer_scope, 1)
+                        .expect("select outer right arm");
+                    worker.set_cursor_index(right_entry);
+                    RouteFrontierMachine::new(&mut *worker)
+                        .align_cursor_to_selected_scope()
+                        .expect("selected nested route must become current scope");
                     worker.refresh_lane_offer_state(0);
                     worker.refresh_lane_offer_state(2);
-                    let current_idx =
-                        state_index_to_usize(worker.route_state.lane_offer_state(0).entry);
-                    let fake_entry_idx = current_idx + 1;
-                    assert!(fake_entry_idx < crate::global::typestate::MAX_STATES);
-                    let lane_two_offer = worker
-                        .route_state
-                        .lane_offer_state_mut(2)
-                        .expect("lane 2 offer state");
-                    lane_two_offer.entry = checked_state_index(fake_entry_idx)
-                        .expect("fake entry index fits StateIndex");
 
-                    let (_active_slots, active_entries) =
-                        active_entry_set_from_pairs(&[(current_idx, 0), (fake_entry_idx, 1)]);
-                    worker.overwrite_global_active_entries_for_test(active_entries);
+                    let left_info = worker.route_state.lane_offer_state(0);
+                    let right_info = worker.route_state.lane_offer_state(2);
+                    assert_eq!(left_info.scope, outer_scope);
+                    assert_eq!(state_index_to_usize(left_info.entry), left_entry);
+                    assert_eq!(right_info.scope, nested_scope);
+                    assert_eq!(state_index_to_usize(right_info.entry), right_entry);
+                    assert!(
+                        worker.cursor.max_frontier_entries() >= 2,
+                        "nested split fixture must retain two compiled frontier slots"
+                    );
+                    let active_entries = worker.global_active_entries();
+                    assert_eq!(active_entries.occupancy_mask(), 0b11);
                     let (
                         _cached_key_slots,
                         _cached_offer_lane_words,
@@ -4291,23 +4350,67 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
                             ScopeId::none(),
                             false,
                         ),
-                        2,
+                        worker.cursor.max_frontier_entries(),
                         worker.cursor.logical_lane_count(),
                     );
-                    let (_cached_observed_slots, cached_observed_entries) =
-                        observed_entries_with_ready_current(current_idx, fake_entry_idx);
+                    let (_cached_observed_slots, mut cached_observed_entries) =
+                        observed_entry_set_storage(worker.cursor.max_frontier_entries());
+                    for entry_idx in [left_entry, right_entry] {
+                        let entry_state = worker
+                            .offer_entry_state_snapshot(entry_idx)
+                            .expect("offer entry state snapshot");
+                        let observed = worker
+                            .recompute_offer_entry_observed_state_non_consuming(entry_idx)
+                            .expect("cached observed state");
+                        let (observed_bit, inserted) = cached_observed_entries
+                            .insert_entry(entry_idx)
+                            .expect("insert cached observed entry");
+                        assert!(inserted);
+                        cached_observed_entries.observe_with_frontier_mask(
+                            observed_bit,
+                            observed,
+                            worker.offer_entry_frontier_mask(entry_idx, entry_state),
+                        );
+                    }
+                    let left_bit = cached_observed_entries.entry_bit(left_entry);
+                    let right_bit = cached_observed_entries.entry_bit(right_entry);
+                    assert_eq!(left_bit, 1u8 << 0);
+                    assert_eq!(right_bit, 1u8 << 1);
+                    let cached_left_ready = cached_observed_entries.ready_mask & left_bit;
+                    let cached_left_progress = cached_observed_entries.progress_mask & left_bit;
+                    let cached_right_ready = cached_observed_entries.ready_mask & right_bit;
+                    let cached_right_progress =
+                        cached_observed_entries.progress_mask & right_bit;
 
-                    let buffered = crate::binding::IncomingClassification {
-                        label: 41,
-                        channel: crate::binding::Channel::new(17),
-                        instance: 0,
-                        has_fin: false,
-                    };
-                    assert!(worker.binding_inbox.push_back(2, buffered));
+                    assert!(worker.binding_inbox.push_back(
+                        2,
+                        crate::binding::IncomingClassification {
+                            label: INNER_LEFT_DATA_LABEL,
+                            channel: crate::binding::Channel::new(7),
+                            instance: 7,
+                            has_fin: false,
+                        },
+                    ));
                     let observation_key = RouteFrontierMachine::frontier_observation_key(
                         &worker,
                         ScopeId::none(),
                         false,
+                    );
+                    let changed_slot_mask = worker
+                        .cached_frontier_changed_entry_slot_mask(
+                            ScopeId::none(),
+                            false,
+                            observation_key,
+                            cached_key,
+                        )
+                        .expect("same active frontier must stay structurally reusable");
+                    let expected_right = worker
+                        .recompute_offer_entry_observed_state_non_consuming(right_entry)
+                        .expect("expected right observed state");
+
+                    assert_eq!(
+                        changed_slot_mask, right_bit,
+                        "lane-2 binding changes must invalidate only the secondary frontier slot"
                     );
 
                     let refreshed = worker
@@ -4321,13 +4424,31 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
                         )
                         .expect("same active frontier should refresh changed entry slots in place");
 
-                    let current_bit = refreshed.entry_bit(current_idx);
-                    let fake_bit = refreshed.entry_bit(fake_entry_idx);
-                    assert_ne!(current_bit, 0);
-                    assert_ne!(fake_bit, 0);
-                    assert_ne!(refreshed.ready_mask & current_bit, 0);
-                    assert_ne!(refreshed.ready_mask & fake_bit, 0);
-                    assert_ne!(refreshed.progress_mask & fake_bit, 0);
+                    assert_eq!(refreshed.entry_bit(left_entry), left_bit);
+                    assert_eq!(refreshed.entry_bit(right_entry), right_bit);
+                    assert_eq!(
+                        refreshed.ready_mask & left_bit,
+                        cached_left_ready,
+                        "lane-2 updates must not rewrite slot 0 readiness"
+                    );
+                    assert_eq!(
+                        refreshed.progress_mask & left_bit,
+                        cached_left_progress,
+                        "lane-2 updates must not rewrite slot 0 progress"
+                    );
+                    assert_eq!(
+                        refreshed.ready_mask & right_bit != 0,
+                        (expected_right.flags & OfferEntryObservedState::FLAG_READY) != 0
+                    );
+                    assert_eq!(
+                        refreshed.progress_mask & right_bit != 0,
+                        expected_right.has_progress_evidence()
+                    );
+                    assert!(
+                        refreshed.ready_mask & right_bit != cached_right_ready
+                            || refreshed.progress_mask & right_bit != cached_right_progress,
+                        "slot 1 must refresh at least one observed bit from the changed lane-2 binding state"
+                    );
                 });
             });
         },
