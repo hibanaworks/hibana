@@ -543,7 +543,6 @@ mod tests {
         let projected: crate::g::advanced::RoleProgram<
             '_,
             0,
-            _,
             crate::control::cap::mint::MintConfig,
         > = crate::g::advanced::project(&program);
         crate::global::compiled::with_compiled_program(lowering_input(&projected), |facts| {
@@ -571,7 +570,6 @@ mod tests {
         let projected: crate::g::advanced::RoleProgram<
             '_,
             0,
-            _,
             crate::control::cap::mint::MintConfig,
         > = crate::g::advanced::project(&program);
         crate::global::compiled::with_compiled_program(lowering_input(&projected), |facts| {

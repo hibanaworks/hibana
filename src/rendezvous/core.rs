@@ -4550,10 +4550,19 @@ mod epf_tests {
                 tap.fill(TapEvent::zero());
                 let slab = &mut *slab.get();
                 slab.fill(0);
-                let config = Config::new(tap, slab).with_lane_range(0..1).with_clock(DropClock);
-                let rv =
-                    DropTestRendezvous::init_in_slab(RendezvousId::new(91), config, DropTransport, 0);
-                assert!(rv.is_none(), "undersized slab must fail public-path rendezvous init");
+                let config = Config::new(tap, slab)
+                    .with_lane_range(0..1)
+                    .with_clock(DropClock);
+                let rv = DropTestRendezvous::init_in_slab(
+                    RendezvousId::new(91),
+                    config,
+                    DropTransport,
+                    0,
+                );
+                assert!(
+                    rv.is_none(),
+                    "undersized slab must fail public-path rendezvous init"
+                );
             });
         });
         assert_eq!(
@@ -4572,9 +4581,14 @@ mod epf_tests {
                 tap.fill(TapEvent::zero());
                 let slab = &mut *slab.get();
                 slab.fill(0);
-                let config = Config::new(tap, slab).with_lane_range(0..1).with_clock(DropClock);
-                let rv =
-                    DropTestRendezvous::init_in_slab_auto(RendezvousId::new(92), config, DropTransport);
+                let config = Config::new(tap, slab)
+                    .with_lane_range(0..1)
+                    .with_clock(DropClock);
+                let rv = DropTestRendezvous::init_in_slab_auto(
+                    RendezvousId::new(92),
+                    config,
+                    DropTransport,
+                );
                 assert!(
                     rv.is_none(),
                     "undersized slab must fail public-path auto rendezvous init"

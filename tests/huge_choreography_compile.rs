@@ -136,12 +136,12 @@ fn huge_programs_stay_on_direct_program_values() {
 #[test]
 fn huge_program_shape_matrix_projects_both_roles() {
     retain_pico_smoke_fixture_symbols();
-    let route_heavy_controller: RoleProgram<'_, 0, _, MintConfig> = project(&ROUTE_HEAVY_PROGRAM);
-    let route_heavy_worker: RoleProgram<'_, 1, _, MintConfig> = project(&ROUTE_HEAVY_PROGRAM);
-    let linear_heavy_controller: RoleProgram<'_, 0, _, MintConfig> = project(&LINEAR_HEAVY_PROGRAM);
-    let linear_heavy_worker: RoleProgram<'_, 1, _, MintConfig> = project(&LINEAR_HEAVY_PROGRAM);
-    let fanout_heavy_controller: RoleProgram<'_, 0, _, MintConfig> = project(&FANOUT_HEAVY_PROGRAM);
-    let fanout_heavy_worker: RoleProgram<'_, 1, _, MintConfig> = project(&FANOUT_HEAVY_PROGRAM);
+    let route_heavy_controller: RoleProgram<'_, 0, MintConfig> = project(&ROUTE_HEAVY_PROGRAM);
+    let route_heavy_worker: RoleProgram<'_, 1, MintConfig> = project(&ROUTE_HEAVY_PROGRAM);
+    let linear_heavy_controller: RoleProgram<'_, 0, MintConfig> = project(&LINEAR_HEAVY_PROGRAM);
+    let linear_heavy_worker: RoleProgram<'_, 1, MintConfig> = project(&LINEAR_HEAVY_PROGRAM);
+    let fanout_heavy_controller: RoleProgram<'_, 0, MintConfig> = project(&FANOUT_HEAVY_PROGRAM);
+    let fanout_heavy_worker: RoleProgram<'_, 1, MintConfig> = project(&FANOUT_HEAVY_PROGRAM);
 
     let _ = (
         &route_heavy_controller,

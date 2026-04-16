@@ -83,6 +83,6 @@ type RouteProgramSteps = RouteSteps<
 
 const ROUTE: g::Program<RouteProgramSteps> = g::route(ARM_WITH_POLICY, ARM_WITHOUT_POLICY);
 
-const CONTROLLER: RoleProgram<'static, 0, RouteProgramSteps> = project(&ROUTE);
+const CONTROLLER: RoleProgram<'static, 0> = project(&ROUTE);
 
 fn main() {}

@@ -17,7 +17,7 @@ use crate::{
     global::{KnownRole, Role},
 };
 
-pub(crate) type LaneWord = usize;
+pub(crate) use core::primitive::usize as LaneWord;
 pub(crate) const RESERVED_BINDING_LANES: usize = 2;
 
 #[inline(always)]
@@ -609,19 +609,18 @@ impl<'prog> RoleLoweringInput<'prog> {
     }
 }
 
-pub struct RoleProgram<'prog, const ROLE: u8, GlobalSteps, Mint = MintConfig>
+pub struct RoleProgram<'prog, const ROLE: u8, Mint = MintConfig>
 where
     Mint: MintConfigMarker,
 {
     _borrow: PhantomData<&'prog EffList>,
-    _global_steps: PhantomData<fn() -> GlobalSteps>,
     _seal: private::RoleProgramSeal,
     summary: &'static crate::global::compiled::LoweringSummary,
     mint: Mint,
     stamp: ProgramStamp,
 }
 
-impl<'prog, const ROLE: u8, GlobalSteps, Mint> RoleProgram<'prog, ROLE, GlobalSteps, Mint>
+impl<'prog, const ROLE: u8, Mint> RoleProgram<'prog, ROLE, Mint>
 where
     Mint: MintConfigMarker,
 {
@@ -632,7 +631,6 @@ where
     ) -> Self {
         Self {
             _borrow: PhantomData,
-            _global_steps: PhantomData,
             _seal: private::RoleProgramSeal,
             summary,
             mint,
@@ -658,15 +656,13 @@ where
     }
 }
 
-impl<'prog, const ROLE: u8, GlobalSteps, Mint> private::RoleProgramViewSeal
-    for RoleProgram<'prog, ROLE, GlobalSteps, Mint>
-where
-    Mint: MintConfigMarker,
+impl<'prog, const ROLE: u8, Mint> private::RoleProgramViewSeal for RoleProgram<'prog, ROLE, Mint> where
+    Mint: MintConfigMarker
 {
 }
 
-impl<'prog, const ROLE: u8, GlobalSteps, Mint> RoleProgramView<'prog, ROLE, Mint>
-    for RoleProgram<'prog, ROLE, GlobalSteps, Mint>
+impl<'prog, const ROLE: u8, Mint> RoleProgramView<'prog, ROLE, Mint>
+    for RoleProgram<'prog, ROLE, Mint>
 where
     Mint: MintConfigMarker,
 {
@@ -687,8 +683,8 @@ where
 }
 
 #[inline(always)]
-pub(crate) const fn lowering_input<'prog, const ROLE: u8, GlobalSteps, Mint>(
-    program: &RoleProgram<'prog, ROLE, GlobalSteps, Mint>,
+pub(crate) const fn lowering_input<'prog, const ROLE: u8, Mint>(
+    program: &RoleProgram<'prog, ROLE, Mint>,
 ) -> RoleLoweringInput<'prog>
 where
     Mint: MintConfigMarker,
@@ -705,7 +701,7 @@ where
 #[allow(private_bounds)]
 pub const fn project<'prog, const ROLE: u8, Steps, Mint>(
     program: &'prog Program<Steps>,
-) -> RoleProgram<'prog, ROLE, Steps, Mint>
+) -> RoleProgram<'prog, ROLE, Mint>
 where
     Role<ROLE>: KnownRole,
     Steps: BuildProgramSource + ProjectRole<Role<ROLE>>,
@@ -722,8 +718,8 @@ mod tests {
     use crate::global::const_dsl::{ScopeEvent, ScopeKind};
     use crate::global::steps::{self, ParSteps, RouteSteps, SeqSteps, StepCons, StepNil};
 
-    fn with_compiled_role_image<const ROLE: u8, Steps, R>(
-        program: &RoleProgram<'_, ROLE, Steps, MintConfig>,
+    fn with_compiled_role_image<const ROLE: u8, R>(
+        program: &RoleProgram<'_, ROLE>,
         f: impl FnOnce(&CompiledRoleImage) -> R,
     ) -> R {
         crate::global::compiled::with_compiled_role_image::<ROLE, _>(
@@ -777,8 +773,8 @@ mod tests {
     #[test]
     fn parallel_projection_keeps_phase_and_lane_split_internal() {
         let parallel_program = PARALLEL_PROGRAM;
-        let client: RoleProgram<'_, 0, _, MintConfig> = project(&parallel_program);
-        let server: RoleProgram<'_, 1, _, MintConfig> = project(&parallel_program);
+        let client: RoleProgram<'_, 0> = project(&parallel_program);
+        let server: RoleProgram<'_, 1> = project(&parallel_program);
 
         with_compiled_role_image(&client, assert_parallel_phase_shape);
         with_compiled_role_image(&server, assert_parallel_phase_shape);
@@ -787,7 +783,7 @@ mod tests {
     #[test]
     fn parallel_route_projection_keeps_scope_markers_without_public_step_surface() {
         let parallel_route_program = PARALLEL_ROUTE_PROGRAM;
-        let program: RoleProgram<'_, 0, _, MintConfig> = project(&parallel_route_program);
+        let program: RoleProgram<'_, 0> = project(&parallel_route_program);
         let scope_markers = super::lowering_input(&program)
             .summary()
             .view()

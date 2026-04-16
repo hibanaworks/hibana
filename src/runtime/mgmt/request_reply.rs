@@ -689,11 +689,9 @@ const REPLY_ROUTE: Program<ReplyRouteSteps> = g::route(ERROR_REPLY, SUCCESS_REPL
 pub const PROGRAM: Program<ProgramSteps> = crate::g::seq(REQUEST_ROUTE, REPLY_ROUTE);
 
 #[cfg(test)]
-pub(super) static CONTROLLER_PROGRAM: RoleProgram<'static, ROLE_CONTROLLER, ProgramSteps> =
-    project(&PROGRAM);
+pub(super) static CONTROLLER_PROGRAM: RoleProgram<'static, ROLE_CONTROLLER> = project(&PROGRAM);
 
 #[cfg(test)]
-pub(super) static CLUSTER_PROGRAM: RoleProgram<'static, ROLE_CLUSTER, ProgramSteps> =
-    project(&PROGRAM);
+pub(super) static CLUSTER_PROGRAM: RoleProgram<'static, ROLE_CLUSTER> = project(&PROGRAM);
 
 const _: () = assert_program_covers_facets(&PROGRAM, MGMT_FACET_NEEDS);

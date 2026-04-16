@@ -440,16 +440,18 @@ where
             }
             arm += 1;
         }
-        let mut dispatch_idx = 0usize;
-        while let Some(dispatch) = self
-            .cursor
-            .route_scope_first_recv_dispatch_entry(scope_id, dispatch_idx)
+        if let Some((dispatch, dispatch_len)) =
+            self.cursor.route_scope_first_recv_dispatch_table(scope_id)
         {
-            let (_label, _dispatch_arm, _target) = dispatch;
-            meta.first_recv_dispatch[dispatch_idx] = dispatch;
-            dispatch_idx += 1;
+            meta.first_recv_dispatch = dispatch;
+            meta.first_recv_len = dispatch_len;
         }
-        meta.first_recv_len = dispatch_idx as u8;
+        meta.first_recv_label_mask = self
+            .cursor
+            .route_scope_first_recv_dispatch_label_mask(scope_id);
+        meta.first_recv_dispatch_arm_mask = self
+            .cursor
+            .route_scope_first_recv_dispatch_arm_mask(scope_id);
         meta
     }
 
@@ -526,18 +528,18 @@ where
         {
             return true;
         }
-        let mut dispatch_idx = 0usize;
-        while let Some((_label, dispatch_arm, target)) = self
+        let lane_bit = if lane < u8::BITS as u8 {
+            1u8 << lane
+        } else {
+            0
+        };
+        if (self
             .cursor
-            .route_scope_first_recv_dispatch_entry(scope_id, dispatch_idx)
+            .route_scope_first_recv_dispatch_lane_mask(scope_id, arm)
+            & lane_bit)
+            != 0
         {
-            if (dispatch_arm == arm || dispatch_arm == ARM_SHARED)
-                && let Some(recv_meta) = self.cursor.try_recv_meta_at(state_index_to_usize(target))
-                && recv_meta.lane == lane
-            {
-                return true;
-            }
-            dispatch_idx += 1;
+            return true;
         }
         false
     }

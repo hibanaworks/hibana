@@ -115,7 +115,7 @@ type RouteProgramSteps = RouteSteps<
 const ROUTE: g::Program<RouteProgramSteps> = g::route(ARM0, ARM1);
 
 // Force evaluation by projecting to the passive role.
-static PASSIVE_PROGRAM: RoleProgram<'static, 1, RouteProgramSteps> =
+static PASSIVE_PROGRAM: RoleProgram<'static, 1> =
     project(&ROUTE);
 
 fn main() {

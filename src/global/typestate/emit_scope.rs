@@ -48,6 +48,16 @@ pub(super) const fn alloc_scope_record(
     } else {
         parent_entry
     };
+    scope_records[idx].parallel_root = match scope_kind {
+        ScopeKind::Parallel => idx as u16,
+        _ if parent_entry == SCOPE_LINK_NONE => SCOPE_LINK_NONE,
+        _ => scope_records[parent_entry as usize].parallel_root,
+    };
+    scope_records[idx].enclosing_loop = match scope_kind {
+        ScopeKind::Loop => idx as u16,
+        _ if parent_entry == SCOPE_LINK_NONE => SCOPE_LINK_NONE,
+        _ => scope_records[parent_entry as usize].enclosing_loop,
+    };
     scope_records[idx].range = *scope_range_counter;
     scope_records[idx].nest = nest as u16;
     *scope_range_counter = scope_range_counter.wrapping_add(1);
@@ -94,6 +104,10 @@ pub(super) unsafe fn init_scope_registry(
                 record.arm1_lane_word_start = encode_typestate_len(lane_word_start);
                 record.first_recv_dispatch = sparse.first_recv_dispatch;
                 record.first_recv_len = sparse.first_recv_len;
+                record.first_recv_label_mask = sparse.first_recv_label_mask;
+                record.first_recv_dispatch_label_mask = sparse.first_recv_dispatch_label_mask;
+                record.first_recv_dispatch_arm_mask = sparse.first_recv_dispatch_arm_mask;
+                record.first_recv_dispatch_lane_mask = sparse.first_recv_dispatch_lane_mask;
                 route_records.add(route_scope_len).write(record);
             }
             route_scope_len += 1;

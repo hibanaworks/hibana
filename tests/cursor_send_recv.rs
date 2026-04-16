@@ -23,16 +23,8 @@ use tls_ref_support::with_tls_ref;
 const PROGRAM: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil>> =
     g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
 
-static ORIGIN_PROGRAM: RoleProgram<
-    'static,
-    0,
-    StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil>,
-> = project(&PROGRAM);
-static TARGET_PROGRAM: RoleProgram<
-    'static,
-    1,
-    StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil>,
-> = project(&PROGRAM);
+static ORIGIN_PROGRAM: RoleProgram<'static, 0> = project(&PROGRAM);
+static TARGET_PROGRAM: RoleProgram<'static, 1> = project(&PROGRAM);
 type TestKit = SessionKit<
     'static,
     TestTransport,

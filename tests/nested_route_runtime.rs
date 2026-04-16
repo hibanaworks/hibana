@@ -133,14 +133,14 @@ fn register_route_resolvers<const MAX_RV: usize>(
     rv_id: RendezvousId,
 ) {
     cluster
-        .set_resolver::<OUTER_ROUTE_POLICY_ID, 0, _, _>(
+        .set_resolver::<OUTER_ROUTE_POLICY_ID, 0, _>(
             rv_id,
             &CONTROLLER_PROGRAM,
             hibana::substrate::policy::ResolverRef::from_fn(nested_route_resolver),
         )
         .expect("register outer route resolver");
     cluster
-        .set_resolver::<INNER_ROUTE_POLICY_ID, 0, _, _>(
+        .set_resolver::<INNER_ROUTE_POLICY_ID, 0, _>(
             rv_id,
             &CONTROLLER_PROGRAM,
             hibana::substrate::policy::ResolverRef::from_fn(nested_route_resolver),
@@ -203,9 +203,9 @@ const OUTER_RIGHT: g::Program<OuterRightArmSteps> = g::seq(
 
 const PROGRAM: g::Program<ProgramSteps> = g::route(OUTER_LEFT, OUTER_RIGHT);
 
-static CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramSteps> = project(&PROGRAM);
+static CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&PROGRAM);
 
-static WORKER_PROGRAM: RoleProgram<'static, 1, ProgramSteps> = project(&PROGRAM);
+static WORKER_PROGRAM: RoleProgram<'static, 1> = project(&PROGRAM);
 
 // Test nested routes with self-send control pattern via flow().send().
 // Controller uses flow().send(()) for control decisions, Worker uses direct recv().

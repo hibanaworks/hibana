@@ -154,9 +154,9 @@ const ROUTE: g::Program<DecisionSteps> = g::route(LEFT_ARM, RIGHT_ARM);
 const PROGRAM: g::Program<ProgramSteps> =
     g::seq(ROUTE, g::send::<Role<0>, Role<1>, Msg<73, u32>, 0>());
 
-static CONTROLLER_PROGRAM: RoleProgram<'static, 0, ProgramSteps> = project(&PROGRAM);
+static CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&PROGRAM);
 
-static WORKER_PROGRAM: RoleProgram<'static, 1, ProgramSteps> = project(&PROGRAM);
+static WORKER_PROGRAM: RoleProgram<'static, 1> = project(&PROGRAM);
 
 #[derive(Clone, Copy)]
 struct PendingInbound {
@@ -436,16 +436,16 @@ impl Transport for FlowTransport {
     }
 }
 
-fn register_route_resolvers_for_program<const ROLE: u8, Steps, Mint, T, const MAX_RV: usize>(
+fn register_route_resolvers_for_program<const ROLE: u8, Mint, T, const MAX_RV: usize>(
     cluster: &SessionKit<'_, T, DefaultLabelUniverse, CounterClock, MAX_RV>,
     rv_id: RendezvousId,
-    program: &RoleProgram<'static, ROLE, Steps, Mint>,
+    program: &RoleProgram<'static, ROLE, Mint>,
 ) where
     T: Transport + 'static,
     Mint: hibana::substrate::cap::advanced::MintConfigMarker,
 {
     cluster
-        .set_resolver::<ROUTE_POLICY_ID, ROLE, _, _>(
+        .set_resolver::<ROUTE_POLICY_ID, ROLE, _>(
             rv_id,
             program,
             hibana::substrate::policy::ResolverRef::from_fn(always_left_route_resolver),

@@ -30,7 +30,7 @@ use crate::epf::vm::Slot;
 use crate::global::const_dsl::{PolicyMode, ScopeId, ScopeKind};
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
-    ARM_SHARED, MAX_FIRST_RECV_DISPATCH, RecvMeta, StateIndex, state_index_to_usize,
+    MAX_FIRST_RECV_DISPATCH, RecvMeta, StateIndex, state_index_to_usize,
 };
 use crate::rendezvous::port::Port;
 use crate::runtime::{config::Clock, consts::LabelUniverse};
@@ -141,6 +141,8 @@ pub(super) struct ScopeArmMaterializationMeta {
     pub(super) passive_arm_scope: [ScopeId; 2],
     pub(super) first_recv_dispatch: [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     pub(super) first_recv_len: u8,
+    pub(super) first_recv_label_mask: u128,
+    pub(super) first_recv_dispatch_arm_mask: u8,
 }
 
 impl ScopeArmMaterializationMeta {
@@ -156,6 +158,8 @@ impl ScopeArmMaterializationMeta {
         passive_arm_scope: [ScopeId::none(); 2],
         first_recv_dispatch: [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH],
         first_recv_len: 0,
+        first_recv_label_mask: 0,
+        first_recv_dispatch_arm_mask: 0,
     };
 
     #[inline]
@@ -200,28 +204,22 @@ impl ScopeArmMaterializationMeta {
 
     #[inline]
     pub(super) fn first_recv_target(&self, label: u8) -> Option<(u8, StateIndex)> {
-        let mut idx = 0usize;
-        while idx < self.first_recv_len as usize {
-            let (entry_label, arm, target) = self.first_recv_dispatch[idx];
-            if entry_label == label && !target.is_max() {
-                return Some((arm, target));
-            }
-            idx += 1;
+        let bit = materialization_dispatch_label_bit(label);
+        if bit == 0 || (self.first_recv_label_mask & bit) == 0 {
+            return None;
         }
-        None
+        let idx = (self.first_recv_label_mask & materialization_dispatch_labels_before(label))
+            .count_ones() as usize;
+        if idx >= self.first_recv_len as usize {
+            return None;
+        }
+        let (_entry_label, arm, target) = self.first_recv_dispatch[idx];
+        (!target.is_max()).then_some((arm, target))
     }
 
     #[inline]
     pub(super) fn arm_has_first_recv_dispatch(&self, arm: u8) -> bool {
-        let mut idx = 0usize;
-        while idx < self.first_recv_len as usize {
-            let (_label, dispatch_arm, target) = self.first_recv_dispatch[idx];
-            if !target.is_max() && (dispatch_arm == arm || dispatch_arm == ARM_SHARED) {
-                return true;
-            }
-            idx += 1;
-        }
-        false
+        arm < 2 && (self.first_recv_dispatch_arm_mask & (1u8 << arm)) != 0
     }
 
     #[inline]
@@ -232,6 +230,26 @@ impl ScopeArmMaterializationMeta {
     #[inline]
     pub(super) fn controller_arm_requires_ready_evidence(&self, arm: u8) -> bool {
         arm < 2 && (self.controller_cross_role_recv_mask & (1u8 << arm)) != 0
+    }
+}
+
+#[inline(always)]
+fn materialization_dispatch_label_bit(label: u8) -> u128 {
+    if label < u128::BITS as u8 {
+        1u128 << label
+    } else {
+        0
+    }
+}
+
+#[inline(always)]
+fn materialization_dispatch_labels_before(label: u8) -> u128 {
+    if label == 0 {
+        0
+    } else if label < u128::BITS as u8 {
+        (1u128 << label) - 1
+    } else {
+        u128::MAX
     }
 }
 
@@ -832,21 +850,37 @@ where
 
     #[inline]
     fn mark_static_passive_descendant_path_ready(&mut self, scope_id: ScopeId, label: u8) {
-        let Some(arm) = self
-            .endpoint
-            .static_passive_descendant_dispatch_arm_from_exact_label(scope_id, label)
-        else {
-            return;
-        };
-        self.mark_scope_ready_arm(scope_id, arm);
-        if self.endpoint.selected_arm_for_scope(scope_id).is_none() {
-            let lane = self.endpoint.offer_lane_for_scope(scope_id);
-            let _ = self.endpoint.set_route_arm(lane, scope_id, arm);
+        let mut current_scope = scope_id;
+        let mut depth = 0usize;
+        while depth < crate::eff::meta::MAX_EFF_NODES {
+            let Some(arm) = self
+                .endpoint
+                .static_passive_descendant_dispatch_arm_from_exact_label(current_scope, label)
+            else {
+                break;
+            };
+            self.mark_scope_ready_arm(current_scope, arm);
+            if self
+                .endpoint
+                .selected_arm_for_scope(current_scope)
+                .is_none()
+            {
+                let lane = self.endpoint.offer_lane_for_scope(current_scope);
+                let _ = self.endpoint.set_route_arm(lane, current_scope, arm);
+            }
+            let Some(child_scope) = self
+                .endpoint
+                .cursor
+                .passive_arm_scope_by_arm(current_scope, arm)
+            else {
+                break;
+            };
+            if child_scope == current_scope {
+                break;
+            }
+            current_scope = child_scope;
+            depth += 1;
         }
-        let Some(child_scope) = self.endpoint.cursor.passive_arm_scope_by_arm(scope_id, arm) else {
-            return;
-        };
-        self.mark_static_passive_descendant_path_ready(child_scope, label);
     }
 
     fn on_frontier_defer(
@@ -2136,7 +2170,8 @@ where
         }
         self.endpoint
             .skip_unselected_arm_lanes(scope_id, selected_arm, lane_wire);
-        self.endpoint.set_route_arm(lane_wire, scope_id, selected_arm)?;
+        self.endpoint
+            .set_route_arm(lane_wire, scope_id, selected_arm)?;
         self.endpoint
             .set_cursor_index(state_index_to_usize(preview.cursor_index));
 

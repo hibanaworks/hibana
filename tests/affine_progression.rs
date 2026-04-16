@@ -41,14 +41,9 @@ type TestKit<T> = SessionKit<'static, T, DefaultLabelUniverse, CounterClock, 2>;
 const SEND_PROTOCOL: g::Program<SendOnly<LABEL_SEND, Role<0>, Role<1>, u32>> =
     g::send::<Role<0>, Role<1>, Msg<LABEL_SEND, u32>, 0>();
 
-static CONTROLLER_SEND_PROGRAM: RoleProgram<
-    'static,
-    0,
-    SendOnly<LABEL_SEND, Role<0>, Role<1>, u32>,
-> = project(&SEND_PROTOCOL);
+static CONTROLLER_SEND_PROGRAM: RoleProgram<'static, 0> = project(&SEND_PROTOCOL);
 
-static WORKER_SEND_PROGRAM: RoleProgram<'static, 1, SendOnly<LABEL_SEND, Role<0>, Role<1>, u32>> =
-    project(&SEND_PROTOCOL);
+static WORKER_SEND_PROGRAM: RoleProgram<'static, 1> = project(&SEND_PROTOCOL);
 
 struct PendingSendState {
     ready: Cell<bool>,

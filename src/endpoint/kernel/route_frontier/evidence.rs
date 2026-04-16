@@ -266,10 +266,18 @@ impl ScopeLabelMeta {
         }
     }
 
+    #[cfg(test)]
     #[inline]
     pub(super) fn record_dispatch_arm_label(&mut self, arm: u8, label: u8) {
         if (arm as usize) < self.arm_label_masks.len() {
             self.arm_label_masks[arm as usize] |= Self::label_bit(label);
+        }
+    }
+
+    #[inline]
+    pub(super) fn record_dispatch_arm_label_mask(&mut self, arm: u8, label_mask: u128) {
+        if (arm as usize) < self.arm_label_masks.len() {
+            self.arm_label_masks[arm as usize] |= label_mask;
         }
     }
 

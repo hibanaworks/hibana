@@ -25,7 +25,7 @@ use tls_ref_support::with_tls_ref;
 
 const PROGRAM: g::Program<StepNil> = StepNil::PROGRAM;
 
-static CONTROLLER_PROGRAM: RoleProgram<'static, 0, StepNil> = project(&PROGRAM);
+static CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&PROGRAM);
 type TestKit = SessionKit<
     'static,
     TestTransport,

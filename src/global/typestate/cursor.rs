@@ -9,6 +9,7 @@ use super::{
         SendMeta, StateIndex, as_state_index, state_index_to_usize, try_local_meta_value,
         try_recv_meta_value, try_send_meta_value,
     },
+    registry::MAX_FIRST_RECV_DISPATCH,
 };
 use crate::endpoint::kernel::FrontierScratchLayout;
 use crate::{
@@ -1072,19 +1073,28 @@ impl PhaseCursor {
     }
 
     #[inline]
+    pub(crate) fn control_parent_scope(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        self.typestate().control_parent(scope_id)
+    }
+
+    #[inline]
+    pub(crate) fn route_parent_scope(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        self.typestate().route_parent(scope_id)
+    }
+
+    #[inline]
+    pub(crate) fn route_parent_arm(&self, scope_id: ScopeId) -> Option<u8> {
+        self.typestate().route_parent_arm(scope_id)
+    }
+
+    #[inline]
+    pub(crate) fn parallel_scope_root(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        self.typestate().parallel_root(scope_id)
+    }
+
+    #[inline]
     pub(crate) fn enclosing_loop_scope(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        let mut current = scope_id;
-        while !current.is_none() {
-            let region = self.scope_region_by_id(current)?;
-            if matches!(region.kind, ScopeKind::Loop) {
-                return Some(current);
-            }
-            current = match self.scope_parent(current) {
-                Some(parent) => parent,
-                None => ScopeId::none(),
-            };
-        }
-        None
+        self.typestate().enclosing_loop(scope_id)
     }
 
     #[inline]
@@ -1189,6 +1199,7 @@ impl PhaseCursor {
         self.typestate().route_scope_count()
     }
 
+    #[cfg(test)]
     #[inline]
     pub(crate) fn route_scope_first_recv_dispatch_entry(
         &self,
@@ -1196,6 +1207,44 @@ impl PhaseCursor {
         idx: usize,
     ) -> Option<(u8, u8, StateIndex)> {
         self.typestate().first_recv_dispatch_entry(scope_id, idx)
+    }
+
+    #[inline]
+    pub(crate) fn route_scope_first_recv_dispatch_table(
+        &self,
+        scope_id: ScopeId,
+    ) -> Option<([(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH], u8)> {
+        self.typestate().first_recv_dispatch_table(scope_id)
+    }
+
+    #[inline]
+    pub(crate) fn route_scope_first_recv_dispatch_label_mask(&self, scope_id: ScopeId) -> u128 {
+        self.typestate().first_recv_dispatch_label_mask(scope_id)
+    }
+
+    #[inline]
+    pub(crate) fn route_scope_first_recv_dispatch_arm_mask(&self, scope_id: ScopeId) -> u8 {
+        self.typestate().first_recv_dispatch_arm_mask(scope_id)
+    }
+
+    #[inline]
+    pub(crate) fn route_scope_first_recv_dispatch_lane_mask(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+    ) -> u8 {
+        self.typestate()
+            .first_recv_dispatch_lane_mask(scope_id, arm)
+    }
+
+    #[inline]
+    pub(crate) fn route_scope_first_recv_dispatch_arm_label_mask(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+    ) -> u128 {
+        self.typestate()
+            .first_recv_dispatch_arm_label_mask(scope_id, arm)
     }
 
     pub(crate) fn scope_lane_first_eff(&self, scope_id: ScopeId, lane: u8) -> Option<EffIndex> {

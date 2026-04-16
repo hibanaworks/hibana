@@ -70,9 +70,9 @@ fn request_reply_prefix_projects_and_enters_without_helper_surface() {
                     .expect("register rendezvous");
 
                 let prefix = mgmt::request_reply::PREFIX;
-                let controller_program: RoleProgram<'_, { mgmt::ROLE_CONTROLLER }, _, MintConfig> =
+                let controller_program: RoleProgram<'_, { mgmt::ROLE_CONTROLLER }, MintConfig> =
                     project(&prefix);
-                let cluster_program: RoleProgram<'_, { mgmt::ROLE_CLUSTER }, _, MintConfig> =
+                let cluster_program: RoleProgram<'_, { mgmt::ROLE_CLUSTER }, MintConfig> =
                     project(&prefix);
                 let _controller_endpoint = cluster
                     .enter(
@@ -114,9 +114,9 @@ fn request_reply_prefix_stays_composable_as_an_ordinary_choreography_prefix() {
                     .expect("register rendezvous");
 
                 let program = MGMT_PROGRAM;
-                let controller_program: RoleProgram<'_, { mgmt::ROLE_CONTROLLER }, _, MintConfig> =
+                let controller_program: RoleProgram<'_, { mgmt::ROLE_CONTROLLER }, MintConfig> =
                     project(&program);
-                let cluster_program: RoleProgram<'_, { mgmt::ROLE_CLUSTER }, _, MintConfig> =
+                let cluster_program: RoleProgram<'_, { mgmt::ROLE_CLUSTER }, MintConfig> =
                     project(&program);
                 let _controller_endpoint = cluster
                     .enter(

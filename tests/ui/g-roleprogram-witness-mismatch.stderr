@@ -1,15 +1,42 @@
-error[E0308]: mismatched types
- --> tests/ui/g-roleprogram-witness-mismatch.rs:9:58
+warning: unreachable expression
+ --> tests/ui/g-roleprogram-witness-mismatch.rs:8:18
   |
-9 | const CLIENT: RoleProgram<'static, 0, StepNil> = project(&PROGRAM);
-  |                                                  ------- ^^^^^^^^ expected `&Program<StepNil>`, found `&Program<StepCons<..., ...>>`
-  |                                                  |
-  |                                                  arguments to this function are incorrect
+7 |         _seal: todo!(),
+  |                ------- any code following this expression is unreachable
+8 |         summary: todo!(),
+  |                  ^^^^^^^ unreachable expression
   |
-  = note: expected reference `&Program<StepNil>`
-             found reference `&Program<StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<1>, ()>>, StepNil>>`
-note: function defined here
- --> src/global/role_program.rs
+  = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+  = note: this warning originates in the macro `todo` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0451]: fields `_borrow`, `_seal`, `summary`, `mint` and `stamp` of struct `RoleProgram` are private
+  --> tests/ui/g-roleprogram-witness-mismatch.rs:6:9
+   |
+ 5 |     let _ = RoleProgram::<'static, 0, MintConfig> {
+   |             ------------------------------------- in this type
+ 6 |         _borrow: core::marker::PhantomData,
+   |         ^^^^^^^ private field
+ 7 |         _seal: todo!(),
+   |         ^^^^^ private field
+ 8 |         summary: todo!(),
+   |         ^^^^^^^ private field
+ 9 |         mint: MintConfig::INSTANCE,
+   |         ^^^^ private field
+10 |         stamp: todo!(),
+   |         ^^^^^ private field
+
+error: type `hibana::global::compiled::driver::LoweringSummary` is private
+ --> tests/ui/g-roleprogram-witness-mismatch.rs:8:18
   |
-  | pub const fn project<'prog, const ROLE: u8, Steps, Mint>(
-  |              ^^^^^^^
+8 |         summary: todo!(),
+  |                  ^^^^^^^ private type
+  |
+  = note: this error originates in the macro `todo` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: type `hibana::global::compiled::driver::ProgramStamp` is private
+  --> tests/ui/g-roleprogram-witness-mismatch.rs:10:16
+   |
+10 |         stamp: todo!(),
+   |                ^^^^^^^ private type
+   |
+   = note: this error originates in the macro `todo` (in Nightly builds, run with -Z macro-backtrace for more info)

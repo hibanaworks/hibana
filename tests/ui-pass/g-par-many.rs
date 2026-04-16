@@ -24,6 +24,6 @@ const PARALLEL: g::Program<
 
 fn main() {
     let frozen = PARALLEL;
-    let program: RoleProgram<'_, 0, _, MintConfig> = project(&frozen);
+    let program: RoleProgram<'_, 0, MintConfig> = project(&frozen);
     let _ = &program;
 }

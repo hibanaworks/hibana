@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-use super::registry::ScopeRegion;
+use super::registry::{MAX_FIRST_RECV_DISPATCH, ScopeRegion};
 
 #[inline(always)]
 fn phase_route_guard_for_scope_registry(
@@ -84,16 +84,18 @@ fn passive_arm_scope_by_arm_for_scope_registry(
 ) -> Option<ScopeId> {
     let entry = scope_registry.passive_arm_entry(scope_id, arm)?;
     let mut current = node_at(state_index_to_usize(entry)).scope();
-    let mut candidate = ScopeId::none();
-    while !current.is_none() && current.raw() != scope_id.raw() {
-        if matches!(current.kind(), ScopeKind::Route) {
-            candidate = current;
-        }
-        let Some(parent) = scope_registry.parent_of(current) else {
+    if current.is_none() || current == scope_id {
+        return None;
+    }
+    if current.kind() != ScopeKind::Route {
+        current = scope_registry.route_parent_of(current)?;
+    }
+    while !current.is_none() && current != scope_id {
+        let Some(parent) = scope_registry.route_parent_of(current) else {
             break;
         };
         if parent == scope_id {
-            return (!candidate.is_none()).then_some(candidate);
+            return Some(current);
         }
         current = parent;
     }
@@ -304,6 +306,32 @@ impl RoleTypestateValue {
         self.scope_registry.parent_of(scope_id)
     }
 
+    pub(in crate::global::typestate) fn control_parent(
+        &self,
+        scope_id: ScopeId,
+    ) -> Option<ScopeId> {
+        self.scope_registry.control_parent_of(scope_id)
+    }
+
+    pub(in crate::global::typestate) fn route_parent(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        self.scope_registry.route_parent_of(scope_id)
+    }
+
+    pub(in crate::global::typestate) fn route_parent_arm(&self, scope_id: ScopeId) -> Option<u8> {
+        self.scope_registry.route_parent_arm_of(scope_id)
+    }
+
+    pub(in crate::global::typestate) fn parallel_root(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        self.scope_registry.parallel_root_of(scope_id)
+    }
+
+    pub(in crate::global::typestate) fn enclosing_loop(
+        &self,
+        scope_id: ScopeId,
+    ) -> Option<ScopeId> {
+        self.scope_registry.enclosing_loop_of(scope_id)
+    }
+
     pub(in crate::global::typestate) fn passive_arm_jump(
         &self,
         scope_id: ScopeId,
@@ -376,6 +404,7 @@ impl RoleTypestateValue {
         self.scope_registry.route_scope_dense_ordinal(slot)
     }
 
+    #[cfg(test)]
     #[inline]
     pub(in crate::global) fn first_recv_dispatch_entry(
         &self,
@@ -383,6 +412,50 @@ impl RoleTypestateValue {
         idx: usize,
     ) -> Option<(u8, u8, StateIndex)> {
         self.scope_registry.first_recv_dispatch_entry(scope_id, idx)
+    }
+
+    #[inline]
+    pub(in crate::global) fn first_recv_dispatch_table(
+        &self,
+        scope_id: ScopeId,
+    ) -> Option<([(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH], u8)> {
+        self.scope_registry.first_recv_dispatch_table(scope_id)
+    }
+
+    #[inline]
+    pub(in crate::global) fn first_recv_dispatch_label_mask(&self, scope_id: ScopeId) -> u128 {
+        self.scope_registry
+            .first_recv_dispatch_label_mask(scope_id)
+            .unwrap_or(0)
+    }
+
+    #[inline]
+    pub(in crate::global) fn first_recv_dispatch_arm_mask(&self, scope_id: ScopeId) -> u8 {
+        self.scope_registry
+            .first_recv_dispatch_arm_mask(scope_id)
+            .unwrap_or(0)
+    }
+
+    #[inline]
+    pub(in crate::global) fn first_recv_dispatch_lane_mask(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+    ) -> u8 {
+        self.scope_registry
+            .first_recv_dispatch_lane_mask(scope_id, arm)
+            .unwrap_or(0)
+    }
+
+    #[inline]
+    pub(in crate::global) fn first_recv_dispatch_arm_label_mask(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+    ) -> u128 {
+        self.scope_registry
+            .first_recv_dispatch_arm_label_mask(scope_id, arm)
+            .unwrap_or(0)
     }
 
     #[inline]
@@ -635,6 +708,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
         self.scope_registry.lookup_region(scope_id)
     }
 
+    #[cfg(test)]
     #[inline]
     pub(in crate::global) fn first_recv_dispatch_entry(
         &self,

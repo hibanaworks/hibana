@@ -8,7 +8,7 @@ const PROGRAM_TOKEN: g::Program<
     StepCons<LocalSend<g::Role<1>, g::Msg<8, u16>>, StepNil>,
 > = PROGRAM;
 
-const CLIENT: RoleProgram<'static, 0, StepCons<LocalSend<g::Role<1>, g::Msg<8, u16>>, StepNil>> =
+const CLIENT: RoleProgram<'static, 0> =
     project(&PROGRAM_TOKEN);
 
 fn main() {

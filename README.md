@@ -199,7 +199,7 @@ The crate root keeps the app-facing result and error owners explicit:
 The public surface is small because guarantees move into the type system, not
 because guarantees were deleted.
 
-- projection stays typed through `RoleProgram<'prog, ROLE, GlobalSteps, Mint>`
+- projection stays typed through `RoleProgram<'prog, ROLE, Mint>` and defaults to `RoleProgram<'prog, ROLE>`
 - `g::route` rejects duplicate labels and controller mismatches before runtime
 - `g::par` rejects empty fragments and role/lane overlap before runtime
 - localside runtime is fail-closed for label and payload mismatches
@@ -357,7 +357,7 @@ use hibana::g::advanced::{RoleProgram, project};
 const PROGRAM: g::Program<_> =
     g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u32>, 0>();
 
-let client: RoleProgram<'_, 0, _, _> = project(&PROGRAM);
+let client: RoleProgram<'_, 0> = project(&PROGRAM);
 ```
 
 `RoleProgram` remains a typed compile-time witness, and the substrate recovers
@@ -644,7 +644,7 @@ Transport-owned send owners:
 Dynamic policy remains explicit:
 
 - annotate the choreography with `Program::policy::<POLICY_ID>()`
-- register a resolver with `set_resolver::<POLICY_ID, ROLE, _, _>(rv_id, program, resolver)`
+- register a resolver with `set_resolver::<POLICY_ID, ROLE, _>(rv_id, program, resolver)`
 - use `ResolverContext::input(index)` and `ResolverContext::attr(id)`
 - return `Result<DynamicResolution, ResolverError>`
 
@@ -710,7 +710,7 @@ fn route_resolver(
 
 let route_policy = RoutePolicy { preferred_arm: 1 };
 
-cluster.set_resolver::<POLICY_ID, 0, _, _>(
+cluster.set_resolver::<POLICY_ID, 0, _>(
     rv_id,
     &CLIENT,
     hibana::substrate::policy::ResolverRef::from_state(&route_policy, route_resolver),

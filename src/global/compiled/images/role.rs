@@ -2047,8 +2047,8 @@ mod tests {
     type SendOnly<const LANE: u8, S, D, M> = StepCons<SendStep<S, D, M, LANE>, StepNil>;
     type BranchSteps<L, R> = RouteSteps<L, R>;
 
-    fn with_compiled_role_image<const ROLE: u8, Steps, R>(
-        program: &role_program::RoleProgram<'_, ROLE, Steps, MintConfig>,
+    fn with_compiled_role_image<const ROLE: u8, R>(
+        program: &role_program::RoleProgram<'_, ROLE, MintConfig>,
         f: impl FnOnce(&CompiledRoleImage) -> R,
     ) -> R {
         crate::global::compiled::with_compiled_role_image::<ROLE, _>(
@@ -2151,7 +2151,7 @@ mod tests {
         const PROGRAM: g::Program<ProgramSteps> = g::route(LEFT, RIGHT);
         let program = PROGRAM;
 
-        let controller: role_program::RoleProgram<'_, 0, _, MintConfig> =
+        let controller: role_program::RoleProgram<'_, 0, MintConfig> =
             role_program::project(&program);
         with_compiled_role_image(&controller, |controller_compiled| {
             let controller_scope = controller_compiled.typestate_ref().node(0).scope();
@@ -2178,8 +2178,7 @@ mod tests {
             );
         });
 
-        let worker: role_program::RoleProgram<'_, 1, _, MintConfig> =
-            role_program::project(&program);
+        let worker: role_program::RoleProgram<'_, 1, MintConfig> = role_program::project(&program);
         with_compiled_role_image(&worker, |worker_compiled| {
             let worker_scope = worker_compiled.typestate_ref().node(0).scope();
             assert_eq!(worker_compiled.role(), 1);
@@ -2409,8 +2408,7 @@ mod tests {
         const PROGRAM: crate::g::Program<ProgramSteps> = g::seq(PREFIX, g::route(LEFT, RIGHT));
         let program = PROGRAM;
 
-        let worker: role_program::RoleProgram<'_, 1, _, MintConfig> =
-            role_program::project(&program);
+        let worker: role_program::RoleProgram<'_, 1, MintConfig> = role_program::project(&program);
         let lowering = crate::global::lowering_input(&worker);
         let summary = lowering.summary();
         assert!(
@@ -2455,8 +2453,7 @@ mod tests {
         Steps: crate::global::program::BuildProgramSource
             + crate::g::advanced::steps::ProjectRole<crate::g::Role<1>>,
     {
-        let worker: role_program::RoleProgram<'_, 1, _, MintConfig> =
-            role_program::project(program);
+        let worker: role_program::RoleProgram<'_, 1, MintConfig> = role_program::project(program);
         with_compiled_role_image(&worker, |image| {
             let active_lane_count = image.active_lane_count();
             let layout = image.endpoint_arena_layout_for_binding(true);
@@ -2559,7 +2556,7 @@ mod tests {
     #[test]
     fn huge_shape_phase_counts_stay_bounded_by_parallel_markers() {
         let route_program = huge_program::PROGRAM;
-        let route_worker: role_program::RoleProgram<'_, 1, _, MintConfig> =
+        let route_worker: role_program::RoleProgram<'_, 1, MintConfig> =
             role_program::project(&route_program);
         let route_lowering = crate::global::lowering_input(&route_worker);
         let route_summary = route_lowering.summary();
@@ -2591,7 +2588,7 @@ mod tests {
         });
 
         let linear_program = linear_program::PROGRAM;
-        let linear_worker: role_program::RoleProgram<'_, 1, _, MintConfig> =
+        let linear_worker: role_program::RoleProgram<'_, 1, MintConfig> =
             role_program::project(&linear_program);
         let linear_lowering = crate::global::lowering_input(&linear_worker);
         let linear_summary = linear_lowering.summary();
@@ -2617,7 +2614,7 @@ mod tests {
         });
 
         let fanout_program = fanout_program::PROGRAM;
-        let fanout_worker: role_program::RoleProgram<'_, 1, _, MintConfig> =
+        let fanout_worker: role_program::RoleProgram<'_, 1, MintConfig> =
             role_program::project(&fanout_program);
         let fanout_lowering = crate::global::lowering_input(&fanout_worker);
         let fanout_summary = fanout_lowering.summary();
@@ -2661,8 +2658,7 @@ mod tests {
             g::par(LANE0_PROGRAM, LANE1_PROGRAM);
         const PROGRAM: crate::global::Program<ProgramSteps> = g::par(INNER_PROGRAM, LANE2_PROGRAM);
 
-        let worker: role_program::RoleProgram<'_, 0, _, MintConfig> =
-            role_program::project(&PROGRAM);
+        let worker: role_program::RoleProgram<'_, 0, MintConfig> = role_program::project(&PROGRAM);
         let lowering = crate::global::lowering_input(&worker);
         let counts = lowering.summary().role_lowering_counts::<0>();
 
@@ -2685,7 +2681,7 @@ mod tests {
         <Steps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
             crate::global::steps::StepCount,
     {
-        let worker: role_program::RoleProgram<'_, ROLE, _, MintConfig> =
+        let worker: role_program::RoleProgram<'_, ROLE, MintConfig> =
             role_program::project(program);
         let lowering = crate::global::lowering_input(&worker);
         let summary = lowering.summary();

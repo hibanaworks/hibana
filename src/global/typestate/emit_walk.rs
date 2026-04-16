@@ -211,6 +211,103 @@ fn clear_dispatch_table(table: &mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPAT
     }
 }
 
+#[inline(always)]
+fn dispatch_label_bit(label: u8) -> u128 {
+    if label < u128::BITS as u8 {
+        1u128 << label
+    } else {
+        0
+    }
+}
+
+#[inline(always)]
+fn dispatch_lane_bit(lane: u8) -> u8 {
+    if lane < u8::BITS as u8 {
+        1u8 << lane
+    } else {
+        0
+    }
+}
+
+#[inline(never)]
+fn sort_dispatch_table(
+    dispatch_table: &mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
+    dispatch_len: u8,
+) {
+    let len = dispatch_len as usize;
+    let mut idx = 1usize;
+    while idx < len {
+        let entry = dispatch_table[idx];
+        let mut scan = idx;
+        while scan > 0 && dispatch_table[scan - 1].0 > entry.0 {
+            dispatch_table[scan] = dispatch_table[scan - 1];
+            scan -= 1;
+        }
+        dispatch_table[scan] = entry;
+        idx += 1;
+    }
+}
+
+#[inline(never)]
+fn store_dispatch_summary(
+    nodes: &[LocalNode],
+    route_entry: &mut RouteScopeScratchRecord,
+    dispatch_table: &mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
+    dispatch_len: u8,
+) -> u8 {
+    sort_dispatch_table(dispatch_table, dispatch_len);
+    route_entry.first_recv_dispatch = *dispatch_table;
+    route_entry.first_recv_len = dispatch_len;
+    route_entry.first_recv_label_mask = 0;
+    route_entry.first_recv_dispatch_label_mask = [0; 2];
+    route_entry.first_recv_dispatch_arm_mask = 0;
+    route_entry.first_recv_dispatch_lane_mask = [0; 2];
+
+    let mut offer_lane_mask = 0u8;
+    let mut idx = 0usize;
+    while idx < dispatch_len as usize {
+        let (label, arm, target) = dispatch_table[idx];
+        let label_bit = dispatch_label_bit(label);
+        route_entry.first_recv_label_mask |= label_bit;
+
+        let target_idx = state_index_to_usize(target);
+        let lane_bit = if target_idx < nodes.len() {
+            match nodes[target_idx].action() {
+                LocalAction::Recv { lane, .. } => dispatch_lane_bit(lane),
+                _ => 0,
+            }
+        } else {
+            0
+        };
+
+        offer_lane_mask |= lane_bit;
+        if arm == ARM_SHARED {
+            route_entry.first_recv_dispatch_arm_mask |= 0b11;
+            route_entry.first_recv_dispatch_lane_mask[0] |= lane_bit;
+            route_entry.first_recv_dispatch_lane_mask[1] |= lane_bit;
+        } else if arm < 2 {
+            let arm_idx = arm as usize;
+            route_entry.first_recv_dispatch_arm_mask |= 1u8 << arm_idx;
+            route_entry.first_recv_dispatch_label_mask[arm_idx] |= label_bit;
+            route_entry.first_recv_dispatch_lane_mask[arm_idx] |= lane_bit;
+        }
+        idx += 1;
+    }
+
+    offer_lane_mask
+}
+
+#[inline(always)]
+fn insert_offer_lane_mask(words: &mut [LaneWord], lane_mask: u8) {
+    let mut lane = 0u8;
+    while lane < u8::BITS as u8 {
+        if (lane_mask & (1u8 << lane)) != 0 {
+            insert_offer_lane(words, lane);
+        }
+        lane += 1;
+    }
+}
+
 #[inline(never)]
 fn clear_prefix_actions(prefix_actions: &mut [[PrefixAction; MAX_PREFIX_ACTIONS]; 2]) {
     let mut arm = 0usize;
@@ -761,30 +858,33 @@ fn finalize_route_scope_exit_for_role(
     if mergeable {
         scope_entries[entry_idx].arm_entry[1] = scope_entries[entry_idx].arm_entry[0];
         clear_dispatch_table(dispatch_table);
-        route_scope_entries[entry_idx].first_recv_dispatch = **dispatch_table;
-        route_scope_entries[entry_idx].first_recv_len = 0;
+        store_dispatch_summary(
+            nodes,
+            &mut route_scope_entries[entry_idx],
+            dispatch_table,
+            0,
+        );
     } else if dispatch_functional && dispatch_len > 0 {
-        route_scope_entries[entry_idx].first_recv_dispatch = **dispatch_table;
-        route_scope_entries[entry_idx].first_recv_len = dispatch_len;
+        let dispatch_lane_mask = store_dispatch_summary(
+            nodes,
+            &mut route_scope_entries[entry_idx],
+            dispatch_table,
+            dispatch_len,
+        );
         let offer_lanes = route_scope_lane_words_mut(
             route_scope_offer_lane_words,
             route_scope_entries[entry_idx].lane_word_start(),
             *route_lane_word_len,
         );
-        let mut di = 0u8;
-        while di < dispatch_len {
-            let target_idx = state_index_to_usize(dispatch_table[di as usize].2);
-            if target_idx < node_len
-                && let LocalAction::Recv { lane, .. } = nodes[target_idx].action()
-            {
-                insert_offer_lane(offer_lanes, lane);
-            }
-            di += 1;
-        }
+        insert_offer_lane_mask(offer_lanes, dispatch_lane_mask);
     } else if scope_route_policy_effs[entry_idx] != EffIndex::MAX {
         clear_dispatch_table(dispatch_table);
-        route_scope_entries[entry_idx].first_recv_dispatch = **dispatch_table;
-        route_scope_entries[entry_idx].first_recv_len = 0;
+        store_dispatch_summary(
+            nodes,
+            &mut route_scope_entries[entry_idx],
+            dispatch_table,
+            0,
+        );
     } else {
         panic!(
             "Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dynamic policy annotation provided"
@@ -1841,6 +1941,33 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
 
                     // Update entry fields (short borrow scope)
                     {
+                        let control_parent = if parent_entry == SCOPE_LINK_NONE {
+                            SCOPE_LINK_NONE
+                        } else {
+                            let parent_stack_idx = scope_stack_len - 2;
+                            let parent_entry_idx = parent_entry as usize;
+                            let parent_record = scope_entries[parent_entry_idx];
+                            if matches!(
+                                scope_stack_kinds[parent_stack_idx],
+                                ScopeKind::Route | ScopeKind::Loop
+                            ) {
+                                parent_entry
+                            } else {
+                                parent_record.control_parent
+                            }
+                        };
+                        let (route_parent, route_parent_arm) = if parent_entry == SCOPE_LINK_NONE {
+                            (SCOPE_LINK_NONE, super::registry::ROUTE_PARENT_ARM_NONE)
+                        } else {
+                            let parent_stack_idx = scope_stack_len - 2;
+                            let parent_entry_idx = parent_entry as usize;
+                            let parent_record = scope_entries[parent_entry_idx];
+                            if matches!(scope_stack_kinds[parent_stack_idx], ScopeKind::Route) {
+                                (parent_entry, route_current_arm[parent_stack_idx])
+                            } else {
+                                (parent_record.route_parent, parent_record.route_parent_arm)
+                            }
+                        };
                         let entry = &mut scope_entries[entry_idx];
                         if marker.linger {
                             entry.linger = true;
@@ -1848,8 +1975,26 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                         if entry.parent != SCOPE_LINK_NONE && entry.parent != parent_entry {
                             panic!("scope parent mismatch for ordinal");
                         }
+                        if entry.control_parent != SCOPE_LINK_NONE
+                            && entry.control_parent != control_parent
+                        {
+                            panic!("scope control parent mismatch for ordinal");
+                        }
+                        if entry.control_parent == SCOPE_LINK_NONE {
+                            entry.control_parent = control_parent;
+                        }
                         if entry.start.is_max() {
                             entry.start = as_state_index(node_len);
+                        }
+                        if entry.route_parent != SCOPE_LINK_NONE
+                            && (entry.route_parent != route_parent
+                                || entry.route_parent_arm != route_parent_arm)
+                        {
+                            panic!("scope route parent mismatch for ordinal");
+                        }
+                        if entry.route_parent == SCOPE_LINK_NONE {
+                            entry.route_parent = route_parent;
+                            entry.route_parent_arm = route_parent_arm;
                         }
                         // Propagate controller_role from ScopeMarker into the shared-atlas scratch.
                         // This keeps the builder's passive/controller decisions detached from the

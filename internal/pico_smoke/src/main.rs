@@ -57,18 +57,10 @@ type ControllerEndpoint = Endpoint<'static, 0, PicoKit>;
 type WorkerEndpoint = Endpoint<'static, 1, PicoKit>;
 
 const PROGRAM: g::Program<sample_program::ProgramSteps> = sample_program::PROGRAM;
-static CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<
-    'static,
-    0,
-    sample_program::ProgramSteps,
-    MintConfig,
-> = project(&PROGRAM);
-static WORKER_PROGRAM: hibana::g::advanced::RoleProgram<
-    'static,
-    1,
-    sample_program::ProgramSteps,
-    MintConfig,
-> = project(&PROGRAM);
+static CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<'static, 0, MintConfig> =
+    project(&PROGRAM);
+static WORKER_PROGRAM: hibana::g::advanced::RoleProgram<'static, 1, MintConfig> =
+    project(&PROGRAM);
 
 #[derive(Clone, Copy)]
 struct FrameOwned {

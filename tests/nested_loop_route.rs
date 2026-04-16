@@ -176,12 +176,12 @@ const DECISION: g::Program<DecisionSteps> = g::route(CONTINUE_ARM, BREAK_ARM);
 
 #[test]
 fn nested_loop_scope_balanced() {
-    let _role_program: RoleProgram<'_, 2, _, MintConfig> = project(&DECISION);
+    let _role_program: RoleProgram<'_, 2, MintConfig> = project(&DECISION);
 
     const HANDSHAKE: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<10, ()>>, StepNil>> =
         g::send::<Role<0>, Role<1>, Msg<10, ()>, 0>();
     const COMBINED: g::Program<
         ParSteps<StepCons<SendStep<Role<0>, Role<1>, Msg<10, ()>>, StepNil>, DecisionSteps>,
     > = g::par(HANDSHAKE, DECISION);
-    let _transport_program: RoleProgram<'_, 2, _, MintConfig> = project(&COMBINED);
+    let _transport_program: RoleProgram<'_, 2, MintConfig> = project(&COMBINED);
 }

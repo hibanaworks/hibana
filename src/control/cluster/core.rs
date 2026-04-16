@@ -1731,19 +1731,18 @@ where
         sid: SessionId,
         operands: SpliceOperands,
     ) -> Result<(), CpError> {
-        let target_slot = Self::cached_operands_slot(operands.src_rv).ok_or(CpError::RendezvousMismatch {
-            expected: operands.src_rv.raw(),
-            actual: 0,
-        })?;
+        let target_slot =
+            Self::cached_operands_slot(operands.src_rv).ok_or(CpError::RendezvousMismatch {
+                expected: operands.src_rv.raw(),
+                actual: 0,
+            })?;
         if !self.locals.is_registered(&operands.src_rv) {
             return Err(CpError::RendezvousMismatch {
                 expected: operands.src_rv.raw(),
                 actual: 0,
             });
         }
-        let additional_entries = usize::from(
-            !self.cached_operands[target_slot].contains_sid(sid),
-        );
+        let additional_entries = usize::from(!self.cached_operands[target_slot].contains_sid(sid));
         self.ensure_cached_operands_capacity(operands.src_rv, additional_entries)?;
         self.cached_operands_remove_other_shards(sid, target_slot);
         self.cached_operands[target_slot].insert(sid, operands)
@@ -2918,10 +2917,10 @@ where
         unsafe { (*self.resolvers_ref_ptr()).get(key) }
     }
 
-    pub(crate) fn set_resolver<'prog, const POLICY: u16, const ROLE: u8, Steps, Mint>(
+    pub(crate) fn set_resolver<'prog, const POLICY: u16, const ROLE: u8, Mint>(
         &self,
         rv_id: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<'prog, ROLE, Steps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'prog, ROLE, Mint>,
         resolver: ResolverRef<'cfg>,
     ) -> Result<(), CpError>
     where
@@ -4068,11 +4067,11 @@ where
     }
 
     #[inline]
-    pub(crate) fn attach_public_endpoint<'r, const ROLE: u8, Steps, Mint>(
+    pub(crate) fn attach_public_endpoint<'r, const ROLE: u8, Mint>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Steps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Mint>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
@@ -4214,11 +4213,11 @@ where
     }
 
     #[inline]
-    pub(crate) fn enter<'r, const ROLE: u8, Steps, Mint>(
+    pub(crate) fn enter<'r, const ROLE: u8, Mint>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Steps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Mint>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
@@ -4229,11 +4228,11 @@ where
     }
 
     #[inline]
-    fn enter_with_binding<'r, const ROLE: u8, Steps, Mint>(
+    fn enter_with_binding<'r, const ROLE: u8, Mint>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Steps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Mint>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
@@ -4453,14 +4452,7 @@ mod tests {
     type SharedBorrowProgram = Program<SharedBorrowSteps>;
     type SharedBorrowPolicyProgram<const POLICY_ID: u16> =
         Program<PolicySteps<SharedBorrowSteps, POLICY_ID>>;
-    type SharedBorrowRoleProgram =
-        crate::g::advanced::RoleProgram<'static, 0, SharedBorrowSteps, MintConfig>;
-    type SharedBorrowPolicyRoleProgram<const POLICY_ID: u16> = crate::g::advanced::RoleProgram<
-        'static,
-        0,
-        PolicySteps<SharedBorrowSteps, POLICY_ID>,
-        MintConfig,
-    >;
+    type SharedBorrowRoleProgram = crate::g::advanced::RoleProgram<'static, 0, MintConfig>;
 
     static SHARED_BORROW_PROGRAM_A: SharedBorrowProgram = g::send::<
         Role<0>,
@@ -4724,7 +4716,7 @@ mod tests {
                 let rv_id = cluster
                     .add_rendezvous_from_config(config, DummyTransport)
                     .expect("register rendezvous");
-                let projected: role_program::RoleProgram<'_, ROLE, _, MintConfig> =
+                let projected: role_program::RoleProgram<'_, ROLE, MintConfig> =
                     role_program::project(program);
                 let lowering = crate::global::lowering_input(&projected);
                 let summary = lowering.summary();
@@ -4845,9 +4837,9 @@ mod tests {
             || {
                 with_cluster_fixture(|clock, config| {
                     with_test_cluster_1(clock, |cluster| {
-                        let controller_program: role_program::RoleProgram<'_, 0, _, MintConfig> =
+                        let controller_program: role_program::RoleProgram<'_, 0, MintConfig> =
                             role_program::project(&LINEAR_HEAVY_PROGRAM);
-                        let worker_program: role_program::RoleProgram<'_, 1, _, MintConfig> =
+                        let worker_program: role_program::RoleProgram<'_, 1, MintConfig> =
                             role_program::project(&LINEAR_HEAVY_PROGRAM);
                         let rv_id = cluster
                             .add_rendezvous_from_config_auto(config, DummyTransport)
@@ -5007,12 +4999,11 @@ mod tests {
         let lowering_summary_bytes = size_of::<LoweringSummary>();
         let compiled_program_bytes = size_of::<CompiledProgramImage>();
         let compiled_role_bytes = size_of::<CompiledRoleImage>();
+        let route_heavy_worker: role_program::RoleProgram<'_, 1, MintConfig> =
+            role_program::project(&ROUTE_HEAVY_PROGRAM);
         let role_compile_scratch_bytes =
             crate::global::compiled::role_lowering_scratch_storage_bytes(
-                crate::global::lowering_input(&role_program::project::<1, _, MintConfig>(
-                    &ROUTE_HEAVY_PROGRAM,
-                ))
-                .footprint(),
+                crate::global::lowering_input(&route_heavy_worker).footprint(),
             );
         let endpoint_storage_bytes = size_of::<
             ErasedPublicEndpointKernel<
@@ -6096,15 +6087,14 @@ mod tests {
             || {
                 with_cluster_fixture(|clock, config| {
                     with_test_cluster(clock, |cluster| {
-                        let route_policy_projected_one: SharedBorrowPolicyRoleProgram<
-                            ROUTE_POLICY_ONE,
-                        > = role_program::project(&ROUTE_POLICY_PROGRAM_ONE);
+                        let route_policy_projected_one: SharedBorrowRoleProgram =
+                            role_program::project(&ROUTE_POLICY_PROGRAM_ONE);
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
 
                         cluster
-                            .set_resolver::<ROUTE_POLICY_ONE, 0, _, _>(
+                            .set_resolver::<ROUTE_POLICY_ONE, 0, _>(
                                 rv_id,
                                 &route_policy_projected_one,
                                 ResolverRef::from_fn(route_resolver),
@@ -6181,15 +6171,14 @@ mod tests {
             || {
                 with_cluster_fixture(|clock, config| {
                     with_test_cluster(clock, |cluster| {
-                        let route_policy_projected_two: SharedBorrowPolicyRoleProgram<
-                            ROUTE_POLICY_TWO,
-                        > = role_program::project(&ROUTE_POLICY_PROGRAM_TWO);
+                        let route_policy_projected_two: SharedBorrowRoleProgram =
+                            role_program::project(&ROUTE_POLICY_PROGRAM_TWO);
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
 
                         cluster
-                            .set_resolver::<ROUTE_POLICY_TWO, 0, _, _>(
+                            .set_resolver::<ROUTE_POLICY_TWO, 0, _>(
                                 rv_id,
                                 &route_policy_projected_two,
                                 ResolverRef::from_fn(route_resolver),

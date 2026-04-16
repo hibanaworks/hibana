@@ -219,8 +219,8 @@ const RIGHT_ARM: g::Program<RouteRightHead> = g::send::<
 // Route is local to Controller (0 → 0) since all arms are self-sends
 const PROGRAM: g::Program<RouteProgramSteps> = g::route(LEFT_ARM, RIGHT_ARM);
 
-static CONTROLLER_PROGRAM: RoleProgram<'static, 0, RouteProgramSteps> = project(&PROGRAM);
-static WORKER_PROGRAM: RoleProgram<'static, 1, RouteProgramSteps> = project(&PROGRAM);
+static CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&PROGRAM);
+static WORKER_PROGRAM: RoleProgram<'static, 1> = project(&PROGRAM);
 
 fn transport_queue_is_empty(transport: &TestTransport) -> bool {
     transport.queue_is_empty()
@@ -251,17 +251,15 @@ const LOOP_BREAK_ARM: g::Program<LoopBreakHead> = g::send::<
 // Route is local to Controller (0 → 0)
 const LOOP_PROGRAM: g::Program<LoopProgramSteps> = g::route(LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
 
-static LOOP_CONTROLLER_PROGRAM: RoleProgram<'static, 0, LoopProgramSteps> = project(&LOOP_PROGRAM);
+static LOOP_CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&LOOP_PROGRAM);
 
 const ROUTE_TAIL_LEFT_ARM: g::Program<RouteTailLeftSteps> = g::seq(LEFT_ARM, LOOP_CONTINUE_ARM);
 const ROUTE_TAIL_RIGHT_ARM: g::Program<RouteTailRightSteps> = g::seq(RIGHT_ARM, LOOP_BREAK_ARM);
 const ROUTE_TAIL_PROGRAM: g::Program<RouteTailProgramSteps> =
     g::route(ROUTE_TAIL_LEFT_ARM, ROUTE_TAIL_RIGHT_ARM);
 
-static ROUTE_TAIL_CONTROLLER_PROGRAM: RoleProgram<'static, 0, RouteTailProgramSteps> =
-    project(&ROUTE_TAIL_PROGRAM);
-static ROUTE_TAIL_WORKER_PROGRAM: RoleProgram<'static, 1, RouteTailProgramSteps> =
-    project(&ROUTE_TAIL_PROGRAM);
+static ROUTE_TAIL_CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&ROUTE_TAIL_PROGRAM);
+static ROUTE_TAIL_WORKER_PROGRAM: RoleProgram<'static, 1> = project(&ROUTE_TAIL_PROGRAM);
 
 const OUTER_LOOP_CONTINUE_ARM: g::Program<OuterLoopContinueArmSteps> =
     g::seq(LOOP_CONTINUE_ARM, LOOP_PROGRAM);
@@ -272,8 +270,7 @@ const NESTED_LOOP_RIGHT_ARM: g::Program<NestedLoopRightSteps> = g::seq(RIGHT_ARM
 const NESTED_LOOP_PROGRAM: g::Program<NestedLoopProgramSteps> =
     g::route(NESTED_LOOP_LEFT_ARM, NESTED_LOOP_RIGHT_ARM);
 
-static NESTED_LOOP_CONTROLLER_PROGRAM: RoleProgram<'static, 0, NestedLoopProgramSteps> =
-    project(&NESTED_LOOP_PROGRAM);
+static NESTED_LOOP_CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&NESTED_LOOP_PROGRAM);
 
 fn route_resolver(ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
     if ctx.attr(core::TAG).map(|value| value.as_u8()) != Some(RouteDecisionKind::TAG) {
@@ -317,7 +314,7 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                     .add_rendezvous_from_config(config, transport.clone())
                     .expect("register rendezvous");
                 cluster
-                    .set_resolver::<ROUTE_POLICY_ID, 0, _, _>(
+                    .set_resolver::<ROUTE_POLICY_ID, 0, _>(
                         rv_id,
                         &CONTROLLER_PROGRAM,
                         hibana::substrate::policy::ResolverRef::from_fn(route_resolver),
@@ -434,7 +431,7 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
                     .add_rendezvous_from_config(config, transport.clone())
                     .expect("register rendezvous");
                 cluster
-                    .set_resolver::<ROUTE_POLICY_ID, 0, _, _>(
+                    .set_resolver::<ROUTE_POLICY_ID, 0, _>(
                         rv_id,
                         &ROUTE_TAIL_CONTROLLER_PROGRAM,
                         hibana::substrate::policy::ResolverRef::from_fn(route_resolver),
@@ -516,7 +513,7 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
                                     .expect("register rendezvous");
 
                                 cluster
-                                    .set_resolver::<ROUTE_POLICY_ID, 0, _, _>(
+                                    .set_resolver::<ROUTE_POLICY_ID, 0, _>(
                                         rv_id,
                                         &CONTROLLER_PROGRAM,
                                         hibana::substrate::policy::ResolverRef::from_fn(

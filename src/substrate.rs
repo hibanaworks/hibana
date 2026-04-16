@@ -114,11 +114,11 @@ where
 
     #[inline]
     #[allow(private_bounds)]
-    pub fn enter<'r, const ROLE: u8, Steps, Mint, B>(
+    pub fn enter<'r, const ROLE: u8, Mint, B>(
         &'r self,
         rv: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Steps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Mint>,
         binding: B,
     ) -> Result<crate::Endpoint<'r, ROLE, Self, Mint>, AttachError>
     where
@@ -131,11 +131,11 @@ where
     }
 
     #[inline]
-    fn enter_with_binding<'r, const ROLE: u8, Steps, Mint>(
+    fn enter_with_binding<'r, const ROLE: u8, Mint>(
         &'r self,
         rv: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Steps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Mint>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<crate::Endpoint<'r, ROLE, Self, Mint>, AttachError>
     where
@@ -152,17 +152,17 @@ where
     }
 
     #[inline]
-    pub fn set_resolver<const POLICY: u16, const ROLE: u8, Steps, Mint>(
+    pub fn set_resolver<const POLICY: u16, const ROLE: u8, Mint>(
         &self,
         rv: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Steps, Mint>,
+        program: &crate::g::advanced::RoleProgram<'_, ROLE, Mint>,
         resolver: crate::substrate::policy::ResolverRef<'cfg>,
     ) -> Result<(), CpError>
     where
         Mint: crate::substrate::cap::advanced::MintConfigMarker,
     {
         self.inner
-            .set_resolver::<POLICY, ROLE, Steps, Mint>(rv, program, resolver)
+            .set_resolver::<POLICY, ROLE, Mint>(rv, program, resolver)
     }
 }
 
@@ -848,9 +848,9 @@ mod tests {
         let mut runtime_metrics = None::<RuntimeShapeMetrics>;
         with_pico_fixture(|clock, tap_buf, slab| {
             let transport = PicoTransport;
-            let controller_program: crate::g::advanced::RoleProgram<'_, 0, _, MintConfig> =
+            let controller_program: crate::g::advanced::RoleProgram<'_, 0, MintConfig> =
                 project(program);
-            let worker_program: crate::g::advanced::RoleProgram<'_, 1, _, MintConfig> =
+            let worker_program: crate::g::advanced::RoleProgram<'_, 1, MintConfig> =
                 project(program);
             let kit = PicoKit::new(clock);
             let rv_id = kit

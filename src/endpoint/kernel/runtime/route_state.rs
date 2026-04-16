@@ -377,24 +377,14 @@ impl RouteState {
         true
     }
 
-    pub(super) fn last_matching_lane_scope<F>(
-        &self,
-        lane_idx: usize,
-        mut include: F,
-    ) -> Option<ScopeId>
-    where
-        F: FnMut(ScopeId) -> bool,
-    {
-        let mut idx = self.lane_route_arm_len(lane_idx);
-        while idx > 0 {
-            idx -= 1;
-            let slot = self.lane_route_arms.get(lane_idx, idx);
-            let scope = slot.scope;
-            if include(scope) {
-                return Some(scope);
-            }
+    #[inline]
+    pub(super) fn last_lane_scope(&self, lane_idx: usize) -> Option<ScopeId> {
+        let len = self.lane_route_arm_len(lane_idx);
+        if len == 0 {
+            None
+        } else {
+            Some(self.lane_route_arms.get(lane_idx, len - 1).scope)
         }
-        None
     }
 
     pub(super) fn route_arm_for(&self, lane_idx: usize, scope: ScopeId) -> Option<u8> {

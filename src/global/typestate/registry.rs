@@ -15,6 +15,7 @@ pub(crate) const ARM_SHARED: u8 = 0xFF;
 pub(crate) const MAX_FIRST_RECV_DISPATCH: usize = 16;
 pub(crate) const CONTROLLER_ROLE_NONE: u8 = u8::MAX;
 pub(crate) const SCOPE_LINK_NONE: u16 = u16::MAX;
+pub(crate) const ROUTE_PARENT_ARM_NONE: u8 = u8::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ScopeRegion {
@@ -38,6 +39,11 @@ pub(crate) struct ScopeRecord {
     pub range: u16,
     pub nest: u16,
     pub parent: u16,
+    pub control_parent: u16,
+    pub route_parent: u16,
+    pub route_parent_arm: u8,
+    pub parallel_root: u16,
+    pub enclosing_loop: u16,
     pub arm_entry: [StateIndex; 2],
 }
 
@@ -50,6 +56,10 @@ pub(crate) struct RouteScopeRecord {
     pub arm1_lane_word_start: u16,
     pub first_recv_dispatch: [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     pub first_recv_len: u8,
+    pub first_recv_label_mask: u128,
+    pub first_recv_dispatch_label_mask: [u128; 2],
+    pub first_recv_dispatch_arm_mask: u8,
+    pub first_recv_dispatch_lane_mask: [u8; 2],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,6 +70,10 @@ pub(super) struct RouteScopeScratchRecord {
     pub offer_entry: StateIndex,
     pub first_recv_dispatch: [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     pub first_recv_len: u8,
+    pub first_recv_label_mask: u128,
+    pub first_recv_dispatch_label_mask: [u128; 2],
+    pub first_recv_dispatch_arm_mask: u8,
+    pub first_recv_dispatch_lane_mask: [u8; 2],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,6 +112,11 @@ impl ScopeRecord {
         range: 0,
         nest: 0,
         parent: SCOPE_LINK_NONE,
+        control_parent: SCOPE_LINK_NONE,
+        route_parent: SCOPE_LINK_NONE,
+        route_parent_arm: ROUTE_PARENT_ARM_NONE,
+        parallel_root: SCOPE_LINK_NONE,
+        enclosing_loop: SCOPE_LINK_NONE,
         arm_entry: [StateIndex::MAX, StateIndex::MAX],
     };
 
@@ -124,6 +143,10 @@ impl RouteScopeRecord {
         arm1_lane_word_start: 0,
         first_recv_dispatch: [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH],
         first_recv_len: 0,
+        first_recv_label_mask: 0,
+        first_recv_dispatch_label_mask: [0; 2],
+        first_recv_dispatch_arm_mask: 0,
+        first_recv_dispatch_lane_mask: [0; 2],
     };
 
     #[inline(always)]
@@ -157,6 +180,21 @@ impl RouteScopeRecord {
     const fn arm1_lane_word_start(&self) -> usize {
         self.arm1_lane_word_start as usize
     }
+
+    #[inline(always)]
+    fn first_recv_dispatch_index_for_label(&self, label: u8) -> Option<usize> {
+        let bit = first_recv_label_bit(label);
+        if bit == 0 || (self.first_recv_label_mask & bit) == 0 {
+            return None;
+        }
+        let preceding = (self.first_recv_label_mask & first_recv_labels_before(label)).count_ones();
+        let idx = preceding as usize;
+        if idx >= self.first_recv_len as usize {
+            None
+        } else {
+            Some(idx)
+        }
+    }
 }
 
 impl RouteScopeScratchRecord {
@@ -167,6 +205,10 @@ impl RouteScopeScratchRecord {
         offer_entry: StateIndex::MAX,
         first_recv_dispatch: [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH],
         first_recv_len: 0,
+        first_recv_label_mask: 0,
+        first_recv_dispatch_label_mask: [0; 2],
+        first_recv_dispatch_arm_mask: 0,
+        first_recv_dispatch_lane_mask: [0; 2],
     };
 
     #[inline(always)]
@@ -183,6 +225,26 @@ impl RouteScopeScratchRecord {
     #[inline(always)]
     pub(crate) const fn lane_word_start(&self) -> usize {
         self.lane_word_start as usize
+    }
+}
+
+#[inline(always)]
+const fn first_recv_label_bit(label: u8) -> u128 {
+    if label < u128::BITS as u8 {
+        1u128 << label
+    } else {
+        0
+    }
+}
+
+#[inline(always)]
+const fn first_recv_labels_before(label: u8) -> u128 {
+    if label == 0 {
+        0
+    } else if label < u128::BITS as u8 {
+        (1u128 << label) - 1
+    } else {
+        u128::MAX
     }
 }
 
@@ -380,6 +442,37 @@ impl ScopeRegistry {
     pub(super) fn parent_of(&self, scope_id: ScopeId) -> Option<ScopeId> {
         self.lookup_record(scope_id)
             .and_then(|record| self.linked_scope_id(record.parent))
+    }
+
+    pub(super) fn control_parent_of(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        self.lookup_record(scope_id)
+            .and_then(|record| self.linked_scope_id(record.control_parent))
+    }
+
+    pub(super) fn route_parent_of(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        self.lookup_record(scope_id)
+            .and_then(|record| self.linked_scope_id(record.route_parent))
+    }
+
+    pub(super) fn route_parent_arm_of(&self, scope_id: ScopeId) -> Option<u8> {
+        let record = self.lookup_record(scope_id)?;
+        if record.route_parent == SCOPE_LINK_NONE
+            || record.route_parent_arm == ROUTE_PARENT_ARM_NONE
+        {
+            None
+        } else {
+            Some(record.route_parent_arm)
+        }
+    }
+
+    pub(super) fn parallel_root_of(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        self.lookup_record(scope_id)
+            .and_then(|record| self.linked_scope_id(record.parallel_root))
+    }
+
+    pub(super) fn enclosing_loop_of(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        self.lookup_record(scope_id)
+            .and_then(|record| self.linked_scope_id(record.enclosing_loop))
     }
 
     pub(super) fn lookup_region(&self, scope_id: ScopeId) -> Option<ScopeRegion> {
@@ -658,6 +751,7 @@ impl ScopeRegistry {
         }
     }
 
+    #[cfg(test)]
     #[inline]
     pub(super) fn first_recv_dispatch_entry(
         &self,
@@ -674,6 +768,66 @@ impl ScopeRegistry {
         Some(route.first_recv_dispatch[idx])
     }
 
+    #[inline]
+    pub(super) fn first_recv_dispatch_table(
+        &self,
+        scope_id: ScopeId,
+    ) -> Option<([(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH], u8)> {
+        let route = match self.lookup_route_record(scope_id) {
+            Some((_record, route)) => route,
+            None => return None,
+        };
+        Some((route.first_recv_dispatch, route.first_recv_len))
+    }
+
+    #[inline]
+    pub(super) fn first_recv_dispatch_label_mask(&self, scope_id: ScopeId) -> Option<u128> {
+        let route = match self.lookup_route_record(scope_id) {
+            Some((_record, route)) => route,
+            None => return None,
+        };
+        Some(route.first_recv_label_mask)
+    }
+
+    #[inline]
+    pub(super) fn first_recv_dispatch_arm_mask(&self, scope_id: ScopeId) -> Option<u8> {
+        let route = match self.lookup_route_record(scope_id) {
+            Some((_record, route)) => route,
+            None => return None,
+        };
+        Some(route.first_recv_dispatch_arm_mask)
+    }
+
+    #[inline]
+    pub(super) fn first_recv_dispatch_lane_mask(&self, scope_id: ScopeId, arm: u8) -> Option<u8> {
+        let route = match self.lookup_route_record(scope_id) {
+            Some((_record, route)) => route,
+            None => return None,
+        };
+        if arm >= 2 {
+            None
+        } else {
+            Some(route.first_recv_dispatch_lane_mask[arm as usize])
+        }
+    }
+
+    #[inline]
+    pub(super) fn first_recv_dispatch_arm_label_mask(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+    ) -> Option<u128> {
+        let route = match self.lookup_route_record(scope_id) {
+            Some((_record, route)) => route,
+            None => return None,
+        };
+        if arm >= 2 {
+            None
+        } else {
+            Some(route.first_recv_dispatch_label_mask[arm as usize])
+        }
+    }
+
     pub(super) fn first_recv_dispatch_target_for_label(
         &self,
         scope_id: ScopeId,
@@ -683,14 +837,8 @@ impl ScopeRegistry {
             Some((_record, route)) => route,
             None => return None,
         };
-        let mut idx = 0usize;
-        while idx < route.first_recv_len as usize {
-            let (entry_label, arm, target) = route.first_recv_dispatch[idx];
-            if entry_label == label {
-                return Some((arm, target));
-            }
-            idx += 1;
-        }
-        None
+        let idx = route.first_recv_dispatch_index_for_label(label)?;
+        let (_entry_label, arm, target) = route.first_recv_dispatch[idx];
+        (!target.is_max()).then_some((arm, target))
     }
 }

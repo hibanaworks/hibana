@@ -904,17 +904,22 @@ where
     }
 
     fn scope_is_descendant_of(&self, scope: ScopeId, ancestor: ScopeId) -> bool {
+        self.route_ancestor_arm(scope, ancestor).is_some()
+    }
+
+    fn route_ancestor_arm(&self, scope: ScopeId, ancestor: ScopeId) -> Option<u8> {
         if scope.is_none() || ancestor.is_none() || scope == ancestor {
-            return false;
+            return None;
         }
         let mut current = scope;
-        while let Some(parent) = self.cursor.scope_parent(current) {
+        while let Some(parent) = self.cursor.route_parent_scope(current) {
+            let arm = self.cursor.route_parent_arm(current)?;
             if parent == ancestor {
-                return true;
+                return Some(arm);
             }
             current = parent;
         }
-        false
+        None
     }
 
     fn clear_descendant_route_state_for_lane(&mut self, lane: u8, ancestor_scope: ScopeId) {
@@ -928,14 +933,13 @@ where
         if self.route_state.lane_route_arm_len(lane_idx) == 0 {
             return;
         }
-        while let Some(scope) = self
-            .route_state
-            .last_matching_lane_scope(lane_idx, |scope| {
-                !scope.is_none()
-                    && scope.kind() == ScopeKind::Route
-                    && self.scope_is_descendant_of(scope, ancestor_scope)
-            })
-        {
+        while let Some(scope) = self.route_state.last_lane_scope(lane_idx) {
+            if scope.is_none()
+                || scope.kind() != ScopeKind::Route
+                || !self.scope_is_descendant_of(scope, ancestor_scope)
+            {
+                break;
+            }
             self.pop_route_arm(lane, scope);
             self.clear_scope_evidence(scope);
         }
@@ -950,14 +954,12 @@ where
             return;
         }
         let cursor_scope = self.cursor.node_scope_id();
-        while let Some(scope) = self
-            .route_state
-            .last_matching_lane_scope(lane_idx, |scope| {
-                let keep = !scope.is_none()
-                    && (scope == cursor_scope || self.scope_is_descendant_of(cursor_scope, scope));
-                !keep && !scope.is_none()
-            })
-        {
+        while let Some(scope) = self.route_state.last_lane_scope(lane_idx) {
+            let keep = !scope.is_none()
+                && (scope == cursor_scope || self.scope_is_descendant_of(cursor_scope, scope));
+            if keep || scope.is_none() {
+                break;
+            }
             self.pop_route_arm(lane, scope);
             self.clear_scope_evidence(scope);
         }
@@ -1085,79 +1087,12 @@ where
             .or_else(|| self.poll_arm_from_ready_mask(scope_id).map(Arm::as_u8))
     }
 
-    fn scope_entry_index(&self, scope_id: ScopeId) -> Option<usize> {
-        self.route_scope_offer_entry_index(scope_id).or_else(|| {
-            self.cursor
-                .scope_region_by_id(scope_id)
-                .map(|region| region.start)
-        })
-    }
-
-    fn scope_within_parent_arm(
-        &self,
-        child_scope: ScopeId,
-        parent_scope: ScopeId,
-        parent_arm: u8,
-    ) -> bool {
-        let Some(child_entry_idx) = self.scope_entry_index(child_scope) else {
-            return false;
-        };
-        let arm_start = if let Some((entry, _)) = self
-            .cursor
-            .controller_arm_entry_by_arm(parent_scope, parent_arm)
-        {
-            state_index_to_usize(entry)
-        } else if let Some(PassiveArmNavigation::WithinArm { entry }) = self
-            .cursor
-            .follow_passive_observer_arm_for_scope(parent_scope, parent_arm)
-        {
-            state_index_to_usize(entry)
-        } else if let Some(entry) = self
-            .cursor
-            .route_scope_arm_recv_index(parent_scope, parent_arm)
-        {
-            entry
-        } else {
-            return false;
-        };
-        if child_entry_idx < arm_start {
-            return false;
-        }
-        let sibling_arm = if parent_arm == 0 { 1 } else { 0 };
-        if let Some((entry, _)) = self
-            .cursor
-            .controller_arm_entry_by_arm(parent_scope, sibling_arm)
-        {
-            let sibling_start = state_index_to_usize(entry);
-            if parent_arm == 0 {
-                return child_entry_idx < sibling_start;
-            }
-            return child_entry_idx >= arm_start;
-        }
-        if let Some(PassiveArmNavigation::WithinArm { entry }) = self
-            .cursor
-            .follow_passive_observer_arm_for_scope(parent_scope, sibling_arm)
-        {
-            let sibling_start = state_index_to_usize(entry);
-            if parent_arm == 0 {
-                return child_entry_idx < sibling_start;
-            }
-        }
-        true
-    }
-
     fn structural_arm_for_child_scope(
         &self,
         parent_scope: ScopeId,
         child_scope: ScopeId,
     ) -> Option<u8> {
-        let child_in_arm0 = self.scope_within_parent_arm(child_scope, parent_scope, 0);
-        let child_in_arm1 = self.scope_within_parent_arm(child_scope, parent_scope, 1);
-        match (child_in_arm0, child_in_arm1) {
-            (true, false) => Some(0),
-            (false, true) => Some(1),
-            _ => None,
-        }
+        self.route_ancestor_arm(child_scope, parent_scope)
     }
 
     #[inline]
@@ -1167,11 +1102,7 @@ where
             return node_scope;
         }
         let mut child_scope = node_scope;
-        while let Some(parent_scope) = self.cursor.scope_parent(child_scope) {
-            if parent_scope.kind() != ScopeKind::Route {
-                child_scope = parent_scope;
-                continue;
-            }
+        while let Some(parent_scope) = self.cursor.route_parent_scope(child_scope) {
             let child_selected_arm = self.selected_arm_for_scope(child_scope);
             let Some(parent_arm) = self
                 .selected_arm_for_scope(parent_scope)
@@ -1190,7 +1121,7 @@ where
             else {
                 return parent_scope;
             };
-            if !self.scope_within_parent_arm(child_scope, parent_scope, parent_arm) {
+            if self.route_ancestor_arm(child_scope, parent_scope) != Some(parent_arm) {
                 return parent_scope;
             }
             child_scope = parent_scope;
@@ -1209,7 +1140,7 @@ where
             let mut child_scope = target_scope;
             let mut depth = 0usize;
             while depth < crate::eff::meta::MAX_EFF_NODES {
-                let Some(parent_scope) = self.cursor.scope_parent(child_scope) else {
+                let Some(parent_scope) = self.cursor.route_parent_scope(child_scope) else {
                     break 'rebase;
                 };
                 if parent_scope == stop_scope {
@@ -1219,7 +1150,7 @@ where
                     && let Some(parent_arm) = self
                         .selected_arm_for_scope(parent_scope)
                         .or_else(|| self.preview_selected_arm_for_scope(parent_scope))
-                    && !self.scope_within_parent_arm(child_scope, parent_scope, parent_arm)
+                    && self.route_ancestor_arm(child_scope, parent_scope) != Some(parent_arm)
                 {
                     if let Some(scope) = self
                         .cursor
@@ -3676,11 +3607,7 @@ where
                         self.pop_route_arm(lane_wire, scope);
                         exited_scope = true;
                         let mut current_scope = scope;
-                        while let Some(parent) = self.cursor.scope_parent(current_scope) {
-                            if !matches!(parent.kind(), ScopeKind::Route | ScopeKind::Loop) {
-                                break;
-                            }
-
+                        while let Some(parent) = self.cursor.control_parent_scope(current_scope) {
                             if let Some(parent_region) = self.cursor.scope_region_by_id(parent) {
                                 if parent_region.linger {
                                     if let Some(parent_arm) = self.route_arm_for(lane_wire, parent)
@@ -3755,12 +3682,9 @@ where
         // entry eff_index so offer()/flow() can locate the next iteration.
         let mut parent_scope = scope;
         loop {
-            let Some(parent) = self.cursor.scope_parent(parent_scope) else {
+            let Some(parent) = self.cursor.control_parent_scope(parent_scope) else {
                 break;
             };
-            if !matches!(parent.kind(), ScopeKind::Route | ScopeKind::Loop) {
-                break;
-            }
             if let Some(parent_region) = self.cursor.scope_region_by_id(parent) {
                 if parent.kind() == ScopeKind::Route
                     && !parent_region.linger
@@ -3866,12 +3790,9 @@ where
         child_scope: ScopeId,
         arm: u8,
     ) {
-        let Some(parent_scope) = self.cursor.scope_parent(child_scope) else {
+        let Some(parent_scope) = self.cursor.route_parent_scope(child_scope) else {
             return;
         };
-        if parent_scope.kind() != ScopeKind::Route {
-            return;
-        }
         let Some(parent_region) = self.cursor.scope_region_by_id(parent_scope) else {
             return;
         };
@@ -4527,19 +4448,8 @@ where
         )
     }
 
-    pub(super) fn parallel_scope_root(
-        cursor: &PhaseCursor,
-        mut scope_id: ScopeId,
-    ) -> Option<ScopeId> {
-        loop {
-            if scope_id.kind() == ScopeKind::Parallel {
-                return Some(scope_id);
-            }
-            let Some(parent) = cursor.scope_parent(scope_id) else {
-                return None;
-            };
-            scope_id = parent;
-        }
+    pub(super) fn parallel_scope_root(cursor: &PhaseCursor, scope_id: ScopeId) -> Option<ScopeId> {
+        cursor.parallel_scope_root(scope_id)
     }
 
     #[inline]
@@ -4687,13 +4597,14 @@ where
                 meta.record_arm_label(1, label);
             }
         }
-        let mut dispatch_idx = 0usize;
-        while let Some((label, arm, _)) =
-            cursor.route_scope_first_recv_dispatch_entry(scope_id, dispatch_idx)
-        {
-            meta.record_dispatch_arm_label(arm, label);
-            dispatch_idx += 1;
-        }
+        meta.record_dispatch_arm_label_mask(
+            0,
+            cursor.route_scope_first_recv_dispatch_arm_label_mask(scope_id, 0),
+        );
+        meta.record_dispatch_arm_label_mask(
+            1,
+            cursor.route_scope_first_recv_dispatch_arm_label_mask(scope_id, 1),
+        );
         meta
     }
 

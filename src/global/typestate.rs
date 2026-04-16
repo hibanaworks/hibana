@@ -75,7 +75,9 @@ mod tests {
     use crate::global::const_dsl::{PolicyMode, ScopeKind};
     use crate::global::role_program;
     use crate::global::role_program::{RoleProgram, project};
-    use crate::global::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
+    use crate::global::steps::{
+        ParSteps, PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil,
+    };
     use crate::global::{CanonicalControl, MessageSpec};
     use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
 
@@ -93,8 +95,8 @@ mod tests {
         let _ = crate::global::typestate::phase_route_guard_for_built_state_for_role::<0>;
     }
 
-    fn with_compiled_role_image<const ROLE: u8, Steps, Mint, R>(
-        program: &RoleProgram<'_, ROLE, Steps, Mint>,
+    fn with_compiled_role_image<const ROLE: u8, Mint, R>(
+        program: &RoleProgram<'_, ROLE, Mint>,
         f: impl FnOnce(&CompiledRoleImage) -> R,
     ) -> R
     where
@@ -207,17 +209,13 @@ mod tests {
         g::route(continue_arm, break_arm)
     };
 
-    const CONTROLLER_PROGRAM: RoleProgram<'static, 0, LoopProgramSteps> = project(&LOOP_PROGRAM);
+    const CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&LOOP_PROGRAM);
 
-    const TARGET_PROGRAM: RoleProgram<'static, 1, LoopProgramSteps> = project(&LOOP_PROGRAM);
+    const TARGET_PROGRAM: RoleProgram<'static, 1> = project(&LOOP_PROGRAM);
 
     const LOCAL_PROGRAM: g::Program<StepCons<SendStep<Role<0>, Role<0>, Msg<9, ()>>, StepNil>> =
         g::send::<Role<0>, Role<0>, Msg<9, ()>, 0>();
-    const LOCAL_ROLE: role_program::RoleProgram<
-        'static,
-        0,
-        StepCons<SendStep<Role<0>, Role<0>, Msg<9, ()>>, StepNil>,
-    > = role_program::project(&LOCAL_PROGRAM);
+    const LOCAL_ROLE: role_program::RoleProgram<'static, 0> = role_program::project(&LOCAL_PROGRAM);
 
     #[test]
     fn state_cursor_rewinds_on_loop_continue() {
@@ -364,7 +362,7 @@ mod tests {
             .policy::<ROUTE_POLICY_ID>(),
         );
 
-        const CONTROLLER: RoleProgram<'static, 0, RouteScopeProgramSteps> = project(&ROUTE);
+        const CONTROLLER: RoleProgram<'static, 0> = project(&ROUTE);
 
         with_compiled_role_image(&CONTROLLER, |compiled| {
             let summary = ROUTE.summary();
@@ -381,6 +379,245 @@ mod tests {
             let expected_policy = PolicyMode::dynamic(ROUTE_POLICY_ID).with_scope(scope_id);
             assert_eq!(policy, expected_policy);
             assert_ne!(eff_index, EffIndex::MAX);
+        });
+    }
+
+    #[test]
+    fn nested_route_scope_caches_parallel_root() {
+        type ParallelRouteProgramSteps = ParSteps<
+            RouteScopeProgramSteps,
+            StepCons<SendStep<Role<1>, Role<1>, Msg<11, ()>>, StepNil>,
+        >;
+
+        const PARALLEL_ROUTE_PROGRAM: g::Program<ParallelRouteProgramSteps> = g::par(
+            g::route(
+                g::send::<
+                    Role<0>,
+                    Role<0>,
+                    Msg<
+                        { LABEL_LOOP_CONTINUE },
+                        GenericCapToken<LoopContinueKind>,
+                        CanonicalControl<LoopContinueKind>,
+                    >,
+                    0,
+                >()
+                .policy::<ROUTE_POLICY_ID>(),
+                g::send::<
+                    Role<0>,
+                    Role<0>,
+                    Msg<
+                        { LABEL_LOOP_BREAK },
+                        GenericCapToken<LoopBreakKind>,
+                        CanonicalControl<LoopBreakKind>,
+                    >,
+                    0,
+                >()
+                .policy::<ROUTE_POLICY_ID>(),
+            ),
+            g::send::<Role<1>, Role<1>, Msg<11, ()>, 0>(),
+        );
+        const PARALLEL_CONTROLLER: RoleProgram<'static, 0> = project(&PARALLEL_ROUTE_PROGRAM);
+
+        with_compiled_role_image(&PARALLEL_CONTROLLER, |compiled| {
+            let typestate = compiled.typestate_ref();
+            let mut route_scope = None;
+            let mut idx = 0usize;
+            while idx < typestate.len() {
+                let scope = typestate.node(idx).scope();
+                if !scope.is_none()
+                    && let Some(region) = typestate.scope_region_for(scope)
+                    && region.kind == ScopeKind::Route
+                    && typestate.parallel_root(scope).is_some()
+                {
+                    route_scope = Some(scope);
+                    break;
+                }
+                idx += 1;
+            }
+
+            let route_scope = route_scope.expect("nested route scope under parallel must exist");
+            let parallel_scope = typestate
+                .parallel_root(route_scope)
+                .expect("parallel root must be cached on nested route scope");
+            let parallel_region = typestate
+                .scope_region_for(parallel_scope)
+                .expect("parallel scope region present");
+
+            assert_eq!(parallel_region.kind, ScopeKind::Parallel);
+            assert_eq!(typestate.scope_parent(route_scope), Some(parallel_scope));
+        });
+    }
+
+    #[test]
+    fn nested_route_scope_caches_enclosing_loop() {
+        type NestedLoopProgramSteps =
+            SeqSteps<StepCons<SendStep<Role<0>, Role<1>, Msg<13, ()>>, StepNil>, LoopProgramSteps>;
+
+        const NESTED_LOOP_PROGRAM: g::Program<NestedLoopProgramSteps> =
+            g::seq(g::send::<Role<0>, Role<1>, Msg<13, ()>, 0>(), LOOP_PROGRAM);
+        const NESTED_LOOP_CONTROLLER: RoleProgram<'static, 0> = project(&NESTED_LOOP_PROGRAM);
+
+        with_compiled_role_image(&NESTED_LOOP_CONTROLLER, |compiled| {
+            let typestate = compiled.typestate_ref();
+            let mut nested_route_scope = None;
+            let mut idx = 0usize;
+            while idx < typestate.len() {
+                let scope = typestate.node(idx).scope();
+                if !scope.is_none()
+                    && let Some(region) = typestate.scope_region_for(scope)
+                    && region.kind == ScopeKind::Route
+                    && let Some(parent) = typestate.scope_parent(scope)
+                    && let Some(parent_region) = typestate.scope_region_for(parent)
+                    && parent_region.kind == ScopeKind::Loop
+                {
+                    nested_route_scope = Some((scope, parent));
+                    break;
+                }
+                idx += 1;
+            }
+
+            let (route_scope, loop_scope) =
+                nested_route_scope.expect("nested route scope under loop must exist");
+            assert_eq!(typestate.enclosing_loop(route_scope), Some(loop_scope));
+            assert_eq!(typestate.control_parent(route_scope), Some(loop_scope));
+        });
+    }
+
+    #[test]
+    fn nested_route_scope_caches_route_parent_arm() {
+        let outer_route_program = {
+            let inner = g::route(
+                g::send::<
+                    Role<0>,
+                    Role<0>,
+                    Msg<
+                        { LABEL_LOOP_CONTINUE },
+                        GenericCapToken<LoopContinueKind>,
+                        CanonicalControl<LoopContinueKind>,
+                    >,
+                    0,
+                >()
+                .policy::<ROUTE_POLICY_ID>(),
+                g::send::<
+                    Role<0>,
+                    Role<0>,
+                    Msg<
+                        { LABEL_LOOP_BREAK },
+                        GenericCapToken<LoopBreakKind>,
+                        CanonicalControl<LoopBreakKind>,
+                    >,
+                    0,
+                >()
+                .policy::<ROUTE_POLICY_ID>(),
+            );
+            let left = g::seq(g::send::<Role<0>, Role<0>, Msg<20, ()>, 0>(), inner);
+            let right = g::send::<Role<0>, Role<0>, Msg<21, ()>, 0>();
+            g::route(left, right)
+        };
+        let outer_controller: RoleProgram<'_, 0> = project(&outer_route_program);
+
+        with_compiled_role_image(&outer_controller, |compiled| {
+            let typestate = compiled.typestate_ref();
+            let mut nested_route_scope = None;
+            let mut idx = 0usize;
+            while idx < typestate.len() {
+                let scope = typestate.node(idx).scope();
+                if !scope.is_none()
+                    && let Some(parent) = typestate.route_parent(scope)
+                {
+                    nested_route_scope = Some((scope, parent));
+                    break;
+                }
+                idx += 1;
+            }
+
+            let (nested_scope, outer_scope) =
+                nested_route_scope.expect("nested route scope under parent route must exist");
+            assert_eq!(typestate.route_parent(nested_scope), Some(outer_scope));
+            assert_eq!(typestate.route_parent_arm(nested_scope), Some(0));
+            assert!(typestate.control_parent(nested_scope).is_some());
+        });
+    }
+
+    #[test]
+    fn nested_route_first_recv_dispatch_summary_is_compiled() {
+        let dispatch_program = {
+            let inner = g::route(
+                g::seq(
+                    g::send::<Role<0>, Role<0>, Msg<0x61, ()>, 1>(),
+                    g::send::<Role<0>, Role<1>, Msg<0x71, ()>, 1>(),
+                ),
+                g::seq(
+                    g::send::<Role<0>, Role<0>, Msg<0x62, ()>, 0>(),
+                    g::send::<Role<0>, Role<1>, Msg<0x72, ()>, 0>(),
+                ),
+            );
+            g::route(
+                g::seq(
+                    g::send::<Role<0>, Role<0>, Msg<0x50, ()>, 0>(),
+                    g::send::<Role<0>, Role<1>, Msg<0x53, ()>, 0>(),
+                ),
+                g::seq(g::send::<Role<0>, Role<0>, Msg<0x51, ()>, 0>(), inner),
+            )
+        };
+        let dispatch_worker: RoleProgram<'_, 1> = project(&dispatch_program);
+
+        with_compiled_role_image(&dispatch_worker, |compiled| {
+            let typestate = compiled.typestate_ref();
+            let outer_scope = typestate.node(0).scope();
+            assert!(
+                !outer_scope.is_none(),
+                "worker must enter at outer route scope"
+            );
+
+            let mut nested_scope = None;
+            let mut idx = 0usize;
+            while idx < typestate.len() {
+                let scope = typestate.node(idx).scope();
+                if !scope.is_none() && typestate.route_parent(scope) == Some(outer_scope) {
+                    nested_scope = Some(scope);
+                    break;
+                }
+                idx += 1;
+            }
+            let nested_scope = nested_scope.expect("worker must see nested route scope");
+
+            assert_eq!(
+                typestate
+                    .first_recv_dispatch_target_for_label(outer_scope, 0x53)
+                    .map(|(arm, _)| arm),
+                Some(0)
+            );
+            assert_eq!(
+                typestate
+                    .first_recv_dispatch_target_for_label(outer_scope, 0x71)
+                    .map(|(arm, _)| arm),
+                Some(1)
+            );
+            assert_eq!(typestate.first_recv_dispatch_arm_mask(outer_scope), 0b11);
+            assert_eq!(
+                typestate.first_recv_dispatch_lane_mask(outer_scope, 0),
+                1u8 << 0
+            );
+            assert_eq!(
+                typestate.first_recv_dispatch_lane_mask(outer_scope, 1),
+                (1u8 << 0) | (1u8 << 1)
+            );
+            assert_eq!(
+                typestate.first_recv_dispatch_arm_label_mask(outer_scope, 0),
+                1u128 << 0x53
+            );
+            assert_eq!(
+                typestate.first_recv_dispatch_arm_label_mask(outer_scope, 1),
+                (1u128 << 0x71) | (1u128 << 0x72)
+            );
+            assert_eq!(
+                typestate
+                    .first_recv_dispatch_target_for_label(nested_scope, 0x71)
+                    .map(|(arm, _)| arm),
+                Some(0)
+            );
+            assert_eq!(typestate.first_recv_dispatch_arm_mask(nested_scope), 0b11);
         });
     }
 

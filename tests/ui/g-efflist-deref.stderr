@@ -1,5 +1,5 @@
-error[E0599]: no method named `eff_list` found for struct `RoleProgram<'prog, ROLE, GlobalSteps, Mint>` in the current scope
+error[E0599]: no method named `eff_list` found for struct `RoleProgram<'prog, ROLE, Mint>` in the current scope
   --> tests/ui/g-efflist-deref.rs:12:21
    |
 12 |     let _ = program.eff_list();
-   |                     ^^^^^^^^ method not found in `RoleProgram<'_, 0, StepCons<SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<1>, ()>>, StepNil>>`
+   |                     ^^^^^^^^ method not found in `RoleProgram<'_, 0>`

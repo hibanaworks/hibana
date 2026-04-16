@@ -474,10 +474,8 @@ const NESTED_STATIC_PROGRAM: g::Program<NestedStaticProgramSteps> = g::route(
         NESTED_STATIC_MIDDLE,
     ),
 );
-static NESTED_STATIC_CONTROLLER_PROGRAM: RoleProgram<'static, 0, NestedStaticProgramSteps> =
-    project(&NESTED_STATIC_PROGRAM);
-static NESTED_STATIC_WORKER_PROGRAM: RoleProgram<'static, 1, NestedStaticProgramSteps> =
-    project(&NESTED_STATIC_PROGRAM);
+static NESTED_STATIC_CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&NESTED_STATIC_PROGRAM);
+static NESTED_STATIC_WORKER_PROGRAM: RoleProgram<'static, 1> = project(&NESTED_STATIC_PROGRAM);
 type LoopContinueScopedContinueMsg = Msg<
     { crate::runtime::consts::LABEL_LOOP_CONTINUE },
     GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
@@ -523,7 +521,7 @@ const LOOP_SEMANTICS_PROGRAM: g::Program<LoopSemanticsProgramSteps> = g::route(
     g::send::<Role<0>, Role<0>, LoopContinueScopedContinueMsg, 0>(),
     g::send::<Role<0>, Role<0>, LoopContinueScopedBreakMsg, 0>(),
 );
-static LOOP_SEMANTICS_CONTROLLER_PROGRAM: RoleProgram<'static, 0, LoopSemanticsProgramSteps> =
+static LOOP_SEMANTICS_CONTROLLER_PROGRAM: RoleProgram<'static, 0> =
     project(&LOOP_SEMANTICS_PROGRAM);
 const LOOP_CONTINUE_SCOPED_PROGRAM: g::Program<LoopContinueScopedProgramSteps> = g::route(
     g::seq(
@@ -541,11 +539,8 @@ const LOOP_CONTINUE_SCOPED_PROGRAM: g::Program<LoopContinueScopedProgramSteps> =
     ),
     g::send::<Role<0>, Role<0>, LoopContinueScopedBreakMsg, 0>(),
 );
-static LOOP_CONTINUE_SCOPED_CONTROLLER_PROGRAM: RoleProgram<
-    'static,
-    0,
-    LoopContinueScopedProgramSteps,
-> = project(&LOOP_CONTINUE_SCOPED_PROGRAM);
+static LOOP_CONTINUE_SCOPED_CONTROLLER_PROGRAM: RoleProgram<'static, 0> =
+    project(&LOOP_CONTINUE_SCOPED_PROGRAM);
 const LOOP_CONTINUE_PASSIVE_RIGHT_REPLY_LABEL: u8 = 0x51;
 type LoopContinuePassiveOuterLeftMsg = Msg<110, u8>;
 type LoopContinuePassiveRightReplyMsg = Msg<{ LOOP_CONTINUE_PASSIVE_RIGHT_REPLY_LABEL }, u8>;
@@ -582,16 +577,10 @@ const LOOP_CONTINUE_PASSIVE_PROGRAM: g::Program<LoopContinuePassiveProgramSteps>
     ),
     g::send::<Role<0>, Role<0>, LoopContinueScopedBreakMsg, 0>(),
 );
-static LOOP_CONTINUE_PASSIVE_CONTROLLER_PROGRAM: RoleProgram<
-    'static,
-    0,
-    LoopContinuePassiveProgramSteps,
-> = project(&LOOP_CONTINUE_PASSIVE_PROGRAM);
-static LOOP_CONTINUE_PASSIVE_WORKER_PROGRAM: RoleProgram<
-    'static,
-    1,
-    LoopContinuePassiveProgramSteps,
-> = project(&LOOP_CONTINUE_PASSIVE_PROGRAM);
+static LOOP_CONTINUE_PASSIVE_CONTROLLER_PROGRAM: RoleProgram<'static, 0> =
+    project(&LOOP_CONTINUE_PASSIVE_PROGRAM);
+static LOOP_CONTINUE_PASSIVE_WORKER_PROGRAM: RoleProgram<'static, 1> =
+    project(&LOOP_CONTINUE_PASSIVE_PROGRAM);
 type NestedDispatchOuterLeftMsg = Msg<0x10, u8>;
 type NestedDispatchLeafLeftMsg = Msg<0x51, u8>;
 type NestedDispatchLeafRightMsg = Msg<0x52, u8>;
@@ -635,10 +624,9 @@ const NESTED_DISPATCH_PROGRAM: g::Program<NestedDispatchProgramSteps> = g::route
         ),
     ),
 );
-static NESTED_DISPATCH_CONTROLLER_PROGRAM: RoleProgram<'static, 0, NestedDispatchProgramSteps> =
+static NESTED_DISPATCH_CONTROLLER_PROGRAM: RoleProgram<'static, 0> =
     project(&NESTED_DISPATCH_PROGRAM);
-static NESTED_DISPATCH_WORKER_PROGRAM: RoleProgram<'static, 1, NestedDispatchProgramSteps> =
-    project(&NESTED_DISPATCH_PROGRAM);
+static NESTED_DISPATCH_WORKER_PROGRAM: RoleProgram<'static, 1> = project(&NESTED_DISPATCH_PROGRAM);
 type PendingOfferCluster =
     SessionCluster<'static, PendingTransport, DefaultLabelUniverse, CounterClock, 4>;
 type HintPendingOfferCluster =
@@ -1672,9 +1660,8 @@ type HintRouteSteps = RouteSteps<
     SeqSteps<HintRightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<101, u8>>, StepNil>>,
 >;
 const HINT_ROUTE_PROGRAM: g::Program<HintRouteSteps> = g::route(HINT_LEFT_ARM, HINT_RIGHT_ARM);
-static HINT_CONTROLLER_PROGRAM: RoleProgram<'static, 0, HintRouteSteps> =
-    project(&HINT_ROUTE_PROGRAM);
-static HINT_WORKER_PROGRAM: RoleProgram<'static, 1, HintRouteSteps> = project(&HINT_ROUTE_PROGRAM);
+static HINT_CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&HINT_ROUTE_PROGRAM);
+static HINT_WORKER_PROGRAM: RoleProgram<'static, 1> = project(&HINT_ROUTE_PROGRAM);
 type HintSplitLeftSteps = SeqSteps<HintLeftHead, SendOnly<0, Role<0>, Role<1>, Msg<100, u8>>>;
 type HintSplitRightSteps = SeqSteps<HintRightHead, SendOnly<2, Role<0>, Role<1>, Msg<101, u8>>>;
 type HintSplitRouteSteps = RouteSteps<HintSplitLeftSteps, HintSplitRightSteps>;
@@ -1704,10 +1691,8 @@ const HINT_SPLIT_RIGHT_ARM: g::Program<HintSplitRightSteps> = g::seq(
 );
 const HINT_SPLIT_ROUTE_PROGRAM: g::Program<HintSplitRouteSteps> =
     g::route(HINT_SPLIT_LEFT_ARM, HINT_SPLIT_RIGHT_ARM);
-static HINT_SPLIT_CONTROLLER_PROGRAM: RoleProgram<'static, 0, HintSplitRouteSteps> =
-    project(&HINT_SPLIT_ROUTE_PROGRAM);
-static HINT_SPLIT_WORKER_PROGRAM: RoleProgram<'static, 1, HintSplitRouteSteps> =
-    project(&HINT_SPLIT_ROUTE_PROGRAM);
+static HINT_SPLIT_CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&HINT_SPLIT_ROUTE_PROGRAM);
+static HINT_SPLIT_WORKER_PROGRAM: RoleProgram<'static, 1> = project(&HINT_SPLIT_ROUTE_PROGRAM);
 const HINT_LEFT_DATA_LABEL: u8 = 100;
 const HINT_RIGHT_DATA_LABEL: u8 = 101;
 type MultiSendRouteLeftMsg = Msg<
@@ -1728,10 +1713,8 @@ type MultiSendLeftSteps = SeqSteps<
     SendOnly<0, Role<0>, Role<0>, MultiSendRouteLeftMsg>,
     SendOnly<0, Role<0>, Role<1>, MultiSendLeftPayloadMsg>,
 >;
-type MultiSendRightSteps = SeqSteps<
-    SendOnly<0, Role<0>, Role<0>, MultiSendRouteRightMsg>,
-    MultiSendRightPayloadSteps,
->;
+type MultiSendRightSteps =
+    SeqSteps<SendOnly<0, Role<0>, Role<0>, MultiSendRouteRightMsg>, MultiSendRightPayloadSteps>;
 type MultiSendRouteSteps = BranchSteps<MultiSendLeftSteps, MultiSendRightSteps>;
 const MULTI_SEND_ROUTE_PROGRAM: g::Program<MultiSendRouteSteps> = g::route(
     g::seq(
@@ -1746,9 +1729,9 @@ const MULTI_SEND_ROUTE_PROGRAM: g::Program<MultiSendRouteSteps> = g::route(
         ),
     ),
 );
-static MULTI_SEND_ROUTE_CONTROLLER_PROGRAM: RoleProgram<'static, 0, MultiSendRouteSteps> =
+static MULTI_SEND_ROUTE_CONTROLLER_PROGRAM: RoleProgram<'static, 0> =
     project(&MULTI_SEND_ROUTE_PROGRAM);
-static MULTI_SEND_ROUTE_WORKER_PROGRAM: RoleProgram<'static, 1, MultiSendRouteSteps> =
+static MULTI_SEND_ROUTE_WORKER_PROGRAM: RoleProgram<'static, 1> =
     project(&MULTI_SEND_ROUTE_PROGRAM);
 
 const ENTRY_ARM0_PROGRAM: g::Program<
@@ -1799,10 +1782,8 @@ type EntryRouteSteps = RouteSteps<
 >;
 const ENTRY_ROUTE_PROGRAM: g::Program<EntryRouteSteps> =
     g::route(ENTRY_ARM0_PROGRAM, ENTRY_ARM1_PROGRAM);
-static ENTRY_CONTROLLER_PROGRAM: RoleProgram<'static, 0, EntryRouteSteps> =
-    project(&ENTRY_ROUTE_PROGRAM);
-static ENTRY_WORKER_PROGRAM: RoleProgram<'static, 1, EntryRouteSteps> =
-    project(&ENTRY_ROUTE_PROGRAM);
+static ENTRY_CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&ENTRY_ROUTE_PROGRAM);
+static ENTRY_WORKER_PROGRAM: RoleProgram<'static, 1> = project(&ENTRY_ROUTE_PROGRAM);
 type NestedRouteSteps = RouteSteps<HintRouteSteps, EntryRouteSteps>;
 const NESTED_ROUTE_PROGRAM: g::Program<NestedRouteSteps> =
     g::route(HINT_ROUTE_PROGRAM, ENTRY_ROUTE_PROGRAM);
@@ -2621,8 +2602,7 @@ fn attach_endpoint_keeps_primary_lane_on_first_live_application_lane() {
                         .add_rendezvous_from_config(config, transport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(998);
-                    let worker_program: RoleProgram<'_, 1, LaneThreeWorkerSteps> =
-                        project(&LANE_THREE_PROGRAM);
+                    let worker_program: RoleProgram<'_, 1> = project(&LANE_THREE_PROGRAM);
                     unsafe {
                         cluster_ref
                             .attach_endpoint_into::<1, _, _, _>(
@@ -4254,8 +4234,10 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
                 SendOnly<0, Role<0>, Role<0>, Msg<OUTER_LEFT_LABEL, u8>>,
                 SendOnly<0, Role<0>, Role<1>, Msg<OUTER_LEFT_DATA_LABEL, u8>>,
             >;
-            type OuterRightSteps =
-                SeqSteps<SendOnly<0, Role<0>, Role<0>, Msg<OUTER_RIGHT_LABEL, u8>>, InnerRouteSteps>;
+            type OuterRightSteps = SeqSteps<
+                SendOnly<0, Role<0>, Role<0>, Msg<OUTER_RIGHT_LABEL, u8>>,
+                InnerRouteSteps,
+            >;
             type NestedSplitRouteSteps = RouteSteps<OuterLeftSteps, OuterRightSteps>;
 
             const INNER_ARM0_PROGRAM: g::Program<InnerArm0> = g::seq(
@@ -4290,8 +4272,7 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
                         .add_rendezvous_from_config(config, transport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(1008);
-                    let worker_program: RoleProgram<'_, 1, NestedSplitRouteSteps> =
-                        project(&NESTED_SPLIT_ROUTE_PROGRAM);
+                    let worker_program: RoleProgram<'_, 1> = project(&NESTED_SPLIT_ROUTE_PROGRAM);
                     unsafe {
                         cluster_ref
                             .attach_endpoint_into::<1, _, _, _>(
@@ -4306,7 +4287,10 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
                     let worker = worker_slot.borrow_mut();
 
                     let outer_scope = worker.cursor.node_scope_id();
-                    assert!(!outer_scope.is_none(), "worker must start at outer route scope");
+                    assert!(
+                        !outer_scope.is_none(),
+                        "worker must start at outer route scope"
+                    );
                     let nested_scope = worker
                         .cursor
                         .seek_label_index(INNER_LEFT_DATA_LABEL)
@@ -4379,8 +4363,7 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
                     let cached_left_ready = cached_observed_entries.ready_mask & left_bit;
                     let cached_left_progress = cached_observed_entries.progress_mask & left_bit;
                     let cached_right_ready = cached_observed_entries.ready_mask & right_bit;
-                    let cached_right_progress =
-                        cached_observed_entries.progress_mask & right_bit;
+                    let cached_right_progress = cached_observed_entries.progress_mask & right_bit;
 
                     assert!(worker.binding_inbox.push_back(
                         2,
@@ -6343,9 +6326,7 @@ fn record_route_decision_for_scope_lanes_refreshes_sibling_frontier_cache() {
                         worker.record_route_decision_for_scope_lanes(scope, 1, 0);
                         worker.record_scope_ack(
                             scope,
-                            RouteDecisionToken::from_ack(
-                                Arm::new(1).expect("binary route arm"),
-                            ),
+                            RouteDecisionToken::from_ack(Arm::new(1).expect("binary route arm")),
                         );
 
                         let mut offer = pin!(worker.offer());
@@ -6517,7 +6498,9 @@ fn selected_route_arm_keeps_later_same_lane_sends_available() {
                         }
 
                         assert!(
-                            controller.preview_flow_meta::<MultiSendRightFirstMsg>().is_ok(),
+                            controller
+                                .preview_flow_meta::<MultiSendRightFirstMsg>()
+                                .is_ok(),
                             "first payload send must remain available after choosing the route arm"
                         );
                         {
@@ -8589,10 +8572,8 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                 ),
                 g::send::<Role<0>, Role<0>, LoopBreakMsg, 3>(),
             );
-            static CLIENT_PROGRAM: RoleProgram<'static, 0, LoopProgramSteps> =
-                project(&LOOP_PROGRAM);
-            static SERVER_PROGRAM: RoleProgram<'static, 1, LoopProgramSteps> =
-                project(&LOOP_PROGRAM);
+            static CLIENT_PROGRAM: RoleProgram<'static, 0> = project(&LOOP_PROGRAM);
+            static SERVER_PROGRAM: RoleProgram<'static, 1> = project(&LOOP_PROGRAM);
             type ClientEndpoint = CursorEndpoint<
                 'static,
                 0,
@@ -9003,10 +8984,8 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                 ),
                 g::send::<Role<0>, Role<0>, LoopBreakMsg, 3>(),
             );
-            static CLIENT_PROGRAM: RoleProgram<'static, 0, LoopProgramSteps> =
-                project(&LOOP_PROGRAM);
-            static SERVER_PROGRAM: RoleProgram<'static, 1, LoopProgramSteps> =
-                project(&LOOP_PROGRAM);
+            static CLIENT_PROGRAM: RoleProgram<'static, 0> = project(&LOOP_PROGRAM);
+            static SERVER_PROGRAM: RoleProgram<'static, 1> = project(&LOOP_PROGRAM);
             type ClientEndpoint = CursorEndpoint<
                 'static,
                 0,
@@ -9517,10 +9496,8 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                 ),
                 g::send::<Role<0>, Role<0>, LoopBreakMsg, 3>(),
             );
-            static CLIENT_PROGRAM: RoleProgram<'static, 0, LoopProgramSteps> =
-                project(&LOOP_PROGRAM);
-            static SERVER_PROGRAM: RoleProgram<'static, 1, LoopProgramSteps> =
-                project(&LOOP_PROGRAM);
+            static CLIENT_PROGRAM: RoleProgram<'static, 0> = project(&LOOP_PROGRAM);
+            static SERVER_PROGRAM: RoleProgram<'static, 1> = project(&LOOP_PROGRAM);
             type ClientEndpoint = CursorEndpoint<
                 'static,
                 0,

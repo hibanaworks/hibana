@@ -224,8 +224,8 @@ const ARM_B: g::Program<RouteArmBSteps> = g::seq(
 const ROUTE_PROGRAM: g::Program<RouteProgramSteps> = g::route(ARM_A, ARM_B);
 
 // Role projections
-static CLIENT_PROGRAM: RoleProgram<'static, 0, RouteProgramSteps> = project(&ROUTE_PROGRAM);
-static SERVER_PROGRAM: RoleProgram<'static, 1, RouteProgramSteps> = project(&ROUTE_PROGRAM);
+static CLIENT_PROGRAM: RoleProgram<'static, 0> = project(&ROUTE_PROGRAM);
+static SERVER_PROGRAM: RoleProgram<'static, 1> = project(&ROUTE_PROGRAM);
 
 // -----------------------------------------------------------------------------
 // Tests

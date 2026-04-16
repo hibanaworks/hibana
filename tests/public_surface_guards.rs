@@ -1064,9 +1064,8 @@ fn runtime_compiled_materialization_stays_transient_and_cacheless() {
     );
     assert!(
         !role_program_runtime_src.contains("pub struct ProgramWitness<Steps> {")
-            && role_program_runtime_src.contains(
-                "pub struct RoleProgram<'prog, const ROLE: u8, GlobalSteps, Mint = MintConfig>",
-            )
+            && role_program_runtime_src
+                .contains("pub struct RoleProgram<'prog, const ROLE: u8, Mint = MintConfig>",)
             && role_program_runtime_src.contains("_seal: private::RoleProgramSeal,"),
         "RoleProgram must expose only the sealed thin role witness, without a public ProgramWitness helper"
     );
@@ -1078,7 +1077,7 @@ fn runtime_compiled_materialization_stays_transient_and_cacheless() {
         "compiled: *const CompiledProgramImage",
         "compiled: *const CompiledRoleImage",
         "pub(crate) trait RoleProgramView<'prog, const ROLE: u8, Mint>",
-        "impl<'prog, const ROLE: u8, GlobalSteps, Mint> RoleProgramView<'prog, ROLE, Mint>",
+        "impl<'prog, const ROLE: u8, Mint> RoleProgramView<'prog, ROLE, Mint>",
     ] {
         assert!(
             compiled_mod_src.contains(required)
@@ -1186,7 +1185,7 @@ fn compiled_authority_completion_stays_summary_backed() {
         "RoleProgram must not keep a dead direct compiled-role helper"
     );
     for required in [
-        "fn with_compiled_role_image<const ROLE: u8, Steps, R>(",
+        "fn with_compiled_role_image<const ROLE: u8, R>(",
         "crate::global::compiled::with_compiled_role_image::<ROLE, _>(",
         "crate::global::lowering_input(program)",
         "counts: program.summary.role_lowering_counts::<ROLE>(),",
@@ -1305,7 +1304,7 @@ fn role_program_projection_metadata_stays_internal() {
         "pub(crate) const fn stamp(&self) -> ProgramStamp {",
         "pub(crate) fn borrow_id(&self) -> usize {",
         "pub(crate) struct RoleLoweringInput<'prog> {",
-        "pub(crate) const fn lowering_input<'prog, const ROLE: u8, GlobalSteps, Mint>(",
+        "pub(crate) const fn lowering_input<'prog, const ROLE: u8, Mint>(",
     ] {
         assert!(
             role_program_src.contains(required),
@@ -1361,9 +1360,9 @@ fn role_program_projection_metadata_stays_internal() {
         "RoleProgram must not hide typed projection behind a StepNil default"
     );
     for forbidden in [
-        "pub struct RoleProgram<'prog, const ROLE: u8, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, _witness:",
-        "pub struct RoleProgram<'prog, const ROLE: u8, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, mint: Mint, phases:",
-        "pub struct RoleProgram<'prog, const ROLE: u8, Mint = MintConfig> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, mint: Mint, typestate:",
+        "pub struct RoleProgram<'prog, const ROLE: u8> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, _witness:",
+        "pub struct RoleProgram<'prog, const ROLE: u8> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, mint: Mint, phases:",
+        "pub struct RoleProgram<'prog, const ROLE: u8> where Mint: MintConfigMarker, { eff_list: &'prog EffList, lease_budget: crate::control::lease::planner::LeaseGraphBudget, mint: Mint, typestate:",
     ] {
         assert!(
             !role_program_ws.contains(forbidden),
@@ -1854,10 +1853,6 @@ fn regression_fixtures_do_not_hide_canonical_owners_behind_synonyms() {
             "route_dynamic_control.rs",
             "type NestedLoopSteps = <NestedLoopContinueSteps as StepConcat<LoopBrkSteps>>::Output;",
         ),
-        (
-            "ui/g-typelist-local-missing-step.rs",
-            "type MissingLocal = StepNil;",
-        ),
         ("cursor_send_recv.rs", "type Origin = Role<0>;"),
         ("cursor_send_recv.rs", "type PayloadMsg = Msg<1, u32>;"),
         ("cursor_send_recv.rs", "type GlobalSteps = StepCons<"),
@@ -2193,7 +2188,7 @@ fn route_projection_regression_fixtures_keep_canonical_inputs_live() {
     );
     assert!(
         route_unprojectable.contains("static PASSIVE_PROGRAM: RoleProgram<")
-            && route_unprojectable.contains("RoleProgram<'static, 1, RouteProgramSteps> =")
+            && route_unprojectable.contains("RoleProgram<'static, 1> =")
             && route_unprojectable.contains("project(&ROUTE);"),
         "g-route-unprojectable must force passive projection through a typed static RoleProgram"
     );
@@ -4609,7 +4604,7 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         "pub(super) struct RouteState {",
         "fn set_route_arm(",
         "fn pop_route_arm(",
-        "fn last_matching_lane_scope<F>(",
+        "fn last_lane_scope(",
         "fn clear_lane_offer_state(",
         "fn set_lane_offer_state(",
         "lane_route_arms:",

@@ -441,20 +441,8 @@ where
         {
             return cursor.is_recv_at(state_index_to_usize(entry));
         }
-        let mut dispatch_idx = 0usize;
-        while let Some((_label, dispatch_arm, target)) =
-            cursor.route_scope_first_recv_dispatch_entry(scope_id, dispatch_idx)
-        {
-            if (dispatch_arm == arm || dispatch_arm == ARM_SHARED)
-                && cursor
-                    .try_recv_meta_at(state_index_to_usize(target))
-                    .is_some()
-            {
-                return true;
-            }
-            dispatch_idx += 1;
-        }
-        false
+        (cursor.route_scope_first_recv_dispatch_arm_mask(scope_id) & ScopeEvidence::arm_bit(arm))
+            != 0
     }
 
     #[inline]
@@ -627,18 +615,6 @@ where
             lane_idx += 1;
         }
         None
-    }
-
-    #[cfg(test)]
-    #[allow(dead_code)]
-    #[inline]
-    pub(in crate::endpoint::kernel) fn next_lane_in_mask(lane_mask: &mut u32) -> Option<usize> {
-        if *lane_mask == 0 {
-            return None;
-        }
-        let lane_idx = lane_mask.trailing_zeros() as usize;
-        *lane_mask &= !(1u32 << lane_idx);
-        Some(lane_idx)
     }
 
     #[inline]

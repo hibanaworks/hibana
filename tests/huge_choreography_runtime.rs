@@ -42,42 +42,18 @@ fn drive<F: core::future::Future>(future: F) -> F::Output {
 static ROUTE_HEAVY_PROGRAM: g::Program<huge_program::ProgramSteps> = huge_program::PROGRAM;
 static LINEAR_HEAVY_PROGRAM: g::Program<linear_program::ProgramSteps> = linear_program::PROGRAM;
 static FANOUT_HEAVY_PROGRAM: g::Program<fanout_program::ProgramSteps> = fanout_program::PROGRAM;
-static ROUTE_HEAVY_CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<
-    'static,
-    0,
-    huge_program::ProgramSteps,
-    MintConfig,
-> = project(&ROUTE_HEAVY_PROGRAM);
-static ROUTE_HEAVY_WORKER_PROGRAM: hibana::g::advanced::RoleProgram<
-    'static,
-    1,
-    huge_program::ProgramSteps,
-    MintConfig,
-> = project(&ROUTE_HEAVY_PROGRAM);
-static LINEAR_HEAVY_CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<
-    'static,
-    0,
-    linear_program::ProgramSteps,
-    MintConfig,
-> = project(&LINEAR_HEAVY_PROGRAM);
-static LINEAR_HEAVY_WORKER_PROGRAM: hibana::g::advanced::RoleProgram<
-    'static,
-    1,
-    linear_program::ProgramSteps,
-    MintConfig,
-> = project(&LINEAR_HEAVY_PROGRAM);
-static FANOUT_HEAVY_CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<
-    'static,
-    0,
-    fanout_program::ProgramSteps,
-    MintConfig,
-> = project(&FANOUT_HEAVY_PROGRAM);
-static FANOUT_HEAVY_WORKER_PROGRAM: hibana::g::advanced::RoleProgram<
-    'static,
-    1,
-    fanout_program::ProgramSteps,
-    MintConfig,
-> = project(&FANOUT_HEAVY_PROGRAM);
+static ROUTE_HEAVY_CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<'static, 0, MintConfig> =
+    project(&ROUTE_HEAVY_PROGRAM);
+static ROUTE_HEAVY_WORKER_PROGRAM: hibana::g::advanced::RoleProgram<'static, 1, MintConfig> =
+    project(&ROUTE_HEAVY_PROGRAM);
+static LINEAR_HEAVY_CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<'static, 0, MintConfig> =
+    project(&LINEAR_HEAVY_PROGRAM);
+static LINEAR_HEAVY_WORKER_PROGRAM: hibana::g::advanced::RoleProgram<'static, 1, MintConfig> =
+    project(&LINEAR_HEAVY_PROGRAM);
+static FANOUT_HEAVY_CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<'static, 0, MintConfig> =
+    project(&FANOUT_HEAVY_PROGRAM);
+static FANOUT_HEAVY_WORKER_PROGRAM: hibana::g::advanced::RoleProgram<'static, 1, MintConfig> =
+    project(&FANOUT_HEAVY_PROGRAM);
 
 const HIGH_LANE_LEFT_CTRL: u8 = 122;
 const HIGH_LANE_RIGHT_CTRL: u8 = 123;
@@ -122,12 +98,7 @@ type HighLaneLeftSteps = SeqSteps<
             StepNil,
         >,
         StepCons<
-            SendStep<
-                Role<1>,
-                Role<0>,
-                Msg<{ HIGH_LANE_LEFT_REPLY_LABEL }, u8>,
-                HIGH_LANE_LEFT,
-            >,
+            SendStep<Role<1>, Role<0>, Msg<{ HIGH_LANE_LEFT_REPLY_LABEL }, u8>, HIGH_LANE_LEFT>,
             StepNil,
         >,
     >,
@@ -140,12 +111,7 @@ type HighLaneRightSteps = SeqSteps<
             StepNil,
         >,
         StepCons<
-            SendStep<
-                Role<1>,
-                Role<0>,
-                Msg<{ HIGH_LANE_RIGHT_REPLY_LABEL }, u8>,
-                HIGH_LANE_RIGHT,
-            >,
+            SendStep<Role<1>, Role<0>, Msg<{ HIGH_LANE_RIGHT_REPLY_LABEL }, u8>, HIGH_LANE_RIGHT>,
             StepNil,
         >,
     >,
@@ -167,12 +133,7 @@ const HIGH_LANE_LEFT_PROGRAM: g::Program<HighLaneLeftSteps> = {
         program,
         g::seq(
             g::send::<Role<0>, Role<1>, Msg<{ HIGH_LANE_LEFT_LABEL }, u8>, HIGH_LANE_LEFT>(),
-            g::send::<
-                Role<1>,
-                Role<0>,
-                Msg<{ HIGH_LANE_LEFT_REPLY_LABEL }, u8>,
-                HIGH_LANE_LEFT,
-            >(),
+            g::send::<Role<1>, Role<0>, Msg<{ HIGH_LANE_LEFT_REPLY_LABEL }, u8>, HIGH_LANE_LEFT>(),
         ),
     )
 };
@@ -192,35 +153,23 @@ const HIGH_LANE_RIGHT_PROGRAM: g::Program<HighLaneRightSteps> = {
         program,
         g::seq(
             g::send::<Role<0>, Role<1>, Msg<{ HIGH_LANE_RIGHT_LABEL }, u8>, HIGH_LANE_RIGHT>(),
-            g::send::<
-                Role<1>,
-                Role<0>,
-                Msg<{ HIGH_LANE_RIGHT_REPLY_LABEL }, u8>,
-                HIGH_LANE_RIGHT,
-            >(),
+            g::send::<Role<1>, Role<0>, Msg<{ HIGH_LANE_RIGHT_REPLY_LABEL }, u8>, HIGH_LANE_RIGHT>(
+            ),
         ),
     )
 };
 
 const HIGH_LANE_ROUTE_PROGRAM: g::Program<HighLaneRouteProgramSteps> =
     g::route(HIGH_LANE_LEFT_PROGRAM, HIGH_LANE_RIGHT_PROGRAM);
-static HIGH_LANE_CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<
-    'static,
-    0,
-    HighLaneRouteProgramSteps,
-    MintConfig,
-> = project(&HIGH_LANE_ROUTE_PROGRAM);
-static HIGH_LANE_WORKER_PROGRAM: hibana::g::advanced::RoleProgram<
-    'static,
-    1,
-    HighLaneRouteProgramSteps,
-    MintConfig,
-> = project(&HIGH_LANE_ROUTE_PROGRAM);
+static HIGH_LANE_CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<'static, 0, MintConfig> =
+    project(&HIGH_LANE_ROUTE_PROGRAM);
+static HIGH_LANE_WORKER_PROGRAM: hibana::g::advanced::RoleProgram<'static, 1, MintConfig> =
+    project(&HIGH_LANE_ROUTE_PROGRAM);
 
 #[inline(never)]
-fn run_attached_sample<Steps>(
-    controller_program: &'static hibana::g::advanced::RoleProgram<'static, 0, Steps, MintConfig>,
-    worker_program: &'static hibana::g::advanced::RoleProgram<'static, 1, Steps, MintConfig>,
+fn run_attached_sample(
+    controller_program: &'static hibana::g::advanced::RoleProgram<'static, 0, MintConfig>,
+    worker_program: &'static hibana::g::advanced::RoleProgram<'static, 1, MintConfig>,
     route_scope_count: usize,
     expected_branch_labels: &'static [u8],
     expected_acks: &'static [u8],

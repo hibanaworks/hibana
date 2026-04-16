@@ -75,7 +75,7 @@ const OUTER_LOOP_CONTINUE_ARM: g::Program<OuterLoopContinueArmSteps> =
 const NESTED_LOOP_PROGRAM: g::Program<NestedLoopProgramSteps> =
     g::route(OUTER_LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
 
-const CONTROLLER: RoleProgram<'static, 0, NestedLoopProgramSteps> = project(&NESTED_LOOP_PROGRAM);
+const CONTROLLER: RoleProgram<'static, 0> = project(&NESTED_LOOP_PROGRAM);
 
 fn main() {
     let _ = CONTROLLER;
