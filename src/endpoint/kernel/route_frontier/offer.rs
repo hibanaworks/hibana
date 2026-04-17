@@ -6,7 +6,7 @@ use super::authority::{
     Arm, DeferReason, DeferSource, RouteDecisionSource, RouteDecisionToken, RouteResolveStep,
     ScopeHint,
 };
-use super::core::{CursorEndpoint, RouteBranch};
+use super::core::{CursorEndpoint, RouteBranch, StagedPayload};
 use super::evidence::ScopeLabelMeta;
 #[cfg(test)]
 use super::frontier::FrontierCandidate;
@@ -34,7 +34,7 @@ use crate::global::typestate::{
 };
 use crate::rendezvous::port::Port;
 use crate::runtime::{config::Clock, consts::LabelUniverse};
-use crate::transport::Transport;
+use crate::transport::{Transport, wire::Payload};
 
 #[derive(Clone, Copy)]
 pub(super) struct OfferScopeSelection {
@@ -67,30 +67,32 @@ enum ResolvePendingAction {
 }
 
 #[derive(Clone, Copy)]
-struct OfferCollectState {
+struct OfferCollectState<'a> {
     selection: OfferScopeSelection,
     facts: OfferFrontierFacts,
     binding_classification: Option<crate::binding::IncomingClassification>,
     transport_payload_len: usize,
     transport_payload_lane: u8,
+    transport_payload: Option<Payload<'a>>,
 }
 
 #[derive(Clone, Copy)]
-struct OfferResolveState {
+struct OfferResolveState<'a> {
     selection: OfferScopeSelection,
     facts: OfferFrontierFacts,
     binding_classification: Option<crate::binding::IncomingClassification>,
     transport_payload_len: usize,
     transport_payload_lane: u8,
+    transport_payload: Option<Payload<'a>>,
     liveness: OfferLivenessState,
     pending_action: Option<ResolvePendingAction>,
     yield_armed: bool,
 }
 
 #[derive(Clone, Copy)]
-enum OfferRunStage {
-    CollectEvidence(OfferCollectState),
-    ResolveToken(OfferResolveState),
+enum OfferRunStage<'a> {
+    CollectEvidence(OfferCollectState<'a>),
+    ResolveToken(OfferResolveState<'a>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -430,7 +432,7 @@ pub(super) struct RouteFrontierMachine<
     E: EpochTable,
     const MAX_RV: usize,
     Mint,
-    B: BindingSlot,
+    B: BindingSlot + 'r,
 > where
     U: LabelUniverse,
     C: Clock,
@@ -439,8 +441,8 @@ pub(super) struct RouteFrontierMachine<
     endpoint: &'endpoint mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     frontier_visited: Option<FrontierVisitSet>,
     carried_binding_classification: Option<crate::binding::IncomingClassification>,
-    carried_transport_payload: Option<(usize, u8)>,
-    run_stage: Option<OfferRunStage>,
+    carried_transport_payload: Option<(usize, u8, Payload<'r>)>,
+    run_stage: Option<OfferRunStage<'r>>,
     pending_recv: lane_port::PendingRecv<'r, T>,
 }
 
@@ -452,7 +454,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: BindingSlot + 'r,
 {
     #[inline]
     pub(super) const fn new(
@@ -1414,6 +1416,7 @@ where
         offer_lane: u8,
         transport_payload_len: &mut usize,
         transport_payload_lane: &mut u8,
+        transport_payload: &mut Option<Payload<'r>>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<()>> {
         let lane_idx = offer_lane as usize;
@@ -1424,11 +1427,9 @@ where
             Poll::Ready(Err(err)) => return Poll::Ready(Err(RecvError::Transport(err))),
         };
         if *transport_payload_len == 0 && !payload.as_bytes().is_empty() {
-            *transport_payload_len = match lane_port::copy_payload_into_scratch(port, &payload) {
-                Ok(len) => len,
-                Err(_) => return Poll::Ready(Err(RecvError::PhaseInvariant)),
-            };
+            *transport_payload_len = payload.as_bytes().len();
             *transport_payload_lane = offer_lane;
+            *transport_payload = Some(payload);
         }
         Poll::Ready(Ok(()))
     }
@@ -1439,6 +1440,7 @@ where
         binding_classification: &mut Option<crate::binding::IncomingClassification>,
         transport_payload_len: &mut usize,
         transport_payload_lane: &mut u8,
+        transport_payload: &mut Option<Payload<'r>>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<()>> {
         let materialization_meta = self.endpoint.selection_materialization_meta(selection);
@@ -1469,6 +1471,7 @@ where
                 selection.offer_lane,
                 transport_payload_len,
                 transport_payload_lane,
+                transport_payload,
                 cx,
             );
         }
@@ -1510,7 +1513,7 @@ where
     }
     fn poll_resolve_pending_action(
         &mut self,
-        state: &mut OfferResolveState,
+        state: &mut OfferResolveState<'r>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<ResolveTokenOutcome>> {
         let Some(action) = state.pending_action else {
@@ -1534,6 +1537,7 @@ where
                     &mut state.binding_classification,
                     &mut state.transport_payload_len,
                     &mut state.transport_payload_lane,
+                    &mut state.transport_payload,
                     cx,
                 ) {
                     Poll::Pending => Poll::Pending,
@@ -1548,7 +1552,7 @@ where
     }
     fn resolve_token(
         &mut self,
-        state: &mut OfferResolveState,
+        state: &mut OfferResolveState<'r>,
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<ResolveTokenOutcome>> {
@@ -1561,6 +1565,7 @@ where
         let binding_classification = &mut state.binding_classification;
         let transport_payload_len = &mut state.transport_payload_len;
         let transport_payload_lane = &mut state.transport_payload_lane;
+        let transport_payload = &mut state.transport_payload;
         let scope_id = selection.scope_id;
         let frontier_parallel_root = selection.frontier_parallel_root;
         let offer_lane = selection.offer_lane;
@@ -1641,7 +1646,7 @@ where
             let mut passive_waited_for_wire = false;
             loop {
                 let staged_payload_for_offer_lane =
-                    *transport_payload_len != 0 && *transport_payload_lane == offer_lane;
+                    transport_payload.is_some() && *transport_payload_lane == offer_lane;
                 if !staged_payload_for_offer_lane {
                     let label_meta = self.endpoint.selection_label_meta(selection);
                     let materialization_meta =
@@ -1719,10 +1724,9 @@ where
                     {
                         let payload = payload.map_err(RecvError::Transport)?;
                         if *transport_payload_len == 0 && !payload.as_bytes().is_empty() {
-                            *transport_payload_len =
-                                lane_port::copy_payload_into_scratch(port, &payload)
-                                    .map_err(|_| RecvError::PhaseInvariant)?;
+                            *transport_payload_len = payload.as_bytes().len();
                             *transport_payload_lane = recv_lane;
+                            *transport_payload = Some(payload);
                         }
                     }
                     passive_waited_for_wire = true;
@@ -2038,6 +2042,7 @@ where
         mut binding_classification: Option<crate::binding::IncomingClassification>,
         mut transport_payload_len: usize,
         transport_payload_lane: u8,
+        mut transport_payload: Option<Payload<'r>>,
     ) -> RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
         let scope_id = selection.scope_id;
         let route_token = resolved.route_token;
@@ -2141,6 +2146,7 @@ where
             let port = self.endpoint.port_for_lane(transport_payload_lane as usize);
             lane_port::requeue_recv(port);
             transport_payload_len = 0;
+            transport_payload = None;
         }
         let branch_progress_eff = self
             .endpoint
@@ -2166,6 +2172,10 @@ where
             transport_payload_len,
             transport_payload_lane,
             binding_channel,
+            staged_payload: transport_payload.map(|payload| StagedPayload::Transport {
+                lane: transport_payload_lane,
+                payload,
+            }),
             branch_meta,
             _cfg: core::marker::PhantomData,
         })
@@ -4280,13 +4290,13 @@ where
 
     fn poll_collect_offer_evidence(
         &mut self,
-        state: &mut OfferCollectState,
+        state: &mut OfferCollectState<'r>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<()>> {
         let facts = state.facts;
         if state.binding_classification.is_none() && state.transport_payload_len == 0 {
             let payload_view = if facts.skip_recv_loop {
-                0usize
+                None
             } else {
                 'offer_recv: loop {
                     if !facts.is_route_controller || facts.controller_selected_recv_step {
@@ -4300,7 +4310,7 @@ where
                             materialization_meta,
                         ) {
                             state.binding_classification = Some(classification);
-                            break 'offer_recv 0usize;
+                            break 'offer_recv None;
                         }
                         if facts.recvless_loop_control_scope
                             && let Some((_, classification)) =
@@ -4310,23 +4320,18 @@ where
                                 )
                         {
                             state.binding_classification = Some(classification);
-                            break 'offer_recv 0usize;
+                            break 'offer_recv None;
                         }
                     }
 
-                    let payload_len = {
+                    let payload = {
                         let port = self.endpoint.port_for_lane(facts.offer_lane_idx);
-                        let payload =
-                            match lane_port::poll_recv(&mut self.pending_recv, port, cx) {
+                        match lane_port::poll_recv(&mut self.pending_recv, port, cx) {
                             Poll::Pending => return Poll::Pending,
                             Poll::Ready(Ok(payload)) => payload,
                             Poll::Ready(Err(err)) => {
                                 return Poll::Ready(Err(RecvError::Transport(err)));
                             }
-                        };
-                        match lane_port::copy_payload_into_scratch(port, &payload) {
-                            Ok(len) => len,
-                            Err(_) => return Poll::Ready(Err(RecvError::PhaseInvariant)),
                         }
                     };
 
@@ -4341,7 +4346,7 @@ where
                             materialization_meta,
                         ) {
                             state.binding_classification = Some(classification);
-                            break 'offer_recv 0usize;
+                            break 'offer_recv None;
                         }
                         if facts.recvless_loop_control_scope
                             && let Some((_, classification)) =
@@ -4351,16 +4356,19 @@ where
                                 )
                         {
                             state.binding_classification = Some(classification);
-                            break 'offer_recv 0usize;
+                            break 'offer_recv None;
                         }
                     }
 
-                    break 'offer_recv payload_len;
+                    break 'offer_recv Some(payload);
                 }
             };
-            if payload_view != 0 {
-                state.transport_payload_len = payload_view;
+            if let Some(payload) = payload_view
+                && !payload.as_bytes().is_empty()
+            {
+                state.transport_payload_len = payload.as_bytes().len();
                 state.transport_payload_lane = facts.offer_lane;
+                state.transport_payload = Some(payload);
             }
         }
 
@@ -4430,6 +4438,7 @@ where
                                         binding_classification: stage.binding_classification,
                                         transport_payload_len: stage.transport_payload_len,
                                         transport_payload_lane: stage.transport_payload_lane,
+                                        transport_payload: stage.transport_payload,
                                         liveness: OfferLivenessState::new(
                                             self.endpoint.liveness_policy,
                                         ),
@@ -4469,11 +4478,15 @@ where
                             ResolveTokenOutcome::RestartFrontier => {
                                 self.carried_binding_classification =
                                     stage.binding_classification;
-                                self.carried_transport_payload =
-                                    (stage.transport_payload_len != 0).then_some((
-                                        stage.transport_payload_len,
-                                        stage.transport_payload_lane,
-                                    ));
+                                self.carried_transport_payload = stage.transport_payload.map(
+                                    |payload| {
+                                        (
+                                            stage.transport_payload_len,
+                                            stage.transport_payload_lane,
+                                            payload,
+                                        )
+                                    },
+                                );
                                 continue;
                             }
                             ResolveTokenOutcome::Resolved(resolved) => {
@@ -4485,13 +4498,15 @@ where
                                         Ok(true) => {
                                             self.carried_binding_classification =
                                                 stage.binding_classification;
-                                            self.carried_transport_payload = (stage
-                                                .transport_payload_len
-                                                != 0)
-                                                .then_some((
-                                                    stage.transport_payload_len,
-                                                    stage.transport_payload_lane,
-                                                ));
+                                            self.carried_transport_payload = stage
+                                                .transport_payload
+                                                .map(|payload| {
+                                                    (
+                                                        stage.transport_payload_len,
+                                                        stage.transport_payload_lane,
+                                                        payload,
+                                                    )
+                                                });
                                             continue;
                                         }
                                         Ok(false) => {}
@@ -4505,6 +4520,7 @@ where
                                     stage.binding_classification,
                                     stage.transport_payload_len,
                                     stage.transport_payload_lane,
+                                    stage.transport_payload,
                                 ));
                             }
                         }
@@ -4531,16 +4547,17 @@ where
                 self.frontier_visited = Some(frontier_visited);
                 facts
             };
-            let (transport_payload_len, transport_payload_lane) = self
+            let (transport_payload_len, transport_payload_lane, transport_payload) = self
                 .carried_transport_payload
                 .take()
-                .unwrap_or((0, facts.offer_lane));
+                .unwrap_or((0, facts.offer_lane, Payload::new(&[])));
             self.run_stage = Some(OfferRunStage::CollectEvidence(OfferCollectState {
                 selection,
                 facts,
                 binding_classification: self.carried_binding_classification.take(),
                 transport_payload_len,
                 transport_payload_lane,
+                transport_payload: (transport_payload_len != 0).then_some(transport_payload),
             }));
         }
     }
@@ -4554,7 +4571,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: BindingSlot + 'r,
 {
     /// Observe an inbound route branch.
     ///

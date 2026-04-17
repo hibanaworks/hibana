@@ -48,7 +48,7 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: BindingSlot + 'r,
 {
     unsafe {
         super::lane_slots::LaneSlotArray::init_from_parts(

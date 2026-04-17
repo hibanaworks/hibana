@@ -138,7 +138,7 @@ fn public_docs_use_canonical_surface_paths() {
         "`hibana::substrate::binding::NoBinding`",
         "`hibana::substrate::policy::PolicySignalsProvider`",
         "`hibana::substrate::policy::epf::{Header, Slot}`",
-        "`hibana::substrate::wire::{Payload, WireDecode, WireEncode}`",
+        "`hibana::substrate::wire::{Payload, WireDecode, WireEncode, WirePayload}`",
         "`CanonicalControl<K>`",
         "`ExternalControl<K>`",
         "`MessageSpec`",

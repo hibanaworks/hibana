@@ -74,7 +74,7 @@ use crate::{
     transport::{
         Transport, TransportMetrics,
         trace::TapFrameMeta,
-        wire::{FrameFlags, WireEncode},
+        wire::{FrameFlags, Payload, WireEncode},
     },
 };
 
@@ -214,7 +214,7 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: BindingSlot + 'r,
 {
     CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_label_meta(
         &endpoint.cursor,
@@ -423,7 +423,7 @@ pub struct CursorEndpoint<
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: BindingSlot + 'r,
 {
     /// Multi-lane port array. Each active lane has its own port.
     /// For single-lane programs, only `ports[0]` is used.
@@ -460,7 +460,7 @@ pub struct RouteBranch<
     E: EpochTable,
     const MAX_RV: usize,
     Mint,
-    B: BindingSlot,
+    B: BindingSlot + 'r,
 > where
     U: LabelUniverse,
     C: crate::runtime::config::Clock,
@@ -471,8 +471,37 @@ pub struct RouteBranch<
     pub(super) transport_payload_len: usize,
     pub(super) transport_payload_lane: u8,
     pub(super) binding_channel: Option<crate::binding::Channel>,
+    pub(super) staged_payload: Option<StagedPayload<'r>>,
     pub(super) branch_meta: BranchMeta,
     pub(super) _cfg: core::marker::PhantomData<fn() -> (&'r T, U, C, E, Mint, B)>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum StagedPayload<'a> {
+    Transport {
+        lane: u8,
+        payload: Payload<'a>,
+    },
+    Binding {
+        lane: u8,
+        payload: Payload<'a>,
+    },
+}
+
+impl<'a> StagedPayload<'a> {
+    #[inline]
+    pub(super) const fn lane(self) -> u8 {
+        match self {
+            Self::Transport { lane, .. } | Self::Binding { lane, .. } => lane,
+        }
+    }
+
+    #[inline]
+    pub(super) const fn payload(self) -> Payload<'a> {
+        match self {
+            Self::Transport { payload, .. } | Self::Binding { payload, .. } => payload,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -501,7 +530,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: BindingSlot + 'r,
 {
     #[inline]
     fn clone(&self) -> Self {
@@ -511,6 +540,7 @@ where
             transport_payload_len: self.transport_payload_len,
             transport_payload_lane: self.transport_payload_lane,
             binding_channel: self.binding_channel,
+            staged_payload: self.staged_payload,
             branch_meta: self.branch_meta,
             _cfg: core::marker::PhantomData,
         }
@@ -525,7 +555,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: BindingSlot + 'r,
 {
     #[inline]
     pub(super) fn matches_send_meta(&self, meta: SendMeta) -> bool {
@@ -823,7 +853,7 @@ where
     C: crate::runtime::config::Clock + 'r,
     E: EpochTable + 'r,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: BindingSlot + 'r,
 {
     let header_bytes =
         core::mem::size_of::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>();
@@ -890,7 +920,7 @@ where
     }
 
     #[inline]
-    pub(super) fn take_pending_branch_preview(
+    pub(crate) fn take_pending_branch_preview(
         &mut self,
     ) -> Option<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
         self.pending_branch_preview.take()
@@ -4638,16 +4668,18 @@ where
         &mut self,
         logical_lane: u8,
         expected_label: u8,
-        buf: &mut [u8],
-    ) -> RecvResult<Option<usize>> {
+        scratch_ptr: *mut [u8],
+    ) -> RecvResult<Option<Payload<'r>>> {
         let lane_idx = logical_lane as usize;
         if let Some(classification) = self.take_matching_binding_for_lane(lane_idx, expected_label)
         {
-            let n = self
-                .binding
-                .on_recv(classification.channel, buf)
-                .map_err(RecvError::Binding)?;
-            return Ok(Some(n));
+            let payload = lane_port::recv_from_binding(
+                core::ptr::from_mut(&mut self.binding),
+                classification.channel,
+                scratch_ptr,
+            )
+            .map_err(RecvError::Binding)?;
+            return Ok(Some(payload));
         }
         Ok(None)
     }

@@ -24,10 +24,6 @@ type EndpointBinding<'r> = BindingHandle<'r>;
 type EndpointCfg<'r, K, Mint> = carrier::EndpointCfg<K, Mint, EndpointBinding<'r>>;
 type KernelEndpoint<'r, const ROLE: u8, K, Mint> =
     carrier::KernelCursorEndpoint<'r, ROLE, K, EpochTbl, Mint, EndpointBinding<'r>>;
-type KernelRouteBranch<'r, const ROLE: u8, K, Mint> =
-    carrier::KernelRouteBranch<'r, ROLE, K, EpochTbl, Mint, EndpointBinding<'r>>;
-type RouteBranchStash<'r, const ROLE: u8, K, Mint> =
-    unsafe fn(*mut KernelEndpoint<'r, ROLE, K, Mint>, KernelRouteBranch<'r, ROLE, K, Mint>);
 
 struct EndpointInner<'r, const ROLE: u8, K, Mint>
 where
@@ -56,9 +52,8 @@ where
     K: carrier::SessionKitFamily + 'r,
     Mint: MintConfigMarker,
 {
-    branch: Option<KernelRouteBranch<'r, ROLE, K, Mint>>,
+    label: u8,
     endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>,
-    stash: RouteBranchStash<'r, ROLE, K, Mint>,
     _borrow: core::marker::PhantomData<&'e mut EndpointCfg<'r, K, Mint>>,
     _local_only: crate::local::LocalOnly,
 }
@@ -101,13 +96,11 @@ where
     #[inline]
     pub(crate) fn from_parts(
         endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>,
-        branch: KernelRouteBranch<'r, ROLE, K, Mint>,
-        stash: RouteBranchStash<'r, ROLE, K, Mint>,
+        label: u8,
     ) -> Self {
         Self {
-            branch: Some(branch),
+            label,
             endpoint,
-            stash,
             _borrow: core::marker::PhantomData,
             _local_only: crate::local::LocalOnly::new(),
         }
@@ -136,26 +129,6 @@ where
     Mint: MintConfigMarker,
 {
     #[inline]
-    unsafe fn stash_route_branch_preview(
-        endpoint: *mut KernelEndpoint<
-            'r,
-            ROLE,
-            crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>,
-            Mint,
-        >,
-        branch: KernelRouteBranch<
-            'r,
-            ROLE,
-            crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>,
-            Mint,
-        >,
-    ) {
-        unsafe {
-            (&mut *endpoint).stash_pending_branch_preview(branch);
-        }
-    }
-
-    #[inline]
     pub fn flow<'e, M>(
         &'e mut self,
     ) -> SendResult<
@@ -173,10 +146,14 @@ where
     }
 
     #[inline]
-    pub fn recv<M>(&mut self) -> impl core::future::Future<Output = RecvResult<M::Payload>> + '_
+    pub fn recv<M>(
+        &mut self,
+    ) -> impl core::future::Future<
+        Output = RecvResult<<<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'_>>,
+    > + '_
     where
         M: crate::global::MessageSpec,
-        M::Payload: crate::transport::wire::WireDecodeOwned,
+        M::Payload: crate::transport::wire::WirePayload,
     {
         unsafe { (&mut *self.inner.endpoint).recv_direct::<M>() }
     }
@@ -191,10 +168,13 @@ where
     > + 'e {
         async move {
             let branch = unsafe { (&mut *self.inner.endpoint).offer().await? };
+            let label = branch.label();
+            unsafe {
+                (&mut *self.inner.endpoint).stash_pending_branch_preview(branch);
+            }
             Ok(RouteBranch::from_parts(
                 self.inner.endpoint,
-                branch,
-                Self::stash_route_branch_preview,
+                label,
             ))
         }
     }
@@ -211,45 +191,37 @@ where
 {
     #[inline]
     pub fn label(&self) -> u8 {
-        self.branch
-            .as_ref()
-            .expect("route branch preview must stay present until consumed")
-            .label()
+        self.label
     }
 
     #[inline]
-    pub fn decode<M>(mut self) -> impl core::future::Future<Output = RecvResult<M::Payload>> + 'e
+    pub fn decode<M>(
+        self,
+    ) -> impl core::future::Future<
+        Output = RecvResult<<<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>>,
+    > + 'e
     where
         M: crate::global::MessageSpec,
-        M::Payload: crate::transport::wire::WireDecodeOwned,
+        M::Payload: crate::transport::wire::WirePayload,
     {
         async move {
-            let payload = unsafe {
-                (&mut *self.endpoint)
-                    .decode_branch::<M>(
-                        self.branch
-                            .as_mut()
-                            .expect("route branch preview must stay present until consumed"),
-                    )
+            let endpoint = self.endpoint;
+            let mut branch = unsafe { (&mut *endpoint).take_pending_branch_preview() }
+                .expect("route branch preview must stay present until consumed");
+            let payload = match unsafe {
+                (&mut *endpoint)
+                    .decode_branch_ptr::<M>(core::ptr::from_mut(&mut branch))
                     .await
-            }?;
-            self.branch = None;
+            } {
+                Ok(payload) => payload,
+                Err(err) => {
+                    unsafe {
+                        (&mut *endpoint).stash_pending_branch_preview(branch);
+                    }
+                    return Err(err);
+                }
+            };
             Ok(payload)
-        }
-    }
-}
-
-impl<'e, 'r, const ROLE: u8, K, Mint> Drop for RouteBranch<'e, 'r, ROLE, K, Mint>
-where
-    K: carrier::SessionKitFamily + 'r,
-    Mint: MintConfigMarker,
-{
-    fn drop(&mut self) {
-        let Some(branch) = self.branch.take() else {
-            return;
-        };
-        unsafe {
-            (self.stash)(self.endpoint, branch);
         }
     }
 }

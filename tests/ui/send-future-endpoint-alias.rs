@@ -3,7 +3,7 @@ use hibana::substrate::{
     SessionKit, Transport,
     cap::advanced::MintConfigMarker,
     runtime::{Clock, LabelUniverse},
-    wire::{CodecError, WireEncode},
+    wire::{CodecError, WireDecode, WireEncode},
 };
 
 struct Payload(u8);
@@ -19,6 +19,15 @@ impl WireEncode for Payload {
         }
         out[0] = self.0;
         Ok(1)
+    }
+}
+
+impl<'a> WireDecode<'a> for Payload {
+    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
+        if input.is_empty() {
+            return Err(CodecError::Truncated);
+        }
+        Ok(Self(input[0]))
     }
 }
 

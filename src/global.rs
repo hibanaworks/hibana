@@ -208,6 +208,8 @@ pub trait MessageSpec {
     const LABEL: u8;
     /// Payload type transmitted on the wire.
     type Payload;
+    /// Decoded payload view returned by `recv()` / `decode()`.
+    type Decoded<'a>;
     /// Control payload handling strategy for this message.
     type ControlKind: ControlPayloadKind;
 }
@@ -215,10 +217,12 @@ pub trait MessageSpec {
 impl<L, P, C> MessageSpec for Message<L, P, C>
 where
     L: LabelTag,
+    P: crate::transport::wire::WirePayload,
     C: ControlPayloadKind,
 {
     const LABEL: u8 = L::VALUE;
     type Payload = P;
+    type Decoded<'a> = <P as crate::transport::wire::WirePayload>::Decoded<'a>;
     type ControlKind = C;
 }
 
@@ -232,6 +236,7 @@ impl<L, P, C> ControlMessage for Message<L, P, C>
 where
     L: LabelTag,
     C: ControlMessageKind,
+    P: crate::transport::wire::WirePayload,
     P: ControlPayload,
     <C as ControlPayloadKind>::ResourceKind: ControlResourceKind,
 {
@@ -671,6 +676,7 @@ pub trait MessageControlSpec: MessageSpec {
 impl<L, P> MessageControlSpec for Message<L, P, NoControl>
 where
     L: LabelTag,
+    P: crate::transport::wire::WirePayload,
 {
     const IS_CONTROL: bool = false;
     const CONTROL_SPEC: ControlLabelSpec = ControlLabelSpec::new(

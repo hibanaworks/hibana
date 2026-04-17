@@ -232,11 +232,17 @@ pub trait BindingSlot {
     /// `RouteDecisionToken(Ack|Resolver|Poll)`.
     fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IncomingClassification>;
 
-    /// Read data from the specified channel into the buffer.
+    /// Read data from the specified channel and return a borrowed payload view.
     ///
     /// Called after `poll_incoming_for_lane()` has provided the channel and the
-    /// route arm has been determined.
-    fn on_recv(&mut self, channel: Channel, buf: &mut [u8]) -> Result<usize, TransportOpsError>;
+    /// route arm has been determined. Implementations may either fill `scratch`
+    /// and return a view into it, or return a view borrowed from binding-owned
+    /// storage.
+    fn on_recv<'a>(
+        &'a mut self,
+        channel: Channel,
+        scratch: &'a mut [u8],
+    ) -> Result<crate::transport::wire::Payload<'a>, TransportOpsError>;
 
     /// Returns a policy signals provider for slot-scoped policy input.
     ///
@@ -294,10 +300,14 @@ impl BindingSlot for BindingHandle<'_> {
     }
 
     #[inline(always)]
-    fn on_recv(&mut self, channel: Channel, buf: &mut [u8]) -> Result<usize, TransportOpsError> {
+    fn on_recv<'a>(
+        &'a mut self,
+        channel: Channel,
+        scratch: &'a mut [u8],
+    ) -> Result<crate::transport::wire::Payload<'a>, TransportOpsError> {
         match self {
-            Self::None(binding) => binding.on_recv(channel, buf),
-            Self::Borrowed(binding) => binding.on_recv(channel, buf),
+            Self::None(binding) => binding.on_recv(channel, scratch),
+            Self::Borrowed(binding) => binding.on_recv(channel, scratch),
         }
     }
 
@@ -333,8 +343,12 @@ impl BindingSlot for NoBinding {
     }
 
     #[inline(always)]
-    fn on_recv(&mut self, _channel: Channel, _buf: &mut [u8]) -> Result<usize, TransportOpsError> {
-        Ok(0)
+    fn on_recv<'a>(
+        &'a mut self,
+        _channel: Channel,
+        _scratch: &'a mut [u8],
+    ) -> Result<crate::transport::wire::Payload<'a>, TransportOpsError> {
+        Ok(crate::transport::wire::Payload::new(&[]))
     }
 
     #[inline(always)]

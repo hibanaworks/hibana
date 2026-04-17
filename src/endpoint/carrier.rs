@@ -55,8 +55,6 @@ pub(crate) trait SessionKitFamily {
 
 pub(crate) type KernelCursorEndpoint<'r, const ROLE: u8, K, E, Mint, B> =
     <K as SessionKitFamily>::KernelCursorEndpoint<'r, ROLE, E, Mint, B>;
-pub(crate) type KernelRouteBranch<'r, const ROLE: u8, K, E, Mint, B> =
-    <K as SessionKitFamily>::KernelRouteBranch<'r, ROLE, E, Mint, B>;
 
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionKitFamily
     for crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>

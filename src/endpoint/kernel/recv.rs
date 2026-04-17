@@ -13,13 +13,20 @@ use crate::{
     global::typestate::{JumpReason, PassiveArmNavigation, state_index_to_usize},
     observe::ids,
     runtime::{config::Clock, consts::LabelUniverse},
-    transport::{Transport, trace::TapFrameMeta, wire::FrameFlags, wire::WireDecodeOwned},
+    transport::{
+        Transport,
+        trace::TapFrameMeta,
+        wire::{FrameFlags, Payload, WirePayload},
+    },
 };
 
-enum RecvPayloadSource {
+enum RecvPayloadSource<'a> {
     Empty,
-    Scratch(usize),
+    Borrowed(Payload<'a>),
 }
+
+type DecodedPayload<'a, M> =
+    <<M as MessageSpec>::Payload as WirePayload>::Decoded<'a>;
 
 #[derive(Clone, Copy)]
 struct RecvDescriptor {
@@ -38,20 +45,8 @@ where
     C: Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: BindingSlot + 'r,
 {
-    /// Receive a payload of type `M` according to the current typestate step.
-    pub fn recv<M>(mut self) -> impl core::future::Future<Output = RecvResult<(Self, <M as MessageSpec>::Payload)>>
-    where
-        M: MessageSpec,
-        M::Payload: WireDecodeOwned,
-    {
-        async move {
-            let payload = self.recv_direct::<M>().await?;
-            Ok((self, payload))
-        }
-    }
-
     fn prepare_recv_descriptor(&mut self, target_label: u8) -> RecvResult<RecvDescriptor> {
         self.try_select_lane_for_label(target_label);
 
@@ -162,69 +157,65 @@ where
         desc: RecvDescriptor,
         pending_recv: &mut lane_port::PendingRecv<'r, T>,
         cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<RecvPayloadSource>>
+    ) -> Poll<RecvResult<RecvPayloadSource<'r>>>
     where
         M: MessageSpec,
-        M::Payload: WireDecodeOwned,
+        M::Payload: WirePayload,
     {
-        if let Some(n) = {
+        if let Some(payload) = {
             let scratch_ptr = {
                 let port = self.port_for_lane(desc.lane_idx);
                 lane_port::scratch_ptr(port)
             };
-            lane_port::with_scratch_ptr(scratch_ptr, |scratch| {
-                self.try_recv_from_binding(desc.meta.lane, desc.target_label, scratch)
-            })
+            self.try_recv_from_binding(desc.meta.lane, desc.target_label, scratch_ptr)
         }?
         {
-            return Poll::Ready(Ok(RecvPayloadSource::Scratch(n)));
+            return Poll::Ready(Ok(RecvPayloadSource::Borrowed(payload)));
         }
 
         loop {
-            let transport_payload_len = {
+            let payload = {
                 let port = self.port_for_lane(desc.lane_idx);
-                let payload = match lane_port::poll_recv(pending_recv, port, cx) {
+                match lane_port::poll_recv(pending_recv, port, cx) {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(Ok(payload)) => payload,
                     Poll::Ready(Err(err)) => return Poll::Ready(Err(RecvError::Transport(err))),
-                };
-                lane_port::copy_payload_into_scratch(port, &payload)
-                    .map_err(|_| RecvError::PhaseInvariant)?
+                }
             };
 
-            if let Some(n) = {
+            if let Some(payload) = {
                 let scratch_ptr = {
                     let port = self.port_for_lane(desc.lane_idx);
                     lane_port::scratch_ptr(port)
                 };
-                lane_port::with_scratch_ptr(scratch_ptr, |scratch| {
-                    self.try_recv_from_binding(desc.meta.lane, desc.target_label, scratch)
-                })
+                self.try_recv_from_binding(desc.meta.lane, desc.target_label, scratch_ptr)
             }?
             {
-                return Poll::Ready(Ok(RecvPayloadSource::Scratch(n)));
+                return Poll::Ready(Ok(RecvPayloadSource::Borrowed(payload)));
             }
 
-            if transport_payload_len == 0 {
+            if payload.as_bytes().is_empty() {
                 let binding_active = self.binding.policy_signals_provider().is_some();
-                if !binding_active || M::Payload::decode_owned(&[]).is_ok() {
+                if !binding_active
+                    || M::Payload::decode_payload(Payload::new(&[])).is_ok()
+                {
                     return Poll::Ready(Ok(RecvPayloadSource::Empty));
                 }
                 continue;
             }
 
-            return Poll::Ready(Ok(RecvPayloadSource::Scratch(transport_payload_len)));
+            return Poll::Ready(Ok(RecvPayloadSource::Borrowed(payload)));
         }
     }
 
-    fn finish_recv_payload<M>(
+    fn finish_recv_payload<'a, M>(
         &mut self,
         desc: RecvDescriptor,
-        payload_source: RecvPayloadSource,
-    ) -> RecvResult<<M as MessageSpec>::Payload>
+        payload_source: RecvPayloadSource<'r>,
+    ) -> RecvResult<DecodedPayload<'a, M>>
     where
         M: MessageSpec,
-        M::Payload: WireDecodeOwned,
+        M::Payload: WirePayload,
     {
         let meta = desc.meta;
         let policy_action = self.eval_endpoint_policy(
@@ -246,15 +237,6 @@ where
 
         let logical_meta =
             TapFrameMeta::new(desc.sid_raw, desc.lane_wire, ROLE, meta.label, FrameFlags::empty());
-        let payload = match payload_source {
-            RecvPayloadSource::Empty => M::Payload::decode_owned(&[]),
-            RecvPayloadSource::Scratch(len) => {
-                let port = self.port_for_lane(desc.lane_idx);
-                M::Payload::decode_owned(&lane_port::scratch(port)[..len])
-            }
-        }
-        .map_err(RecvError::Codec)?;
-
         let scope_trace = self.scope_trace(meta.scope);
         let event_id = if meta.is_control {
             ids::ENDPOINT_CONTROL
@@ -271,15 +253,27 @@ where
         self.maybe_skip_remaining_route_arm(meta.scope, meta.lane, meta.route_arm, meta.eff_index);
         self.settle_scope_after_action(meta.scope, meta.route_arm, Some(meta.eff_index), meta.lane);
         self.maybe_advance_phase();
-        Ok(payload)
+        match payload_source {
+            RecvPayloadSource::Empty => {
+                <<M as MessageSpec>::Payload as WirePayload>::decode_payload(Payload::new(&[]))
+                    .map_err(RecvError::Codec)
+            }
+            RecvPayloadSource::Borrowed(payload) => {
+                let payload_view: Payload<'a> = lane_port::shrink_payload(payload);
+                <<M as MessageSpec>::Payload as WirePayload>::decode_payload(
+                    payload_view,
+                )
+                .map_err(RecvError::Codec)
+            }
+        }
     }
 
     pub fn recv_direct<M>(
         &mut self,
-    ) -> impl core::future::Future<Output = RecvResult<<M as MessageSpec>::Payload>> + '_
+    ) -> impl core::future::Future<Output = RecvResult<DecodedPayload<'_, M>>> + '_
     where
         M: MessageSpec,
-        M::Payload: WireDecodeOwned,
+        M::Payload: WirePayload,
     {
         let mut desc = None;
         let mut pending_recv = lane_port::PendingRecv::new();

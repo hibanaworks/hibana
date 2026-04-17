@@ -40,6 +40,17 @@ pub trait WireDecodeOwned: Sized {
     fn decode_owned(input: &[u8]) -> Result<Self, CodecError>;
 }
 
+/// Payload owner contract for app-facing receive/decode paths.
+///
+/// `Payload` remains the send-side owner that `flow().send()` accepts by
+/// reference. `Decoded<'a>` describes what `recv()` / `decode()` yield when the
+/// wire bytes are borrowed for the duration of the endpoint borrow.
+pub trait WirePayload: WireEncode {
+    type Decoded<'a>;
+
+    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError>;
+}
+
 impl<T> WireDecodeOwned for T
 where
     for<'a> T: WireDecode<'a>,
@@ -47,6 +58,18 @@ where
     #[inline]
     fn decode_owned(input: &[u8]) -> Result<Self, CodecError> {
         <Self as WireDecode>::decode_from(input)
+    }
+}
+
+impl<T> WirePayload for T
+where
+    T: WireEncode + WireDecodeOwned,
+{
+    type Decoded<'a> = T;
+
+    #[inline]
+    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
+        Self::decode_owned(input.as_bytes())
     }
 }
 
@@ -298,6 +321,7 @@ impl fmt::Debug for FrameFlags {
 
 /// Zero-copy view over an encoded payload slice (application data remains
 /// opaque to Hibana; transports simply forward the bytes handed to them).
+#[derive(Clone, Copy)]
 pub struct Payload<'a> {
     data: &'a [u8],
 }

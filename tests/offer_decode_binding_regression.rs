@@ -308,10 +308,16 @@ impl BindingSlot for FlowBinding {
             .with_mut(|state| state.take_incoming_for_lane(self.role, logical_lane))
     }
 
-    fn on_recv(&mut self, channel: Channel, buf: &mut [u8]) -> Result<usize, TransportOpsError> {
-        self.shared
+    fn on_recv<'a>(
+        &'a mut self,
+        channel: Channel,
+        buf: &'a mut [u8],
+    ) -> Result<hibana::substrate::wire::Payload<'a>, TransportOpsError> {
+        let len = self
+            .shared
             .state
-            .with_mut(|state| state.take_payload(channel.raw(), buf))
+            .with_mut(|state| state.take_payload(channel.raw(), buf))?;
+        Ok(hibana::substrate::wire::Payload::new(&buf[..len]))
     }
 
     fn policy_signals_provider(&self) -> Option<&dyn PolicySignalsProvider> {

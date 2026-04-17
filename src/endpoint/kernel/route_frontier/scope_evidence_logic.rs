@@ -8,7 +8,7 @@ where
     C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
-    B: BindingSlot,
+    B: BindingSlot + 'r,
 {
     #[inline]
     pub(in crate::endpoint::kernel) fn bump_scope_evidence_generation(&mut self, slot: usize) {

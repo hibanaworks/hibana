@@ -189,8 +189,12 @@ impl BindingSlot for PolicyInputBinding {
         None
     }
 
-    fn on_recv(&mut self, _channel: Channel, _buf: &mut [u8]) -> Result<usize, TransportOpsError> {
-        Ok(0)
+    fn on_recv<'a>(
+        &'a mut self,
+        _channel: Channel,
+        _buf: &'a mut [u8],
+    ) -> Result<hibana::substrate::wire::Payload<'a>, TransportOpsError> {
+        Ok(hibana::substrate::wire::Payload::new(&[]))
     }
 
     fn policy_signals_provider(&self) -> Option<&dyn PolicySignalsProvider> {

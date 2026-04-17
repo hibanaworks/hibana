@@ -11,5 +11,7 @@ fn g_compile_fails() {
 
     t.compile_fail("tests/ui/control-cancel-payload.rs");
     t.compile_fail("tests/ui/control-checkpoint-payload.rs");
+    t.compile_fail("tests/ui/decode-borrow-endpoint-alias.rs");
+    t.compile_fail("tests/ui/recv-borrow-endpoint-alias.rs");
     t.compile_fail("tests/ui/send-future-endpoint-alias.rs");
 }

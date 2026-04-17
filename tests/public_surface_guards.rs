@@ -183,13 +183,17 @@ fn endpoint_internal_carrier_stays_crate_private() {
     for required in [
         "carrier::EndpointCfg",
         "carrier::KernelCursorEndpoint",
-        "carrier::KernelRouteBranch",
     ] {
         assert!(
             endpoint_src.contains(required) || flow_src.contains(required),
             "endpoint facade must route internal cursor aliases through carrier owner: {required}"
         );
     }
+    assert!(
+        carrier_src.contains("type KernelRouteBranch<'r, const ROLE: u8, E, Mint, B>")
+            && !endpoint_src.contains("carrier::KernelRouteBranch"),
+        "route preview owner must stay carrier-internal while public RouteBranch stays a thin token"
+    );
     assert!(
         substrate_src.contains("type KernelSessionCluster<'cfg, T, U, C, const MAX_RV: usize> =")
             || runtime_mgmt_src
@@ -517,7 +521,7 @@ fn offer_kernel_stays_three_stage_and_fail_closed() {
     let prepare_send_control_body = impl_body(cursor_src, "fn prepare_send_control(");
     let begin_send_transport_body = impl_body(cursor_src, "fn begin_send_transport<'a>(");
     let poll_send_transport_body = impl_body(cursor_src, "fn poll_send_transport(");
-    let decode_branch_body = impl_body(decode_src, "pub fn decode_branch<'a, M>(");
+    let decode_branch_body = impl_body(decode_src, "pub(crate) fn decode_branch_ptr<'a, M>(");
     let apply_branch_recv_policy_body = impl_body(decode_src, "fn apply_branch_recv_policy(");
 
     assert!(
@@ -2543,7 +2547,7 @@ fn binding_slot_keeps_lane_identity_canonical() {
     );
     assert!(
         !binding_ws.contains(
-            "pub unsafe trait BindingSlot { fn on_send_with_meta(&mut self, meta: SendMetadata, payload: &[u8]) -> Result<SendDisposition, TransportOpsError>; fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IncomingClassification>; fn on_recv(&mut self, channel: Channel, buf: &mut [u8]) -> Result<usize, TransportOpsError>; fn policy_signals_provider(&self) -> Option<&dyn PolicySignalsProvider> { None } }"
+            "pub unsafe trait BindingSlot { fn on_send_with_meta(&mut self, meta: SendMetadata, payload: &[u8]) -> Result<SendDisposition, TransportOpsError>; fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IncomingClassification>; fn on_recv<'a>(&'a mut self, channel: Channel, scratch: &'a mut [u8]) -> Result<crate::transport::wire::Payload<'a>, TransportOpsError>; fn policy_signals_provider(&self) -> Option<&dyn PolicySignalsProvider> { None } }"
         ),
         "BindingSlot must not keep a default zero-signals fallback hook"
     );

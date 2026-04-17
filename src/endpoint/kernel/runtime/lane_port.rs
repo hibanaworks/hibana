@@ -3,6 +3,7 @@
 use core::{pin::Pin, task::{Context, Poll}};
 
 use crate::{
+    binding::{BindingSlot, Channel, TransportOpsError},
     control::cap::mint::EpochTable,
     endpoint::SendError,
     rendezvous::port::Port,
@@ -130,21 +131,6 @@ where
 }
 
 #[inline]
-pub(super) fn with_scratch_ptr<R>(scratch_ptr: *mut [u8], f: impl FnOnce(&mut [u8]) -> R) -> R {
-    unsafe { f(&mut *scratch_ptr) }
-}
-
-#[inline]
-pub(super) fn scratch<'a, 'r, T, E>(port: &'a Port<'r, T, E>) -> &'a [u8]
-where
-    T: Transport + 'r,
-    E: EpochTable + 'r,
-    'r: 'a,
-{
-    unsafe { &*port.scratch_ptr() }
-}
-
-#[inline]
 pub(super) fn staged_payload<'a, 'r, T, E, R>(
     port: &'a Port<'r, T, E>,
     stage: impl FnOnce(&mut [u8]) -> Result<usize, R>,
@@ -160,22 +146,23 @@ where
 }
 
 #[inline]
-pub(super) fn copy_payload_into_scratch<'a, 'r, T, E>(
-    port: &'a Port<'r, T, E>,
-    payload: &Payload<'_>,
-) -> Result<usize, ()>
-where
-    T: Transport + 'r,
-    E: EpochTable + 'r,
-    'r: 'a,
-{
-    let bytes = payload.as_bytes();
-    let scratch = scratch_mut(port);
-    if bytes.len() > scratch.len() {
-        return Err(());
-    }
-    scratch[..bytes.len()].copy_from_slice(bytes);
-    Ok(bytes.len())
+pub(super) fn shrink_payload<'a>(payload: Payload<'_>) -> Payload<'a> {
+    let bytes = unsafe { &*(payload.as_bytes() as *const [u8]) };
+    Payload::new(bytes)
+}
+
+#[inline]
+pub(super) fn recv_from_binding<'r, B: BindingSlot + 'r>(
+    binding_ptr: *mut B,
+    channel: Channel,
+    scratch_ptr: *mut [u8],
+) -> Result<Payload<'r>, TransportOpsError> {
+    unsafe { (&mut *binding_ptr).on_recv(channel, &mut *scratch_ptr) }
+}
+
+#[inline]
+pub(super) fn deref_mut<'a, T>(ptr: *mut T) -> &'a mut T {
+    unsafe { &mut *ptr }
 }
 
 #[inline]

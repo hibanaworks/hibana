@@ -314,7 +314,7 @@ Everyday substrate owners:
 - `hibana::substrate::policy::{ContextId, ContextValue, DynamicResolution, PolicyAttrs, PolicySignals, PolicySignalsProvider, ResolverContext, ResolverError, ResolverRef}`
 - `hibana::substrate::policy::PolicySignalsProvider` is the canonical slot-scoped policy input owner
 - `hibana::substrate::cap::{CapShot, ControlResourceKind, GenericCapToken, Many, One, ResourceKind}`
-- `hibana::substrate::wire::{Payload, WireDecode, WireEncode}`
+- `hibana::substrate::wire::{Payload, WireDecode, WireEncode, WirePayload}`
 - `hibana::substrate::transport::{Outgoing, TransportError, TransportEvent, TransportEventKind, TransportSnapshot}`
 - `hibana::substrate::mgmt::{request_reply::PREFIX, observe_stream::PREFIX, tap::TapEvent}`
 
@@ -482,6 +482,7 @@ impl hibana::substrate::Transport for MyTransport {
 Transport rules:
 
 - `recv()` must yield borrowed payload views
+- `recv()` / `decode()` return the decoded view chosen by the payload owner
 - `requeue()` is how transport hands an unconsumed frame back
 - `drain_events()` feeds protocol-neutral transport observation
 - `recv_label_hint()` is a demux hint, not route authority
@@ -605,15 +606,15 @@ impl hibana::substrate::binding::BindingSlot for MyBinding {
         })
     }
 
-    fn on_recv(
-        &mut self,
+    fn on_recv<'a>(
+        &'a mut self,
         channel: hibana::substrate::binding::Channel,
-        buf: &mut [u8],
-    ) -> Result<usize, hibana::substrate::binding::TransportOpsError> {
+        scratch: &'a mut [u8],
+    ) -> Result<hibana::substrate::wire::Payload<'a>, hibana::substrate::binding::TransportOpsError> {
         let channel_value = channel;
         let _state = channel_value;
-        buf[..4].copy_from_slice(&[1, 2, 3, 4]);
-        Ok(4)
+        scratch[..4].copy_from_slice(&[1, 2, 3, 4]);
+        Ok(hibana::substrate::wire::Payload::new(&scratch[..4]))
     }
 
     fn policy_signals_provider(
@@ -627,7 +628,7 @@ impl hibana::substrate::binding::BindingSlot for MyBinding {
 Binding rules:
 
 - `poll_incoming_for_lane()` is lane-local demux only
-- `on_recv()` reads from the already selected channel
+- `on_recv()` reads from the already selected channel and returns a borrowed payload view
 - `policy_signals_provider()` is the only public input source for slot-scoped signals
 
 Supporting binding owners:
@@ -907,12 +908,13 @@ through localside send paths such as `flow().send()`.
 
 ## Wire and Transport Observation
 
-`hibana::substrate::wire::{Payload, WireDecode, WireEncode}` is the canonical
+`hibana::substrate::wire::{Payload, WireDecode, WireEncode, WirePayload}` is the canonical
 codec seam. `hibana::substrate::transport::{TransportEvent, TransportEventKind,
 TransportSnapshot}` is the canonical transport observation seam.
 
 If a payload type crosses the wire and is not already a codec type, implement
-`WireEncode` and `WireDecode` for it.
+`WireEncode` and either `WireDecode` (owned default path) or `WirePayload`
+when `recv()` / `decode()` should yield a borrowed payload view.
 
 Transport telemetry is surfaced two ways:
 

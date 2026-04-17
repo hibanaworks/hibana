@@ -241,7 +241,7 @@ fn frontier_visit_slots<const N: usize>() -> [ScopeId; N] {
 const fn offer_endpoint_slot_bytes<const ROLE: u8, T, B>(lane_capacity: usize) -> usize
 where
     T: Transport + 'static,
-    B: crate::binding::BindingSlot,
+    B: crate::binding::BindingSlot + 'static,
 {
     let header_bytes = size_of::<
         CursorEndpoint<
@@ -1083,8 +1083,12 @@ impl BindingSlot for LaneAwareTestBinding {
         self.incoming[lane_idx].pop_front()
     }
 
-    fn on_recv(&mut self, _channel: Channel, _buf: &mut [u8]) -> Result<usize, TransportOpsError> {
-        Ok(0)
+    fn on_recv<'a>(
+        &'a mut self,
+        _channel: Channel,
+        _buf: &'a mut [u8],
+    ) -> Result<Payload<'a>, TransportOpsError> {
+        Ok(Payload::new(&[]))
     }
 
     fn policy_signals_provider(
@@ -1100,14 +1104,18 @@ impl BindingSlot for TestBinding {
         self.incoming.pop_front()
     }
 
-    fn on_recv(&mut self, _channel: Channel, buf: &mut [u8]) -> Result<usize, TransportOpsError> {
+    fn on_recv<'a>(
+        &'a mut self,
+        _channel: Channel,
+        buf: &'a mut [u8],
+    ) -> Result<Payload<'a>, TransportOpsError> {
         let Some(payload) = self.recv_payloads.pop_front() else {
-            return Ok(0);
+            return Ok(Payload::new(&[]));
         };
         let payload = payload.as_slice();
         let len = core::cmp::min(buf.len(), payload.len());
         buf[..len].copy_from_slice(&payload[..len]);
-        Ok(len)
+        Ok(Payload::new(&buf[..len]))
     }
 
     fn policy_signals_provider(
@@ -1407,14 +1415,18 @@ impl BindingSlot for DeferredIngressBinding {
         Some(classification)
     }
 
-    fn on_recv(&mut self, _channel: Channel, buf: &mut [u8]) -> Result<usize, TransportOpsError> {
+    fn on_recv<'a>(
+        &'a mut self,
+        _channel: Channel,
+        buf: &'a mut [u8],
+    ) -> Result<Payload<'a>, TransportOpsError> {
         let Some(payload) = self.state.pop_recv_payload() else {
-            return Ok(0);
+            return Ok(Payload::new(&[]));
         };
         let payload = payload.as_slice();
         let len = core::cmp::min(buf.len(), payload.len());
         buf[..len].copy_from_slice(&payload[..len]);
-        Ok(len)
+        Ok(Payload::new(&buf[..len]))
     }
 
     fn policy_signals_provider(
@@ -8283,6 +8295,7 @@ fn stashed_send_branch_preview_commits_ack_route_bookkeeping_on_flow_send() {
                         transport_payload_len: 0,
                         transport_payload_lane: meta.lane,
                         binding_channel: None,
+                        staged_payload: None,
                         branch_meta: BranchMeta {
                             scope_id: meta.scope,
                             selected_arm: meta.route_arm.expect("selected arm for send preview"),

@@ -232,6 +232,7 @@ pub fn run<T, U, C, const MAX_RV: usize>(
     run_suffix(controller, worker);
 }
 
+#[inline(never)]
 fn run_prefix<T, U, C, const MAX_RV: usize>(
     controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
     worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
@@ -382,7 +383,22 @@ fn run_prefix<T, U, C, const MAX_RV: usize>(
     );
 }
 
+#[inline(never)]
 fn run_routes<T, U, C, const MAX_RV: usize>(
+    controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
+    worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
+) where
+    T: Transport + 'static,
+    U: LabelUniverse + 'static,
+    C: Clock + 'static,
+{
+    run_routes_block_1(controller, worker);
+    run_routes_block_2(controller, worker);
+    run_routes_block_3(controller, worker);
+}
+
+#[inline(never)]
+fn run_routes_block_1<T, U, C, const MAX_RV: usize>(
     controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
     worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
 ) where
@@ -417,7 +433,17 @@ fn run_routes<T, U, C, const MAX_RV: usize>(
         localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
         93
     );
+}
 
+#[inline(never)]
+fn run_routes_block_2<T, U, C, const MAX_RV: usize>(
+    controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
+    worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
+) where
+    T: Transport + 'static,
+    U: LabelUniverse + 'static,
+    C: Clock + 'static,
+{
     localside::controller_select::<{ LABEL_ROUTE_LEFT_CTRL }, RouteLeftKind, _, _, _, MAX_RV>(
         controller,
     );
@@ -431,7 +457,17 @@ fn run_routes<T, U, C, const MAX_RV: usize>(
         localside::controller_recv_u8::<{ LABEL_W2C_U8 }, _, _, _, MAX_RV>(controller),
         94
     );
+}
 
+#[inline(never)]
+fn run_routes_block_3<T, U, C, const MAX_RV: usize>(
+    controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
+    worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
+) where
+    T: Transport + 'static,
+    U: LabelUniverse + 'static,
+    C: Clock + 'static,
+{
     localside::controller_select::<{ LABEL_ROUTE_RIGHT_CTRL }, RouteRightKind, _, _, _, MAX_RV>(
         controller,
     );
@@ -447,6 +483,7 @@ fn run_routes<T, U, C, const MAX_RV: usize>(
     );
 }
 
+#[inline(never)]
 fn run_suffix<T, U, C, const MAX_RV: usize>(
     controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
     worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,

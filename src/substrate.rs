@@ -260,7 +260,7 @@ pub mod cap {
 
 /// Canonical wire codec surface.
 pub mod wire {
-    pub use crate::transport::wire::{CodecError, Payload, WireDecode, WireEncode};
+    pub use crate::transport::wire::{CodecError, Payload, WireDecode, WireEncode, WirePayload};
 }
 
 /// Canonical transport I/O surface plus observation/detail owners.

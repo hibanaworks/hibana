@@ -16,7 +16,7 @@ use hibana::{
         binding::NoBinding,
         mgmt::tap::TapEvent,
         runtime::{Config, CounterClock},
-        wire::{CodecError, WireEncode},
+        wire::{CodecError, WireDecode, WireEncode},
     },
 };
 use runtime_support::with_fixture;
@@ -38,6 +38,17 @@ impl WireEncode for InstallPayload {
         }
         buf[..4].copy_from_slice(&self.data);
         Ok(4)
+    }
+}
+
+impl<'a> WireDecode<'a> for InstallPayload {
+    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
+        if input.len() < 4 {
+            return Err(CodecError::Truncated);
+        }
+        let mut data = [0u8; 4];
+        data.copy_from_slice(&input[..4]);
+        Ok(Self { data })
     }
 }
 
