@@ -514,7 +514,7 @@ where
     ) -> RecvResult<()> {
         let lane = crate::control::types::Lane::new(branch.branch_meta.lane_wire as u32);
         let action = self.eval_endpoint_policy(
-            crate::epf::vm::Slot::EndpointRx,
+            crate::policy_runtime::PolicySlot::EndpointRx,
             crate::observe::ids::ENDPOINT_RECV,
             self.sid.raw(),
             Self::endpoint_policy_args(

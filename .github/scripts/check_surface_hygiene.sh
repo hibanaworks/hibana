@@ -54,12 +54,12 @@ check_absent_multiline() {
 check_absent \
   "mod[[:space:]]+sync;|crate::sync" \
   "runtime fake-sync shim reintroduced" \
-  src/lib.rs src/substrate.rs src/endpoint.rs src/rendezvous/core.rs src/epf/host.rs src/observe/core.rs
+  src/lib.rs src/substrate.rs src/endpoint.rs src/rendezvous/core.rs ../hibana-epf/src/host.rs src/observe/core.rs
 
 check_absent \
   "Atomic(Bool|U8|U16|U32|U64|Usize|Ptr)" \
   "production runtime atomics reintroduced" \
-  src/rendezvous/core.rs src/epf/host.rs src/observe/core.rs
+  src/rendezvous/core.rs ../hibana-epf/src/host.rs src/observe/core.rs
 
 check_absent \
   "Atomic(Bool|U8|U16|U32|U64|Usize|Ptr)" \
@@ -281,8 +281,7 @@ fi
 
 STACK_BACKED_TAP_STORAGE_SHIM="$(
   rg -n "Box::new\\(\\[TapEvent::default\\(\\);[[:space:]]*RING_EVENTS\\]\\)" \
-    tests/support/runtime.rs \
-    src/epf/policy_replay_tests.rs || true
+    tests/support/runtime.rs || true
 )"
 if [[ -n "${STACK_BACKED_TAP_STORAGE_SHIM}" ]]; then
   echo "${STACK_BACKED_TAP_STORAGE_SHIM}" >&2
@@ -468,19 +467,19 @@ check_absent "#\\[allow\\(clippy::empty_loop\\)\\]|#\\[allow\\(unused_variables\
   src tests
 check_absent "^type[[:space:]]+(Controller|Cluster)[[:space:]]*=[[:space:]]*g::Role<[0-9]+>;" \
   "role synonym alias shim" \
-  src/runtime/mgmt/request_reply.rs
+  ../hibana-mgmt/src/request_reply.rs
 check_absent "route_inferred|par_inferred" \
   "legacy inferred binary builder vocabulary" \
   src/global.rs \
   src/global/program.rs
 check_absent "^type[[:space:]]+(LoadBeginSteps|LoopContinueArmSteps|LoopRouteSteps|LoopSegmentSteps|AfterLoop|AfterCommit|FullProgramSteps|ControllerLocal|ClusterLocal|StreamLoopContinueSteps|StreamLoopBreakSteps|StreamLoopRouteSteps|StreamProgramSteps|StreamControllerLocal|StreamClusterLocal|LoadCommitSteps|LoadBeginTokenStep|LoadBeginMsgStep|LoopChunkStep|LoopBreakStep|CommandStep|StreamSubscribeStep|StreamBatchStep|StreamEndStep|StreamLoopContinueStep|StreamLoopBreakStep)[[:space:]]*=" \
   "runtime mgmt composition alias shim" \
-  src/runtime/mgmt/request_reply.rs \
-  src/runtime/mgmt/observe_stream.rs
+  ../hibana-mgmt/src/request_reply.rs \
+  ../hibana-mgmt/src/observe_stream.rs
 check_absent "^type[[:space:]]+(LoadBeginTokenMsg|LoadBeginMsg|LoadChunkMsg|LoadCommitTokenMsg|LoopContinueMsg|LoopBreakMsg|CommandMsg|SubscribeMsg|TapBatchMsg|StreamContinueMsg|StreamBreakMsg|StreamEndMsg)[[:space:]]*=" \
   "runtime mgmt message alias shim" \
-  src/runtime/mgmt/request_reply.rs \
-  src/runtime/mgmt/observe_stream.rs
+  ../hibana-mgmt/src/request_reply.rs \
+  ../hibana-mgmt/src/observe_stream.rs
 check_absent "^type[[:space:]]+(LoopContinueMsg|LoopBreakMsg)[[:space:]]*=" \
   "global const-dsl loop message alias shim" \
   src/global/const_dsl.rs
@@ -499,7 +498,7 @@ check_absent "LeaseObserve::new\\(observe.tap\\(\\) as \\*const _\\)|LeaseObserv
   src/control/lease/bundle.rs
 check_absent "^const[[:space:]]+SLOT_COUNT[[:space:]]*:[^=]*=[[:space:]]*RENDEZVOUS_SLOT_COUNT[[:space:]]*;" \
   "runtime mgmt slot-count synonym alias" \
-  src/runtime/mgmt.rs
+  ../hibana-mgmt/src/lib.rs
 check_absent "#\\[doc\\(hidden\\)\\]" \
   "doc-hidden escape hatch" \
   src examples
@@ -653,10 +652,30 @@ else
   fi
 fi
 
-if ! rg -n -U "async fn run\\([[:space:][:cntrl:][:print:]]*let selection = self\\.select_scope\\(\\)\\?[[:space:][:cntrl:]]*;[[:space:][:cntrl:][:print:]]*resolve_token\\([[:space:][:cntrl:][:print:]]*return self\\.materialize_branch\\(" \
-  src/endpoint/kernel/route_frontier/offer.rs >/dev/null; then
-  echo "offer kernel stage order regression" >&2
+POLL_RUN_BLOCK="$(
+  awk '
+    /fn poll_run\(/ { in_block=1 }
+    in_block {
+      print
+      if ($0 ~ /^    }$/) { exit }
+    }
+  ' src/endpoint/kernel/route_frontier/offer.rs
+)"
+if [[ -z "${POLL_RUN_BLOCK}" ]]; then
+  echo "poll_run block not found" >&2
   FAILED=1
+else
+  for required in \
+    "self.select_scope()" \
+    "OfferRunStage::ResolveToken(" \
+    "self.resolve_token(" \
+    "self.materialize_branch("
+  do
+    if ! printf '%s\n' "${POLL_RUN_BLOCK}" | rg -n -F "${required}" >/dev/null; then
+      echo "offer kernel stage owner missing: ${required}" >&2
+      FAILED=1
+    fi
+  done
 fi
 
 SELECT_SCOPE_BLOCK="$(
@@ -678,7 +697,7 @@ fi
 
 RESOLVE_TOKEN_BLOCK="$(
   awk '
-    /async fn resolve_token\(/ { in_block=1 }
+    /fn resolve_token\(/ { in_block=1 }
     in_block {
       print
       if ($0 ~ /^    }$/) { exit }

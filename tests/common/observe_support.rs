@@ -1,4 +1,4 @@
-use hibana::substrate::mgmt::tap::TapEvent;
+use hibana::substrate::tap::TapEvent;
 
 pub(crate) const LANE_ACQUIRE_ID: u16 = 0x0210;
 pub(crate) const LANE_RELEASE_ID: u16 = 0x0211;

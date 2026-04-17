@@ -16,7 +16,7 @@ use hibana::{
     substrate::{
         Lane, SessionId, SessionKit,
         binding::NoBinding,
-        mgmt::tap::TapEvent,
+        tap::TapEvent,
         runtime::{Config, DefaultLabelUniverse},
     },
 };

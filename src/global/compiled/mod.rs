@@ -34,8 +34,8 @@ pub(crate) use self::{
 #[cfg(test)]
 pub(crate) use self::{
     lease::{
-        role_lowering_scratch_storage_bytes, with_compiled_program, with_compiled_programs,
-        with_compiled_role_image, with_role_lowering_scratch_storage,
+        role_lowering_scratch_storage_bytes, with_compiled_program, with_compiled_role_image,
+        with_role_lowering_scratch_storage,
     },
-    program::{CompiledProgram, MAX_COMPILED_PROGRAM_RESOURCES},
+    program::CompiledProgram,
 };

@@ -65,7 +65,4 @@ pub(crate) const fn policy_trap() -> u16 {
 }
 
 #[cfg(test)]
-mod facet;
-
-#[cfg(test)]
 mod normalise;

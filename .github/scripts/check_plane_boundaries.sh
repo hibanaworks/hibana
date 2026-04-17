@@ -17,20 +17,20 @@ check_absent() {
 }
 
 # Mgmt ordinary-prefix redesign removed the direct runtime driver/automaton owners.
-check_absent "fn apply_seed\\b" "legacy apply_seed owner returned" src/runtime/mgmt.rs
+check_absent "fn apply_seed\\b" "legacy apply_seed owner returned" ../hibana-mgmt/src/lib.rs
 check_absent "cluster[[:space:][:cntrl:]]*\\.[[:space:][:cntrl:]]*drive_mgmt\\(" "legacy drive_mgmt hook returned" src
 check_absent "\\bmgmt_managers\\b" "cluster mgmt manager cache returned" src/control/cluster/core.rs
 check_absent "\\bon_decision_boundary\\(" "cluster decision-boundary mgmt hook returned" src/control/cluster/core.rs
 
 # Direct manager mutators must not survive in production mgmt helpers.
-check_absent "manager[[:space:][:cntrl:]]*\\.[[:space:][:cntrl:]]*(load_begin|load_chunk)\\(" "legacy mgmt load mutator owner returned" src/runtime/mgmt.rs src/runtime/mgmt/request_reply.rs src/runtime/mgmt/observe_stream.rs
+check_absent "manager[[:space:][:cntrl:]]*\\.[[:space:][:cntrl:]]*(load_begin|load_chunk)\\(" "legacy mgmt load mutator owner returned" ../hibana-mgmt/src/lib.rs ../hibana-mgmt/src/request_reply.rs ../hibana-mgmt/src/observe_stream.rs
 check_absent "manager[[:space:][:cntrl:]]*\\.[[:space:][:cntrl:]]*(load_commit|schedule_activate|on_decision_boundary|revert)\\(" "legacy rendezvous policy mutator owner returned" src/rendezvous/core.rs
 
 # Slot-bundle wrapper helpers were removed with the mgmt automaton path.
 check_absent "fn (load_commit_with|schedule_activate_with|on_decision_boundary_for_slot_with|revert_with)\\b" "legacy slot-bundle wrapper returned" src/rendezvous/core.rs
 
 # Runtime mgmt helper family must stay deleted.
-check_absent "fn (enter_controller|enter_cluster|enter_stream_controller|enter_stream_cluster|drive_controller|drive_cluster|drive_stream_cluster|drive_stream_controller)\\b" "legacy runtime mgmt helper returned" src/runtime/mgmt.rs src/runtime/mgmt/request_reply.rs src/runtime/mgmt/observe_stream.rs src/runtime/mgmt/test_support.rs
+check_absent "fn (enter_controller|enter_cluster|enter_stream_controller|enter_stream_cluster|drive_controller|drive_cluster|drive_stream_cluster|drive_stream_controller)\\b" "legacy runtime mgmt helper returned" ../hibana-mgmt/src/lib.rs ../hibana-mgmt/src/request_reply.rs ../hibana-mgmt/src/observe_stream.rs
 
 if [[ "${FAILED}" -ne 0 ]]; then
   exit 1

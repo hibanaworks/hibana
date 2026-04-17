@@ -24,27 +24,9 @@ pub const LABEL_COMMIT: u8 = 62;
 /// Reserved label used for typed rollback intents.
 pub const LABEL_ROLLBACK: u8 = 63;
 
-/// Management session label assignments (below control-plane range 48-63).
-/// - Replies: 30-34
-/// - Requests: 35-37, 40-45
-/// - Streaming observe: 38-39
-pub const LABEL_MGMT_REPLY_ERROR: u8 = 30;
-pub const LABEL_MGMT_REPLY_LOADED: u8 = 31;
-pub const LABEL_MGMT_REPLY_ACTIVATED: u8 = 32;
-pub const LABEL_MGMT_REPLY_REVERTED: u8 = 33;
-pub const LABEL_MGMT_REPLY_STATS: u8 = 34;
-pub const LABEL_MGMT_ACTIVATE: u8 = 35;
-pub const LABEL_MGMT_REVERT: u8 = 36;
-pub const LABEL_MGMT_STATS: u8 = 37;
-/// Streaming observe labels.
-pub const LABEL_OBSERVE_BATCH: u8 = 38; // Batch of TapEvents (up to 50)
-pub const LABEL_OBSERVE_STREAM_END: u8 = 39; // Reserved for EOS
+/// Reserved management route/load labels retained by core capability metadata.
 pub const LABEL_MGMT_LOAD_BEGIN: u8 = 40; // For GenericCapToken<LoadBeginKind>
-pub const LABEL_MGMT_LOAD_CHUNK: u8 = 42;
 pub const LABEL_MGMT_LOAD_COMMIT: u8 = 43; // For GenericCapToken<LoadCommitKind>
-pub const LABEL_MGMT_STAGE: u8 = 44;
-pub const LABEL_OBSERVE_SUBSCRIBE: u8 = 45;
-pub const LABEL_MGMT_LOAD_AND_ACTIVATE: u8 = 46;
 pub const LABEL_MGMT_ROUTE_LOAD: u8 = 64;
 pub const LABEL_MGMT_ROUTE_ACTIVATE: u8 = 65;
 pub const LABEL_MGMT_ROUTE_REVERT: u8 = 66;
@@ -58,7 +40,6 @@ pub const LABEL_MGMT_ROUTE_REPLY_REVERTED: u8 = 73;
 pub const LABEL_MGMT_ROUTE_REPLY_STATS: u8 = 74;
 pub const LABEL_MGMT_ROUTE_COMMAND_FAMILY: u8 = 75;
 pub const LABEL_MGMT_ROUTE_COMMAND_TAIL: u8 = 76;
-pub const LABEL_MGMT_LOAD_FINAL_CHUNK: u8 = 77;
 pub const LABEL_MGMT_ROUTE_REPLY_SUCCESS_FAMILY: u8 = 78;
 pub const LABEL_MGMT_ROUTE_REPLY_SUCCESS_TAIL: u8 = 79;
 pub const LABEL_MGMT_ROUTE_REPLY_SUCCESS_FINAL: u8 = 80;

@@ -90,8 +90,7 @@ check_absent_outside \
   "CompiledProgram::compile\\(" \
   "direct CompiledProgram::compile call used outside compiled owners or test-only fixtures" \
   "src/global/compiled/program.rs" \
-  "src/control/cluster/effects.rs" \
-  "src/runtime/mgmt/test_support.rs"
+  "src/control/cluster/effects.rs"
 
 check_absent_outside \
   "CompiledRole::compile\\(" \

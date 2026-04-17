@@ -360,18 +360,18 @@ impl BindingSlot for NoBinding {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::epf::vm::Slot;
+    use crate::policy_runtime::PolicySlot;
     use crate::transport::context::PolicySignals;
 
     #[test]
     fn no_binding_policy_signals_are_zero_for_all_slots() {
         let binding = NoBinding;
         for slot in [
-            Slot::Forward,
-            Slot::EndpointRx,
-            Slot::EndpointTx,
-            Slot::Rendezvous,
-            Slot::Route,
+            PolicySlot::Forward,
+            PolicySlot::EndpointRx,
+            PolicySlot::EndpointTx,
+            PolicySlot::Rendezvous,
+            PolicySlot::Route,
         ] {
             let signals = binding
                 .policy_signals_provider()

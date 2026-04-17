@@ -37,7 +37,6 @@ use crate::{
     },
     eff::EffIndex,
     endpoint::affine::LaneGuard,
-    epf::host::HostSlots,
     global::compiled::{
         CompiledProgramImage, CompiledRoleImage, LoweringSummary, ProgramStamp, RoleLoweringScratch,
     },
@@ -47,6 +46,7 @@ use crate::{
         events::{DelegBegin, DelegSplice, LaneRelease, RawEvent, RollbackOk},
         ids, policy_abort, policy_trap,
     },
+    policy_runtime::{self, AbortInfo, Action, HostSlots, PolicyCtx, PolicySlot},
     runtime::config::{Clock, Config, ConfigParts, CounterClock},
     runtime::consts::{DefaultLabelUniverse, LabelUniverse},
     transport::{Transport, TransportEventKind, TransportMetrics},
@@ -2012,81 +2012,42 @@ where
     }
 
     #[inline]
-    fn policy_digest(&self, slot: crate::epf::vm::Slot) -> u32 {
-        #[cfg(test)]
-        {
-            self.host_slots.active_digest(slot)
-        }
-        #[cfg(not(test))]
-        {
-            let _ = slot;
-            0
-        }
+    fn policy_digest(&self, slot: PolicySlot) -> u32 {
+        self.host_slots.active_digest(slot)
     }
 
     #[inline]
-    fn policy_mode(&self, slot: crate::epf::vm::Slot) -> crate::epf::PolicyMode {
-        #[cfg(test)]
-        {
-            self.host_slots.policy_mode(slot)
-        }
-        #[cfg(not(test))]
-        {
-            let _ = slot;
-            crate::epf::PolicyMode::Enforce
-        }
+    fn policy_mode(&self, slot: PolicySlot) -> policy_runtime::PolicyMode {
+        self.host_slots.policy_mode(slot)
     }
 
     #[inline]
-    fn last_policy_fuel_used(&self, slot: crate::epf::vm::Slot) -> u16 {
-        #[cfg(test)]
-        {
-            self.host_slots.last_fuel_used(slot)
-        }
-        #[cfg(not(test))]
-        {
-            let _ = slot;
-            0
-        }
+    fn last_policy_fuel_used(&self, slot: PolicySlot) -> u16 {
+        self.host_slots.last_fuel_used(slot)
     }
 
     #[inline]
     fn run_policy<F>(
         &self,
-        slot: crate::epf::vm::Slot,
+        slot: PolicySlot,
         event: &crate::observe::core::TapEvent,
         caps: CapsMask,
         session: Option<SessionId>,
         lane: Option<Lane>,
         configure: F,
-    ) -> crate::epf::Action
+    ) -> Action
     where
-        F: FnOnce(&mut crate::epf::vm::VmCtx<'_>),
+        F: FnOnce(&mut PolicyCtx<'_>),
     {
-        #[cfg(test)]
-        {
-            return crate::epf::run_with(
-                &self.host_slots,
-                slot,
-                event,
-                caps,
-                session,
-                lane,
-                configure,
-            );
+        let mut ctx = PolicyCtx::new(slot, event, caps);
+        if let Some(session) = session {
+            ctx.set_session(session);
         }
-        #[cfg(not(test))]
-        {
-            let mut ctx = crate::epf::vm::VmCtx::new(slot, event, caps);
-            if let Some(session) = session {
-                ctx.set_session(session);
-            }
-            if let Some(lane) = lane {
-                ctx.set_lane(lane);
-            }
-            configure(&mut ctx);
-            crate::epf::Action::Proceed
+        if let Some(lane) = lane {
+            ctx.set_lane(lane);
         }
+        configure(&mut ctx);
+        Action::Proceed
     }
 
     fn prepare_distributed_splice_operands(
@@ -2180,7 +2141,7 @@ where
 
     fn apply_policy_action(
         &self,
-        action: crate::epf::Action,
+        action: Action,
         sid: Option<SessionId>,
         lane: Option<Lane>,
     ) -> Result<(), CpError> {
@@ -2198,7 +2159,7 @@ where
 
     fn handle_policy_abort(
         &self,
-        info: crate::epf::AbortInfo,
+        info: AbortInfo,
         sid: Option<SessionId>,
         lane: Option<Lane>,
     ) {
@@ -4173,15 +4134,17 @@ where
         let _ = self.flush_transport_events();
         let transport_metrics = self.transport.metrics().snapshot();
         let policy_input =
-            crate::epf::slot_contract::slot_default_input(crate::epf::vm::Slot::Rendezvous);
-        let policy_digest = self.policy_digest(crate::epf::vm::Slot::Rendezvous);
-        let event_hash = crate::epf::hash_tap_event(&policy_event);
-        let signals_input_hash = crate::epf::hash_policy_input(policy_input);
-        let transport_snapshot_hash = crate::epf::hash_transport_snapshot(transport_metrics);
-        let replay_transport = crate::epf::replay_transport_inputs(transport_metrics);
-        let replay_transport_presence = crate::epf::replay_transport_presence(transport_metrics);
+            crate::policy_runtime::slot_default_input(crate::policy_runtime::PolicySlot::Rendezvous);
+        let policy_digest = self.policy_digest(crate::policy_runtime::PolicySlot::Rendezvous);
+        let event_hash = crate::policy_runtime::hash_tap_event(&policy_event);
+        let signals_input_hash = crate::policy_runtime::hash_policy_input(policy_input);
+        let transport_snapshot_hash = crate::policy_runtime::hash_transport_snapshot(transport_metrics);
+        let replay_transport = crate::policy_runtime::replay_transport_inputs(transport_metrics);
+        let replay_transport_presence = crate::policy_runtime::replay_transport_presence(transport_metrics);
         let mode_id =
-            crate::epf::policy_mode_tag(self.policy_mode(crate::epf::vm::Slot::Rendezvous));
+            crate::policy_runtime::policy_mode_tag(
+                self.policy_mode(crate::policy_runtime::PolicySlot::Rendezvous),
+            );
         self.emit_policy_event_with_arg2(
             ids::POLICY_AUDIT,
             lane_opt,
@@ -4194,7 +4157,9 @@ where
             lane_opt,
             0,
             transport_snapshot_hash,
-            ((crate::epf::slot_tag(crate::epf::vm::Slot::Rendezvous) as u32) << 24)
+            ((crate::policy_runtime::slot_tag(crate::policy_runtime::PolicySlot::Rendezvous)
+                as u32)
+                << 24)
                 | ((mode_id as u32) << 16),
         );
         self.emit_policy_event_with_arg2(
@@ -4240,7 +4205,7 @@ where
             0,
         );
         let action = self.run_policy(
-            crate::epf::vm::Slot::Rendezvous,
+            crate::policy_runtime::PolicySlot::Rendezvous,
             &policy_event,
             caps_mask,
             sid_opt,
@@ -4252,14 +4217,14 @@ where
             },
         );
         let verdict = action.verdict();
-        let verdict_meta = ((crate::epf::verdict_tag(verdict) as u32) << 24)
-            | ((crate::epf::verdict_arm(verdict) as u32) << 16);
+        let verdict_meta = ((crate::policy_runtime::verdict_tag(verdict) as u32) << 24)
+            | ((crate::policy_runtime::verdict_arm(verdict) as u32) << 16);
         self.emit_policy_event_with_arg2(
             ids::POLICY_AUDIT_RESULT,
             lane_opt,
             verdict_meta,
-            crate::epf::verdict_reason(verdict) as u32,
-            self.last_policy_fuel_used(crate::epf::vm::Slot::Rendezvous) as u32,
+            crate::policy_runtime::verdict_reason(verdict) as u32,
+            self.last_policy_fuel_used(crate::policy_runtime::PolicySlot::Rendezvous) as u32,
         );
 
         self.apply_policy_action(action, sid_opt, lane_opt)?;

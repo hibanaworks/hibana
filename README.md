@@ -279,7 +279,7 @@ stays an internal endpoint seam rather than a public authority source.
 - EPF executes inside the resolver slot; it is not a second public policy API
 - fail-closed remains the default for verifier, trap, or fuel failures
 - policy distribution and activation belong to the management prefixes under
-  `hibana::substrate::mgmt`, not to endpoint-local helpers
+  `hibana_mgmt`, not to endpoint-local helpers
 
 ### Responsibility Matrix
 
@@ -313,15 +313,17 @@ Everyday substrate owners:
 - `hibana::substrate::binding::NoBinding` is the canonical empty-binding owner
 - `hibana::substrate::policy::{ContextId, ContextValue, DynamicResolution, PolicyAttrs, PolicySignals, PolicySignalsProvider, ResolverContext, ResolverError, ResolverRef}`
 - `hibana::substrate::policy::PolicySignalsProvider` is the canonical slot-scoped policy input owner
+- `hibana::substrate::policy::PolicySlot`
+- `hibana::substrate::tap::TapEvent`
 - `hibana::substrate::cap::{CapShot, ControlResourceKind, GenericCapToken, Many, One, ResourceKind}`
 - `hibana::substrate::wire::{Payload, WireDecode, WireEncode, WirePayload}`
 - `hibana::substrate::transport::{Outgoing, TransportError, TransportEvent, TransportEventKind, TransportSnapshot}`
-- `hibana::substrate::mgmt::{request_reply::PREFIX, observe_stream::PREFIX, tap::TapEvent}`
+- `hibana_mgmt::{request_reply::PREFIX, observe_stream::PREFIX, ROLE_CLUSTER, ROLE_CONTROLLER}`
 
 Advanced / deep-dive substrate owners:
 
 - `hibana::substrate::policy::core::*` for fixed context-key ids
-- `hibana::substrate::policy::epf::{Header, Slot}` for EPF image and slot ownership
+- `hibana_epf::{Header, Slot}` for EPF image ownership and the optional EPF slot alias
 - `hibana::substrate::cap::advanced` for mint details and the built-in control-kind catalogue
 - `hibana::substrate::transport` detail owners for local send direction, algorithm reporting, and metrics translation
 
@@ -496,7 +498,7 @@ clock, config storage, projected program, and resolver state borrowed; add
 rendezvous once; then `enter()`.
 
 ```rust
-let mut tap_buf = [hibana::substrate::mgmt::tap::TapEvent::zero(); 128];
+let mut tap_buf = [hibana::substrate::tap::TapEvent::zero(); 128];
 let mut slab = [0u8; 64 * 1024];
 let clock = hibana::substrate::runtime::CounterClock::new();
 let config = hibana::substrate::runtime::Config::new(&mut tap_buf, &mut slab);
@@ -530,7 +532,7 @@ integration should provide stable buffers and clocks without `Box`, `Vec`, or
 stack-growth helpers.
 
 ```rust
-let mut tap_buf = [hibana::substrate::mgmt::tap::TapEvent::zero(); 128];
+let mut tap_buf = [hibana::substrate::tap::TapEvent::zero(); 128];
 let mut slab = [0u8; 64 * 1024];
 let clock = hibana::substrate::runtime::CounterClock::new();
 
@@ -574,8 +576,6 @@ code supplies `PolicySignalsProvider`.
 `BindingSlot` is demux and transport observation only. It does not decide route arms.
 
 ```rust
-use hibana::substrate::policy::epf;
-
 struct MyBinding {
     signals: hibana::substrate::policy::PolicySignals,
 }
@@ -583,7 +583,7 @@ struct MyBinding {
 impl hibana::substrate::policy::PolicySignalsProvider for MyBinding {
     fn signals(
         &self,
-        slot: epf::Slot,
+        slot: hibana::substrate::policy::PolicySlot,
     ) -> hibana::substrate::policy::PolicySignals {
         let route_slot = slot;
         let _state = route_slot;
@@ -654,18 +654,18 @@ Dynamic policy remains explicit:
 `ResolverContext` is intentionally small: `input(index)` and `attr(id)` are the
 only public accessors.
 
-The public EPF owner surface is intentionally narrow:
+The public policy owner surface is intentionally narrow:
 
-- `hibana::substrate::policy::epf::{Header, Slot}` owns the image header and slot identity
-- `Slot` is `Forward | EndpointRx | EndpointTx | Rendezvous | Route`
+- `hibana::substrate::policy::PolicySlot` owns the generic slot identity
+- `hibana_epf::{Header, Slot}` owns EPF image headers plus the optional EPF slot alias
+- `PolicySlot` / `hibana_epf::Slot` are `Forward | EndpointRx | EndpointTx | Rendezvous | Route`
 - active EPF is consulted inside the same resolver slot, before the Rust resolver callback
 - if EPF does not decide, the same slot continues into the Rust resolver stage
-- there is no public VM-run API separate from the resolver/policy surface
+- `hibana` core itself does not expose a second VM-run API; the optional sibling crate `hibana_epf` owns `loader::ImageLoader`, `verifier::VerifiedImage`, `HostSlots`, `ScratchLease`, `host::InstallError`, `VmCtx`, and `run_with(...)`
 - `PolicySignalsProvider::signals(slot)` is the only public input boundary for slot-scoped policy data
 - policy execution is fail-closed; verifier, trap, and fuel failures reject rather than falling through
 - policy activation switches at the decision boundary through staged active/pending epochs
-- load / activate / revert stay on the management prefixes under
-  `hibana::substrate::mgmt`
+- load / activate / revert stay on the management prefixes in `hibana_mgmt`
 
 Input semantics also come from the implementation contract:
 
@@ -674,8 +674,6 @@ Input semantics also come from the implementation contract:
 - the public authority source remains the resolver slot, not a second EPF API
 
 ```rust
-use hibana::substrate::policy::epf;
-
 const POLICY_ID: u16 = 7;
 const CUSTOM_INPUT0: hibana::substrate::policy::ContextId =
     hibana::substrate::policy::ContextId::new(0x9001);
@@ -746,7 +744,7 @@ The public policy data owners are:
 - `ContextId` and `ContextValue` for fixed-width policy inputs and attrs
 - `PolicyAttrs` for the attribute bag copied into resolver context
 - `PolicySignals` for slot-scoped inputs delivered by `PolicySignalsProvider`
-- `Header` and `Slot` in the `hibana::substrate::policy::epf` module for EPF image and slot ownership
+- `hibana::substrate::policy::PolicySlot` plus `hibana_epf::{Header, Slot}` for generic slot identity and EPF image ownership
 
 Useful value helpers:
 
@@ -955,26 +953,26 @@ let _state = (queue_depth, packet_number);
 
 ## Management Session
 
-Policy distribution belongs to `hibana::substrate::mgmt`.
+Policy distribution belongs to `hibana_mgmt`.
 
 Management is split into exactly two ordinary choreography prefixes:
 
-- `hibana::substrate::mgmt::request_reply::PREFIX`
-- `hibana::substrate::mgmt::observe_stream::PREFIX`
+- `hibana_mgmt::request_reply::PREFIX`
+- `hibana_mgmt::observe_stream::PREFIX`
 
 The public role owners are:
 
-- `hibana::substrate::mgmt::ROLE_CONTROLLER`
-- `hibana::substrate::mgmt::ROLE_CLUSTER`
+- `hibana_mgmt::ROLE_CONTROLLER`
+- `hibana_mgmt::ROLE_CLUSTER`
 
 EPF image injection and execution live on the request/reply prefix. The public
 request vocabulary is:
 
-- `hibana::substrate::mgmt::Request::Load(LoadRequest)`
-- `hibana::substrate::mgmt::Request::LoadAndActivate(LoadRequest)`
-- `hibana::substrate::mgmt::Request::Activate(SlotRequest)`
-- `hibana::substrate::mgmt::Request::Revert(SlotRequest)`
-- `hibana::substrate::mgmt::Request::Stats(SlotRequest)`
+- `hibana_mgmt::Request::Load(LoadRequest)`
+- `hibana_mgmt::Request::LoadAndActivate(LoadRequest)`
+- `hibana_mgmt::Request::Activate(SlotRequest)`
+- `hibana_mgmt::Request::Revert(SlotRequest)`
+- `hibana_mgmt::Request::Stats(SlotRequest)`
 
 `LoadRequest` owns `slot`, `code`, `fuel_max`, and `mem_len`. `SlotRequest`
 owns only `slot`. That split is intentional: staged upload and command-only
@@ -985,11 +983,11 @@ Management payload and reply owners:
 - `LoadBegin` starts a staged code image upload
 - `LoadChunk::mid(offset, chunk)` and `LoadChunk::last(offset, chunk)` stream the image body
 - `LoadRequest` and `SlotRequest` are the typed public request payloads
-- `LoadRequest` and `SlotRequest` carry `hibana::substrate::policy::epf::Slot` as their public slot owner
+- `LoadRequest` and `SlotRequest` carry `hibana::substrate::policy::PolicySlot` as their public slot owner
 - `Request` is the public request sum type for the request/reply prefix
 - `SubscribeReq` configures stream-tap subscription
 - `Reply`, `LoadReport`, `MgmtError`, `StatsResp`, and `TransitionReport` are the canonical response owners
-- `hibana::substrate::mgmt::tap::TapEvent` is the minimal public tap surface for observe streaming
+- `hibana::substrate::tap::TapEvent` is the minimal public tap surface for observe streaming
 - tap batching is a lower-layer observe-stream detail; there is no public `TapBatch` surface
 
 The public management surface intentionally stops at payload owners and prefix
@@ -1018,7 +1016,7 @@ use hibana::g;
 use hibana::g::advanced::project;
 
 const PROGRAM: g::Program<_> =
-    g::seq(hibana::substrate::mgmt::request_reply::PREFIX, APP);
+    g::seq(hibana_mgmt::request_reply::PREFIX, APP);
 
 let controller_program = project(&PROGRAM); // typed controller-side projection
 let cluster_program = project(&PROGRAM); // typed cluster-side projection

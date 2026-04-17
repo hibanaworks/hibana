@@ -7548,7 +7548,7 @@ fn defer_budget_exhaustion_forces_poll_then_abort() {
         max_no_evidence_defer: 1,
         force_poll_on_exhaustion: true,
         max_forced_poll_attempts: 1,
-        exhaust_reason: crate::epf::ENGINE_LIVENESS_EXHAUSTED,
+        exhaust_reason: crate::policy_runtime::ENGINE_LIVENESS_EXHAUSTED,
     });
     let fingerprint = EvidenceFingerprint::new(false, false, false);
     assert_eq!(liveness.on_defer(fingerprint), DeferBudgetOutcome::Continue);
@@ -7561,7 +7561,7 @@ fn defer_budget_exhaustion_forces_poll_then_abort() {
     assert!(!liveness.can_force_poll());
     assert_eq!(
         liveness.exhaust_reason(),
-        crate::epf::ENGINE_LIVENESS_EXHAUSTED
+        crate::policy_runtime::ENGINE_LIVENESS_EXHAUSTED
     );
 }
 

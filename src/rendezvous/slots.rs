@@ -1,5 +1,5 @@
 #[cfg(test)]
-use crate::epf::vm::Slot;
+use crate::policy_runtime::PolicySlot;
 use core::marker::PhantomData;
 #[cfg(test)]
 use core::ptr::NonNull;
@@ -141,45 +141,6 @@ impl SlotStorage {
         unsafe { core::slice::from_raw_parts_mut(ptr, self.staging_len) }
     }
 
-    #[cfg(test)]
-    pub(crate) fn copy_active_to_staging(&mut self, len: usize) {
-        let active =
-            unsafe { core::slice::from_raw_parts(self.active_ptr.cast_const(), self.active_len) };
-        self.staging_mut()[..len].copy_from_slice(&active[..len]);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn copy_active_to_backup(&mut self, len: usize) {
-        let active =
-            unsafe { core::slice::from_raw_parts(self.active_ptr.cast_const(), self.active_len) };
-        let backup = unsafe { core::slice::from_raw_parts_mut(self.backup_ptr, self.backup_len) };
-        backup[..len].copy_from_slice(&active[..len]);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn copy_backup_to_active(&mut self, len: usize) {
-        let backup =
-            unsafe { core::slice::from_raw_parts(self.backup_ptr.cast_const(), self.backup_len) };
-        let active = unsafe { core::slice::from_raw_parts_mut(self.active_ptr, self.active_len) };
-        active[..len].copy_from_slice(&backup[..len]);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn copy_staging_to_active(&mut self, len: usize) {
-        let staging =
-            unsafe { core::slice::from_raw_parts(self.staging_ptr.cast_const(), self.staging_len) };
-        let active = unsafe { core::slice::from_raw_parts_mut(self.active_ptr, self.active_len) };
-        active[..len].copy_from_slice(&staging[..len]);
-    }
-
-    #[inline]
-    #[cfg(test)]
-    pub(crate) fn active_and_scratch_mut(&mut self) -> (&mut [u8], &mut [u8]) {
-        let active = unsafe { core::slice::from_raw_parts_mut(self.active_ptr, self.active_len) };
-        let scratch =
-            unsafe { core::slice::from_raw_parts_mut(self.scratch_ptr, self.scratch_len) };
-        (active, scratch)
-    }
 }
 
 impl Default for SlotStorage {
@@ -271,7 +232,7 @@ impl SlotArena {
     }
 
     #[cfg(test)]
-    pub(crate) fn storage(&self, slot: Slot) -> &SlotStorage {
+    pub(crate) fn storage(&self, slot: PolicySlot) -> &SlotStorage {
         assert!(
             !self.slots_ptr().is_null() && self.slot_count == SLOT_COUNT,
             "slot arena storage must be bound"
@@ -280,7 +241,7 @@ impl SlotArena {
     }
 
     #[cfg(test)]
-    pub(crate) fn storage_mut(&mut self, slot: Slot) -> &mut SlotStorage {
+    pub(crate) fn storage_mut(&mut self, slot: PolicySlot) -> &mut SlotStorage {
         assert!(
             !self.slots_ptr().is_null() && self.slot_count == SLOT_COUNT,
             "slot arena storage must be bound"
@@ -312,12 +273,12 @@ impl Default for SlotArena {
 
 #[cfg(test)]
 #[inline]
-pub(crate) const fn slot_index(slot: Slot) -> usize {
+pub(crate) const fn slot_index(slot: PolicySlot) -> usize {
     match slot {
-        Slot::Forward => 0,
-        Slot::EndpointRx => 1,
-        Slot::EndpointTx => 2,
-        Slot::Rendezvous => 3,
-        Slot::Route => 4,
+        PolicySlot::Forward => 0,
+        PolicySlot::EndpointRx => 1,
+        PolicySlot::EndpointTx => 2,
+        PolicySlot::Rendezvous => 3,
+        PolicySlot::Route => 4,
     }
 }

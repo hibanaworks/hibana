@@ -172,33 +172,9 @@ pub mod runtime {
     pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse};
 }
 
-/// Canonical management prefixes and payload owners.
-pub mod mgmt {
-    pub use crate::runtime::mgmt::{
-        LoadBegin, LoadChunk, LoadReport, LoadRequest, MgmtError, ROLE_CLUSTER, ROLE_CONTROLLER,
-        Reply, Request, SlotRequest, StatsResp, SubscribeReq, TransitionReport,
-    };
-
-    /// Canonical tap-event owner for management observation.
-    pub mod tap {
-        pub use crate::observe::core::TapEvent;
-    }
-
-    /// Canonical request/reply management prefix.
-    pub mod request_reply {
-        pub use crate::runtime::mgmt::RequestReplyPrefixSteps as PrefixSteps;
-
-        pub const PREFIX: crate::g::Program<PrefixSteps> =
-            crate::runtime::mgmt::REQUEST_REPLY_PREFIX;
-    }
-
-    /// Canonical observe-stream management prefix.
-    pub mod observe_stream {
-        pub use crate::runtime::mgmt::ObserveStreamPrefixSteps as PrefixSteps;
-
-        pub const PREFIX: crate::g::Program<PrefixSteps> =
-            crate::runtime::mgmt::OBSERVE_STREAM_PREFIX;
-    }
+/// Canonical tap-event owner retained in core.
+pub mod tap {
+    pub use crate::observe::core::TapEvent;
 }
 
 /// Canonical binding and ingress classification surface.
@@ -227,11 +203,7 @@ pub mod policy {
         };
     }
 
-    /// Advanced EPF image/slot owners.
-    pub mod epf {
-        pub use crate::epf::verifier::Header;
-        pub use crate::epf::vm::Slot;
-    }
+    pub use crate::policy_runtime::PolicySlot;
 }
 
 /// Canonical capability-token surface plus advanced mint/control-kind owners.
@@ -244,9 +216,15 @@ pub mod cap {
         };
         pub use crate::control::cap::resource_kinds::{
             CancelAckKind, CancelKind, CheckpointKind, CommitKind, LoadBeginKind, LoadCommitKind,
-            LoopBreakKind, LoopContinueKind, LoopDecisionHandle, PolicyActivateKind,
-            PolicyAnnotateKind, PolicyLoadKind, PolicyRevertKind, RerouteKind, RollbackKind,
-            RouteDecisionHandle, RouteDecisionKind, SpliceAckKind, SpliceIntentKind,
+            LoopBreakKind, LoopContinueKind, LoopDecisionHandle, MgmtRouteActivateKind,
+            MgmtRouteCommandFamilyKind, MgmtRouteCommandTailKind, MgmtRouteLoadAndActivateKind,
+            MgmtRouteLoadFamilyKind, MgmtRouteLoadKind, MgmtRouteReplyActivatedKind,
+            MgmtRouteReplyErrorKind, MgmtRouteReplyLoadedKind, MgmtRouteReplyRevertedKind,
+            MgmtRouteReplyStatsKind, MgmtRouteReplySuccessFamilyKind,
+            MgmtRouteReplySuccessFinalKind, MgmtRouteReplySuccessTailKind, MgmtRouteRevertKind,
+            MgmtRouteStatsKind, PolicyActivateKind, PolicyAnnotateKind, PolicyLoadKind,
+            PolicyRevertKind, RerouteKind, RollbackKind, RouteDecisionHandle, RouteDecisionKind,
+            SpliceAckKind, SpliceIntentKind,
         };
         pub use crate::global::ControlHandling;
         pub use crate::global::const_dsl::{ControlScopeKind, ScopeId};

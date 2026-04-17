@@ -8,5 +8,3 @@
 pub(crate) mod config;
 /// Runtime constants and label universe helpers.
 pub(crate) mod consts;
-/// Management protocol surface.
-pub(crate) mod mgmt;

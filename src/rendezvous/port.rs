@@ -14,9 +14,9 @@ use crate::{
     control::cap::mint::CapsMask,
     control::types::{Lane, RendezvousId, SessionId},
     endpoint::kernel::FrontierScratchLayout,
-    epf::{Action, PolicyMode, host::HostSlots, vm::Slot, vm::VmCtx},
     global::const_dsl::ScopeId,
     observe::core::{TapEvent, TapRing, emit},
+    policy_runtime::{Action, HostSlots, PolicyCtx, PolicyMode, PolicySlot},
     runtime::config::Clock,
     transport::{Transport, TransportEvent, TransportEventKind, TransportMetrics},
 };
@@ -456,7 +456,7 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     }
 
     #[inline]
-    pub(crate) fn policy_digest(&self, slot: Slot) -> u32 {
+    pub(crate) fn policy_digest(&self, slot: PolicySlot) -> u32 {
         #[cfg(test)]
         {
             self.host_slots().active_digest(slot)
@@ -469,7 +469,7 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     }
 
     #[inline]
-    pub(crate) fn policy_mode(&self, slot: Slot) -> PolicyMode {
+    pub(crate) fn policy_mode(&self, slot: PolicySlot) -> PolicyMode {
         #[cfg(test)]
         {
             self.host_slots().policy_mode(slot)
@@ -482,7 +482,7 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     }
 
     #[inline]
-    pub(crate) fn last_policy_fuel_used(&self, slot: Slot) -> u16 {
+    pub(crate) fn last_policy_fuel_used(&self, slot: PolicySlot) -> u16 {
         #[cfg(test)]
         {
             self.host_slots().last_fuel_used(slot)
@@ -497,7 +497,7 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     #[inline]
     pub(crate) fn run_policy<F>(
         &self,
-        slot: Slot,
+        slot: PolicySlot,
         event: &TapEvent,
         caps: CapsMask,
         session: Option<SessionId>,
@@ -505,32 +505,17 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         configure: F,
     ) -> Action
     where
-        F: FnOnce(&mut VmCtx<'_>),
+        F: FnOnce(&mut PolicyCtx<'_>),
     {
-        #[cfg(test)]
-        {
-            return crate::epf::run_with(
-                self.host_slots(),
-                slot,
-                event,
-                caps,
-                session,
-                lane,
-                configure,
-            );
+        let mut ctx = PolicyCtx::new(slot, event, caps);
+        if let Some(session) = session {
+            ctx.set_session(session);
         }
-        #[cfg(not(test))]
-        {
-            let mut ctx = VmCtx::new(slot, event, caps);
-            if let Some(session) = session {
-                ctx.set_session(session);
-            }
-            if let Some(lane) = lane {
-                ctx.set_lane(lane);
-            }
-            configure(&mut ctx);
-            Action::Proceed
+        if let Some(lane) = lane {
+            ctx.set_lane(lane);
         }
+        configure(&mut ctx);
+        Action::Proceed
     }
 
     #[inline]

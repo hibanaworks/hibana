@@ -32,6 +32,7 @@ use std::{
 use crate::{
     observe::ids,
     runtime::consts::{RING_BUFFER_SIZE, RING_EVENTS},
+    transport::wire::{CodecError, WireDecode, WireEncode},
 };
 
 /// 20-byte tap record with causal key tracking for roll-π reversibility.
@@ -116,6 +117,41 @@ impl TapEvent {
     }
 }
 
+impl WireEncode for TapEvent {
+    fn encoded_len(&self) -> Option<usize> {
+        Some(20)
+    }
+
+    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
+        if out.len() < 20 {
+            return Err(CodecError::Truncated);
+        }
+        out[0..4].copy_from_slice(&self.ts.to_be_bytes());
+        out[4..6].copy_from_slice(&self.id.to_be_bytes());
+        out[6..8].copy_from_slice(&self.causal_key.to_be_bytes());
+        out[8..12].copy_from_slice(&self.arg0.to_be_bytes());
+        out[12..16].copy_from_slice(&self.arg1.to_be_bytes());
+        out[16..20].copy_from_slice(&self.arg2.to_be_bytes());
+        Ok(20)
+    }
+}
+
+impl<'a> WireDecode<'a> for TapEvent {
+    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
+        if input.len() < 20 {
+            return Err(CodecError::Truncated);
+        }
+        Ok(Self {
+            ts: u32::from_be_bytes([input[0], input[1], input[2], input[3]]),
+            id: u16::from_be_bytes([input[4], input[5]]),
+            causal_key: u16::from_be_bytes([input[6], input[7]]),
+            arg0: u32::from_be_bytes([input[8], input[9], input[10], input[11]]),
+            arg1: u32::from_be_bytes([input[12], input[13], input[14], input[15]]),
+            arg2: u32::from_be_bytes([input[16], input[17], input[18], input[19]]),
+        })
+    }
+}
+
 // -----------------------------------------------------------------------------
 // TapBatch: Batch of tap events for efficient streaming
 // -----------------------------------------------------------------------------
@@ -126,8 +162,6 @@ impl TapEvent {
 /// - Header: 1 byte (count) + 4 bytes (lost_events) = 5 bytes
 /// - Events: 50 × 20 bytes = 1000 bytes
 /// - Total: 1005 bytes
-pub(crate) const TAP_BATCH_MAX_EVENTS: usize = 50;
-
 /// Single-producer ring buffer suited for DMA/SHM environments.
 struct RingBuffer<'a> {
     head: Cell<usize>,
@@ -306,30 +340,6 @@ impl GlobalTap {
         }
     }
 
-    #[cfg(test)]
-    fn install(&self, ring: &'static TapRing<'static>) -> Option<&'static TapRing<'static>> {
-        let ptr = ring as *const TapRing<'static> as *mut TapRing<'static>;
-        let previous = TEST_GLOBAL_TAP_RING.with(|slot| slot.replace(ptr));
-        if previous.is_null() {
-            None
-        } else {
-            Some(unsafe { &*previous })
-        }
-    }
-
-    #[cfg(test)]
-    fn uninstall(&self, target: &'static TapRing<'static>) -> bool {
-        let target_ptr = target as *const TapRing<'static> as *mut TapRing<'static>;
-        TEST_GLOBAL_TAP_RING.with(|slot| {
-            if slot.get() == target_ptr {
-                slot.set(ptr::null_mut());
-                true
-            } else {
-                false
-            }
-        })
-    }
-
     fn with_ring<R>(&self, f: impl FnOnce(&TapRing<'static>) -> R) -> Option<R> {
         #[cfg(test)]
         let ptr = TEST_GLOBAL_TAP_RING.with(Cell::get);
@@ -359,16 +369,6 @@ thread_local! {
     static CHECKER_STATE: UnsafeCell<CheckerState> = const { UnsafeCell::new(CheckerState::new()) };
     static RING_STORAGE: UnsafeCell<[TapEvent; RING_EVENTS]> =
         const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
-}
-
-#[cfg(test)]
-pub(crate) fn install_ring(ring: &'static TapRing<'static>) -> Option<&'static TapRing<'static>> {
-    GLOBAL_TAP.install(ring)
-}
-
-#[cfg(test)]
-pub(crate) fn uninstall_ring(ring: &'static TapRing<'static>) -> bool {
-    GLOBAL_TAP.uninstall(ring)
 }
 
 pub(crate) fn push(event: TapEvent) {

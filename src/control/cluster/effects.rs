@@ -322,12 +322,6 @@ impl ResourceDescriptor {
     }
 
     #[inline(always)]
-    #[cfg(test)]
-    pub(crate) const fn label(&self) -> u8 {
-        self.label
-    }
-
-    #[inline(always)]
     pub(crate) const fn tag(&self) -> u8 {
         self.tag
     }

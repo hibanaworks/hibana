@@ -345,71 +345,11 @@ impl DelegSplice {
 
 // ────────────── Policy VM (0x0400-0x040F) ──────────────
 
-/// Policy VM slot commit.
-#[cfg(test)]
-pub(crate) struct PolicyCommit;
-#[cfg(test)]
-impl PolicyCommit {
-    #[inline(always)]
-    pub(crate) const fn with_digest(
-        ts: u32,
-        slot: u32,
-        version: u32,
-        policy_digest: u32,
-    ) -> TapEvent {
-        TapEvent {
-            ts,
-            id: ids::POLICY_COMMIT,
-            causal_key: 0,
-            arg0: slot,
-            arg1: version,
-            arg2: policy_digest,
-        }
-    }
-}
-
-/// Policy VM slot rollback.
-#[cfg(test)]
-pub(crate) struct PolicyRollback;
-#[cfg(test)]
-impl PolicyRollback {
-    #[inline(always)]
-    pub(crate) const fn with_digest(
-        ts: u32,
-        slot: u32,
-        version: u32,
-        policy_digest: u32,
-    ) -> TapEvent {
-        TapEvent {
-            ts,
-            id: ids::POLICY_ROLLBACK,
-            causal_key: 0,
-            arg0: slot,
-            arg1: version,
-            arg2: policy_digest,
-        }
-    }
-}
-
 // ────────────── Raw builder (for testing / zero-init) ──────────────
 
 /// Raw TapEvent builder (for special cases only).
 pub struct RawEvent;
 impl RawEvent {
-    /// Zero-initialized event (for static defaults).
-    #[inline(always)]
-    #[cfg(test)]
-    pub const fn zero() -> TapEvent {
-        TapEvent {
-            ts: 0,
-            id: 0,
-            causal_key: 0,
-            arg0: 0,
-            arg1: 0,
-            arg2: 0,
-        }
-    }
-
     /// Raw event with explicit id (for tests and edge cases).
     #[inline(always)]
     pub const fn new(ts: u32, id: u16) -> TapEvent {

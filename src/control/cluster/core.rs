@@ -5026,7 +5026,7 @@ mod tests {
         let loop_table_bytes = size_of::<crate::rendezvous::tables::LoopTable>();
         let cap_table_bytes = size_of::<crate::rendezvous::capability::CapTable>();
         let slot_arena_bytes = size_of::<crate::rendezvous::slots::SlotArena>();
-        let host_slots_bytes = size_of::<crate::epf::host::HostSlots<'static>>();
+        let host_slots_bytes = size_of::<crate::policy_runtime::HostSlots<'static>>();
         let delegation_graph_bytes = size_of::<
             LeaseGraph<
                 'static,

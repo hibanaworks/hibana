@@ -463,17 +463,6 @@ pub(crate) fn with_compiled_program<R>(
 }
 
 #[cfg(test)]
-pub(crate) fn with_compiled_programs<R>(
-    left: RoleLoweringInput<'_>,
-    right: RoleLoweringInput<'_>,
-    f: impl FnOnce(&CompiledProgram, &CompiledProgram) -> R,
-) -> R {
-    with_compiled_program(left, |left_compiled| {
-        with_compiled_program(right, |right_compiled| f(left_compiled, right_compiled))
-    })
-}
-
-#[cfg(test)]
 pub(crate) fn with_role_lowering_scratch<R>(
     input: RoleLoweringInput<'_>,
     f: impl FnOnce(&LoweringSummary, &mut RoleLoweringScratch<'_>) -> R,

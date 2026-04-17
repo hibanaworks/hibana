@@ -64,7 +64,7 @@ use crate::{
         affine::LaneGuard,
         control::{ControlOutcome, SessionControlCtx},
     },
-    epf::{self, AbortInfo, Action, vm::Slot},
+    policy_runtime::{self, AbortInfo, Action, PolicySlot},
     observe::core::{TapEvent, emit},
     observe::scope::ScopeTrace,
     observe::{events, ids, policy_abort, policy_trap},
@@ -1461,7 +1461,7 @@ where
 
     pub(super) fn eval_endpoint_policy(
         &self,
-        slot: Slot,
+        slot: PolicySlot,
         event_id: u16,
         arg0: u32,
         arg1: u32,
@@ -1476,14 +1476,14 @@ where
         let signals = self.policy_signals_for_slot(slot);
         let policy_input = signals.input;
         let policy_digest = port.policy_digest(slot);
-        let event_hash = epf::hash_tap_event(&event);
-        let signals_input_hash = epf::hash_policy_input(policy_input);
+        let event_hash = policy_runtime::hash_tap_event(&event);
+        let signals_input_hash = policy_runtime::hash_policy_input(policy_input);
         let signals_attrs_hash = signals.attrs().hash32();
-        let transport_snapshot_hash = epf::hash_transport_snapshot(transport_metrics);
-        let replay_transport = epf::replay_transport_inputs(transport_metrics);
-        let replay_transport_presence = epf::replay_transport_presence(transport_metrics);
-        let slot_id = epf::slot_tag(slot);
-        let mode_id = epf::policy_mode_tag(port.policy_mode(slot));
+        let transport_snapshot_hash = policy_runtime::hash_transport_snapshot(transport_metrics);
+        let replay_transport = policy_runtime::replay_transport_inputs(transport_metrics);
+        let replay_transport_presence = policy_runtime::replay_transport_presence(transport_metrics);
+        let slot_id = policy_runtime::slot_tag(slot);
+        let mode_id = policy_runtime::policy_mode_tag(port.policy_mode(slot));
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT,
             policy_digest,
@@ -1547,11 +1547,11 @@ where
         );
         let verdict = action.verdict();
         let verdict_meta =
-            ((epf::verdict_tag(verdict) as u32) << 24) | ((epf::verdict_arm(verdict) as u32) << 16);
+            ((policy_runtime::verdict_tag(verdict) as u32) << 24) | ((policy_runtime::verdict_arm(verdict) as u32) << 16);
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT_RESULT,
             verdict_meta,
-            epf::verdict_reason(verdict) as u32,
+            policy_runtime::verdict_reason(verdict) as u32,
             port.last_policy_fuel_used(slot) as u32,
             lane,
         );
@@ -1564,8 +1564,8 @@ where
         }
 
         match action.verdict() {
-            epf::PolicyVerdict::Proceed | epf::PolicyVerdict::RouteArm(_) => Ok(()),
-            epf::PolicyVerdict::Reject(reason) => {
+            policy_runtime::PolicyVerdict::Proceed | policy_runtime::PolicyVerdict::RouteArm(_) => Ok(()),
+            policy_runtime::PolicyVerdict::Reject(reason) => {
                 if let Some(info) = action.abort_info() {
                     return Err(self.policy_abort_send(info, scope, lane));
                 }
@@ -1609,8 +1609,8 @@ where
         }
 
         match action.verdict() {
-            epf::PolicyVerdict::Proceed | epf::PolicyVerdict::RouteArm(_) => Ok(()),
-            epf::PolicyVerdict::Reject(reason) => {
+            policy_runtime::PolicyVerdict::Proceed | policy_runtime::PolicyVerdict::RouteArm(_) => Ok(()),
+            policy_runtime::PolicyVerdict::Reject(reason) => {
                 if let Some(info) = action.abort_info() {
                     return Err(self.policy_abort_recv(info, scope, lane));
                 }
@@ -2005,7 +2005,7 @@ where
         if is_splice_or_reroute_semantic(dynamic_kind) {
             return Ok(());
         }
-        let route_signals = self.policy_signals_for_slot(Slot::Route).into_owned();
+        let route_signals = self.policy_signals_for_slot(PolicySlot::Route).into_owned();
         match dynamic_kind {
             ControlSemanticKind::LoopContinue | ControlSemanticKind::LoopBreak => {
                 self.evaluate_loop_policy(meta, &route_signals)
@@ -2040,14 +2040,14 @@ where
         if let Some(trace) = self.scope_trace(scope_id) {
             event = event.with_arg2(trace.pack());
         }
-        let policy_digest = port.policy_digest(Slot::Route);
-        let event_hash = epf::hash_tap_event(&event);
-        let signals_input_hash = epf::hash_policy_input(policy_input);
+        let policy_digest = port.policy_digest(PolicySlot::Route);
+        let event_hash = policy_runtime::hash_tap_event(&event);
+        let signals_input_hash = policy_runtime::hash_policy_input(policy_input);
         let signals_attrs_hash = signals.attrs().hash32();
-        let transport_snapshot_hash = epf::hash_transport_snapshot(transport_metrics);
-        let replay_transport = epf::replay_transport_inputs(transport_metrics);
-        let replay_transport_presence = epf::replay_transport_presence(transport_metrics);
-        let mode_id = epf::policy_mode_tag(port.policy_mode(Slot::Route));
+        let transport_snapshot_hash = policy_runtime::hash_transport_snapshot(transport_metrics);
+        let replay_transport = policy_runtime::replay_transport_inputs(transport_metrics);
+        let replay_transport_presence = policy_runtime::replay_transport_presence(transport_metrics);
+        let mode_id = policy_runtime::policy_mode_tag(port.policy_mode(PolicySlot::Route));
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT,
             policy_digest,
@@ -2059,7 +2059,8 @@ where
             ids::POLICY_AUDIT_EXT,
             signals_attrs_hash,
             transport_snapshot_hash,
-            ((epf::slot_tag(Slot::Route) as u32) << 24) | ((mode_id as u32) << 16),
+            ((policy_runtime::slot_tag(PolicySlot::Route) as u32) << 24)
+                | ((mode_id as u32) << 16),
             port.lane(),
         );
         self.emit_policy_audit_event(
@@ -2105,7 +2106,7 @@ where
             port.lane(),
         );
         let action = port.run_policy(
-            Slot::Route,
+            PolicySlot::Route,
             &event,
             port.caps_mask(),
             Some(self.sid),
@@ -2117,12 +2118,12 @@ where
         );
         let verdict = action.verdict();
         let verdict_meta =
-            ((epf::verdict_tag(verdict) as u32) << 24) | ((epf::verdict_arm(verdict) as u32) << 16);
+            ((policy_runtime::verdict_tag(verdict) as u32) << 24) | ((policy_runtime::verdict_arm(verdict) as u32) << 16);
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT_RESULT,
             verdict_meta,
-            epf::verdict_reason(verdict) as u32,
-            port.last_policy_fuel_used(Slot::Route) as u32,
+            policy_runtime::verdict_reason(verdict) as u32,
+            port.last_policy_fuel_used(PolicySlot::Route) as u32,
             port.lane(),
         );
         route_policy_decision_from_action(action, policy_id)
@@ -3341,7 +3342,7 @@ where
 
         let lane = Lane::new(meta.lane as u32);
         let policy_action = self.eval_endpoint_policy(
-            Slot::EndpointTx,
+            PolicySlot::EndpointTx,
             ids::ENDPOINT_SEND,
             self.sid.raw(),
             Self::endpoint_policy_args(lane, meta.label, FrameFlags::empty()),
@@ -3622,7 +3623,7 @@ where
         let src_rv = RendezvousId::new(self.rendezvous_id().raw());
         port.flush_transport_events();
         let transport_metrics = port.transport().metrics().snapshot();
-        let signals = self.policy_signals_for_slot(Slot::Route);
+        let signals = self.policy_signals_for_slot(PolicySlot::Route);
         let attrs = signals.attrs();
         let bytes = match tag {
             LoopContinueKind::TAG => {

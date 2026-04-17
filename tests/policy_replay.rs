@@ -1,8 +1,8 @@
 #![cfg(feature = "std")]
 
 use hibana::substrate::{
-    mgmt::tap::TapEvent,
-    policy::epf::Slot,
+    policy::PolicySlot,
+    tap::TapEvent,
     transport::{TransportAlgorithm, TransportSnapshot},
 };
 
@@ -121,7 +121,7 @@ struct ReplayPending {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct AuditRow {
     digest: u32,
-    slot: Slot,
+    slot: PolicySlot,
     mode_tag: u8,
     event: TapEvent,
     policy_input: [u32; 4],
@@ -150,17 +150,17 @@ impl ReplayPending {
     }
 }
 
-fn slot_tag(slot: Slot) -> u8 {
+fn slot_tag(slot: PolicySlot) -> u8 {
     match slot {
-        Slot::Forward => 0,
-        Slot::EndpointRx => 1,
-        Slot::EndpointTx => 2,
-        Slot::Rendezvous => 3,
-        Slot::Route => 4,
+        PolicySlot::Forward => 0,
+        PolicySlot::EndpointRx => 1,
+        PolicySlot::EndpointTx => 2,
+        PolicySlot::Rendezvous => 3,
+        PolicySlot::Route => 4,
     }
 }
 
-fn replay_digests(log: &ReplayLog, slot: Slot, cursor: &mut usize) -> DigestState {
+fn replay_digests(log: &ReplayLog, slot: PolicySlot, cursor: &mut usize) -> DigestState {
     let mut replay = DigestState {
         active_digest: None,
         standby_digest: None,
@@ -332,13 +332,13 @@ fn replay_transport_snapshot(values: [u32; 4], presence: u8) -> TransportSnapsho
         .with_retransmissions(retransmissions)
 }
 
-fn decode_slot_mode(raw: u32) -> Result<(Slot, u8), &'static str> {
+fn decode_slot_mode(raw: u32) -> Result<(PolicySlot, u8), &'static str> {
     let slot = match ((raw >> 24) & 0xFF) as u8 {
-        0 => Slot::Forward,
-        1 => Slot::EndpointRx,
-        2 => Slot::EndpointTx,
-        3 => Slot::Rendezvous,
-        4 => Slot::Route,
+        0 => PolicySlot::Forward,
+        1 => PolicySlot::EndpointRx,
+        2 => PolicySlot::EndpointTx,
+        3 => PolicySlot::Rendezvous,
+        4 => PolicySlot::Route,
         _ => return Err("invalid slot tag"),
     };
     let mode = ((raw >> 16) & 0xFF) as u8;
@@ -352,7 +352,7 @@ fn push_policy_audit_tuple(
     log: &mut ReplayLog,
     ts: u32,
     digest: u32,
-    slot: Slot,
+    slot: PolicySlot,
     mode_tag: u8,
     event: TapEvent,
     policy_input: [u32; 4],
@@ -570,24 +570,24 @@ fn replay_from_audit_log_tracks_digest_transitions() {
 
     log.push(
         raw_event(1, POLICY_COMMIT_ID)
-            .with_arg0(slot_tag(Slot::Route) as u32)
+            .with_arg0(slot_tag(PolicySlot::Route) as u32)
             .with_arg1(1)
             .with_arg2(digest_v1),
     );
     log.push(
         raw_event(2, POLICY_COMMIT_ID)
-            .with_arg0(slot_tag(Slot::Route) as u32)
+            .with_arg0(slot_tag(PolicySlot::Route) as u32)
             .with_arg1(2)
             .with_arg2(digest_v2),
     );
     log.push(
         raw_event(3, POLICY_ROLLBACK_ID)
-            .with_arg0(slot_tag(Slot::Route) as u32)
+            .with_arg0(slot_tag(PolicySlot::Route) as u32)
             .with_arg1(1)
             .with_arg2(digest_v1),
     );
 
-    let replay = replay_digests(&log, Slot::Route, &mut cursor);
+    let replay = replay_digests(&log, PolicySlot::Route, &mut cursor);
     assert_eq!(
         replay,
         DigestState {
@@ -616,7 +616,7 @@ fn public_policy_audit_tuple_roundtrips_logged_inputs() {
         &mut log,
         100,
         0xAABB_CCDD,
-        Slot::Route,
+        PolicySlot::Route,
         1,
         event_one,
         input_one,
@@ -635,7 +635,7 @@ fn public_policy_audit_tuple_roundtrips_logged_inputs() {
         &mut log,
         101,
         0x1122_3344,
-        Slot::EndpointRx,
+        PolicySlot::EndpointRx,
         0,
         event_two,
         input_two,
@@ -656,7 +656,7 @@ fn public_policy_audit_tuple_roundtrips_logged_inputs() {
 
     let first = rows.get(0).expect("first audit row");
     assert_eq!(first.digest, 0xAABB_CCDD);
-    assert_eq!(first.slot, Slot::Route);
+    assert_eq!(first.slot, PolicySlot::Route);
     assert_eq!(first.mode_tag, 1);
     assert_eq!(first.event, event_one);
     assert_eq!(first.policy_input, input_one);
@@ -666,7 +666,7 @@ fn public_policy_audit_tuple_roundtrips_logged_inputs() {
 
     let second = rows.get(1).expect("second audit row");
     assert_eq!(second.digest, 0x1122_3344);
-    assert_eq!(second.slot, Slot::EndpointRx);
+    assert_eq!(second.slot, PolicySlot::EndpointRx);
     assert_eq!(second.mode_tag, 0);
     assert_eq!(second.event, event_two);
     assert_eq!(second.policy_input, input_two);
@@ -688,7 +688,7 @@ fn public_policy_audit_tuple_rejects_corruption() {
         &mut log,
         200,
         0xDEAD_BEEF,
-        Slot::Route,
+        PolicySlot::Route,
         1,
         event,
         input,

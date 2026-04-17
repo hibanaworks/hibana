@@ -101,11 +101,10 @@ mod endpoint;
 
 mod observe;
 
+mod policy_runtime;
+
 /// Transport binding layer.
 mod binding;
-
-/// EPF Effect Policy Filter (bytecode VM for control-plane policies).
-mod epf;
 
 // ============================================================================
 // Internal modules (NOT for direct user access)

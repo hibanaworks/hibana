@@ -26,7 +26,7 @@ use crate::binding::BindingSlot;
 use crate::control::cap::mint::{CapShot, EpochTable, MintConfigMarker};
 use crate::eff::EffIndex;
 use crate::endpoint::{RecvError, RecvResult};
-use crate::epf::vm::Slot;
+use crate::policy_runtime::PolicySlot;
 use crate::global::const_dsl::{PolicyMode, ScopeId, ScopeKind};
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
@@ -1595,7 +1595,7 @@ where
             loop {
                 let route_signals = self
                     .endpoint
-                    .policy_signals_for_slot(Slot::Route)
+                    .policy_signals_for_slot(PolicySlot::Route)
                     .into_owned();
                 let resolver_step = if is_self_send_route {
                     self.endpoint
@@ -1767,7 +1767,7 @@ where
             let resolver_step = {
                 let route_signals = self
                     .endpoint
-                    .policy_signals_for_slot(Slot::Route)
+                    .policy_signals_for_slot(PolicySlot::Route)
                     .into_owned();
                 self.endpoint
                     .prepare_route_decision_from_resolver(scope_id, &route_signals)?

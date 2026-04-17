@@ -288,7 +288,7 @@ where
 
     pub(in crate::endpoint::kernel) fn policy_signals_for_slot(
         &self,
-        slot: Slot,
+        slot: crate::policy_runtime::PolicySlot,
     ) -> crate::transport::context::PolicySignals<'_> {
         match self.binding.policy_signals_provider() {
             Some(provider) => provider.signals(slot),

@@ -45,27 +45,10 @@ impl LeaseFacetNeeds {
         Self { bits }
     }
 
-    #[inline(always)]
-    #[cfg(test)]
-    pub(crate) const fn is_empty(&self) -> bool {
-        self.bits == 0
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn with_slots(mut self) -> Self {
-        self.bits |= FACET_SLOTS;
-        self
-    }
-
     pub(crate) const fn union(self, other: Self) -> Self {
         Self {
             bits: self.bits | other.bits,
         }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn contains(&self, other: Self) -> bool {
-        (self.bits & other.bits) == other.bits
     }
 
     #[inline(always)]
@@ -281,19 +264,6 @@ impl LeaseGraphBudget {
         self.facets.requires_delegation()
     }
 
-    #[inline(always)]
-    pub(crate) const fn covers(&self, needs: LeaseFacetNeeds) -> bool {
-        self.facets.contains(needs)
-    }
-}
-
-#[inline(always)]
-#[track_caller]
-pub(crate) const fn assert_budget_covers(budget: LeaseGraphBudget, needs: LeaseFacetNeeds) {
-    assert!(
-        budget.covers(needs),
-        "lease facet needs exceed role program lease budget"
-    );
 }
 
 #[inline(always)]
@@ -355,15 +325,4 @@ const fn base_facets_for_tag(tag: u8) -> LeaseFacetNeeds {
         | RollbackKind::TAG => facets_caps(),
         _ => LeaseFacetNeeds::new(),
     }
-}
-
-#[inline(always)]
-pub(crate) const fn assert_program_covers_facets<Steps>(
-    program: &crate::g::Program<Steps>,
-    needs: LeaseFacetNeeds,
-) where
-    Steps: crate::global::program::BuildProgramSource,
-{
-    let budget = program.summary().lease_budget();
-    assert_budget_covers(budget, needs);
 }

@@ -21,8 +21,8 @@ use hibana::{
         SessionId, SessionKit,
         binding::{BindingSlot, Channel, IncomingClassification, NoBinding, TransportOpsError},
         policy::{
-            ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider, core,
-            epf::Slot,
+            ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider, PolicySlot,
+            core,
         },
         runtime::{Config, DefaultLabelUniverse},
     },
@@ -171,9 +171,9 @@ impl PolicyInputBinding {
 }
 
 impl PolicySignalsProvider for PolicyInputBinding {
-    fn signals(&self, slot: Slot) -> PolicySignals<'_> {
+    fn signals(&self, slot: PolicySlot) -> PolicySignals<'_> {
         let policy_input0 = self.policy_input0.get();
-        let input = if matches!(slot, Slot::Route) {
+        let input = if matches!(slot, PolicySlot::Route) {
             [policy_input0, 0, 0, 0]
         } else {
             [0; 4]

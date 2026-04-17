@@ -10,7 +10,7 @@ use crate::global::compiled::{LoweringSummary, ProgramStamp, validate_all_roles}
 use crate::global::const_dsl::{EffList, PolicyMode, ScopeId};
 use crate::global::steps::{
     LocalAction, LocalRecv, LocalSend, ParSteps, PolicyEligible, PolicySteps, RoleEq, RouteSteps,
-    SendStep, SeqSteps, StepConcat, StepCons, StepNil,
+    SendStep, SeqSteps, StepCons, StepNil,
 };
 use crate::global::{
     DistinctRouteLabels, LoopControlMeaning, NonEmptyParallelArm, RouteArmHead, RouteArmLoopHead,
@@ -289,17 +289,6 @@ impl<Steps> Program<Steps> {
     {
         let _ = <Steps as BuildProgramSource>::SOURCE.scope_budget();
         Self::new()
-    }
-
-    pub(crate) const fn then<NextSteps>(
-        self,
-        next: Program<NextSteps>,
-    ) -> Program<<Steps as StepConcat<NextSteps>>::Output>
-    where
-        Steps: StepConcat<NextSteps>,
-    {
-        let _ = (self, next);
-        Program::new()
     }
 
     pub const fn policy<const POLICY_ID: u16>(self) -> Program<PolicySteps<Steps, POLICY_ID>>

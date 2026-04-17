@@ -1,59 +1,58 @@
-//! EPF — Effect Policy Filter (no_std / no_alloc).
+//! Generic policy runtime helpers retained by hibana core.
 //!
-//! This layer brings together the EPF bytecode loader, verifier, dispatcher,
-//! and interpreter to evaluate the `GenericCapToken<K> → CapsMask → CpEffect` pipeline.
-//! The VM uses eight 32-bit registers and a fixed-size memory region, keeping
-//! the design small enough to run on the rendezvous hot path without `std` or
-//! heap allocations. The host side maps the emitted [`Action`] values back into
-//! the control and data planes.
+//! Phase 6 removes the EPF appliance and management prefixes from core. The
+//! runtime keeps only the generic slot boundary, policy-action normalisation,
+//! and deterministic replay helpers needed by the localside kernel.
 
-/// EPF dispatch glue for rendezvous integration.
-#[cfg(test)]
-pub(crate) mod dispatch;
-/// EPF host interface.
-pub(crate) mod host;
-/// Bytecode image loader.
-#[cfg(test)]
-pub(crate) mod loader;
-/// Opcode definitions.
-#[cfg(test)]
-pub(crate) mod ops;
-/// Slot-level policy contract (SNC).
-pub(crate) mod slot_contract;
-/// Bytecode verifier.
-pub(crate) mod verifier;
-/// VM execution engine.
-pub(crate) mod vm;
-use crate::observe::core::TapEvent;
-#[cfg(test)]
-use host::HostSlots;
-#[cfg(test)]
-use vm::VmAction;
-#[cfg(test)]
-use vm::VmCtx;
-use vm::{Slot, Trap};
-
-use crate::transport::TransportSnapshot;
-#[cfg(test)]
 use crate::{
     control::cap::mint::CapsMask,
     control::types::{Lane, SessionId},
+    observe::core::TapEvent,
+    transport::TransportSnapshot,
 };
 
-/// Abort outcome emitted by the policy VM (or by the host when mapping traps).
+/// Generic policy slot identity used by resolver/policy seams.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct AbortInfo {
-    pub reason: u16,
-    pub trap: Option<Trap>,
+pub enum PolicySlot {
+    Forward,
+    EndpointRx,
+    EndpointTx,
+    Rendezvous,
+    Route,
 }
 
-/// Engine-level fail-closed reason used when EPF execution cannot produce
-/// a safe decision (trap / verifier failure / illegal syscall path).
+/// Trap reasons surfaced in audit trails when a downstream appliance fails
+/// closed. Core itself does not execute a policy VM.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Trap {
+    FuelExhausted,
+    IllegalOpcode(u8),
+    OutOfBounds,
+    IllegalSyscall,
+    VerifyFailed,
+}
+
+/// Trap reasons surfaced in audit trails when a downstream appliance fails
+/// closed. Core itself does not execute a policy VM.
+#[cfg(not(test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Trap {}
+
+/// Abort outcome emitted by a downstream policy appliance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AbortInfo {
+    pub(crate) reason: u16,
+    pub(crate) trap: Option<Trap>,
+}
+
+/// Engine-level fail-closed reason used when policy execution cannot produce
+/// a safe decision.
 pub(crate) const ENGINE_FAIL_CLOSED: u16 = 0xFFFF;
 /// Engine-level liveness exhaustion reason for dynamic route decision loops.
 pub(crate) const ENGINE_LIVENESS_EXHAUSTED: u16 = 0xFFFE;
 
-/// Runtime policy mode.
+/// Runtime policy mode retained for audit metadata.
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PolicyMode {
@@ -61,7 +60,7 @@ pub(crate) enum PolicyMode {
     Enforce,
 }
 
-/// Runtime policy mode.
+/// Runtime policy mode retained for audit metadata.
 #[cfg(not(test))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PolicyMode {
@@ -117,13 +116,13 @@ pub(crate) const fn verdict_reason(verdict: PolicyVerdict) -> u16 {
 }
 
 #[inline]
-pub(crate) const fn slot_tag(slot: Slot) -> u8 {
+pub(crate) const fn slot_tag(slot: PolicySlot) -> u8 {
     match slot {
-        Slot::Forward => 0,
-        Slot::EndpointRx => 1,
-        Slot::EndpointTx => 2,
-        Slot::Rendezvous => 3,
-        Slot::Route => 4,
+        PolicySlot::Forward => 0,
+        PolicySlot::EndpointRx => 1,
+        PolicySlot::EndpointTx => 2,
+        PolicySlot::Rendezvous => 3,
+        PolicySlot::Route => 4,
     }
 }
 
@@ -180,7 +179,7 @@ fn fnv32_mix_opt_u64(hash: u32, value: Option<u64>) -> u32 {
     }
 }
 
-/// Deterministic 32-bit hash of tap input consumed by EPF.
+/// Deterministic 32-bit hash of tap input consumed by policy audit replay.
 #[inline]
 pub(crate) fn hash_tap_event(event: &TapEvent) -> u32 {
     let mut hash = FNV32_OFFSET;
@@ -192,7 +191,7 @@ pub(crate) fn hash_tap_event(event: &TapEvent) -> u32 {
     fnv32_mix_u32(hash, event.arg2)
 }
 
-/// Deterministic 32-bit hash of EPF input args.
+/// Deterministic 32-bit hash of policy input args.
 #[inline]
 pub(crate) fn hash_policy_input(input: [u32; 4]) -> u32 {
     let mut hash = FNV32_OFFSET;
@@ -204,7 +203,7 @@ pub(crate) fn hash_policy_input(input: [u32; 4]) -> u32 {
     hash
 }
 
-/// Deterministic 32-bit hash of transport snapshot attached to VM context.
+/// Deterministic 32-bit hash of transport snapshot attached to policy context.
 #[inline]
 pub(crate) fn hash_transport_snapshot(snapshot: TransportSnapshot) -> u32 {
     let mut hash = FNV32_OFFSET;
@@ -250,10 +249,7 @@ const fn opt_u32_or_zero(value: Option<u32>) -> u32 {
     }
 }
 
-/// Canonical replay transport inputs consumed by VM `GET_*` opcodes.
-///
-/// Returns `[latency_us, queue_depth, congestion_marks, retransmissions]`
-/// with unavailable fields normalised to zero.
+/// Canonical replay transport inputs consumed by audit tools.
 #[inline]
 pub(crate) const fn replay_transport_inputs(snapshot: TransportSnapshot) -> [u32; 4] {
     [
@@ -265,8 +261,6 @@ pub(crate) const fn replay_transport_inputs(snapshot: TransportSnapshot) -> [u32
 }
 
 /// Presence bitmask for replay transport inputs.
-///
-/// bit0=latency, bit1=queue_depth, bit2=congestion_marks, bit3=retransmissions.
 #[inline]
 pub(crate) const fn replay_transport_presence(snapshot: TransportSnapshot) -> u8 {
     let mut mask = 0u8;
@@ -304,9 +298,7 @@ pub(crate) enum Action {
 }
 
 impl Action {
-    /// Convert the full action stream into emergency verdicts.
-    ///
-    /// Tap is observational and therefore normalises to `Proceed`.
+    #[inline]
     #[cfg(test)]
     pub(crate) const fn verdict(self) -> PolicyVerdict {
         match self {
@@ -319,7 +311,7 @@ impl Action {
         }
     }
 
-    /// Convert the full action stream into emergency verdicts.
+    #[inline]
     #[cfg(not(test))]
     pub(crate) const fn verdict(self) -> PolicyVerdict {
         let _ = self;
@@ -328,10 +320,7 @@ impl Action {
         PolicyVerdict::Proceed
     }
 
-    /// Apply runtime mode to policy action.
-    ///
-    /// Shadow mode never enforces policy decisions on the control/data path.
-    /// Tap remains observable to preserve audit visibility.
+    #[inline]
     #[cfg(test)]
     pub(crate) const fn with_mode(self, mode: PolicyMode) -> Self {
         match mode {
@@ -343,6 +332,14 @@ impl Action {
         }
     }
 
+    #[inline]
+    #[cfg(not(test))]
+    pub(crate) const fn abort_info(self) -> Option<AbortInfo> {
+        let _ = self;
+        None
+    }
+
+    #[inline]
     #[cfg(test)]
     pub(crate) const fn abort_info(self) -> Option<AbortInfo> {
         match self {
@@ -351,12 +348,14 @@ impl Action {
         }
     }
 
+    #[inline]
     #[cfg(not(test))]
-    pub(crate) const fn abort_info(self) -> Option<AbortInfo> {
+    pub(crate) const fn tap_payload(self) -> Option<(u16, u32, u32)> {
         let _ = self;
         None
     }
 
+    #[inline]
     #[cfg(test)]
     pub(crate) const fn tap_payload(self) -> Option<(u16, u32, u32)> {
         match self {
@@ -365,12 +364,14 @@ impl Action {
         }
     }
 
+    #[inline]
     #[cfg(not(test))]
-    pub(crate) const fn tap_payload(self) -> Option<(u16, u32, u32)> {
+    pub(crate) const fn route_arm(self) -> Option<u8> {
         let _ = self;
         None
     }
 
+    #[inline]
     #[cfg(test)]
     pub(crate) const fn route_arm(self) -> Option<u8> {
         match self {
@@ -379,12 +380,14 @@ impl Action {
         }
     }
 
+    #[inline]
     #[cfg(not(test))]
-    pub(crate) const fn route_arm(self) -> Option<u8> {
+    pub(crate) const fn defer_hint(self) -> Option<u8> {
         let _ = self;
         None
     }
 
+    #[inline]
     #[cfg(test)]
     pub(crate) const fn defer_hint(self) -> Option<u8> {
         match self {
@@ -392,86 +395,216 @@ impl Action {
             _ => None,
         }
     }
+}
 
-    #[cfg(not(test))]
-    pub(crate) const fn defer_hint(self) -> Option<u8> {
-        let _ = self;
-        None
+/// Static contract associated with each policy slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SlotPolicyContract {
+    pub(crate) allows_get_input: bool,
+    pub(crate) allows_attr: bool,
+    pub(crate) allows_mem_ops: bool,
+    pub(crate) source: SlotPolicySource,
+}
+
+/// Policy signal source associated with a slot contract.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SlotPolicySource {
+    Binding,
+    Zero,
+}
+
+impl SlotPolicyContract {
+    const fn new(
+        allows_get_input: bool,
+        allows_attr: bool,
+        allows_mem_ops: bool,
+        source: SlotPolicySource,
+    ) -> Self {
+        Self {
+            allows_get_input,
+            allows_attr,
+            allows_mem_ops,
+            source,
+        }
     }
 }
 
-/// Execute the VM with an opportunity to configure the [`VmCtx`] prior to dispatch.
-#[cfg(test)]
-pub(crate) fn run_with<F>(
-    host_slots: &HostSlots<'_>,
-    slot: Slot,
-    event: &TapEvent,
-    caps: CapsMask,
-    session: Option<SessionId>,
-    lane: Option<Lane>,
-    configure: F,
-) -> Action
-where
-    F: FnOnce(&mut VmCtx<'_>),
-{
-    let vm_action = host_slots.execute_with(slot, event, caps, session, lane, configure);
-    let action = convert_action(vm_action);
-    action.with_mode(host_slots.policy_mode(slot))
-}
-
-#[cfg(test)]
-fn convert_action(vm_action: VmAction) -> Action {
-    match vm_action {
-        VmAction::Proceed => Action::Proceed,
-        VmAction::Abort { reason } => Action::Abort(AbortInfo { reason, trap: None }),
-        VmAction::Trap(trap) => Action::Abort(AbortInfo {
-            reason: ENGINE_FAIL_CLOSED,
-            trap: Some(trap),
-        }),
-        VmAction::Tap { id, arg0, arg1 } => Action::Tap { id, arg0, arg1 },
-        VmAction::Route { arm } => Action::Route { arm },
-        VmAction::Defer { retry_hint } => Action::Defer { retry_hint },
-        VmAction::Ra(_) => Action::Abort(AbortInfo {
-            reason: ENGINE_FAIL_CLOSED,
-            trap: Some(Trap::IllegalSyscall),
-        }),
+#[inline]
+pub(crate) const fn slot_policy_contract(slot: PolicySlot) -> SlotPolicyContract {
+    match slot {
+        PolicySlot::Route | PolicySlot::EndpointTx | PolicySlot::EndpointRx => {
+            SlotPolicyContract::new(
+                true,
+                true,
+                !matches!(slot, PolicySlot::Route),
+                SlotPolicySource::Binding,
+            )
+        }
+        PolicySlot::Forward | PolicySlot::Rendezvous => {
+            SlotPolicyContract::new(false, false, true, SlotPolicySource::Zero)
+        }
     }
 }
 
-#[cfg(test)]
-#[path = "epf/policy_replay_tests.rs"]
-mod policy_replay_tests;
+#[inline]
+pub(crate) const fn slot_default_input(slot: PolicySlot) -> [u32; 4] {
+    match slot_policy_contract(slot).source {
+        SlotPolicySource::Binding => [0; 4],
+        SlotPolicySource::Zero => [0; 4],
+    }
+}
+
+/// Minimal policy context retained by core so call sites can continue to seed
+/// deterministic audit metadata even when no appliance is installed.
+#[derive(Debug, Default)]
+pub(crate) struct PolicyCtx<'a> {
+    _event: core::marker::PhantomData<&'a TapEvent>,
+    _slot: Option<PolicySlot>,
+    _caps: Option<CapsMask>,
+    _session: Option<SessionId>,
+    _lane: Option<Lane>,
+    _transport: TransportSnapshot,
+    _input: [u32; 4],
+}
+
+impl<'a> PolicyCtx<'a> {
+    #[inline]
+    pub(crate) fn new(slot: PolicySlot, _event: &'a TapEvent, caps: CapsMask) -> Self {
+        Self {
+            _event: core::marker::PhantomData,
+            _slot: Some(slot),
+            _caps: Some(caps),
+            _session: None,
+            _lane: None,
+            _transport: TransportSnapshot::default(),
+            _input: [0; 4],
+        }
+    }
+
+    #[inline]
+    pub(crate) fn set_session(&mut self, session: SessionId) {
+        self._session = Some(session);
+    }
+
+    #[inline]
+    pub(crate) fn set_lane(&mut self, lane: Lane) {
+        self._lane = Some(lane);
+    }
+
+    #[inline]
+    pub(crate) fn set_transport_snapshot(&mut self, snapshot: TransportSnapshot) {
+        self._transport = snapshot;
+    }
+
+    #[inline]
+    pub(crate) fn set_policy_input(&mut self, input: [u32; 4]) {
+        self._input = input;
+    }
+}
+
+/// Placeholder slot registry kept by hibana core after the EPF appliance moved
+/// to the sibling crate.
+pub(crate) struct HostSlots<'arena> {
+    _arena: core::marker::PhantomData<&'arena ()>,
+}
+
+impl<'arena> HostSlots<'arena> {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            _arena: core::marker::PhantomData,
+        }
+    }
+
+    pub(crate) unsafe fn init_empty(dst: *mut Self) {
+        unsafe {
+            core::ptr::addr_of_mut!((*dst)._arena).write(core::marker::PhantomData);
+        }
+    }
+
+    #[inline]
+    pub(crate) fn active_digest(&self, _slot: PolicySlot) -> u32 {
+        0
+    }
+
+    #[inline]
+    pub(crate) fn policy_mode(&self, _slot: PolicySlot) -> PolicyMode {
+        PolicyMode::Enforce
+    }
+
+    #[inline]
+    pub(crate) fn last_fuel_used(&self, _slot: PolicySlot) -> u16 {
+        0
+    }
+}
+
+impl Default for HostSlots<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{control::cap::mint::CapsMask, epf::ops, observe::events::RawEvent};
 
     #[test]
-    fn effect_syscall_is_fail_closed() {
-        let code = [ops::instr::ACT_EFFECT, ops::effect::CHECKPOINT, 0x00];
-        let mut scratch = [0u8; 64];
-        let scratch_len = scratch.len();
-        let machine =
-            super::host::Machine::with_mem(&code, &mut scratch, scratch_len, 16).expect("machine");
-        let mut slots = HostSlots::new();
-        slots.install(Slot::Rendezvous, machine).expect("install");
+    fn action_helpers_cover_non_proceed_variants() {
+        let abort = Action::Abort(AbortInfo {
+            reason: 7,
+            trap: Some(Trap::VerifyFailed),
+        });
+        assert_eq!(abort.abort_info().unwrap().reason, 7);
 
-        let action = run_with(
-            &slots,
-            Slot::Rendezvous,
-            &RawEvent::zero(),
-            CapsMask::allow_all(),
-            None,
-            None,
-            |_| {},
-        );
-        assert!(matches!(
-            action,
+        let tap = Action::Tap {
+            id: 3,
+            arg0: 4,
+            arg1: 5,
+        };
+        assert_eq!(tap.tap_payload(), Some((3, 4, 5)));
+
+        let route = Action::Route { arm: 1 };
+        assert_eq!(route.route_arm(), Some(1));
+
+        let defer = Action::Defer { retry_hint: 9 };
+        assert_eq!(defer.defer_hint(), Some(9));
+    }
+
+    #[test]
+    fn shadow_mode_suppresses_non_tap_actions() {
+        assert_eq!(Action::Proceed.with_mode(PolicyMode::Shadow), Action::Proceed);
+        assert_eq!(
             Action::Abort(AbortInfo {
-                reason: ENGINE_FAIL_CLOSED,
-                trap: Some(Trap::IllegalSyscall),
+                reason: 11,
+                trap: Some(Trap::FuelExhausted),
             })
-        ));
+            .with_mode(PolicyMode::Shadow),
+            Action::Proceed
+        );
+        assert_eq!(
+            Action::Tap {
+                id: 1,
+                arg0: 2,
+                arg1: 3,
+            }
+            .with_mode(PolicyMode::Shadow),
+            Action::Tap {
+                id: 1,
+                arg0: 2,
+                arg1: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn trap_variants_stay_addressable_for_audit_paths() {
+        let traps = [
+            Trap::FuelExhausted,
+            Trap::IllegalOpcode(0xAA),
+            Trap::OutOfBounds,
+            Trap::IllegalSyscall,
+            Trap::VerifyFailed,
+        ];
+        assert_eq!(traps.len(), 5);
     }
 }

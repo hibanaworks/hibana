@@ -7,7 +7,7 @@ use crate::{
     binding::BindingSlot,
     control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult},
-    epf::vm::Slot,
+    policy_runtime::PolicySlot,
     global::MessageSpec,
     global::const_dsl::ScopeKind,
     global::typestate::{JumpReason, PassiveArmNavigation, state_index_to_usize},
@@ -69,7 +69,7 @@ where
                 && region.linger
             {
                 let scope_id = region.scope_id;
-                let route_signals = self.policy_signals_for_slot(Slot::Route).into_owned();
+                let route_signals = self.policy_signals_for_slot(PolicySlot::Route).into_owned();
                 if let Ok(step) = self.prepare_route_decision_from_resolver(scope_id, &route_signals) {
                     match step {
                         super::authority::RouteResolveStep::Resolved(arm) => {
@@ -219,7 +219,7 @@ where
     {
         let meta = desc.meta;
         let policy_action = self.eval_endpoint_policy(
-            Slot::EndpointRx,
+            PolicySlot::EndpointRx,
             ids::ENDPOINT_RECV,
             desc.sid_raw,
             Self::endpoint_policy_args(

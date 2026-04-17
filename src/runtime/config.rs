@@ -32,7 +32,7 @@ impl Default for LivenessPolicy {
             max_no_evidence_defer: 1,
             force_poll_on_exhaustion: true,
             max_forced_poll_attempts: 1,
-            exhaust_reason: crate::epf::ENGINE_LIVENESS_EXHAUSTED,
+            exhaust_reason: crate::policy_runtime::ENGINE_LIVENESS_EXHAUSTED,
         }
     }
 }

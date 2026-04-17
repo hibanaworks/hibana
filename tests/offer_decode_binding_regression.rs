@@ -114,7 +114,7 @@ fn route_resolver_calls() -> usize {
 }
 
 fn count_policy_audit_ext_for_slot(
-    tap_buf: &[hibana::substrate::mgmt::tap::TapEvent],
+    tap_buf: &[hibana::substrate::tap::TapEvent],
     slot_tag: u32,
 ) -> usize {
     tap_buf

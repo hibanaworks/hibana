@@ -4,8 +4,8 @@
 use crate::control::cap::resource_kinds::RouteDecisionHandle;
 use crate::{
     endpoint::{SendError, SendResult},
-    epf::{AbortInfo, Action},
     global::const_dsl::ScopeId,
+    policy_runtime::{AbortInfo, Action},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

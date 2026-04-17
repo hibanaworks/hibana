@@ -5,21 +5,13 @@ pub use crate::transport::Transport;
 pub struct SessionKit<'cfg, T, U, C, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, U: crate::runtime::consts::LabelUniverse + 'cfg, C: crate::runtime::config::Clock + 'cfg, {
 pub fn new(clock: &'cfg C) -> Self {
 pub fn add_rendezvous_from_config( &self, config: crate::substrate::runtime::Config<'cfg, U, C>, transport: T, ) -> Result<RendezvousId, CpError> {
-pub fn enter<'r, const ROLE: u8, Witness, Mint, B>( &'r self, rv: RendezvousId, sid: SessionId, program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>, binding: B, ) -> Result<crate::Endpoint<'r, ROLE, Self, Mint>, AttachError> where B: crate::binding::BindingArg<'r>, Mint: crate::substrate::cap::advanced::MintConfigMarker, 'cfg: 'r, {
-pub fn set_resolver<const POLICY: u16, const ROLE: u8, Witness, Mint>( &self, rv: RendezvousId, program: &crate::g::advanced::RoleProgram<'_, ROLE, Witness, Mint>, resolver: crate::substrate::policy::ResolverRef<'cfg>, ) -> Result<(), CpError> where Mint: crate::substrate::cap::advanced::MintConfigMarker, {
+pub fn enter<'r, const ROLE: u8, Mint, B>( &'r self, rv: RendezvousId, sid: SessionId, program: &crate::g::advanced::RoleProgram<'_, ROLE, Mint>, binding: B, ) -> Result<crate::Endpoint<'r, ROLE, Self, Mint>, AttachError> where B: crate::binding::BindingArg<'r>, Mint: crate::substrate::cap::advanced::MintConfigMarker, 'cfg: 'r, {
+pub fn set_resolver<const POLICY: u16, const ROLE: u8, Mint>( &self, rv: RendezvousId, program: &crate::g::advanced::RoleProgram<'_, ROLE, Mint>, resolver: crate::substrate::policy::ResolverRef<'cfg>, ) -> Result<(), CpError> where Mint: crate::substrate::cap::advanced::MintConfigMarker, {
 pub mod runtime {
 pub use crate::runtime::config::{Clock, Config, CounterClock};
 pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse};
-pub mod mgmt {
-pub use crate::runtime::mgmt::{ LoadBegin, LoadChunk, LoadReport, LoadRequest, MgmtError, Reply, Request, ROLE_CLUSTER, ROLE_CONTROLLER, SlotRequest, StatsResp, SubscribeReq, TransitionReport, };
 pub mod tap {
 pub use crate::observe::core::TapEvent;
-pub mod request_reply {
-pub use crate::runtime::mgmt::RequestReplyPrefixSteps as PrefixSteps;
-pub const PREFIX: crate::g::Program<PrefixSteps> = crate::runtime::mgmt::REQUEST_REPLY_PREFIX;
-pub mod observe_stream {
-pub use crate::runtime::mgmt::ObserveStreamPrefixSteps as PrefixSteps;
-pub const PREFIX: crate::g::Program<PrefixSteps> = crate::runtime::mgmt::OBSERVE_STREAM_PREFIX;
 pub mod binding {
 pub use crate::binding::{ BindingSlot, Channel, ChannelDirection, ChannelKey, ChannelStore, IncomingClassification, NoBinding, TransportOpsError, };
 pub mod policy {
@@ -27,18 +19,16 @@ pub use crate::control::cluster::core::{ DynamicResolution, ResolverContext, Res
 pub use crate::transport::context::{ ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider, };
 pub mod core {
 pub use crate::transport::context::core::{ CONGESTION_MARKS, CONGESTION_WINDOW, IN_FLIGHT_BYTES, LANE, LATENCY_US, LATEST_ACK_PN, PACING_INTERVAL_US, PTO_COUNT, QUEUE_DEPTH, RETRANSMISSIONS, RV_ID, SESSION_ID, SRTT_US, TAG, TRANSPORT_ALGORITHM, };
-pub mod epf {
-pub use Header;
-pub use Slot;
+pub use crate::policy_runtime::PolicySlot;
 pub mod cap {
 pub mod advanced {
 pub use super::super::control::cap::mint::{ AllowsCanonical, CAP_HANDLE_LEN, CapError, CapsMask, ControlMint, EpochTbl, MintConfig, MintConfigMarker, SessionScopedKind, };
-pub use crate::control::cap::resource_kinds::{ CancelAckKind, CancelKind, CheckpointKind, CommitKind, LoadBeginKind, LoadCommitKind, LoopBreakKind, LoopContinueKind, LoopDecisionHandle, PolicyActivateKind, PolicyAnnotateKind, PolicyLoadKind, PolicyRevertKind, RerouteKind, RollbackKind, RouteDecisionHandle, RouteDecisionKind, SpliceAckKind, SpliceIntentKind, };
+pub use crate::control::cap::resource_kinds::{ CancelAckKind, CancelKind, CheckpointKind, CommitKind, LoadBeginKind, LoadCommitKind, LoopBreakKind, LoopContinueKind, LoopDecisionHandle, MgmtRouteActivateKind, MgmtRouteCommandFamilyKind, MgmtRouteCommandTailKind, MgmtRouteLoadAndActivateKind, MgmtRouteLoadFamilyKind, MgmtRouteLoadKind, MgmtRouteReplyActivatedKind, MgmtRouteReplyErrorKind, MgmtRouteReplyLoadedKind, MgmtRouteReplyRevertedKind, MgmtRouteReplyStatsKind, MgmtRouteReplySuccessFamilyKind, MgmtRouteReplySuccessFinalKind, MgmtRouteReplySuccessTailKind, MgmtRouteRevertKind, MgmtRouteStatsKind, PolicyActivateKind, PolicyAnnotateKind, PolicyLoadKind, PolicyRevertKind, RerouteKind, RollbackKind, RouteDecisionHandle, RouteDecisionKind, SpliceAckKind, SpliceIntentKind, };
 pub use crate::global::ControlHandling;
 pub use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 pub use crate::control::cap::mint::{ CapShot, ControlResourceKind, GenericCapToken, ResourceKind, };
 pub use {One, Many};
 pub mod wire {
-pub use crate::transport::wire::{CodecError, Payload, WireDecode, WireEncode};
+pub use crate::transport::wire::{CodecError, Payload, WireDecode, WireEncode, WirePayload};
 pub mod transport {
 pub use crate::transport::{ LocalDirection, Outgoing, SendMeta, TransportAlgorithm, TransportError, TransportEvent, TransportEventKind, TransportMetrics, TransportSnapshot, };

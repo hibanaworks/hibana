@@ -772,11 +772,6 @@ impl LoweringSummary {
     }
 
     #[inline(always)]
-    pub(crate) const fn lease_budget(&self) -> LeaseGraphBudget {
-        self.program.lease_budget
-    }
-
-    #[inline(always)]
     pub(crate) const fn compiled_program_counts(&self) -> CompiledProgramCounts {
         self.program.compiled_program_counts
     }

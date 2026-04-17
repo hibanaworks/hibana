@@ -7,7 +7,7 @@
 //! The core runtime treats context identifiers as opaque values. Protocol crates
 //! define their own identifiers and semantics.
 
-use crate::substrate::policy::epf::Slot;
+use crate::substrate::policy::PolicySlot;
 
 const POLICY_ATTRS_CAPACITY: usize = 16;
 
@@ -222,7 +222,7 @@ impl Default for PolicySignals<'_> {
 /// - Overlay precedence must be explicit and stable (e.g. shared -> local override).
 pub trait PolicySignalsProvider {
     /// Return policy signals for the specified VM slot.
-    fn signals(&self, slot: Slot) -> PolicySignals<'_>;
+    fn signals(&self, slot: PolicySlot) -> PolicySignals<'_>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -433,9 +433,9 @@ mod tests {
     fn policy_signals_provider_uses_slot() {
         struct Provider;
         impl PolicySignalsProvider for Provider {
-            fn signals(&self, slot: Slot) -> PolicySignals<'_> {
+            fn signals(&self, slot: PolicySlot) -> PolicySignals<'_> {
                 let value = match slot {
-                    Slot::Route => 1,
+                    PolicySlot::Route => 1,
                     _ => 2,
                 };
                 let mut attrs = PolicyAttrs::new();
@@ -444,8 +444,8 @@ mod tests {
             }
         }
 
-        let route = Provider.signals(Slot::Route);
-        let tx = Provider.signals(Slot::EndpointTx);
+        let route = Provider.signals(PolicySlot::Route);
+        let tx = Provider.signals(PolicySlot::EndpointTx);
         assert_eq!(route.input[0], 1);
         assert_eq!(tx.input[0], 2);
         assert_eq!(

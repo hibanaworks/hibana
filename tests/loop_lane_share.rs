@@ -36,7 +36,7 @@ use hibana::{
     substrate::{
         SessionId, SessionKit,
         binding::NoBinding,
-        mgmt::tap::TapEvent,
+        tap::TapEvent,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
     },
 };

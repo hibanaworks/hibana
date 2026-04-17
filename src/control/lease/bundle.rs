@@ -19,7 +19,7 @@ use crate::{
     transport::Transport,
 };
 #[cfg(test)]
-use crate::{epf::vm::Slot, rendezvous::slots::SlotArena};
+use crate::{policy_runtime::PolicySlot, rendezvous::slots::SlotArena};
 
 const CAP_LOG_CAPACITY: usize = 4;
 const CAP_MASK_LOG_CAPACITY: usize = 4;
@@ -193,13 +193,13 @@ where
 #[cfg(test)]
 #[derive(Clone, Copy)]
 struct SlotStageRecord {
-    slot: Slot,
+    slot: PolicySlot,
 }
 
 #[cfg(test)]
 impl SlotStageRecord {
     const EMPTY: Self = Self {
-        slot: Slot::Forward,
+        slot: PolicySlot::Forward,
     };
 }
 
@@ -224,7 +224,7 @@ impl<'ctx, 'cfg> SlotBundleHandle<'ctx, 'cfg> {
     }
 
     #[inline]
-    pub(crate) fn track_stage(&mut self, slot: Slot) -> Result<(), LeaseBundleError> {
+    pub(crate) fn track_stage(&mut self, slot: PolicySlot) -> Result<(), LeaseBundleError> {
         let mut idx = 0usize;
         while idx < SLOT_LOG_CAPACITY {
             let bit = 1u8 << idx;
@@ -1008,7 +1008,7 @@ mod tests {
 
         let mut arena = SlotArena::new();
         let arena_ptr = NonNull::from(&mut arena);
-        let slot = Slot::Forward;
+        let slot = PolicySlot::Forward;
         {
             let storage = arena.storage_mut(slot);
             storage.staging_mut()[0] = 0xAA;
@@ -1064,21 +1064,21 @@ mod tests {
         ctx.set_slot_bundle(SlotBundleHandle::new(arena_ptr));
 
         let slots = ctx.slots_mut().expect("slot handle present");
-        slots.track_stage(Slot::Forward).expect("log stage");
+        slots.track_stage(PolicySlot::Forward).expect("log stage");
         slots
-            .track_stage(Slot::Forward)
+            .track_stage(PolicySlot::Forward)
             .expect("duplicate stage stays idempotent");
         slots
-            .track_stage(Slot::EndpointRx)
+            .track_stage(PolicySlot::EndpointRx)
             .expect("log second stage");
         slots
-            .track_stage(Slot::EndpointTx)
+            .track_stage(PolicySlot::EndpointTx)
             .expect("log third stage");
         slots
-            .track_stage(Slot::Rendezvous)
+            .track_stage(PolicySlot::Rendezvous)
             .expect("log fourth stage");
         assert!(matches!(
-            slots.track_stage(Slot::Route),
+            slots.track_stage(PolicySlot::Route),
             Err(LeaseBundleError::Capacity)
         ));
     }

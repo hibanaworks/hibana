@@ -106,7 +106,7 @@ static CONTROLLER_BOOTSTRAP_PROGRAM: RoleProgram<'static, 0> = project(&BOOTSTRA
 
 fn run_cancel_local_action_test(
     cluster: &'static TestKit,
-    tap_storage: &'static mut [hibana::substrate::mgmt::tap::TapEvent;
+    tap_storage: &'static mut [hibana::substrate::tap::TapEvent;
                      runtime_support::RING_EVENTS],
     slab: &'static mut [u8],
 ) {
@@ -141,7 +141,7 @@ fn run_cancel_local_action_test(
 
 fn run_checkpoint_rollback_local_action_test(
     cluster: &'static TestKit,
-    tap_storage: &'static mut [hibana::substrate::mgmt::tap::TapEvent;
+    tap_storage: &'static mut [hibana::substrate::tap::TapEvent;
                      runtime_support::RING_EVENTS],
     slab: &'static mut [u8],
 ) {

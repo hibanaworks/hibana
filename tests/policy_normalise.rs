@@ -7,7 +7,7 @@ mod observe_support;
 
 use check_support::policy_check_summary;
 use core::cell::UnsafeCell;
-use hibana::substrate::mgmt::tap::TapEvent;
+use hibana::substrate::tap::TapEvent;
 use observe_support::{
     LANE_ACQUIRE_ID, LANE_RELEASE_ID, POLICY_ABORT_ID, POLICY_COMMIT_ID, PolicyEventDomain,
     PolicyEventKind, policy_lane_trace,
