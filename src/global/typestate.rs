@@ -16,7 +16,9 @@ mod registry;
 mod route_facts;
 
 pub use self::facts::StateIndex;
-pub(crate) use self::registry::{RouteDispatchEntry, RouteDispatchShape, RouteScopeRecord, ScopeRecord};
+pub(crate) use self::registry::{
+    RouteDispatchEntry, RouteDispatchShape, RouteScopeRecord, ScopeRecord,
+};
 #[cfg(test)]
 pub(crate) use self::{builder::RoleTypestate, emit::phase_route_guard_for_built_state_for_role};
 #[allow(unused_imports)]

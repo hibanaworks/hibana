@@ -26,12 +26,12 @@ use crate::binding::BindingSlot;
 use crate::control::cap::mint::{CapShot, EpochTable, MintConfigMarker};
 use crate::eff::EffIndex;
 use crate::endpoint::{RecvError, RecvResult};
-use crate::policy_runtime::PolicySlot;
 use crate::global::const_dsl::{PolicyMode, ScopeId, ScopeKind};
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
     MAX_FIRST_RECV_DISPATCH, RecvMeta, StateIndex, state_index_to_usize,
 };
+use crate::policy_runtime::PolicySlot;
 use crate::rendezvous::port::Port;
 use crate::runtime::{config::Clock, consts::LabelUniverse};
 use crate::transport::{Transport, wire::Payload};
@@ -1996,11 +1996,10 @@ where
                 ) {
                     FrontierDeferOutcome::Continue => {
                         if !is_route_controller && !is_dynamic_route_scope {
-                            state.pending_action = Some(
-                                ResolvePendingAction::StaticPassiveProgress {
+                            state.pending_action =
+                                Some(ResolvePendingAction::StaticPassiveProgress {
                                     selected_arm: route_token.arm().as_u8(),
-                                },
-                            );
+                                });
                             return self.poll_resolve_pending_action(state, cx);
                         }
                         state.pending_action = Some(ResolvePendingAction::YieldRestart);
@@ -2346,9 +2345,9 @@ where
         drain_transport_hints: bool,
     ) {
         if suppress_hint {
-            if let Some(label) = self
-                .endpoint
-                .take_hint_for_lane(lane_idx, false, label_meta, drain_transport_hints)
+            if let Some(label) =
+                self.endpoint
+                    .take_hint_for_lane(lane_idx, false, label_meta, drain_transport_hints)
             {
                 self.endpoint.record_scope_hint_dynamic(scope_id, label);
                 self.endpoint
@@ -2375,10 +2374,12 @@ where
                     .record_scope_ack(scope_id, RouteDecisionToken::from_ack(arm));
             }
         }
-        if let Some(label) = self
-            .endpoint
-            .take_hint_for_lane(lane_idx, suppress_hint, label_meta, drain_transport_hints)
-        {
+        if let Some(label) = self.endpoint.take_hint_for_lane(
+            lane_idx,
+            suppress_hint,
+            label_meta,
+            drain_transport_hints,
+        ) {
             self.endpoint.record_scope_hint(scope_id, label);
         }
     }
@@ -4270,8 +4271,9 @@ where
             && (!passive_dynamic_scope_has_recv
                 || preview_ready_arm_evidence
                 || passive_ack_is_materializable);
-        let skip_recv_loop =
-            passive_dynamic_can_skip_recv || controller_can_skip_recv || early_decision_arm_has_no_recv;
+        let skip_recv_loop = passive_dynamic_can_skip_recv
+            || controller_can_skip_recv
+            || early_decision_arm_has_no_recv;
 
         Ok(OfferFrontierFacts {
             selection,
@@ -4301,8 +4303,9 @@ where
                 'offer_recv: loop {
                     if !facts.is_route_controller || facts.controller_selected_recv_step {
                         let label_meta = self.endpoint.selection_label_meta(facts.selection);
-                        let materialization_meta =
-                            self.endpoint.selection_materialization_meta(facts.selection);
+                        let materialization_meta = self
+                            .endpoint
+                            .selection_materialization_meta(facts.selection);
                         if let Some((_, classification)) = self.endpoint.poll_binding_for_offer(
                             facts.scope_id,
                             facts.offer_lane_idx,
@@ -4313,11 +4316,9 @@ where
                             break 'offer_recv None;
                         }
                         if facts.recvless_loop_control_scope
-                            && let Some((_, classification)) =
-                                self.endpoint.poll_binding_any_for_offer(
-                                    facts.offer_lane_idx,
-                                    facts.offer_lanes,
-                                )
+                            && let Some((_, classification)) = self
+                                .endpoint
+                                .poll_binding_any_for_offer(facts.offer_lane_idx, facts.offer_lanes)
                         {
                             state.binding_classification = Some(classification);
                             break 'offer_recv None;
@@ -4337,8 +4338,9 @@ where
 
                     if !facts.is_route_controller || facts.controller_selected_recv_step {
                         let label_meta = self.endpoint.selection_label_meta(facts.selection);
-                        let materialization_meta =
-                            self.endpoint.selection_materialization_meta(facts.selection);
+                        let materialization_meta = self
+                            .endpoint
+                            .selection_materialization_meta(facts.selection);
                         if let Some((_, classification)) = self.endpoint.poll_binding_for_offer(
                             facts.scope_id,
                             facts.offer_lane_idx,
@@ -4349,11 +4351,9 @@ where
                             break 'offer_recv None;
                         }
                         if facts.recvless_loop_control_scope
-                            && let Some((_, classification)) =
-                                self.endpoint.poll_binding_any_for_offer(
-                                    facts.offer_lane_idx,
-                                    facts.offer_lanes,
-                                )
+                            && let Some((_, classification)) = self
+                                .endpoint
+                                .poll_binding_any_for_offer(facts.offer_lane_idx, facts.offer_lanes)
                         {
                             state.binding_classification = Some(classification);
                             break 'offer_recv None;
@@ -4384,8 +4384,9 @@ where
         }
         if self.frontier_visited.is_none() {
             let mut frontier_scratch = self.endpoint.frontier_scratch_view();
-            self.frontier_visited =
-                Some(super::frontier::frontier_visit_set_from_scratch(&mut frontier_scratch));
+            self.frontier_visited = Some(super::frontier::frontier_visit_set_from_scratch(
+                &mut frontier_scratch,
+            ));
         }
         loop {
             if let Some(stage) = self.run_stage.take() {
@@ -4403,8 +4404,10 @@ where
                                 let suppress_scope_hint = stage.facts.suppress_scope_hint;
                                 let is_route_controller = stage.facts.is_route_controller;
                                 let is_dynamic_route_scope = stage.facts.is_dynamic_route_scope;
-                                if let Some(classification) = stage.binding_classification.as_ref() {
-                                    let label_meta = self.endpoint.selection_label_meta(stage.selection);
+                                if let Some(classification) = stage.binding_classification.as_ref()
+                                {
+                                    let label_meta =
+                                        self.endpoint.selection_label_meta(stage.selection);
                                     self.ingest_binding_scope_evidence(
                                         scope_id,
                                         classification.label,
@@ -4413,7 +4416,8 @@ where
                                     );
                                 }
                                 {
-                                    let label_meta = self.endpoint.selection_label_meta(stage.selection);
+                                    let label_meta =
+                                        self.endpoint.selection_label_meta(stage.selection);
                                     self.ingest_scope_evidence_for_offer(
                                         scope_id,
                                         offer_lane_idx,
@@ -4431,8 +4435,8 @@ where
                                 {
                                     return Poll::Ready(Err(RecvError::PhaseInvariant));
                                 }
-                                self.run_stage = Some(OfferRunStage::ResolveToken(
-                                    OfferResolveState {
+                                self.run_stage =
+                                    Some(OfferRunStage::ResolveToken(OfferResolveState {
                                         selection: stage.selection,
                                         facts: stage.facts,
                                         binding_classification: stage.binding_classification,
@@ -4444,8 +4448,7 @@ where
                                         ),
                                         pending_action: None,
                                         yield_armed: false,
-                                    },
-                                ));
+                                    }));
                                 continue;
                             }
                         }
@@ -4455,38 +4458,33 @@ where
                             .frontier_visited
                             .take()
                             .expect("offer frontier state must be initialized before polling");
-                        let resolved = match self.resolve_token(
-                            &mut stage,
-                            &mut frontier_visited,
-                            cx,
-                        ) {
-                            Poll::Pending => {
-                                self.frontier_visited = Some(frontier_visited);
-                                self.run_stage = Some(OfferRunStage::ResolveToken(stage));
-                                return Poll::Pending;
-                            }
-                            Poll::Ready(Err(err)) => {
-                                self.frontier_visited = Some(frontier_visited);
-                                return Poll::Ready(Err(err));
-                            }
-                            Poll::Ready(Ok(resolved)) => {
-                                self.frontier_visited = Some(frontier_visited);
-                                resolved
-                            }
-                        };
+                        let resolved =
+                            match self.resolve_token(&mut stage, &mut frontier_visited, cx) {
+                                Poll::Pending => {
+                                    self.frontier_visited = Some(frontier_visited);
+                                    self.run_stage = Some(OfferRunStage::ResolveToken(stage));
+                                    return Poll::Pending;
+                                }
+                                Poll::Ready(Err(err)) => {
+                                    self.frontier_visited = Some(frontier_visited);
+                                    return Poll::Ready(Err(err));
+                                }
+                                Poll::Ready(Ok(resolved)) => {
+                                    self.frontier_visited = Some(frontier_visited);
+                                    resolved
+                                }
+                            };
                         match resolved {
                             ResolveTokenOutcome::RestartFrontier => {
-                                self.carried_binding_classification =
-                                    stage.binding_classification;
-                                self.carried_transport_payload = stage.transport_payload.map(
-                                    |payload| {
+                                self.carried_binding_classification = stage.binding_classification;
+                                self.carried_transport_payload =
+                                    stage.transport_payload.map(|payload| {
                                         (
                                             stage.transport_payload_len,
                                             stage.transport_payload_lane,
                                             payload,
                                         )
-                                    },
-                                );
+                                    });
                                 continue;
                             }
                             ResolveTokenOutcome::Resolved(resolved) => {
@@ -4498,9 +4496,8 @@ where
                                         Ok(true) => {
                                             self.carried_binding_classification =
                                                 stage.binding_classification;
-                                            self.carried_transport_payload = stage
-                                                .transport_payload
-                                                .map(|payload| {
+                                            self.carried_transport_payload =
+                                                stage.transport_payload.map(|payload| {
                                                     (
                                                         stage.transport_payload_len,
                                                         stage.transport_payload_lane,
@@ -4581,7 +4578,9 @@ where
     /// EmptyArmTerminal and skip decode.
     pub fn offer(
         &mut self,
-    ) -> impl core::future::Future<Output = RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>> + '_ {
+    ) -> impl core::future::Future<
+        Output = RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>,
+    > + '_ {
         let mut machine = RouteFrontierMachine::new(self);
         poll_fn(move |cx| machine.poll_run(cx))
     }

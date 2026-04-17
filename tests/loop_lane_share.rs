@@ -36,8 +36,8 @@ use hibana::{
     substrate::{
         SessionId, SessionKit,
         binding::NoBinding,
-        tap::TapEvent,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
+        tap::TapEvent,
     },
 };
 use placement_support::write_value;

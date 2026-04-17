@@ -76,7 +76,12 @@ fn substrate_root_exposes_only_phase6_core_buckets() {
         );
     }
 
-    for forbidden in ["pub mod mgmt {", "pub mod epf {", "crate::runtime::mgmt", "crate::epf"] {
+    for forbidden in [
+        "pub mod mgmt {",
+        "pub mod epf {",
+        "crate::runtime::mgmt",
+        "crate::epf",
+    ] {
         assert!(
             !substrate_rs.contains(forbidden),
             "substrate surface must not keep deleted in-crate mgmt/epf owners: {forbidden}"
@@ -117,7 +122,12 @@ fn substrate_allowlist_tracks_phase6_boundary() {
         );
     }
 
-    for forbidden in ["pub mod mgmt {", "pub mod epf {", "crate::runtime::mgmt", "crate::epf"] {
+    for forbidden in [
+        "pub mod mgmt {",
+        "pub mod epf {",
+        "crate::runtime::mgmt",
+        "crate::epf",
+    ] {
         assert!(
             !allowlist.contains(forbidden),
             "substrate allowlist must not keep deleted mgmt/epf buckets: {forbidden}"

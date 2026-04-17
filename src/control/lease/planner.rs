@@ -263,7 +263,6 @@ impl LeaseGraphBudget {
     pub(crate) const fn requires_delegation(&self) -> bool {
         self.facets.requires_delegation()
     }
-
 }
 
 #[inline(always)]

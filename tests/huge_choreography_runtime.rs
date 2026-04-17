@@ -40,9 +40,7 @@ fn drive<F: core::future::Future>(future: F) -> F::Output {
     drive_pinned(future.as_mut())
 }
 
-fn drive_pinned<F: core::future::Future>(
-    mut future: core::pin::Pin<&mut F>,
-) -> F::Output {
+fn drive_pinned<F: core::future::Future>(mut future: core::pin::Pin<&mut F>) -> F::Output {
     use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
     const VTABLE: RawWakerVTable = RawWakerVTable::new(

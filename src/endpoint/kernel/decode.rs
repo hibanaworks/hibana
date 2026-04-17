@@ -16,11 +16,13 @@ use crate::{
         typestate::{ARM_SHARED, JumpReason, LoopMetadata, LoopRole},
     },
     runtime::{config::Clock, consts::LabelUniverse},
-    transport::{Transport, wire::{Payload, WirePayload}},
+    transport::{
+        Transport,
+        wire::{Payload, WirePayload},
+    },
 };
 
-type DecodedPayload<'a, M> =
-    <<M as MessageSpec>::Payload as WirePayload>::Decoded<'a>;
+type DecodedPayload<'a, M> = <<M as MessageSpec>::Payload as WirePayload>::Decoded<'a>;
 
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
@@ -53,13 +55,18 @@ where
         {
             return Ok(None);
         }
-        let meta = self.cursor.try_recv_meta().ok_or_else(decode_phase_invariant)?;
+        let meta = self
+            .cursor
+            .try_recv_meta()
+            .ok_or_else(decode_phase_invariant)?;
         let control_handling = <M::ControlKind as ControlPayloadKind>::HANDLING;
         let expects_control = !matches!(control_handling, ControlHandling::None);
         if meta.is_control != expects_control {
             return Err(decode_phase_invariant());
         }
-        if self.control_semantic_kind(meta.label, meta.resource).is_loop()
+        if self
+            .control_semantic_kind(meta.label, meta.resource)
+            .is_loop()
             && let Some(LoopMetadata {
                 scope: scope_id,
                 controller,
@@ -174,11 +181,10 @@ where
         match branch_meta.kind {
             super::offer::BranchKind::LocalControl => {
                 static ZERO_BUF: [u8; 64] = [0u8; 64];
-                let payload =
-                    <<M as MessageSpec>::Payload as WirePayload>::decode_payload(Payload::new(
-                        &ZERO_BUF,
-                    ))
-                    .map_err(RecvError::Codec)?;
+                let payload = <<M as MessageSpec>::Payload as WirePayload>::decode_payload(
+                    Payload::new(&ZERO_BUF),
+                )
+                .map_err(RecvError::Codec)?;
                 self.apply_branch_recv_policy(branch)?;
                 let _ = self.commit_branch_preview(&branch)?;
 
@@ -235,11 +241,10 @@ where
 
             super::offer::BranchKind::EmptyArmTerminal => {
                 static ZERO_BUF: [u8; 64] = [0u8; 64];
-                let payload =
-                    <<M as MessageSpec>::Payload as WirePayload>::decode_payload(Payload::new(
-                        &ZERO_BUF,
-                    ))
-                    .map_err(RecvError::Codec)?;
+                let payload = <<M as MessageSpec>::Payload as WirePayload>::decode_payload(
+                    Payload::new(&ZERO_BUF),
+                )
+                .map_err(RecvError::Codec)?;
                 self.apply_branch_recv_policy(branch)?;
                 let _ = self.commit_branch_preview(&branch)?;
 
@@ -271,11 +276,10 @@ where
 
             super::offer::BranchKind::ArmSendHint => {
                 static ZERO_BUF: [u8; 64] = [0u8; 64];
-                let payload =
-                    <<M as MessageSpec>::Payload as WirePayload>::decode_payload(Payload::new(
-                        &ZERO_BUF,
-                    ))
-                    .map_err(RecvError::Codec)?;
+                let payload = <<M as MessageSpec>::Payload as WirePayload>::decode_payload(
+                    Payload::new(&ZERO_BUF),
+                )
+                .map_err(RecvError::Codec)?;
                 self.apply_branch_recv_policy(branch)?;
                 let _ = self.commit_branch_preview(&branch)?;
 
@@ -348,8 +352,8 @@ where
 
         if prepared_meta.is_none()
             && self
-            .control_semantic_kind(meta.label, meta.resource)
-            .is_loop()
+                .control_semantic_kind(meta.label, meta.resource)
+                .is_loop()
         {
             if let Some(LoopMetadata {
                 scope: scope_id,
@@ -409,18 +413,17 @@ where
 
         let staged_payload = staged_payload.ok_or_else(decode_phase_invariant)?;
         let payload_view: Payload<'a> = lane_port::shrink_payload(staged_payload.payload());
-        let payload = match <<M as MessageSpec>::Payload as WirePayload>::decode_payload(
-            payload_view,
-        ) {
-            Ok(payload) => payload,
-            Err(err) => {
-                branch.binding_channel = None;
-                branch.staged_payload = Some(staged_payload);
-                branch.transport_payload_len = staged_payload.payload().as_bytes().len();
-                branch.transport_payload_lane = staged_payload.lane();
-                return Err(RecvError::Codec(err));
-            }
-        };
+        let payload =
+            match <<M as MessageSpec>::Payload as WirePayload>::decode_payload(payload_view) {
+                Ok(payload) => payload,
+                Err(err) => {
+                    branch.binding_channel = None;
+                    branch.staged_payload = Some(staged_payload);
+                    branch.transport_payload_len = staged_payload.payload().as_bytes().len();
+                    branch.transport_payload_lane = staged_payload.lane();
+                    return Err(RecvError::Codec(err));
+                }
+            };
 
         if let Err(err) = self.apply_branch_recv_policy(branch) {
             branch.binding_channel = None;

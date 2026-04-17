@@ -607,24 +607,16 @@ unsafe fn compact_route_scope_tail(
         lane_word_len,
     );
 
-    let offer_lane_words_start = CompiledRoleScopeStorage::align_up(
-        route_records_end,
-        core::mem::align_of::<LaneWord>(),
-    );
-    let offer_lane_words_end = offer_lane_words_start.saturating_add(
-        offer_lane_word_words.saturating_mul(core::mem::size_of::<LaneWord>()),
-    );
-    let arm1_lane_words_start = CompiledRoleScopeStorage::align_up(
-        offer_lane_words_end,
-        core::mem::align_of::<LaneWord>(),
-    );
-    let arm1_lane_words_end = arm1_lane_words_start.saturating_add(
-        arm1_lane_word_words.saturating_mul(core::mem::size_of::<LaneWord>()),
-    );
-    let arm0_lane_last_start = CompiledRoleScopeStorage::align_up(
-        arm1_lane_words_end,
-        core::mem::align_of::<EffIndex>(),
-    );
+    let offer_lane_words_start =
+        CompiledRoleScopeStorage::align_up(route_records_end, core::mem::align_of::<LaneWord>());
+    let offer_lane_words_end = offer_lane_words_start
+        .saturating_add(offer_lane_word_words.saturating_mul(core::mem::size_of::<LaneWord>()));
+    let arm1_lane_words_start =
+        CompiledRoleScopeStorage::align_up(offer_lane_words_end, core::mem::align_of::<LaneWord>());
+    let arm1_lane_words_end = arm1_lane_words_start
+        .saturating_add(arm1_lane_word_words.saturating_mul(core::mem::size_of::<LaneWord>()));
+    let arm0_lane_last_start =
+        CompiledRoleScopeStorage::align_up(arm1_lane_words_end, core::mem::align_of::<EffIndex>());
     let arm0_lane_last_end = arm0_lane_last_start.saturating_add(
         route_scope_count
             .saturating_mul(lane_slot_count)
@@ -635,13 +627,15 @@ unsafe fn compact_route_scope_tail(
         core::mem::align_of::<RouteDispatchShape>(),
     );
     let dispatch_entries_start = CompiledRoleScopeStorage::align_up(
-        dispatch_shapes_start
-            .saturating_add(dispatch_shape_count.saturating_mul(core::mem::size_of::<RouteDispatchShape>())),
+        dispatch_shapes_start.saturating_add(
+            dispatch_shape_count.saturating_mul(core::mem::size_of::<RouteDispatchShape>()),
+        ),
         core::mem::align_of::<RouteDispatchEntry>(),
     );
     let dispatch_targets_start = CompiledRoleScopeStorage::align_up(
-        dispatch_entries_start
-            .saturating_add(dispatch_entry_count.saturating_mul(core::mem::size_of::<RouteDispatchEntry>())),
+        dispatch_entries_start.saturating_add(
+            dispatch_entry_count.saturating_mul(core::mem::size_of::<RouteDispatchEntry>()),
+        ),
         core::mem::align_of::<StateIndex>(),
     );
     let dispatch_shapes_dst = dispatch_shapes_start as *mut RouteDispatchShape;
@@ -1657,10 +1651,8 @@ impl CompiledRoleImage {
                 footprint.logical_lane_word_count,
             )
         };
-        let eff_index_start = CompiledRoleScopeStorage::align_up(
-            compact_route_end,
-            core::mem::align_of::<u16>(),
-        );
+        let eff_index_start =
+            CompiledRoleScopeStorage::align_up(compact_route_end, core::mem::align_of::<u16>());
         let step_index_start = CompiledRoleScopeStorage::align_up(
             eff_index_start
                 + footprint

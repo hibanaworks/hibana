@@ -49,8 +49,9 @@ impl WirePayload for FramePayload {
     }
 }
 
-const BORROWED_PROGRAM: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<2, FramePayload>, 0>, StepNil>> =
-    g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
+const BORROWED_PROGRAM: g::Program<
+    StepCons<SendStep<Role<0>, Role<1>, Msg<2, FramePayload>, 0>, StepNil>,
+> = g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
 
 static ORIGIN_PROGRAM: RoleProgram<'static, 0> = project(&PROGRAM);
 static TARGET_PROGRAM: RoleProgram<'static, 1> = project(&PROGRAM);
@@ -100,10 +101,9 @@ fn cursor_recv_can_return_borrowed_frame_views() {
                 )
                 .expect("send succeeds");
                 assert!(outcome.is_none());
-                let payload = futures::executor::block_on(
-                    target_endpoint.recv::<Msg<2, FramePayload>>(),
-                )
-                .expect("recv succeeds");
+                let payload =
+                    futures::executor::block_on(target_endpoint.recv::<Msg<2, FramePayload>>())
+                        .expect("recv succeeds");
                 assert_eq!(payload.as_bytes(), b"hiba");
                 assert!(transport_queue_is_empty(&transport));
             },

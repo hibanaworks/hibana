@@ -140,7 +140,6 @@ impl SlotStorage {
         };
         unsafe { core::slice::from_raw_parts_mut(ptr, self.staging_len) }
     }
-
 }
 
 impl Default for SlotStorage {

@@ -7,11 +7,11 @@ use crate::{
     binding::BindingSlot,
     control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult},
-    policy_runtime::PolicySlot,
     global::MessageSpec,
     global::const_dsl::ScopeKind,
     global::typestate::{JumpReason, PassiveArmNavigation, state_index_to_usize},
     observe::ids,
+    policy_runtime::PolicySlot,
     runtime::{config::Clock, consts::LabelUniverse},
     transport::{
         Transport,
@@ -25,8 +25,7 @@ enum RecvPayloadSource<'a> {
     Borrowed(Payload<'a>),
 }
 
-type DecodedPayload<'a, M> =
-    <<M as MessageSpec>::Payload as WirePayload>::Decoded<'a>;
+type DecodedPayload<'a, M> = <<M as MessageSpec>::Payload as WirePayload>::Decoded<'a>;
 
 #[derive(Clone, Copy)]
 struct RecvDescriptor {
@@ -70,7 +69,9 @@ where
             {
                 let scope_id = region.scope_id;
                 let route_signals = self.policy_signals_for_slot(PolicySlot::Route).into_owned();
-                if let Ok(step) = self.prepare_route_decision_from_resolver(scope_id, &route_signals) {
+                if let Ok(step) =
+                    self.prepare_route_decision_from_resolver(scope_id, &route_signals)
+                {
                     match step {
                         super::authority::RouteResolveStep::Resolved(arm) => {
                             if arm.as_u8() == 0 {
@@ -133,7 +134,10 @@ where
             return Err(RecvError::PhaseInvariant);
         }
 
-        let meta = self.cursor.try_recv_meta().ok_or(RecvError::PhaseInvariant)?;
+        let meta = self
+            .cursor
+            .try_recv_meta()
+            .ok_or(RecvError::PhaseInvariant)?;
         if meta.label != target_label {
             return Err(RecvError::LabelMismatch {
                 expected: meta.label,
@@ -168,8 +172,7 @@ where
                 lane_port::scratch_ptr(port)
             };
             self.try_recv_from_binding(desc.meta.lane, desc.target_label, scratch_ptr)
-        }?
-        {
+        }? {
             return Poll::Ready(Ok(RecvPayloadSource::Borrowed(payload)));
         }
 
@@ -189,16 +192,13 @@ where
                     lane_port::scratch_ptr(port)
                 };
                 self.try_recv_from_binding(desc.meta.lane, desc.target_label, scratch_ptr)
-            }?
-            {
+            }? {
                 return Poll::Ready(Ok(RecvPayloadSource::Borrowed(payload)));
             }
 
             if payload.as_bytes().is_empty() {
                 let binding_active = self.binding.policy_signals_provider().is_some();
-                if !binding_active
-                    || M::Payload::decode_payload(Payload::new(&[])).is_ok()
-                {
+                if !binding_active || M::Payload::decode_payload(Payload::new(&[])).is_ok() {
                     return Poll::Ready(Ok(RecvPayloadSource::Empty));
                 }
                 continue;
@@ -235,8 +235,13 @@ where
             crate::control::types::Lane::new(meta.lane as u32),
         )?;
 
-        let logical_meta =
-            TapFrameMeta::new(desc.sid_raw, desc.lane_wire, ROLE, meta.label, FrameFlags::empty());
+        let logical_meta = TapFrameMeta::new(
+            desc.sid_raw,
+            desc.lane_wire,
+            ROLE,
+            meta.label,
+            FrameFlags::empty(),
+        );
         let scope_trace = self.scope_trace(meta.scope);
         let event_id = if meta.is_control {
             ids::ENDPOINT_CONTROL
@@ -260,10 +265,8 @@ where
             }
             RecvPayloadSource::Borrowed(payload) => {
                 let payload_view: Payload<'a> = lane_port::shrink_payload(payload);
-                <<M as MessageSpec>::Payload as WirePayload>::decode_payload(
-                    payload_view,
-                )
-                .map_err(RecvError::Codec)
+                <<M as MessageSpec>::Payload as WirePayload>::decode_payload(payload_view)
+                    .map_err(RecvError::Codec)
             }
         }
     }

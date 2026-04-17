@@ -1,6 +1,9 @@
 //! Safe wrappers over endpoint lane/port transport access.
 
-use core::{pin::Pin, task::{Context, Poll}};
+use core::{
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use crate::{
     binding::{BindingSlot, Channel, TransportOpsError},
@@ -204,8 +207,7 @@ pub(super) fn begin_send_outgoing<'f, 'r, T, E>(
     pending: &mut PendingSend<'r, T>,
     port: &Port<'r, T, E>,
     outgoing: Outgoing<'f>,
-)
-where
+) where
     T: Transport + 'r,
     E: EpochTable + 'r,
     'r: 'f,

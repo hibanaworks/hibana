@@ -16,8 +16,8 @@ use hibana::{
     substrate::{
         Lane, SessionId, SessionKit,
         binding::NoBinding,
-        tap::TapEvent,
         runtime::{Config, DefaultLabelUniverse},
+        tap::TapEvent,
     },
 };
 use runtime_support::{RING_EVENTS, with_fixture};

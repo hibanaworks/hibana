@@ -1,6 +1,9 @@
 //! Scope registry owners for typestate lowering.
 
-use super::{builder::encode_typestate_len, facts::{StateIndex, state_index_to_usize}};
+use super::{
+    builder::encode_typestate_len,
+    facts::{StateIndex, state_index_to_usize},
+};
 use crate::{
     eff,
     eff::EffIndex,
@@ -519,7 +522,8 @@ impl ScopeRegistry {
         if route.dispatch_shape == ROUTE_DISPATCH_SHAPE_NONE {
             None
         } else {
-            self.route_dispatch_shapes().get(route.dispatch_shape as usize)
+            self.route_dispatch_shapes()
+                .get(route.dispatch_shape as usize)
         }
     }
 
@@ -997,7 +1001,9 @@ impl ScopeRegistry {
         if arm >= 2 {
             None
         } else {
-            Some(shape.map_or(0, |shape| shape.first_recv_dispatch_label_mask[arm as usize]))
+            Some(shape.map_or(0, |shape| {
+                shape.first_recv_dispatch_label_mask[arm as usize]
+            }))
         }
     }
 

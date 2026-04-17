@@ -94,10 +94,7 @@ where
     Mint: MintConfigMarker,
 {
     #[inline]
-    pub(crate) fn from_parts(
-        endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>,
-        label: u8,
-    ) -> Self {
+    pub(crate) fn from_parts(endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>, label: u8) -> Self {
         Self {
             label,
             endpoint,
@@ -163,7 +160,7 @@ where
         &'e mut self,
     ) -> impl core::future::Future<
         Output = RecvResult<
-        RouteBranch<'e, 'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
+            RouteBranch<'e, 'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
         >,
     > + 'e {
         async move {
@@ -172,10 +169,7 @@ where
             unsafe {
                 (&mut *self.inner.endpoint).stash_pending_branch_preview(branch);
             }
-            Ok(RouteBranch::from_parts(
-                self.inner.endpoint,
-                label,
-            ))
+            Ok(RouteBranch::from_parts(self.inner.endpoint, label))
         }
     }
 }

@@ -2157,12 +2157,7 @@ where
         Ok(())
     }
 
-    fn handle_policy_abort(
-        &self,
-        info: AbortInfo,
-        sid: Option<SessionId>,
-        lane: Option<Lane>,
-    ) {
+    fn handle_policy_abort(&self, info: AbortInfo, sid: Option<SessionId>, lane: Option<Lane>) {
         if let Some(sid_val) = sid {
             if let Some(lane_val) = lane {
                 self.policy_cancel(sid_val, lane_val);
@@ -4133,18 +4128,20 @@ where
 
         let _ = self.flush_transport_events();
         let transport_metrics = self.transport.metrics().snapshot();
-        let policy_input =
-            crate::policy_runtime::slot_default_input(crate::policy_runtime::PolicySlot::Rendezvous);
+        let policy_input = crate::policy_runtime::slot_default_input(
+            crate::policy_runtime::PolicySlot::Rendezvous,
+        );
         let policy_digest = self.policy_digest(crate::policy_runtime::PolicySlot::Rendezvous);
         let event_hash = crate::policy_runtime::hash_tap_event(&policy_event);
         let signals_input_hash = crate::policy_runtime::hash_policy_input(policy_input);
-        let transport_snapshot_hash = crate::policy_runtime::hash_transport_snapshot(transport_metrics);
+        let transport_snapshot_hash =
+            crate::policy_runtime::hash_transport_snapshot(transport_metrics);
         let replay_transport = crate::policy_runtime::replay_transport_inputs(transport_metrics);
-        let replay_transport_presence = crate::policy_runtime::replay_transport_presence(transport_metrics);
-        let mode_id =
-            crate::policy_runtime::policy_mode_tag(
-                self.policy_mode(crate::policy_runtime::PolicySlot::Rendezvous),
-            );
+        let replay_transport_presence =
+            crate::policy_runtime::replay_transport_presence(transport_metrics);
+        let mode_id = crate::policy_runtime::policy_mode_tag(
+            self.policy_mode(crate::policy_runtime::PolicySlot::Rendezvous),
+        );
         self.emit_policy_event_with_arg2(
             ids::POLICY_AUDIT,
             lane_opt,

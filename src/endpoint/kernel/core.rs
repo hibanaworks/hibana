@@ -64,10 +64,10 @@ use crate::{
         affine::LaneGuard,
         control::{ControlOutcome, SessionControlCtx},
     },
-    policy_runtime::{self, AbortInfo, Action, PolicySlot},
     observe::core::{TapEvent, emit},
     observe::scope::ScopeTrace,
     observe::{events, ids, policy_abort, policy_trap},
+    policy_runtime::{self, AbortInfo, Action, PolicySlot},
     rendezvous::core::EndpointLeaseId,
     rendezvous::{port::Port, tables::LoopDisposition},
     runtime::consts::LabelUniverse,
@@ -478,14 +478,8 @@ pub struct RouteBranch<
 
 #[derive(Clone, Copy)]
 pub(super) enum StagedPayload<'a> {
-    Transport {
-        lane: u8,
-        payload: Payload<'a>,
-    },
-    Binding {
-        lane: u8,
-        payload: Payload<'a>,
-    },
+    Transport { lane: u8, payload: Payload<'a> },
+    Binding { lane: u8, payload: Payload<'a> },
 }
 
 impl<'a> StagedPayload<'a> {
@@ -668,9 +662,7 @@ where
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
-    Immediate(
-        SendTransportEmission<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>,
-    ),
+    Immediate(SendTransportEmission<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>),
     Pending(PendingSendTransport<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>),
 }
 
@@ -1481,7 +1473,8 @@ where
         let signals_attrs_hash = signals.attrs().hash32();
         let transport_snapshot_hash = policy_runtime::hash_transport_snapshot(transport_metrics);
         let replay_transport = policy_runtime::replay_transport_inputs(transport_metrics);
-        let replay_transport_presence = policy_runtime::replay_transport_presence(transport_metrics);
+        let replay_transport_presence =
+            policy_runtime::replay_transport_presence(transport_metrics);
         let slot_id = policy_runtime::slot_tag(slot);
         let mode_id = policy_runtime::policy_mode_tag(port.policy_mode(slot));
         self.emit_policy_audit_event(
@@ -1546,8 +1539,8 @@ where
             },
         );
         let verdict = action.verdict();
-        let verdict_meta =
-            ((policy_runtime::verdict_tag(verdict) as u32) << 24) | ((policy_runtime::verdict_arm(verdict) as u32) << 16);
+        let verdict_meta = ((policy_runtime::verdict_tag(verdict) as u32) << 24)
+            | ((policy_runtime::verdict_arm(verdict) as u32) << 16);
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT_RESULT,
             verdict_meta,
@@ -1564,7 +1557,9 @@ where
         }
 
         match action.verdict() {
-            policy_runtime::PolicyVerdict::Proceed | policy_runtime::PolicyVerdict::RouteArm(_) => Ok(()),
+            policy_runtime::PolicyVerdict::Proceed | policy_runtime::PolicyVerdict::RouteArm(_) => {
+                Ok(())
+            }
             policy_runtime::PolicyVerdict::Reject(reason) => {
                 if let Some(info) = action.abort_info() {
                     return Err(self.policy_abort_send(info, scope, lane));
@@ -1609,7 +1604,9 @@ where
         }
 
         match action.verdict() {
-            policy_runtime::PolicyVerdict::Proceed | policy_runtime::PolicyVerdict::RouteArm(_) => Ok(()),
+            policy_runtime::PolicyVerdict::Proceed | policy_runtime::PolicyVerdict::RouteArm(_) => {
+                Ok(())
+            }
             policy_runtime::PolicyVerdict::Reject(reason) => {
                 if let Some(info) = action.abort_info() {
                     return Err(self.policy_abort_recv(info, scope, lane));
@@ -2046,7 +2043,8 @@ where
         let signals_attrs_hash = signals.attrs().hash32();
         let transport_snapshot_hash = policy_runtime::hash_transport_snapshot(transport_metrics);
         let replay_transport = policy_runtime::replay_transport_inputs(transport_metrics);
-        let replay_transport_presence = policy_runtime::replay_transport_presence(transport_metrics);
+        let replay_transport_presence =
+            policy_runtime::replay_transport_presence(transport_metrics);
         let mode_id = policy_runtime::policy_mode_tag(port.policy_mode(PolicySlot::Route));
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT,
@@ -2059,8 +2057,7 @@ where
             ids::POLICY_AUDIT_EXT,
             signals_attrs_hash,
             transport_snapshot_hash,
-            ((policy_runtime::slot_tag(PolicySlot::Route) as u32) << 24)
-                | ((mode_id as u32) << 16),
+            ((policy_runtime::slot_tag(PolicySlot::Route) as u32) << 24) | ((mode_id as u32) << 16),
             port.lane(),
         );
         self.emit_policy_audit_event(
@@ -2117,8 +2114,8 @@ where
             },
         );
         let verdict = action.verdict();
-        let verdict_meta =
-            ((policy_runtime::verdict_tag(verdict) as u32) << 24) | ((policy_runtime::verdict_arm(verdict) as u32) << 16);
+        let verdict_meta = ((policy_runtime::verdict_tag(verdict) as u32) << 24)
+            | ((policy_runtime::verdict_arm(verdict) as u32) << 16);
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT_RESULT,
             verdict_meta,
@@ -3449,7 +3446,6 @@ where
             ErasedControlOutcome::External(token) => ControlOutcome::External(token.into_generic()),
         }
     }
-
 }
 
 impl<'e, 'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B, M> Future
@@ -3467,8 +3463,9 @@ where
     <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
     'r: 'a,
 {
-    type Output =
-        SendResult<ControlOutcome<'r, <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>>;
+    type Output = SendResult<
+        ControlOutcome<'r, <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>,
+    >;
 
     fn poll(self: Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -3482,18 +3479,21 @@ where
                     let meta = *meta;
                     let preview_cursor_index = *preview_cursor_index;
                     let payload = payload.take();
-                    let prepared =
-                        match lane_port::deref_mut_ptr::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>(this.endpoint)
-                            .prepare_send_control(meta, CursorEndpoint::send_descriptor::<M>())
-                        {
-                            Ok(prepared) => prepared,
-                            Err(err) => {
-                                this.state = SendWithPreviewState::Done;
-                                return Poll::Ready(Err(err));
-                            }
-                        };
-                    let step = match lane_port::deref_mut_ptr::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>(this.endpoint)
-                        .begin_send_transport(meta, payload, prepared)
+                    let prepared = match lane_port::deref_mut_ptr::<
+                        CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+                    >(this.endpoint)
+                    .prepare_send_control(meta, CursorEndpoint::send_descriptor::<M>())
+                    {
+                        Ok(prepared) => prepared,
+                        Err(err) => {
+                            this.state = SendWithPreviewState::Done;
+                            return Poll::Ready(Err(err));
+                        }
+                    };
+                    let step = match lane_port::deref_mut_ptr::<
+                        CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+                    >(this.endpoint)
+                    .begin_send_transport(meta, payload, prepared)
                     {
                         Ok(step) => step,
                         Err(err) => {
@@ -3503,9 +3503,15 @@ where
                     };
                     match step {
                         SendTransportStep::Immediate(emission) => {
-                            let outcome = lane_port::deref_mut_ptr::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>(this.endpoint)
-                                .finish_send_after_transport_erased(meta, preview_cursor_index, emission)
-                                .map(CursorEndpoint::typed_control_outcome::<M>);
+                            let outcome = lane_port::deref_mut_ptr::<
+                                CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+                            >(this.endpoint)
+                            .finish_send_after_transport_erased(
+                                meta,
+                                preview_cursor_index,
+                                emission,
+                            )
+                            .map(CursorEndpoint::typed_control_outcome::<M>);
                             this.state = SendWithPreviewState::Done;
                             return Poll::Ready(outcome);
                         }
@@ -3522,13 +3528,16 @@ where
                     meta,
                     preview_cursor_index,
                     pending,
-                } => match lane_port::deref_mut_ptr::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>(this.endpoint)
-                    .poll_send_transport(pending, cx)
+                } => match lane_port::deref_mut_ptr::<
+                    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+                >(this.endpoint)
+                .poll_send_transport(pending, cx)
                 {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(Ok(())) => {
-                        let endpoint =
-                            lane_port::deref_mut_ptr::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>(this.endpoint);
+                        let endpoint = lane_port::deref_mut_ptr::<
+                            CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+                        >(this.endpoint);
                         let emission = SendTransportEmission {
                             control: pending
                                 .control
@@ -3537,7 +3546,11 @@ where
                             dispatch_control: pending.dispatch_control,
                         };
                         let outcome = endpoint
-                            .finish_send_after_transport_erased(*meta, *preview_cursor_index, emission)
+                            .finish_send_after_transport_erased(
+                                *meta,
+                                *preview_cursor_index,
+                                emission,
+                            )
                             .map(CursorEndpoint::typed_control_outcome::<M>);
                         this.state = SendWithPreviewState::Done;
                         return Poll::Ready(outcome);
@@ -3565,7 +3578,6 @@ where
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
-
     fn record_loop_decision(
         &mut self,
         metadata: &LoopMetadata,

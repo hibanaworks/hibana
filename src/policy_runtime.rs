@@ -572,7 +572,10 @@ mod tests {
 
     #[test]
     fn shadow_mode_suppresses_non_tap_actions() {
-        assert_eq!(Action::Proceed.with_mode(PolicyMode::Shadow), Action::Proceed);
+        assert_eq!(
+            Action::Proceed.with_mode(PolicyMode::Shadow),
+            Action::Proceed
+        );
         assert_eq!(
             Action::Abort(AbortInfo {
                 reason: 11,

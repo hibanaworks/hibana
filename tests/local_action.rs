@@ -14,8 +14,8 @@ use hibana::{
     substrate::{
         SessionId, SessionKit,
         binding::NoBinding,
-        tap::TapEvent,
         runtime::{Config, CounterClock},
+        tap::TapEvent,
         wire::{CodecError, WireDecode, WireEncode},
     },
 };

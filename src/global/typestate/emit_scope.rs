@@ -325,7 +325,9 @@ unsafe fn intern_route_dispatch_shape(
     while entry_idx < sparse_len {
         let (label, arm, _) = sparse.first_recv_dispatch[entry_idx];
         unsafe {
-            entries.add(entries_start + entry_idx).write(RouteDispatchEntry { label, arm });
+            entries
+                .add(entries_start + entry_idx)
+                .write(RouteDispatchEntry { label, arm });
         }
         entry_idx += 1;
     }
