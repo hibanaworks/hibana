@@ -11,7 +11,7 @@ Repository intent:
 
 Clean split requirements:
 
-1. crate manifests use GitHub repo dependencies rather than path dependencies
+1. crate manifests use immutable GitHub repo revisions rather than path dependencies or floating branches
 2. repository metadata points at the final per-repo GitHub home
 3. `hibana` core tests and scripts do not assume sibling checkouts
 4. cross-repo smoke lives outside the core crate surface

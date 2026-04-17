@@ -24,6 +24,9 @@ check_absent '\[patch\.crates-io\]' \
   "cross-repo harness must not rely on a local crates.io patch overlay" \
   "${HARNESS_CARGO}" \
   "${HARNESS_README}"
+check_absent 'branch *= *"main"' \
+  "cross-repo harness must not float on moving main branches" \
+  "${HARNESS_CARGO}"
 check_absent '\.\./\.\./hibana/tests/|../hibana-epf|../hibana-mgmt' \
   "cross-repo harness docs must not assume sibling checkout layout" \
   "${HARNESS_README}" \
@@ -36,6 +39,17 @@ for required in \
 do
   if ! grep -Fq "${required}" "${HARNESS_CARGO}"; then
     echo "cross-repo harness must pin GitHub repo dependency: ${required}" >&2
+    FAILED=1
+  fi
+done
+
+for required in \
+  'rev = "b066079887f2d86d9266f3608321cfd860218aa0"' \
+  'rev = "e0283f6a01dac137ca5a464b6196ac58774809b5"' \
+  'rev = "4635b75afac0a58b0cd9958eaa0b50fc75e81085"'
+do
+  if ! grep -Fq "${required}" "${HARNESS_CARGO}"; then
+    echo "cross-repo harness must pin immutable dependency revision: ${required}" >&2
     FAILED=1
   fi
 done

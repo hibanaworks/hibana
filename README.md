@@ -343,7 +343,8 @@ The `hibana` repo no longer hard-codes a sibling-checkout assumption in its
 public-surface guards or boundary scripts. Cross-repo smoke and compositional
 tests now belong in `integration/cross-repo/`, which is structured so it can be
 lifted into a dedicated integration repository without changing the published
-crate surfaces.
+crate surfaces. The split crates are consumed through immutable GitHub
+revisions, so pinned downstream builds do not float on sibling `main` heads.
 
 ## Protocol-Implementor Walkthrough
 
