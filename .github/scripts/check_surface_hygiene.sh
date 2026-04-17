@@ -54,12 +54,12 @@ check_absent_multiline() {
 check_absent \
   "mod[[:space:]]+sync;|crate::sync" \
   "runtime fake-sync shim reintroduced" \
-  src/lib.rs src/substrate.rs src/endpoint.rs src/rendezvous/core.rs ../hibana-epf/src/host.rs src/observe/core.rs
+  src/lib.rs src/substrate.rs src/endpoint.rs src/rendezvous/core.rs src/observe/core.rs
 
 check_absent \
   "Atomic(Bool|U8|U16|U32|U64|Usize|Ptr)" \
   "production runtime atomics reintroduced" \
-  src/rendezvous/core.rs ../hibana-epf/src/host.rs src/observe/core.rs
+  src/rendezvous/core.rs src/observe/core.rs
 
 check_absent \
   "Atomic(Bool|U8|U16|U32|U64|Usize|Ptr)" \
@@ -465,21 +465,10 @@ check_absent "type[[:space:]]+Controller[[:space:]]*=[[:space:]]*Controller;" \
 check_absent "#\\[allow\\(clippy::empty_loop\\)\\]|#\\[allow\\(unused_variables\\)\\]|#\\[allow\\(clippy::let_unit_value\\)\\]" \
   "stale allow shim" \
   src tests
-check_absent "^type[[:space:]]+(Controller|Cluster)[[:space:]]*=[[:space:]]*g::Role<[0-9]+>;" \
-  "role synonym alias shim" \
-  ../hibana-mgmt/src/request_reply.rs
 check_absent "route_inferred|par_inferred" \
   "legacy inferred binary builder vocabulary" \
   src/global.rs \
   src/global/program.rs
-check_absent "^type[[:space:]]+(LoadBeginSteps|LoopContinueArmSteps|LoopRouteSteps|LoopSegmentSteps|AfterLoop|AfterCommit|FullProgramSteps|ControllerLocal|ClusterLocal|StreamLoopContinueSteps|StreamLoopBreakSteps|StreamLoopRouteSteps|StreamProgramSteps|StreamControllerLocal|StreamClusterLocal|LoadCommitSteps|LoadBeginTokenStep|LoadBeginMsgStep|LoopChunkStep|LoopBreakStep|CommandStep|StreamSubscribeStep|StreamBatchStep|StreamEndStep|StreamLoopContinueStep|StreamLoopBreakStep)[[:space:]]*=" \
-  "runtime mgmt composition alias shim" \
-  ../hibana-mgmt/src/request_reply.rs \
-  ../hibana-mgmt/src/observe_stream.rs
-check_absent "^type[[:space:]]+(LoadBeginTokenMsg|LoadBeginMsg|LoadChunkMsg|LoadCommitTokenMsg|LoopContinueMsg|LoopBreakMsg|CommandMsg|SubscribeMsg|TapBatchMsg|StreamContinueMsg|StreamBreakMsg|StreamEndMsg)[[:space:]]*=" \
-  "runtime mgmt message alias shim" \
-  ../hibana-mgmt/src/request_reply.rs \
-  ../hibana-mgmt/src/observe_stream.rs
 check_absent "^type[[:space:]]+(LoopContinueMsg|LoopBreakMsg)[[:space:]]*=" \
   "global const-dsl loop message alias shim" \
   src/global/const_dsl.rs
@@ -496,9 +485,6 @@ check_absent "transmute::<usize, fn\\(u32\\)>" \
 check_absent "LeaseObserve::new\\(observe.tap\\(\\) as \\*const _\\)|LeaseObserve::new\\(static_ring as \\*const _\\)" \
   "lease observe pointer underscore shim" \
   src/control/lease/bundle.rs
-check_absent "^const[[:space:]]+SLOT_COUNT[[:space:]]*:[^=]*=[[:space:]]*RENDEZVOUS_SLOT_COUNT[[:space:]]*;" \
-  "runtime mgmt slot-count synonym alias" \
-  ../hibana-mgmt/src/lib.rs
 check_absent "#\\[doc\\(hidden\\)\\]" \
   "doc-hidden escape hatch" \
   src examples

@@ -29,25 +29,6 @@ fn core_source_tree_no_longer_keeps_mgmt_or_epf_owners() {
 }
 
 #[test]
-fn sibling_crates_exist_for_optional_mgmt_and_epf_layers() {
-    let hibana_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = hibana_root
-        .parent()
-        .expect("hibana crate must live under the repository root");
-
-    for sibling in [
-        repo_root.join("hibana-mgmt/src/lib.rs"),
-        repo_root.join("hibana-epf/src/lib.rs"),
-    ] {
-        assert!(
-            sibling.exists(),
-            "phase6 must provide the sibling crate entrypoint: {}",
-            sibling.display()
-        );
-    }
-}
-
-#[test]
 fn transport_context_uses_generic_policy_slot_owner() {
     let context_src = read("src/transport/context.rs");
 
@@ -71,7 +52,13 @@ fn substrate_tap_surface_stays_on_tapevent_only() {
         "substrate tap surface must expose TapEvent from core"
     );
 
-    for forbidden in ["TapBatch", "RawEvent", "for_each_since", "install_ring", "push("] {
+    for forbidden in [
+        "TapBatch",
+        "RawEvent",
+        "for_each_since",
+        "install_ring",
+        "push(",
+    ] {
         assert!(
             !substrate_src.contains(forbidden),
             "substrate tap surface must stay minimal after phase6: {forbidden}"
@@ -92,5 +79,27 @@ fn substrate_policy_surface_exports_policyslot_only() {
             !substrate_src.contains(forbidden),
             "substrate::policy must not regrow the deleted epf bucket: {forbidden}"
         );
+    }
+}
+
+#[test]
+fn core_repo_checks_do_not_assume_sibling_checkout_layout() {
+    for path in [
+        ".github/scripts/check_mgmt_boundary.sh",
+        ".github/scripts/check_plane_boundaries.sh",
+        ".github/scripts/check_surface_hygiene.sh",
+        "tests/docs_surface.rs",
+    ] {
+        let src = read(path);
+        for forbidden in [
+            "../hibana-mgmt",
+            "../hibana-epf",
+            "hibana crate must live under the repository root",
+        ] {
+            assert!(
+                !src.contains(forbidden),
+                "core repo checks must not assume sibling checkout layout after phase7: {path}: {forbidden}"
+            );
+        }
     }
 }

@@ -1,0 +1,13 @@
+[package]
+name = "hibana-cross-repo-smoke"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+default = []
+
+[dependencies]
+hibana = { version = "0.1.0", git = "https://github.com/hibanaworks/hibana", branch = "main", default-features = false, features = ["std"] }
+hibana-epf = { version = "0.1.0", git = "https://github.com/hibanaworks/hibana-epf", branch = "main", default-features = false, features = ["std"] }
+hibana-mgmt = { version = "0.1.0", git = "https://github.com/hibanaworks/hibana-mgmt", branch = "main", default-features = false, features = ["std"] }

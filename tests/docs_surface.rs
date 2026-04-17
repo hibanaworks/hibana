@@ -9,7 +9,7 @@ fn read(path: &str) -> String {
 }
 
 #[test]
-fn readme_tracks_phase6_core_and_sibling_boundaries() {
+fn readme_tracks_phase7_external_repo_boundaries() {
     let readme = read("README.md");
 
     for required in [
@@ -25,10 +25,13 @@ fn readme_tracks_phase6_core_and_sibling_boundaries() {
         "`hibana_mgmt::Request::Revert(SlotRequest)`",
         "`hibana_mgmt::Request::Stats(SlotRequest)`",
         "`hibana_epf::{Header, Slot}`",
+        "`https://github.com/hibanaworks/hibana-epf`",
+        "`https://github.com/hibanaworks/hibana-mgmt`",
+        "`integration/cross-repo/`",
     ] {
         assert!(
             readme.contains(required),
-            "README must spell the phase6 sibling boundary: {required}"
+            "README must spell the phase7 external repo boundary: {required}"
         );
     }
 
@@ -53,10 +56,35 @@ fn readme_tracks_phase6_core_and_sibling_boundaries() {
 }
 
 #[test]
+fn phase7_spec_docs_exist() {
+    for required in [
+        "docs/spec/public_surface.md",
+        "docs/spec/projection_witness.md",
+        "docs/spec/descriptor_kernel.md",
+        "docs/spec/payload_plane.md",
+        "docs/spec/compiled_image_layout.md",
+        "docs/spec/policy_boundary.md",
+        "docs/spec/downstream_readiness.md",
+    ] {
+        let full = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(required);
+        assert!(
+            full.exists(),
+            "phase7 spec doc must exist: {}",
+            full.display()
+        );
+    }
+}
+
+#[test]
 fn crate_root_docs_do_not_regrow_internal_buckets() {
     let lib_rs = read("src/lib.rs");
 
-    for forbidden in ["mod epf;", "pub mod runtime;", "pub mod transport;", "pub mod observe;"] {
+    for forbidden in [
+        "mod epf;",
+        "pub mod runtime;",
+        "pub mod transport;",
+        "pub mod observe;",
+    ] {
         assert!(
             !lib_rs.contains(forbidden),
             "crate root must stay on the minimal app/substrate surface: {forbidden}"

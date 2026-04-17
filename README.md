@@ -330,6 +330,21 @@ Advanced / deep-dive substrate owners:
 Everything in this section is protocol-neutral. If a protocol-specific concept
 is needed, keep it outside `hibana`'s public surface.
 
+## Repository Split
+
+Phase 7 treats crate boundaries and repository boundaries as the same design
+boundary.
+
+- `hibana` lives at `https://github.com/hibanaworks/hibana`
+- `hibana-epf` lives at `https://github.com/hibanaworks/hibana-epf`
+- `hibana-mgmt` lives at `https://github.com/hibanaworks/hibana-mgmt`
+
+The `hibana` repo no longer hard-codes a sibling-checkout assumption in its
+public-surface guards or boundary scripts. Cross-repo smoke and compositional
+tests now belong in `integration/cross-repo/`, which is structured so it can be
+lifted into a dedicated integration repository without changing the published
+crate surfaces.
+
 ## Protocol-Implementor Walkthrough
 
 ### 1. Compose `transport prefix -> appkit prefix -> user app`
@@ -661,7 +676,7 @@ The public policy owner surface is intentionally narrow:
 - `PolicySlot` / `hibana_epf::Slot` are `Forward | EndpointRx | EndpointTx | Rendezvous | Route`
 - active EPF is consulted inside the same resolver slot, before the Rust resolver callback
 - if EPF does not decide, the same slot continues into the Rust resolver stage
-- `hibana` core itself does not expose a second VM-run API; the optional sibling crate `hibana_epf` owns `loader::ImageLoader`, `verifier::VerifiedImage`, `HostSlots`, `ScratchLease`, `host::InstallError`, `VmCtx`, and `run_with(...)`
+- `hibana` core itself does not expose a second VM-run API; the optional external crate `hibana_epf` owns `loader::ImageLoader`, `verifier::VerifiedImage`, `HostSlots`, `ScratchLease`, `host::InstallError`, `VmCtx`, and `run_with(...)`
 - `PolicySignalsProvider::signals(slot)` is the only public input boundary for slot-scoped policy data
 - policy execution is fail-closed; verifier, trap, and fuel failures reject rather than falling through
 - policy activation switches at the decision boundary through staged active/pending epochs

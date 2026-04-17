@@ -22,10 +22,4 @@ if ! rg -n "pub use crate::policy_runtime::PolicySlot;" src/substrate.rs; then
   exit 1
 fi
 
-# Sibling crates must exist for downstream opt-in.
-if [[ ! -f ../hibana-mgmt/src/lib.rs || ! -f ../hibana-epf/src/lib.rs ]]; then
-  echo "mgmt boundary violation: sibling hibana-mgmt / hibana-epf crates must exist" >&2
-  exit 1
-fi
-
 echo "mgmt boundary check passed"
