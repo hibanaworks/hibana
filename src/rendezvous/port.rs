@@ -353,11 +353,17 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     }
 
     #[inline]
-    pub(crate) fn has_route_hint_for_label_mask(&self, label_mask: u128) -> bool {
+    pub(crate) fn has_route_hint_for_label_mask(
+        &self,
+        label_mask: u128,
+        drain_transport_hints: bool,
+    ) -> bool {
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
-        let rx = unsafe { &*self.rx.get() };
-        hints.drain_from_transport(self.transport(), rx);
+        if drain_transport_hints {
+            let rx = unsafe { &*self.rx.get() };
+            hints.drain_from_transport(self.transport(), rx);
+        }
         self.sync_pending_route_hint_lane_masks(before, hints.present_mask);
         hints.has_any_label_in_mask(label_mask)
     }
@@ -367,22 +373,31 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         &self,
         label_mask: u128,
         target_lane: Lane,
+        drain_transport_hints: bool,
     ) -> bool {
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
-        let rx = unsafe { &*self.rx.get() };
-        hints.drain_from_transport(self.transport(), rx);
+        if drain_transport_hints {
+            let rx = unsafe { &*self.rx.get() };
+            hints.drain_from_transport(self.transport(), rx);
+        }
         self.sync_pending_route_hint_lane_masks(before, hints.present_mask);
         self.route_table()
             .has_pending_hint_for_lane(target_lane, label_mask)
     }
 
     #[inline]
-    pub(crate) fn take_route_hint_for_label_mask(&self, label_mask: u128) -> Option<u8> {
+    pub(crate) fn take_route_hint_for_label_mask(
+        &self,
+        label_mask: u128,
+        drain_transport_hints: bool,
+    ) -> Option<u8> {
         let mut hints = self.route_hints_from_table();
         let before = hints.present_mask;
-        let rx = unsafe { &*self.rx.get() };
-        hints.drain_from_transport(self.transport(), rx);
+        if drain_transport_hints {
+            let rx = unsafe { &*self.rx.get() };
+            hints.drain_from_transport(self.transport(), rx);
+        }
         let taken = hints.take_from_label_mask(label_mask);
         self.sync_pending_route_hint_lane_masks(before, hints.present_mask);
         taken

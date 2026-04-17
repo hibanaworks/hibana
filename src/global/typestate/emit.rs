@@ -157,6 +157,12 @@ pub(crate) unsafe fn init_value_from_summary_for_role(
     route_offer_lane_words: *mut crate::global::role_program::LaneWord,
     route_arm1_lane_words: *mut crate::global::role_program::LaneWord,
     route_lane_word_len: usize,
+    route_dispatch_shapes: *mut super::registry::RouteDispatchShape,
+    route_dispatch_shape_cap: usize,
+    route_dispatch_entries: *mut super::registry::RouteDispatchEntry,
+    route_dispatch_entry_cap: usize,
+    route_dispatch_targets: *mut StateIndex,
+    route_dispatch_target_cap: usize,
     lane_slot_count: usize,
     scope_lane_first_eff: *mut EffIndex,
     scope_lane_last_eff: *mut EffIndex,
@@ -181,6 +187,12 @@ pub(crate) unsafe fn init_value_from_summary_for_role(
             route_offer_lane_words,
             route_arm1_lane_words,
             route_lane_word_len,
+            route_dispatch_shapes,
+            route_dispatch_shape_cap,
+            route_dispatch_entries,
+            route_dispatch_entry_cap,
+            route_dispatch_targets,
+            route_dispatch_target_cap,
             lane_slot_count,
             scope_lane_first_eff,
             scope_lane_last_eff,
@@ -474,6 +486,51 @@ impl RoleTypestateValue {
     }
 
     #[inline]
+    pub(crate) fn route_dispatch_shape_count(&self) -> usize {
+        self.scope_registry.route_dispatch_shape_count()
+    }
+
+    #[inline]
+    pub(crate) fn route_dispatch_entry_count(&self) -> usize {
+        self.scope_registry.route_dispatch_entry_count()
+    }
+
+    #[inline]
+    pub(crate) fn route_dispatch_target_count(&self) -> usize {
+        self.scope_registry.route_dispatch_target_count()
+    }
+
+    #[inline]
+    pub(crate) unsafe fn relocate_compact_route_payload(
+        &mut self,
+        route_records: *const super::registry::RouteScopeRecord,
+        route_offer_lane_words: *const crate::global::role_program::LaneWord,
+        route_arm1_lane_words: *const crate::global::role_program::LaneWord,
+        route_dispatch_shapes: *const super::registry::RouteDispatchShape,
+        route_dispatch_shape_len: usize,
+        route_dispatch_entries: *const super::registry::RouteDispatchEntry,
+        route_dispatch_entry_len: usize,
+        route_dispatch_targets: *const StateIndex,
+        route_dispatch_target_len: usize,
+        route_arm0_lane_last_eff_by_route: *const EffIndex,
+    ) {
+        unsafe {
+            self.scope_registry.relocate_compact_route_payload(
+                route_records,
+                route_offer_lane_words,
+                route_arm1_lane_words,
+                route_dispatch_shapes,
+                route_dispatch_shape_len,
+                route_dispatch_entries,
+                route_dispatch_entry_len,
+                route_dispatch_targets,
+                route_dispatch_target_len,
+                route_arm0_lane_last_eff_by_route,
+            );
+        }
+    }
+
+    #[inline]
     pub(crate) fn frontier_entry_capacity(&self) -> usize {
         self.scope_registry.frontier_entry_capacity()
     }
@@ -592,9 +649,16 @@ impl RoleTypestateValue {
                     idx += 1;
                     continue;
                 };
+                let Some(dense) = self.scope_registry.route_scope_dense_ordinal(idx) else {
+                    idx += 1;
+                    continue;
+                };
                 let scope_lane_last_eff = self.scope_registry.scope_lane_last_row(idx);
-                let arm0_lane_last_eff = self.scope_registry.route_arm0_lane_last_row(idx);
-                let first_recv_entries = route.first_recv_len as usize;
+                let arm0_lane_last_eff = self.scope_registry.route_arm0_lane_last_row(dense);
+                let first_recv_entries = self
+                    .scope_registry
+                    .first_recv_dispatch_table(record.scope_id.to_scope_id())
+                    .map_or(0, |(_, len)| len as usize);
                 let arm_lane_last_entries = count_arm_lane_last_entries(
                     arm0_lane_last_eff,
                     self.scope_registry
@@ -778,6 +842,12 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
         route_offer_lane_words: *mut crate::global::role_program::LaneWord,
         route_arm1_lane_words: *mut crate::global::role_program::LaneWord,
         route_lane_word_len: usize,
+        route_dispatch_shapes: *mut super::registry::RouteDispatchShape,
+        route_dispatch_shape_cap: usize,
+        route_dispatch_entries: *mut super::registry::RouteDispatchEntry,
+        route_dispatch_entry_cap: usize,
+        route_dispatch_targets: *mut StateIndex,
+        route_dispatch_target_cap: usize,
         lane_slot_count: usize,
         scope_lane_first_eff: *mut EffIndex,
         scope_lane_last_eff: *mut EffIndex,
@@ -801,6 +871,12 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                 route_offer_lane_words,
                 route_arm1_lane_words,
                 route_lane_word_len,
+                route_dispatch_shapes,
+                route_dispatch_shape_cap,
+                route_dispatch_entries,
+                route_dispatch_entry_cap,
+                route_dispatch_targets,
+                route_dispatch_target_cap,
                 lane_slot_count,
                 scope_lane_first_eff,
                 scope_lane_last_eff,

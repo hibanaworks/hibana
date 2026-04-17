@@ -143,13 +143,28 @@ where
         M: 'a,
         A: 'a,
         Mint: 'a,
+        'e: 'a,
         'r: 'a,
         'cfg: 'a,
         <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
     {
         let (endpoint, preview) = self.into_parts();
         let payload = arg.into_payload();
-        unsafe { (&mut *endpoint).send_with_preview_in_place::<M>(preview, payload) }
+        let send: crate::endpoint::kernel::SendWithPreviewFuture<
+            'e,
+            'a,
+            'r,
+            ROLE,
+            T,
+            U,
+            C,
+            EpochTbl,
+            MAX_RV,
+            Mint,
+            EndpointBinding<'r>,
+            M,
+        > = unsafe { (&mut *endpoint).send_with_preview_in_place::<M>(preview, payload) };
+        send
     }
 }
 
@@ -194,6 +209,7 @@ where
         M: 'a,
         A: 'a,
         Mint: 'a,
+        'e: 'a,
         'r: 'a,
         'cfg: 'a,
         <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,

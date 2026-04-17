@@ -173,26 +173,30 @@ where
     }
 
     #[inline]
-    pub async fn recv<M>(&mut self) -> RecvResult<M::Payload>
+    pub fn recv<M>(&mut self) -> impl core::future::Future<Output = RecvResult<M::Payload>> + '_
     where
         M: crate::global::MessageSpec,
         M::Payload: crate::transport::wire::WireDecodeOwned,
     {
-        unsafe { (&mut *self.inner.endpoint).recv_direct::<M>().await }
+        unsafe { (&mut *self.inner.endpoint).recv_direct::<M>() }
     }
 
     #[inline]
-    pub async fn offer<'e>(
+    pub fn offer<'e>(
         &'e mut self,
-    ) -> RecvResult<
+    ) -> impl core::future::Future<
+        Output = RecvResult<
         RouteBranch<'e, 'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
-    > {
-        let branch = unsafe { (&mut *self.inner.endpoint).offer().await? };
-        Ok(RouteBranch::from_parts(
-            self.inner.endpoint,
-            branch,
-            Self::stash_route_branch_preview,
-        ))
+        >,
+    > + 'e {
+        async move {
+            let branch = unsafe { (&mut *self.inner.endpoint).offer().await? };
+            Ok(RouteBranch::from_parts(
+                self.inner.endpoint,
+                branch,
+                Self::stash_route_branch_preview,
+            ))
+        }
     }
 }
 
@@ -214,22 +218,24 @@ where
     }
 
     #[inline]
-    pub async fn decode<M>(mut self) -> RecvResult<M::Payload>
+    pub fn decode<M>(mut self) -> impl core::future::Future<Output = RecvResult<M::Payload>> + 'e
     where
         M: crate::global::MessageSpec,
         M::Payload: crate::transport::wire::WireDecodeOwned,
     {
-        let payload = unsafe {
-            (&mut *self.endpoint)
-                .decode_branch::<M>(
-                    self.branch
-                        .as_mut()
-                        .expect("route branch preview must stay present until consumed"),
-                )
-                .await
-        }?;
-        self.branch = None;
-        Ok(payload)
+        async move {
+            let payload = unsafe {
+                (&mut *self.endpoint)
+                    .decode_branch::<M>(
+                        self.branch
+                            .as_mut()
+                            .expect("route branch preview must stay present until consumed"),
+                    )
+                    .await
+            }?;
+            self.branch = None;
+            Ok(payload)
+        }
     }
 }
 

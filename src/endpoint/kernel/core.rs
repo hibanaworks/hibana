@@ -3,7 +3,9 @@
 //! The kernel endpoint owns the rendezvous port outright and advances
 //! according to the typestate cursor obtained from `RoleProgram` projection.
 
-use core::{convert::TryFrom, ops::ControlFlow};
+use core::{
+    convert::TryFrom, future::Future, marker::PhantomData, ops::ControlFlow, pin::Pin, task::Poll,
+};
 
 use super::authority::{
     Arm, DeferReason, DeferSource, LoopDecision, RouteDecisionSource, RouteDecisionToken,
@@ -613,10 +615,111 @@ struct SendTransportEmission<E> {
     dispatch_control: DispatchSendTokenFn<E>,
 }
 
+struct PendingSendTransport<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
+{
+    transport: lane_port::PendingSend<'r, T>,
+    control: Option<StagedSendControl>,
+    dispatch_control: DispatchSendTokenFn<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>,
+}
+
+enum SendTransportStep<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
+{
+    Immediate(
+        SendTransportEmission<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>,
+    ),
+    Pending(PendingSendTransport<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>),
+}
+
 enum ErasedControlOutcome<'rv> {
     None,
     Canonical(ErasedRegisteredCapToken<'rv>),
     External(ErasedCapFlowToken),
+}
+
+enum SendWithPreviewState<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
+    'r: 'a,
+{
+    Init {
+        meta: SendMeta,
+        preview_cursor_index: Option<StateIndex>,
+        payload: Option<lane_port::ErasedSendPayload<'a>>,
+    },
+    Sending {
+        meta: SendMeta,
+        preview_cursor_index: Option<StateIndex>,
+        pending: PendingSendTransport<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    },
+    Done,
+}
+
+pub(crate) struct SendWithPreviewFuture<
+    'e,
+    'a,
+    'r,
+    const ROLE: u8,
+    T,
+    U,
+    C,
+    E,
+    const MAX_RV: usize,
+    Mint,
+    B,
+    M,
+> where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
+    M: MessageSpec + SendableLabel,
+    M::Payload: WireEncode,
+    M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
+    <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
+    'r: 'a,
+{
+    endpoint: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    state: SendWithPreviewState<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    _endpoint_borrow: PhantomData<&'e mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>,
+    _marker: PhantomData<(&'a M::Payload, M)>,
+}
+
+impl<'e, 'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B, M> Unpin
+    for SendWithPreviewFuture<'e, 'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
+    M: MessageSpec + SendableLabel,
+    M::Payload: WireEncode,
+    M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
+    <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
+    'r: 'a,
+{
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2902,18 +3005,72 @@ where
         self.maybe_advance_phase();
     }
 
-    pub(crate) fn send_with_preview_in_place<'a, M>(
+    fn begin_send_transport<'a>(
         &'a mut self,
+        meta: SendMeta,
+        payload: Option<lane_port::ErasedSendPayload<'a>>,
+        prepared: PreparedSendControl<Self>,
+    ) -> SendResult<SendTransportStep<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>
+    where
+        'r: 'a,
+    {
+        let mut staged_send = None;
+        let mut pending_transport = None;
+        let is_remote_send = {
+            let port = self.port_for_lane(meta.lane as usize);
+            let payload_view = lane_port::staged_payload(port, |scratch| {
+                let staged = (prepared.stage_payload)(prepared.minted_token, payload, scratch)?;
+                let encoded_len = staged.encoded_len;
+                staged_send = Some(staged);
+                Ok::<usize, SendError>(encoded_len)
+            })?;
+
+            let outgoing = crate::transport::Outgoing {
+                meta: crate::transport::SendMeta {
+                    eff_index: meta.eff_index,
+                    label: meta.label,
+                    peer: meta.peer,
+                    lane: meta.lane,
+                    direction: if meta.peer == ROLE {
+                        crate::transport::LocalDirection::Local
+                    } else {
+                        crate::transport::LocalDirection::Send
+                    },
+                    is_control: meta.is_control,
+                },
+                payload: payload_view,
+            };
+
+            if !outgoing.meta.is_local() {
+                let mut transport = lane_port::PendingSend::new();
+                lane_port::begin_send_outgoing(&mut transport, port, outgoing);
+                pending_transport = Some(transport);
+                true
+            } else {
+                false
+            }
+        };
+
+        let staged_send = staged_send.ok_or(SendError::PhaseInvariant)?;
+        if is_remote_send {
+            Ok(SendTransportStep::Pending(PendingSendTransport {
+                transport: pending_transport.ok_or(SendError::PhaseInvariant)?,
+                control: Some(staged_send.control),
+                dispatch_control: prepared.dispatch_control,
+            }))
+        } else {
+            Ok(SendTransportStep::Immediate(SendTransportEmission {
+                control: staged_send.control,
+                dispatch_control: prepared.dispatch_control,
+            }))
+        }
+    }
+
+    pub(crate) fn send_with_preview_in_place<'e, 'a, M>(
+        &'e mut self,
         preview: crate::endpoint::kernel::SendPreview,
         payload: Option<&'a <M as MessageSpec>::Payload>,
-    ) -> impl core::future::Future<
-        Output = SendResult<
-            ControlOutcome<
-                'r,
-                <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind,
-            >,
-        >,
-    > + 'a
+    ) -> SendWithPreviewFuture<'e, 'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
     where
         M: MessageSpec + SendableLabel + 'a,
         M::Payload: WireEncode,
@@ -2921,52 +3078,40 @@ where
         <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
     {
         let (meta, cursor_index) = preview.into_parts();
-        self.send_with_meta_and_cursor_in_place::<M>(meta, Some(cursor_index), payload)
+        SendWithPreviewFuture {
+            endpoint: self,
+            state: SendWithPreviewState::Init {
+                meta,
+                preview_cursor_index: Some(cursor_index),
+                payload: payload.map(lane_port::ErasedSendPayload::from_typed::<M::Payload>),
+            },
+            _endpoint_borrow: PhantomData,
+            _marker: PhantomData,
+        }
     }
 
     #[cfg(test)]
-    pub(crate) async fn send_with_meta_in_place<M>(
-        &mut self,
+    pub(crate) fn send_with_meta_in_place<'e, 'a, M>(
+        &'e mut self,
         meta: SendMeta,
-        payload: Option<&<M as MessageSpec>::Payload>,
-    ) -> SendResult<
-        ControlOutcome<'r, <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>,
-    >
+        payload: Option<&'a <M as MessageSpec>::Payload>,
+    ) -> SendWithPreviewFuture<'e, 'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
     where
         M: MessageSpec + SendableLabel,
         M::Payload: WireEncode,
         M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
         <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
     {
-        self.send_with_meta_and_cursor_in_place::<M>(meta, None, payload)
-            .await
-    }
-
-    async fn send_with_meta_and_cursor_in_place<M>(
-        &mut self,
-        meta: SendMeta,
-        preview_cursor_index: Option<StateIndex>,
-        payload: Option<&<M as MessageSpec>::Payload>,
-    ) -> SendResult<
-        ControlOutcome<'r, <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>,
-    >
-    where
-        M: MessageSpec + SendableLabel,
-        M::Payload: WireEncode,
-        M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
-        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-    {
-        let prepared = self.prepare_send_control(meta, Self::send_descriptor::<M>())?;
-        let emission = self
-            .emit_send_transport(
+        SendWithPreviewFuture {
+            endpoint: self,
+            state: SendWithPreviewState::Init {
                 meta,
-                payload.map(lane_port::ErasedSendPayload::from_typed::<M::Payload>),
-                prepared,
-            )
-            .await?;
-        let control =
-            self.finish_send_after_transport_erased(meta, preview_cursor_index, emission)?;
-        Ok(Self::typed_control_outcome::<M>(control))
+                preview_cursor_index: None,
+                payload: payload.map(lane_port::ErasedSendPayload::from_typed::<M::Payload>),
+            },
+            _endpoint_borrow: PhantomData,
+            _marker: PhantomData,
+        }
     }
 
     #[inline(always)]
@@ -3183,50 +3328,13 @@ where
         })
     }
 
-    async fn emit_send_transport(
+    fn poll_send_transport(
         &mut self,
-        meta: SendMeta,
-        payload: Option<lane_port::ErasedSendPayload<'_>>,
-        prepared: PreparedSendControl<Self>,
-    ) -> SendResult<SendTransportEmission<Self>> {
-        let mut staged_send = None;
-        {
-            let port = self.port_for_lane(meta.lane as usize);
-            let payload_view = lane_port::staged_payload(port, |scratch| {
-                let staged = (prepared.stage_payload)(prepared.minted_token, payload, scratch)?;
-                let encoded_len = staged.encoded_len;
-                staged_send = Some(staged);
-                Ok::<usize, SendError>(encoded_len)
-            })?;
-
-            let outgoing = crate::transport::Outgoing {
-                meta: crate::transport::SendMeta {
-                    eff_index: meta.eff_index,
-                    label: meta.label,
-                    peer: meta.peer,
-                    lane: meta.lane,
-                    direction: if meta.peer == ROLE {
-                        crate::transport::LocalDirection::Local
-                    } else {
-                        crate::transport::LocalDirection::Send
-                    },
-                    is_control: meta.is_control,
-                },
-                payload: payload_view,
-            };
-
-            if !outgoing.meta.is_local() {
-                lane_port::send_outgoing(port, outgoing)
-                    .await
-                    .map_err(SendError::Transport)?;
-            }
-        }
-
-        let staged_send = staged_send.ok_or(SendError::PhaseInvariant)?;
-        Ok(SendTransportEmission {
-            control: staged_send.control,
-            dispatch_control: prepared.dispatch_control,
-        })
+        pending: &mut PendingSendTransport<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<SendResult<()>> {
+        let _ = self;
+        lane_port::poll_send_outgoing(&mut pending.transport, cx).map_err(SendError::Transport)
     }
 
     #[inline(never)]
@@ -3310,6 +3418,122 @@ where
             ErasedControlOutcome::External(token) => ControlOutcome::External(token.into_generic()),
         }
     }
+
+}
+
+impl<'e, 'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B, M> Future
+    for SendWithPreviewFuture<'e, 'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker + 'a,
+    B: BindingSlot + 'a,
+    M: MessageSpec + SendableLabel,
+    M::Payload: WireEncode,
+    M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
+    <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
+    'r: 'a,
+{
+    type Output =
+        SendResult<ControlOutcome<'r, <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        loop {
+            match &mut this.state {
+                SendWithPreviewState::Init {
+                    meta,
+                    preview_cursor_index,
+                    payload,
+                } => {
+                    let meta = *meta;
+                    let preview_cursor_index = *preview_cursor_index;
+                    let payload = payload.take();
+                    let prepared =
+                        match lane_port::deref_mut_ptr::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>(this.endpoint)
+                            .prepare_send_control(meta, CursorEndpoint::send_descriptor::<M>())
+                        {
+                            Ok(prepared) => prepared,
+                            Err(err) => {
+                                this.state = SendWithPreviewState::Done;
+                                return Poll::Ready(Err(err));
+                            }
+                        };
+                    let step = match lane_port::deref_mut_ptr::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>(this.endpoint)
+                        .begin_send_transport(meta, payload, prepared)
+                    {
+                        Ok(step) => step,
+                        Err(err) => {
+                            this.state = SendWithPreviewState::Done;
+                            return Poll::Ready(Err(err));
+                        }
+                    };
+                    match step {
+                        SendTransportStep::Immediate(emission) => {
+                            let outcome = lane_port::deref_mut_ptr::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>(this.endpoint)
+                                .finish_send_after_transport_erased(meta, preview_cursor_index, emission)
+                                .map(CursorEndpoint::typed_control_outcome::<M>);
+                            this.state = SendWithPreviewState::Done;
+                            return Poll::Ready(outcome);
+                        }
+                        SendTransportStep::Pending(pending) => {
+                            this.state = SendWithPreviewState::Sending {
+                                meta,
+                                preview_cursor_index,
+                                pending,
+                            };
+                        }
+                    }
+                }
+                SendWithPreviewState::Sending {
+                    meta,
+                    preview_cursor_index,
+                    pending,
+                } => match lane_port::deref_mut_ptr::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>(this.endpoint)
+                    .poll_send_transport(pending, cx)
+                {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(Ok(())) => {
+                        let endpoint =
+                            lane_port::deref_mut_ptr::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>(this.endpoint);
+                        let emission = SendTransportEmission {
+                            control: pending
+                                .control
+                                .take()
+                                .expect("send transport control must remain until completion"),
+                            dispatch_control: pending.dispatch_control,
+                        };
+                        let outcome = endpoint
+                            .finish_send_after_transport_erased(*meta, *preview_cursor_index, emission)
+                            .map(CursorEndpoint::typed_control_outcome::<M>);
+                        this.state = SendWithPreviewState::Done;
+                        return Poll::Ready(outcome);
+                    }
+                    Poll::Ready(Err(err)) => {
+                        this.state = SendWithPreviewState::Done;
+                        return Poll::Ready(Err(err));
+                    }
+                },
+                SendWithPreviewState::Done => {
+                    panic!("send future polled after completion");
+                }
+            }
+        }
+    }
+}
+
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
+    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
+{
 
     fn record_loop_decision(
         &mut self,

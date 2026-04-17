@@ -1144,6 +1144,18 @@ impl HintPendingTransport {
     const fn new(state: &'static PendingTransportState, worker_hint: u8) -> Self {
         Self { state, worker_hint }
     }
+
+    fn poll_count(&self) -> usize {
+        self.state.polls.get()
+    }
+
+    fn assert_no_hint_drain_while_recv_parked(&self) {
+        assert_eq!(
+            self.state.hint_drains_while_recv_parked.get(),
+            0,
+            "offer must not drain route hints from a lane whose recv future is parked"
+        );
+    }
 }
 
 struct HintPendingRx {
@@ -1274,6 +1286,18 @@ impl Transport for HintPendingTransport {
     fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
     fn recv_label_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<u8> {
+        if self.state.recv_parked.get() {
+            self.state.hint_drains_while_recv_parked.set(
+                self.state
+                    .hint_drains_while_recv_parked
+                    .get()
+                    .wrapping_add(1),
+            );
+            assert!(
+                !self.state.panic_on_hint_drain_while_recv_parked.get(),
+                "transport hint drain must not touch rx while recv future is parked"
+            );
+        }
         let hint = rx.hint.get();
         if hint == HINT_NONE { None } else { Some(hint) }
     }
@@ -1304,6 +1328,9 @@ impl PendingTransport {
 struct PendingTransportState {
     polls: Cell<usize>,
     ready: Cell<bool>,
+    recv_parked: Cell<bool>,
+    hint_drains_while_recv_parked: Cell<usize>,
+    panic_on_hint_drain_while_recv_parked: Cell<bool>,
     waker: UnsafeCell<Option<Waker>>,
 }
 
@@ -1421,8 +1448,10 @@ impl<'a> Future for PendingRecv<'a> {
     fn poll(self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.state.polls.set(self.state.polls.get().wrapping_add(1));
         if self.state.ready.get() {
+            self.state.recv_parked.set(false);
             Poll::Ready(Ok(Payload::new(&[])))
         } else {
+            self.state.recv_parked.set(true);
             unsafe {
                 *self.state.waker.get() = Some(cx.waker().clone());
             }
@@ -9969,6 +9998,82 @@ fn static_passive_offer_with_known_arm_waits_on_transport_without_busy_restart()
                                 transport_probe.poll_count(),
                                 1,
                                 "known static passive arm must park on transport once instead of frontier-restarting"
+                            );
+                        });
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn parked_passive_offer_does_not_drain_hint_from_same_lane() {
+    run_offer_regression_test(
+        "parked_passive_offer_does_not_drain_hint_from_same_lane",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, HintPendingOfferCluster, cluster_ref, {
+                with_offer_value_slot!(HintPendingControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(HintPendingWorkerEndpoint, worker_slot, {
+                        with_offer_value_slot!(PendingTransportState, pending_state_slot, {
+                            pending_state_slot.store(PendingTransportState::default());
+                            let pending_state: &'static PendingTransportState =
+                                unsafe { &*pending_state_slot.ptr() };
+                            pending_state
+                                .panic_on_hint_drain_while_recv_parked
+                                .set(true);
+                            let transport = HintPendingTransport::new(
+                                pending_state,
+                                <Msg<106, u8> as MessageSpec>::LABEL,
+                            );
+                            let transport_probe = transport;
+                            let rv_id = cluster_ref
+                                .add_rendezvous_from_config(config, transport)
+                                .expect("register rendezvous");
+                            let sid = SessionId::new(1203);
+                            unsafe {
+                                cluster_ref
+                                    .attach_endpoint_into::<0, _, _, _>(
+                                        controller_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &ENTRY_CONTROLLER_PROGRAM,
+                                        NoBinding,
+                                    )
+                                    .expect("attach controller endpoint");
+                                cluster_ref
+                                    .attach_endpoint_into::<1, _, _, _>(
+                                        worker_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &ENTRY_WORKER_PROGRAM,
+                                        NoBinding,
+                                    )
+                                    .expect("attach worker endpoint");
+                            }
+                            let controller = controller_slot.borrow_mut();
+                            let worker = worker_slot.borrow_mut();
+                            let scope = worker.cursor.node_scope_id();
+                            controller.port_for_lane(0).record_route_decision(scope, 1);
+
+                            let waker = noop_waker_ref();
+                            let mut cx = Context::from_waker(waker);
+                            let mut offer = pin!(worker.offer());
+
+                            assert!(
+                                matches!(offer.as_mut().poll(&mut cx), Poll::Pending),
+                                "first offer poll must park on transport recv"
+                            );
+                            assert!(
+                                matches!(offer.as_mut().poll(&mut cx), Poll::Pending),
+                                "second offer poll must continue parked recv without draining hints"
+                            );
+                            transport_probe.assert_no_hint_drain_while_recv_parked();
+                            assert_eq!(
+                                transport_probe.poll_count(),
+                                2,
+                                "second offer poll must re-poll the same parked recv future"
                             );
                         });
                     });

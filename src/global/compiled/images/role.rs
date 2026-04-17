@@ -7,7 +7,8 @@ use crate::global::role_program::{
     logical_lane_count_for_role,
 };
 use crate::global::typestate::{
-    LocalAction, LocalNode, RoleTypestateValue, RouteScopeRecord, ScopeRecord, StateIndex,
+    LocalAction, LocalNode, RoleTypestateValue, RouteDispatchEntry, RouteDispatchShape,
+    RouteScopeRecord, ScopeRecord, StateIndex,
 };
 
 use super::{LoweringSummary, lease::RoleLoweringScratch};
@@ -30,15 +31,23 @@ const fn encode_compact_count_u16(value: usize) -> u16 {
     value as u16
 }
 
+#[inline(always)]
+const fn encode_compact_offset_u16(value: usize) -> u16 {
+    if value > u16::MAX as usize {
+        panic!("compiled role compact offset overflow");
+    }
+    value as u16
+}
+
 /// Crate-private runtime image for role-local immutable facts.
 #[derive(Clone, Debug)]
 pub(crate) struct CompiledRoleImage {
-    phase_headers: *const PhaseImageHeader,
-    phase_lane_entries: *const PhaseLaneEntry,
-    phase_lane_words: *const LaneWord,
-    typestate: *const RoleTypestateValue,
-    eff_index_to_step: *const u16,
-    step_index_to_state: *const StateIndex,
+    typestate_offset: u16,
+    phase_headers_offset: u16,
+    phase_lane_entries_offset: u16,
+    phase_lane_words_offset: u16,
+    eff_index_to_step_offset: u16,
+    step_index_to_state_offset: u16,
     role: u8,
     role_facts: RoleResidentFacts,
 }
@@ -86,6 +95,7 @@ struct RoleResidentFacts {
     phase_lane_word_len: u16,
     eff_index_to_step_len: u16,
     step_index_to_state_len: u16,
+    persistent_bytes: u16,
 }
 
 impl RoleResidentFacts {
@@ -97,6 +107,7 @@ impl RoleResidentFacts {
         phase_lane_word_len: 0,
         eff_index_to_step_len: 0,
         step_index_to_state_len: 0,
+        persistent_bytes: 0,
     };
 
     #[inline(always)]
@@ -134,6 +145,11 @@ impl RoleResidentFacts {
     const fn step_index_to_state_len(self) -> usize {
         self.step_index_to_state_len as usize
     }
+
+    #[inline(always)]
+    const fn persistent_bytes(self) -> usize {
+        self.persistent_bytes as usize
+    }
 }
 
 struct CompiledRoleScopeStorage {
@@ -155,10 +171,14 @@ struct CompiledRoleScopeStorage {
     route_offer_lane_words: *mut LaneWord,
     route_arm1_lane_words: *mut LaneWord,
     route_arm0_lane_last_eff_by_slot: *mut EffIndex,
+    route_dispatch_shapes: *mut RouteDispatchShape,
+    route_dispatch_shape_cap: usize,
+    route_dispatch_entries: *mut RouteDispatchEntry,
+    route_dispatch_entry_cap: usize,
+    route_dispatch_targets: *mut StateIndex,
+    route_dispatch_target_cap: usize,
     route_scope_cap: usize,
     scope_cap: usize,
-    eff_index_to_step: *mut u16,
-    step_index_to_state: *mut StateIndex,
 }
 
 impl CompiledRoleScopeStorage {
@@ -241,6 +261,10 @@ impl CompiledRoleScopeStorage {
         let phase_lane_word_cap = Self::phase_lane_word_cap(footprint);
         let scope_lane_matrix_cap = Self::scope_lane_matrix_cap(footprint);
         let route_scope_lane_word_cap = Self::route_scope_lane_word_cap(footprint);
+        let route_dispatch_shape_cap = route_scope_cap;
+        let route_dispatch_entry_cap =
+            route_scope_cap.saturating_mul(crate::global::typestate::MAX_FIRST_RECV_DISPATCH);
+        let route_dispatch_target_cap = route_dispatch_entry_cap;
         let header = core::mem::size_of::<CompiledRoleImage>();
         let typestate_start = Self::align_up(
             header,
@@ -305,8 +329,26 @@ impl CompiledRoleScopeStorage {
             Self::align_up(route_arm1_lane_words_end, core::mem::align_of::<EffIndex>());
         let route_arm0_lane_last_end = route_arm0_lane_last_start
             + scope_lane_matrix_cap.saturating_mul(core::mem::size_of::<EffIndex>());
+        let route_dispatch_shapes_start = Self::align_up(
+            route_arm0_lane_last_end,
+            core::mem::align_of::<RouteDispatchShape>(),
+        );
+        let route_dispatch_shapes_end = route_dispatch_shapes_start
+            + route_dispatch_shape_cap.saturating_mul(core::mem::size_of::<RouteDispatchShape>());
+        let route_dispatch_entries_start = Self::align_up(
+            route_dispatch_shapes_end,
+            core::mem::align_of::<RouteDispatchEntry>(),
+        );
+        let route_dispatch_entries_end = route_dispatch_entries_start
+            + route_dispatch_entry_cap.saturating_mul(core::mem::size_of::<RouteDispatchEntry>());
+        let route_dispatch_targets_start = Self::align_up(
+            route_dispatch_entries_end,
+            core::mem::align_of::<StateIndex>(),
+        );
+        let route_dispatch_targets_end = route_dispatch_targets_start
+            + route_dispatch_target_cap.saturating_mul(core::mem::size_of::<StateIndex>());
         let eff_index_start =
-            Self::align_up(route_arm0_lane_last_end, core::mem::align_of::<u16>());
+            Self::align_up(route_dispatch_targets_end, core::mem::align_of::<u16>());
         let eff_index_end =
             eff_index_start + eff_index_cap.saturating_mul(core::mem::size_of::<u16>());
         let step_index_start = Self::align_up(eff_index_end, core::mem::align_of::<StateIndex>());
@@ -378,6 +420,12 @@ impl CompiledRoleScopeStorage {
         if core::mem::align_of::<RouteScopeRecord>() > align {
             align = core::mem::align_of::<RouteScopeRecord>();
         }
+        if core::mem::align_of::<RouteDispatchShape>() > align {
+            align = core::mem::align_of::<RouteDispatchShape>();
+        }
+        if core::mem::align_of::<RouteDispatchEntry>() > align {
+            align = core::mem::align_of::<RouteDispatchEntry>();
+        }
         if core::mem::align_of::<EffIndex>() > align {
             align = core::mem::align_of::<EffIndex>();
         }
@@ -394,7 +442,6 @@ impl CompiledRoleScopeStorage {
     ) -> Self {
         let scope_cap = Self::scope_cap(footprint.scope_count);
         let route_scope_cap = Self::route_scope_cap(footprint.route_scope_count);
-        let eff_index_cap = Self::step_cap(footprint.eff_count);
         let typestate_node_cap = Self::typestate_node_cap(
             footprint.scope_count,
             footprint.passive_linger_route_scope_count,
@@ -405,6 +452,10 @@ impl CompiledRoleScopeStorage {
         let phase_lane_word_cap = Self::phase_lane_word_cap(footprint);
         let scope_lane_matrix_cap = Self::scope_lane_matrix_cap(footprint);
         let route_scope_lane_word_cap = Self::route_scope_lane_word_cap(footprint);
+        let route_dispatch_shape_cap = route_scope_cap;
+        let route_dispatch_entry_cap =
+            route_scope_cap.saturating_mul(crate::global::typestate::MAX_FIRST_RECV_DISPATCH);
+        let route_dispatch_target_cap = route_dispatch_entry_cap;
         let base = image.cast::<u8>() as usize;
         let header_end = base + core::mem::size_of::<CompiledRoleImage>();
         let typestate_start =
@@ -462,11 +513,22 @@ impl CompiledRoleScopeStorage {
             Self::align_up(route_arm1_lane_words_end, core::mem::align_of::<EffIndex>());
         let route_arm0_lane_last_end = route_arm0_lane_last_start
             + scope_lane_matrix_cap.saturating_mul(core::mem::size_of::<EffIndex>());
-        let eff_index_start =
-            Self::align_up(route_arm0_lane_last_end, core::mem::align_of::<u16>());
-        let eff_index_end =
-            eff_index_start + eff_index_cap.saturating_mul(core::mem::size_of::<u16>());
-        let step_index_start = Self::align_up(eff_index_end, core::mem::align_of::<StateIndex>());
+        let route_dispatch_shapes_start = Self::align_up(
+            route_arm0_lane_last_end,
+            core::mem::align_of::<RouteDispatchShape>(),
+        );
+        let route_dispatch_shapes_end = route_dispatch_shapes_start
+            + route_dispatch_shape_cap.saturating_mul(core::mem::size_of::<RouteDispatchShape>());
+        let route_dispatch_entries_start = Self::align_up(
+            route_dispatch_shapes_end,
+            core::mem::align_of::<RouteDispatchEntry>(),
+        );
+        let route_dispatch_entries_end = route_dispatch_entries_start
+            + route_dispatch_entry_cap.saturating_mul(core::mem::size_of::<RouteDispatchEntry>());
+        let route_dispatch_targets_start = Self::align_up(
+            route_dispatch_entries_end,
+            core::mem::align_of::<StateIndex>(),
+        );
         Self {
             typestate: typestate_start as *mut RoleTypestateValue,
             typestate_nodes: typestate_nodes_start as *mut LocalNode,
@@ -486,12 +548,181 @@ impl CompiledRoleScopeStorage {
             route_offer_lane_words: route_offer_lane_words_start as *mut LaneWord,
             route_arm1_lane_words: route_arm1_lane_words_start as *mut LaneWord,
             route_arm0_lane_last_eff_by_slot: route_arm0_lane_last_start as *mut EffIndex,
+            route_dispatch_shapes: route_dispatch_shapes_start as *mut RouteDispatchShape,
+            route_dispatch_shape_cap,
+            route_dispatch_entries: route_dispatch_entries_start as *mut RouteDispatchEntry,
+            route_dispatch_entry_cap,
+            route_dispatch_targets: route_dispatch_targets_start as *mut StateIndex,
+            route_dispatch_target_cap,
             route_scope_cap,
             scope_cap,
-            eff_index_to_step: eff_index_start as *mut u16,
-            step_index_to_state: step_index_start as *mut StateIndex,
         }
     }
+}
+
+#[inline(always)]
+fn used_route_lane_word_words(
+    route_records: *const RouteScopeRecord,
+    route_scope_count: usize,
+    lane_word_len: usize,
+) -> (usize, usize) {
+    if route_scope_count == 0 || lane_word_len == 0 {
+        return (0, 0);
+    }
+    let mut offer_words = 0usize;
+    let mut arm1_words = 0usize;
+    let mut idx = 0usize;
+    while idx < route_scope_count {
+        let record = unsafe { &*route_records.add(idx) };
+        let offer_end = record.offer_lane_word_start as usize + lane_word_len;
+        if offer_end > offer_words {
+            offer_words = offer_end;
+        }
+        let arm1_end = record.arm1_lane_word_start as usize + lane_word_len;
+        if arm1_end > arm1_words {
+            arm1_words = arm1_end;
+        }
+        idx += 1;
+    }
+    (offer_words, arm1_words)
+}
+
+#[inline(always)]
+unsafe fn compact_route_scope_tail(
+    storage: &CompiledRoleScopeStorage,
+    lane_slot_count: usize,
+    lane_word_len: usize,
+) -> usize {
+    let typestate = unsafe { &mut *storage.typestate };
+    let route_scope_count = typestate.route_scope_count();
+    let dispatch_shape_count = typestate.route_dispatch_shape_count();
+    let dispatch_entry_count = typestate.route_dispatch_entry_count();
+    let dispatch_target_count = typestate.route_dispatch_target_count();
+    let route_records_start = storage.route_records as usize;
+    let route_records_end = route_records_start
+        .saturating_add(route_scope_count.saturating_mul(core::mem::size_of::<RouteScopeRecord>()));
+    let (offer_lane_word_words, arm1_lane_word_words) = used_route_lane_word_words(
+        storage.route_records.cast_const(),
+        route_scope_count,
+        lane_word_len,
+    );
+
+    let offer_lane_words_start = CompiledRoleScopeStorage::align_up(
+        route_records_end,
+        core::mem::align_of::<LaneWord>(),
+    );
+    let offer_lane_words_end = offer_lane_words_start.saturating_add(
+        offer_lane_word_words.saturating_mul(core::mem::size_of::<LaneWord>()),
+    );
+    let arm1_lane_words_start = CompiledRoleScopeStorage::align_up(
+        offer_lane_words_end,
+        core::mem::align_of::<LaneWord>(),
+    );
+    let arm1_lane_words_end = arm1_lane_words_start.saturating_add(
+        arm1_lane_word_words.saturating_mul(core::mem::size_of::<LaneWord>()),
+    );
+    let arm0_lane_last_start = CompiledRoleScopeStorage::align_up(
+        arm1_lane_words_end,
+        core::mem::align_of::<EffIndex>(),
+    );
+    let arm0_lane_last_end = arm0_lane_last_start.saturating_add(
+        route_scope_count
+            .saturating_mul(lane_slot_count)
+            .saturating_mul(core::mem::size_of::<EffIndex>()),
+    );
+    let dispatch_shapes_start = CompiledRoleScopeStorage::align_up(
+        arm0_lane_last_end,
+        core::mem::align_of::<RouteDispatchShape>(),
+    );
+    let dispatch_entries_start = CompiledRoleScopeStorage::align_up(
+        dispatch_shapes_start
+            .saturating_add(dispatch_shape_count.saturating_mul(core::mem::size_of::<RouteDispatchShape>())),
+        core::mem::align_of::<RouteDispatchEntry>(),
+    );
+    let dispatch_targets_start = CompiledRoleScopeStorage::align_up(
+        dispatch_entries_start
+            .saturating_add(dispatch_entry_count.saturating_mul(core::mem::size_of::<RouteDispatchEntry>())),
+        core::mem::align_of::<StateIndex>(),
+    );
+    let dispatch_shapes_dst = dispatch_shapes_start as *mut RouteDispatchShape;
+    let dispatch_entries_dst = dispatch_entries_start as *mut RouteDispatchEntry;
+    let dispatch_targets_dst = dispatch_targets_start as *mut StateIndex;
+    let offer_lane_words_dst = offer_lane_words_start as *mut LaneWord;
+    let arm1_lane_words_dst = arm1_lane_words_start as *mut LaneWord;
+    let arm0_lane_last_dst = arm0_lane_last_start as *mut EffIndex;
+
+    if offer_lane_word_words != 0 {
+        unsafe {
+            core::ptr::copy(
+                storage.route_offer_lane_words,
+                offer_lane_words_dst,
+                offer_lane_word_words,
+            );
+        }
+    }
+    if arm1_lane_word_words != 0 {
+        unsafe {
+            core::ptr::copy(
+                storage.route_arm1_lane_words,
+                arm1_lane_words_dst,
+                arm1_lane_word_words,
+            );
+        }
+    }
+    if route_scope_count != 0 && lane_slot_count != 0 {
+        unsafe {
+            core::ptr::copy(
+                storage.route_arm0_lane_last_eff_by_slot,
+                arm0_lane_last_dst,
+                route_scope_count.saturating_mul(lane_slot_count),
+            );
+        }
+    }
+    if dispatch_shape_count != 0 {
+        unsafe {
+            core::ptr::copy(
+                storage.route_dispatch_shapes,
+                dispatch_shapes_dst,
+                dispatch_shape_count,
+            );
+        }
+    }
+    if dispatch_entry_count != 0 {
+        unsafe {
+            core::ptr::copy(
+                storage.route_dispatch_entries,
+                dispatch_entries_dst,
+                dispatch_entry_count,
+            );
+        }
+    }
+    if dispatch_target_count != 0 {
+        unsafe {
+            core::ptr::copy(
+                storage.route_dispatch_targets,
+                dispatch_targets_dst,
+                dispatch_target_count,
+            );
+        }
+    }
+
+    unsafe {
+        typestate.relocate_compact_route_payload(
+            storage.route_records.cast_const(),
+            offer_lane_words_dst.cast_const(),
+            arm1_lane_words_dst.cast_const(),
+            dispatch_shapes_dst.cast_const(),
+            dispatch_shape_count,
+            dispatch_entries_dst.cast_const(),
+            dispatch_entry_count,
+            dispatch_targets_dst.cast_const(),
+            dispatch_target_count,
+            arm0_lane_last_dst.cast_const(),
+        );
+    }
+
+    dispatch_targets_start
+        .saturating_add(dispatch_target_count.saturating_mul(core::mem::size_of::<StateIndex>()))
 }
 
 fn build_local_steps_into(
@@ -1137,6 +1368,57 @@ unsafe fn finalize_compiled_role_image_from_typestate(
 }
 
 impl CompiledRoleImage {
+    #[inline(always)]
+    fn base_ptr(&self) -> *const u8 {
+        (self as *const Self).cast::<u8>()
+    }
+
+    #[inline(always)]
+    fn ptr_at<T>(&self, offset: u16) -> *const T {
+        if offset == 0 {
+            core::ptr::null()
+        } else {
+            unsafe { self.base_ptr().add(offset as usize).cast::<T>() }
+        }
+    }
+
+    #[inline(always)]
+    fn typestate_ptr(&self) -> *const RoleTypestateValue {
+        self.ptr_at(self.typestate_offset)
+    }
+
+    #[inline(always)]
+    fn phase_headers_ptr(&self) -> *const PhaseImageHeader {
+        self.ptr_at(self.phase_headers_offset)
+    }
+
+    #[inline(always)]
+    fn phase_lane_entries_ptr(&self) -> *const PhaseLaneEntry {
+        self.ptr_at(self.phase_lane_entries_offset)
+    }
+
+    #[inline(always)]
+    fn phase_lane_words_ptr(&self) -> *const LaneWord {
+        self.ptr_at(self.phase_lane_words_offset)
+    }
+
+    #[inline(always)]
+    fn eff_index_to_step_ptr(&self) -> *const u16 {
+        self.ptr_at(self.eff_index_to_step_offset)
+    }
+
+    #[inline(always)]
+    fn step_index_to_state_ptr(&self) -> *const StateIndex {
+        self.ptr_at(self.step_index_to_state_offset)
+    }
+
+    #[inline(always)]
+    unsafe fn write_offset(field: *mut u16, base: usize, ptr: usize) {
+        unsafe {
+            field.write(encode_compact_offset_u16(ptr.saturating_sub(base)));
+        }
+    }
+
     #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn persistent_bytes_for_counts(
@@ -1157,15 +1439,20 @@ impl CompiledRoleImage {
         CompiledRoleScopeStorage::overall_align()
     }
 
+    #[inline(always)]
+    pub(crate) fn actual_persistent_bytes(&self) -> usize {
+        self.role_facts.persistent_bytes()
+    }
+
     #[inline(never)]
     unsafe fn init_empty_compiled_role(dst: *mut Self, role: u8) {
         unsafe {
-            ptr::addr_of_mut!((*dst).typestate).write(core::ptr::null());
-            ptr::addr_of_mut!((*dst).eff_index_to_step).write(core::ptr::null());
-            ptr::addr_of_mut!((*dst).phase_headers).write(core::ptr::null());
-            ptr::addr_of_mut!((*dst).phase_lane_entries).write(core::ptr::null());
-            ptr::addr_of_mut!((*dst).phase_lane_words).write(core::ptr::null());
-            ptr::addr_of_mut!((*dst).step_index_to_state).write(core::ptr::null());
+            ptr::addr_of_mut!((*dst).typestate_offset).write(0);
+            ptr::addr_of_mut!((*dst).eff_index_to_step_offset).write(0);
+            ptr::addr_of_mut!((*dst).phase_headers_offset).write(0);
+            ptr::addr_of_mut!((*dst).phase_lane_entries_offset).write(0);
+            ptr::addr_of_mut!((*dst).phase_lane_words_offset).write(0);
+            ptr::addr_of_mut!((*dst).step_index_to_state_offset).write(0);
             ptr::addr_of_mut!((*dst).role).write(role);
             ptr::addr_of_mut!((*dst).role_facts).write(RoleResidentFacts::EMPTY);
         }
@@ -1177,7 +1464,8 @@ impl CompiledRoleImage {
         scratch: &mut RoleLoweringScratch<'_>,
     ) {
         let role = unsafe { (*dst).role };
-        let typed_typestate = unsafe { &*(*dst).typestate };
+        let image = unsafe { &*dst };
+        let typed_typestate = unsafe { &*image.typestate_ptr() };
         let (by_eff_index, present, steps, eff_index_to_step) =
             scratch.local_step_build_slices_mut();
         let len = build_local_steps_into(
@@ -1217,11 +1505,11 @@ impl CompiledRoleImage {
                 step_index_to_state,
                 route_guards,
                 parallel_ranges,
-                (*dst).phase_headers.cast_mut(),
+                image.phase_headers_ptr().cast_mut(),
                 phase_cap,
-                (*dst).phase_lane_entries.cast_mut(),
+                image.phase_lane_entries_ptr().cast_mut(),
                 phase_lane_entry_cap,
-                (*dst).phase_lane_words.cast_mut(),
+                image.phase_lane_words_ptr().cast_mut(),
                 phase_lane_word_cap,
             )
         };
@@ -1231,14 +1519,11 @@ impl CompiledRoleImage {
             (*dst).role_facts.phase_lane_word_len = encode_compact_count_u16(phase_lane_word_len);
         }
         let eff_index_len = unsafe { (*dst).role_facts.eff_index_to_step_len() };
+        let eff_index_to_step_ptr = image.eff_index_to_step_ptr().cast_mut();
         let mut eff_idx = 0usize;
         while eff_idx < eff_index_len {
             unsafe {
-                (*dst)
-                    .eff_index_to_step
-                    .cast_mut()
-                    .add(eff_idx)
-                    .write(MACHINE_NO_STEP);
+                eff_index_to_step_ptr.add(eff_idx).write(MACHINE_NO_STEP);
             }
             eff_idx += 1;
         }
@@ -1249,19 +1534,16 @@ impl CompiledRoleImage {
         unsafe {
             core::ptr::copy_nonoverlapping(
                 eff_index_to_step.as_ptr(),
-                (*dst).eff_index_to_step.cast_mut(),
+                eff_index_to_step_ptr,
                 eff_index_len,
             );
         }
         let step_state_len = unsafe { (*dst).role_facts.step_index_to_state_len() };
+        let step_index_to_state_ptr = image.step_index_to_state_ptr().cast_mut();
         let mut step_idx = 0usize;
         while step_idx < step_state_len {
             unsafe {
-                (*dst)
-                    .step_index_to_state
-                    .cast_mut()
-                    .add(step_idx)
-                    .write(StateIndex::MAX);
+                step_index_to_state_ptr.add(step_idx).write(StateIndex::MAX);
             }
             step_idx += 1;
         }
@@ -1272,9 +1554,14 @@ impl CompiledRoleImage {
         unsafe {
             core::ptr::copy_nonoverlapping(
                 step_index_to_state.as_ptr(),
-                (*dst).step_index_to_state.cast_mut(),
+                step_index_to_state_ptr,
                 step_state_len,
             );
+            let image_base = dst.cast::<u8>() as usize;
+            let image_end = (step_index_to_state_ptr as usize)
+                .saturating_add(step_state_len.saturating_mul(core::mem::size_of::<StateIndex>()))
+                .saturating_sub(image_base);
+            (*dst).role_facts.persistent_bytes = encode_compact_count_u16(image_end);
         }
     }
 
@@ -1301,11 +1588,27 @@ impl CompiledRoleImage {
         let storage =
             unsafe { CompiledRoleScopeStorage::from_image_ptr_with_layout(dst, footprint) };
         unsafe {
-            ptr::addr_of_mut!((*dst).typestate).write(storage.typestate.cast_const());
-            ptr::addr_of_mut!((*dst).phase_headers).write(storage.phase_headers.cast_const());
-            ptr::addr_of_mut!((*dst).phase_lane_entries)
-                .write(storage.phase_lane_entries.cast_const());
-            ptr::addr_of_mut!((*dst).phase_lane_words).write(storage.phase_lane_words.cast_const());
+            let image_base = dst.cast::<u8>() as usize;
+            Self::write_offset(
+                ptr::addr_of_mut!((*dst).typestate_offset),
+                image_base,
+                storage.typestate as usize,
+            );
+            Self::write_offset(
+                ptr::addr_of_mut!((*dst).phase_headers_offset),
+                image_base,
+                storage.phase_headers as usize,
+            );
+            Self::write_offset(
+                ptr::addr_of_mut!((*dst).phase_lane_entries_offset),
+                image_base,
+                storage.phase_lane_entries as usize,
+            );
+            Self::write_offset(
+                ptr::addr_of_mut!((*dst).phase_lane_words_offset),
+                image_base,
+                storage.phase_lane_words as usize,
+            );
             (*dst).role_facts.active_lane_count =
                 encode_compact_count_u16(footprint.active_lane_count);
             (*dst).role_facts.endpoint_lane_slot_count =
@@ -1315,11 +1618,7 @@ impl CompiledRoleImage {
                 encode_compact_count_u16(storage.phase_lane_entry_cap);
             (*dst).role_facts.phase_lane_word_len =
                 encode_compact_count_u16(storage.phase_lane_word_cap);
-            ptr::addr_of_mut!((*dst).eff_index_to_step)
-                .write(storage.eff_index_to_step.cast_const());
             (*dst).role_facts.eff_index_to_step_len = encode_compact_count_u16(footprint.eff_count);
-            ptr::addr_of_mut!((*dst).step_index_to_state)
-                .write(storage.step_index_to_state.cast_const());
             (*dst).role_facts.step_index_to_state_len =
                 encode_compact_count_u16(footprint.local_step_count);
         }
@@ -1336,6 +1635,12 @@ impl CompiledRoleImage {
                 storage.route_offer_lane_words,
                 storage.route_arm1_lane_words,
                 footprint.logical_lane_word_count,
+                storage.route_dispatch_shapes,
+                storage.route_dispatch_shape_cap,
+                storage.route_dispatch_entries,
+                storage.route_dispatch_entry_cap,
+                storage.route_dispatch_targets,
+                storage.route_dispatch_target_cap,
                 footprint.logical_lane_count,
                 storage.scope_lane_first_eff,
                 storage.scope_lane_last_eff,
@@ -1343,6 +1648,37 @@ impl CompiledRoleImage {
                 storage.route_scope_cap,
                 summary,
                 scratch.typestate_build_mut(),
+            );
+        }
+        let compact_route_end = unsafe {
+            compact_route_scope_tail(
+                &storage,
+                footprint.logical_lane_count,
+                footprint.logical_lane_word_count,
+            )
+        };
+        let eff_index_start = CompiledRoleScopeStorage::align_up(
+            compact_route_end,
+            core::mem::align_of::<u16>(),
+        );
+        let step_index_start = CompiledRoleScopeStorage::align_up(
+            eff_index_start
+                + footprint
+                    .eff_count
+                    .saturating_mul(core::mem::size_of::<u16>()),
+            core::mem::align_of::<StateIndex>(),
+        );
+        unsafe {
+            let image_base = dst.cast::<u8>() as usize;
+            Self::write_offset(
+                ptr::addr_of_mut!((*dst).eff_index_to_step_offset),
+                image_base,
+                eff_index_start,
+            );
+            Self::write_offset(
+                ptr::addr_of_mut!((*dst).step_index_to_state_offset),
+                image_base,
+                step_index_start,
             );
         }
         let finalize = core::hint::black_box(finalize_compiled_role_image_from_typestate);
@@ -1370,7 +1706,7 @@ impl CompiledRoleImage {
         if idx >= self.phase_len() {
             return None;
         }
-        Some(unsafe { *self.phase_headers.add(idx) })
+        Some(unsafe { *self.phase_headers_ptr().add(idx) })
     }
 
     #[inline(always)]
@@ -1382,7 +1718,7 @@ impl CompiledRoleImage {
             debug_assert!(false, "compiled role phase lane-entry bounds out of range");
             return &[];
         }
-        unsafe { core::slice::from_raw_parts(self.phase_lane_entries.add(start), len) }
+        unsafe { core::slice::from_raw_parts(self.phase_lane_entries_ptr().add(start), len) }
     }
 
     #[inline(always)]
@@ -1402,7 +1738,7 @@ impl CompiledRoleImage {
             debug_assert!(false, "compiled role phase lane-word bounds out of range");
             return LaneSetView::from_parts(core::ptr::null(), 0);
         }
-        LaneSetView::from_parts(unsafe { self.phase_lane_words.add(start) }, len)
+        LaneSetView::from_parts(unsafe { self.phase_lane_words_ptr().add(start) }, len)
     }
 
     #[inline(always)]
@@ -1441,15 +1777,15 @@ impl CompiledRoleImage {
 
     #[inline(always)]
     pub(crate) fn typestate_ref(&self) -> &RoleTypestateValue {
-        debug_assert!(!self.typestate.is_null());
-        unsafe { &*self.typestate }
+        debug_assert!(!self.typestate_ptr().is_null());
+        unsafe { &*self.typestate_ptr() }
     }
 
     #[inline(always)]
     pub(crate) fn eff_index_to_step(&self) -> &[u16] {
         unsafe {
             core::slice::from_raw_parts(
-                self.eff_index_to_step,
+                self.eff_index_to_step_ptr(),
                 self.role_facts.eff_index_to_step_len(),
             )
         }
@@ -1459,7 +1795,7 @@ impl CompiledRoleImage {
     pub(crate) fn step_index_to_state(&self) -> &[StateIndex] {
         unsafe {
             core::slice::from_raw_parts(
-                self.step_index_to_state,
+                self.step_index_to_state_ptr(),
                 self.role_facts.step_index_to_state_len(),
             )
         }
@@ -2101,6 +2437,15 @@ mod tests {
     }
 
     #[test]
+    fn compiled_role_image_header_stays_compact() {
+        assert!(
+            core::mem::size_of::<super::CompiledRoleImage>() <= 32,
+            "CompiledRoleImage header regressed back to pointer-rich layout: {} bytes",
+            core::mem::size_of::<super::CompiledRoleImage>()
+        );
+    }
+
+    #[test]
     fn compiled_role_exposes_controller_arm_and_dispatch_tables() {
         type LeftSteps = SeqSteps<
             SendOnly<
@@ -2717,6 +3062,8 @@ mod tests {
         let scope_stats =
             with_compiled_role_image(&worker, |image| image.typestate_ref().scope_payload_stats());
         let node_stats = with_compiled_role_image(&worker, typestate_node_stats);
+        let actual_total_bytes =
+            with_compiled_role_image(&worker, |image| image.actual_persistent_bytes());
         std::println!(
             "role-tail-breakdown name={name} scope_count={} eff_count={} local_len={} phase_cap={} typestate_node_cap={} built_node_len={} typestate_node_slack={} local_node_size={} local_action_size={} policy_mode_size={} scope_record_size={} route_scope_record_size={} state_index_size={} typestate_nodes_bytes={} phases_bytes={} records_bytes={} slots_bytes={} route_dense_bytes={} route_records_bytes={} route_recv_bytes={} eff_index_bytes={} step_index_bytes={} total_bytes={} send_nodes={} recv_nodes={} local_nodes={} jump_nodes={} terminate_nodes={} route_arm_end_jumps={} loop_continue_jumps={} loop_break_jumps={} passive_observer_branch_jumps={} total_lane_first_entries={} max_lane_first_entries={} total_lane_last_entries={} max_lane_last_entries={} total_arm_entries={} max_arm_entries={} total_passive_arm_scopes={} max_passive_arm_scopes={} route_scope_count={} route_enter_count={} total_first_recv_entries={} max_first_recv_entries={} total_arm_lane_last_entries={} max_arm_lane_last_entries={} total_arm_lane_last_override_entries={} max_arm_lane_last_override_entries={} total_offer_lane_entries={} max_offer_lane_entries={}",
             scope_count,
@@ -2742,7 +3089,7 @@ mod tests {
             0usize,
             eff_cap * core::mem::size_of::<u16>(),
             step_cap * core::mem::size_of::<crate::global::typestate::StateIndex>(),
-            CompiledRoleImage::persistent_bytes_for_program(lowering.footprint()),
+            actual_total_bytes,
             node_stats.send_count,
             node_stats.recv_count,
             node_stats.local_count,

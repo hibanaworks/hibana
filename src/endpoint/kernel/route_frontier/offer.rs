@@ -19,7 +19,7 @@ use super::frontier::{
     frontier_observed_entries_view_from_storage,
     frontier_offer_lane_entry_slot_masks_view_from_storage, frontier_snapshot_from_scratch,
     frontier_working_observation_key_view_from_storage,
-    should_suppress_current_passive_without_evidence, yield_once,
+    should_suppress_current_passive_without_evidence,
 };
 use super::lane_port;
 use crate::binding::BindingSlot;
@@ -45,14 +45,52 @@ pub(super) struct OfferScopeSelection {
     pub(super) at_route_offer_entry: bool,
 }
 
-pub(super) struct ResolveTokenContext<'a> {
+#[derive(Clone, Copy)]
+struct OfferFrontierFacts {
     selection: OfferScopeSelection,
+    scope_id: ScopeId,
+    offer_lane: u8,
+    offer_lane_idx: usize,
+    offer_lanes: LaneSetView,
+    suppress_scope_hint: bool,
     is_route_controller: bool,
     is_dynamic_route_scope: bool,
-    binding_classification: &'a mut Option<crate::binding::IncomingClassification>,
-    transport_payload_len: &'a mut usize,
-    transport_payload_lane: &'a mut u8,
-    frontier_visited: &'a mut FrontierVisitSet,
+    recvless_loop_control_scope: bool,
+    controller_selected_recv_step: bool,
+    skip_recv_loop: bool,
+}
+
+#[derive(Clone, Copy)]
+enum ResolvePendingAction {
+    YieldRestart,
+    StaticPassiveProgress { selected_arm: u8 },
+}
+
+#[derive(Clone, Copy)]
+struct OfferCollectState {
+    selection: OfferScopeSelection,
+    facts: OfferFrontierFacts,
+    binding_classification: Option<crate::binding::IncomingClassification>,
+    transport_payload_len: usize,
+    transport_payload_lane: u8,
+}
+
+#[derive(Clone, Copy)]
+struct OfferResolveState {
+    selection: OfferScopeSelection,
+    facts: OfferFrontierFacts,
+    binding_classification: Option<crate::binding::IncomingClassification>,
+    transport_payload_len: usize,
+    transport_payload_lane: u8,
+    liveness: OfferLivenessState,
+    pending_action: Option<ResolvePendingAction>,
+    yield_armed: bool,
+}
+
+#[derive(Clone, Copy)]
+enum OfferRunStage {
+    CollectEvidence(OfferCollectState),
+    ResolveToken(OfferResolveState),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -399,6 +437,11 @@ pub(super) struct RouteFrontierMachine<
     Mint: MintConfigMarker,
 {
     endpoint: &'endpoint mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    frontier_visited: Option<FrontierVisitSet>,
+    carried_binding_classification: Option<crate::binding::IncomingClassification>,
+    carried_transport_payload: Option<(usize, u8)>,
+    run_stage: Option<OfferRunStage>,
+    pending_recv: lane_port::PendingRecv<'r, T>,
 }
 
 impl<'endpoint, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
@@ -415,7 +458,14 @@ where
     pub(super) const fn new(
         endpoint: &'endpoint mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     ) -> Self {
-        Self { endpoint }
+        Self {
+            endpoint,
+            frontier_visited: None,
+            carried_binding_classification: None,
+            carried_transport_payload: None,
+            run_stage: None,
+            pending_recv: lane_port::PendingRecv::new(),
+        }
     }
 
     #[inline]
@@ -669,7 +719,7 @@ where
         current_parallel_root: ScopeId,
         use_root_observed_entries: bool,
     ) {
-        let mut machine = Self { endpoint };
+        let mut machine = Self::new(endpoint);
         machine.refresh_frontier_observation_cache_impl(
             current_parallel_root,
             use_root_observed_entries,
@@ -1359,39 +1409,45 @@ where
         }
         Err(RecvError::PhaseInvariant)
     }
-    async fn await_transport_payload_for_offer_lane(
+    fn poll_transport_payload_for_offer_lane(
         &mut self,
         offer_lane: u8,
         transport_payload_len: &mut usize,
         transport_payload_lane: &mut u8,
-    ) -> RecvResult<()> {
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<()>> {
         let lane_idx = offer_lane as usize;
         let port = self.endpoint.port_for_lane(lane_idx);
-        let payload = lane_port::recv_future(port)
-            .await
-            .map_err(RecvError::Transport)?;
+        let payload = match lane_port::poll_recv(&mut self.pending_recv, port, cx) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Ok(payload)) => payload,
+            Poll::Ready(Err(err)) => return Poll::Ready(Err(RecvError::Transport(err))),
+        };
         if *transport_payload_len == 0 && !payload.as_bytes().is_empty() {
-            *transport_payload_len = lane_port::copy_payload_into_scratch(port, &payload)
-                .map_err(|_| RecvError::PhaseInvariant)?;
+            *transport_payload_len = match lane_port::copy_payload_into_scratch(port, &payload) {
+                Ok(len) => len,
+                Err(_) => return Poll::Ready(Err(RecvError::PhaseInvariant)),
+            };
             *transport_payload_lane = offer_lane;
         }
-        Ok(())
+        Poll::Ready(Ok(()))
     }
-    async fn await_static_passive_progress(
+    fn poll_static_passive_progress(
         &mut self,
         selection: OfferScopeSelection,
         selected_arm: Option<u8>,
         binding_classification: &mut Option<crate::binding::IncomingClassification>,
         transport_payload_len: &mut usize,
         transport_payload_lane: &mut u8,
-    ) -> RecvResult<()> {
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<()>> {
         let materialization_meta = self.endpoint.selection_materialization_meta(selection);
         if let Some(arm) = selected_arm
             && selection.at_route_offer_entry
             && let Some(entry) = materialization_meta.passive_arm_entry(arm)
         {
             if !self.endpoint.cursor.is_recv_at(state_index_to_usize(entry)) {
-                return Ok(());
+                return Poll::Ready(Ok(()));
             }
         }
         if binding_classification.is_none()
@@ -1406,63 +1462,105 @@ where
             }
         {
             *binding_classification = Some(classification);
-            return Ok(());
+            return Poll::Ready(Ok(()));
         }
         if *transport_payload_len == 0 {
-            self.await_transport_payload_for_offer_lane(
+            return self.poll_transport_payload_for_offer_lane(
                 selection.offer_lane,
                 transport_payload_len,
                 transport_payload_lane,
-            )
-            .await?;
+                cx,
+            );
         }
-        Ok(())
+        Poll::Ready(Ok(()))
     }
-    async fn try_poll_route_decision_immediate(
+    fn try_poll_route_decision_immediate(
         &self,
         scope_id: ScopeId,
         offer_lanes: LaneSetView,
+        cx: &mut core::task::Context<'_>,
     ) -> Option<Arm> {
-        let arm = poll_fn(|cx| {
-            let mut lane_idx = 0usize;
-            let logical_lane_count = self.endpoint.cursor.logical_lane_count();
-            while lane_idx < logical_lane_count {
-                if !offer_lanes.contains(lane_idx) {
-                    lane_idx += 1;
-                    continue;
-                }
-                let lane = lane_idx as u8;
-                let port = self.endpoint.port_for_lane(lane as usize);
-                if let Poll::Ready(arm) = port.poll_route_decision(scope_id, ROLE, cx) {
-                    return Poll::Ready(Some(arm));
-                }
+        let mut lane_idx = 0usize;
+        let logical_lane_count = self.endpoint.cursor.logical_lane_count();
+        let mut arm = None;
+        while lane_idx < logical_lane_count {
+            if !offer_lanes.contains(lane_idx) {
                 lane_idx += 1;
+                continue;
             }
-            Poll::Ready(None)
-        })
-        .await?;
+            let lane = lane_idx as u8;
+            let port = self.endpoint.port_for_lane(lane as usize);
+            if let Poll::Ready(route_arm) = port.poll_route_decision(scope_id, ROLE, cx) {
+                arm = Some(route_arm);
+                break;
+            }
+            lane_idx += 1;
+        }
+        let arm = arm?;
         Arm::new(arm)
     }
-    async fn try_poll_route_decision_for_offer(
+    fn try_poll_route_decision_for_offer(
         &self,
         scope_id: ScopeId,
         offer_lanes: LaneSetView,
+        cx: &mut core::task::Context<'_>,
     ) -> Option<Arm> {
-        self.try_poll_route_decision_immediate(scope_id, offer_lanes)
-            .await
+        self.try_poll_route_decision_immediate(scope_id, offer_lanes, cx)
             .or_else(|| self.endpoint.poll_arm_from_ready_mask(scope_id))
     }
-    pub(super) async fn resolve_token(
+    fn poll_resolve_pending_action(
         &mut self,
-        ctx: &mut ResolveTokenContext<'_>,
-    ) -> RecvResult<ResolveTokenOutcome> {
-        let selection = ctx.selection;
-        let is_route_controller = ctx.is_route_controller;
-        let is_dynamic_route_scope = ctx.is_dynamic_route_scope;
-        let binding_classification = &mut *ctx.binding_classification;
-        let transport_payload_len = &mut *ctx.transport_payload_len;
-        let transport_payload_lane = &mut *ctx.transport_payload_lane;
-        let frontier_visited = &mut *ctx.frontier_visited;
+        state: &mut OfferResolveState,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<ResolveTokenOutcome>> {
+        let Some(action) = state.pending_action else {
+            return Poll::Ready(Err(RecvError::PhaseInvariant));
+        };
+        match action {
+            ResolvePendingAction::YieldRestart => {
+                if !state.yield_armed {
+                    state.yield_armed = true;
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+                state.pending_action = None;
+                state.yield_armed = false;
+                Poll::Ready(Ok(ResolveTokenOutcome::RestartFrontier))
+            }
+            ResolvePendingAction::StaticPassiveProgress { selected_arm } => {
+                match self.poll_static_passive_progress(
+                    state.selection,
+                    Some(selected_arm),
+                    &mut state.binding_classification,
+                    &mut state.transport_payload_len,
+                    &mut state.transport_payload_lane,
+                    cx,
+                ) {
+                    Poll::Pending => Poll::Pending,
+                    Poll::Ready(Ok(())) => {
+                        state.pending_action = None;
+                        Poll::Ready(Ok(ResolveTokenOutcome::RestartFrontier))
+                    }
+                    Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+                }
+            }
+        }
+    }
+    fn resolve_token(
+        &mut self,
+        state: &mut OfferResolveState,
+        frontier_visited: &mut FrontierVisitSet,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<ResolveTokenOutcome>> {
+        if state.pending_action.is_some() {
+            return self.poll_resolve_pending_action(state, cx);
+        }
+        let selection = state.selection;
+        let is_route_controller = state.facts.is_route_controller;
+        let is_dynamic_route_scope = state.facts.is_dynamic_route_scope;
+        let binding_classification = &mut state.binding_classification;
+        let transport_payload_len = &mut state.transport_payload_len;
+        let transport_payload_lane = &mut state.transport_payload_lane;
         let scope_id = selection.scope_id;
         let frontier_parallel_root = selection.frontier_parallel_root;
         let offer_lane = selection.offer_lane;
@@ -1483,7 +1581,7 @@ where
                 .mark_scope_ready_arm_from_label(scope_id, label, label_meta);
         }
 
-        let mut liveness = OfferLivenessState::new(self.endpoint.liveness_policy);
+        let liveness = &mut state.liveness;
         let mut liveness_exhausted = false;
 
         let mut route_token = self.endpoint.peek_scope_ack(scope_id);
@@ -1510,11 +1608,11 @@ where
                         break;
                     }
                     RouteResolveStep::Abort(reason) => {
-                        return Err(RecvError::PolicyAbort { reason });
+                        return Poll::Ready(Err(RecvError::PolicyAbort { reason }));
                     }
                     RouteResolveStep::Deferred { retry_hint, source } => {
                         match self.on_frontier_defer(
-                            &mut liveness,
+                            liveness,
                             scope_id,
                             frontier_parallel_root,
                             source,
@@ -1527,7 +1625,7 @@ where
                         ) {
                             FrontierDeferOutcome::Continue => {}
                             FrontierDeferOutcome::Yielded => {
-                                return Ok(ResolveTokenOutcome::RestartFrontier);
+                                return Poll::Ready(Ok(ResolveTokenOutcome::RestartFrontier));
                             }
                             FrontierDeferOutcome::Exhausted => {
                                 liveness_exhausted = true;
@@ -1578,7 +1676,7 @@ where
                             is_route_controller,
                         )
                     {
-                        return Err(RecvError::PhaseInvariant);
+                        return Poll::Ready(Err(RecvError::PhaseInvariant));
                     }
 
                     if let Some(label) = self
@@ -1616,13 +1714,9 @@ where
                     let recv_lane_idx = offer_lane as usize;
                     let recv_lane = recv_lane_idx as u8;
                     let port = self.endpoint.port_for_lane(recv_lane_idx);
-                    let mut recv_fut = core::pin::pin!(lane_port::recv_future(port));
-                    let payload = poll_fn(|cx| match recv_fut.as_mut().poll(cx) {
-                        Poll::Ready(result) => Poll::Ready(Some(result)),
-                        Poll::Pending => Poll::Ready(None),
-                    })
-                    .await;
-                    if let Some(payload) = payload {
+                    if let Poll::Ready(payload) =
+                        lane_port::poll_recv(&mut self.pending_recv, port, cx)
+                    {
                         let payload = payload.map_err(RecvError::Transport)?;
                         if *transport_payload_len == 0 && !payload.as_bytes().is_empty() {
                             *transport_payload_len =
@@ -1636,7 +1730,7 @@ where
                 }
 
                 match self.on_frontier_defer(
-                    &mut liveness,
+                    liveness,
                     scope_id,
                     frontier_parallel_root,
                     DeferSource::Resolver,
@@ -1651,7 +1745,7 @@ where
                         break;
                     }
                     FrontierDeferOutcome::Yielded => {
-                        return Ok(ResolveTokenOutcome::RestartFrontier);
+                        return Poll::Ready(Ok(ResolveTokenOutcome::RestartFrontier));
                     }
                     FrontierDeferOutcome::Exhausted => {
                         liveness_exhausted = true;
@@ -1680,12 +1774,12 @@ where
                 }
                 RouteResolveStep::Abort(reason) => {
                     if reason != 0 {
-                        return Err(RecvError::PolicyAbort { reason });
+                        return Poll::Ready(Err(RecvError::PolicyAbort { reason }));
                     }
                 }
                 RouteResolveStep::Deferred { retry_hint, source } => {
                     match self.on_frontier_defer(
-                        &mut liveness,
+                        liveness,
                         scope_id,
                         frontier_parallel_root,
                         source,
@@ -1698,8 +1792,8 @@ where
                     ) {
                         FrontierDeferOutcome::Continue => {}
                         FrontierDeferOutcome::Yielded => {
-                            yield_once().await;
-                            return Ok(ResolveTokenOutcome::RestartFrontier);
+                            state.pending_action = Some(ResolvePendingAction::YieldRestart);
+                            return self.poll_resolve_pending_action(state, cx);
                         }
                         FrontierDeferOutcome::Exhausted => {
                             liveness_exhausted = true;
@@ -1717,7 +1811,7 @@ where
             && !liveness_exhausted
         {
             match self.on_frontier_defer(
-                &mut liveness,
+                liveness,
                 scope_id,
                 frontier_parallel_root,
                 DeferSource::Resolver,
@@ -1729,12 +1823,12 @@ where
                 frontier_visited,
             ) {
                 FrontierDeferOutcome::Continue => {
-                    yield_once().await;
-                    return Ok(ResolveTokenOutcome::RestartFrontier);
+                    state.pending_action = Some(ResolvePendingAction::YieldRestart);
+                    return self.poll_resolve_pending_action(state, cx);
                 }
                 FrontierDeferOutcome::Yielded => {
-                    yield_once().await;
-                    return Ok(ResolveTokenOutcome::RestartFrontier);
+                    state.pending_action = Some(ResolvePendingAction::YieldRestart);
+                    return self.poll_resolve_pending_action(state, cx);
                 }
                 FrontierDeferOutcome::Exhausted => {
                     liveness_exhausted = true;
@@ -1745,18 +1839,17 @@ where
         if route_token.is_none() && liveness_exhausted {
             while route_token.is_none() && liveness.can_force_poll() {
                 liveness.mark_forced_poll();
-                if let Some(poll_arm) = self
-                    .try_poll_route_decision_for_offer(scope_id, offer_lanes)
-                    .await
+                if let Some(poll_arm) =
+                    self.try_poll_route_decision_for_offer(scope_id, offer_lanes, cx)
                 {
                     route_token = Some(RouteDecisionToken::from_poll(poll_arm));
                     break;
                 }
             }
             if route_token.is_none() {
-                return Err(RecvError::PolicyAbort {
+                return Poll::Ready(Err(RecvError::PolicyAbort {
                     reason: liveness.exhaust_reason(),
-                });
+                }));
             }
         }
 
@@ -1765,16 +1858,15 @@ where
                 && *transport_payload_len != 0
                 && *transport_payload_lane != offer_lane
             {
-                return Ok(ResolveTokenOutcome::RestartFrontier);
+                return Poll::Ready(Ok(ResolveTokenOutcome::RestartFrontier));
             }
-            if let Some(poll_arm) = self
-                .try_poll_route_decision_for_offer(scope_id, offer_lanes)
-                .await
+            if let Some(poll_arm) =
+                self.try_poll_route_decision_for_offer(scope_id, offer_lanes, cx)
             {
                 route_token = Some(RouteDecisionToken::from_poll(poll_arm));
             } else {
                 match self.on_frontier_defer(
-                    &mut liveness,
+                    liveness,
                     scope_id,
                     frontier_parallel_root,
                     DeferSource::Resolver,
@@ -1786,28 +1878,27 @@ where
                     frontier_visited,
                 ) {
                     FrontierDeferOutcome::Continue => {
-                        yield_once().await;
-                        return Ok(ResolveTokenOutcome::RestartFrontier);
+                        state.pending_action = Some(ResolvePendingAction::YieldRestart);
+                        return self.poll_resolve_pending_action(state, cx);
                     }
                     FrontierDeferOutcome::Yielded => {
-                        yield_once().await;
-                        return Ok(ResolveTokenOutcome::RestartFrontier);
+                        state.pending_action = Some(ResolvePendingAction::YieldRestart);
+                        return self.poll_resolve_pending_action(state, cx);
                     }
                     FrontierDeferOutcome::Exhausted => {
                         while route_token.is_none() && liveness.can_force_poll() {
                             liveness.mark_forced_poll();
-                            if let Some(poll_arm) = self
-                                .try_poll_route_decision_for_offer(scope_id, offer_lanes)
-                                .await
+                            if let Some(poll_arm) =
+                                self.try_poll_route_decision_for_offer(scope_id, offer_lanes, cx)
                             {
                                 route_token = Some(RouteDecisionToken::from_poll(poll_arm));
                                 break;
                             }
                         }
                         if route_token.is_none() {
-                            return Err(RecvError::PolicyAbort {
+                            return Poll::Ready(Err(RecvError::PolicyAbort {
                                 reason: liveness.exhaust_reason(),
-                            });
+                            }));
                         }
                     }
                 }
@@ -1816,7 +1907,7 @@ where
 
         let mut route_token = match route_token {
             Some(route_token) => route_token,
-            None => return Err(RecvError::PhaseInvariant),
+            None => return Poll::Ready(Err(RecvError::PhaseInvariant)),
         };
         if let Some(classification) = binding_classification.as_ref()
             && let Some(binding_arm) = {
@@ -1864,9 +1955,8 @@ where
                 && !self.endpoint.scope_has_ready_arm(scope_id, selected_arm)
             {
                 if matches!(route_token.source(), RouteDecisionSource::Resolver)
-                    && let Some(poll_arm) = self
-                        .try_poll_route_decision_for_offer(scope_id, offer_lanes)
-                        .await
+                    && let Some(poll_arm) =
+                        self.try_poll_route_decision_for_offer(scope_id, offer_lanes, cx)
                 {
                     route_token = RouteDecisionToken::from_poll(poll_arm);
                     continue;
@@ -1885,11 +1975,11 @@ where
                     && !at_route_offer_entry
                     && matches!(route_token.source(), RouteDecisionSource::Resolver);
                 if keep_current_scope {
-                    yield_once().await;
-                    return Ok(ResolveTokenOutcome::RestartFrontier);
+                    state.pending_action = Some(ResolvePendingAction::YieldRestart);
+                    return self.poll_resolve_pending_action(state, cx);
                 }
                 match self.on_frontier_defer(
-                    &mut liveness,
+                    liveness,
                     scope_id,
                     frontier_parallel_root,
                     DeferSource::Resolver,
@@ -1902,47 +1992,43 @@ where
                 ) {
                     FrontierDeferOutcome::Continue => {
                         if !is_route_controller && !is_dynamic_route_scope {
-                            self.await_static_passive_progress(
-                                selection,
-                                Some(route_token.arm().as_u8()),
-                                binding_classification,
-                                transport_payload_len,
-                                transport_payload_lane,
-                            )
-                            .await?;
-                            return Ok(ResolveTokenOutcome::RestartFrontier);
+                            state.pending_action = Some(
+                                ResolvePendingAction::StaticPassiveProgress {
+                                    selected_arm: route_token.arm().as_u8(),
+                                },
+                            );
+                            return self.poll_resolve_pending_action(state, cx);
                         }
-                        yield_once().await;
-                        return Ok(ResolveTokenOutcome::RestartFrontier);
+                        state.pending_action = Some(ResolvePendingAction::YieldRestart);
+                        return self.poll_resolve_pending_action(state, cx);
                     }
                     FrontierDeferOutcome::Yielded => {
-                        yield_once().await;
-                        return Ok(ResolveTokenOutcome::RestartFrontier);
+                        state.pending_action = Some(ResolvePendingAction::YieldRestart);
+                        return self.poll_resolve_pending_action(state, cx);
                     }
                     FrontierDeferOutcome::Exhausted => {
                         while liveness.can_force_poll() {
                             liveness.mark_forced_poll();
                             if self
-                                .try_poll_route_decision_for_offer(scope_id, offer_lanes)
-                                .await
+                                .try_poll_route_decision_for_offer(scope_id, offer_lanes, cx)
                                 .is_some()
                             {
-                                return Ok(ResolveTokenOutcome::RestartFrontier);
+                                return Poll::Ready(Ok(ResolveTokenOutcome::RestartFrontier));
                             }
                         }
-                        return Err(RecvError::PolicyAbort {
+                        return Poll::Ready(Err(RecvError::PolicyAbort {
                             reason: liveness.exhaust_reason(),
-                        });
+                        }));
                     }
                 }
             }
             break selected_arm;
         };
-        Ok(ResolveTokenOutcome::Resolved(ResolvedRouteDecision {
+        Poll::Ready(Ok(ResolveTokenOutcome::Resolved(ResolvedRouteDecision {
             route_token,
             selected_arm,
             resolved_label_hint,
-        }))
+        })))
     }
     pub(super) fn materialize_branch(
         &mut self,
@@ -2247,11 +2333,12 @@ where
         scope_id: ScopeId,
         suppress_hint: bool,
         label_meta: ScopeLabelMeta,
+        drain_transport_hints: bool,
     ) {
         if suppress_hint {
             if let Some(label) = self
                 .endpoint
-                .take_hint_for_lane(lane_idx, false, label_meta)
+                .take_hint_for_lane(lane_idx, false, label_meta, drain_transport_hints)
             {
                 self.endpoint.record_scope_hint_dynamic(scope_id, label);
                 self.endpoint
@@ -2280,7 +2367,7 @@ where
         }
         if let Some(label) = self
             .endpoint
-            .take_hint_for_lane(lane_idx, suppress_hint, label_meta)
+            .take_hint_for_lane(lane_idx, suppress_hint, label_meta, drain_transport_hints)
         {
             self.endpoint.record_scope_hint(scope_id, label);
         }
@@ -2300,17 +2387,29 @@ where
         let lane_limit = self.endpoint.cursor.logical_lane_count();
         let mut lane_idx = 0usize;
         while lane_idx < lane_limit {
-            if offer_lanes.contains(lane_idx)
-                && (self
+            if offer_lanes.contains(lane_idx) {
+                let drain_transport_hints = {
+                    let port = self.endpoint.port_for_lane(lane_idx);
+                    !self.pending_recv.parks_port(port)
+                };
+                if self
                     .endpoint
                     .pending_scope_ack_lane_mask(summary_lane_idx, scope_id, lane_idx)
                     || self.endpoint.pending_scope_hint_lane_mask(
                         summary_lane_idx,
                         lane_idx,
                         label_meta,
-                    ))
-            {
-                self.ingest_scope_evidence_for_lane(lane_idx, scope_id, suppress_hint, label_meta);
+                        drain_transport_hints,
+                    )
+                {
+                    self.ingest_scope_evidence_for_lane(
+                        lane_idx,
+                        scope_id,
+                        suppress_hint,
+                        label_meta,
+                        drain_transport_hints,
+                    );
+                }
             }
             lane_idx += 1;
         }
@@ -4056,277 +4155,393 @@ where
         }
     }
 
-    async fn run(&mut self) -> RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
-        if let Some(branch) = self.take_pending_branch_preview() {
-            return Ok(branch);
-        }
-        let mut frontier_scratch = self.endpoint.frontier_scratch_view();
-        let mut frontier_visited =
-            super::frontier::frontier_visit_set_from_scratch(&mut frontier_scratch);
-        let mut carried_binding_classification = None;
-        let mut carried_transport_payload = None;
-        'offer_frontier: loop {
-            let selection = self.select_scope()?;
-            let scope_id = selection.scope_id;
-            frontier_visited.record(scope_id);
-            let offer_lane = selection.offer_lane;
-            let offer_lane_idx = selection.offer_lane_idx as usize;
-            let at_route_offer_entry = selection.at_route_offer_entry;
-            let loop_meta = self.endpoint.selection_label_meta(selection).loop_meta();
+    fn prepare_frontier_facts(
+        &mut self,
+        selection: OfferScopeSelection,
+        frontier_visited: &mut FrontierVisitSet,
+    ) -> RecvResult<OfferFrontierFacts> {
+        let scope_id = selection.scope_id;
+        frontier_visited.record(scope_id);
+        let offer_lane = selection.offer_lane;
+        let offer_lane_idx = selection.offer_lane_idx as usize;
+        let at_route_offer_entry = selection.at_route_offer_entry;
+        let loop_meta = self.endpoint.selection_label_meta(selection).loop_meta();
 
-            let cursor_is_not_recv = !self.endpoint.cursor.is_recv();
-            let is_route_controller = self.endpoint.cursor.is_route_controller(scope_id);
-            let controller_selected_recv_step = is_route_controller
-                && !at_route_offer_entry
-                && self
-                    .endpoint
-                    .cursor
-                    .try_recv_meta()
-                    .map(|recv_meta| recv_meta.peer != ROLE)
-                    .unwrap_or(false);
-
-            let route_policy_is_dynamic = self
+        let cursor_is_not_recv = !self.endpoint.cursor.is_recv();
+        let is_route_controller = self.endpoint.cursor.is_route_controller(scope_id);
+        let controller_selected_recv_step = is_route_controller
+            && !at_route_offer_entry
+            && self
                 .endpoint
                 .cursor
-                .route_scope_controller_policy(scope_id)
-                .map(|(policy, _, _)| policy.is_dynamic())
+                .try_recv_meta()
+                .map(|recv_meta| recv_meta.peer != ROLE)
                 .unwrap_or(false);
-            let is_dynamic_route_scope = route_policy_is_dynamic;
-            let suppress_scope_hint = is_dynamic_route_scope;
-            let offer_lanes = self.endpoint.offer_lane_set_for_scope(scope_id);
-            {
-                let label_meta = self.endpoint.selection_label_meta(selection);
-                self.ingest_scope_evidence_for_offer(
-                    scope_id,
-                    offer_lane_idx,
-                    offer_lanes,
-                    suppress_scope_hint,
-                    label_meta,
-                );
-            }
-            let preview_route_decision = self.endpoint.preview_scope_ack_token_non_consuming(
+
+        let is_dynamic_route_scope = self
+            .endpoint
+            .cursor
+            .route_scope_controller_policy(scope_id)
+            .map(|(policy, _, _)| policy.is_dynamic())
+            .unwrap_or(false);
+        let suppress_scope_hint = is_dynamic_route_scope;
+        let offer_lanes = self.endpoint.offer_lane_set_for_scope(scope_id);
+        {
+            let label_meta = self.endpoint.selection_label_meta(selection);
+            self.ingest_scope_evidence_for_offer(
                 scope_id,
                 offer_lane_idx,
                 offer_lanes,
+                suppress_scope_hint,
+                label_meta,
             );
-            let preview_ready_arm_evidence = self.endpoint.scope_has_ready_arm_evidence(scope_id);
-            let recvless_loop_control_scope = !is_route_controller
-                && !is_dynamic_route_scope
-                && loop_meta.control_scope()
-                && !loop_meta.arm_has_recv(0)
-                && !loop_meta.arm_has_recv(1);
+        }
+        let preview_route_decision = self.endpoint.preview_scope_ack_token_non_consuming(
+            scope_id,
+            offer_lane_idx,
+            offer_lanes,
+        );
+        let preview_ready_arm_evidence = self.endpoint.scope_has_ready_arm_evidence(scope_id);
+        let recvless_loop_control_scope = !is_route_controller
+            && !is_dynamic_route_scope
+            && loop_meta.control_scope()
+            && !loop_meta.arm_has_recv(0)
+            && !loop_meta.arm_has_recv(1);
 
-            let is_self_send_controller = cursor_is_not_recv
-                && is_route_controller
-                && !CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_has_controller_arm_entry(
-                    &self.endpoint.cursor,
-                    scope_id,
-                );
-            let controller_non_entry_cursor_ready = cursor_is_not_recv
-                && is_route_controller
-                && self.endpoint.controller_arm_at_cursor(scope_id).is_none();
-
-            let early_route_decision = if is_route_controller {
-                preview_route_decision
-            } else {
-                preview_route_decision
-                    .filter(|token| !self.endpoint.arm_has_recv(scope_id, token.arm().as_u8()))
-            };
-
-            let early_decision_arm_has_no_recv = early_route_decision
-                .map(|token| !self.endpoint.arm_has_recv(scope_id, token.arm().as_u8()))
-                .unwrap_or(false);
-            let early_hint_resolves_recvless = false;
-            let controller_static_entry_ready = false;
-            let controller_pending_materialization = is_route_controller
-                && self
-                    .endpoint
-                    .selected_arm_for_scope(scope_id)
-                    .map(|arm| {
-                        self.endpoint
-                            .arm_requires_materialization_ready_evidence(scope_id, arm)
-                            && !self.endpoint.scope_has_ready_arm(scope_id, arm)
-                    })
-                    .unwrap_or(false);
-            let controller_can_skip_recv = is_route_controller
-                && !controller_pending_materialization
-                && ((at_route_offer_entry
-                    && (is_dynamic_route_scope
-                        || controller_non_entry_cursor_ready
-                        || is_self_send_controller
-                        || early_route_decision.is_some()
-                        || controller_static_entry_ready))
-                    || (!at_route_offer_entry && cursor_is_not_recv));
-            let passive_dynamic_scope_has_recv =
-                self.endpoint.arm_has_recv(scope_id, 0) || self.endpoint.arm_has_recv(scope_id, 1);
-            let passive_ack_is_materializable = self
+        let is_self_send_controller = cursor_is_not_recv
+            && is_route_controller
+            && !CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_has_controller_arm_entry(
+                &self.endpoint.cursor,
+                scope_id,
+            );
+        let controller_non_entry_cursor_ready = cursor_is_not_recv
+            && is_route_controller
+            && self.endpoint.controller_arm_at_cursor(scope_id).is_none();
+        let early_route_decision = if is_route_controller {
+            preview_route_decision
+        } else {
+            preview_route_decision
+                .filter(|token| !self.endpoint.arm_has_recv(scope_id, token.arm().as_u8()))
+        };
+        let early_decision_arm_has_no_recv = early_route_decision
+            .map(|token| !self.endpoint.arm_has_recv(scope_id, token.arm().as_u8()))
+            .unwrap_or(false);
+        let controller_pending_materialization = is_route_controller
+            && self
                 .endpoint
-                .preview_scope_ack_token_non_consuming(scope_id, offer_lane_idx, offer_lanes)
-                .map(|token| {
-                    let arm = token.arm().as_u8();
-                    self.endpoint.scope_has_ready_arm(scope_id, arm)
-                        || !self.endpoint.arm_has_recv(scope_id, arm)
+                .selected_arm_for_scope(scope_id)
+                .map(|arm| {
+                    self.endpoint
+                        .arm_requires_materialization_ready_evidence(scope_id, arm)
+                        && !self.endpoint.scope_has_ready_arm(scope_id, arm)
                 })
                 .unwrap_or(false);
-            let passive_dynamic_can_skip_recv = !is_route_controller
-                && is_dynamic_route_scope
-                && (!passive_dynamic_scope_has_recv
-                    || preview_ready_arm_evidence
-                    || passive_ack_is_materializable);
-            let skip_recv_loop = passive_dynamic_can_skip_recv
-                || controller_can_skip_recv
-                || early_decision_arm_has_no_recv
-                || early_hint_resolves_recvless;
-            let mut binding_classification = carried_binding_classification.take();
-            let (mut transport_payload_len, mut transport_payload_lane) =
-                carried_transport_payload.take().unwrap_or((0, offer_lane));
-            if binding_classification.is_none() && transport_payload_len == 0 {
-                let payload_view = if skip_recv_loop {
-                    0usize
-                } else {
-                    'offer_recv: loop {
-                        if !is_route_controller || controller_selected_recv_step {
-                            let label_meta = self.endpoint.selection_label_meta(selection);
-                            let materialization_meta =
-                                self.endpoint.selection_materialization_meta(selection);
-                            if let Some((_, classification)) = self.endpoint.poll_binding_for_offer(
-                                scope_id,
-                                offer_lane_idx,
-                                label_meta,
-                                materialization_meta,
-                            ) {
-                                binding_classification = Some(classification);
-                                break 'offer_recv 0usize;
-                            }
-                            if recvless_loop_control_scope
-                                && let Some((_, classification)) =
-                                    self.endpoint.poll_binding_any_for_offer(
-                                        offer_lane_idx,
-                                        self.endpoint.offer_lane_set_for_scope(scope_id),
-                                    )
-                            {
-                                binding_classification = Some(classification);
-                                break 'offer_recv 0usize;
-                            }
-                        }
+        let controller_can_skip_recv = is_route_controller
+            && !controller_pending_materialization
+            && ((at_route_offer_entry
+                && (is_dynamic_route_scope
+                    || controller_non_entry_cursor_ready
+                    || is_self_send_controller
+                    || early_route_decision.is_some()))
+                || (!at_route_offer_entry && cursor_is_not_recv));
+        let passive_dynamic_scope_has_recv =
+            self.endpoint.arm_has_recv(scope_id, 0) || self.endpoint.arm_has_recv(scope_id, 1);
+        let passive_ack_is_materializable = self
+            .endpoint
+            .preview_scope_ack_token_non_consuming(scope_id, offer_lane_idx, offer_lanes)
+            .map(|token| {
+                let arm = token.arm().as_u8();
+                self.endpoint.scope_has_ready_arm(scope_id, arm)
+                    || !self.endpoint.arm_has_recv(scope_id, arm)
+            })
+            .unwrap_or(false);
+        let passive_dynamic_can_skip_recv = !is_route_controller
+            && is_dynamic_route_scope
+            && (!passive_dynamic_scope_has_recv
+                || preview_ready_arm_evidence
+                || passive_ack_is_materializable);
+        let skip_recv_loop =
+            passive_dynamic_can_skip_recv || controller_can_skip_recv || early_decision_arm_has_no_recv;
 
-                        let payload_len = {
-                            let port = self.endpoint.port_for_lane(offer_lane_idx);
-                            let payload = lane_port::recv_future(port)
-                                .await
-                                .map_err(RecvError::Transport)?;
-                            lane_port::copy_payload_into_scratch(port, &payload)
-                                .map_err(|_| RecvError::PhaseInvariant)?
+        Ok(OfferFrontierFacts {
+            selection,
+            scope_id,
+            offer_lane,
+            offer_lane_idx,
+            offer_lanes,
+            suppress_scope_hint,
+            is_route_controller,
+            is_dynamic_route_scope,
+            recvless_loop_control_scope,
+            controller_selected_recv_step,
+            skip_recv_loop,
+        })
+    }
+
+    fn poll_collect_offer_evidence(
+        &mut self,
+        state: &mut OfferCollectState,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<()>> {
+        let facts = state.facts;
+        if state.binding_classification.is_none() && state.transport_payload_len == 0 {
+            let payload_view = if facts.skip_recv_loop {
+                0usize
+            } else {
+                'offer_recv: loop {
+                    if !facts.is_route_controller || facts.controller_selected_recv_step {
+                        let label_meta = self.endpoint.selection_label_meta(facts.selection);
+                        let materialization_meta =
+                            self.endpoint.selection_materialization_meta(facts.selection);
+                        if let Some((_, classification)) = self.endpoint.poll_binding_for_offer(
+                            facts.scope_id,
+                            facts.offer_lane_idx,
+                            label_meta,
+                            materialization_meta,
+                        ) {
+                            state.binding_classification = Some(classification);
+                            break 'offer_recv 0usize;
+                        }
+                        if facts.recvless_loop_control_scope
+                            && let Some((_, classification)) =
+                                self.endpoint.poll_binding_any_for_offer(
+                                    facts.offer_lane_idx,
+                                    facts.offer_lanes,
+                                )
+                        {
+                            state.binding_classification = Some(classification);
+                            break 'offer_recv 0usize;
+                        }
+                    }
+
+                    let payload_len = {
+                        let port = self.endpoint.port_for_lane(facts.offer_lane_idx);
+                        let payload =
+                            match lane_port::poll_recv(&mut self.pending_recv, port, cx) {
+                            Poll::Pending => return Poll::Pending,
+                            Poll::Ready(Ok(payload)) => payload,
+                            Poll::Ready(Err(err)) => {
+                                return Poll::Ready(Err(RecvError::Transport(err)));
+                            }
                         };
+                        match lane_port::copy_payload_into_scratch(port, &payload) {
+                            Ok(len) => len,
+                            Err(_) => return Poll::Ready(Err(RecvError::PhaseInvariant)),
+                        }
+                    };
 
-                        if !is_route_controller || controller_selected_recv_step {
-                            let label_meta = self.endpoint.selection_label_meta(selection);
-                            let materialization_meta =
-                                self.endpoint.selection_materialization_meta(selection);
-                            if let Some((_, classification)) = self.endpoint.poll_binding_for_offer(
-                                scope_id,
-                                offer_lane_idx,
-                                label_meta,
-                                materialization_meta,
-                            ) {
-                                binding_classification = Some(classification);
-                                break 'offer_recv 0usize;
+                    if !facts.is_route_controller || facts.controller_selected_recv_step {
+                        let label_meta = self.endpoint.selection_label_meta(facts.selection);
+                        let materialization_meta =
+                            self.endpoint.selection_materialization_meta(facts.selection);
+                        if let Some((_, classification)) = self.endpoint.poll_binding_for_offer(
+                            facts.scope_id,
+                            facts.offer_lane_idx,
+                            label_meta,
+                            materialization_meta,
+                        ) {
+                            state.binding_classification = Some(classification);
+                            break 'offer_recv 0usize;
+                        }
+                        if facts.recvless_loop_control_scope
+                            && let Some((_, classification)) =
+                                self.endpoint.poll_binding_any_for_offer(
+                                    facts.offer_lane_idx,
+                                    facts.offer_lanes,
+                                )
+                        {
+                            state.binding_classification = Some(classification);
+                            break 'offer_recv 0usize;
+                        }
+                    }
+
+                    break 'offer_recv payload_len;
+                }
+            };
+            if payload_view != 0 {
+                state.transport_payload_len = payload_view;
+                state.transport_payload_lane = facts.offer_lane;
+            }
+        }
+
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_run(
+        &mut self,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>> {
+        if let Some(branch) = self.take_pending_branch_preview() {
+            return Poll::Ready(Ok(branch));
+        }
+        if self.frontier_visited.is_none() {
+            let mut frontier_scratch = self.endpoint.frontier_scratch_view();
+            self.frontier_visited =
+                Some(super::frontier::frontier_visit_set_from_scratch(&mut frontier_scratch));
+        }
+        loop {
+            if let Some(stage) = self.run_stage.take() {
+                match stage {
+                    OfferRunStage::CollectEvidence(mut stage) => {
+                        match self.poll_collect_offer_evidence(&mut stage, cx) {
+                            Poll::Pending => {
+                                self.run_stage = Some(OfferRunStage::CollectEvidence(stage));
+                                return Poll::Pending;
                             }
-                            if recvless_loop_control_scope
-                                && let Some((_, classification)) =
-                                    self.endpoint.poll_binding_any_for_offer(
+                            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                            Poll::Ready(Ok(())) => {
+                                let scope_id = stage.facts.scope_id;
+                                let offer_lane_idx = stage.facts.offer_lane_idx;
+                                let suppress_scope_hint = stage.facts.suppress_scope_hint;
+                                let is_route_controller = stage.facts.is_route_controller;
+                                let is_dynamic_route_scope = stage.facts.is_dynamic_route_scope;
+                                if let Some(classification) = stage.binding_classification.as_ref() {
+                                    let label_meta = self.endpoint.selection_label_meta(stage.selection);
+                                    self.ingest_binding_scope_evidence(
+                                        scope_id,
+                                        classification.label,
+                                        suppress_scope_hint,
+                                        label_meta,
+                                    );
+                                }
+                                {
+                                    let label_meta = self.endpoint.selection_label_meta(stage.selection);
+                                    self.ingest_scope_evidence_for_offer(
+                                        scope_id,
                                         offer_lane_idx,
                                         self.endpoint.offer_lane_set_for_scope(scope_id),
+                                        suppress_scope_hint,
+                                        label_meta,
+                                    );
+                                }
+                                if self.endpoint.scope_evidence_conflicted(scope_id)
+                                    && !self.recover_scope_evidence_conflict(
+                                        scope_id,
+                                        is_dynamic_route_scope,
+                                        is_route_controller,
                                     )
-                            {
-                                binding_classification = Some(classification);
-                                break 'offer_recv 0usize;
+                                {
+                                    return Poll::Ready(Err(RecvError::PhaseInvariant));
+                                }
+                                self.run_stage = Some(OfferRunStage::ResolveToken(
+                                    OfferResolveState {
+                                        selection: stage.selection,
+                                        facts: stage.facts,
+                                        binding_classification: stage.binding_classification,
+                                        transport_payload_len: stage.transport_payload_len,
+                                        transport_payload_lane: stage.transport_payload_lane,
+                                        liveness: OfferLivenessState::new(
+                                            self.endpoint.liveness_policy,
+                                        ),
+                                        pending_action: None,
+                                        yield_armed: false,
+                                    },
+                                ));
+                                continue;
                             }
                         }
+                    }
+                    OfferRunStage::ResolveToken(mut stage) => {
+                        let mut frontier_visited = self
+                            .frontier_visited
+                            .take()
+                            .expect("offer frontier state must be initialized before polling");
+                        let resolved = match self.resolve_token(
+                            &mut stage,
+                            &mut frontier_visited,
+                            cx,
+                        ) {
+                            Poll::Pending => {
+                                self.frontier_visited = Some(frontier_visited);
+                                self.run_stage = Some(OfferRunStage::ResolveToken(stage));
+                                return Poll::Pending;
+                            }
+                            Poll::Ready(Err(err)) => {
+                                self.frontier_visited = Some(frontier_visited);
+                                return Poll::Ready(Err(err));
+                            }
+                            Poll::Ready(Ok(resolved)) => {
+                                self.frontier_visited = Some(frontier_visited);
+                                resolved
+                            }
+                        };
+                        match resolved {
+                            ResolveTokenOutcome::RestartFrontier => {
+                                self.carried_binding_classification =
+                                    stage.binding_classification;
+                                self.carried_transport_payload =
+                                    (stage.transport_payload_len != 0).then_some((
+                                        stage.transport_payload_len,
+                                        stage.transport_payload_lane,
+                                    ));
+                                continue;
+                            }
+                            ResolveTokenOutcome::Resolved(resolved) => {
+                                if !stage.facts.is_route_controller {
+                                    match self
+                                        .endpoint
+                                        .descend_selected_passive_route(stage.selection, resolved)
+                                    {
+                                        Ok(true) => {
+                                            self.carried_binding_classification =
+                                                stage.binding_classification;
+                                            self.carried_transport_payload = (stage
+                                                .transport_payload_len
+                                                != 0)
+                                                .then_some((
+                                                    stage.transport_payload_len,
+                                                    stage.transport_payload_lane,
+                                                ));
+                                            continue;
+                                        }
+                                        Ok(false) => {}
+                                        Err(err) => return Poll::Ready(Err(err)),
+                                    }
+                                }
+                                return Poll::Ready(self.materialize_branch(
+                                    stage.selection,
+                                    resolved,
+                                    stage.facts.is_route_controller,
+                                    stage.binding_classification,
+                                    stage.transport_payload_len,
+                                    stage.transport_payload_lane,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
 
-                        break 'offer_recv payload_len;
+            let selection = match self.select_scope() {
+                Ok(selection) => selection,
+                Err(err) => return Poll::Ready(Err(err)),
+            };
+            let facts = {
+                let mut frontier_visited = self
+                    .frontier_visited
+                    .take()
+                    .expect("offer frontier state must be initialized before selection");
+                let facts = match self.prepare_frontier_facts(selection, &mut frontier_visited) {
+                    Ok(facts) => facts,
+                    Err(err) => {
+                        self.frontier_visited = Some(frontier_visited);
+                        return Poll::Ready(Err(err));
                     }
                 };
-                if payload_view != 0 {
-                    transport_payload_len = payload_view;
-                    transport_payload_lane = offer_lane;
-                }
-            }
-            if let Some(classification) = binding_classification.as_ref() {
-                let label_meta = self.endpoint.selection_label_meta(selection);
-                self.ingest_binding_scope_evidence(
-                    scope_id,
-                    classification.label,
-                    suppress_scope_hint,
-                    label_meta,
-                );
-            }
-            {
-                let label_meta = self.endpoint.selection_label_meta(selection);
-                self.ingest_scope_evidence_for_offer(
-                    scope_id,
-                    offer_lane_idx,
-                    self.endpoint.offer_lane_set_for_scope(scope_id),
-                    suppress_scope_hint,
-                    label_meta,
-                );
-            }
-            if self.endpoint.scope_evidence_conflicted(scope_id)
-                && !self.recover_scope_evidence_conflict(
-                    scope_id,
-                    is_dynamic_route_scope,
-                    is_route_controller,
-                )
-            {
-                return Err(RecvError::PhaseInvariant);
-            }
-
-            let resolved = match self
-                .resolve_token(&mut ResolveTokenContext {
-                    selection,
-                    is_route_controller,
-                    is_dynamic_route_scope,
-                    binding_classification: &mut binding_classification,
-                    transport_payload_len: &mut transport_payload_len,
-                    transport_payload_lane: &mut transport_payload_lane,
-                    frontier_visited: &mut frontier_visited,
-                })
-                .await
-            {
-                Ok(resolved) => match resolved {
-                    ResolveTokenOutcome::RestartFrontier => {
-                        carried_binding_classification = binding_classification;
-                        carried_transport_payload = (transport_payload_len != 0)
-                            .then_some((transport_payload_len, transport_payload_lane));
-                        continue 'offer_frontier;
-                    }
-                    ResolveTokenOutcome::Resolved(resolved) => resolved,
-                },
-                Err(err) => return Err(err),
+                self.frontier_visited = Some(frontier_visited);
+                facts
             };
-            if !is_route_controller {
-                match self
-                    .endpoint
-                    .descend_selected_passive_route(selection, resolved)
-                {
-                    Ok(true) => {
-                        carried_binding_classification = binding_classification;
-                        carried_transport_payload = (transport_payload_len != 0)
-                            .then_some((transport_payload_len, transport_payload_lane));
-                        continue 'offer_frontier;
-                    }
-                    Ok(false) => {}
-                    Err(err) => return Err(err),
-                }
-            }
-            return self.materialize_branch(
+            let (transport_payload_len, transport_payload_lane) = self
+                .carried_transport_payload
+                .take()
+                .unwrap_or((0, facts.offer_lane));
+            self.run_stage = Some(OfferRunStage::CollectEvidence(OfferCollectState {
                 selection,
-                resolved,
-                is_route_controller,
-                binding_classification,
+                facts,
+                binding_classification: self.carried_binding_classification.take(),
                 transport_payload_len,
                 transport_payload_lane,
-            );
+            }));
         }
     }
 }
@@ -4347,10 +4562,11 @@ where
     /// the current route scope.
     /// Loop control evidence that resolves a recv-less branch is treated as
     /// EmptyArmTerminal and skip decode.
-    pub async fn offer(
+    pub fn offer(
         &mut self,
-    ) -> RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
-        RouteFrontierMachine::new(self).run().await
+    ) -> impl core::future::Future<Output = RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>> + '_ {
+        let mut machine = RouteFrontierMachine::new(self);
+        poll_fn(move |cx| machine.poll_run(cx))
     }
 
     pub(super) fn commit_pending_branch_preview(

@@ -501,42 +501,44 @@ fn offer_kernel_stays_three_stage_and_fail_closed() {
     let cursor_src = include_str!("../src/endpoint/kernel/core.rs");
     let decode_src = include_str!("../src/endpoint/kernel/decode.rs");
     let typed_tokens_src = include_str!("../src/control/cap/typed_tokens.rs");
-    let offer_body = impl_body(offer_src, "pub async fn offer(");
-    let offer_driver_body = impl_body(offer_src, "async fn run(&mut self)");
+    let offer_body = impl_body(offer_src, "pub fn offer(");
+    let offer_driver_body = impl_body(offer_src, "fn poll_run(");
     let select_scope_body = impl_body(
         offer_src,
         "pub(super) fn select_scope(&mut self) -> RecvResult<OfferScopeSelection>",
     );
-    let resolve_token_body = impl_body(offer_src, "pub(super) async fn resolve_token(");
+    let resolve_token_body = impl_body(offer_src, "fn resolve_token(");
     let materialize_branch_body = impl_body(offer_src, "pub(super) fn materialize_branch(");
     let preview_flow_meta_body = impl_body(cursor_src, "pub(super) fn preview_flow_meta<M>(");
-    let send_with_meta_body = impl_body(
+    let send_future_body = impl_body(
         cursor_src,
-        "async fn send_with_meta_and_cursor_in_place<M>(",
+        "impl<'e, 'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B, M> Future",
     );
     let prepare_send_control_body = impl_body(cursor_src, "fn prepare_send_control(");
-    let emit_send_transport_body = impl_body(cursor_src, "async fn emit_send_transport(");
-    let decode_branch_body = impl_body(decode_src, "pub async fn decode_branch<M>(");
+    let begin_send_transport_body = impl_body(cursor_src, "fn begin_send_transport<'a>(");
+    let poll_send_transport_body = impl_body(cursor_src, "fn poll_send_transport(");
+    let decode_branch_body = impl_body(decode_src, "pub fn decode_branch<'a, M>(");
     let apply_branch_recv_policy_body = impl_body(decode_src, "fn apply_branch_recv_policy(");
 
     assert!(
-        offer_body.contains("RouteFrontierMachine::new(self).run().await"),
+        offer_body.contains("poll_fn(move |cx| machine.poll_run(cx))"),
         "public offer must delegate orchestration through the sealed route-frontier machine"
     );
-    let select_idx = offer_driver_body
-        .find("let selection = self.endpoint.select_scope()?;")
-        .or_else(|| offer_driver_body.find("let selection = self.select_scope()?;"))
-        .expect("offer driver must start by selecting a scope");
     let resolve_idx = offer_driver_body
         .find(".resolve_token(")
         .expect("offer driver must resolve authority via resolve_token");
     let materialize_idx = offer_driver_body
         .find("return self.endpoint.materialize_branch(")
+        .or_else(|| offer_driver_body.find("return Poll::Ready(self.endpoint.materialize_branch("))
         .or_else(|| offer_driver_body.find("return self.materialize_branch("))
+        .or_else(|| offer_driver_body.find("return Poll::Ready(self.materialize_branch("))
         .expect("offer driver must materialize the chosen branch last");
     assert!(
-        select_idx < resolve_idx && resolve_idx < materialize_idx,
-        "offer kernel must stay ordered as select_scope -> resolve_token -> materialize_branch"
+        offer_driver_body.contains("let selection = match self.select_scope()")
+            && offer_driver_body.contains("OfferRunStage::CollectEvidence(")
+            && offer_driver_body.contains("OfferRunStage::ResolveToken(")
+            && resolve_idx < materialize_idx,
+        "offer kernel must keep the staged select_scope -> resolve_token -> materialize_branch pipeline explicit"
     );
 
     for forbidden in [
@@ -596,7 +598,7 @@ fn offer_kernel_stays_three_stage_and_fail_closed() {
         "preview_flow_meta must stay policy-free and preview-only"
     );
     assert!(
-        !send_with_meta_body.contains("evaluate_dynamic_policy("),
+        !send_future_body.contains("evaluate_dynamic_policy("),
         "send orchestration must keep dynamic policy inside the consume-preparation helper"
     );
     assert!(
@@ -604,17 +606,21 @@ fn offer_kernel_stays_three_stage_and_fail_closed() {
         "send consume preparation must own dynamic policy evaluation"
     );
     assert!(
-        emit_send_transport_body.contains("prepared.stage_payload"),
+        begin_send_transport_body.contains("prepared.stage_payload"),
         "send transport staging must stay descriptor-driven through the prepared send descriptor"
     );
     assert!(
-        !emit_send_transport_body.contains("match prepared.control_handling"),
+        !begin_send_transport_body.contains("match prepared.control_handling"),
         "send transport staging must not branch on control handling after descriptor preparation"
     );
     assert!(
-        send_with_meta_body.contains("finish_send_after_transport_erased(")
-            && send_with_meta_body.contains("typed_control_outcome::<M>(control)"),
+        send_future_body.contains("finish_send_after_transport_erased(")
+            && send_future_body.contains("typed_control_outcome::<M>"),
         "send orchestration must keep the transport/dispatch split and only retype the final control outcome at the boundary"
+    );
+    assert!(
+        poll_send_transport_body.contains("poll_send_outgoing("),
+        "send transport poll helper must stay the sole owner of driving the transport send future"
     );
     for required in [
         "dispatch_control: DispatchSendTokenFn<E>,",
@@ -673,8 +679,13 @@ fn offer_kernel_stays_three_stage_and_fail_closed() {
         );
     }
     assert!(
-        decode_branch_body.contains("apply_branch_recv_policy("),
-        "decode_branch must delegate recv policy consumption to the consume path helper",
+        decode_branch_body.contains("finish_decode_branch::<M>(")
+            && !decode_branch_body.contains("apply_branch_recv_policy("),
+        "decode_branch must keep recv policy consumption inside the synchronous consume helper",
+    );
+    assert!(
+        decode_branch_body.contains("prepare_decode_transport_wait::<M>(branch)?"),
+        "decode branch orchestration must stage transport prerequisites before consume finish"
     );
     for required in ["eval_endpoint_policy(", "apply_recv_policy("] {
         assert!(
@@ -749,8 +760,8 @@ fn endpoint_app_surface_stays_on_canonical_localside_helpers() {
 
     for required in [
         "pub fn flow<'e, M>(",
-        "pub async fn recv<M>(",
-        "pub async fn offer<'e>(",
+        "pub fn recv<M>(",
+        "pub fn offer<'e>(",
     ] {
         assert!(
             endpoint_src.contains(required),
@@ -1461,7 +1472,7 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
         "struct PhaseImageHeader {",
         "struct PhaseLaneEntry {",
         "phase_lane_entry_len: u16,",
-        "phase_lane_words: *const LaneWord,",
+        "phase_lane_words_offset: u16,",
     ] {
         assert!(
             compiled_role_src.contains(required) || cursor_src.contains(required),
@@ -1472,12 +1483,12 @@ fn compiled_role_layout_and_typestate_registry_stay_compact_indexed() {
     assert!(
         compiled_role_ws.contains(&compact_ws(
             "pub(crate) struct CompiledRoleImage {
-                phase_headers: *const PhaseImageHeader,
-                phase_lane_entries: *const PhaseLaneEntry,
-                phase_lane_words: *const LaneWord,
-                typestate: *const RoleTypestateValue,
-                eff_index_to_step: *const u16,
-                step_index_to_state: *const StateIndex,
+                typestate_offset: u16,
+                phase_headers_offset: u16,
+                phase_lane_entries_offset: u16,
+                phase_lane_words_offset: u16,
+                eff_index_to_step_offset: u16,
+                step_index_to_state_offset: u16,
                 role: u8,
                 role_facts: RoleResidentFacts,
             }"
@@ -1539,7 +1550,7 @@ fn exact_layout_owners_stay_footprint_backed() {
         "pub(crate) const fn from_footprint(footprint: RoleFootprint) -> Self {",
         "struct PhaseImageHeader {",
         "struct PhaseLaneEntry {",
-        "phase_lane_words: *const LaneWord,",
+        "phase_lane_words_offset: u16,",
     ] {
         assert!(
             role_program_src.contains(required)
@@ -4645,8 +4656,8 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         "fn mark_static_passive_descendant_path_ready(",
         "fn on_frontier_defer(",
         "fn align_cursor_to_selected_scope(",
-        "fn await_transport_payload_for_offer_lane(",
-        "fn await_static_passive_progress(",
+        "fn poll_transport_payload_for_offer_lane(",
+        "fn poll_static_passive_progress(",
         "fn try_poll_route_decision_immediate(",
         "fn try_poll_route_decision_for_offer(",
         "fn commit_pending_branch_preview(",
@@ -4762,8 +4773,8 @@ fn endpoint_kernel_owner_split_stays_explicit() {
         "fn ingest_scope_evidence_for_offer(",
         "fn ingest_binding_scope_evidence(",
         "fn recover_scope_evidence_conflict(",
-        "fn await_transport_payload_for_offer_lane(",
-        "fn await_static_passive_progress(",
+        "fn poll_transport_payload_for_offer_lane(",
+        "fn poll_static_passive_progress(",
         "fn try_poll_route_decision_immediate(",
         "fn try_poll_route_decision_for_offer(",
     ] {
@@ -4775,8 +4786,8 @@ fn endpoint_kernel_owner_split_stays_explicit() {
     for required in [
         "fn on_frontier_defer(",
         "fn align_cursor_to_selected_scope(",
-        "fn await_transport_payload_for_offer_lane(",
-        "fn await_static_passive_progress(",
+        "fn poll_transport_payload_for_offer_lane(",
+        "fn poll_static_passive_progress(",
         "fn try_poll_route_decision_immediate(",
         "fn try_poll_route_decision_for_offer(",
     ] {

@@ -515,6 +515,7 @@ where
         lane_idx: usize,
         suppress_hint: bool,
         label_meta: ScopeLabelMeta,
+        drain_transport_hints: bool,
     ) -> Option<u8> {
         if suppress_hint {
             return None;
@@ -527,10 +528,10 @@ where
             .unwrap_or(0);
         let port = self.port_for_lane(lane_idx);
         let hint_label_mask = label_meta.hint_label_mask();
-        let taken = if !port.has_route_hint_for_label_mask(hint_label_mask) {
+        let taken = if !port.has_route_hint_for_label_mask(hint_label_mask, drain_transport_hints) {
             None
         } else {
-            port.take_route_hint_for_label_mask(hint_label_mask)
+            port.take_route_hint_for_label_mask(hint_label_mask, drain_transport_hints)
         };
         self.refresh_frontier_observation_cache_for_route_lane(lane_idx, previous_change_epoch);
         taken
@@ -562,6 +563,7 @@ where
         lane_idx: usize,
         offer_lane_idx: usize,
         label_meta: ScopeLabelMeta,
+        drain_transport_hints: bool,
     ) -> bool {
         let previous_change_epoch = self
             .ports
@@ -575,6 +577,7 @@ where
         let pending = port.has_pending_route_hint_for_lane(
             label_meta.hint_label_mask(),
             Lane::new(offer_lane_idx as u32),
+            drain_transport_hints,
         );
         self.refresh_frontier_observation_cache_for_route_lane(lane_idx, previous_change_epoch);
         pending

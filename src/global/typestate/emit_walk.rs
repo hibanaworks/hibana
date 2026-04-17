@@ -447,6 +447,279 @@ struct RouteFinalizeCtx<'a> {
     visited: &'a mut [bool; MAX_STATES],
 }
 
+#[derive(Clone, Copy)]
+struct RouteDispatchOutcome {
+    dispatch_len: u8,
+    dispatch_functional: bool,
+}
+
+#[inline(never)]
+fn collect_route_dispatch_for_exit(
+    ctx: &mut RouteFinalizeCtx<'_>,
+    role: u8,
+    node_len: usize,
+    entry_idx: usize,
+    scope_id: ScopeId,
+    scope_end: StateIndex,
+) -> RouteDispatchOutcome {
+    let mut dispatch_len = 0u8;
+    let mut dispatch_functional = true;
+    clear_dispatch_table(ctx.dispatch_table);
+    clear_prefix_actions(ctx.prefix_actions);
+    *ctx.prefix_lens = [0; 2];
+    *ctx.arm_seen_recv = [false; 2];
+
+    let mut arm = 0u8;
+    while arm < 2 {
+        let arm_idx = arm as usize;
+        let arm_entry = ctx.scope_entries[entry_idx].arm_entry[arm_idx];
+        if !arm_entry.is_max() {
+            clear_scan_stack(ctx.scan_stack);
+            clear_visited(ctx.visited);
+            let mut scan_len = 1usize;
+            ctx.scan_stack[0] = arm_entry;
+
+            while scan_len > 0 {
+                scan_len -= 1;
+                let scan_idx = state_index_to_usize(ctx.scan_stack[scan_len]);
+                if scan_idx >= node_len {
+                    arm += 1;
+                    continue;
+                }
+                if ctx.visited[scan_idx] {
+                    continue;
+                }
+                ctx.visited[scan_idx] = true;
+                let node = ctx.nodes[scan_idx];
+                let scan_scope = node.scope();
+                if matches!(scan_scope.kind(), ScopeKind::Route)
+                    && !scan_scope.is_none()
+                    && scan_scope.local_ordinal() != scope_id.local_ordinal()
+                {
+                    let nested_ordinal = scan_scope.local_ordinal();
+                    let _ = merge_nested_dispatch_entries(
+                        ctx.nodes,
+                        scope_end,
+                        ctx.scope_entries,
+                        ctx.route_scope_entries,
+                        ctx.scope_entries_len,
+                        nested_ordinal,
+                        arm,
+                        ctx.dispatch_table,
+                        &mut dispatch_len,
+                        &mut dispatch_functional,
+                    );
+                    continue;
+                }
+                match node.action() {
+                    LocalAction::Recv { label, .. } => {
+                        let target_idx = as_state_index(scan_idx);
+                        ctx.arm_seen_recv[arm_idx] = true;
+                        merge_dispatch_entry(
+                            ctx.nodes,
+                            scope_end,
+                            ctx.dispatch_table,
+                            &mut dispatch_len,
+                            &mut dispatch_functional,
+                            arm,
+                            label,
+                            target_idx,
+                        );
+
+                        let recv_scope = node.scope();
+                        if matches!(recv_scope.kind(), ScopeKind::Route)
+                            && !recv_scope.is_none()
+                            && recv_scope.local_ordinal() != scope_id.local_ordinal()
+                        {
+                            let nested_ordinal = recv_scope.local_ordinal();
+                            let _ = merge_nested_dispatch_entries(
+                                ctx.nodes,
+                                scope_end,
+                                ctx.scope_entries,
+                                ctx.route_scope_entries,
+                                ctx.scope_entries_len,
+                                nested_ordinal,
+                                arm,
+                                ctx.dispatch_table,
+                                &mut dispatch_len,
+                                &mut dispatch_functional,
+                            );
+                        }
+                    }
+                    LocalAction::Send {
+                        peer, label, lane, ..
+                    } => {
+                        if !ctx.arm_seen_recv[arm_idx] {
+                            if ctx.prefix_lens[arm_idx] >= MAX_PREFIX_ACTIONS {
+                                panic!("route prefix action overflow");
+                            }
+                            let prefix_idx = ctx.prefix_lens[arm_idx];
+                            ctx.prefix_actions[arm_idx][prefix_idx] = PrefixAction {
+                                kind: PREFIX_KIND_SEND,
+                                peer,
+                                label,
+                                lane,
+                            };
+                            ctx.prefix_lens[arm_idx] += 1;
+                        }
+                        let next_state = node.next();
+                        let next_idx = state_index_to_usize(next_state);
+                        let mut nested_merged = false;
+                        if next_idx < node_len && next_idx != scan_idx {
+                            let next_node = ctx.nodes[next_idx];
+                            let next_scope = next_node.scope();
+                            let current_scope = node.scope();
+
+                            if matches!(next_scope.kind(), ScopeKind::Route)
+                                && !next_scope.is_none()
+                                && next_scope.local_ordinal() != current_scope.local_ordinal()
+                            {
+                                let nested_ordinal = next_scope.local_ordinal();
+                                nested_merged = merge_nested_dispatch_entries(
+                                    ctx.nodes,
+                                    scope_end,
+                                    ctx.scope_entries,
+                                    ctx.route_scope_entries,
+                                    ctx.scope_entries_len,
+                                    nested_ordinal,
+                                    arm,
+                                    ctx.dispatch_table,
+                                    &mut dispatch_len,
+                                    &mut dispatch_functional,
+                                );
+                            }
+                        }
+                        if !nested_merged && !next_state.is_max() && scan_len < ctx.scan_stack.len()
+                        {
+                            ctx.scan_stack[scan_len] = next_state;
+                            scan_len += 1;
+                        }
+                    }
+                    LocalAction::Local { label, lane, .. } => {
+                        if !ctx.arm_seen_recv[arm_idx] {
+                            if ctx.prefix_lens[arm_idx] >= MAX_PREFIX_ACTIONS {
+                                panic!("route prefix action overflow");
+                            }
+                            let prefix_idx = ctx.prefix_lens[arm_idx];
+                            ctx.prefix_actions[arm_idx][prefix_idx] = PrefixAction {
+                                kind: PREFIX_KIND_LOCAL,
+                                peer: role,
+                                label,
+                                lane,
+                            };
+                            ctx.prefix_lens[arm_idx] += 1;
+                        }
+                        let next_state = node.next();
+                        let next_idx = state_index_to_usize(next_state);
+                        let mut nested_merged = false;
+                        if next_idx < node_len && next_idx != scan_idx {
+                            let next_node = ctx.nodes[next_idx];
+                            let next_scope = next_node.scope();
+                            let current_scope = node.scope();
+
+                            if matches!(next_scope.kind(), ScopeKind::Route)
+                                && !next_scope.is_none()
+                                && next_scope.local_ordinal() != current_scope.local_ordinal()
+                            {
+                                let nested_ordinal = next_scope.local_ordinal();
+                                nested_merged = merge_nested_dispatch_entries(
+                                    ctx.nodes,
+                                    scope_end,
+                                    ctx.scope_entries,
+                                    ctx.route_scope_entries,
+                                    ctx.scope_entries_len,
+                                    nested_ordinal,
+                                    arm,
+                                    ctx.dispatch_table,
+                                    &mut dispatch_len,
+                                    &mut dispatch_functional,
+                                );
+                            }
+                        }
+                        if !nested_merged && !next_state.is_max() && scan_len < ctx.scan_stack.len()
+                        {
+                            ctx.scan_stack[scan_len] = next_state;
+                            scan_len += 1;
+                        }
+                    }
+                    LocalAction::Jump {
+                        reason: JumpReason::PassiveObserverBranch,
+                    } => {
+                        let target = node.next();
+                        if !target.is_max() && scan_len < ctx.scan_stack.len() {
+                            ctx.scan_stack[scan_len] = target;
+                            scan_len += 1;
+                        }
+                    }
+                    LocalAction::Jump {
+                        reason:
+                            JumpReason::RouteArmEnd | JumpReason::LoopContinue | JumpReason::LoopBreak,
+                    } => {}
+                    _ => {
+                        let next_state = node.next();
+                        let next_idx = state_index_to_usize(next_state);
+                        let mut nested_merged = false;
+                        if next_idx < node_len && next_idx != scan_idx {
+                            let next_node = ctx.nodes[next_idx];
+                            let next_scope = next_node.scope();
+                            let current_scope = node.scope();
+
+                            if matches!(next_scope.kind(), ScopeKind::Route)
+                                && !next_scope.is_none()
+                                && next_scope.local_ordinal() != current_scope.local_ordinal()
+                            {
+                                let nested_ordinal = next_scope.local_ordinal();
+                                nested_merged = merge_nested_dispatch_entries(
+                                    ctx.nodes,
+                                    scope_end,
+                                    ctx.scope_entries,
+                                    ctx.route_scope_entries,
+                                    ctx.scope_entries_len,
+                                    nested_ordinal,
+                                    arm,
+                                    ctx.dispatch_table,
+                                    &mut dispatch_len,
+                                    &mut dispatch_functional,
+                                );
+                            }
+                        }
+                        if !nested_merged && !next_state.is_max() && scan_len < ctx.scan_stack.len()
+                        {
+                            ctx.scan_stack[scan_len] = next_state;
+                            scan_len += 1;
+                        }
+                    }
+                }
+            }
+        }
+        arm += 1;
+    }
+
+    let mut prefix_mismatch = false;
+    if dispatch_len > 0 {
+        if ctx.prefix_lens[0] != ctx.prefix_lens[1] {
+            prefix_mismatch = true;
+        } else {
+            let mut pi = 0usize;
+            while pi < ctx.prefix_lens[0] {
+                if !prefix_action_eq(ctx.prefix_actions[0][pi], ctx.prefix_actions[1][pi]) {
+                    prefix_mismatch = true;
+                    break;
+                }
+                pi += 1;
+            }
+        }
+        if prefix_mismatch {
+            dispatch_functional = false;
+        }
+    }
+
+    RouteDispatchOutcome {
+        dispatch_len,
+        dispatch_functional,
+    }
+}
+
 #[inline(never)]
 fn finalize_route_scope_exit_for_role(
     ctx: &mut RouteFinalizeCtx<'_>,
@@ -454,39 +727,23 @@ fn finalize_route_scope_exit_for_role(
     node_len: usize,
     entry_idx: usize,
 ) -> bool {
-    let RouteFinalizeCtx {
-        nodes,
-        scope_entries,
-        scope_controller_roles,
-        scope_route_policy_effs,
-        route_scope_entries,
-        route_scope_offer_lane_words,
-        route_lane_word_len,
-        scope_entries_len,
-        dispatch_table,
-        prefix_actions,
-        prefix_lens,
-        arm_seen_recv,
-        scan_stack,
-        visited,
-    } = ctx;
     let mut offer_entry_locked = false;
-    let scope_id = scope_entries[entry_idx].scope_id.to_scope_id();
-    let is_linger = scope_entries[entry_idx].linger;
-    let is_controller = scope_controller_roles[entry_idx] == role;
+    let scope_id = ctx.scope_entries[entry_idx].scope_id.to_scope_id();
+    let is_linger = ctx.scope_entries[entry_idx].linger;
+    let is_controller = ctx.scope_controller_roles[entry_idx] == role;
     let scope_end = as_state_index(node_len);
 
     if !is_linger {
-        let arm0_entry = scope_entries[entry_idx].arm_entry[0];
-        let arm1_entry = scope_entries[entry_idx].arm_entry[1];
+        let arm0_entry = ctx.scope_entries[entry_idx].arm_entry[0];
+        let arm1_entry = ctx.scope_entries[entry_idx].arm_entry[1];
         if !arm0_entry.is_max() && !arm1_entry.is_max() {
             let (prefix_end0, prefix_end1, prefix_len) =
-                arm_common_prefix_end(nodes, scope_id, scope_end, arm0_entry, arm1_entry);
+                arm_common_prefix_end(ctx.nodes, scope_id, scope_end, arm0_entry, arm1_entry);
             if prefix_len > 0 {
-                let parent_scope = if scope_entries[entry_idx].parent == SCOPE_LINK_NONE {
+                let parent_scope = if ctx.scope_entries[entry_idx].parent == SCOPE_LINK_NONE {
                     ScopeId::none()
                 } else {
-                    scope_entries[scope_entries[entry_idx].parent as usize]
+                    ctx.scope_entries[ctx.scope_entries[entry_idx].parent as usize]
                         .scope_id
                         .to_scope_id()
                 };
@@ -502,8 +759,8 @@ fn finalize_route_scope_exit_for_role(
                         if node_idx >= node_len {
                             break;
                         }
-                        let node = nodes[node_idx];
-                        nodes[node_idx] = node.with_scope(parent_scope).with_route_arm(None);
+                        let node = ctx.nodes[node_idx];
+                        ctx.nodes[node_idx] = node.with_scope(parent_scope).with_route_arm(None);
                         let next = node.next();
                         if next.is_max() {
                             break;
@@ -520,58 +777,61 @@ fn finalize_route_scope_exit_for_role(
                     prefix_end1
                 };
                 if !min_start.is_max() {
-                    scope_entries[entry_idx].start = min_start;
+                    ctx.scope_entries[entry_idx].start = min_start;
                 }
                 if is_controller {
-                    scope_entries[entry_idx].arm_entry[0] = prefix_end0;
-                    scope_entries[entry_idx].arm_entry[1] = prefix_end1;
+                    ctx.scope_entries[entry_idx].arm_entry[0] = prefix_end0;
+                    ctx.scope_entries[entry_idx].arm_entry[1] = prefix_end1;
 
                     let mut arm = 0u8;
                     while arm < 2 {
-                        let entry = scope_entries[entry_idx].arm_entry[arm as usize];
+                        let entry = ctx.scope_entries[entry_idx].arm_entry[arm as usize];
                         if !entry.is_max() {
                             let node_idx = state_index_to_usize(entry);
                             if node_idx < node_len {
-                                match nodes[node_idx].action() {
+                                match ctx.nodes[node_idx].action() {
                                     LocalAction::Local { .. } => {}
                                     _ => {
-                                        scope_entries[entry_idx].arm_entry[arm as usize] =
+                                        ctx.scope_entries[entry_idx].arm_entry[arm as usize] =
                                             StateIndex::MAX;
                                     }
                                 }
                             } else {
-                                scope_entries[entry_idx].arm_entry[arm as usize] = StateIndex::MAX;
+                                ctx.scope_entries[entry_idx].arm_entry[arm as usize] =
+                                    StateIndex::MAX;
                             }
                         }
                         arm += 1;
                     }
 
-                    route_scope_entries[entry_idx].route_recv = [StateIndex::MAX, StateIndex::MAX];
-                    let lane_word_start = route_scope_entries[entry_idx].lane_word_start();
+                    ctx.route_scope_entries[entry_idx].route_recv =
+                        [StateIndex::MAX, StateIndex::MAX];
+                    let lane_word_start = ctx.route_scope_entries[entry_idx].lane_word_start();
                     route_scope_lane_words_mut(
-                        route_scope_offer_lane_words,
+                        ctx.route_scope_offer_lane_words,
                         lane_word_start,
-                        *route_lane_word_len,
+                        ctx.route_lane_word_len,
                     )
                     .fill(0);
                     if prefix_end0.raw() != prefix_end1.raw() {
                         let mut arm = 0u8;
                         while arm < 2 {
                             let arm_entry = if arm == 0 { prefix_end0 } else { prefix_end1 };
-                            if arm == route_scope_entries[entry_idx].route_recv_count()
+                            if arm == ctx.route_scope_entries[entry_idx].route_recv_count()
                                 && !arm_entry.is_max()
                             {
                                 let node_idx = state_index_to_usize(arm_entry);
                                 if node_idx < node_len
-                                    && let LocalAction::Recv { lane, .. } = nodes[node_idx].action()
+                                    && let LocalAction::Recv { lane, .. } =
+                                        ctx.nodes[node_idx].action()
                                 {
-                                    route_scope_entries[entry_idx].route_recv[arm as usize] =
+                                    ctx.route_scope_entries[entry_idx].route_recv[arm as usize] =
                                         arm_entry;
                                     insert_offer_lane(
                                         route_scope_lane_words_mut(
-                                            route_scope_offer_lane_words,
+                                            ctx.route_scope_offer_lane_words,
                                             lane_word_start,
-                                            *route_lane_word_len,
+                                            ctx.route_lane_word_len,
                                         ),
                                         lane,
                                     );
@@ -581,10 +841,10 @@ fn finalize_route_scope_exit_for_role(
                         }
                     }
                 } else {
-                    scope_entries[entry_idx].arm_entry[0] = prefix_end0;
-                    scope_entries[entry_idx].arm_entry[1] = prefix_end1;
+                    ctx.scope_entries[entry_idx].arm_entry[0] = prefix_end0;
+                    ctx.scope_entries[entry_idx].arm_entry[1] = prefix_end1;
                 }
-                route_scope_entries[entry_idx].offer_entry =
+                ctx.route_scope_entries[entry_idx].offer_entry =
                     if prefix_end0.raw() == prefix_end1.raw() {
                         prefix_end0
                     } else {
@@ -596,293 +856,47 @@ fn finalize_route_scope_exit_for_role(
     }
 
     if is_controller {
-        clear_dispatch_table(dispatch_table);
-        route_scope_entries[entry_idx].first_recv_dispatch = **dispatch_table;
-        route_scope_entries[entry_idx].first_recv_len = 0;
+        clear_dispatch_table(ctx.dispatch_table);
+        ctx.route_scope_entries[entry_idx].first_recv_dispatch = *ctx.dispatch_table;
+        ctx.route_scope_entries[entry_idx].first_recv_len = 0;
         return offer_entry_locked;
     }
 
-    let mut dispatch_len = 0u8;
-    let mut dispatch_functional = true;
-    clear_dispatch_table(dispatch_table);
-    clear_prefix_actions(prefix_actions);
-    **prefix_lens = [0; 2];
-    **arm_seen_recv = [false; 2];
+    let dispatch =
+        collect_route_dispatch_for_exit(ctx, role, node_len, entry_idx, scope_id, scope_end);
 
-    let mut arm = 0u8;
-    while arm < 2 {
-        let arm_idx = arm as usize;
-        let arm_entry = scope_entries[entry_idx].arm_entry[arm as usize];
-        if !arm_entry.is_max() {
-            clear_scan_stack(scan_stack);
-            clear_visited(visited);
-            let mut scan_len = 1usize;
-            scan_stack[0] = arm_entry;
-
-            while scan_len > 0 {
-                scan_len -= 1;
-                let scan_idx = state_index_to_usize(scan_stack[scan_len]);
-                if scan_idx >= node_len {
-                    arm += 1;
-                    continue;
-                }
-                if visited[scan_idx] {
-                    continue;
-                }
-                visited[scan_idx] = true;
-                let node = nodes[scan_idx];
-                let scan_scope = node.scope();
-                if matches!(scan_scope.kind(), ScopeKind::Route)
-                    && !scan_scope.is_none()
-                    && scan_scope.local_ordinal() != scope_id.local_ordinal()
-                {
-                    let nested_ordinal = scan_scope.local_ordinal();
-                    let _ = merge_nested_dispatch_entries(
-                        nodes,
-                        scope_end,
-                        scope_entries,
-                        route_scope_entries,
-                        *scope_entries_len,
-                        nested_ordinal,
-                        arm,
-                        dispatch_table,
-                        &mut dispatch_len,
-                        &mut dispatch_functional,
-                    );
-                    continue;
-                }
-                match node.action() {
-                    LocalAction::Recv { label, .. } => {
-                        let target_idx = as_state_index(scan_idx);
-                        arm_seen_recv[arm_idx] = true;
-                        merge_dispatch_entry(
-                            nodes,
-                            scope_end,
-                            dispatch_table,
-                            &mut dispatch_len,
-                            &mut dispatch_functional,
-                            arm,
-                            label,
-                            target_idx,
-                        );
-
-                        let recv_scope = node.scope();
-                        if matches!(recv_scope.kind(), ScopeKind::Route)
-                            && !recv_scope.is_none()
-                            && recv_scope.local_ordinal() != scope_id.local_ordinal()
-                        {
-                            let nested_ordinal = recv_scope.local_ordinal();
-                            let _ = merge_nested_dispatch_entries(
-                                nodes,
-                                scope_end,
-                                scope_entries,
-                                route_scope_entries,
-                                *scope_entries_len,
-                                nested_ordinal,
-                                arm,
-                                dispatch_table,
-                                &mut dispatch_len,
-                                &mut dispatch_functional,
-                            );
-                        }
-                    }
-                    LocalAction::Send {
-                        peer, label, lane, ..
-                    } => {
-                        if !arm_seen_recv[arm_idx] {
-                            if prefix_lens[arm_idx] >= MAX_PREFIX_ACTIONS {
-                                panic!("route prefix action overflow");
-                            }
-                            let prefix_idx = prefix_lens[arm_idx];
-                            prefix_actions[arm_idx][prefix_idx] = PrefixAction {
-                                kind: PREFIX_KIND_SEND,
-                                peer,
-                                label,
-                                lane,
-                            };
-                            prefix_lens[arm_idx] += 1;
-                        }
-                        let next_state = node.next();
-                        let next_idx = state_index_to_usize(next_state);
-                        let mut nested_merged = false;
-                        if next_idx < node_len && next_idx != scan_idx {
-                            let next_node = nodes[next_idx];
-                            let next_scope = next_node.scope();
-                            let current_scope = node.scope();
-
-                            if matches!(next_scope.kind(), ScopeKind::Route)
-                                && !next_scope.is_none()
-                                && next_scope.local_ordinal() != current_scope.local_ordinal()
-                            {
-                                let nested_ordinal = next_scope.local_ordinal();
-                                nested_merged = merge_nested_dispatch_entries(
-                                    nodes,
-                                    scope_end,
-                                    scope_entries,
-                                    route_scope_entries,
-                                    *scope_entries_len,
-                                    nested_ordinal,
-                                    arm,
-                                    dispatch_table,
-                                    &mut dispatch_len,
-                                    &mut dispatch_functional,
-                                );
-                            }
-                        }
-                        if !nested_merged && !next_state.is_max() && scan_len < scan_stack.len() {
-                            scan_stack[scan_len] = next_state;
-                            scan_len += 1;
-                        }
-                    }
-                    LocalAction::Local { label, lane, .. } => {
-                        if !arm_seen_recv[arm_idx] {
-                            if prefix_lens[arm_idx] >= MAX_PREFIX_ACTIONS {
-                                panic!("route prefix action overflow");
-                            }
-                            let prefix_idx = prefix_lens[arm_idx];
-                            prefix_actions[arm_idx][prefix_idx] = PrefixAction {
-                                kind: PREFIX_KIND_LOCAL,
-                                peer: role,
-                                label,
-                                lane,
-                            };
-                            prefix_lens[arm_idx] += 1;
-                        }
-                        let next_state = node.next();
-                        let next_idx = state_index_to_usize(next_state);
-                        let mut nested_merged = false;
-                        if next_idx < node_len && next_idx != scan_idx {
-                            let next_node = nodes[next_idx];
-                            let next_scope = next_node.scope();
-                            let current_scope = node.scope();
-
-                            if matches!(next_scope.kind(), ScopeKind::Route)
-                                && !next_scope.is_none()
-                                && next_scope.local_ordinal() != current_scope.local_ordinal()
-                            {
-                                let nested_ordinal = next_scope.local_ordinal();
-                                nested_merged = merge_nested_dispatch_entries(
-                                    nodes,
-                                    scope_end,
-                                    scope_entries,
-                                    route_scope_entries,
-                                    *scope_entries_len,
-                                    nested_ordinal,
-                                    arm,
-                                    dispatch_table,
-                                    &mut dispatch_len,
-                                    &mut dispatch_functional,
-                                );
-                            }
-                        }
-                        if !nested_merged && !next_state.is_max() && scan_len < scan_stack.len() {
-                            scan_stack[scan_len] = next_state;
-                            scan_len += 1;
-                        }
-                    }
-                    LocalAction::Jump {
-                        reason: JumpReason::PassiveObserverBranch,
-                    } => {
-                        let target = node.next();
-                        if !target.is_max() && scan_len < scan_stack.len() {
-                            scan_stack[scan_len] = target;
-                            scan_len += 1;
-                        }
-                    }
-                    LocalAction::Jump {
-                        reason:
-                            JumpReason::RouteArmEnd | JumpReason::LoopContinue | JumpReason::LoopBreak,
-                    } => {}
-                    _ => {
-                        let next_state = node.next();
-                        let next_idx = state_index_to_usize(next_state);
-                        let mut nested_merged = false;
-                        if next_idx < node_len && next_idx != scan_idx {
-                            let next_node = nodes[next_idx];
-                            let next_scope = next_node.scope();
-                            let current_scope = node.scope();
-
-                            if matches!(next_scope.kind(), ScopeKind::Route)
-                                && !next_scope.is_none()
-                                && next_scope.local_ordinal() != current_scope.local_ordinal()
-                            {
-                                let nested_ordinal = next_scope.local_ordinal();
-                                nested_merged = merge_nested_dispatch_entries(
-                                    nodes,
-                                    scope_end,
-                                    scope_entries,
-                                    route_scope_entries,
-                                    *scope_entries_len,
-                                    nested_ordinal,
-                                    arm,
-                                    dispatch_table,
-                                    &mut dispatch_len,
-                                    &mut dispatch_functional,
-                                );
-                            }
-                        }
-                        if !nested_merged && !next_state.is_max() && scan_len < scan_stack.len() {
-                            scan_stack[scan_len] = next_state;
-                            scan_len += 1;
-                        }
-                    }
-                }
-            }
-        }
-        arm += 1;
-    }
-
-    let mut prefix_mismatch = false;
-    if dispatch_len > 0 {
-        if prefix_lens[0] != prefix_lens[1] {
-            prefix_mismatch = true;
-        } else {
-            let mut pi = 0usize;
-            while pi < prefix_lens[0] {
-                if !prefix_action_eq(prefix_actions[0][pi], prefix_actions[1][pi]) {
-                    prefix_mismatch = true;
-                    break;
-                }
-                pi += 1;
-            }
-        }
-        if prefix_mismatch {
-            dispatch_functional = false;
-        }
-    }
-
-    let arm0_entry = scope_entries[entry_idx].arm_entry[0];
-    let arm1_entry = scope_entries[entry_idx].arm_entry[1];
-    let mergeable = arm_sequences_equal(nodes, scope_end, arm0_entry, arm1_entry);
+    let arm0_entry = ctx.scope_entries[entry_idx].arm_entry[0];
+    let arm1_entry = ctx.scope_entries[entry_idx].arm_entry[1];
+    let mergeable = arm_sequences_equal(ctx.nodes, scope_end, arm0_entry, arm1_entry);
 
     if mergeable {
-        scope_entries[entry_idx].arm_entry[1] = scope_entries[entry_idx].arm_entry[0];
-        clear_dispatch_table(dispatch_table);
+        ctx.scope_entries[entry_idx].arm_entry[1] = ctx.scope_entries[entry_idx].arm_entry[0];
+        clear_dispatch_table(ctx.dispatch_table);
         store_dispatch_summary(
-            nodes,
-            &mut route_scope_entries[entry_idx],
-            dispatch_table,
+            ctx.nodes,
+            &mut ctx.route_scope_entries[entry_idx],
+            ctx.dispatch_table,
             0,
         );
-    } else if dispatch_functional && dispatch_len > 0 {
+    } else if dispatch.dispatch_functional && dispatch.dispatch_len > 0 {
         let dispatch_lane_mask = store_dispatch_summary(
-            nodes,
-            &mut route_scope_entries[entry_idx],
-            dispatch_table,
-            dispatch_len,
+            ctx.nodes,
+            &mut ctx.route_scope_entries[entry_idx],
+            ctx.dispatch_table,
+            dispatch.dispatch_len,
         );
         let offer_lanes = route_scope_lane_words_mut(
-            route_scope_offer_lane_words,
-            route_scope_entries[entry_idx].lane_word_start(),
-            *route_lane_word_len,
+            ctx.route_scope_offer_lane_words,
+            ctx.route_scope_entries[entry_idx].lane_word_start(),
+            ctx.route_lane_word_len,
         );
         insert_offer_lane_mask(offer_lanes, dispatch_lane_mask);
-    } else if scope_route_policy_effs[entry_idx] != EffIndex::MAX {
-        clear_dispatch_table(dispatch_table);
+    } else if ctx.scope_route_policy_effs[entry_idx] != EffIndex::MAX {
+        clear_dispatch_table(ctx.dispatch_table);
         store_dispatch_summary(
-            nodes,
-            &mut route_scope_entries[entry_idx],
-            dispatch_table,
+            ctx.nodes,
+            &mut ctx.route_scope_entries[entry_idx],
+            ctx.dispatch_table,
             0,
         );
     } else {
@@ -1741,6 +1755,12 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
     route_offer_lane_words: *mut LaneWord,
     route_arm1_lane_words: *mut LaneWord,
     route_lane_word_len: usize,
+    route_dispatch_shapes: *mut super::registry::RouteDispatchShape,
+    route_dispatch_shape_cap: usize,
+    route_dispatch_entries: *mut super::registry::RouteDispatchEntry,
+    route_dispatch_entry_cap: usize,
+    route_dispatch_targets: *mut StateIndex,
+    route_dispatch_target_cap: usize,
     lane_slot_count: usize,
     scope_lane_first_eff: *mut EffIndex,
     scope_lane_last_eff: *mut EffIndex,
@@ -2268,6 +2288,12 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
             route_offer_lane_words,
             route_arm1_lane_words,
             route_lane_word_len,
+            route_dispatch_shapes,
+            route_dispatch_shape_cap,
+            route_dispatch_entries,
+            route_dispatch_entry_cap,
+            route_dispatch_targets,
+            route_dispatch_target_cap,
             route_scope_entries.as_mut_ptr(),
             lane_slot_count,
             scope_lane_first_eff.as_mut_ptr(),

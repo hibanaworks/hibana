@@ -2,7 +2,8 @@ use super::{
     builder::encode_typestate_len,
     facts::StateIndex,
     registry::{
-        RouteScopeRecord, RouteScopeScratchRecord, SCOPE_LINK_NONE, ScopeRecord, ScopeRegistry,
+        ROUTE_DISPATCH_SHAPE_NONE, RouteDispatchEntry, RouteDispatchShape, RouteScopeRecord,
+        RouteScopeScratchRecord, SCOPE_LINK_NONE, ScopeRecord, ScopeRegistry,
     },
 };
 use crate::eff::EffIndex;
@@ -75,6 +76,12 @@ pub(super) unsafe fn init_scope_registry(
     route_offer_lane_words: *mut LaneWord,
     route_arm1_lane_words: *mut LaneWord,
     route_lane_word_len: usize,
+    route_dispatch_shapes: *mut RouteDispatchShape,
+    route_dispatch_shape_cap: usize,
+    route_dispatch_entries: *mut RouteDispatchEntry,
+    route_dispatch_entry_cap: usize,
+    route_dispatch_targets: *mut StateIndex,
+    route_dispatch_target_cap: usize,
     route_records_sparse: *mut RouteScopeScratchRecord,
     lane_slot_count: usize,
     scope_lane_first_eff: *mut EffIndex,
@@ -83,6 +90,11 @@ pub(super) unsafe fn init_scope_registry(
     scope_records_len: usize,
 ) {
     let mut route_scope_len = 0usize;
+    let mut offer_lane_row_len = 0usize;
+    let mut arm1_lane_row_len = 0usize;
+    let mut dispatch_shape_len = 0usize;
+    let mut dispatch_entry_len = 0usize;
+    let mut dispatch_target_len = 0usize;
     let mut slot_idx = 0usize;
     while slot_idx < scope_records_len {
         let record = unsafe { &*scope_records.add(slot_idx) };
@@ -94,21 +106,60 @@ pub(super) unsafe fn init_scope_registry(
                 route_dense_by_slot
                     .add(slot_idx)
                     .write(route_scope_len as u16);
-                let sparse = &*route_records_sparse.add(slot_idx);
-                let lane_word_start = sparse.lane_word_start();
-                let mut record = RouteScopeRecord::EMPTY;
-                record.route_recv = sparse.route_recv;
-                record.passive_arm_jump = sparse.passive_arm_jump;
-                record.offer_lane_word_start = encode_typestate_len(lane_word_start);
-                record.offer_entry = sparse.offer_entry;
-                record.arm1_lane_word_start = encode_typestate_len(lane_word_start);
-                record.first_recv_dispatch = sparse.first_recv_dispatch;
-                record.first_recv_len = sparse.first_recv_len;
-                record.first_recv_label_mask = sparse.first_recv_label_mask;
-                record.first_recv_dispatch_label_mask = sparse.first_recv_dispatch_label_mask;
-                record.first_recv_dispatch_arm_mask = sparse.first_recv_dispatch_arm_mask;
-                record.first_recv_dispatch_lane_mask = sparse.first_recv_dispatch_lane_mask;
-                route_records.add(route_scope_len).write(record);
+            }
+            let sparse = unsafe { &*route_records_sparse.add(slot_idx) };
+            let offer_lane_word_start = unsafe {
+                intern_lane_word_row(
+                    route_offer_lane_words,
+                    &mut offer_lane_row_len,
+                    route_lane_word_len,
+                    sparse.lane_word_start(),
+                )
+            };
+            let arm1_lane_word_start = unsafe {
+                intern_lane_word_row(
+                    route_arm1_lane_words,
+                    &mut arm1_lane_row_len,
+                    route_lane_word_len,
+                    sparse.lane_word_start(),
+                )
+            };
+            let dispatch_shape = unsafe {
+                intern_route_dispatch_shape(
+                    route_dispatch_shapes,
+                    &mut dispatch_shape_len,
+                    route_dispatch_shape_cap,
+                    route_dispatch_entries,
+                    &mut dispatch_entry_len,
+                    route_dispatch_entry_cap,
+                    sparse,
+                )
+            };
+            let dispatch_target_start = unsafe {
+                append_route_dispatch_targets(
+                    route_dispatch_targets,
+                    &mut dispatch_target_len,
+                    route_dispatch_target_cap,
+                    sparse,
+                )
+            };
+            let mut record = RouteScopeRecord::EMPTY;
+            record.route_recv = sparse.route_recv;
+            record.passive_arm_jump = sparse.passive_arm_jump;
+            record.offer_lane_word_start = offer_lane_word_start;
+            record.offer_entry = sparse.offer_entry;
+            record.arm1_lane_word_start = arm1_lane_word_start;
+            record.dispatch_shape = dispatch_shape;
+            record.dispatch_target_start = dispatch_target_start;
+            unsafe { route_records.add(route_scope_len).write(record) };
+            if lane_slot_count != 0 {
+                unsafe {
+                    core::ptr::copy(
+                        route_arm0_lane_last_eff_by_slot.add(slot_idx * lane_slot_count),
+                        route_arm0_lane_last_eff_by_slot.add(route_scope_len * lane_slot_count),
+                        lane_slot_count,
+                    );
+                }
             }
             route_scope_len += 1;
         } else {
@@ -151,11 +202,20 @@ pub(super) unsafe fn init_scope_registry(
         core::ptr::addr_of_mut!((*dst).route_arm1_lane_words).write(route_arm1_lane_words);
         core::ptr::addr_of_mut!((*dst).route_lane_word_len)
             .write(encode_typestate_len(route_lane_word_len));
+        core::ptr::addr_of_mut!((*dst).route_dispatch_shapes).write(route_dispatch_shapes);
+        core::ptr::addr_of_mut!((*dst).route_dispatch_shape_len)
+            .write(encode_typestate_len(dispatch_shape_len));
+        core::ptr::addr_of_mut!((*dst).route_dispatch_entries).write(route_dispatch_entries);
+        core::ptr::addr_of_mut!((*dst).route_dispatch_entry_len)
+            .write(encode_typestate_len(dispatch_entry_len));
+        core::ptr::addr_of_mut!((*dst).route_dispatch_targets).write(route_dispatch_targets);
+        core::ptr::addr_of_mut!((*dst).route_dispatch_target_len)
+            .write(encode_typestate_len(dispatch_target_len));
         core::ptr::addr_of_mut!((*dst).lane_slot_count)
             .write(encode_typestate_len(lane_slot_count));
         core::ptr::addr_of_mut!((*dst).scope_lane_first_eff).write(scope_lane_first_eff);
         core::ptr::addr_of_mut!((*dst).scope_lane_last_eff).write(scope_lane_last_eff);
-        core::ptr::addr_of_mut!((*dst).route_arm0_lane_last_eff_by_slot)
+        core::ptr::addr_of_mut!((*dst).route_arm0_lane_last_eff_by_route)
             .write(route_arm0_lane_last_eff_by_slot);
         core::ptr::addr_of_mut!((*dst).frontier_entry_capacity_value).write(0);
     }
@@ -171,4 +231,143 @@ pub(super) unsafe fn init_scope_registry(
         core::ptr::addr_of_mut!((*dst).frontier_entry_capacity_value)
             .write(frontier_entry_capacity as u8);
     }
+}
+
+#[inline(always)]
+unsafe fn intern_lane_word_row(
+    words: *mut LaneWord,
+    rows_len: &mut usize,
+    row_len: usize,
+    source_start: usize,
+) -> u16 {
+    if row_len == 0 {
+        return 0;
+    }
+    let mut row = 0usize;
+    while row < *rows_len {
+        let mut word_idx = 0usize;
+        let mut matched = true;
+        while word_idx < row_len {
+            if unsafe { *words.add(row * row_len + word_idx) }
+                != unsafe { *words.add(source_start + word_idx) }
+            {
+                matched = false;
+                break;
+            }
+            word_idx += 1;
+        }
+        if matched {
+            return encode_typestate_len(row * row_len);
+        }
+        row += 1;
+    }
+    let start = *rows_len * row_len;
+    if start != source_start {
+        unsafe {
+            core::ptr::copy(words.add(source_start), words.add(start), row_len);
+        }
+    }
+    *rows_len += 1;
+    encode_typestate_len(start)
+}
+
+#[inline(always)]
+unsafe fn intern_route_dispatch_shape(
+    shapes: *mut RouteDispatchShape,
+    shapes_len: &mut usize,
+    shape_cap: usize,
+    entries: *mut RouteDispatchEntry,
+    entries_len: &mut usize,
+    entry_cap: usize,
+    sparse: &RouteScopeScratchRecord,
+) -> u16 {
+    if sparse.first_recv_len == 0 {
+        return ROUTE_DISPATCH_SHAPE_NONE;
+    }
+    let sparse_len = sparse.first_recv_len as usize;
+    let mut shape_idx = 0usize;
+    while shape_idx < *shapes_len {
+        let shape = unsafe { &*shapes.add(shape_idx) };
+        if shape.first_recv_label_mask != sparse.first_recv_label_mask
+            || shape.first_recv_dispatch_label_mask != sparse.first_recv_dispatch_label_mask
+            || shape.first_recv_dispatch_arm_mask != sparse.first_recv_dispatch_arm_mask
+            || shape.first_recv_dispatch_lane_mask != sparse.first_recv_dispatch_lane_mask
+            || shape.entries_len as usize != sparse_len
+        {
+            shape_idx += 1;
+            continue;
+        }
+        let mut entry_idx = 0usize;
+        let mut matched = true;
+        while entry_idx < sparse_len {
+            let existing = unsafe { *entries.add(shape.entries_start as usize + entry_idx) };
+            let (label, arm, _) = sparse.first_recv_dispatch[entry_idx];
+            if existing.label != label || existing.arm != arm {
+                matched = false;
+                break;
+            }
+            entry_idx += 1;
+        }
+        if matched {
+            return encode_typestate_len(shape_idx);
+        }
+        shape_idx += 1;
+    }
+
+    if *shapes_len >= shape_cap {
+        panic!("route dispatch shape registry overflow");
+    }
+    if entries_len.saturating_add(sparse_len) > entry_cap {
+        panic!("route dispatch entry registry overflow");
+    }
+    let entries_start = *entries_len;
+    let mut entry_idx = 0usize;
+    while entry_idx < sparse_len {
+        let (label, arm, _) = sparse.first_recv_dispatch[entry_idx];
+        unsafe {
+            entries.add(entries_start + entry_idx).write(RouteDispatchEntry { label, arm });
+        }
+        entry_idx += 1;
+    }
+    *entries_len += sparse_len;
+    unsafe {
+        shapes.add(*shapes_len).write(RouteDispatchShape {
+            first_recv_label_mask: sparse.first_recv_label_mask,
+            first_recv_dispatch_label_mask: sparse.first_recv_dispatch_label_mask,
+            entries_start: encode_typestate_len(entries_start),
+            entries_len: sparse.first_recv_len,
+            first_recv_dispatch_arm_mask: sparse.first_recv_dispatch_arm_mask,
+            first_recv_dispatch_lane_mask: sparse.first_recv_dispatch_lane_mask,
+        });
+    }
+    let idx = *shapes_len;
+    *shapes_len += 1;
+    encode_typestate_len(idx)
+}
+
+#[inline(always)]
+unsafe fn append_route_dispatch_targets(
+    targets: *mut StateIndex,
+    targets_len: &mut usize,
+    target_cap: usize,
+    sparse: &RouteScopeScratchRecord,
+) -> u16 {
+    let sparse_len = sparse.first_recv_len as usize;
+    if sparse_len == 0 {
+        return 0;
+    }
+    if targets_len.saturating_add(sparse_len) > target_cap {
+        panic!("route dispatch target registry overflow");
+    }
+    let start = *targets_len;
+    let mut idx = 0usize;
+    while idx < sparse_len {
+        let (_, _, target) = sparse.first_recv_dispatch[idx];
+        unsafe {
+            targets.add(start + idx).write(target);
+        }
+        idx += 1;
+    }
+    *targets_len += sparse_len;
+    encode_typestate_len(start)
 }

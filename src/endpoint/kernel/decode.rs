@@ -1,5 +1,7 @@
 //! Decode-path helpers for `RouteBranch`.
 
+use core::future::poll_fn;
+
 use super::{
     core::{CursorEndpoint, RouteBranch},
     lane_port,
@@ -17,6 +19,12 @@ use crate::{
     transport::{Transport, wire::WireDecodeOwned},
 };
 
+#[derive(Clone, Copy)]
+struct StagedTransportPayload {
+    len: usize,
+    lane: u8,
+}
+
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
 where
@@ -27,9 +35,120 @@ where
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
-    pub async fn decode_branch<M>(
+    fn prepare_decode_transport_wait<M>(
         &mut self,
         branch: &mut RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    ) -> RecvResult<Option<crate::global::typestate::RecvMeta>>
+    where
+        M: MessageSpec,
+        M::Payload: WireDecodeOwned,
+    {
+        let expected = <M as MessageSpec>::LABEL;
+        if branch.label != expected {
+            return Err(RecvError::LabelMismatch {
+                expected,
+                actual: branch.label,
+            });
+        }
+        if !matches!(branch.branch_meta.kind, super::offer::BranchKind::WireRecv)
+            || branch.binding_channel.is_some()
+            || branch.transport_payload_len != 0
+        {
+            return Ok(None);
+        }
+        let meta = self.cursor.try_recv_meta().ok_or_else(decode_phase_invariant)?;
+        let control_handling = <M::ControlKind as ControlPayloadKind>::HANDLING;
+        let expects_control = !matches!(control_handling, ControlHandling::None);
+        if meta.is_control != expects_control {
+            return Err(decode_phase_invariant());
+        }
+        if self.control_semantic_kind(meta.label, meta.resource).is_loop()
+            && let Some(LoopMetadata {
+                scope: scope_id,
+                controller,
+                target,
+                role,
+                ..
+            }) = self.cursor.loop_metadata_inner()
+        {
+            if role != LoopRole::Target || target != ROLE {
+                return Err(decode_phase_invariant());
+            }
+
+            if meta.peer != controller {
+                return Err(RecvError::PeerMismatch {
+                    expected: controller,
+                    actual: meta.peer,
+                });
+            }
+
+            let idx = CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint>::loop_index(scope_id)
+                .ok_or_else(decode_phase_invariant)?;
+            let port = self.port_for_lane(meta.lane as usize);
+            let lane = port.lane();
+            port.loop_table().acknowledge(lane, ROLE, idx);
+            let has_local_decision = port.loop_table().has_decision(lane, idx);
+            if has_local_decision {
+                port.ack_loop_decision(idx, ROLE);
+            }
+        }
+        Ok(Some(meta))
+    }
+
+    pub fn decode_branch<'a, M>(
+        &'a mut self,
+        branch: &'a mut RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    ) -> impl core::future::Future<Output = RecvResult<M::Payload>> + 'a
+    where
+        M: MessageSpec,
+        M::Payload: WireDecodeOwned,
+    {
+        let mut prepared_meta = None;
+        let mut staged_transport = None;
+        let mut pending_recv = lane_port::PendingRecv::new();
+        poll_fn(move |cx| {
+            if prepared_meta.is_none() {
+                prepared_meta = self.prepare_decode_transport_wait::<M>(branch)?;
+            }
+            if let Some(meta) = prepared_meta
+                && staged_transport.is_none()
+                && branch.transport_payload_len == 0
+                && branch.binding_channel.is_none()
+            {
+                let port = self.port_for_lane(meta.lane as usize);
+                let payload = match lane_port::poll_recv(&mut pending_recv, port, cx) {
+                    core::task::Poll::Pending => return core::task::Poll::Pending,
+                    core::task::Poll::Ready(Ok(payload)) => payload,
+                    core::task::Poll::Ready(Err(err)) => {
+                        prepared_meta = None;
+                        return core::task::Poll::Ready(Err(RecvError::Transport(err)));
+                    }
+                };
+                let n = match lane_port::copy_payload_into_scratch(port, &payload) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        prepared_meta = None;
+                        return core::task::Poll::Ready(Err(decode_phase_invariant()));
+                    }
+                };
+                staged_transport = Some(StagedTransportPayload {
+                    len: n,
+                    lane: meta.lane,
+                });
+            }
+            core::task::Poll::Ready(self.finish_decode_branch::<M>(
+                branch,
+                prepared_meta,
+                staged_transport,
+            ))
+        })
+    }
+
+    fn finish_decode_branch<M>(
+        &mut self,
+        branch: &mut RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        prepared_meta: Option<crate::global::typestate::RecvMeta>,
+        staged_transport: Option<StagedTransportPayload>,
     ) -> RecvResult<M::Payload>
     where
         M: MessageSpec,
@@ -199,7 +318,9 @@ where
             super::offer::BranchKind::WireRecv => {}
         }
 
-        let meta = if let Some(meta) = self.cursor.try_recv_meta() {
+        let meta = if let Some(meta) = prepared_meta {
+            meta
+        } else if let Some(meta) = self.cursor.try_recv_meta() {
             meta
         } else {
             return Err(decode_phase_invariant());
@@ -210,7 +331,8 @@ where
             return Err(decode_phase_invariant());
         }
 
-        if self
+        if prepared_meta.is_none()
+            && self
             .control_semantic_kind(meta.label, meta.resource)
             .is_loop()
         {
@@ -246,9 +368,8 @@ where
         }
 
         enum PolicyRestash {
-            None,
-            Scratch { len: usize, lane: u8 },
             BindingScratch { len: usize, lane: u8 },
+            TransportPayload { len: usize, lane: u8 },
         }
 
         let (payload, policy_restash) = if let Some(channel) = binding_channel {
@@ -281,44 +402,40 @@ where
                     return Err(RecvError::Codec(err));
                 }
             }
-        } else if transport_payload_len != 0 {
-            let port = self.port_for_lane(transport_payload_lane as usize);
-            (
-                M::Payload::decode_owned(&lane_port::scratch(port)[..transport_payload_len])
-                    .map_err(RecvError::Codec)?,
-                PolicyRestash::None,
-            )
-        } else {
-            let port = self.port_for_lane(meta.lane as usize);
-            let payload = lane_port::recv_future(port)
-                .await
-                .map_err(RecvError::Transport)?;
-            let n = lane_port::copy_payload_into_scratch(port, &payload)
-                .map_err(|_| decode_phase_invariant())?;
-            match M::Payload::decode_owned(&lane_port::scratch(port)[..n]) {
+        } else if transport_payload_len != 0 || staged_transport.is_some() {
+            let (payload_len, payload_lane) = if let Some(staged) = staged_transport {
+                (staged.len, staged.lane)
+            } else {
+                (transport_payload_len, transport_payload_lane)
+            };
+            let port = self.port_for_lane(payload_lane as usize);
+            match M::Payload::decode_owned(&lane_port::scratch(port)[..payload_len]) {
                 Ok(payload) => (
                     payload,
-                    PolicyRestash::Scratch {
-                        len: n,
-                        lane: meta.lane,
+                    PolicyRestash::TransportPayload {
+                        len: payload_len,
+                        lane: payload_lane,
                     },
                 ),
                 Err(err) => {
-                    branch.transport_payload_len = n;
-                    branch.transport_payload_lane = meta.lane;
+                    branch.binding_channel = None;
+                    branch.transport_payload_len = payload_len;
+                    branch.transport_payload_lane = payload_lane;
                     return Err(RecvError::Codec(err));
                 }
             }
+        } else {
+            return Err(decode_phase_invariant());
         };
 
         if let Err(err) = self.apply_branch_recv_policy(branch) {
             match policy_restash {
-                PolicyRestash::None => {}
-                PolicyRestash::Scratch { len, lane } => {
+                PolicyRestash::BindingScratch { len, lane } => {
+                    branch.binding_channel = None;
                     branch.transport_payload_len = len;
                     branch.transport_payload_lane = lane;
                 }
-                PolicyRestash::BindingScratch { len, lane } => {
+                PolicyRestash::TransportPayload { len, lane } => {
                     branch.binding_channel = None;
                     branch.transport_payload_len = len;
                     branch.transport_payload_lane = lane;

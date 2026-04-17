@@ -1678,6 +1678,13 @@ where
                 footprint,
             );
         }
+        let actual_bytes = unsafe { (*ptr.cast::<CompiledRoleImage>()).actual_persistent_bytes() };
+        if actual_bytes < bytes {
+            self.release_persistent_region(
+                offset.saturating_add(actual_bytes as u32),
+                (bytes - actual_bytes) as u32,
+            );
+        }
         let reserved = Self::frontier_scratch_guard_bytes(unsafe {
             (*ptr.cast::<CompiledRoleImage>()).frontier_scratch_layout()
         }) as u32;
@@ -1688,7 +1695,7 @@ where
             stamp,
             role: ROLE,
             offset,
-            len: bytes as u32,
+            len: actual_bytes as u32,
             pins: 0,
             occupied: true,
         };
@@ -1770,12 +1777,20 @@ where
                     ptr, summary, scratch, footprint,
                 );
             }
+            let actual_bytes = unsafe { (*ptr).actual_persistent_bytes() };
+            if actual_bytes < slot.len as usize {
+                self.release_persistent_region(
+                    slot.offset.saturating_add(actual_bytes as u32),
+                    slot.len.saturating_sub(actual_bytes as u32),
+                );
+            }
             let reserved =
                 Self::frontier_scratch_guard_bytes(unsafe { (*ptr).frontier_scratch_layout() })
                     as u32;
             self.reserve_scratch_reserved_bytes(reserved);
             slot.stamp = stamp;
             slot.role = ROLE;
+            slot.len = actual_bytes as u32;
             slot.occupied = true;
             debug_assert_eq!(slot.pins, 0);
             return Some(ptr.cast_const());
@@ -1809,6 +1824,14 @@ where
                 footprint,
             );
         }
+        let actual_bytes =
+            unsafe { (*ptr.cast::<CompiledRoleImage>()).actual_persistent_bytes() } as u32;
+        if actual_bytes < reserved_len {
+            self.release_persistent_region(
+                offset.saturating_add(actual_bytes),
+                reserved_len.saturating_sub(actual_bytes),
+            );
+        }
         let reserved = Self::frontier_scratch_guard_bytes(unsafe {
             (*ptr.cast::<CompiledRoleImage>()).frontier_scratch_layout()
         }) as u32;
@@ -1821,7 +1844,7 @@ where
             stamp,
             role: ROLE,
             offset,
-            len: reserved_len,
+            len: actual_bytes,
             pins: 0,
             occupied: true,
         };

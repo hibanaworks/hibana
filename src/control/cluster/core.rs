@@ -4769,9 +4769,7 @@ mod tests {
                     compiled_program_header_bytes: size_of::<CompiledProgramImage>(),
                     compiled_role_header_bytes: size_of::<CompiledRoleImage>(),
                     compiled_program_persistent_bytes: program_bytes,
-                    compiled_role_persistent_bytes: CompiledRoleImage::persistent_bytes_for_program(
-                        lowering.footprint(),
-                    ),
+                    compiled_role_persistent_bytes: compiled_role.actual_persistent_bytes(),
                     endpoint_phase_cursor_state_bytes: endpoint_layout.phase_cursor_state().bytes(),
                     endpoint_route_state_bytes: endpoint_layout.route_state().bytes(),
                     endpoint_route_arm_stack_bytes: endpoint_layout.route_arm_stack().bytes(),
@@ -5058,8 +5056,8 @@ mod tests {
                 && rv_core_bytes <= 250_000
                 && resolver_core_bytes <= 8_000
                 && lowering_summary_bytes <= 20_000
-                && compiled_program_bytes <= 25_000
-                && compiled_role_bytes <= 25_000
+                && compiled_program_bytes <= 64
+                && compiled_role_bytes <= 64
                 && role_compile_scratch_bytes <= 68_000
                 && endpoint_storage_bytes <= 90_000
                 && rendezvous_header_bytes <= 32_768
@@ -5247,29 +5245,29 @@ mod tests {
         );
 
         assert!(
-            route.compiled_program_header_bytes <= 1024
-                && linear.compiled_program_header_bytes <= 1024
-                && fanout.compiled_program_header_bytes <= 1024,
+            route.compiled_program_header_bytes <= 64
+                && linear.compiled_program_header_bytes <= 64
+                && fanout.compiled_program_header_bytes <= 64,
             "compiled program header must stay small-header only: route={route:?} linear={linear:?} fanout={fanout:?}"
         );
         assert!(
-            route.compiled_role_header_bytes <= 16 * 1024
-                && linear.compiled_role_header_bytes <= 16 * 1024
-                && fanout.compiled_role_header_bytes <= 16 * 1024,
-            "compiled role header still looks too fat for atlas migration: route={route:?} linear={linear:?} fanout={fanout:?}"
+            route.compiled_role_header_bytes <= 64
+                && linear.compiled_role_header_bytes <= 64
+                && fanout.compiled_role_header_bytes <= 64,
+            "compiled role header must stay compact-offset only: route={route:?} linear={linear:?} fanout={fanout:?}"
         );
 
         assert!(
-            route.compiled_program_persistent_bytes <= 1024
-                && linear.compiled_program_persistent_bytes <= 1024
-                && fanout.compiled_program_persistent_bytes <= 2 * 1024,
+            route.compiled_program_persistent_bytes <= 256
+                && linear.compiled_program_persistent_bytes <= 64
+                && fanout.compiled_program_persistent_bytes <= 256,
             "compiled program atlas tail regressed: route={route:?} linear={linear:?} fanout={fanout:?}"
         );
         assert!(
-            route.compiled_role_persistent_bytes <= 18 * 1024
-                && linear.compiled_role_persistent_bytes <= 17 * 1024
-                && fanout.compiled_role_persistent_bytes <= 20 * 1024,
-            "compiled role atlas tail regressed: route={route:?} linear={linear:?} fanout={fanout:?}"
+            route.compiled_role_persistent_bytes <= 3 * 1024
+                && linear.compiled_role_persistent_bytes <= 1536
+                && fanout.compiled_role_persistent_bytes <= 4 * 1024,
+            "compiled role blob tail regressed: route={route:?} linear={linear:?} fanout={fanout:?}"
         );
 
         assert!(

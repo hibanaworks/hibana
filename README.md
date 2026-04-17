@@ -390,6 +390,8 @@ Handling rules are fixed by the implementation:
 
 `hibana::substrate::Transport` is the protocol-neutral I/O seam. It owns send,
 recv, requeue, event draining, hint exposure, metrics, and pacing updates.
+`Send` / `Recv` future types must be `Unpin`; hibana parks and re-polls the same
+transport future until the operation completes.
 
 ```rust
 struct MyTransport;
@@ -1079,7 +1081,7 @@ the measured resident shape matrix:
 
 `check_subsystem_budget_gates.sh` promotes the subsystem-local exact gates that
 pin compiled-role bytes, route-heavy resident regressions, and the
-descriptor-driven send/policy hot paths.
+descriptor-driven localside send/recv/offer/decode and policy hot paths.
 
 ```bash
 # Stable hygiene and boundary gates

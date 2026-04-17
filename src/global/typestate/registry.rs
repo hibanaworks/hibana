@@ -1,6 +1,6 @@
 //! Scope registry owners for typestate lowering.
 
-use super::facts::{StateIndex, state_index_to_usize};
+use super::{builder::encode_typestate_len, facts::{StateIndex, state_index_to_usize}};
 use crate::{
     eff,
     eff::EffIndex,
@@ -16,6 +16,7 @@ pub(crate) const MAX_FIRST_RECV_DISPATCH: usize = 16;
 pub(crate) const CONTROLLER_ROLE_NONE: u8 = u8::MAX;
 pub(crate) const SCOPE_LINK_NONE: u16 = u16::MAX;
 pub(crate) const ROUTE_PARENT_ARM_NONE: u8 = u8::MAX;
+pub(crate) const ROUTE_DISPATCH_SHAPE_NONE: u16 = u16::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ScopeRegion {
@@ -54,10 +55,22 @@ pub(crate) struct RouteScopeRecord {
     pub offer_lane_word_start: u16,
     pub offer_entry: StateIndex,
     pub arm1_lane_word_start: u16,
-    pub first_recv_dispatch: [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
-    pub first_recv_len: u8,
+    pub dispatch_shape: u16,
+    pub dispatch_target_start: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RouteDispatchEntry {
+    pub label: u8,
+    pub arm: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RouteDispatchShape {
     pub first_recv_label_mask: u128,
     pub first_recv_dispatch_label_mask: [u128; 2],
+    pub entries_start: u16,
+    pub entries_len: u8,
     pub first_recv_dispatch_arm_mask: u8,
     pub first_recv_dispatch_lane_mask: [u8; 2],
 }
@@ -87,10 +100,16 @@ pub(super) struct ScopeRegistry {
     pub(super) route_offer_lane_words: *const LaneWord,
     pub(super) route_arm1_lane_words: *const LaneWord,
     pub(super) route_lane_word_len: u16,
+    pub(super) route_dispatch_shapes: *const RouteDispatchShape,
+    pub(super) route_dispatch_shape_len: u16,
+    pub(super) route_dispatch_entries: *const RouteDispatchEntry,
+    pub(super) route_dispatch_entry_len: u16,
+    pub(super) route_dispatch_targets: *const StateIndex,
+    pub(super) route_dispatch_target_len: u16,
     pub(super) lane_slot_count: u16,
     pub(super) scope_lane_first_eff: *const EffIndex,
     pub(super) scope_lane_last_eff: *const EffIndex,
-    pub(super) route_arm0_lane_last_eff_by_slot: *const EffIndex,
+    pub(super) route_arm0_lane_last_eff_by_route: *const EffIndex,
     pub(super) frontier_entry_capacity_value: u8,
 }
 
@@ -141,12 +160,8 @@ impl RouteScopeRecord {
         offer_lane_word_start: 0,
         offer_entry: StateIndex::MAX,
         arm1_lane_word_start: 0,
-        first_recv_dispatch: [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH],
-        first_recv_len: 0,
-        first_recv_label_mask: 0,
-        first_recv_dispatch_label_mask: [0; 2],
-        first_recv_dispatch_arm_mask: 0,
-        first_recv_dispatch_lane_mask: [0; 2],
+        dispatch_shape: ROUTE_DISPATCH_SHAPE_NONE,
+        dispatch_target_start: 0,
     };
 
     #[inline(always)]
@@ -180,6 +195,18 @@ impl RouteScopeRecord {
     const fn arm1_lane_word_start(&self) -> usize {
         self.arm1_lane_word_start as usize
     }
+}
+
+impl RouteDispatchShape {
+    #[inline(always)]
+    const fn entries_start(&self) -> usize {
+        self.entries_start as usize
+    }
+
+    #[inline(always)]
+    pub(crate) const fn entries_len(&self) -> usize {
+        self.entries_len as usize
+    }
 
     #[inline(always)]
     fn first_recv_dispatch_index_for_label(&self, label: u8) -> Option<usize> {
@@ -189,7 +216,7 @@ impl RouteScopeRecord {
         }
         let preceding = (self.first_recv_label_mask & first_recv_labels_before(label)).count_ones();
         let idx = preceding as usize;
-        if idx >= self.first_recv_len as usize {
+        if idx >= self.entries_len() {
             None
         } else {
             Some(idx)
@@ -288,6 +315,48 @@ impl ScopeRegistry {
     }
 
     #[inline(always)]
+    fn route_dispatch_shapes(&self) -> &[RouteDispatchShape] {
+        if self.route_dispatch_shape_len == 0 {
+            &[]
+        } else {
+            unsafe {
+                core::slice::from_raw_parts(
+                    self.route_dispatch_shapes,
+                    self.route_dispatch_shape_len as usize,
+                )
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn route_dispatch_entries(&self) -> &[RouteDispatchEntry] {
+        if self.route_dispatch_entry_len == 0 {
+            &[]
+        } else {
+            unsafe {
+                core::slice::from_raw_parts(
+                    self.route_dispatch_entries,
+                    self.route_dispatch_entry_len as usize,
+                )
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn route_dispatch_targets(&self) -> &[StateIndex] {
+        if self.route_dispatch_target_len == 0 {
+            &[]
+        } else {
+            unsafe {
+                core::slice::from_raw_parts(
+                    self.route_dispatch_targets,
+                    self.route_dispatch_target_len as usize,
+                )
+            }
+        }
+    }
+
+    #[inline(always)]
     fn route_lane_word_len(&self) -> usize {
         self.route_lane_word_len as usize
     }
@@ -327,9 +396,9 @@ impl ScopeRegistry {
     }
 
     #[inline(always)]
-    fn lane_row(&self, base: *const EffIndex, slot: usize) -> &[EffIndex] {
+    fn lane_row(&self, base: *const EffIndex, slot: usize, row_count: usize) -> &[EffIndex] {
         let lane_slot_count = self.lane_slot_count();
-        if lane_slot_count == 0 || slot >= self.len as usize {
+        if lane_slot_count == 0 || slot >= row_count {
             &[]
         } else {
             unsafe {
@@ -340,18 +409,21 @@ impl ScopeRegistry {
 
     #[inline(always)]
     pub(super) fn scope_lane_first_row(&self, slot: usize) -> &[EffIndex] {
-        self.lane_row(self.scope_lane_first_eff, slot)
+        self.lane_row(self.scope_lane_first_eff, slot, self.len as usize)
     }
 
     #[inline(always)]
     pub(super) fn scope_lane_last_row(&self, slot: usize) -> &[EffIndex] {
-        self.lane_row(self.scope_lane_last_eff, slot)
+        self.lane_row(self.scope_lane_last_eff, slot, self.len as usize)
     }
 
     #[inline(always)]
-    #[cfg(test)]
-    pub(super) fn route_arm0_lane_last_row(&self, slot: usize) -> &[EffIndex] {
-        self.lane_row(self.route_arm0_lane_last_eff_by_slot, slot)
+    pub(super) fn route_arm0_lane_last_row(&self, dense: usize) -> &[EffIndex] {
+        self.lane_row(
+            self.route_arm0_lane_last_eff_by_route,
+            dense,
+            self.route_scope_len as usize,
+        )
     }
 
     #[inline(always)]
@@ -437,6 +509,49 @@ impl ScopeRegistry {
             return None;
         }
         Some((record, self.route_payload_at_slot(slot)?))
+    }
+
+    #[inline(always)]
+    fn route_dispatch_shape_for<'a>(
+        &'a self,
+        route: &RouteScopeRecord,
+    ) -> Option<&'a RouteDispatchShape> {
+        if route.dispatch_shape == ROUTE_DISPATCH_SHAPE_NONE {
+            None
+        } else {
+            self.route_dispatch_shapes().get(route.dispatch_shape as usize)
+        }
+    }
+
+    #[inline(always)]
+    fn route_dispatch_entries_for<'a>(
+        &'a self,
+        shape: &RouteDispatchShape,
+    ) -> &'a [RouteDispatchEntry] {
+        let start = shape.entries_start();
+        let len = shape.entries_len();
+        let entries = self.route_dispatch_entries();
+        if start > entries.len() || len > entries.len().saturating_sub(start) {
+            &[]
+        } else {
+            &entries[start..start + len]
+        }
+    }
+
+    #[inline(always)]
+    fn route_dispatch_targets_for<'a>(
+        &'a self,
+        route: &RouteScopeRecord,
+        shape: &RouteDispatchShape,
+    ) -> &'a [StateIndex] {
+        let start = route.dispatch_target_start as usize;
+        let len = shape.entries_len();
+        let targets = self.route_dispatch_targets();
+        if start > targets.len() || len > targets.len().saturating_sub(start) {
+            &[]
+        } else {
+            &targets[start..start + len]
+        }
     }
 
     pub(super) fn parent_of(&self, scope_id: ScopeId) -> Option<ScopeId> {
@@ -531,6 +646,47 @@ impl ScopeRegistry {
 
     pub(super) fn route_scope_count(&self) -> usize {
         self.route_scope_len as usize
+    }
+
+    #[inline(always)]
+    pub(super) fn route_dispatch_shape_count(&self) -> usize {
+        self.route_dispatch_shape_len as usize
+    }
+
+    #[inline(always)]
+    pub(super) fn route_dispatch_entry_count(&self) -> usize {
+        self.route_dispatch_entry_len as usize
+    }
+
+    #[inline(always)]
+    pub(super) fn route_dispatch_target_count(&self) -> usize {
+        self.route_dispatch_target_len as usize
+    }
+
+    #[inline(always)]
+    pub(super) unsafe fn relocate_compact_route_payload(
+        &mut self,
+        route_records: *const RouteScopeRecord,
+        route_offer_lane_words: *const LaneWord,
+        route_arm1_lane_words: *const LaneWord,
+        route_dispatch_shapes: *const RouteDispatchShape,
+        route_dispatch_shape_len: usize,
+        route_dispatch_entries: *const RouteDispatchEntry,
+        route_dispatch_entry_len: usize,
+        route_dispatch_targets: *const StateIndex,
+        route_dispatch_target_len: usize,
+        route_arm0_lane_last_eff_by_route: *const EffIndex,
+    ) {
+        self.route_records = route_records;
+        self.route_offer_lane_words = route_offer_lane_words;
+        self.route_arm1_lane_words = route_arm1_lane_words;
+        self.route_dispatch_shapes = route_dispatch_shapes;
+        self.route_dispatch_shape_len = encode_typestate_len(route_dispatch_shape_len);
+        self.route_dispatch_entries = route_dispatch_entries;
+        self.route_dispatch_entry_len = encode_typestate_len(route_dispatch_entry_len);
+        self.route_dispatch_targets = route_dispatch_targets;
+        self.route_dispatch_target_len = encode_typestate_len(route_dispatch_target_len);
+        self.route_arm0_lane_last_eff_by_route = route_arm0_lane_last_eff_by_route;
     }
 
     pub(super) fn frontier_entry_capacity(&self) -> usize {
@@ -672,7 +828,7 @@ impl ScopeRegistry {
         if slot >= self.len as usize || lane_idx >= self.lane_slot_count() {
             return None;
         }
-        let eff_index = self.lane_row(base, slot)[lane_idx];
+        let eff_index = self.lane_row(base, slot, self.len as usize)[lane_idx];
         if eff_index == EffIndex::MAX {
             None
         } else {
@@ -706,7 +862,16 @@ impl ScopeRegistry {
             return None;
         }
         if arm == 0 {
-            self.scope_lane_eff_in_slot(self.route_arm0_lane_last_eff_by_slot, slot, lane)
+            let dense = self.route_dense_by_slot()[slot];
+            if dense == u16::MAX {
+                return None;
+            }
+            let eff_index = self.route_arm0_lane_last_row(dense as usize)[lane_idx];
+            if eff_index == EffIndex::MAX {
+                None
+            } else {
+                Some(eff_index)
+            }
         } else if !self.route_arm1_lane_set_for(route).contains(lane as usize) {
             None
         } else {
@@ -758,14 +923,16 @@ impl ScopeRegistry {
         scope_id: ScopeId,
         idx: usize,
     ) -> Option<(u8, u8, StateIndex)> {
-        let route = match self.lookup_route_record(scope_id) {
-            Some((_record, route)) => route,
+        let (_record, route) = match self.lookup_route_record(scope_id) {
+            Some(pair) => pair,
             None => return None,
         };
-        if idx >= route.first_recv_len as usize {
-            return None;
-        }
-        Some(route.first_recv_dispatch[idx])
+        let shape = self.route_dispatch_shape_for(route)?;
+        let entries = self.route_dispatch_entries_for(shape);
+        let targets = self.route_dispatch_targets_for(route, shape);
+        let entry = *entries.get(idx)?;
+        let target = *targets.get(idx)?;
+        Some((entry.label, entry.arm, target))
     }
 
     #[inline]
@@ -773,41 +940,49 @@ impl ScopeRegistry {
         &self,
         scope_id: ScopeId,
     ) -> Option<([(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH], u8)> {
-        let route = match self.lookup_route_record(scope_id) {
-            Some((_record, route)) => route,
+        let (_record, route) = match self.lookup_route_record(scope_id) {
+            Some(pair) => pair,
             None => return None,
         };
-        Some((route.first_recv_dispatch, route.first_recv_len))
+        let shape = self.route_dispatch_shape_for(route)?;
+        let entries = self.route_dispatch_entries_for(shape);
+        let targets = self.route_dispatch_targets_for(route, shape);
+        let mut table = [(0, 0, StateIndex::MAX); MAX_FIRST_RECV_DISPATCH];
+        let mut idx = 0usize;
+        while idx < entries.len() && idx < targets.len() && idx < MAX_FIRST_RECV_DISPATCH {
+            let entry = entries[idx];
+            table[idx] = (entry.label, entry.arm, targets[idx]);
+            idx += 1;
+        }
+        Some((table, shape.entries_len as u8))
     }
 
     #[inline]
     pub(super) fn first_recv_dispatch_label_mask(&self, scope_id: ScopeId) -> Option<u128> {
-        let route = match self.lookup_route_record(scope_id) {
-            Some((_record, route)) => route,
-            None => return None,
-        };
-        Some(route.first_recv_label_mask)
+        let (_record, route) = self.lookup_route_record(scope_id)?;
+        Some(
+            self.route_dispatch_shape_for(route)
+                .map_or(0, |shape| shape.first_recv_label_mask),
+        )
     }
 
     #[inline]
     pub(super) fn first_recv_dispatch_arm_mask(&self, scope_id: ScopeId) -> Option<u8> {
-        let route = match self.lookup_route_record(scope_id) {
-            Some((_record, route)) => route,
-            None => return None,
-        };
-        Some(route.first_recv_dispatch_arm_mask)
+        let (_record, route) = self.lookup_route_record(scope_id)?;
+        Some(
+            self.route_dispatch_shape_for(route)
+                .map_or(0, |shape| shape.first_recv_dispatch_arm_mask),
+        )
     }
 
     #[inline]
     pub(super) fn first_recv_dispatch_lane_mask(&self, scope_id: ScopeId, arm: u8) -> Option<u8> {
-        let route = match self.lookup_route_record(scope_id) {
-            Some((_record, route)) => route,
-            None => return None,
-        };
+        let (_record, route) = self.lookup_route_record(scope_id)?;
+        let shape = self.route_dispatch_shape_for(route);
         if arm >= 2 {
             None
         } else {
-            Some(route.first_recv_dispatch_lane_mask[arm as usize])
+            Some(shape.map_or(0, |shape| shape.first_recv_dispatch_lane_mask[arm as usize]))
         }
     }
 
@@ -817,14 +992,12 @@ impl ScopeRegistry {
         scope_id: ScopeId,
         arm: u8,
     ) -> Option<u128> {
-        let route = match self.lookup_route_record(scope_id) {
-            Some((_record, route)) => route,
-            None => return None,
-        };
+        let (_record, route) = self.lookup_route_record(scope_id)?;
+        let shape = self.route_dispatch_shape_for(route);
         if arm >= 2 {
             None
         } else {
-            Some(route.first_recv_dispatch_label_mask[arm as usize])
+            Some(shape.map_or(0, |shape| shape.first_recv_dispatch_label_mask[arm as usize]))
         }
     }
 
@@ -833,12 +1006,16 @@ impl ScopeRegistry {
         scope_id: ScopeId,
         label: u8,
     ) -> Option<(u8, StateIndex)> {
-        let route = match self.lookup_route_record(scope_id) {
-            Some((_record, route)) => route,
+        let (_record, route) = match self.lookup_route_record(scope_id) {
+            Some(pair) => pair,
             None => return None,
         };
-        let idx = route.first_recv_dispatch_index_for_label(label)?;
-        let (_entry_label, arm, target) = route.first_recv_dispatch[idx];
-        (!target.is_max()).then_some((arm, target))
+        let shape = self.route_dispatch_shape_for(route)?;
+        let idx = shape.first_recv_dispatch_index_for_label(label)?;
+        let entries = self.route_dispatch_entries_for(shape);
+        let targets = self.route_dispatch_targets_for(route, shape);
+        let entry = *entries.get(idx)?;
+        let target = *targets.get(idx)?;
+        (!target.is_max()).then_some((entry.arm, target))
     }
 }

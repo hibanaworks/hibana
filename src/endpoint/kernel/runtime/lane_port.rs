@@ -1,6 +1,6 @@
 //! Safe wrappers over endpoint lane/port transport access.
 
-use core::future::Future;
+use core::{pin::Pin, task::{Context, Poll}};
 
 use crate::{
     control::cap::mint::EpochTable,
@@ -17,6 +17,63 @@ pub(super) struct ErasedSendPayload<'a> {
     ptr: *const (),
     encode: unsafe fn(*const (), &mut [u8]) -> Result<usize, SendError>,
     _marker: core::marker::PhantomData<&'a ()>,
+}
+
+pub(super) struct PendingRecv<'r, T>
+where
+    T: Transport + 'r,
+{
+    future: Option<T::Recv<'r>>,
+    port_key: Option<*const ()>,
+}
+
+impl<'r, T> PendingRecv<'r, T>
+where
+    T: Transport + 'r,
+{
+    #[inline]
+    pub(super) const fn new() -> Self {
+        Self {
+            future: None,
+            port_key: None,
+        }
+    }
+
+    #[inline]
+    fn clear(&mut self) {
+        self.future = None;
+        self.port_key = None;
+    }
+
+    #[inline]
+    pub(super) fn parks_port<E>(&self, port: &Port<'r, T, E>) -> bool
+    where
+        E: EpochTable + 'r,
+    {
+        self.future.is_some() && self.port_key == Some(core::ptr::from_ref(port).cast())
+    }
+}
+
+pub(super) struct PendingSend<'r, T>
+where
+    T: Transport + 'r,
+{
+    future: Option<T::Send<'r>>,
+}
+
+impl<'r, T> PendingSend<'r, T>
+where
+    T: Transport + 'r,
+{
+    #[inline]
+    pub(super) const fn new() -> Self {
+        Self { future: None }
+    }
+
+    #[inline]
+    fn clear(&mut self) {
+        self.future = None;
+    }
 }
 
 impl<'a> ErasedSendPayload<'a> {
@@ -122,39 +179,75 @@ where
 }
 
 #[inline]
-pub(super) fn recv_future<'a, 'r, T, E>(
-    port: &'a Port<'r, T, E>,
-) -> impl Future<Output = Result<Payload<'a>, TransportError>> + 'a
+pub(super) fn poll_recv<'r, T, E>(
+    pending: &mut PendingRecv<'r, T>,
+    port: &Port<'r, T, E>,
+    cx: &mut Context<'_>,
+) -> Poll<Result<Payload<'r>, TransportError>>
 where
     T: Transport + 'r,
     E: EpochTable + 'r,
-    'r: 'a,
 {
-    async move {
+    let port_key = core::ptr::from_ref(port).cast();
+    if pending.port_key != Some(port_key) {
+        pending.clear();
+    }
+    if pending.future.is_none() {
         let transport = port.transport();
         let rx_ptr = port.rx_ptr();
-        unsafe { transport.recv(&mut *rx_ptr).await.map_err(Into::into) }
+        pending.future = Some(unsafe { transport.recv(&mut *rx_ptr) });
+        pending.port_key = Some(port_key);
     }
+    let poll = Pin::new(
+        pending
+            .future
+            .as_mut()
+            .expect("pending recv future must exist before polling"),
+    )
+    .poll(cx)
+    .map_err(Into::into);
+    if poll.is_ready() {
+        pending.clear();
+    }
+    poll
 }
 
 #[inline]
-pub(super) async fn send_outgoing<'a, 'r, 'f, T, E>(
-    port: &'a Port<'r, T, E>,
+pub(super) fn begin_send_outgoing<'f, 'r, T, E>(
+    pending: &mut PendingSend<'r, T>,
+    port: &Port<'r, T, E>,
     outgoing: Outgoing<'f>,
-) -> Result<(), TransportError>
+)
 where
     T: Transport + 'r,
     E: EpochTable + 'r,
-    'a: 'f,
+    'r: 'f,
 {
     let transport = port.transport();
     let tx_ptr = port.tx_ptr();
-    unsafe {
-        transport
-            .send(&mut *tx_ptr, outgoing)
-            .await
-            .map_err(Into::into)
+    pending.future = Some(unsafe { transport.send(&mut *tx_ptr, outgoing) });
+}
+
+#[inline]
+pub(super) fn poll_send_outgoing<'r, T>(
+    pending: &mut PendingSend<'r, T>,
+    cx: &mut Context<'_>,
+) -> Poll<Result<(), TransportError>>
+where
+    T: Transport + 'r,
+{
+    let poll = Pin::new(
+        pending
+            .future
+            .as_mut()
+            .expect("pending send future must exist before polling"),
+    )
+    .poll(cx)
+    .map_err(Into::into);
+    if poll.is_ready() {
+        pending.clear();
     }
+    poll
 }
 
 #[inline]
@@ -168,4 +261,9 @@ where
     unsafe {
         transport.requeue(&mut *rx_ptr);
     }
+}
+
+#[inline(always)]
+pub(super) fn deref_mut_ptr<'a, T>(ptr: *mut T) -> &'a mut T {
+    unsafe { &mut *ptr }
 }

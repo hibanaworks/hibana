@@ -1,0 +1,40 @@
+use hibana::{Endpoint, g};
+use hibana::substrate::{
+    SessionKit, Transport,
+    cap::advanced::MintConfigMarker,
+    runtime::{Clock, LabelUniverse},
+    wire::{CodecError, WireEncode},
+};
+
+struct Payload(u8);
+
+impl WireEncode for Payload {
+    fn encoded_len(&self) -> Option<usize> {
+        Some(1)
+    }
+
+    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
+        if out.is_empty() {
+            return Err(CodecError::Truncated);
+        }
+        out[0] = self.0;
+        Ok(1)
+    }
+}
+
+fn pending_send_keeps_endpoint_borrow<'r, 'cfg, T, U, C, const MAX_RV: usize, Mint>(
+    endpoint: &mut Endpoint<'r, 0, SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
+) where
+    T: Transport + 'cfg,
+    U: LabelUniverse + 'cfg,
+    C: Clock + 'cfg,
+    'cfg: 'r,
+    Mint: MintConfigMarker,
+{
+    let flow = endpoint.flow::<g::Msg<7, Payload>>().unwrap();
+    let send = flow.send(&Payload(1));
+    let _flow_again = endpoint.flow::<g::Msg<7, Payload>>().unwrap();
+    let _ = send;
+}
+
+fn main() {}

@@ -2,11 +2,9 @@
 
 use core::{
     convert::TryFrom,
-    future::poll_fn,
     mem,
     ops::{Deref, DerefMut, Index, IndexMut},
     slice,
-    task::Poll,
 };
 
 #[cfg(test)]
@@ -2667,22 +2665,6 @@ pub(super) fn choose_offer_priority(
     }
 }
 
-#[inline]
-pub(super) async fn yield_once() {
-    let mut yielded = false;
-    poll_fn(|cx| {
-        if yielded {
-            Poll::Ready(())
-        } else {
-            yielded = true;
-            cx.waker().wake_by_ref();
-            Poll::Pending
-        }
-    })
-    .await
-}
-
-#[inline]
 pub(super) fn current_entry_is_candidate(
     current_matches_candidate: bool,
     current_is_controller: bool,

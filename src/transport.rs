@@ -499,11 +499,11 @@ pub trait Transport {
     type Rx<'a>: 'a
     where
         Self: 'a;
-    type Send<'a>: Future<Output = Result<(), Self::Error>> + 'a
+    type Send<'a>: Future<Output = Result<(), Self::Error>> + Unpin + 'a
     where
         Self: 'a;
     /// Future returned by [`recv`](Transport::recv).
-    type Recv<'a>: Future<Output = Result<Payload<'a>, Self::Error>> + 'a
+    type Recv<'a>: Future<Output = Result<Payload<'a>, Self::Error>> + Unpin + 'a
     where
         Self: 'a;
     type Metrics: TransportMetrics;

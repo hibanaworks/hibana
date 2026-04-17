@@ -36,7 +36,34 @@ type ControllerEndpoint<'a> = Endpoint<'a, 0, HugeKit, MintConfig>;
 type WorkerEndpoint<'a> = Endpoint<'a, 1, HugeKit, MintConfig>;
 
 fn drive<F: core::future::Future>(future: F) -> F::Output {
-    futures::executor::block_on(future)
+    let mut future = core::pin::pin!(future);
+    drive_pinned(future.as_mut())
+}
+
+fn drive_pinned<F: core::future::Future>(
+    mut future: core::pin::Pin<&mut F>,
+) -> F::Output {
+    use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+
+    const VTABLE: RawWakerVTable = RawWakerVTable::new(
+        |_| RawWaker::new(core::ptr::null(), &VTABLE),
+        |_| {},
+        |_| {},
+        |_| {},
+    );
+
+    fn noop_waker() -> Waker {
+        unsafe { Waker::from_raw(RawWaker::new(core::ptr::null(), &VTABLE)) }
+    }
+
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    loop {
+        match future.as_mut().poll(&mut cx) {
+            Poll::Ready(output) => return output,
+            Poll::Pending => std::thread::yield_now(),
+        }
+    }
 }
 
 static ROUTE_HEAVY_PROGRAM: g::Program<huge_program::ProgramSteps> = huge_program::PROGRAM;
