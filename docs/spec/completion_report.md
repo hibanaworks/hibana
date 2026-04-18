@@ -10,8 +10,7 @@ before the completion-branch deletions landed.
 - localside hot path is named-future based for `send / recv / offer / decode`
 - route preview ownership lives in `RouteBranch` itself; `Endpoint` no longer
   keeps a backing preview slot for offer/decode
-- cross-repo smoke moved out of `hibana` into the dedicated
-  `hibana-cross-repo` repository
+- cross-crate smoke moved out of `hibana` into an external integration harness
 
 ## Localside Size Deltas
 
@@ -98,5 +97,5 @@ All current shapes remain inside the 96 KiB peak SRAM budget.
   preview rather than a lease over endpoint-side storage
 - packed image closure removes mixed-responsibility owners from frozen image
   files without regrowing persistent bytes
-- repo split is now reflected by a dedicated external integration repo instead
-  of a staging harness inside `hibana`
+- repo split is now reflected by an external integration harness rather than a
+  staging harness inside `hibana`

@@ -9,7 +9,7 @@ Hard rules:
 - no dual public receive/decode trait story
 - no raw-pointer frozen image owners
 - no wrapper-future regressions in localside hot paths
-- no repo-boundary ambiguity between `hibana`, `hibana-mgmt`, and `hibana-epf`
+- no repo-boundary ambiguity between `hibana` core and external integration crates
 
 Canonical payload contract:
 

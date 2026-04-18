@@ -8,13 +8,11 @@
   </p>
 
   <p>
-    <a href="#constitution">Constitution</a> •
-    <a href="#surface-map">Surface Map</a> •
+    <a href="#overview">Overview</a> •
+    <a href="#quick-start">Quick Start</a> •
     <a href="#app-surface">App Surface</a> •
-    <a href="#runtime-semantics">Runtime Semantics</a> •
-    <a href="#substrate-surface-protocol-implementors-only">Substrate Surface</a> •
-    <a href="#policy-plane">Policy Plane</a> •
-    <a href="#management-session">Management Session</a> •
+    <a href="#how-it-works">How It Works</a> •
+    <a href="#protocol-integration">Protocol Integration</a> •
     <a href="#validation">Validation</a>
   </p>
 </div>
@@ -23,89 +21,45 @@
 
 `hibana` is a Rust 2024 `#![no_std]` / `no_alloc` oriented affine MPST runtime.
 
-It has two surfaces:
+It has two public surfaces:
 
 - App surface: `hibana::g` plus `Endpoint`
-- Substrate surface: protocol-neutral SPI for protocol implementors
+- Substrate surface: `hibana::g::advanced` plus `hibana::substrate`
+
+Application code should stay on `hibana::g` and `Endpoint`. Protocol crates
+use `hibana::g::advanced` and `hibana::substrate` to attach transport,
+binding, resolver, and policy.
 
 Everything else is lower layer.
 
-This README is the canonical manual for the public `hibana` surface. If a user
-needs a public owner to build with `hibana`, it is introduced here.
+## Overview
 
-## Constitution
+`hibana` is for protocols that want one global choreography as the source of
+truth and a small localside API at runtime.
 
-`hibana` optimizes for a smaller concept count, stronger type-level guarantees,
-and a cleaner split between app code and substrate code.
+The normal flow is:
 
-- Mission: keep `hibana` as a Rust 2024 `#![no_std]` / `no_alloc` oriented
-  affine MPST runtime with one choreography language and one localside core API.
-- Public shape: `hibana` has exactly two public faces - app surface and
-  substrate surface. Everything else is lower layer.
-- Protocol neutrality: `hibana` core stays protocol-neutral. Transport- and
-  integration-specific vocabulary does not live in the crate's public surface.
-- Route authority: route decisions remain `Ack | Resolver | Poll`. Hints,
-  cached classifications, and rescue paths are not extra authority sources.
-- Static route boundary: static route remains `Merged -> Dynamic -> compile-error`.
-- Surface minimization: app authors stay on `hibana::g` + `Endpoint`; protocol
-  implementors stay on the substrate SPI documented later in this README.
-- No heuristics: `hibana` does not rely on protocol inference, stale
-  classification caches, or timeout-based rescue logic.
+1. Write one choreography with `hibana::g`
+2. Let a protocol crate compose transport and appkit prefixes around it
+3. Receive an attached `Endpoint`
+4. Advance that endpoint with `flow().send()`, `recv()`, `offer()`, and `decode()`
 
-## Surface Map
+What `hibana` gives you:
 
-Inside `hibana`, responsibilities are intentionally split by surface:
-
-| surface | role |
-| --- | --- |
-| App surface | `hibana::g` plus `Endpoint` for app authors |
-| Compile-time substrate SPI | typed projection and preserved composition, documented in the substrate SPI section below |
-| Runtime substrate SPI | attach / enter / binding / resolver / policy / transport seams, documented in the substrate SPI section below |
-| Lower layer | endpoint kernel, typestate internals, and runtime machinery that are not part of the public app contract |
-
-This README documents `hibana` itself. If a concept is not owned by one of the
-surfaces above, it is lower layer and not part of the public contract.
+- typed projection from one global program
+- compile-time checks for route shape, lane ownership, and composition errors
+- fail-closed localside execution for label and payload mismatches
+- a protocol-neutral core that does not bake QUIC, HTTP/3, or other wire terms
+  into the crate root
 
 ## Cargo Features
 
-- `std` — Enables transport/testing utilities and observability normalisers.
-  The runtime remains slab-backed and `no_alloc` oriented in both modes; `std`
-  does not switch the core localside path to heap-backed ownership.
+- `std` - enables transport/testing utilities and observability normalisers.
+  The runtime remains slab-backed and `no_alloc` oriented in both modes.
 
-## App Surface
+## Quick Start
 
-App authors should stay on `g` and `Endpoint`.
-
-If you are reaching for projection, attach, binding, resolver registration,
-transport setup, or policy installation, you are already on the substrate
-surface and should move to the protocol-implementor SPI section below.
-
-The app surface is intentionally narrow:
-
-| Job | Public owner |
-| --- | --- |
-| Define choreography | `hibana::g::{send, route, par, seq}` |
-| Mark dynamic authority points | `Program::policy::<POLICY_ID>()` |
-| Advance a localside endpoint | `flow().send()`, `offer()`, `recv()`, `decode()` |
-| Handle a chosen branch | `RouteBranch::{label, decode}` |
-
-The public language is fixed to:
-
-- `hibana::g::{send, route, par, seq}`
-- `Program::policy::<POLICY_ID>()`
-- `RouteBranch::label()`
-- `RouteBranch::decode()`
-- `flow().send()`
-- `offer()`
-- `recv()`
-- `decode()`
-
-App code does not call projection, attach, binding, resolver registration, or
-policy install directly.
-
-### Write One Choreography
-
-`g::Program` is the only public choreography representation.
+Write a choreography once with `hibana::g`:
 
 ```rust
 use hibana::g;
@@ -116,11 +70,52 @@ let request_response = g::seq(
 );
 ```
 
-### Route, Parallel, and Dynamic Policy
+After integration code returns an attached endpoint, app code stays on the
+localside core API:
 
-`g::route(left, right)` is always binary. The controller is derived from the
-first self-send in each arm. `g::par(left, right)` is also binary and requires
-disjoint `(role, lane)` ownership.
+```rust
+use hibana::g;
+
+let _sent = endpoint.flow::<g::Msg<1, u32>>()?.send(&7).await?;
+let reply = endpoint.recv::<g::Msg<2, u32>>().await?;
+let _ = reply;
+```
+
+That is the intended app path: define a choreography, receive an endpoint, and
+drive it with the localside methods.
+
+## App Surface
+
+App authors should stay on `hibana::g` and `Endpoint`.
+
+| Job | Public owner |
+| --- | --- |
+| Define choreography | `hibana::g::{send, route, par, seq}` |
+| Mark a dynamic policy point | `Program::policy::<POLICY_ID>()` |
+| Send a known message | `flow().send()` |
+| Receive a known message | `recv()` |
+| Observe a route choice | `offer()` |
+| Receive the first message of the chosen route arm | `decode()` |
+| Inspect a chosen branch | `RouteBranch::{label, decode}` |
+
+App code does not call projection, attach, binding, transport, or resolver
+setup directly.
+
+The public app language is fixed to:
+
+- `hibana::g::{send, route, par, seq}`
+- `Program::policy::<POLICY_ID>()`
+- `RouteBranch::label()`
+- `RouteBranch::decode()`
+- `flow().send()`
+- `offer()`
+- `recv()`
+- `decode()`
+
+### Routes, Parallelism, and Dynamic Policy
+
+`g::route(left, right)` is binary. `g::par(left, right)` is also binary and
+requires disjoint `(role, lane)` ownership.
 
 ```rust
 use hibana::g;
@@ -133,6 +128,7 @@ let right_arm = g::seq(
     g::send::<g::Role<0>, g::Role<0>, g::Msg<12, ()>, 0>().policy::<7>(),
     g::send::<g::Role<0>, g::Role<1>, g::Msg<13, u16>, 0>(),
 );
+
 let routed = g::route(left_arm, right_arm);
 
 let parallel = g::par(
@@ -145,16 +141,22 @@ let app = g::seq(routed, parallel);
 
 Rules worth remembering:
 
-- annotate only the control point that actually needs dynamic authority
-- static route stays `Merged -> Dynamic -> compile-error`
+- annotate only the control point that actually needs dynamic policy
 - duplicate route labels are compile errors
 - empty `g::par` arms are compile errors
 - overlapping `(role, lane)` pairs in `g::par` are rejected
+- dynamic route does not silently appear at runtime; it must be explicit in the
+  choreography
 
-### Drive Localside
+### Driving an Endpoint
 
-After integration code returns the first app endpoint, progress stays on the
-localside core API.
+Each localside method has one job:
+
+- `flow().send()` for sends you already know statically
+- `recv()` for deterministic receives
+- `offer()` when the next step is a route decision
+- `decode()` when the chosen arm begins with a receive
+- `drop(branch); endpoint.flow().send()` when the chosen arm begins with a send
 
 ```rust
 use hibana::g;
@@ -176,65 +178,54 @@ match branch.label() {
 }
 ```
 
-Use each localside API for one job:
+### Result and Error Types
 
-- `flow().send()` for sends you already know statically
-- `recv()` for deterministic receives
-- `offer()` when the next step is a route decision
-- `decode()` when the chosen arm begins with a receive
-- `drop(branch); endpoint.flow().send()` when the chosen arm begins with a send
+The app-facing owners at the crate root are:
 
-### App Result and Error Types
-
-The crate root keeps the app-facing result and error owners explicit:
-
-- `hibana::SendResult<T>` is returned by `flow()`
-- `hibana::RecvResult<T>` is returned by `recv()`, `offer()`, and `decode()`
-- `hibana::SendError` reports send-side localside failures
-- `hibana::RecvError` reports receive-side localside failures
-- `hibana::RouteBranch` is the only route-branch owner app code handles directly
+- `hibana::SendResult<T>`
+- `hibana::RecvResult<T>`
+- `hibana::SendError`
+- `hibana::RecvError`
+- `hibana::RouteBranch`
 
 ### Compile-Time Guarantees
 
-The public surface is small because guarantees move into the type system, not
-because guarantees were deleted.
+The public surface stays small because guarantees are pushed into the type
+system:
 
-- projection stays typed through `RoleProgram<'prog, ROLE, Mint>` and defaults to `RoleProgram<'prog, ROLE>`
+- projection stays typed through `RoleProgram<'prog, ROLE, Mint>` and defaults
+  to `RoleProgram<'prog, ROLE>`
 - `g::route` rejects duplicate labels and controller mismatches before runtime
 - `g::par` rejects empty fragments and role/lane overlap before runtime
 - localside runtime is fail-closed for label and payload mismatches
-- dynamic route is explicit and fail-closed; it does not silently appear at runtime
 
-## Localside Shape
+## How It Works
 
-The connection shape is always explained as:
+`hibana` is choreography-first.
+
+The connection shape is always:
 
 ```text
 transport prefix -> appkit prefix -> user app
 ```
 
-or, on the choreography side:
+On the choreography side, that means:
 
 ```text
 g::seq(transport prefix, g::seq(appkit prefix, APP))
 ```
 
-`hibana` itself only owns the app surface and the protocol-neutral substrate
-surface. Lower-layer integration code is responsible for composing prefixes,
-projecting the connection, and returning the first attached app endpoint.
+The intended split is:
 
-## Runtime Semantics
+1. App code writes `APP: g::Program<_>`
+2. A protocol crate composes transport and appkit prefixes around `APP`
+3. The protocol crate projects a typed role witness with `project(&PROGRAM)`
+4. The protocol crate attaches transport, binding, and policy, then returns
+   the first app endpoint
+5. App code continues only through the localside core API
 
-The runtime model is deliberately simple: choreography is defined first, then
-lower-layer integration code composes prefixes, projects typed locals, and
-hands app code a single endpoint that advances through the localside core API.
-
-### Choreography First
-
-- The connection shape is always `transport prefix -> appkit prefix -> user app`
-- On the choreography side that means
-  `g::seq(transport prefix, g::seq(appkit prefix, APP))`
-- `hibana` does not expose a second public DSL or a second app-facing builder
+This keeps the user-facing path small while preserving typed projection and a
+protocol-neutral core.
 
 ### Driver and Branching
 
@@ -243,8 +234,7 @@ hands app code a single endpoint that advances through the localside core API.
 - Use `branch.decode()` when the chosen arm begins with a receive
 - Use `drop(branch); endpoint.flow().send()` when the chosen arm begins with a send
 - `flow()` and `offer()` are preview-only; endpoint progress happens only when
-  `send()` or `decode()` successfully consumes the preview, including policy
-  input, transport-event flush, and policy audit/replay observation
+  `send()` or `decode()` successfully consumes the preview
 - App code and generic driver logic do not call transport APIs directly
 
 ### Route Authority
@@ -252,38 +242,37 @@ hands app code a single endpoint that advances through the localside core API.
 Route authority has exactly three public sources:
 
 - `Ack` for already materialized canonical control decisions
-- `Resolver` for dynamic-route resolution (EPF first, Rust resolver second)
+- `Resolver` for dynamic-route resolution
 - `Poll` for transport-observable static evidence
 
-Important negative rule: hint labels and binding classifications are
-demux/readiness evidence, not a fourth authority source. When exact static
-passive ingress is normalized into `Poll`-equivalent evidence, it is still the
-same `Poll`-class wire fact, not a new authority category.
+Important negative rule: hint labels and binding classifications are demux or
+readiness evidence, not a fourth authority source.
 
-Loop meaning is metadata-authoritative. Wire labels remain representation only,
-and any encode/decode or dynamic-label classification needed for loop control
-stays an internal endpoint seam rather than a public authority source.
+Loop meaning comes from metadata, not from special wire labels. Labels are
+representation; they are not semantic authority on their own.
 
 ### Lane and Binding Discipline
 
-- lane `0` is control
-- lane `1` is early-data
+- `hibana` の app surface では、lane の意味は固定されません
+- app lane ownership は protocol / appkit contract が決めます
+- canonical な attach path では control traffic を lane `0` に載せます
+- additional reserved lanes があるかどうかは transport / appkit 側の契約です
 - bindings own demux and channel resolution, not route authority
-- app-lane ownership comes from the protocol/appkit contract, not from `hibana`
-  guessing at runtime
-- unknown lanes are errors, not absorption or fallback points
+- `hibana` runtime が app lane を推測したり吸収したりはしません
+- unknown lanes are errors once the binding / transport contract is fixed
 
 ### Policy and Management Boundary
 
-- `PolicySignalsProvider::signals(slot)` is the single public slot-input boundary
+- `PolicySignalsProvider::signals(slot)` is the single public slot-input
+  boundary
 - EPF executes inside the resolver slot; it is not a second public policy API
-- fail-closed remains the default for verifier, trap, or fuel failures
-- policy distribution and activation belong to the management prefixes under
-  `hibana_mgmt`, not to endpoint-local helpers
+- fail-closed is the default for verifier, trap, or fuel failures
+- policy distribution and activation belong to the integration layer, not to
+  endpoint-local helpers
 
 ### Responsibility Matrix
 
-| layer | writes | reads |
+| Layer | Writes | Reads |
 | --- | :---: | :---: |
 | Transport | yes | yes |
 | Resolver | no | yes |
@@ -291,185 +280,190 @@ stays an internal endpoint seam rather than a public authority source.
 | Binder | no | yes |
 | Driver | no | no |
 
-## Substrate Surface (protocol implementors only)
+## Public Surfaces
 
-Protocol implementors use the protocol-neutral SPI:
+| Surface | Who uses it | Main owners |
+| --- | --- | --- |
+| App surface | application code | `hibana::g`, `Endpoint`, `RouteBranch`, `SendResult`, `RecvResult` |
+| Substrate surface | protocol implementations | `hibana::g::advanced`, `hibana::substrate` |
 
-- `hibana::g` owns choreography composition
-- `hibana::g::advanced` owns typed projection and compile-time control-message typing
-- `hibana::substrate` owns attach / enter / binding / resolver / policy /
-  transport seams
-- the root app surface does not expose `SessionKit`, `BindingSlot`,
-  `RoleProgram`, `PhaseCursor`, or typestate internals
+If a concept is not owned by one of the two surfaces above, treat it as lower
+layer rather than as part of the app-facing contract.
 
-Everyday substrate owners:
+## Protocol Integration
 
-- `hibana::g::advanced::{project, RoleProgram, CanonicalControl, ExternalControl, MessageSpec, ControlMessage, ControlMessageKind}`
-- `hibana::substrate::SessionKit`
-- `hibana::substrate::{AttachError, CpError, EffIndex, Lane, RendezvousId, SessionId}`
-- `hibana::substrate::Transport`
-- `hibana::substrate::runtime::{Clock, Config, CounterClock, DefaultLabelUniverse, LabelUniverse}`
-- `hibana::substrate::binding::{BindingSlot, NoBinding}`
-- `hibana::substrate::binding::NoBinding` is the canonical empty-binding owner
-- `hibana::substrate::policy::{ContextId, ContextValue, DynamicResolution, PolicyAttrs, PolicySignals, PolicySignalsProvider, ResolverContext, ResolverError, ResolverRef}`
-- `hibana::substrate::policy::PolicySignalsProvider` is the canonical slot-scoped policy input owner
-- `hibana::substrate::policy::PolicySlot`
-- `hibana::substrate::tap::TapEvent`
-- `hibana::substrate::cap::{CapShot, ControlResourceKind, GenericCapToken, Many, One, ResourceKind}`
-- `hibana::substrate::wire::{Payload, WireEncode, WirePayload}`
-- `hibana::substrate::transport::{Outgoing, TransportError, TransportEvent, TransportEventKind, TransportSnapshot}`
-- `hibana_mgmt::{request_reply::PREFIX, observe_stream::PREFIX, ROLE_CLUSTER, ROLE_CONTROLLER}`
-
-Advanced / deep-dive substrate owners:
-
-- `hibana::substrate::policy::core::*` for fixed context-key ids
-- `hibana_epf::{Header, Slot}` for EPF image ownership and the optional EPF slot alias
-- `hibana::substrate::cap::advanced` for mint details and the built-in control-kind catalogue
-- `hibana::substrate::transport` detail owners for local send direction, algorithm reporting, and metrics translation
-
-Everything in this section is protocol-neutral. If a protocol-specific concept
-is needed, keep it outside `hibana`'s public surface.
-
-## Repository Split
-
-Phase 7 treats crate boundaries and repository boundaries as the same design
-boundary.
-
-- `hibana` lives at `https://github.com/hibanaworks/hibana`
-- `hibana-epf` lives at `https://github.com/hibanaworks/hibana-epf`
-- `hibana-mgmt` lives at `https://github.com/hibanaworks/hibana-mgmt`
-
-The `hibana` repo no longer hard-codes a sibling-checkout assumption in its
-public-surface guards or boundary scripts. Cross-repo smoke and compositional
-tests now belong in the dedicated `hibana-cross-repo` repository at
-`https://github.com/hibanaworks/hibana-cross-repo`, not under the `hibana`
-tree itself. The split crates are consumed there through immutable GitHub
-revisions, so pinned downstream builds do not float on sibling `main` heads.
-Current branch validation runs there through `run_workspace_smoke.sh`, which
-overlays the local sibling worktrees without changing the immutable manifest
-contract.
-
-## Protocol-Implementor Walkthrough
-
-### 1. Compose `transport prefix -> appkit prefix -> user app`
-
-Use ordinary `hibana::g::seq`. There is no second composition surface for
-protocol implementors.
-
-```rust
-let app_connection = hibana::g::seq(APPKIT_PREFIX, APP);
-let full_connection = hibana::g::seq(TRANSPORT_PREFIX, app_connection);
-```
-
-App code and protocol-implementor code both use the same `g::seq`. Segment
-boundaries stay explicit in the program value itself; there is no separate
-composition shim.
-
-### 2. Project a Typed Role Witness
-
-Projection stays typed, but protocol implementations do not need to spell the
-projected local typelist in public code. The canonical path is
-`Program<_>` -> `project(&PROGRAM)`.
+Protocol implementations use the same choreography language as applications.
+There is no second composition DSL.
 
 ```rust
 use hibana::g;
 use hibana::g::advanced::{RoleProgram, project};
 
 const PROGRAM: g::Program<_> =
-    g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u32>, 0>();
+    g::seq(TRANSPORT_PREFIX, g::seq(APPKIT_PREFIX, APP));
 
 let client: RoleProgram<'_, 0> = project(&PROGRAM);
 ```
 
-`RoleProgram` remains a typed compile-time witness, and the substrate recovers
-the role-local projection internally. Protocol code passes that witness to
-`SessionKit::enter(...)` and other substrate seams without spelling the
-projected local typelist in the canonical path.
+### Substrate Surface
 
-## Control Message Surface
+Protocol implementors use the protocol-neutral SPI:
+
+- `hibana::g` owns choreography composition
+- `hibana::g::advanced` owns typed projection and compile-time control-message
+  typing
+- `hibana::substrate` owns attach, enter, binding, resolver, policy, and
+  transport seams
+- the root app surface does not expose `SessionKit`, `BindingSlot`,
+  `RoleProgram`, or typestate internals
+
+The everyday protocol-side owners are:
+
+- `hibana::g::advanced::{project, RoleProgram, CanonicalControl, ExternalControl, MessageSpec, ControlMessage, ControlMessageKind}`
+- `hibana::substrate::SessionKit`
+- `hibana::substrate::{AttachError, CpError, EffIndex, Lane, RendezvousId, SessionId}`
+- `hibana::substrate::Transport`
+- `hibana::substrate::binding::{BindingSlot, NoBinding}`
+- `hibana::substrate::policy::{ContextId, ContextValue, DynamicResolution, PolicyAttrs, PolicySignals, PolicySignalsProvider, ResolverContext, ResolverError, ResolverRef, PolicySlot}`
+- `hibana::substrate::runtime::{Clock, Config, CounterClock, DefaultLabelUniverse, LabelUniverse}`
+- `hibana::substrate::tap::TapEvent`
+- `hibana::substrate::cap::{CapShot, ControlResourceKind, GenericCapToken, Many, One, ResourceKind}`
+- `hibana::substrate::wire::{Payload, WireEncode, WirePayload}`
+- `hibana::substrate::transport::{Outgoing, TransportError, TransportEvent, TransportEventKind, TransportSnapshot}`
+
+Advanced buckets:
+
+- `hibana::substrate::policy::core::*` for fixed context-key ids
+- `hibana::substrate::cap::advanced` for mint details and the built-in
+  control-kind catalogue
+- `hibana::substrate::transport` detail owners for send direction, algorithm
+  reporting, and metrics translation
+
+Everything in this section is protocol-neutral. If a concept is protocol
+specific, keep it outside `hibana`'s public surface.
+
+### Control Messages
 
 There is no public `g::splice`, `g::delegate`, or `g::reroute`.
 
-`delegate`, `splice`, `reroute`, `route`, `loop`, and management policy
-operations are all expressed as `g::send()` steps whose message type carries a
-capability token and a control handling marker.
+`delegate`, `splice`, `reroute`, `route`, `loop`, and management-policy
+operations are all expressed as ordinary `g::send()` steps whose message type
+carries a capability token and a control-handling marker.
 
-The protocol-implementor compile-time owners are:
+The key owners are:
 
 - `CanonicalControl<K>` for locally minted control tokens
 - `ExternalControl<K>` for control tokens carried on the wire
-- `MessageSpec` for label/payload/control typing
+- `MessageSpec` for label, payload, and control typing
 - `ControlMessage` and `ControlMessageKind` for control-message-only contracts
-Handling rules are fixed by the implementation:
+
+Handling rules are fixed:
 
 - `CanonicalControl<K>` is compile-time restricted to self-send
 - `ExternalControl<K>` may cross roles and ride the wire
-- `ControlHandling` is the canonical owner for the handling mode carried by a control kind
-- the operation itself comes from the control kind's resource tag, not from a second DSL
+- the operation itself comes from the control kind's resource tag, not from a
+  second DSL
 
-## Transport Seam
+The built-in control kind catalogue lives under
+`hibana::substrate::cap::advanced`:
+
+- route and loop: `RouteDecisionKind`, `LoopContinueKind`, `LoopBreakKind`
+- checkpoint and recovery: `CheckpointKind`, `CommitKind`, `RollbackKind`,
+  `CancelKind`, `CancelAckKind`
+- splice and reroute: `SpliceIntentKind`, `SpliceAckKind`, `RerouteKind`
+- policy lifecycle: `PolicyLoadKind`, `PolicyActivateKind`, `PolicyRevertKind`,
+  `PolicyAnnotateKind`
+- management load protocol: `LoadBeginKind`, `LoadCommitKind`
+
+If a protocol needs a custom control kind, implement the capability traits in
+`hibana::substrate::cap::advanced` and carry that kind through
+`GenericCapToken<K>` plus `CanonicalControl<K>` or `ExternalControl<K>`.
+
+Control kinds are still just message types in the choreography:
+
+```rust
+use hibana::g;
+use hibana::g::advanced::{CanonicalControl, ExternalControl};
+use hibana::substrate::cap::{ControlResourceKind, GenericCapToken};
+use hibana::substrate::cap::advanced::{
+    LoopContinueKind, SpliceIntentKind,
+};
+
+let loop_continue = g::send::<
+    g::Role<0>,
+    g::Role<0>,
+    g::Msg<
+        { <LoopContinueKind as ControlResourceKind>::LABEL },
+        GenericCapToken<LoopContinueKind>,
+        CanonicalControl<LoopContinueKind>,
+    >,
+    0,
+>();
+
+let splice_intent = g::send::<
+    g::Role<0>,
+    g::Role<1>,
+    g::Msg<
+        { <SpliceIntentKind as ControlResourceKind>::LABEL },
+        GenericCapToken<SpliceIntentKind>,
+        ExternalControl<SpliceIntentKind>,
+    >,
+    0,
+>();
+```
+
+Capability-building owners live in two layers:
+
+- `hibana::substrate::cap::{One, Many}` for affine shot discipline
+- `hibana::substrate::cap::{CapShot, ResourceKind, ControlResourceKind}` for
+  runtime capability representation
+- `hibana::substrate::cap::advanced::{MintConfig, MintConfigMarker,
+  ControlMint, SessionScopedKind, AllowsCanonical, EpochTbl, CAP_HANDLE_LEN,
+  CapError, CapsMask}` for mint configuration
+- `hibana::substrate::cap::advanced::{ControlScopeKind, ScopeId,
+  ControlHandling}` for control-scope metadata
+
+### Transport
 
 `hibana::substrate::Transport` is the protocol-neutral I/O seam. It owns send,
 recv, requeue, event draining, hint exposure, metrics, and pacing updates.
-`Send` / `Recv` future types must be `Unpin`; hibana parks and re-polls the same
-transport future until the operation completes.
+`Send` and `Recv` future types must be `Unpin`.
 
 ```rust
 struct MyTransport;
 
 impl hibana::substrate::Transport for MyTransport {
     type Error = hibana::substrate::transport::TransportError;
-    type Tx<'a>
-        = ()
-    where
-        Self: 'a;
-    type Rx<'a>
-        = ()
-    where
-        Self: 'a;
-    type Send<'a>
-        = core::future::Ready<Result<(), Self::Error>>
-    where
-        Self: 'a;
-    type Recv<'a>
-        = core::future::Ready<Result<hibana::substrate::wire::Payload<'a>, Self::Error>>
+    type Tx<'a> = () where Self: 'a;
+    type Rx<'a> = () where Self: 'a;
+    type Send<'a> = core::future::Ready<Result<(), Self::Error>> where Self: 'a;
+    type Recv<'a> =
+        core::future::Ready<Result<hibana::substrate::wire::Payload<'a>, Self::Error>>
     where
         Self: 'a;
     type Metrics = ();
 
-    fn open<'a>(&'a self, local_role: u8, session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
-        let local_role_value = local_role;
-        let session_id_value = session_id;
-        let _state = (local_role_value, session_id_value);
+    fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
         ((), ())
     }
 
     fn send<'a, 'f>(
         &'a self,
-        tx: &'a mut Self::Tx<'a>,
-        outgoing: hibana::substrate::transport::Outgoing<'f>,
+        _tx: &'a mut Self::Tx<'a>,
+        _outgoing: hibana::substrate::transport::Outgoing<'f>,
     ) -> Self::Send<'a>
     where
         'a: 'f,
     {
-        let tx_handle = tx;
-        let payload_view = outgoing.payload;
-        let send_meta = outgoing.meta;
-        let _state = (tx_handle, payload_view, send_meta);
         core::future::ready(Ok(()))
     }
 
-    fn recv<'a>(&'a self, rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
+    fn recv<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
         static EMPTY: [u8; 0] = [];
-        let rx_handle = rx;
-        let _state = rx_handle;
         core::future::ready(Ok(hibana::substrate::wire::Payload::new(&EMPTY)))
     }
 
-    fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
-        let rx_handle = rx;
-        let _state = rx_handle;
-    }
+    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
 
     fn drain_events(
         &self,
@@ -483,9 +477,7 @@ impl hibana::substrate::Transport for MyTransport {
         ));
     }
 
-    fn recv_label_hint<'a>(&'a self, rx: &'a Self::Rx<'a>) -> Option<u8> {
-        let rx_handle = rx;
-        let _state = rx_handle;
+    fn recv_label_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<u8> {
         None
     }
 
@@ -493,27 +485,24 @@ impl hibana::substrate::Transport for MyTransport {
         ()
     }
 
-    fn apply_pacing_update(&self, interval_us: u32, burst_bytes: u16) {
-        let pacing_state = (interval_us, burst_bytes);
-        let _state = pacing_state;
-    }
+    fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
 }
 ```
 
 Transport rules:
 
 - `recv()` must yield borrowed payload views
-- `recv()` / `decode()` return the decoded view chosen by the payload owner
+- `recv()` and `decode()` return the decoded view chosen by the payload owner
 - `requeue()` is how transport hands an unconsumed frame back
 - `drain_events()` feeds protocol-neutral transport observation
 - `recv_label_hint()` is a demux hint, not route authority
 - `metrics()` returns `TransportSnapshot` through `TransportMetrics`
 
-## Bootstrap `SessionKit` and Enter Typed Endpoints
+### SessionKit and Endpoint Attachment
 
 `hibana::substrate::SessionKit::new(&clock)` is the canonical starting point.
-The borrowed / `no_alloc`-oriented path is the canonical substrate path: keep the
-clock, config storage, projected program, and resolver state borrowed; add
+The borrowed, `no_alloc`-oriented path is the canonical substrate path: keep
+the clock, config storage, projected program, and resolver state borrowed; add
 rendezvous once; then `enter()`.
 
 ```rust
@@ -541,58 +530,28 @@ let endpoint = cluster.enter(
 )?;
 ```
 
-The same borrowed `RoleProgram` can be passed to `set_resolver()` and `enter()`,
-and the same borrowed resolver state can stay outside the cluster through
-`ResolverRef::from_state()`.
+Key points:
 
-The canonical substrate story stays borrowed and caller-provided even under
-`std`: lower-layer storage is slab-backed, not heap-backed, and app/protocol
-integration should provide stable buffers and clocks without `Box`, `Vec`, or
-stack-growth helpers.
+- the borrowed path is canonical even under `std`
+- storage stays slab-backed, not heap-backed
+- the same borrowed `RoleProgram` can be passed to `set_resolver()` and
+  `enter()`
+- `Config::new(tap_buf, slab)` allocates tap storage and the rendezvous slab
+- `Config::with_lane_range(range)` reserves lane space for the transport/appkit
+  split
+- `Config::with_universe(universe)` and `Config::with_clock(clock)` install
+  custom label-universe and clock owners
+- bootstrap failures use `hibana::substrate::CpError` and
+  `hibana::substrate::AttachError`
 
-```rust
-let mut tap_buf = [hibana::substrate::tap::TapEvent::zero(); 128];
-let mut slab = [0u8; 64 * 1024];
-let clock = hibana::substrate::runtime::CounterClock::new();
-
-let config = hibana::substrate::runtime::Config::new(&mut tap_buf, &mut slab);
-
-let cluster: hibana::substrate::SessionKit<
-    '_,
-    MyTransport,
-    hibana::substrate::runtime::DefaultLabelUniverse,
-    hibana::substrate::runtime::CounterClock,
-    4,
-> = hibana::substrate::SessionKit::new(&clock);
-```
-
-On embedded targets, these borrowed buffers still need stable storage owned by
-the integration layer. The canonical docs do not use `static mut`; keep any
-boot-storage `unsafe` private to the binary or BSP glue.
-
-`SessionKit::new(&clock)` is always paired with a rendezvous config. The
-runtime config owner is `hibana::substrate::runtime::Config`, and the public
-customisation points are:
-
-- `Config::new(tap_buf, slab)` to allocate tap storage and the rendezvous slab
-- `Config::tap_storage()` and `Config::slab()` to inspect or reuse the owned buffers
-- `Config::with_lane_range(range)` to reserve lane space for the transport/appkit split; the configured window must still include reserved control lane `0`
-- `Config::lane_range()` to inspect the configured lane ownership window
-- `Config::with_universe(universe)` to install a custom label universe
-- `Config::universe()` to inspect the active label universe
-- `Config::with_clock(clock)` to move from `CounterClock` to another clock owner
-- `Config::clock()` to inspect the active clock owner
-
-If cluster bootstrap fails before attachment, the substrate errors are
-`hibana::substrate::CpError` and `hibana::substrate::AttachError`.
-
-## BindingSlot Contract
+### BindingSlot
 
 `BindingSlot` is the transport-adapter seam for framed streams, multiplexed
-channels, and slot-scoped policy signals. It is also the place where protocol
-code supplies `PolicySignalsProvider`.
+channels, and slot-scoped policy signals. It is also where protocol code
+supplies `PolicySignalsProvider`.
 
-`BindingSlot` is demux and transport observation only. It does not decide route arms.
+`BindingSlot` is demux and transport observation only. It does not decide route
+arms.
 
 ```rust
 struct MyBinding {
@@ -602,10 +561,8 @@ struct MyBinding {
 impl hibana::substrate::policy::PolicySignalsProvider for MyBinding {
     fn signals(
         &self,
-        slot: hibana::substrate::policy::PolicySlot,
+        _slot: hibana::substrate::policy::PolicySlot,
     ) -> hibana::substrate::policy::PolicySignals {
-        let route_slot = slot;
-        let _state = route_slot;
         self.signals
     }
 }
@@ -613,10 +570,8 @@ impl hibana::substrate::policy::PolicySignalsProvider for MyBinding {
 impl hibana::substrate::binding::BindingSlot for MyBinding {
     fn poll_incoming_for_lane(
         &mut self,
-        logical_lane: u8,
+        _logical_lane: u8,
     ) -> Option<hibana::substrate::binding::IncomingClassification> {
-        let lane_value = logical_lane;
-        let _state = lane_value;
         Some(hibana::substrate::binding::IncomingClassification {
             label: 40,
             instance: 0,
@@ -627,11 +582,12 @@ impl hibana::substrate::binding::BindingSlot for MyBinding {
 
     fn on_recv<'a>(
         &'a mut self,
-        channel: hibana::substrate::binding::Channel,
+        _channel: hibana::substrate::binding::Channel,
         scratch: &'a mut [u8],
-    ) -> Result<hibana::substrate::wire::Payload<'a>, hibana::substrate::binding::TransportOpsError> {
-        let channel_value = channel;
-        let _state = channel_value;
+    ) -> Result<
+        hibana::substrate::wire::Payload<'a>,
+        hibana::substrate::binding::TransportOpsError,
+    > {
         scratch[..4].copy_from_slice(&[1, 2, 3, 4]);
         Ok(hibana::substrate::wire::Payload::new(&scratch[..4]))
     }
@@ -647,55 +603,56 @@ impl hibana::substrate::binding::BindingSlot for MyBinding {
 Binding rules:
 
 - `poll_incoming_for_lane()` is lane-local demux only
-- `on_recv()` reads from the already selected channel and returns a borrowed payload view
-- `policy_signals_provider()` is the only public input source for slot-scoped signals
+- `on_recv()` reads from the already selected channel and returns a borrowed
+  payload view
+- `policy_signals_provider()` is the only public input source for slot-scoped
+  signals
 
 Supporting binding owners:
 
-- `Channel`, `ChannelDirection`, and `ChannelKey` identify stream/channel endpoints
-- `ChannelStore` is the storage contract when the binding owns multiple channels
+- `Channel`, `ChannelDirection`, and `ChannelKey` identify stream and channel
+  endpoints
+- `ChannelStore` is the storage contract when the binding owns multiple
+  channels
 - `TransportOpsError` is the canonical binding-side I/O error
 
-Transport-owned send owners:
+### Policy
 
-- `hibana::substrate::transport::Outgoing<'f>` is the canonical transport-owned send object
-- transport-local send direction and metadata details stay in the transport bucket for transport-detail inspection, not as day-to-day app-facing owners
-
-## Policy Plane
-
-Dynamic policy remains explicit:
+Dynamic policy stays explicit:
 
 - annotate the choreography with `Program::policy::<POLICY_ID>()`
-- register a resolver with `set_resolver::<POLICY_ID, ROLE, _>(rv_id, program, resolver)`
-- use `ResolverContext::input(index)` and `ResolverContext::attr(id)`
+- register a resolver with `set_resolver::<POLICY_ID, ROLE, _>(...)`
+- read inputs through `ResolverContext::input(index)` and attrs through
+  `ResolverContext::attr(id)`
 - return `Result<DynamicResolution, ResolverError>`
 
 `ResolverContext` is intentionally small: `input(index)` and `attr(id)` are the
 only public accessors.
 
-The public policy owner surface is intentionally narrow:
+The public policy-owner surface is intentionally narrow:
 
 - `hibana::substrate::policy::PolicySlot` owns the generic slot identity
-- `hibana_epf::{Header, Slot}` owns EPF image headers plus the optional EPF slot alias
-- `PolicySlot` / `hibana_epf::Slot` are `Forward | EndpointRx | EndpointTx | Rendezvous | Route`
-- active EPF is consulted inside the same resolver slot, before the Rust resolver callback
-- if EPF does not decide, the same slot continues into the Rust resolver stage
-- `hibana` core itself does not expose a second VM-run API; the optional external crate `hibana_epf` owns `loader::ImageLoader`, `verifier::VerifiedImage`, `HostSlots`, `ScratchLease`, `host::InstallError`, `VmCtx`, and `run_with(...)`
-- `PolicySignalsProvider::signals(slot)` is the only public input boundary for slot-scoped policy data
-- policy execution is fail-closed; verifier, trap, and fuel failures reject rather than falling through
-- policy activation switches at the decision boundary through staged active/pending epochs
-- load / activate / revert stay on the management prefixes in `hibana_mgmt`
+- an external policy engine may execute inside the same resolver slot, but that
+  engine is not part of the `hibana` crate surface
+- policy execution is fail-closed; verifier, trap, and fuel failures reject
+  rather than falling through
 
-Input semantics also come from the implementation contract:
+Useful policy owners and helpers:
 
-- `Route`, `EndpointTx`, and `EndpointRx` may consume `PolicySignalsProvider` input
-- `Forward` and `Rendezvous` run with zero policy input
-- the public authority source remains the resolver slot, not a second EPF API
+- `ContextId` and `ContextValue` for fixed-width policy inputs and attrs
+- `PolicyAttrs` for the attribute bag copied into resolver context
+- `PolicySignals` for slot-scoped inputs delivered by
+  `PolicySignalsProvider`
+- `ResolverRef::from_state()` for borrowed-state resolvers
+- `ResolverRef::from_fn()` for stateless callbacks
+- `hibana::substrate::policy::core::*` for fixed metadata such as `RV_ID`,
+  `SESSION_ID`, `LANE`, `QUEUE_DEPTH`, `SRTT_US`, `PTO_COUNT`,
+  `IN_FLIGHT_BYTES`, and `TRANSPORT_ALGORITHM`
+
+Example resolver:
 
 ```rust
 const POLICY_ID: u16 = 7;
-const CUSTOM_INPUT0: hibana::substrate::policy::ContextId =
-    hibana::substrate::policy::ContextId::new(0x9001);
 
 struct RoutePolicy {
     preferred_arm: u8,
@@ -719,12 +676,6 @@ fn route_resolver(
         return Err(hibana::substrate::policy::ResolverError::Reject);
     }
 
-    if ctx.attr(CUSTOM_INPUT0).is_some_and(|value| value.as_u32() == 99) {
-        return Ok(hibana::substrate::policy::DynamicResolution::Loop {
-            decision: true,
-        });
-    }
-
     Ok(hibana::substrate::policy::DynamicResolution::Defer { retry_hint: 1 })
 }
 
@@ -737,197 +688,13 @@ cluster.set_resolver::<POLICY_ID, 0, _>(
 )?;
 ```
 
-`ResolverRef::from_fn()` remains available as sugar for stateless callbacks, but
-the canonical public path is the borrowed-state form above.
-
-Advanced policy metadata arrives through `hibana::substrate::policy::core::*`:
-
-- `RV_ID`
-- `SESSION_ID`
-- `LANE`
-- `TAG`
-- `LATENCY_US`
-- `QUEUE_DEPTH`
-- `SRTT_US`
-- `PTO_COUNT`
-- `PACING_INTERVAL_US`
-- `IN_FLIGHT_BYTES`
-- `CONGESTION_WINDOW`
-- `CONGESTION_MARKS`
-- `RETRANSMISSIONS`
-- `LATEST_ACK_PN`
-- `TRANSPORT_ALGORITHM`
-
-The public policy data owners are:
-
-- `ContextId` and `ContextValue` for fixed-width policy inputs and attrs
-- `PolicyAttrs` for the attribute bag copied into resolver context
-- `PolicySignals` for slot-scoped inputs delivered by `PolicySignalsProvider`
-- `hibana::substrate::policy::PolicySlot` plus `hibana_epf::{Header, Slot}` for generic slot identity and EPF image ownership
-
-Useful value helpers:
-
-- `ContextId::new(raw)` and `ContextId::raw()` for opaque attribute ids
-- `ContextValue::{NONE, FALSE, TRUE}` for sentinel and boolean-style values
-- `ContextValue::from_u8`, `from_u16`, `from_u32`, `from_u64`, and `from_pair` for encoding
-- `ContextValue::as_bool`, `as_u8`, `as_u16`, `as_u32`, `as_u64`, `as_pair`, and `raw` for decoding
-- `PolicyAttrs::new()`, `insert(id, value)`, and `query(id)` for the fixed-size attribute map
-
-## Control Messages and Capability Kinds
-
-Control messages are regular `g::send()` steps whose payload carries a
-capability token and control kind. The public owner for shot discipline is
-`hibana::substrate::cap::{One, Many}`. The public owner for capability payloads
-is `hibana::substrate::cap::GenericCapToken`.
-
-Built-in control kinds live under `hibana::substrate::cap::advanced`. This is
-the deep-dive bucket for mint details and standard control-kind owners; day-to-
-day capability handling stays on `hibana::substrate::cap::{CapShot,
-ControlResourceKind, GenericCapToken, Many, One, ResourceKind}`. The public
-control-message handling markers are `CanonicalControl<K>` and
-`ExternalControl<K>`, and the handling enum is `ControlHandling`.
-
-```rust
-use hibana::g;
-use hibana::g::advanced::{CanonicalControl, ExternalControl};
-use hibana::substrate::cap::{ControlResourceKind, GenericCapToken};
-use hibana::substrate::cap::advanced::{
-    LoopBreakKind, LoopContinueKind, SpliceIntentKind,
-};
-
-let loop_continue = g::send::<
-    g::Role<0>,
-    g::Role<0>,
-    g::Msg<
-        { <LoopContinueKind as ControlResourceKind>::LABEL },
-        GenericCapToken<LoopContinueKind>,
-        CanonicalControl<LoopContinueKind>,
-    >,
-    0,
->();
-
-let splice_intent = g::send::<
-    g::Role<0>,
-    g::Role<1>,
-    g::Msg<
-        { <SpliceIntentKind as ControlResourceKind>::LABEL },
-        GenericCapToken<SpliceIntentKind>,
-        ExternalControl<SpliceIntentKind>,
-    >,
-    0,
->();
-```
-
-Custom control kinds are ordinary trait impls:
-
-```rust
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RouteLeftKind;
-
-impl hibana::substrate::cap::ResourceKind for RouteLeftKind {
-    type Handle = hibana::substrate::cap::advanced::RouteDecisionHandle;
-    const TAG: u8 =
-        <hibana::substrate::cap::advanced::RouteDecisionKind as hibana::substrate::cap::ResourceKind>::TAG;
-    const NAME: &'static str = "RouteLeftDecision";
-    const AUTO_MINT_EXTERNAL: bool = false;
-
-    fn encode_handle(
-        handle: &Self::Handle,
-    ) -> [u8; hibana::substrate::cap::advanced::CAP_HANDLE_LEN] {
-        handle.encode()
-    }
-
-    fn decode_handle(
-        data: [u8; hibana::substrate::cap::advanced::CAP_HANDLE_LEN],
-    ) -> Result<Self::Handle, hibana::substrate::cap::advanced::CapError> {
-        hibana::substrate::cap::advanced::RouteDecisionHandle::decode(data)
-    }
-
-    fn zeroize(handle: &mut Self::Handle) {
-        *handle = hibana::substrate::cap::advanced::RouteDecisionHandle::default();
-    }
-
-    fn caps_mask(
-        _handle: &Self::Handle,
-    ) -> hibana::substrate::cap::advanced::CapsMask {
-        hibana::substrate::cap::advanced::CapsMask::empty()
-    }
-
-    fn scope_id(
-        handle: &Self::Handle,
-    ) -> Option<hibana::substrate::cap::advanced::ScopeId> {
-        Some(handle.scope)
-    }
-}
-
-impl hibana::substrate::cap::advanced::SessionScopedKind for RouteLeftKind {
-    fn handle_for_session(
-        _sid: hibana::substrate::SessionId,
-        _lane: hibana::substrate::Lane,
-    ) -> Self::Handle {
-        hibana::substrate::cap::advanced::RouteDecisionHandle::default()
-    }
-
-    fn shot() -> hibana::substrate::cap::CapShot {
-        hibana::substrate::cap::CapShot::One
-    }
-}
-
-impl hibana::substrate::cap::advanced::ControlMint for RouteLeftKind {
-    fn mint_handle(
-        _sid: hibana::substrate::SessionId,
-        _lane: hibana::substrate::Lane,
-        scope: hibana::substrate::cap::advanced::ScopeId,
-    ) -> Self::Handle {
-        hibana::substrate::cap::advanced::RouteDecisionHandle { scope, arm: 0 }
-    }
-}
-
-impl hibana::substrate::cap::ControlResourceKind for RouteLeftKind {
-    const LABEL: u8 = 70;
-    const SCOPE: hibana::substrate::cap::advanced::ControlScopeKind =
-        hibana::substrate::cap::advanced::ControlScopeKind::Route;
-    const TAP_ID: u16 =
-        <hibana::substrate::cap::advanced::RouteDecisionKind as hibana::substrate::cap::ControlResourceKind>::TAP_ID;
-    const SHOT: hibana::substrate::cap::CapShot = hibana::substrate::cap::CapShot::One;
-    const HANDLING: hibana::substrate::cap::advanced::ControlHandling =
-        hibana::substrate::cap::advanced::ControlHandling::Canonical;
-}
-```
-
-After declaring a custom control kind, use it through
-`GenericCapToken<RouteLeftKind>` and `CanonicalControl<RouteLeftKind>` or the
-appropriate external control kind.
-
-Built-in kind catalogue:
-
-- route and loop: `RouteDecisionKind`, `LoopContinueKind`, `LoopBreakKind`
-- checkpoint and recovery: `CheckpointKind`, `CommitKind`, `RollbackKind`, `CancelKind`, `CancelAckKind`
-- splice and reroute: `SpliceIntentKind`, `SpliceAckKind`, `RerouteKind`
-- policy lifecycle: `PolicyLoadKind`, `PolicyActivateKind`, `PolicyRevertKind`, `PolicyAnnotateKind`
-- management load protocol: `LoadBeginKind`, `LoadCommitKind`
-
-The implementation-level distinction that matters:
-
-- `CanonicalControl<K>` covers self-send control such as route, loop, checkpoint, rollback, cancel, policy annotate, and reroute
-- `ExternalControl<K>` covers cross-role control such as `SpliceIntentKind`, `SpliceAckKind`, `LoadBeginKind`, and `LoadCommitKind`
-- delegation is an effect, not a separate public DSL node; the built-in public kinds that carry delegation semantics are `LoopContinueKind` and `RerouteKind`
-
-Capability-building owners live in two layers:
-
-- `hibana::substrate::cap::{One, Many}` for affine shot discipline
-- `hibana::substrate::cap::{CapShot, ResourceKind, ControlResourceKind}` for runtime capability representation
-- `hibana::substrate::cap::advanced::{MintConfig, MintConfigMarker, ControlMint, SessionScopedKind, AllowsCanonical, EpochTbl, CAP_HANDLE_LEN, CapError, CapsMask}` for protocol-implementor mint configuration
-- `hibana::substrate::cap::advanced::{ControlScopeKind, ScopeId, ControlHandling}` for control-scope metadata
-
-Canonical control minting for built-in control kinds happens automatically
-through localside send paths such as `flow().send()`.
-
-## Wire and Transport Observation
+### Wire and Transport Observation
 
 `hibana::substrate::wire::{Payload, WireEncode, WirePayload}` is the canonical
-payload seam. `hibana::substrate::transport::{TransportEvent, TransportEventKind,
-TransportSnapshot}` is the canonical transport observation seam.
+payload seam.
+
+`hibana::substrate::transport::{TransportEvent, TransportEventKind,
+TransportSnapshot}` is the canonical transport-observation seam.
 
 If a payload type crosses the wire and is not already a codec type, implement
 `WireEncode` plus `WirePayload`. Borrowed payload views use
@@ -938,10 +705,14 @@ Transport telemetry is surfaced two ways:
 
 - resolvers read snapshot data through `ResolverContext::attr()` and
   `hibana::substrate::policy::core::*`
-- transports emit semantic events through `TransportEvent` and `TransportEventKind`
-- codecs report parse/encode failures through `CodecError`
-- transport implementations report send/recv failures through `TransportError`
-- `TransportMetrics` is the owner trait that turns implementation-specific counters into `TransportSnapshot`
+- transports emit semantic events through `TransportEvent` and
+  `TransportEventKind`
+- codec failures report through `CodecError`
+- transport failures report through `TransportError`
+- `TransportMetrics` turns implementation-specific counters into
+  `TransportSnapshot`
+
+Example snapshot construction:
 
 ```rust
 let snapshot = hibana::substrate::transport::TransportSnapshot::new(Some(500), Some(2))
@@ -957,9 +728,7 @@ let transport_event = hibana::substrate::transport::TransportEvent::new(
     0,
 );
 
-let queue_depth = snapshot.queue_depth;
-let packet_number = transport_event.packet_number;
-let _state = (queue_depth, packet_number);
+let _ = (snapshot.queue_depth, transport_event.packet_number);
 ```
 
 `TransportSnapshot` uses builder-style enrichment:
@@ -969,77 +738,26 @@ let _state = (queue_depth, packet_number);
 - `with_pto_count`, `with_srtt`, `with_latest_ack`
 - `with_congestion_window`, `with_in_flight`, `with_algorithm`
 
-`TransportAlgorithm` identifies the congestion-control owner carried by the snapshot.
+### Management Boundary
 
-## Management Session
+`hibana` does not define a built-in management protocol.
 
-Policy distribution belongs to `hibana_mgmt`.
+If an integration needs policy distribution, tap streaming, or any other
+cluster-management session, that choreography lives outside the `hibana` crate.
+`hibana` only provides the neutral seams needed to compose, project, attach,
+and drive that choreography.
 
-Management is split into exactly two ordinary choreography prefixes:
-
-- `hibana_mgmt::request_reply::PREFIX`
-- `hibana_mgmt::observe_stream::PREFIX`
-
-The public role owners are:
-
-- `hibana_mgmt::ROLE_CONTROLLER`
-- `hibana_mgmt::ROLE_CLUSTER`
-
-EPF image injection and execution live on the request/reply prefix. The public
-request vocabulary is:
-
-- `hibana_mgmt::Request::Load(LoadRequest)`
-- `hibana_mgmt::Request::LoadAndActivate(LoadRequest)`
-- `hibana_mgmt::Request::Activate(SlotRequest)`
-- `hibana_mgmt::Request::Revert(SlotRequest)`
-- `hibana_mgmt::Request::Stats(SlotRequest)`
-
-`LoadRequest` owns `slot`, `code`, `fuel_max`, and `mem_len`. `SlotRequest`
-owns only `slot`. That split is intentional: staged upload and command-only
-requests are different shapes, and the public surface keeps them different.
-
-Management payload and reply owners:
-
-- `LoadBegin` starts a staged code image upload
-- `LoadChunk::mid(offset, chunk)` and `LoadChunk::last(offset, chunk)` stream the image body
-- `LoadRequest` and `SlotRequest` are the typed public request payloads
-- `LoadRequest` and `SlotRequest` carry `hibana::substrate::policy::PolicySlot` as their public slot owner
-- `Request` is the public request sum type for the request/reply prefix
-- `SubscribeReq` configures stream-tap subscription
-- `Reply`, `LoadReport`, `MgmtError`, `StatsResp`, and `TransitionReport` are the canonical response owners
-- `hibana::substrate::tap::TapEvent` is the minimal public tap surface for observe streaming
-- tap batching is a lower-layer observe-stream detail; there is no public `TapBatch` surface
-
-The public management surface intentionally stops at payload owners and prefix
-owners. There is no public management helper family beyond those ordinary
-choreography owners.
-
-EPF lifecycle and result surfaces:
-
-- `Request::Load` returns `Reply::Loaded(report)`
-- `Request::LoadAndActivate` returns `Reply::ActivationScheduled(report)`
-- `Request::Activate` returns `Reply::ActivationScheduled(report)`
-- `Request::Revert` returns `Reply::Reverted(report)`
-- `Request::Stats` returns `Reply::Stats { stats, staged_version }`
-- `TransitionReport` carries the activated or reverted version plus `policy_stats`
-- `LoadReport` carries the staged version when code was uploaded without scheduling activation
-- `StatsResp` carries `traps`, `aborts`, `fuel_used`, and `active_version`
-- after activation, the image executes when its `Slot` is reached; immediate command completion returns over the request/reply prefix, and continuing observation stays on the stream prefix
-- `Request::LoadAndActivate` and `Request::Activate` schedule activation at the management command boundary; `Request::Revert` restores the previous active version and clears pending activation state
-
-Canonical substrate usage composes the management prefix, projects typed roles,
-enters them through `SessionKit::enter`, then progresses the attached endpoints
-with the same localside core API as any other choreography:
+Management-style usage still follows the normal substrate path:
 
 ```rust
 use hibana::g;
 use hibana::g::advanced::project;
 
 const PROGRAM: g::Program<_> =
-    g::seq(hibana_mgmt::request_reply::PREFIX, APP);
+    g::seq(MGMT_PREFIX, APP);
 
-let controller_program = project(&PROGRAM); // typed controller-side projection
-let cluster_program = project(&PROGRAM); // typed cluster-side projection
+let controller_program = project(&PROGRAM);
+let cluster_program = project(&PROGRAM);
 
 let controller = cluster.enter(
     rv_id,
@@ -1054,64 +772,16 @@ let cluster_role = cluster.enter(
     hibana::substrate::binding::NoBinding,
 )?;
 
-let _state = (controller, cluster_role);
+let _ = (controller, cluster_role);
 ```
-
-The request/reply prefix and observe stream prefix are ordinary choreography
-artifacts. Protocol implementors compose `Program` values with ordinary
-`hibana::g::seq`, project them with `project()`, attach them with
-`SessionKit::enter(...)`, and drive the resulting endpoints with
-`flow().send()`, `recv()`, `offer()`, and `decode()` just like any other
-attached session.
 
 ## Validation
 
-Push-quality validation means more than "the examples compile". At minimum, the
-surface gates, protocol-neutrality, typed projection, and policy replay checks
-should stay green. CI is intentionally split between stable verification and a
-nightly rustdoc-JSON semantic surface lane. The canonical Pico gate is
-SRAM-first and route-heavy: it projects, attaches, and runs a huge localside
-sample to completion and reserves 96 KiB free on RP2040. The practical
-shape-matrix contract is tracked per `route_heavy`, `linear_heavy`, and
-`fanout_heavy` build:
-
-- `flash <= 768 KiB`
-- `static SRAM <= 48 KiB`
-- `kernel stack <= 24 KiB`
-- `peak SRAM <= 96 KiB`
-
-`check_pico_smoke.sh` reserves a `24 KiB` kernel stack in the Pico linker
-script, then combines target flash/static-SRAM bytes with a host-executed
-canonical runtime measurement on a `32 KiB` thread stack to report the existing
-hard-gated upper bounds (`kernel stack reserve`, `peak stack upper-bound`, and
-`peak SRAM upper-bound bytes`) plus shadow/report-only executed metrics
-(`measured peak stack bytes`, live slab usage, and `measured peak SRAM bytes`).
-The measured peak SRAM report subtracts the statically reserved Pico slab, then
-adds back the measured live slab bytes plus measured peak stack bytes so the
-Phase 0a instrumentation tracks executed runtime usage without weakening the
-current practical hard gate. `check_pico_size_matrix.sh` keeps the same budget
-class for linear-heavy and fanout-heavy huge choreography shapes and also prints
-the measured resident shape matrix:
-
-- route resident bytes
-- loop resident bytes
-- endpoint resident bytes
-- `CompiledProgramImage` header / persistent bytes
-- `CompiledRoleImage` header / persistent bytes
-
-`check_subsystem_budget_gates.sh` promotes the subsystem-local exact gates that
-pin compiled-role bytes, route-heavy resident regressions, and the
-descriptor-driven localside send/recv/offer/decode and policy hot paths.
+The canonical local validation flow is:
 
 ```bash
-# Stable hygiene and boundary gates
 bash ./.github/scripts/check_policy_surface_hygiene.sh
 bash ./.github/scripts/check_surface_hygiene.sh
-bash ./.github/scripts/check_lowering_hygiene.sh
-bash ./.github/scripts/check_frozen_image_hygiene.sh
-bash ./.github/scripts/check_summary_authority_hygiene.sh
-bash ./.github/scripts/check_exact_layout_hygiene.sh
-bash ./.github/scripts/check_route_frontier_owner.sh
 bash ./.github/scripts/check_boundary_contracts.sh
 bash ./.github/scripts/check_plane_boundaries.sh
 bash ./.github/scripts/check_mgmt_boundary.sh
@@ -1119,38 +789,25 @@ bash ./.github/scripts/check_resolver_context_surface.sh
 bash ./.github/scripts/check_warning_free.sh
 bash ./.github/scripts/check_direct_projection_binary.sh
 bash ./.github/scripts/check_no_std_build.sh
-bash ./.github/scripts/check_huge_choreography_budget.sh
-bash ./.github/scripts/check_subsystem_budget_gates.sh
-bash ./.github/scripts/check_pico_smoke.sh
-bash ./.github/scripts/check_pico_size_matrix.sh
 
-# Core builds
 cargo check --all-targets -p hibana
 cargo check --no-default-features --lib -p hibana
 
-# Core test suites
 cargo test -p hibana --features std
 cargo test -p hibana --test ui --features std
 cargo test -p hibana --test policy_replay --features std
 cargo test -p hibana --test public_surface_guards --features std
 cargo test -p hibana --test substrate_surface --features std
 cargo test -p hibana --test docs_surface --features std
-
-# Nightly semantic public surface gate
-bash ./.github/scripts/check_hibana_public_api.sh
 ```
 
-Before pushing, verify these invariants in addition to green commands:
+These checks keep the public surface small, keep `no_std` healthy, and guard
+the compile-time guarantees described above.
+
+Before pushing, also verify these invariants:
 
 - `hibana/src/**/*.rs` stays protocol-neutral
 - route authority stays `Ack | Resolver | Poll`
 - static unprojectable route stays compile-error, not runtime rescue
-- typed projection and public-surface compile-fail tests stay intact
+- typed projection stays intact
 - substrate names do not leak back into the app surface
-
-## Integration Boundary
-
-`hibana` stops at the first typed app endpoint. Prefix composition, transport
-setup, and any integration-specific policy stay outside the crate and should
-arrive at app code only as the already-attached endpoint plus the public
-localside core API.

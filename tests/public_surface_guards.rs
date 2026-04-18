@@ -22,7 +22,7 @@ fn core_source_tree_no_longer_keeps_mgmt_or_epf_owners() {
     ] {
         assert!(
             !deleted.exists(),
-            "phase6 must remove the deleted core owner path: {}",
+            "core tree must remove the deleted owner path: {}",
             deleted.display()
         );
     }
@@ -61,7 +61,7 @@ fn substrate_tap_surface_stays_on_tapevent_only() {
     ] {
         assert!(
             !substrate_src.contains(forbidden),
-            "substrate tap surface must stay minimal after phase6: {forbidden}"
+            "substrate tap surface must stay minimal: {forbidden}"
         );
     }
 }
@@ -98,7 +98,7 @@ fn core_repo_checks_do_not_assume_sibling_checkout_layout() {
         ] {
             assert!(
                 !src.contains(forbidden),
-                "core repo checks must not assume sibling checkout layout after phase7: {path}: {forbidden}"
+                "core repo checks must not assume sibling checkout layout: {path}: {forbidden}"
             );
         }
     }

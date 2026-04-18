@@ -12,9 +12,9 @@ The root crate must not regrow:
 - typestate or endpoint-kernel internals
 - protocol-specific vocabulary
 
-The external companion crates are:
+External integrations may provide:
 
-- `hibana-epf` for the optional EPF appliance
-- `hibana-mgmt` for the ordinary management prefixes and payload owners
+- an optional policy appliance or VM
+- ordinary management prefixes and payload owners
 
-Those crates are not part of `hibana`'s root public surface.
+Those integrations are not part of `hibana`'s root public surface.

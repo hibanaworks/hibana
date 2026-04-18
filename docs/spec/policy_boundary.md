@@ -14,9 +14,6 @@ Core does not own:
 - management request/reply payloads
 - management choreography prefixes
 
-Those live in:
-
-- `hibana-epf`
-- `hibana-mgmt`
+Those live outside `hibana` core, in external integration crates or binaries.
 
 The public authority source remains `Ack | Resolver | Poll`.

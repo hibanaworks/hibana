@@ -50,12 +50,12 @@ fn compact_ws(input: &str) -> String {
 }
 
 #[test]
-fn projection_surface_still_builds_after_phase6_split() {
+fn projection_surface_still_builds() {
     let _: RoleProgram<'static, 0> = CLIENT_PROGRAM;
 }
 
 #[test]
-fn substrate_root_exposes_only_phase6_core_buckets() {
+fn substrate_root_exposes_only_core_buckets() {
     let substrate_rs = read("src/substrate.rs");
 
     for required in [
@@ -72,7 +72,7 @@ fn substrate_root_exposes_only_phase6_core_buckets() {
     ] {
         assert!(
             substrate_rs.contains(required),
-            "substrate surface must keep the phase6 core bucket: {required}"
+            "substrate surface must keep the core bucket: {required}"
         );
     }
 
@@ -108,7 +108,7 @@ fn runtime_and_lib_drop_incrate_mgmt_and_epf_modules() {
 }
 
 #[test]
-fn substrate_allowlist_tracks_phase6_boundary() {
+fn substrate_allowlist_tracks_core_boundary() {
     let allowlist = compact_ws(&read(".github/allowlists/substrate-public-api.txt"));
 
     for required in [
@@ -119,7 +119,7 @@ fn substrate_allowlist_tracks_phase6_boundary() {
     ] {
         assert!(
             allowlist.contains(required),
-            "substrate allowlist must track the surviving phase6 surface: {required}"
+            "substrate allowlist must track the surviving core surface: {required}"
         );
     }
 

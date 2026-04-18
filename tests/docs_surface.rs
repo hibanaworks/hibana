@@ -9,38 +9,47 @@ fn read(path: &str) -> String {
 }
 
 #[test]
-fn readme_tracks_phase7_external_repo_boundaries() {
+fn readme_stays_self_contained_and_hibana_scoped() {
     let readme = read("README.md");
 
     for required in [
+        "## Overview",
+        "## Quick Start",
+        "## App Surface",
+        "## How It Works",
+        "## Public Surfaces",
+        "## Protocol Integration",
+        "### Substrate Surface",
+        "### Transport",
+        "### SessionKit and Endpoint Attachment",
+        "### BindingSlot",
+        "### Policy",
+        "### Management Boundary",
+        "## Validation",
         "`hibana::substrate::wire::{Payload, WireEncode, WirePayload}`",
         "`hibana::substrate::policy::PolicySlot`",
         "`hibana::substrate::tap::TapEvent`",
-        "`hibana_mgmt::request_reply::PREFIX`",
-        "`hibana_mgmt::observe_stream::PREFIX`",
-        "`hibana_mgmt::ROLE_CONTROLLER`",
-        "`hibana_mgmt::ROLE_CLUSTER`",
-        "`hibana_mgmt::Request::Load(LoadRequest)`",
-        "`hibana_mgmt::Request::LoadAndActivate(LoadRequest)`",
-        "`hibana_mgmt::Request::Activate(SlotRequest)`",
-        "`hibana_mgmt::Request::Revert(SlotRequest)`",
-        "`hibana_mgmt::Request::Stats(SlotRequest)`",
-        "`hibana_epf::{Header, Slot}`",
-        "`https://github.com/hibanaworks/hibana-epf`",
-        "`https://github.com/hibanaworks/hibana-mgmt`",
-        "`hibana-cross-repo`",
-        "`https://github.com/hibanaworks/hibana-cross-repo`",
-        "`run_workspace_smoke.sh`",
+        "g::seq(MGMT_PREFIX, APP)",
     ] {
         assert!(
             readme.contains(required),
-            "README must spell the phase7 external repo boundary: {required}"
+            "README must stay self-contained and hibana-scoped: {required}"
         );
     }
 
     for forbidden in [
+        "## Constitution",
+        "Phase 7",
+        "Phase 0a",
         "`WireDecode`",
         "owned default path",
+        "hibana-quic",
+        "hibana_mgmt",
+        "hibana-mgmt",
+        "hibana_epf",
+        "hibana-epf",
+        "hibana-cross-repo",
+        "run_workspace_smoke.sh",
         "`hibana::substrate::mgmt`",
         "`hibana::substrate::policy::epf`",
         "`hibana::substrate::mgmt::request_reply::PREFIX`",
@@ -57,13 +66,13 @@ fn readme_tracks_phase7_external_repo_boundaries() {
     ] {
         assert!(
             !readme.contains(forbidden),
-            "README must not teach the deleted in-crate mgmt/epf paths: {forbidden}"
+            "README must not leak other-crate or internal-only wording: {forbidden}"
         );
     }
 }
 
 #[test]
-fn phase7_spec_docs_exist() {
+fn spec_docs_exist() {
     for required in [
         "docs/spec/public_surface.md",
         "docs/spec/projection_witness.md",
@@ -78,18 +87,18 @@ fn phase7_spec_docs_exist() {
         let full = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(required);
         assert!(
             full.exists(),
-            "phase7 spec doc must exist: {}",
+            "spec doc must exist: {}",
             full.display()
         );
     }
 }
 
 #[test]
-fn core_repo_no_longer_keeps_in_tree_cross_repo_harness() {
+fn core_repo_keeps_cross_repo_harness_outside_tree() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("integration/cross-repo");
     assert!(
         !path.exists(),
-        "phase4 must move cross-repo smoke out of the hibana repo: {}",
+        "cross-repo smoke must stay outside the hibana repo: {}",
         path.display()
     );
 }

@@ -1,34 +1,31 @@
 # Downstream Readiness
 
-Phase 7 treats `hibana`, `hibana-epf`, and `hibana-mgmt` as separate repository
-units.
+`hibana` core must be consumable as a standalone repository unit.
 
 Repository intent:
 
 - `hibana`: generic affine MPST core
-- `hibana-epf`: optional EPF appliance
-- `hibana-mgmt`: ordinary management prefixes and payload owners
+- external integrations: policy appliances, management protocols, and
+  transport/appkit compositions built around the core
 
 Clean split requirements:
 
-1. crate manifests use immutable GitHub repo revisions rather than path dependencies or floating branches
-2. repository metadata points at the final per-repo GitHub home
+1. downstream manifests use immutable revisions rather than path dependencies or floating branches
+2. repository metadata describes `hibana` as the protocol-neutral core rather than as an umbrella workspace
 3. `hibana` core tests and scripts do not assume sibling checkouts
-4. cross-repo smoke lives outside the core crate surface
+4. cross-crate smoke lives outside the core crate surface and outside this repo
 
-Dedicated integration repo:
+Composition testing boundary:
 
-- `hibana-cross-repo`: `https://github.com/hibanaworks/hibana-cross-repo`
+- the core repo is not the owner of cross-crate smoke
+- those composition tests belong to an external integration harness
 
-Required smoke lanes in that repo:
+Required smoke coverage in that harness:
 
-1. `hibana` + `hibana-mgmt`
-2. `hibana` + `hibana-epf`
-3. `hibana` + both siblings together
-4. current local branch verification through `hibana-cross-repo/run_workspace_smoke.sh`
-   so the dedicated harness exercises the in-flight sibling worktrees without
-   weakening the immutable manifest contract
+1. `hibana` plus an external management integration
+2. `hibana` plus an external policy integration
+3. `hibana` plus both integrations together
+4. branch-local verification without weakening the immutable manifest contract
 
-`hibana` core must not keep an in-tree cross-repo harness after the split is
-closed. The dedicated integration repo is the only owner of those composition
-tests.
+`hibana` core must not keep an in-tree cross-crate harness. Composition tests
+must stay outside the core repository.
