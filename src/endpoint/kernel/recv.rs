@@ -1,6 +1,11 @@
 //! Receive-path helpers for deterministic recv.
 
-use core::{future::poll_fn, task::Poll};
+use core::{
+    future::Future,
+    marker::PhantomData,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use super::{core::CursorEndpoint, lane_port};
 use crate::{
@@ -26,6 +31,95 @@ enum RecvPayloadSource<'a> {
 }
 
 type DecodedPayload<'a, M> = <<M as MessageSpec>::Payload as WirePayload>::Decoded<'a>;
+
+pub(crate) struct RecvFuture<
+    'a,
+    'r,
+    const ROLE: u8,
+    T: Transport + 'r,
+    U,
+    C,
+    E: EpochTable,
+    const MAX_RV: usize,
+    Mint,
+    B: BindingSlot + 'r,
+    M,
+> where
+    U: LabelUniverse,
+    C: Clock,
+    Mint: MintConfigMarker,
+    M: MessageSpec,
+    M::Payload: WirePayload,
+{
+    endpoint: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    desc: Option<RecvDescriptor>,
+    pending_recv: lane_port::PendingRecv<'r, T>,
+    _borrow: PhantomData<&'a mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>,
+    _msg: PhantomData<M>,
+}
+
+impl<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B, M>
+    RecvFuture<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker,
+    B: BindingSlot + 'r,
+    M: MessageSpec,
+    M::Payload: WirePayload,
+{
+    #[inline]
+    const fn new(endpoint: &'a mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>) -> Self {
+        Self {
+            endpoint: core::ptr::from_mut(endpoint),
+            desc: None,
+            pending_recv: lane_port::PendingRecv::new(),
+            _borrow: PhantomData,
+            _msg: PhantomData,
+        }
+    }
+}
+
+impl<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B, M> Future
+    for RecvFuture<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker,
+    B: BindingSlot + 'r,
+    M: MessageSpec,
+    M::Payload: WirePayload,
+{
+    type Output = RecvResult<DecodedPayload<'a, M>>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = unsafe { self.get_unchecked_mut() };
+        let endpoint = unsafe { &mut *this.endpoint };
+        let descriptor = match this.desc {
+            Some(descriptor) => descriptor,
+            None => {
+                let descriptor = endpoint.prepare_recv_descriptor(<M as MessageSpec>::LABEL)?;
+                this.desc = Some(descriptor);
+                descriptor
+            }
+        };
+        match endpoint.poll_recv_payload_source::<M>(descriptor, &mut this.pending_recv, cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(payload_source)) => {
+                this.desc = None;
+                Poll::Ready(endpoint.finish_recv_payload::<M>(descriptor, payload_source))
+            }
+            Poll::Ready(Err(err)) => {
+                this.desc = None;
+                Poll::Ready(Err(err))
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 struct RecvDescriptor {
@@ -271,35 +365,13 @@ where
         }
     }
 
-    pub fn recv_direct<M>(
+    pub(crate) fn recv_direct<M>(
         &mut self,
-    ) -> impl core::future::Future<Output = RecvResult<DecodedPayload<'_, M>>> + '_
+    ) -> RecvFuture<'_, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
     where
         M: MessageSpec,
         M::Payload: WirePayload,
     {
-        let mut desc = None;
-        let mut pending_recv = lane_port::PendingRecv::new();
-        poll_fn(move |cx| {
-            let descriptor = match desc {
-                Some(descriptor) => descriptor,
-                None => {
-                    let descriptor = self.prepare_recv_descriptor(<M as MessageSpec>::LABEL)?;
-                    desc = Some(descriptor);
-                    descriptor
-                }
-            };
-            match self.poll_recv_payload_source::<M>(descriptor, &mut pending_recv, cx) {
-                Poll::Pending => Poll::Pending,
-                Poll::Ready(Ok(payload_source)) => {
-                    desc = None;
-                    Poll::Ready(self.finish_recv_payload::<M>(descriptor, payload_source))
-                }
-                Poll::Ready(Err(err)) => {
-                    desc = None;
-                    Poll::Ready(Err(err))
-                }
-            }
-        })
+        RecvFuture::new(self)
     }
 }

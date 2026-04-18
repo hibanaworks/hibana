@@ -23,7 +23,10 @@ pub(crate) use self::registry::{
 pub(crate) use self::{builder::RoleTypestate, emit::phase_route_guard_for_built_state_for_role};
 #[allow(unused_imports)]
 pub(crate) use self::{
-    builder::{ARM_SHARED, MAX_FIRST_RECV_DISPATCH, RoleTypestateValue, ScopeRegion},
+    builder::{
+        ARM_SHARED, MAX_FIRST_RECV_DISPATCH, RoleTypestateInitStorage, RoleTypestateValue,
+        ScopeRegion,
+    },
     cursor::{LoopMetadata, LoopRole, PhaseCursor, PhaseCursorState},
     emit::{init_value_from_summary_for_role, phase_route_guard_for_state_for_role},
     emit_walk::RoleTypestateBuildScratch,
@@ -73,7 +76,7 @@ mod tests {
     use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
     use crate::eff::EffIndex;
     use crate::g::{self, Msg, Role};
-    use crate::global::compiled::{CompiledProgram, CompiledRoleImage};
+    use crate::global::compiled::{images::CompiledRoleImage, lowering::CompiledProgram};
     use crate::global::const_dsl::{PolicyMode, ScopeKind};
     use crate::global::role_program;
     use crate::global::role_program::{RoleProgram, project};
@@ -104,7 +107,7 @@ mod tests {
     where
         Mint: crate::control::cap::mint::MintConfigMarker,
     {
-        crate::global::compiled::with_compiled_role_image::<ROLE, _>(
+        crate::global::compiled::materialize::with_compiled_role_image::<ROLE, _>(
             crate::global::lowering_input(program),
             f,
         )

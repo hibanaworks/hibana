@@ -15,4 +15,7 @@ Implementation constraints:
 - no whole-lane rebuild in `offer()`
 - no whole-scope scan in `offer()`
 - pending transport futures are retained and re-polled, not recreated
-- preview ownership stays affine to the endpoint
+- `Endpoint` owns send/recv progress; `RouteBranch` owns the sole live
+  materialized preview for offer/decode
+- preview state is not duplicated between `Endpoint` and `RouteBranch`; the
+  endpoint only provides restore/commit authority for the branch-owned preview

@@ -5,11 +5,11 @@ use crate::global::{
     typestate::{RoleTypestateBuildScratch, StateIndex},
 };
 
+use super::super::images::{CompiledProgramImage, CompiledRoleImage};
 #[cfg(test)]
-use super::program::CompiledProgram;
-use super::program::CompiledProgramImage;
-use super::role::CompiledRoleImage;
-use super::{LoweringSummary, ProgramStamp};
+use super::super::lowering::program_owner::CompiledProgram;
+use super::super::lowering::{program_image_builder, role_image_builder};
+use super::super::lowering::{LoweringSummary, ProgramStamp};
 #[cfg(test)]
 use core::ptr;
 
@@ -49,7 +49,7 @@ impl<'a> RoleLoweringScratch<'a> {
     }
 
     #[inline(always)]
-    unsafe fn init_empty(&mut self) {
+    pub(crate) unsafe fn init_empty(&mut self) {
         unsafe {
             RoleTypestateBuildScratch::init_empty(self.typestate_build);
         }
@@ -432,18 +432,21 @@ pub(crate) unsafe fn init_compiled_program_image_from_summary(
     summary: &LoweringSummary,
 ) {
     unsafe {
-        CompiledProgramImage::init_from_summary(dst, summary);
+        program_image_builder::init_compiled_program_image_from_summary(dst, summary);
     }
 }
 
-pub(crate) unsafe fn init_compiled_role_image_from_summary<const ROLE: u8>(
+pub(crate) unsafe fn init_compiled_role_image_from_summary(
     dst: *mut CompiledRoleImage,
+    role: u8,
     summary: &LoweringSummary,
     scratch: &mut RoleLoweringScratch<'_>,
     footprint: RoleFootprint,
 ) {
     unsafe {
-        CompiledRoleImage::init_from_summary_for_program::<ROLE>(dst, summary, scratch, footprint);
+        role_image_builder::init_compiled_role_image_from_summary(
+            dst, role, summary, scratch, footprint,
+        );
     }
 }
 
@@ -507,7 +510,7 @@ pub(crate) fn with_compiled_role_image<const ROLE: u8, R>(
     let aligned = TransientLoweringLeaseStorage::align_up(base, align) as *mut CompiledRoleImage;
     debug_assert!((aligned as usize) + bytes <= base + storage.len());
     with_role_lowering_scratch(input, |summary, scratch| unsafe {
-        init_compiled_role_image_from_summary::<ROLE>(aligned, summary, scratch, footprint);
+        init_compiled_role_image_from_summary(aligned, ROLE, summary, scratch, footprint);
         let result = f(&*aligned);
         ptr::drop_in_place(aligned);
         result

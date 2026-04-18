@@ -6,7 +6,7 @@ use crate::endpoint::control::SessionControlCtx;
 use crate::endpoint::kernel::frontier_state::FrontierState;
 use crate::endpoint::kernel::inbox::BindingInbox;
 use crate::endpoint::kernel::route_state::RouteState;
-use crate::global::compiled::{CompiledRoleImage, ProgramImage};
+use crate::global::compiled::images::{CompiledRoleImage, ProgramImage};
 use crate::global::typestate::PhaseCursor;
 use crate::rendezvous::core::EndpointLeaseId;
 use crate::rendezvous::port::Port;
@@ -75,8 +75,8 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
         ::core::ptr::addr_of_mut!((*dst).public_slot_owned).write(public_slot_owned);
         ::core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
         ::core::ptr::addr_of_mut!((*dst).control).write(control);
-        ::core::ptr::addr_of_mut!((*dst).pending_branch_preview).write(None);
         ::core::ptr::addr_of_mut!((*dst).mint).write(mint.as_config());
+        ::core::ptr::addr_of_mut!((*dst).restored_binding_payload).write(None);
         ::core::ptr::addr_of_mut!((*dst).binding).write(binding);
     }
 }

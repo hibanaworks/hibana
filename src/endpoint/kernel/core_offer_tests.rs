@@ -8236,9 +8236,9 @@ fn loop_continue_then_nested_custom_route_right_send_stays_well_scoped() {
 }
 
 #[test]
-fn stashed_send_branch_preview_commits_ack_route_bookkeeping_on_flow_send() {
+fn send_preview_commits_ack_route_bookkeeping_on_flow_send() {
     run_offer_regression_test(
-        "stashed_send_branch_preview_commits_ack_route_bookkeeping_on_flow_send",
+        "send_preview_commits_ack_route_bookkeeping_on_flow_send",
         || {
             offer_fixture!(2048, clock, config);
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
@@ -8280,36 +8280,13 @@ fn stashed_send_branch_preview_commits_ack_route_bookkeeping_on_flow_send() {
                     );
 
                     controller.mark_scope_ready_arm(scope, 1);
+                    controller.record_scope_ack(
+                        scope,
+                        RouteDecisionToken::from_ack(Arm::new(1).expect("valid selected arm")),
+                    );
                     assert!(
                         controller.scope_has_ready_arm_evidence(scope),
                         "test requires pending scope evidence before send-arm commit"
-                    );
-
-                    let (meta, cursor_index) = controller
-                        .preview_flow_meta::<LoopContinueScopedRouteRightMsg>()
-                        .expect("preview right send arm")
-                        .into_parts();
-                    let branch = RouteBranch {
-                        label: meta.label,
-                        cursor_index,
-                        transport_payload_len: 0,
-                        transport_payload_lane: meta.lane,
-                        binding_channel: None,
-                        staged_payload: None,
-                        branch_meta: BranchMeta {
-                            scope_id: meta.scope,
-                            selected_arm: meta.route_arm.expect("selected arm for send preview"),
-                            lane_wire: meta.lane,
-                            eff_index: meta.eff_index,
-                            kind: BranchKind::ArmSendHint,
-                            route_source: RouteDecisionSource::Ack,
-                        },
-                        _cfg: PhantomData,
-                    };
-                    controller.stash_pending_branch_preview(branch);
-                    assert!(
-                        controller.pending_branch_preview.is_some(),
-                        "send-arm preview must remain stashed until flow().send() commits it"
                     );
 
                     {
@@ -8319,17 +8296,13 @@ fn stashed_send_branch_preview_commits_ack_route_bookkeeping_on_flow_send() {
                         let _ = poll_ready_ok(
                             &mut cx,
                             route_right_send.as_mut(),
-                            "send right arm after stashing preview",
+                            "send right arm after preview",
                         );
                     }
 
                     assert!(
-                        controller.pending_branch_preview.is_none(),
-                        "flow().send() must consume the matching stashed send-arm preview"
-                    );
-                    assert!(
                         !controller.scope_has_ready_arm_evidence(scope),
-                        "committing the stashed send-arm preview must clear ready-arm scope evidence"
+                        "flow().send() must clear ready-arm scope evidence after consuming the preview"
                     );
 
                     let saw_ack_route_decision = OFFER_TEST_TAP.with(|tap| unsafe {
@@ -8342,7 +8315,7 @@ fn stashed_send_branch_preview_commits_ack_route_bookkeeping_on_flow_send() {
                     });
                     assert!(
                         saw_ack_route_decision,
-                        "flow().send() must emit Ack route-decision observability when it consumes a stashed send-arm preview"
+                        "flow().send() must emit Ack route-decision observability when it consumes a send preview"
                     );
                 });
             });

@@ -15,7 +15,7 @@ pub use crate::observe::core::TapEvent;
 pub mod binding {
 pub use crate::binding::{ BindingSlot, Channel, ChannelDirection, ChannelKey, ChannelStore, IncomingClassification, NoBinding, TransportOpsError, };
 pub mod policy {
-pub use crate::control::cluster::core::{ DynamicResolution, ResolverContext, ResolverError, ResolverRef, };
+pub use super::cluster::core::{ DynamicResolution, ResolverContext, ResolverError, ResolverRef, };
 pub use crate::transport::context::{ ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider, };
 pub mod core {
 pub use crate::transport::context::core::{ CONGESTION_MARKS, CONGESTION_WINDOW, IN_FLIGHT_BYTES, LANE, LATENCY_US, LATEST_ACK_PN, PACING_INTERVAL_US, PTO_COUNT, QUEUE_DEPTH, RETRANSMISSIONS, RV_ID, SESSION_ID, SRTT_US, TAG, TRANSPORT_ALGORITHM, };
@@ -29,6 +29,6 @@ pub use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 pub use crate::control::cap::mint::{ CapShot, ControlResourceKind, GenericCapToken, ResourceKind, };
 pub use {One, Many};
 pub mod wire {
-pub use crate::transport::wire::{CodecError, Payload, WireDecode, WireEncode, WirePayload};
+pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 pub mod transport {
 pub use crate::transport::{ LocalDirection, Outgoing, SendMeta, TransportAlgorithm, TransportError, TransportEvent, TransportEventKind, TransportMetrics, TransportSnapshot, };

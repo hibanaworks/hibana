@@ -6,7 +6,7 @@
 
 use core::marker::PhantomData;
 
-use crate::global::compiled::{LoweringSummary, ProgramStamp, validate_all_roles};
+use crate::global::compiled::lowering::{LoweringSummary, ProgramStamp, validate_all_roles};
 use crate::global::const_dsl::{EffList, PolicyMode, ScopeId};
 use crate::global::steps::{
     LocalAction, LocalRecv, LocalSend, ParSteps, PolicyEligible, PolicySteps, RoleEq, RouteSteps,

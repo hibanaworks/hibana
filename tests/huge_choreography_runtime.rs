@@ -11,6 +11,8 @@ mod linear_program;
 mod localside;
 #[path = "../internal/pico_smoke/src/route_control_kinds.rs"]
 mod route_control_kinds;
+#[path = "../internal/pico_smoke/src/route_localside.rs"]
+mod route_localside;
 #[path = "support/runtime.rs"]
 mod runtime_support;
 
@@ -299,7 +301,7 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
                 NoBinding,
             )
             .expect("enter worker-left");
-        localside::controller_select::<{ HIGH_LANE_LEFT_CTRL }, HighLaneLeftKind, _, _, _, 2>(
+        route_localside::controller_select::<{ HIGH_LANE_LEFT_CTRL }, HighLaneLeftKind, _, _, _, 2>(
             &mut controller,
         );
         localside::controller_send_u8::<{ HIGH_LANE_LEFT_LABEL }, _, _, _, 2>(&mut controller, 7);
@@ -335,7 +337,7 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
                 NoBinding,
             )
             .expect("enter worker-right");
-        localside::controller_select::<{ HIGH_LANE_RIGHT_CTRL }, HighLaneRightKind, _, _, _, 2>(
+        route_localside::controller_select::<{ HIGH_LANE_RIGHT_CTRL }, HighLaneRightKind, _, _, _, 2>(
             &mut controller,
         );
         localside::controller_send_u8::<{ HIGH_LANE_RIGHT_LABEL }, _, _, _, 2>(&mut controller, 9);

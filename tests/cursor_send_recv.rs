@@ -4,7 +4,10 @@ mod runtime_support;
 #[path = "support/tls_ref.rs"]
 mod tls_ref_support;
 
-use core::{cell::UnsafeCell, mem::MaybeUninit};
+use core::{
+    cell::UnsafeCell,
+    mem::{MaybeUninit, size_of, size_of_val},
+};
 
 use common::TestTransport;
 use hibana::{
@@ -64,6 +67,9 @@ type TestKit = SessionKit<
     CounterClock,
     2,
 >;
+const ENDPOINT_BYTES_MAX: usize = 8;
+const SEND_FUTURE_BYTES_MAX: usize = 304;
+const RECV_FUTURE_BYTES_MAX: usize = 88;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
@@ -149,6 +155,58 @@ fn cursor_send_and_recv_roundtrip() {
                     .expect("recv succeeds");
                 assert_eq!(payload, 42u32);
                 assert!(transport_queue_is_empty(&transport));
+            },
+        );
+    });
+}
+
+#[test]
+fn localside_send_recv_sizes_stay_compact() {
+    with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let rv_id = cluster
+                    .add_rendezvous_from_config(Config::new(tap_buf, slab), transport)
+                    .expect("register rendezvous");
+
+                let sid = SessionId::new(3);
+                let mut origin_endpoint = cluster
+                    .enter(rv_id, sid, &ORIGIN_PROGRAM, NoBinding)
+                    .expect("origin endpoint");
+                let mut target_endpoint = cluster
+                    .enter(rv_id, sid, &TARGET_PROGRAM, NoBinding)
+                    .expect("target endpoint");
+
+                let send = origin_endpoint
+                    .flow::<Msg<1, u32>>()
+                    .expect("send flow")
+                    .send(&42);
+                let recv = target_endpoint.recv::<Msg<1, u32>>();
+
+                let endpoint_bytes = size_of::<hibana::Endpoint<'static, 0, TestKit>>();
+                let send_future_bytes = size_of_val(&send);
+                let recv_future_bytes = size_of_val(&recv);
+
+                assert!(
+                    endpoint_bytes <= ENDPOINT_BYTES_MAX,
+                    "endpoint handle regressed: {endpoint_bytes} > {ENDPOINT_BYTES_MAX}"
+                );
+                assert!(
+                    send_future_bytes <= SEND_FUTURE_BYTES_MAX,
+                    "send future regressed: {send_future_bytes} > {SEND_FUTURE_BYTES_MAX}"
+                );
+                assert!(
+                    recv_future_bytes <= RECV_FUTURE_BYTES_MAX,
+                    "recv future regressed: {recv_future_bytes} > {RECV_FUTURE_BYTES_MAX}"
+                );
+
+                drop(send);
+                drop(recv);
             },
         );
     });

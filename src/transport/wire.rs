@@ -1,13 +1,11 @@
 //! Transport codec helpers.
 //!
-//! This module intentionally stays tiny: it provides the fixed codec traits
-//! (`WireEncode` / `WireDecode`) used by control / mgmt payloads plus the
-//! transport-facing payload wrapper (`Payload`) and lightweight codec traits
-//! (`CodecError`, `WireEncode`, `WireDecode`). Protocol-specific transports
-//! map typestate decisions onto their native frame formats and do
-//! **not** put Hibana metadata on the wire. Application payloads are opaque
-//! byte slices; only control-plane messages implement the lightweight codecs
-//! defined here so that Hibana can stay `no_std` / `no_alloc`.
+//! The canonical payload contract is [`WirePayload`]. [`Payload`] is the
+//! transport-facing borrowed byte view passed into that contract. In-tree
+//! control/mgmt payloads implement by-value [`WirePayload`] directly when
+//! borrowed views are unnecessary.
+//! Protocol-specific transports map typestate decisions onto their native frame
+//! formats and do **not** put Hibana metadata on the wire.
 
 use core::{fmt, ops};
 
@@ -27,19 +25,6 @@ pub trait WireEncode {
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError>;
 }
 
-/// Trait for decoding borrowed payload slices without allocations.
-pub trait WireDecode<'a>: Sized {
-    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError>;
-}
-
-/// Helper trait for payloads that never borrow from the wire buffer (used by
-/// control/mgmt messages). Application payloads are free to be raw byte slices;
-/// only Hibana-defined control planes implement this trait so that codec logic
-/// stays allocation-free.
-pub trait WireDecodeOwned: Sized {
-    fn decode_owned(input: &[u8]) -> Result<Self, CodecError>;
-}
-
 /// Payload owner contract for app-facing receive/decode paths.
 ///
 /// `Payload` remains the send-side owner that `flow().send()` accepts by
@@ -49,28 +34,6 @@ pub trait WirePayload: WireEncode {
     type Decoded<'a>;
 
     fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError>;
-}
-
-impl<T> WireDecodeOwned for T
-where
-    for<'a> T: WireDecode<'a>,
-{
-    #[inline]
-    fn decode_owned(input: &[u8]) -> Result<Self, CodecError> {
-        <Self as WireDecode>::decode_from(input)
-    }
-}
-
-impl<T> WirePayload for T
-where
-    T: WireEncode + WireDecodeOwned,
-{
-    type Decoded<'a> = T;
-
-    #[inline]
-    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
-        Self::decode_owned(input.as_bytes())
-    }
 }
 
 impl WireEncode for () {
@@ -83,8 +46,10 @@ impl WireEncode for () {
     }
 }
 
-impl<'a> WireDecode<'a> for () {
-    fn decode_from(_input: &'a [u8]) -> Result<Self, CodecError> {
+impl WirePayload for () {
+    type Decoded<'a> = Self;
+
+    fn decode_payload<'a>(_input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
         Ok(())
     }
 }
@@ -103,12 +68,15 @@ impl WireEncode for bool {
     }
 }
 
-impl<'a> WireDecode<'a> for bool {
-    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
-        if input.is_empty() {
+impl WirePayload for bool {
+    type Decoded<'a> = Self;
+
+    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
+        let bytes = input.as_bytes();
+        if bytes.is_empty() {
             return Err(CodecError::Truncated);
         }
-        match input[0] {
+        match bytes[0] {
             0 => Ok(false),
             1 => Ok(true),
             _ => Err(CodecError::Invalid("boolean must be 0 or 1")),
@@ -132,13 +100,16 @@ macro_rules! impl_wire_for_int {
             }
         }
 
-        impl<'a> WireDecode<'a> for $ty {
-            fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
-                if input.len() < $len {
+        impl WirePayload for $ty {
+            type Decoded<'a> = Self;
+
+            fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
+                let bytes = input.as_bytes();
+                if bytes.len() < $len {
                     return Err(CodecError::Truncated);
                 }
                 let mut buf = [0u8; $len];
-                buf.copy_from_slice(&input[..$len]);
+                buf.copy_from_slice(&bytes[..$len]);
                 Ok(<$ty>::from_be_bytes(buf))
             }
         }
@@ -170,9 +141,11 @@ impl WireEncode for &[u8] {
     }
 }
 
-impl<'a> WireDecode<'a> for &'a [u8] {
-    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
-        Ok(input)
+impl WirePayload for &[u8] {
+    type Decoded<'a> = &'a [u8];
+
+    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
+        Ok(input.as_bytes())
     }
 }
 
@@ -190,13 +163,16 @@ impl<const N: usize> WireEncode for [u8; N] {
     }
 }
 
-impl<'a, const N: usize> WireDecode<'a> for [u8; N] {
-    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
-        if input.len() < N {
+impl<const N: usize> WirePayload for [u8; N] {
+    type Decoded<'a> = Self;
+
+    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
+        let bytes = input.as_bytes();
+        if bytes.len() < N {
             return Err(CodecError::Truncated);
         }
         let mut buf = [0u8; N];
-        buf.copy_from_slice(&input[..N]);
+        buf.copy_from_slice(&bytes[..N]);
         Ok(buf)
     }
 }

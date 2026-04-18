@@ -236,9 +236,9 @@ pub mod cap {
     pub use crate::control::types::{Many, One};
 }
 
-/// Canonical wire codec surface.
+/// Canonical wire payload surface.
 pub mod wire {
-    pub use crate::transport::wire::{CodecError, Payload, WireDecode, WireEncode, WirePayload};
+    pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 }
 
 /// Canonical transport I/O surface plus observation/detail owners.
@@ -293,6 +293,13 @@ mod tests {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/internal/pico_smoke/src/localside.rs"
+        ));
+    }
+    mod route_localside {
+        extern crate self as hibana;
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/internal/pico_smoke/src/route_localside.rs"
         ));
     }
     mod route_control_kinds {

@@ -32,7 +32,7 @@ use std::{
 use crate::{
     observe::ids,
     runtime::consts::{RING_BUFFER_SIZE, RING_EVENTS},
-    transport::wire::{CodecError, WireDecode, WireEncode},
+    transport::wire::{CodecError, Payload, WireEncode, WirePayload},
 };
 
 /// 20-byte tap record with causal key tracking for roll-π reversibility.
@@ -136,18 +136,21 @@ impl WireEncode for TapEvent {
     }
 }
 
-impl<'a> WireDecode<'a> for TapEvent {
-    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
-        if input.len() < 20 {
+impl WirePayload for TapEvent {
+    type Decoded<'a> = Self;
+
+    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
+        let bytes = input.as_bytes();
+        if bytes.len() < 20 {
             return Err(CodecError::Truncated);
         }
         Ok(Self {
-            ts: u32::from_be_bytes([input[0], input[1], input[2], input[3]]),
-            id: u16::from_be_bytes([input[4], input[5]]),
-            causal_key: u16::from_be_bytes([input[6], input[7]]),
-            arg0: u32::from_be_bytes([input[8], input[9], input[10], input[11]]),
-            arg1: u32::from_be_bytes([input[12], input[13], input[14], input[15]]),
-            arg2: u32::from_be_bytes([input[16], input[17], input[18], input[19]]),
+            ts: u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            id: u16::from_be_bytes([bytes[4], bytes[5]]),
+            causal_key: u16::from_be_bytes([bytes[6], bytes[7]]),
+            arg0: u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
+            arg1: u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]),
+            arg2: u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]),
         })
     }
 }

@@ -9,6 +9,8 @@ mod huge_program;
 mod linear_program;
 mod localside;
 #[cfg(not(feature = "linear-heavy"))]
+mod route_localside;
+#[cfg(not(feature = "linear-heavy"))]
 mod route_control_kinds;
 
 use core::{

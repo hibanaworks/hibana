@@ -4,17 +4,17 @@ error[E0080]: evaluation panicked: route scope recorded a controller policy anno
   |         validate_all_roles(&summary);
   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::ValidatedProgram::<hibana::g::advanced::steps::RouteSteps<hibana::g::advanced::steps::SeqSteps<hibana::g::advanced::steps::SeqSteps<hibana::g::advanced::steps::PolicySteps<hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<48>, hibana::substrate::cap::GenericCapToken<hibana::substrate::cap::advanced::LoopContinueKind>, hibana::g::advanced::CanonicalControl<hibana::substrate::cap::advanced::LoopContinueKind>>>, hibana::g::advanced::steps::StepNil>, 10>, hibana::g::advanced::steps::StepNil>, hibana::g::advanced::steps::RouteSteps<hibana::g::advanced::steps::SeqSteps<hibana::g::advanced::steps::PolicySteps<hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<48>, hibana::substrate::cap::GenericCapToken<hibana::substrate::cap::advanced::LoopContinueKind>, hibana::g::advanced::CanonicalControl<hibana::substrate::cap::advanced::LoopContinueKind>>>, hibana::g::advanced::steps::StepNil>, 10>, hibana::g::advanced::steps::StepNil>, hibana::g::advanced::steps::PolicySteps<hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<49>, hibana::substrate::cap::GenericCapToken<hibana::substrate::cap::advanced::LoopBreakKind>, hibana::g::advanced::CanonicalControl<hibana::substrate::cap::advanced::LoopBreakKind>>>, hibana::g::advanced::steps::StepNil>, 10>>>, hibana::g::advanced::steps::PolicySteps<hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<49>, hibana::substrate::cap::GenericCapToken<hibana::substrate::cap::advanced::LoopBreakKind>, hibana::g::advanced::CanonicalControl<hibana::substrate::cap::advanced::LoopBreakKind>>>, hibana::g::advanced::steps::StepNil>, 10>>>::SUMMARY` failed inside this call
   |
-note: inside `hibana::global::compiled::seal::validate_all_roles`
+note: inside `hibana::global::compiled::lowering::seal::validate_all_roles`
  --> src/global/compiled/lowering/seal.rs
   |
   |     ProjectionSeal::<0>::validate_compiled_layout(summary.view());
   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_compiled_layout`
+note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<0>::validate_compiled_layout`
  --> src/global/compiled/lowering/seal.rs
   |
   |         Self::validate_route_projection_guarantees(view);
   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_route_projection_guarantees`
+note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<0>::validate_route_projection_guarantees`
  --> src/global/compiled/lowering/seal.rs
   |
   | /                 Self::validate_route_scope(
@@ -25,7 +25,7 @@ note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_rout
   | |                     marker.linger,
   | |                 );
   | |_________________^
-note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_route_scope`
+note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<0>::validate_route_scope`
  --> src/global/compiled/lowering/seal.rs
   |
   | /         Self::validate_route_policy_consistency(
@@ -36,7 +36,7 @@ note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_rout
   | |             arm1_end,
   | |         );
   | |_________^
-note: inside `hibana::global::compiled::seal::ProjectionSeal::<0>::validate_route_policy_consistency`
+note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<0>::validate_route_policy_consistency`
  --> src/global/compiled/lowering/seal.rs
   |
   |                 panic!("route scope recorded a controller policy annotation on only one arm");

@@ -116,8 +116,10 @@ pub(crate) use self::core::cursor_endpoint_storage_layout;
 #[allow(unused_imports)]
 pub(super) use self::core::*;
 pub(crate) use self::core::{
-    CanonicalTokenProvider, CursorEndpoint, RouteBranch, SendPreview, SendWithPreviewFuture,
+    CanonicalTokenProvider, CursorEndpoint, SendPreview, SendWithPreviewFuture,
 };
+pub(crate) use self::decode::RouteDecodeFuture;
 pub(crate) use self::frontier::FrontierScratchLayout;
 pub(crate) use self::frontier::MAX_ROUTE_ARM_STACK;
 pub(crate) use self::layout::EndpointArenaLayout;
+pub(crate) use self::offer::RouteOfferFuture;

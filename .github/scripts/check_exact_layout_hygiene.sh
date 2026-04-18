@@ -235,7 +235,7 @@ check_required \
   src/global/compiled/images/role.rs
 
 check_required \
-  "phase_lane_words: *const LaneWord," \
+  "phase_lane_words_offset: u16," \
   "compiled role image must own exact phase lane-word storage" \
   src/global/compiled/images/role.rs
 

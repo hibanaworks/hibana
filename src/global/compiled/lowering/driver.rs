@@ -7,11 +7,11 @@ use crate::{
     },
 };
 
-use super::program::{
+use super::super::images::program::{
     CompiledProgramCounts, MAX_COMPILED_PROGRAM_CONTROLS, MAX_COMPILED_PROGRAM_CP_EFFECTS,
     MAX_COMPILED_PROGRAM_RESOURCES, MAX_COMPILED_PROGRAM_SCOPES, MAX_COMPILED_PROGRAM_TAP_EVENTS,
-    control_scope_mask_bit,
 };
+use super::program_lowering::control_scope_mask_bit;
 
 const MAX_LOWERING_NODES: usize = crate::eff::meta::MAX_EFF_NODES;
 const CONTROL_SPEC_MASK_BYTES: usize = (MAX_LOWERING_NODES + 7) / 8;

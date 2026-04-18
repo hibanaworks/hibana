@@ -9,7 +9,7 @@ use core::{mem::MaybeUninit, ptr};
 use crate::{
     eff::EffIndex,
     global::{
-        compiled::DynamicPolicySite,
+        compiled::images::DynamicPolicySite,
         const_dsl::{ControlScopeKind, PolicyMode},
     },
 };
@@ -539,7 +539,7 @@ mod tests {
             0,
             crate::control::cap::mint::MintConfig,
         > = crate::g::advanced::project(&program);
-        crate::global::compiled::with_compiled_program(lowering_input(&projected), |facts| {
+        crate::global::compiled::materialize::with_compiled_program(lowering_input(&projected), |facts| {
             let projected = facts.effect_envelope();
             assert!(projected.is_empty());
         });
@@ -566,7 +566,7 @@ mod tests {
             0,
             crate::control::cap::mint::MintConfig,
         > = crate::g::advanced::project(&program);
-        crate::global::compiled::with_compiled_program(lowering_input(&projected), |facts| {
+        crate::global::compiled::materialize::with_compiled_program(lowering_input(&projected), |facts| {
             let projected = facts.effect_envelope();
             assert_eq!(projected.cp_effects().count(), 1);
             assert!(projected.tap_events().count() >= 1);

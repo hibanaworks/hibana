@@ -162,7 +162,7 @@ use hibana::g;
 let outbound = endpoint.flow::<g::Msg<1, u32>>()?.send(&7).await?;
 let inbound = endpoint.recv::<g::Msg<2, u32>>().await?;
 
-let branch = endpoint.offer().await?;
+let mut branch = endpoint.offer().await?;
 match branch.label() {
     30 => {
         let payload = branch.decode::<g::Msg<30, [u8; 4]>>().await?;
@@ -316,7 +316,7 @@ Everyday substrate owners:
 - `hibana::substrate::policy::PolicySlot`
 - `hibana::substrate::tap::TapEvent`
 - `hibana::substrate::cap::{CapShot, ControlResourceKind, GenericCapToken, Many, One, ResourceKind}`
-- `hibana::substrate::wire::{Payload, WireDecode, WireEncode, WirePayload}`
+- `hibana::substrate::wire::{Payload, WireEncode, WirePayload}`
 - `hibana::substrate::transport::{Outgoing, TransportError, TransportEvent, TransportEventKind, TransportSnapshot}`
 - `hibana_mgmt::{request_reply::PREFIX, observe_stream::PREFIX, ROLE_CLUSTER, ROLE_CONTROLLER}`
 
@@ -341,10 +341,13 @@ boundary.
 
 The `hibana` repo no longer hard-codes a sibling-checkout assumption in its
 public-surface guards or boundary scripts. Cross-repo smoke and compositional
-tests now belong in `integration/cross-repo/`, which is structured so it can be
-lifted into a dedicated integration repository without changing the published
-crate surfaces. The split crates are consumed through immutable GitHub
+tests now belong in the dedicated `hibana-cross-repo` repository at
+`https://github.com/hibanaworks/hibana-cross-repo`, not under the `hibana`
+tree itself. The split crates are consumed there through immutable GitHub
 revisions, so pinned downstream builds do not float on sibling `main` heads.
+Current branch validation runs there through `run_workspace_smoke.sh`, which
+overlays the local sibling worktrees without changing the immutable manifest
+contract.
 
 ## Protocol-Implementor Walkthrough
 
@@ -922,13 +925,14 @@ through localside send paths such as `flow().send()`.
 
 ## Wire and Transport Observation
 
-`hibana::substrate::wire::{Payload, WireDecode, WireEncode, WirePayload}` is the canonical
-codec seam. `hibana::substrate::transport::{TransportEvent, TransportEventKind,
+`hibana::substrate::wire::{Payload, WireEncode, WirePayload}` is the canonical
+payload seam. `hibana::substrate::transport::{TransportEvent, TransportEventKind,
 TransportSnapshot}` is the canonical transport observation seam.
 
 If a payload type crosses the wire and is not already a codec type, implement
-`WireEncode` and either `WireDecode` (owned default path) or `WirePayload`
-when `recv()` / `decode()` should yield a borrowed payload view.
+`WireEncode` plus `WirePayload`. Borrowed payload views use
+`type Decoded<'a> = ...`; fixed-width by-value payloads stay on the same
+contract with `type Decoded<'a> = Self`.
 
 Transport telemetry is surfaced two ways:
 
@@ -1104,6 +1108,7 @@ descriptor-driven localside send/recv/offer/decode and policy hot paths.
 bash ./.github/scripts/check_policy_surface_hygiene.sh
 bash ./.github/scripts/check_surface_hygiene.sh
 bash ./.github/scripts/check_lowering_hygiene.sh
+bash ./.github/scripts/check_frozen_image_hygiene.sh
 bash ./.github/scripts/check_summary_authority_hygiene.sh
 bash ./.github/scripts/check_exact_layout_hygiene.sh
 bash ./.github/scripts/check_route_frontier_owner.sh

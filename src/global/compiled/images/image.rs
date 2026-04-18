@@ -5,10 +5,10 @@ use crate::{
 };
 
 use super::{
-    ControlSemanticsTable, ProgramStamp,
-    program::{CompiledProgramImage, DynamicPolicySite},
+    program::{CompiledProgramImage, ControlSemanticsTable, DynamicPolicySite},
     role::CompiledRoleImage,
 };
+use crate::global::compiled::lowering::ProgramStamp;
 
 /// Sealed runtime owner for immutable program-wide compiled facts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

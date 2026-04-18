@@ -101,9 +101,9 @@ use crate::control::automaton::txn::{InAcked, InBegin, NoopTap};
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 use crate::eff::EffIndex;
 #[cfg(test)]
-use crate::global::compiled::CompiledProgramImage;
+use crate::global::compiled::images::CompiledProgramImage;
 use crate::global::{
-    compiled::{CompiledRoleImage, ProgramImage, RoleImageSlice},
+    compiled::images::{CompiledRoleImage, ProgramImage, RoleImageSlice},
     const_dsl::{PolicyMode, ScopeId},
 };
 use crate::observe::scope::ScopeTrace;
@@ -2250,11 +2250,11 @@ where
         storage = unsafe { storage.add(guard) };
         len -= guard;
         unsafe {
-            crate::global::compiled::with_lowering_lease(
+            crate::global::compiled::materialize::with_lowering_lease(
                 lowering,
                 storage,
                 len,
-                crate::global::compiled::LoweringLeaseMode::SummaryOnly,
+                crate::global::compiled::materialize::LoweringLeaseMode::SummaryOnly,
                 |lease| rv.materialize_program_image_from_summary(program.stamp(), lease.summary()),
             )
         }
@@ -2312,37 +2312,58 @@ where
         len -= guard;
 
         unsafe {
-            crate::global::compiled::with_lowering_lease(
+            crate::global::compiled::materialize::with_lowering_lease(
                 lowering,
                 storage,
                 len,
-                crate::global::compiled::LoweringLeaseMode::SummaryAndRoleScratch,
+                crate::global::compiled::materialize::LoweringLeaseMode::SummaryAndRoleScratch,
                 |lease| {
                     let (summary, scratch) = lease.into_parts();
-                    let mut scratch =
-                        scratch.expect("role scratch requested by lowering lease mode");
-                    let program_image = if has_program {
-                        rv.program_image(program.stamp())
-                    } else {
-                        rv.materialize_program_image_from_summary(program.stamp(), summary)
-                    }?;
-                    let role_image = if has_role {
-                        rv.role_image::<ROLE>(program.stamp())
-                    } else {
-                        rv.materialize_role_image_from_summary_for_program::<ROLE>(
-                            program.stamp(),
-                            summary,
-                            &mut scratch,
-                            lowering.footprint(),
-                        )
-                    }?;
-                    let program_image = ProgramImage::from_raw(program.stamp(), program_image);
-                    Some(RoleImageSlice::from_raw(program_image, role_image))
+                    Self::materialize_role_image_slice_from_lease::<ROLE, Mint>(
+                        rv,
+                        program.stamp(),
+                        has_program,
+                        has_role,
+                        lowering.footprint(),
+                        summary,
+                        &mut scratch.expect("role scratch requested by lowering lease mode"),
+                    )
                 },
             )
         }
         .flatten()
         .ok_or(AttachError::Control(CpError::ResourceExhausted))
+    }
+
+    #[inline(never)]
+    fn materialize_role_image_slice_from_lease<const ROLE: u8, Mint>(
+        rv: &mut crate::rendezvous::core::Rendezvous<'_, 'cfg, T, U, C>,
+        stamp: crate::global::compiled::lowering::ProgramStamp,
+        has_program: bool,
+        has_role: bool,
+        footprint: crate::global::role_program::RoleFootprint,
+        summary: &crate::global::compiled::lowering::LoweringSummary,
+        scratch: &mut crate::global::compiled::materialize::RoleLoweringScratch<'_>,
+    ) -> Option<RoleImageSlice<ROLE>>
+    where
+        Mint: MintConfigMarker,
+    {
+        let program_image = if has_program {
+            rv.program_image(stamp)
+        } else {
+            unsafe { rv.materialize_program_image_from_summary(stamp, summary) }
+        }?;
+        let role_image = if has_role {
+            rv.role_image::<ROLE>(stamp)
+        } else {
+            unsafe {
+                rv.materialize_role_image_from_summary_for_program_dyn(
+                    stamp, ROLE, summary, scratch, footprint,
+                )
+            }
+        }?;
+        let program_image = unsafe { ProgramImage::from_raw(stamp, program_image) };
+        Some(unsafe { RoleImageSlice::from_raw(program_image, role_image) })
     }
 
     #[cfg(test)]
@@ -4040,7 +4061,6 @@ where
                 control_guard,
             );
         }
-
         let init_result = self.attach_secondary_endpoint_lanes::<ROLE, Mint, B>(
             dst,
             rv_id,
@@ -4062,7 +4082,6 @@ where
         unsafe {
             crate::endpoint::kernel::endpoint_init::finish_init(dst);
         }
-
         Ok(())
     }
 
@@ -4401,6 +4420,13 @@ mod tests {
             "/internal/pico_smoke/src/localside.rs"
         ));
     }
+    mod route_localside {
+        extern crate self as hibana;
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/internal/pico_smoke/src/route_localside.rs"
+        ));
+    }
     mod route_control_kinds {
         extern crate self as hibana;
         include!(concat!(
@@ -4419,7 +4445,7 @@ mod tests {
     use crate::control::types::{Generation, Lane, SessionId};
     use crate::g::{self, Msg, Role};
     use crate::global::CanonicalControl;
-    use crate::global::compiled::LoweringSummary;
+    use crate::global::compiled::lowering::LoweringSummary;
     use crate::global::program::Program;
     use crate::global::role_program;
     use crate::global::steps::{PolicySteps, SendStep, StepCons, StepNil};
@@ -4720,7 +4746,7 @@ mod tests {
                     role_program::project(program);
                 let lowering = crate::global::lowering_input(&projected);
                 let summary = lowering.summary();
-                let counts = CompiledProgramImage::counts(&summary);
+                let counts = summary.compiled_program_counts();
                 let program_bytes = CompiledProgramImage::persistent_bytes_for_counts(counts);
                 let role_image = cluster
                     .materialize_test_role_image::<ROLE, _, MintConfig>(rv_id, &projected)
@@ -5000,7 +5026,7 @@ mod tests {
         let route_heavy_worker: role_program::RoleProgram<'_, 1, MintConfig> =
             role_program::project(&ROUTE_HEAVY_PROGRAM);
         let role_compile_scratch_bytes =
-            crate::global::compiled::role_lowering_scratch_storage_bytes(
+            crate::global::compiled::materialize::role_lowering_scratch_storage_bytes(
                 crate::global::lowering_input(&route_heavy_worker).footprint(),
             );
         let endpoint_storage_bytes = size_of::<
@@ -6183,7 +6209,7 @@ mod tests {
                             )
                             .expect("register resolver without a free cache slot");
 
-                        crate::global::compiled::with_compiled_program(
+                        crate::global::compiled::materialize::with_compiled_program(
                             crate::global::lowering_input(&route_policy_projected_two),
                             |compiled| {
                                 let site = compiled

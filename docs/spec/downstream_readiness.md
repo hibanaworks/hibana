@@ -16,6 +16,19 @@ Clean split requirements:
 3. `hibana` core tests and scripts do not assume sibling checkouts
 4. cross-repo smoke lives outside the core crate surface
 
-The staging location for cross-repo smoke in this checkout is
-`integration/cross-repo/`. It is intentionally self-contained so it can be
-promoted into a dedicated integration repository without changing crate APIs.
+Dedicated integration repo:
+
+- `hibana-cross-repo`: `https://github.com/hibanaworks/hibana-cross-repo`
+
+Required smoke lanes in that repo:
+
+1. `hibana` + `hibana-mgmt`
+2. `hibana` + `hibana-epf`
+3. `hibana` + both siblings together
+4. current local branch verification through `hibana-cross-repo/run_workspace_smoke.sh`
+   so the dedicated harness exercises the in-flight sibling worktrees without
+   weakening the immutable manifest contract
+
+`hibana` core must not keep an in-tree cross-repo harness after the split is
+closed. The dedicated integration repo is the only owner of those composition
+tests.

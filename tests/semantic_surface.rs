@@ -533,12 +533,19 @@ fn render_where_predicate(predicate: &Value) -> String {
         );
         return format!("{}: {}", render_type(&bound["type"]), bounds);
     }
-    if let Some(region) = predicate.get("region_predicate") {
+    if let Some(region) = predicate
+        .get("region_predicate")
+        .or_else(|| predicate.get("lifetime_predicate"))
+    {
         let lifetime = region["lifetime"].as_str().unwrap_or("'_");
+        let bounds_value = region
+            .get("bounds")
+            .or_else(|| region.get("outlives"))
+            .expect("lifetime predicate must expose bounds");
         let bounds = join_strs(
-            region["bounds"]
+            bounds_value
                 .as_array()
-                .expect("region predicate must expose bounds")
+                .expect("lifetime predicate bounds must be an array")
                 .iter()
                 .filter_map(Value::as_str),
             " + ",
@@ -559,6 +566,13 @@ fn render_bound(bound: &Value) -> String {
             .to_owned();
     }
     panic!("unsupported generic bound: {bound:?}");
+}
+
+fn render_bound_option(bound: &Value) -> Option<String> {
+    if bound.get("use").is_some() {
+        return None;
+    }
+    Some(render_bound(bound))
 }
 
 fn render_type(ty: &Value) -> String {
@@ -622,6 +636,16 @@ fn render_type(ty: &Value) -> String {
             "const"
         };
         return format!("*{} {}", mutable, render_type(&raw_pointer["type"]));
+    }
+    if let Some(impl_trait) = ty.get("impl_trait").and_then(Value::as_array) {
+        return format!(
+            "impl {}",
+            join_display(
+                impl_trait.iter().filter_map(render_bound_option),
+                " + ",
+                |part| part,
+            )
+        );
     }
     if let Some(qualified) = ty.get("qualified_path") {
         let trait_path = render_path(&qualified["trait"]);
@@ -688,13 +712,19 @@ fn render_args(args: &Value) -> String {
         return String::new();
     }
     if let Some(angle) = args.get("angle_bracketed") {
+        let generic_args = angle["args"]
+            .as_array()
+            .expect("angle bracketed args must be an array");
+        let constraints = angle["constraints"]
+            .as_array()
+            .expect("angle bracketed constraints must be an array");
         let rendered = join_display(
-            angle["args"]
-                .as_array()
-                .expect("angle bracketed args must be an array")
-                .iter(),
+            generic_args
+                .iter()
+                .map(render_generic_arg)
+                .chain(constraints.iter().map(render_generic_constraint)),
             ", ",
-            render_generic_arg,
+            |part| part,
         );
         return format!("<{}>", rendered);
     }
@@ -737,6 +767,35 @@ fn render_generic_arg(arg: &Value) -> String {
         return "_".to_owned();
     }
     panic!("unsupported generic arg: {arg:?}");
+}
+
+fn render_generic_constraint(constraint: &Value) -> String {
+    let binding = constraint
+        .get("binding")
+        .expect("generic constraint must expose binding");
+    let name = binding["name"]
+        .as_str()
+        .or_else(|| constraint["name"].as_str())
+        .unwrap_or("_");
+    let args = binding.get("args").map(render_args).unwrap_or_default();
+    let head = format!("{name}{args}");
+    if let Some(equality) = binding.get("equality") {
+        return format!("{head} = {}", render_type(&equality["type"]));
+    }
+    if let Some(bounds) = binding.get("bounds") {
+        return format!(
+            "{head}: {}",
+            join_display(
+                bounds
+                    .as_array()
+                    .expect("generic constraint bounds must be an array")
+                    .iter(),
+                " + ",
+                render_bound,
+            )
+        );
+    }
+    panic!("unsupported generic constraint: {constraint:?}");
 }
 
 fn render_use_group(group: &[&Value], mode: SurfaceMode<'_>) -> String {

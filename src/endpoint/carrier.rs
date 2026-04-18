@@ -51,10 +51,22 @@ pub(crate) trait SessionKitFamily {
         E: crate::control::cap::mint::EpochTable + 'r,
         Mint: crate::control::cap::mint::MintConfigMarker,
         B: crate::binding::BindingSlot + 'r;
+
+    unsafe fn restore_materialized_route_branch<'r, const ROLE: u8, E, Mint, B>(
+        endpoint: *mut Self::KernelCursorEndpoint<'r, ROLE, E, Mint, B>,
+        branch: Self::KernelRouteBranch<'r, ROLE, E, Mint, B>,
+    ) where
+        Self: 'r,
+        E: crate::control::cap::mint::EpochTable + 'r,
+        Mint: crate::control::cap::mint::MintConfigMarker,
+        B: crate::binding::BindingSlot + 'r;
 }
 
 pub(crate) type KernelCursorEndpoint<'r, const ROLE: u8, K, E, Mint, B> =
     <K as SessionKitFamily>::KernelCursorEndpoint<'r, ROLE, E, Mint, B>;
+
+pub(crate) type KernelRouteBranch<'r, const ROLE: u8, K, E, Mint, B> =
+    <K as SessionKitFamily>::KernelRouteBranch<'r, ROLE, E, Mint, B>;
 
 impl<'cfg, T, U, C, const MAX_RV: usize> SessionKitFamily
     for crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>
@@ -87,4 +99,18 @@ where
         E: crate::control::cap::mint::EpochTable + 'r,
         Mint: crate::control::cap::mint::MintConfigMarker,
         B: crate::binding::BindingSlot + 'r;
+
+    unsafe fn restore_materialized_route_branch<'r, const ROLE: u8, E, Mint, B>(
+        endpoint: *mut Self::KernelCursorEndpoint<'r, ROLE, E, Mint, B>,
+        branch: Self::KernelRouteBranch<'r, ROLE, E, Mint, B>,
+    ) where
+        Self: 'r,
+        E: crate::control::cap::mint::EpochTable + 'r,
+        Mint: crate::control::cap::mint::MintConfigMarker,
+        B: crate::binding::BindingSlot + 'r,
+    {
+        unsafe {
+            (&mut *endpoint).restore_materialized_route_branch(branch);
+        }
+    }
 }

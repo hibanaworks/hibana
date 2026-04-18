@@ -4,7 +4,8 @@
 //! according to the typestate cursor obtained from `RoleProgram` projection.
 
 use core::{
-    convert::TryFrom, future::Future, marker::PhantomData, ops::ControlFlow, pin::Pin, task::Poll,
+    convert::TryFrom, future::Future, marker::PhantomData, ops::ControlFlow, pin::Pin,
+    task::Poll,
 };
 
 use super::authority::{
@@ -15,14 +16,14 @@ use super::authority::{
 use super::evidence::{ScopeEvidence, ScopeLabelMeta, ScopeLoopMeta};
 use super::frontier::*;
 use super::frontier_state::FrontierState;
-use super::inbox::BindingInbox;
+use super::inbox::{BindingInbox, PackedIncomingClassification};
 use super::lane_port;
 use super::lane_slots::LaneSlotArray;
 use super::layout::{EndpointArenaLayout, LeasedState};
 use super::offer::RouteFrontierMachine;
 use super::offer::*;
 use super::route_state::RouteState;
-use crate::binding::{BindingSlot, NoBinding};
+use crate::binding::{BindingSlot, IncomingClassification, NoBinding};
 use crate::eff::EffIndex;
 #[cfg(test)]
 use crate::global::LoopControlMeaning;
@@ -35,7 +36,7 @@ use crate::global::typestate::{
 use crate::global::{
     CanonicalControl, ControlHandling, ControlPayloadKind, ExternalControl, MessageSpec, NoControl,
     SendableLabel,
-    compiled::{ControlSemanticKind, ControlSemanticsTable},
+    compiled::images::{ControlSemanticKind, ControlSemanticsTable},
 };
 use crate::runtime::config::Clock;
 use crate::{
@@ -445,7 +446,7 @@ pub struct CursorEndpoint<
     pub(super) route_state: LeasedState<RouteState>,
     pub(super) frontier_state: LeasedState<FrontierState>,
     pub(super) binding_inbox: LeasedState<BindingInbox>,
-    pub(super) pending_branch_preview: Option<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>,
+    pub(super) restored_binding_payload: Option<RestoredBindingPayload<'r>>,
     pub(super) liveness_policy: crate::runtime::config::LivenessPolicy,
     pub(super) mint: StoredMint<Mint>,
     pub(super) binding: B,
@@ -467,10 +468,7 @@ pub struct RouteBranch<
     Mint: MintConfigMarker,
 {
     pub(super) label: u8,
-    pub(super) cursor_index: StateIndex,
-    pub(super) transport_payload_len: usize,
-    pub(super) transport_payload_lane: u8,
-    pub(super) binding_channel: Option<crate::binding::Channel>,
+    pub(super) binding_classification: PackedIncomingClassification,
     pub(super) staged_payload: Option<StagedPayload<'r>>,
     pub(super) branch_meta: BranchMeta,
     pub(super) _cfg: core::marker::PhantomData<fn() -> (&'r T, U, C, E, Mint, B)>,
@@ -482,14 +480,26 @@ pub(super) enum StagedPayload<'a> {
     Binding { lane: u8, payload: Payload<'a> },
 }
 
-impl<'a> StagedPayload<'a> {
-    #[inline]
-    pub(super) const fn lane(self) -> u8 {
-        match self {
-            Self::Transport { lane, .. } | Self::Binding { lane, .. } => lane,
-        }
-    }
+#[derive(Clone, Copy)]
+pub(super) struct RestoredBindingPayload<'a> {
+    lane: u8,
+    classification: PackedIncomingClassification,
+    payload: Payload<'a>,
+}
 
+impl<'a> RestoredBindingPayload<'a> {
+    #[inline]
+    fn matches(self, lane_idx: usize, classification: IncomingClassification) -> bool {
+        let restored = self.classification.decode();
+        self.lane as usize == lane_idx
+            && restored.label == classification.label
+            && restored.instance == classification.instance
+            && restored.has_fin == classification.has_fin
+            && restored.channel == classification.channel
+    }
+}
+
+impl<'a> StagedPayload<'a> {
     #[inline]
     pub(super) const fn payload(self) -> Payload<'a> {
         match self {
@@ -530,33 +540,11 @@ where
     fn clone(&self) -> Self {
         Self {
             label: self.label,
-            cursor_index: self.cursor_index,
-            transport_payload_len: self.transport_payload_len,
-            transport_payload_lane: self.transport_payload_lane,
-            binding_channel: self.binding_channel,
+            binding_classification: self.binding_classification,
             staged_payload: self.staged_payload,
             branch_meta: self.branch_meta,
             _cfg: core::marker::PhantomData,
         }
-    }
-}
-
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
-where
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
-{
-    #[inline]
-    pub(super) fn matches_send_meta(&self, meta: SendMeta) -> bool {
-        self.branch_meta.kind == BranchKind::ArmSendHint
-            && self.label == meta.label
-            && self.branch_meta.scope_id == meta.scope
-            && meta.route_arm == Some(self.branch_meta.selected_arm)
     }
 }
 
@@ -904,32 +892,54 @@ where
     }
 
     #[inline]
-    pub(crate) fn stash_pending_branch_preview(
+    pub(in crate::endpoint) fn restore_materialized_route_branch(
+        &mut self,
+        mut branch: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    ) {
+        let binding_classification =
+            PackedIncomingClassification::take(&mut branch.binding_classification);
+        match branch.staged_payload {
+            Some(StagedPayload::Binding { lane, payload }) => {
+                if let Some(classification) = binding_classification {
+                    self.restore_binding_payload_for_lane(lane as usize, classification, payload);
+                } else {
+                    debug_assert!(
+                        false,
+                        "binding staged payload must keep its classification until restore"
+                    );
+                }
+            }
+            Some(StagedPayload::Transport { lane, .. }) => {
+                if let Some(classification) = binding_classification {
+                    self.put_back_binding_for_lane(
+                        branch.branch_meta.lane_wire as usize,
+                        classification,
+                    );
+                }
+                let port = self.port_for_lane(lane as usize);
+                lane_port::requeue_recv(port);
+            }
+            None => {
+                if let Some(classification) = binding_classification {
+                    self.put_back_binding_for_lane(
+                        branch.branch_meta.lane_wire as usize,
+                        classification,
+                    );
+                }
+            }
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn decode_route_branch<M>(
         &mut self,
         branch: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    ) {
-        self.pending_branch_preview = Some(branch);
-    }
-
-    #[inline]
-    pub(crate) fn take_pending_branch_preview(
-        &mut self,
-    ) -> Option<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
-        self.pending_branch_preview.take()
-    }
-
-    #[inline]
-    fn take_matching_pending_send_branch_preview(
-        &mut self,
-        meta: SendMeta,
-    ) -> Option<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
-        let preview = self.pending_branch_preview.as_ref().cloned()?;
-        if preview.matches_send_meta(meta) {
-            self.pending_branch_preview = None;
-            Some(preview)
-        } else {
-            None
-        }
+    ) -> super::decode::RouteDecodeFuture<'_, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
+    where
+        M: MessageSpec,
+        M::Payload: crate::transport::wire::WirePayload,
+    {
+        super::decode::RouteDecodeFuture::new(self, branch)
     }
 
     #[inline(always)]
@@ -3000,15 +3010,63 @@ where
     }
 
     #[inline(never)]
+    fn commit_send_route_selection(&mut self, meta: SendMeta) -> SendResult<()> {
+        let Some(selected_arm) = meta.route_arm else {
+            return Ok(());
+        };
+        let scope_id = meta.scope;
+        let lane_wire = meta.lane;
+        let route_source = self.peek_scope_ack(scope_id).map(|token| token.source());
+        let is_route_controller = self.cursor.is_route_controller(scope_id);
+
+        if !is_route_controller {
+            self.propagate_recvless_parent_route_decision(scope_id, selected_arm);
+        }
+
+        match route_source {
+            Some(RouteDecisionSource::Ack) if is_route_controller => {
+                self.record_route_decision_for_lane(lane_wire as usize, scope_id, selected_arm);
+                self.emit_route_decision(
+                    scope_id,
+                    selected_arm,
+                    RouteDecisionSource::Ack,
+                    lane_wire,
+                );
+            }
+            Some(RouteDecisionSource::Poll) => {
+                self.emit_route_decision(
+                    scope_id,
+                    selected_arm,
+                    RouteDecisionSource::Poll,
+                    self.offer_lane_for_scope(scope_id),
+                );
+            }
+            _ => {}
+        }
+
+        if self.selected_arm_for_scope(scope_id) != Some(selected_arm) {
+            self.clear_scope_route_state_for_other_lanes(scope_id, lane_wire);
+        }
+        self.skip_unselected_arm_lanes(scope_id, selected_arm, lane_wire);
+        self.set_route_arm(lane_wire, scope_id, selected_arm)
+            .map_err(|_| SendError::PhaseInvariant)?;
+        if self.arm_has_recv(scope_id, selected_arm) {
+            self.consume_scope_ready_arm(scope_id, selected_arm);
+        }
+        self.clear_scope_evidence(scope_id);
+        if lane_wire == 5 {
+            self.port_for_lane(lane_wire as usize).clear_route_hints();
+        }
+        Ok(())
+    }
+
+    #[inline(never)]
     fn commit_send_preview(
         &mut self,
         preview_cursor_index: Option<StateIndex>,
         meta: SendMeta,
     ) -> SendResult<()> {
-        if let Some(preview) = self.take_matching_pending_send_branch_preview(meta) {
-            self.commit_pending_branch_preview(preview)
-                .map_err(|_| SendError::PhaseInvariant)?;
-        }
+        self.commit_send_route_selection(meta)?;
         if let Some(preview_cursor_index) = preview_cursor_index {
             self.set_cursor_index(state_index_to_usize(preview_cursor_index));
         }
@@ -4171,6 +4229,40 @@ where
         classification
     }
 
+    #[inline]
+    pub(super) fn take_restored_binding_payload(
+        &mut self,
+        lane_idx: usize,
+        classification: crate::binding::IncomingClassification,
+    ) -> Option<Payload<'r>> {
+        match self.restored_binding_payload {
+            Some(restored) if restored.matches(lane_idx, classification) => {
+                self.restored_binding_payload = None;
+                Some(restored.payload)
+            }
+            Some(_) | None => None,
+        }
+    }
+
+    #[inline]
+    fn restore_binding_payload_for_lane(
+        &mut self,
+        lane_idx: usize,
+        classification: crate::binding::IncomingClassification,
+        payload: Payload<'r>,
+    ) {
+        debug_assert!(
+            self.restored_binding_payload.is_none(),
+            "at most one restored binding payload may be staged per endpoint"
+        );
+        self.restored_binding_payload = Some(RestoredBindingPayload {
+            lane: lane_idx as u8,
+            classification: PackedIncomingClassification::encode(classification),
+            payload,
+        });
+        self.put_back_binding_for_lane(lane_idx, classification);
+    }
+
     pub(super) fn put_back_binding_for_lane(
         &mut self,
         lane_idx: usize,
@@ -4686,6 +4778,9 @@ where
         let lane_idx = logical_lane as usize;
         if let Some(classification) = self.take_matching_binding_for_lane(lane_idx, expected_label)
         {
+            if let Some(payload) = self.take_restored_binding_payload(lane_idx, classification) {
+                return Ok(Some(payload));
+            }
             let payload = lane_port::recv_from_binding(
                 core::ptr::from_mut(&mut self.binding),
                 classification.channel,

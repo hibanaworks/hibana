@@ -38,7 +38,9 @@ use crate::{
     eff::EffIndex,
     endpoint::affine::LaneGuard,
     global::compiled::{
-        CompiledProgramImage, CompiledRoleImage, LoweringSummary, ProgramStamp, RoleLoweringScratch,
+        images::{CompiledProgramImage, CompiledRoleImage},
+        lowering::{LoweringSummary, ProgramStamp},
+        materialize::RoleLoweringScratch,
     },
     global::const_dsl::{ControlScopeKind, PolicyMode},
     observe::core::{TapEvent, TapRing, emit},
@@ -398,11 +400,11 @@ where
         let (slab_ptr, _) = self.slab_ptr_and_len();
         let base = slab_ptr as usize;
         let start = Self::align_up(
-            base + self.image_frontier as usize,
+            base + self.endpoint_lease_floor(),
             CompiledProgramImage::persistent_align(),
         )
         .saturating_sub(base);
-        start + CompiledProgramImage::max_persistent_bytes() - self.image_frontier as usize
+        start + CompiledProgramImage::max_persistent_bytes() - self.endpoint_lease_floor()
     }
 
     #[inline(always)]
@@ -410,11 +412,11 @@ where
         let (slab_ptr, _) = self.slab_ptr_and_len();
         let base = slab_ptr as usize;
         let start = Self::align_up(
-            base + self.image_frontier as usize,
+            base + self.endpoint_lease_floor(),
             CompiledRoleImage::persistent_align(),
         )
         .saturating_sub(base);
-        start + bytes - self.image_frontier as usize
+        start + bytes - self.endpoint_lease_floor()
     }
 
     #[inline(always)]
@@ -422,12 +424,12 @@ where
         let (slab_ptr, _) = self.slab_ptr_and_len();
         let base = slab_ptr as usize;
         let program_end = Self::align_up(
-            base + self.image_frontier as usize,
+            base + self.endpoint_lease_floor(),
             CompiledProgramImage::persistent_align(),
         ) + CompiledProgramImage::max_persistent_bytes();
         let role_end =
             Self::align_up(program_end, CompiledRoleImage::persistent_align()) + role_image_bytes;
-        role_end - self.image_frontier as usize - base
+        role_end - self.endpoint_lease_floor() - base
     }
 
     #[inline]
@@ -456,7 +458,7 @@ where
     #[inline]
     pub(crate) fn scratch_storage_ptr_and_len(&self) -> (*mut u8, usize) {
         let (ptr, _) = self.slab_ptr_and_len();
-        let start = self.image_frontier as usize;
+        let start = self.endpoint_lease_floor();
         let end = self.endpoint_storage_floor();
         let len = end.saturating_sub(start);
         unsafe { (ptr.add(start), len) }
@@ -1425,11 +1427,11 @@ where
     }
 
     #[inline]
-    fn role_image_slot_index<const ROLE: u8>(&self, stamp: ProgramStamp) -> Option<usize> {
+    fn role_image_slot_index_for(&self, stamp: ProgramStamp, role: u8) -> Option<usize> {
         let mut idx = 0usize;
         while idx < self.image_slot_capacity as usize {
             let slot = unsafe { &*self.role_images.add(idx) };
-            if slot.occupied && slot.stamp == stamp && slot.role == ROLE {
+            if slot.occupied && slot.stamp == stamp && slot.role == role {
                 return Some(idx);
             }
             idx += 1;
@@ -1437,9 +1439,8 @@ where
         None
     }
 
-    #[inline]
-    fn pin_role_image<const ROLE: u8>(&mut self, stamp: ProgramStamp) -> Option<u8> {
-        let idx = self.role_image_slot_index::<ROLE>(stamp)?;
+    fn pin_role_image_for(&mut self, stamp: ProgramStamp, role: u8) -> Option<u8> {
+        let idx = self.role_image_slot_index_for(stamp, role)?;
         let slot = unsafe { &mut *self.role_images.add(idx) };
         slot.pins = slot.pins.saturating_add(1);
         Some(idx as u8)
@@ -1466,7 +1467,7 @@ where
         let Some(program_image_slot) = self.pin_program_image(stamp) else {
             return false;
         };
-        let Some(role_image_slot) = self.pin_role_image::<ROLE>(stamp) else {
+        let Some(role_image_slot) = self.pin_role_image_for(stamp, ROLE) else {
             self.unpin_program_image_slot(program_image_slot as usize);
             return false;
         };
@@ -1512,13 +1513,13 @@ where
         let Some(insert_idx) = self.first_free_program_image_slot() else {
             return unsafe { self.recycle_program_image_from_summary(stamp, summary) };
         };
-        let counts = CompiledProgramImage::counts(summary);
+        let counts = summary.compiled_program_counts();
         let bytes = CompiledProgramImage::persistent_bytes_for_counts(counts);
         let (ptr, offset) = unsafe {
             self.allocate_persistent_image_bytes(bytes, CompiledProgramImage::persistent_align())
         }?;
         unsafe {
-            crate::global::compiled::init_compiled_program_image_from_summary(
+            crate::global::compiled::materialize::init_compiled_program_image_from_summary(
                 ptr.cast::<CompiledProgramImage>(),
                 summary,
             );
@@ -1541,7 +1542,7 @@ where
         stamp: ProgramStamp,
         summary: &LoweringSummary,
     ) -> Option<*const CompiledProgramImage> {
-        let counts = CompiledProgramImage::counts(summary);
+        let counts = summary.compiled_program_counts();
         let bytes = CompiledProgramImage::persistent_bytes_for_counts(counts);
         if let Some(insert_idx) = self.first_reusable_program_image_slot(bytes) {
             let slot = unsafe { &mut *self.program_images.add(insert_idx) };
@@ -1552,7 +1553,9 @@ where
                     .cast::<CompiledProgramImage>()
             };
             unsafe {
-                crate::global::compiled::init_compiled_program_image_from_summary(ptr, summary);
+                crate::global::compiled::materialize::init_compiled_program_image_from_summary(
+                    ptr, summary,
+                );
             }
             slot.stamp = stamp;
             slot.occupied = true;
@@ -1582,7 +1585,7 @@ where
             }
         };
         unsafe {
-            crate::global::compiled::init_compiled_program_image_from_summary(
+            crate::global::compiled::materialize::init_compiled_program_image_from_summary(
                 ptr.cast::<CompiledProgramImage>(),
                 summary,
             );
@@ -1614,7 +1617,7 @@ where
     }
 
     #[inline(never)]
-    unsafe fn pinned_role_image_from_slot<const ROLE: u8>(
+    unsafe fn pinned_role_image_from_slot(
         &mut self,
         slot: &RoleImageSlot,
     ) -> *const CompiledRoleImage {
@@ -1628,40 +1631,15 @@ where
             Self::frontier_scratch_guard_bytes(unsafe { (*role_ptr).frontier_scratch_layout() })
                 as u32;
         self.reserve_scratch_reserved_bytes(reserved);
-        let _ = ROLE;
         role_ptr
     }
 
-    #[cfg(test)]
-    fn role_footprint_from_summary<const ROLE: u8>(
-        summary: &LoweringSummary,
-    ) -> crate::global::role_program::RoleFootprint {
-        let counts = summary.role_lowering_counts::<ROLE>();
-        crate::global::role_program::RoleFootprint {
-            scope_count: counts.scope_count,
-            eff_count: counts.eff_count,
-            phase_count: counts.phase_count,
-            phase_lane_entry_count: counts.phase_lane_entry_count,
-            phase_lane_word_count: counts.phase_lane_word_count,
-            parallel_enter_count: counts.parallel_enter_count,
-            route_scope_count: counts.route_scope_count,
-            local_step_count: counts.local_step_count,
-            passive_linger_route_scope_count: counts.passive_linger_route_scope_count,
-            active_lane_count: counts.active_lane_count,
-            endpoint_lane_slot_count: counts.endpoint_lane_slot_count,
-            logical_lane_count: counts.logical_lane_count,
-            logical_lane_word_count: counts.logical_lane_word_count,
-            max_route_stack_depth: 0,
-            scope_evidence_count: 0,
-            frontier_entry_count: 0,
-        }
-    }
-
     #[inline(never)]
-    unsafe fn materialize_new_role_image_from_summary_for_program<const ROLE: u8>(
+    unsafe fn materialize_new_role_image_from_summary_for_program(
         &mut self,
         insert_idx: usize,
         stamp: ProgramStamp,
+        role: u8,
         summary: &LoweringSummary,
         scratch: &mut RoleLoweringScratch<'_>,
         footprint: crate::global::role_program::RoleFootprint,
@@ -1671,8 +1649,9 @@ where
             self.allocate_persistent_image_bytes(bytes, CompiledRoleImage::persistent_align())
         }?;
         unsafe {
-            crate::global::compiled::init_compiled_role_image_from_summary::<ROLE>(
+            crate::global::compiled::materialize::init_compiled_role_image_from_summary(
                 ptr.cast::<CompiledRoleImage>(),
+                role,
                 summary,
                 scratch,
                 footprint,
@@ -1693,7 +1672,7 @@ where
         debug_assert!(!slot.occupied);
         *slot = RoleImageSlot {
             stamp,
-            role: ROLE,
+            role,
             offset,
             len: actual_bytes as u32,
             pins: 0,
@@ -1709,12 +1688,31 @@ where
         stamp: ProgramStamp,
         summary: &LoweringSummary,
     ) -> Option<*const CompiledRoleImage> {
-        let footprint = Self::role_footprint_from_summary::<ROLE>(summary);
-        let scratch_bytes = crate::global::compiled::role_lowering_scratch_storage_bytes(footprint);
+        let counts = summary.role_lowering_counts::<ROLE>();
+        let footprint = crate::global::role_program::RoleFootprint {
+            scope_count: counts.scope_count,
+            eff_count: counts.eff_count,
+            phase_count: counts.phase_count,
+            phase_lane_entry_count: counts.phase_lane_entry_count,
+            phase_lane_word_count: counts.phase_lane_word_count,
+            parallel_enter_count: counts.parallel_enter_count,
+            route_scope_count: counts.route_scope_count,
+            local_step_count: counts.local_step_count,
+            passive_linger_route_scope_count: counts.passive_linger_route_scope_count,
+            active_lane_count: counts.active_lane_count,
+            endpoint_lane_slot_count: counts.endpoint_lane_slot_count,
+            logical_lane_count: counts.logical_lane_count,
+            logical_lane_word_count: counts.logical_lane_word_count,
+            max_route_stack_depth: 0,
+            scope_evidence_count: 0,
+            frontier_entry_count: 0,
+        };
+        let scratch_bytes =
+            crate::global::compiled::materialize::role_lowering_scratch_storage_bytes(footprint);
         let mut scratch_storage = std::vec::Vec::with_capacity(scratch_bytes);
         scratch_storage.resize(scratch_bytes, 0u8);
         unsafe {
-            crate::global::compiled::with_role_lowering_scratch_storage(
+            crate::global::compiled::materialize::with_role_lowering_scratch_storage(
                 footprint,
                 scratch_storage.as_mut_ptr(),
                 scratch_storage.len(),
@@ -1728,6 +1726,7 @@ where
         .flatten()
     }
 
+    #[cfg(test)]
     #[inline(never)]
     pub(crate) unsafe fn materialize_role_image_from_summary_for_program<const ROLE: u8>(
         &mut self,
@@ -1736,29 +1735,46 @@ where
         scratch: &mut RoleLoweringScratch<'_>,
         footprint: crate::global::role_program::RoleFootprint,
     ) -> Option<*const CompiledRoleImage> {
-        if let Some(idx) = self.role_image_slot_index::<ROLE>(stamp) {
+        unsafe {
+            self.materialize_role_image_from_summary_for_program_dyn(
+                stamp, ROLE, summary, scratch, footprint,
+            )
+        }
+    }
+
+    #[inline(never)]
+    pub(crate) unsafe fn materialize_role_image_from_summary_for_program_dyn(
+        &mut self,
+        stamp: ProgramStamp,
+        role: u8,
+        summary: &LoweringSummary,
+        scratch: &mut RoleLoweringScratch<'_>,
+        footprint: crate::global::role_program::RoleFootprint,
+    ) -> Option<*const CompiledRoleImage> {
+        if let Some(idx) = self.role_image_slot_index_for(stamp, role) {
             let slot = unsafe { &*self.role_images.add(idx) };
-            return Some(unsafe { self.pinned_role_image_from_slot::<ROLE>(slot) });
+            return Some(unsafe { self.pinned_role_image_from_slot(slot) });
         }
         let Some(insert_idx) = self.first_free_role_image_slot() else {
             return unsafe {
-                self.recycle_role_image_from_summary_for_program::<ROLE>(
-                    stamp, summary, scratch, footprint,
+                self.recycle_role_image_from_summary_for_program(
+                    stamp, role, summary, scratch, footprint,
                 )
             };
         };
         unsafe {
-            self.materialize_new_role_image_from_summary_for_program::<ROLE>(
-                insert_idx, stamp, summary, scratch, footprint,
+            self.materialize_new_role_image_from_summary_for_program(
+                insert_idx, stamp, role, summary, scratch, footprint,
             )
         }
     }
 
     #[cold]
     #[inline(never)]
-    unsafe fn recycle_role_image_from_summary_for_program<const ROLE: u8>(
+    unsafe fn recycle_role_image_from_summary_for_program(
         &mut self,
         stamp: ProgramStamp,
+        role: u8,
         summary: &LoweringSummary,
         scratch: &mut RoleLoweringScratch<'_>,
         footprint: crate::global::role_program::RoleFootprint,
@@ -1773,8 +1789,8 @@ where
                     .cast::<CompiledRoleImage>()
             };
             unsafe {
-                crate::global::compiled::init_compiled_role_image_from_summary::<ROLE>(
-                    ptr, summary, scratch, footprint,
+                crate::global::compiled::materialize::init_compiled_role_image_from_summary(
+                    ptr, role, summary, scratch, footprint,
                 );
             }
             let actual_bytes = unsafe { (*ptr).actual_persistent_bytes() };
@@ -1789,7 +1805,7 @@ where
                     as u32;
             self.reserve_scratch_reserved_bytes(reserved);
             slot.stamp = stamp;
-            slot.role = ROLE;
+            slot.role = role;
             slot.len = actual_bytes as u32;
             slot.occupied = true;
             debug_assert_eq!(slot.pins, 0);
@@ -1817,8 +1833,9 @@ where
             }
         };
         unsafe {
-            crate::global::compiled::init_compiled_role_image_from_summary::<ROLE>(
+            crate::global::compiled::materialize::init_compiled_role_image_from_summary(
                 ptr.cast::<CompiledRoleImage>(),
+                role,
                 summary,
                 scratch,
                 footprint,
@@ -1842,7 +1859,7 @@ where
         let slot = unsafe { &mut *self.role_images.add(insert_idx) };
         *slot = RoleImageSlot {
             stamp,
-            role: ROLE,
+            role,
             offset,
             len: actual_bytes,
             pins: 0,
@@ -1853,7 +1870,7 @@ where
 
     #[inline]
     pub(crate) fn has_role_image<const ROLE: u8>(&self, stamp: ProgramStamp) -> bool {
-        self.role_image_slot_index::<ROLE>(stamp).is_some()
+        self.role_image_slot_index_for(stamp, ROLE).is_some()
     }
 
     #[inline]
@@ -1862,7 +1879,7 @@ where
         stamp: ProgramStamp,
     ) -> Option<*const CompiledRoleImage> {
         let (slab_ptr, _) = self.slab_ptr_and_len();
-        let idx = self.role_image_slot_index::<ROLE>(stamp)?;
+        let idx = self.role_image_slot_index_for(stamp, ROLE)?;
         let slot = unsafe { &*self.role_images.add(idx) };
         Some(unsafe {
             slab_ptr
@@ -4257,7 +4274,7 @@ mod epf_tests {
         control::cluster::core::{CpCommand, EffectRunner},
         control::types::{Lane, SessionId},
         g::{self, Msg, Role},
-        global::compiled::LoweringSummary,
+        global::compiled::lowering::LoweringSummary,
         observe::core::TapEvent,
         runtime::{config::Config, consts::RING_EVENTS},
         transport::{Transport, TransportError, wire::Payload},

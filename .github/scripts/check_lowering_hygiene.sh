@@ -109,6 +109,67 @@ check_absent \
   "public impl_control_resource macro reintroduced" \
   src
 
+check_absent \
+  '#\[path[[:space:]]*=[[:space:]]*"../lowering/' \
+  "frozen image owner path-imports lowering modules directly" \
+  src/global/compiled/images
+
+check_absent \
+  "use[[:space:]]+crate::global::compiled::lowering::" \
+  "frozen image owner imports lowering helpers directly" \
+  src/global/compiled/images/program.rs \
+  src/global/compiled/images/role.rs
+
+check_absent \
+  "struct[[:space:]]+CompiledProgramTailStorage[[:space:]]*\\{" \
+  "pointer-rich compiled-program storage leaked back into frozen image owner" \
+  src/global/compiled/images/program.rs
+
+check_absent \
+  "impl[[:space:]]+CompiledProgramTailStorage[[:space:]]*\\{" \
+  "compiled-program lowering impl leaked back into frozen image owner" \
+  src/global/compiled/images/program.rs
+
+check_absent \
+  "pub\\(crate\\)[[:space:]]+use[[:space:]]+image_builder::init_compiled_program_image_from_summary" \
+  "compiled-program image builder re-export leaked back into frozen image owner" \
+  src/global/compiled/images/program.rs
+
+check_absent \
+  "struct[[:space:]]+CompiledProgram[[:space:]]*\\{|impl[[:space:]]+CompiledProgram[[:space:]]*\\{" \
+  "compiled-program test/build owner leaked back into frozen image owner" \
+  src/global/compiled/images/program.rs
+
+check_absent \
+  "^(fn|const fn|unsafe fn|pub\\([^)]*\\)[[:space:]]+fn|pub\\([^)]*\\)[[:space:]]+const[[:space:]]+fn|pub\\([^)]*\\)[[:space:]]+unsafe[[:space:]]+fn)[[:space:]]+(compiled_program_push_dynamic_policy_site|compiled_program_push_resource|compiled_program_route_scope_end|compiled_program_insert_route_control|compiled_program_emit_route_controls|compiled_program_emit_atom_into_slices|compiled_program_emit_atom|control_scope_mask_bit)\\(" \
+  "compiled-program lowering helpers leaked back into frozen image owner" \
+  src/global/compiled/images/program.rs
+
+check_absent \
+  "struct[[:space:]]+CompiledRoleScopeStorage[[:space:]]*\\{" \
+  "pointer-rich compiled-role storage leaked back into frozen image owner" \
+  src/global/compiled/images/role.rs
+
+check_absent \
+  "impl[[:space:]]+CompiledRoleScopeStorage[[:space:]]*\\{" \
+  "compiled-role lowering impl leaked back into frozen image owner" \
+  src/global/compiled/images/role.rs
+
+check_absent \
+  "^(fn|unsafe fn)[[:space:]]+(build_local_steps_into|build_step_index_to_state_into|record_step_state|build_phase_image_from_steps|build_route_guards_for_steps_into|push_phase_range_to_image|route_guard_for_range|initialize_phase_image_storage)\\(" \
+  "compiled-role lowering walk helpers leaked back into frozen image owner" \
+  src/global/compiled/images/role.rs
+
+check_absent \
+  "^(fn|unsafe fn)[[:space:]]+(init_empty_compiled_role_image|finalize_compiled_role_image_from_typestate)\\(|(unsafe[[:space:]]+fn|pub\\(crate\\)[[:space:]]+unsafe[[:space:]]+fn)[[:space:]]+(init_empty_compiled_role|finalize_compiled_role_from_typestate|init_from_summary_for_program|init_from_summary_with_layout)\\(" \
+  "compiled-role image mutation builder leaked back into frozen image owner" \
+  src/global/compiled/images/role.rs
+
+check_absent \
+  "pub\\(crate\\)[[:space:]]+use[[:space:]]+image_builder::init_compiled_role_image_from_summary" \
+  "compiled-role image builder re-export leaked back into frozen image owner" \
+  src/global/compiled/images/role.rs
+
 if [[ -e "src/global/compiled/facts.rs" || -e "src/global/compiled/machine.rs" ]]; then
   echo "lowering hygiene violation: legacy compiled owners still present on disk" >&2
   FAILED=1

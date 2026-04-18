@@ -5,7 +5,7 @@
 
 use core::marker::PhantomData;
 
-use super::compiled::{ProgramStamp, RoleLoweringCounts};
+use super::compiled::lowering::{ProgramStamp, RoleLoweringCounts};
 use super::{
     program::{BuildProgramSource, Program},
     steps::ProjectRole,
@@ -467,7 +467,7 @@ impl LocalStep {
 #[derive(Clone, Copy)]
 pub(crate) struct RoleLoweringInput<'prog> {
     _borrow: PhantomData<&'prog EffList>,
-    summary: &'static crate::global::compiled::LoweringSummary,
+    summary: &'static crate::global::compiled::lowering::LoweringSummary,
     stamp: ProgramStamp,
     counts: RoleLoweringCounts,
 }
@@ -553,7 +553,9 @@ impl RoleFootprint {
 
 impl<'prog> RoleLoweringInput<'prog> {
     #[inline(always)]
-    pub(crate) const fn summary(&self) -> &'static crate::global::compiled::LoweringSummary {
+    pub(crate) const fn summary(
+        &self,
+    ) -> &'static crate::global::compiled::lowering::LoweringSummary {
         self.summary
     }
 
@@ -615,7 +617,7 @@ where
 {
     _borrow: PhantomData<&'prog EffList>,
     _seal: private::RoleProgramSeal,
-    summary: &'static crate::global::compiled::LoweringSummary,
+    summary: &'static crate::global::compiled::lowering::LoweringSummary,
     mint: Mint,
     stamp: ProgramStamp,
 }
@@ -625,7 +627,7 @@ where
     Mint: MintConfigMarker,
 {
     const fn new(
-        summary: &'static crate::global::compiled::LoweringSummary,
+        summary: &'static crate::global::compiled::lowering::LoweringSummary,
         mint: Mint,
         stamp: ProgramStamp,
     ) -> Self {
@@ -646,7 +648,7 @@ where
     #[inline(always)]
     #[cfg(test)]
     pub(crate) fn borrow_id(&self) -> usize {
-        self.summary as *const crate::global::compiled::LoweringSummary as usize
+        self.summary as *const crate::global::compiled::lowering::LoweringSummary as usize
     }
 
     /// Mint configuration baked into the RoleProgram.
@@ -714,7 +716,7 @@ where
 mod tests {
     use super::*;
     use crate::g::{self, Msg, Role};
-    use crate::global::compiled::CompiledRoleImage;
+    use crate::global::compiled::images::CompiledRoleImage;
     use crate::global::const_dsl::{ScopeEvent, ScopeKind};
     use crate::global::steps::{self, ParSteps, RouteSteps, SeqSteps, StepCons, StepNil};
 
@@ -722,7 +724,7 @@ mod tests {
         program: &RoleProgram<'_, ROLE>,
         f: impl FnOnce(&CompiledRoleImage) -> R,
     ) -> R {
-        crate::global::compiled::with_compiled_role_image::<ROLE, _>(
+        crate::global::compiled::materialize::with_compiled_role_image::<ROLE, _>(
             crate::global::lowering_input(program),
             f,
         )

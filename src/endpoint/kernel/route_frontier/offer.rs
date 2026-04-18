@@ -1,6 +1,11 @@
 //! Offer-path helpers for scope selection and branch materialization.
 
-use core::{future::poll_fn, ops::ControlFlow, task::Poll};
+use core::{
+    future::Future,
+    ops::ControlFlow,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use super::authority::{
     Arm, DeferReason, DeferSource, RouteDecisionSource, RouteDecisionToken, RouteResolveStep,
@@ -21,6 +26,7 @@ use super::frontier::{
     frontier_working_observation_key_view_from_storage,
     should_suppress_current_passive_without_evidence,
 };
+use super::inbox::PackedIncomingClassification;
 use super::lane_port;
 use crate::binding::BindingSlot;
 use crate::control::cap::mint::{CapShot, EpochTable, MintConfigMarker};
@@ -728,13 +734,6 @@ where
         )
     }
 
-    #[inline]
-    fn take_pending_branch_preview(
-        &mut self,
-    ) -> Option<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
-        self.endpoint.take_pending_branch_preview()
-    }
-
     pub(super) fn select_scope(&mut self) -> RecvResult<OfferScopeSelection> {
         self.align_cursor_to_selected_scope()?;
         // O(1) entry: offer() must be called at a Route decision point.
@@ -1411,7 +1410,7 @@ where
         }
         Err(RecvError::PhaseInvariant)
     }
-    fn poll_transport_payload_for_offer_lane(
+    fn await_transport_payload_for_offer_lane(
         &mut self,
         offer_lane: u8,
         transport_payload_len: &mut usize,
@@ -1433,7 +1432,7 @@ where
         }
         Poll::Ready(Ok(()))
     }
-    fn poll_static_passive_progress(
+    fn await_static_passive_progress(
         &mut self,
         selection: OfferScopeSelection,
         selected_arm: Option<u8>,
@@ -1467,7 +1466,7 @@ where
             return Poll::Ready(Ok(()));
         }
         if *transport_payload_len == 0 {
-            return self.poll_transport_payload_for_offer_lane(
+            return self.await_transport_payload_for_offer_lane(
                 selection.offer_lane,
                 transport_payload_len,
                 transport_payload_lane,
@@ -1531,7 +1530,7 @@ where
                 Poll::Ready(Ok(ResolveTokenOutcome::RestartFrontier))
             }
             ResolvePendingAction::StaticPassiveProgress { selected_arm } => {
-                match self.poll_static_passive_progress(
+                match self.await_static_passive_progress(
                     state.selection,
                     Some(selected_arm),
                     &mut state.binding_classification,
@@ -2039,7 +2038,7 @@ where
         resolved: ResolvedRouteDecision,
         is_route_controller: bool,
         mut binding_classification: Option<crate::binding::IncomingClassification>,
-        mut transport_payload_len: usize,
+        transport_payload_len: usize,
         transport_payload_lane: u8,
         mut transport_payload: Option<Payload<'r>>,
     ) -> RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
@@ -2047,7 +2046,6 @@ where
         let route_token = resolved.route_token;
         let selected_arm = resolved.selected_arm;
         let resolved_label_hint = resolved.resolved_label_hint;
-        let binding_channel: Option<crate::binding::Channel> = None;
         let preview_meta = self.endpoint.preview_selected_arm_meta(
             selection,
             selected_arm,
@@ -2097,10 +2095,10 @@ where
         // Late binding channel resolution: for wire recv branches, prefer
         // binding ingress even when transport payload bytes were staged earlier.
         let label_meta = self.endpoint.selection_label_meta(selection);
-        let binding_channel = if transport_payload_len == 0
+        let binding_classification = if transport_payload_len == 0
             || matches!(branch_kind, BranchKind::WireRecv)
         {
-            let mut channel = binding_channel;
+            let mut classification = binding_classification;
             let lane_idx = meta.lane as usize;
             if let Some(expected_label) = label_meta.preferred_binding_label(Some(selected_arm)) {
                 if binding_classification
@@ -2108,8 +2106,8 @@ where
                     .map(|classification| classification.label == expected_label)
                     .unwrap_or(false)
                 {
-                    if let Some(classification) = binding_classification.take() {
-                        channel = Some(classification.channel);
+                    if let Some(matched) = binding_classification.take() {
+                        classification = Some(matched);
                     }
                 } else if binding_classification.as_ref().and_then(|classification| {
                     CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_label_to_arm(
@@ -2118,33 +2116,44 @@ where
                     )
                 }) == Some(selected_arm)
                 {
-                    if let Some(classification) = binding_classification.take() {
-                        channel = Some(classification.channel);
+                    if let Some(matched) = binding_classification.take() {
+                        classification = Some(matched);
                     }
-                } else if let Some(classification) = self
+                } else if let Some(matched) = self
                     .endpoint
                     .take_matching_binding_for_lane(lane_idx, expected_label)
                 {
-                    channel = Some(classification.channel);
+                    classification = Some(matched);
                 }
             } else {
-                (channel, _, _) = self.endpoint.take_binding_for_selected_arm(
+                let (channel, instance, has_fin) = self.endpoint.take_binding_for_selected_arm(
                     lane_idx,
                     selected_arm,
                     label_meta,
                     &mut binding_classification,
                 );
+                if let Some(channel) = channel {
+                    classification = Some(crate::binding::IncomingClassification {
+                        label: meta.label,
+                        instance: instance.unwrap_or(0),
+                        has_fin,
+                        channel,
+                    });
+                }
             }
-            channel
+            classification
         } else {
-            binding_channel
+            binding_classification
         };
+        let binding_staged_payload = binding_classification.and_then(|classification| {
+            self.endpoint
+                .take_restored_binding_payload(meta.lane as usize, classification)
+        });
         if transport_payload_len != 0
-            && (!matches!(branch_kind, BranchKind::WireRecv) || binding_channel.is_some())
+            && (!matches!(branch_kind, BranchKind::WireRecv) || binding_classification.is_some())
         {
             let port = self.endpoint.port_for_lane(transport_payload_lane as usize);
             lane_port::requeue_recv(port);
-            transport_payload_len = 0;
             transport_payload = None;
         }
         let branch_progress_eff = self
@@ -2165,24 +2174,32 @@ where
             kind: branch_kind,
             route_source: route_token.source(),
         };
+        self.endpoint
+            .set_cursor_index(state_index_to_usize(preview_meta.cursor_index));
         Ok(RouteBranch {
             label: meta.label,
-            cursor_index: preview_meta.cursor_index,
-            transport_payload_len,
-            transport_payload_lane,
-            binding_channel,
-            staged_payload: transport_payload.map(|payload| StagedPayload::Transport {
-                lane: transport_payload_lane,
-                payload,
-            }),
+            binding_classification: PackedIncomingClassification::from_option(
+                binding_classification,
+            ),
+            staged_payload: binding_staged_payload
+                .map(|payload| StagedPayload::Binding {
+                    lane: meta.lane,
+                    payload,
+                })
+                .or_else(|| {
+                    transport_payload.map(|payload| StagedPayload::Transport {
+                        lane: transport_payload_lane,
+                        payload,
+                    })
+                }),
             branch_meta,
             _cfg: core::marker::PhantomData,
         })
     }
 
-    fn commit_pending_branch_preview(
+    fn commit_route_branch_preview(
         &mut self,
-        preview: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        preview: &RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     ) -> RecvResult<Option<RecvMeta>> {
         let scope_id = preview.branch_meta.scope_id;
         let selected_arm = preview.branch_meta.selected_arm;
@@ -2267,8 +2284,6 @@ where
             .skip_unselected_arm_lanes(scope_id, selected_arm, lane_wire);
         self.endpoint
             .set_route_arm(lane_wire, scope_id, selected_arm)?;
-        self.endpoint
-            .set_cursor_index(state_index_to_usize(preview.cursor_index));
 
         let meta = if preview.branch_meta.kind == BranchKind::WireRecv {
             let mut meta = if let Some(meta) = self.endpoint.cursor.try_recv_meta() {
@@ -2306,7 +2321,7 @@ where
         &mut self,
         branch: &RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     ) -> RecvResult<Option<RecvMeta>> {
-        self.commit_pending_branch_preview(branch.clone())
+        self.commit_route_branch_preview(branch)
     }
 
     fn ingest_binding_scope_evidence(
@@ -4379,9 +4394,6 @@ where
         &mut self,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>> {
-        if let Some(branch) = self.take_pending_branch_preview() {
-            return Poll::Ready(Ok(branch));
-        }
         if self.frontier_visited.is_none() {
             let mut frontier_scratch = self.endpoint.frontier_scratch_view();
             self.frontier_visited = Some(super::frontier::frontier_visit_set_from_scratch(
@@ -4560,6 +4572,62 @@ where
     }
 }
 
+pub(crate) struct RouteOfferFuture<
+    'endpoint,
+    'r,
+    const ROLE: u8,
+    T: Transport + 'r,
+    U,
+    C,
+    E: EpochTable,
+    const MAX_RV: usize,
+    Mint,
+    B: BindingSlot + 'r,
+> where
+    U: LabelUniverse,
+    C: Clock,
+    Mint: MintConfigMarker,
+{
+    machine: RouteFrontierMachine<'endpoint, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+}
+
+impl<'endpoint, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
+    RouteOfferFuture<'endpoint, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker,
+    B: BindingSlot + 'r,
+{
+    #[inline]
+    pub(crate) const fn new(
+        endpoint: &'endpoint mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    ) -> Self {
+        Self {
+            machine: RouteFrontierMachine::new(endpoint),
+        }
+    }
+}
+
+impl<'endpoint, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B> Future
+    for RouteOfferFuture<'endpoint, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker,
+    B: BindingSlot + 'r,
+{
+    type Output = RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.get_mut().machine.poll_run(cx)
+    }
+}
+
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
 where
@@ -4576,20 +4644,8 @@ where
     /// the current route scope.
     /// Loop control evidence that resolves a recv-less branch is treated as
     /// EmptyArmTerminal and skip decode.
-    pub fn offer(
-        &mut self,
-    ) -> impl core::future::Future<
-        Output = RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>,
-    > + '_ {
-        let mut machine = RouteFrontierMachine::new(self);
-        poll_fn(move |cx| machine.poll_run(cx))
-    }
-
-    pub(super) fn commit_pending_branch_preview(
-        &mut self,
-        preview: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    ) -> RecvResult<Option<RecvMeta>> {
-        RouteFrontierMachine::new(self).commit_pending_branch_preview(preview)
+    pub(crate) fn offer(&mut self) -> RouteOfferFuture<'_, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B> {
+        RouteOfferFuture::new(self)
     }
 
     pub(in crate::endpoint::kernel) fn commit_branch_preview(

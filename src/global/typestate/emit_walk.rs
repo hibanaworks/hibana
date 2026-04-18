@@ -9,8 +9,8 @@ use super::{
         state_index_to_usize,
     },
     registry::{
-        CONTROLLER_ROLE_NONE, RouteScopeRecord, RouteScopeScratchRecord, SCOPE_LINK_NONE,
-        ScopeRecord, insert_offer_lane,
+        CONTROLLER_ROLE_NONE, RouteScopeScratchRecord, SCOPE_LINK_NONE, ScopeRecord,
+        insert_offer_lane,
     },
     route_facts::{
         MAX_PREFIX_ACTIONS, PREFIX_KIND_LOCAL, PREFIX_KIND_SEND, PrefixAction,
@@ -146,7 +146,7 @@ use crate::{
     eff::{self, EffIndex, EffStruct},
     global::{
         ControlLabelSpec, LoopControlMeaning,
-        compiled::LoweringView,
+        compiled::lowering::LoweringView,
         const_dsl::{PolicyMode, ScopeEvent, ScopeId, ScopeKind},
         role_program::LaneWord,
     },
@@ -439,6 +439,41 @@ struct RouteFinalizeCtx<'a> {
     route_scope_offer_lane_words: &'a mut [LaneWord],
     route_lane_word_len: usize,
     scope_entries_len: usize,
+    dispatch_table: &'a mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
+    prefix_actions: &'a mut [[PrefixAction; MAX_PREFIX_ACTIONS]; 2],
+    prefix_lens: &'a mut [usize; 2],
+    arm_seen_recv: &'a mut [bool; 2],
+    scan_stack: &'a mut [StateIndex; eff::meta::MAX_EFF_NODES],
+    visited: &'a mut [bool; MAX_STATES],
+}
+
+struct RoleWalkCtx<'a> {
+    nodes: &'a mut [LocalNode],
+    scope_entries: &'a mut [ScopeRecord],
+    route_scope_entries: &'a mut [RouteScopeScratchRecord],
+    route_scope_offer_lane_words: &'a mut [LaneWord],
+    route_scope_arm1_lane_words: &'a mut [LaneWord],
+    route_lane_word_len: usize,
+    lane_slot_count: usize,
+    scope_lane_first_eff: &'a mut [EffIndex],
+    scope_lane_last_eff: &'a mut [EffIndex],
+    route_arm0_lane_last_eff_by_slot: &'a mut [EffIndex],
+    loop_entry_ids: &'a mut [ScopeId; MAX_LOOP_TRACKED],
+    loop_entry_states: &'a mut [StateIndex; MAX_LOOP_TRACKED],
+    linger_arm_scope_ids: &'a mut [ScopeId; MAX_SCOPE_SCRATCH],
+    linger_arm_current: &'a mut [u8; MAX_SCOPE_SCRATCH],
+    linger_arm_last_node: &'a mut [[u16; 2]; MAX_SCOPE_SCRATCH],
+    jump_backpatch_indices: &'a mut [u16; MAX_JUMP_BACKPATCH],
+    jump_backpatch_scopes: &'a mut [ScopeId; MAX_JUMP_BACKPATCH],
+    jump_backpatch_kinds: &'a mut [u8; MAX_JUMP_BACKPATCH],
+    scope_stack: &'a mut [ScopeId; MAX_SCOPE_SCRATCH],
+    scope_stack_kinds: &'a mut [ScopeKind; MAX_SCOPE_SCRATCH],
+    scope_stack_entries: &'a mut [u16; MAX_SCOPE_SCRATCH],
+    route_current_arm: &'a mut [u8; MAX_SCOPE_SCRATCH],
+    scope_controller_roles: &'a mut [u8; MAX_SCOPE_SCRATCH],
+    scope_route_policy_effs: &'a mut [EffIndex; MAX_SCOPE_SCRATCH],
+    last_step_was_scope: &'a mut [bool; MAX_SCOPE_SCRATCH],
+    route_arm_last_node: &'a mut [[StateIndex; 2]; MAX_SCOPE_SCRATCH],
     dispatch_table: &'a mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     prefix_actions: &'a mut [[PrefixAction; MAX_PREFIX_ACTIONS]; 2],
     prefix_lens: &'a mut [usize; 2],
@@ -910,49 +945,27 @@ fn finalize_route_scope_exit_for_role(
 
 #[inline(never)]
 fn handle_scope_exit_for_role(
-    nodes: &mut [LocalNode],
+    ctx: &mut RoleWalkCtx<'_>,
     node_len: &mut usize,
     scope_markers: &[crate::global::const_dsl::ScopeMarker],
     scope_marker_idx: usize,
     scope: ScopeId,
     role: u8,
-    scope_stack: &[ScopeId; MAX_SCOPE_SCRATCH],
-    _scope_stack_kinds: &[ScopeKind; MAX_SCOPE_SCRATCH],
-    scope_stack_entries: &[u16; MAX_SCOPE_SCRATCH],
     scope_stack_len: &mut usize,
-    scope_entries: &mut [ScopeRecord],
     scope_entries_len: usize,
-    scope_controller_roles: &[u8; MAX_SCOPE_SCRATCH],
-    scope_route_policy_effs: &[EffIndex; MAX_SCOPE_SCRATCH],
-    route_scope_entries: &mut [RouteScopeScratchRecord],
-    route_scope_offer_lane_words: &mut [LaneWord],
-    route_lane_word_len: usize,
     linger_arm_len: usize,
-    linger_arm_scope_ids: &[ScopeId; MAX_SCOPE_SCRATCH],
-    linger_arm_last_node: &[[u16; 2]; MAX_SCOPE_SCRATCH],
-    jump_backpatch_indices: &mut [u16; MAX_JUMP_BACKPATCH],
-    jump_backpatch_scopes: &mut [ScopeId; MAX_JUMP_BACKPATCH],
-    jump_backpatch_kinds: &mut [u8; MAX_JUMP_BACKPATCH],
     jump_backpatch_len: &mut usize,
-    route_arm_last_node: &[[StateIndex; 2]; MAX_SCOPE_SCRATCH],
-    last_step_was_scope: &mut [bool; MAX_SCOPE_SCRATCH],
-    dispatch_table: &mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
-    prefix_actions: &mut [[PrefixAction; MAX_PREFIX_ACTIONS]; 2],
-    prefix_lens: &mut [usize; 2],
-    arm_seen_recv: &mut [bool; 2],
-    scan_stack: &mut [StateIndex; eff::meta::MAX_EFF_NODES],
-    visited: &mut [bool; MAX_STATES],
 ) {
     if *scope_stack_len == 0 {
         panic!("structured scope stack underflow");
     }
     *scope_stack_len -= 1;
-    let expected = scope_stack[*scope_stack_len];
+    let expected = ctx.scope_stack[*scope_stack_len];
     if expected.local_ordinal() != scope.local_ordinal() {
         panic!("structured scope stack mismatch");
     }
-    let entry_idx = scope_stack_entries[*scope_stack_len] as usize;
-    let is_linger = scope_entries[entry_idx].linger;
+    let entry_idx = ctx.scope_stack_entries[*scope_stack_len] as usize;
+    let is_linger = ctx.scope_entries[entry_idx].linger;
     let mut offer_entry_locked = false;
 
     let next_marker_idx = scope_marker_idx + 1;
@@ -964,25 +977,25 @@ fn handle_scope_exit_for_role(
     if is_linger {
         let mut linger_idx = 0usize;
         while linger_idx < linger_arm_len {
-            if linger_arm_scope_ids[linger_idx].local_ordinal() == scope.local_ordinal() {
+            if ctx.linger_arm_scope_ids[linger_idx].local_ordinal() == scope.local_ordinal() {
                 break;
             }
             linger_idx += 1;
         }
 
         if linger_idx < linger_arm_len {
-            let arm_last = linger_arm_last_node[linger_idx];
-            let loop_start = scope_entries[entry_idx].start;
-            let controller_role = scope_controller_roles[entry_idx];
+            let arm_last = ctx.linger_arm_last_node[linger_idx];
+            let loop_start = ctx.scope_entries[entry_idx].start;
+            let controller_role = ctx.scope_controller_roles[entry_idx];
             let is_passive = controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
             let passive_starts = if is_passive {
-                let arm0_start = if !scope_entries[entry_idx].arm_entry[0].is_max() {
-                    state_index_to_usize(scope_entries[entry_idx].arm_entry[0])
+                let arm0_start = if !ctx.scope_entries[entry_idx].arm_entry[0].is_max() {
+                    state_index_to_usize(ctx.scope_entries[entry_idx].arm_entry[0])
                 } else {
                     usize::from(LINGER_ARM_NO_NODE)
                 };
-                let arm1_start = if !scope_entries[entry_idx].arm_entry[1].is_max() {
-                    state_index_to_usize(scope_entries[entry_idx].arm_entry[1])
+                let arm1_start = if !ctx.scope_entries[entry_idx].arm_entry[1].is_max() {
+                    state_index_to_usize(ctx.scope_entries[entry_idx].arm_entry[1])
                 } else {
                     usize::from(LINGER_ARM_NO_NODE)
                 };
@@ -1009,8 +1022,9 @@ fn handle_scope_exit_for_role(
                         Some(scope),
                         Some(0),
                     );
-                    nodes[*node_len] = jump_node;
-                    route_scope_entries[entry_idx].passive_arm_jump[0] = as_state_index(*node_len);
+                    ctx.nodes[*node_len] = jump_node;
+                    ctx.route_scope_entries[entry_idx].passive_arm_jump[0] =
+                        as_state_index(*node_len);
                     *node_len += 1;
                     if arm_last[0] != LINGER_ARM_NO_NODE {
                         if *node_len >= MAX_STATES {
@@ -1026,8 +1040,9 @@ fn handle_scope_exit_for_role(
                             Some(0),
                         );
                         let prev_idx = arm_last[0] as usize;
-                        nodes[prev_idx] = nodes[prev_idx].with_next(as_state_index(*node_len));
-                        nodes[*node_len] = jump_node;
+                        ctx.nodes[prev_idx] =
+                            ctx.nodes[prev_idx].with_next(as_state_index(*node_len));
+                        ctx.nodes[*node_len] = jump_node;
                         *node_len += 1;
                     }
                 } else if arm_last[0] != LINGER_ARM_NO_NODE {
@@ -1042,8 +1057,8 @@ fn handle_scope_exit_for_role(
                         Some(0),
                     );
                     let prev_idx = arm_last[0] as usize;
-                    nodes[prev_idx] = nodes[prev_idx].with_next(as_state_index(*node_len));
-                    nodes[*node_len] = jump_node;
+                    ctx.nodes[prev_idx] = ctx.nodes[prev_idx].with_next(as_state_index(*node_len));
+                    ctx.nodes[*node_len] = jump_node;
                     *node_len += 1;
                 } else if passive_starts[0] != usize::from(LINGER_ARM_NO_NODE) {
                     if *node_len >= MAX_STATES {
@@ -1059,8 +1074,9 @@ fn handle_scope_exit_for_role(
                         Some(scope),
                         Some(0),
                     );
-                    nodes[*node_len] = jump_node;
-                    route_scope_entries[entry_idx].passive_arm_jump[0] = as_state_index(*node_len);
+                    ctx.nodes[*node_len] = jump_node;
+                    ctx.route_scope_entries[entry_idx].passive_arm_jump[0] =
+                        as_state_index(*node_len);
                     *node_len += 1;
                 }
             } else if arm_last[1] != LINGER_ARM_NO_NODE {
@@ -1075,14 +1091,14 @@ fn handle_scope_exit_for_role(
                     Some(1),
                 );
                 let prev_idx = arm_last[1] as usize;
-                nodes[prev_idx] = nodes[prev_idx].with_next(as_state_index(*node_len));
-                nodes[*node_len] = jump_node;
+                ctx.nodes[prev_idx] = ctx.nodes[prev_idx].with_next(as_state_index(*node_len));
+                ctx.nodes[*node_len] = jump_node;
                 if *jump_backpatch_len >= MAX_JUMP_BACKPATCH {
                     panic!("jump backpatch capacity exceeded for LoopBreak");
                 }
-                jump_backpatch_indices[*jump_backpatch_len] = *node_len as u16;
-                jump_backpatch_scopes[*jump_backpatch_len] = scope;
-                jump_backpatch_kinds[*jump_backpatch_len] = 1;
+                ctx.jump_backpatch_indices[*jump_backpatch_len] = *node_len as u16;
+                ctx.jump_backpatch_scopes[*jump_backpatch_len] = scope;
+                ctx.jump_backpatch_kinds[*jump_backpatch_len] = 1;
                 *jump_backpatch_len += 1;
                 *node_len += 1;
             } else if is_passive && passive_starts[1] != usize::from(LINGER_ARM_NO_NODE) {
@@ -1092,13 +1108,13 @@ fn handle_scope_exit_for_role(
                 let arm_is_empty = passive_starts[1] == *node_len;
                 if *node_len > 0 && passive_starts[1] < *node_len {
                     let arm_last_node = *node_len - 1;
-                    if !nodes[arm_last_node].action().is_jump() {
+                    if !ctx.nodes[arm_last_node].action().is_jump() {
                         if *jump_backpatch_len >= MAX_JUMP_BACKPATCH {
                             panic!("jump backpatch capacity exceeded for arm last node");
                         }
-                        jump_backpatch_indices[*jump_backpatch_len] = arm_last_node as u16;
-                        jump_backpatch_scopes[*jump_backpatch_len] = scope;
-                        jump_backpatch_kinds[*jump_backpatch_len] = 1;
+                        ctx.jump_backpatch_indices[*jump_backpatch_len] = arm_last_node as u16;
+                        ctx.jump_backpatch_scopes[*jump_backpatch_len] = scope;
+                        ctx.jump_backpatch_kinds[*jump_backpatch_len] = 1;
                         *jump_backpatch_len += 1;
                     }
                 }
@@ -1114,15 +1130,15 @@ fn handle_scope_exit_for_role(
                     Some(scope),
                     Some(1),
                 );
-                nodes[*node_len] = jump_node;
-                route_scope_entries[entry_idx].passive_arm_jump[1] = as_state_index(*node_len);
+                ctx.nodes[*node_len] = jump_node;
+                ctx.route_scope_entries[entry_idx].passive_arm_jump[1] = as_state_index(*node_len);
                 if arm_is_empty {
                     if *jump_backpatch_len >= MAX_JUMP_BACKPATCH {
                         panic!("jump backpatch capacity exceeded for empty arm");
                     }
-                    jump_backpatch_indices[*jump_backpatch_len] = *node_len as u16;
-                    jump_backpatch_scopes[*jump_backpatch_len] = scope;
-                    jump_backpatch_kinds[*jump_backpatch_len] = 1;
+                    ctx.jump_backpatch_indices[*jump_backpatch_len] = *node_len as u16;
+                    ctx.jump_backpatch_scopes[*jump_backpatch_len] = scope;
+                    ctx.jump_backpatch_kinds[*jump_backpatch_len] = 1;
                     *jump_backpatch_len += 1;
                 }
                 *node_len += 1;
@@ -1130,12 +1146,12 @@ fn handle_scope_exit_for_role(
         }
     }
 
-    let controller_role = scope_controller_roles[entry_idx];
+    let controller_role = ctx.scope_controller_roles[entry_idx];
     if !is_linger
-        && matches!(scope_entries[entry_idx].kind, ScopeKind::Route)
+        && matches!(ctx.scope_entries[entry_idx].kind, ScopeKind::Route)
         && is_immediate_reenter
     {
-        let arm0_is_tau_eliminated = scope_entries[entry_idx].arm_entry[0].is_max();
+        let arm0_is_tau_eliminated = ctx.scope_entries[entry_idx].arm_entry[0].is_max();
         let is_passive = controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
 
         if *node_len >= MAX_STATES {
@@ -1148,26 +1164,26 @@ fn handle_scope_exit_for_role(
             None,
             Some(0),
         );
-        nodes[*node_len] = jump_node;
+        ctx.nodes[*node_len] = jump_node;
         if is_passive && arm0_is_tau_eliminated {
-            scope_entries[entry_idx].arm_entry[0] = as_state_index(*node_len);
+            ctx.scope_entries[entry_idx].arm_entry[0] = as_state_index(*node_len);
         }
         if *jump_backpatch_len >= MAX_JUMP_BACKPATCH {
             panic!("jump backpatch capacity exceeded for RouteArmEnd Jump");
         }
-        jump_backpatch_indices[*jump_backpatch_len] = *node_len as u16;
-        jump_backpatch_scopes[*jump_backpatch_len] = scope;
-        jump_backpatch_kinds[*jump_backpatch_len] = 2;
+        ctx.jump_backpatch_indices[*jump_backpatch_len] = *node_len as u16;
+        ctx.jump_backpatch_scopes[*jump_backpatch_len] = scope;
+        ctx.jump_backpatch_kinds[*jump_backpatch_len] = 2;
         *jump_backpatch_len += 1;
         *node_len += 1;
     }
 
     if !is_linger
-        && matches!(scope_entries[entry_idx].kind, ScopeKind::Route)
+        && matches!(ctx.scope_entries[entry_idx].kind, ScopeKind::Route)
         && !is_immediate_reenter
     {
-        let arm1_last = route_arm_last_node[*scope_stack_len][1];
-        let last_was_scope = last_step_was_scope[*scope_stack_len];
+        let arm1_last = ctx.route_arm_last_node[*scope_stack_len][1];
+        let last_was_scope = ctx.last_step_was_scope[*scope_stack_len];
         if !arm1_last.is_max() {
             if *node_len >= MAX_STATES {
                 panic!("node capacity exceeded inserting RouteArmEnd Jump for arm 1");
@@ -1180,25 +1196,25 @@ fn handle_scope_exit_for_role(
                 Some(1),
             );
             if last_was_scope {
-                nodes[*node_len] = jump_node;
+                ctx.nodes[*node_len] = jump_node;
             } else {
                 let prev_idx = state_index_to_usize(arm1_last);
-                nodes[prev_idx] = nodes[prev_idx].with_next(as_state_index(*node_len));
-                nodes[*node_len] = jump_node;
+                ctx.nodes[prev_idx] = ctx.nodes[prev_idx].with_next(as_state_index(*node_len));
+                ctx.nodes[*node_len] = jump_node;
             }
             if *jump_backpatch_len >= MAX_JUMP_BACKPATCH {
                 panic!("jump backpatch capacity exceeded for RouteArmEnd Jump (arm 1)");
             }
-            jump_backpatch_indices[*jump_backpatch_len] = *node_len as u16;
-            jump_backpatch_scopes[*jump_backpatch_len] = scope;
-            jump_backpatch_kinds[*jump_backpatch_len] = 2;
+            ctx.jump_backpatch_indices[*jump_backpatch_len] = *node_len as u16;
+            ctx.jump_backpatch_scopes[*jump_backpatch_len] = scope;
+            ctx.jump_backpatch_kinds[*jump_backpatch_len] = 2;
             *jump_backpatch_len += 1;
             *node_len += 1;
         }
     }
 
-    if matches!(scope_entries[entry_idx].kind, ScopeKind::Route) && !is_immediate_reenter {
-        let arm1_has_content = !scope_entries[entry_idx].arm_entry[1].is_max();
+    if matches!(ctx.scope_entries[entry_idx].kind, ScopeKind::Route) && !is_immediate_reenter {
+        let arm1_has_content = !ctx.scope_entries[entry_idx].arm_entry[1].is_max();
         let is_passive = controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
         if !arm1_has_content {
             if *node_len >= MAX_STATES {
@@ -1221,84 +1237,63 @@ fn handle_scope_exit_for_role(
                     Some(1),
                 )
             };
-            nodes[*node_len] = jump_node;
+            ctx.nodes[*node_len] = jump_node;
             if is_passive {
-                scope_entries[entry_idx].arm_entry[1] = as_state_index(*node_len);
+                ctx.scope_entries[entry_idx].arm_entry[1] = as_state_index(*node_len);
             }
             *node_len += 1;
         }
     }
 
     if *scope_stack_len > 0 {
-        last_step_was_scope[*scope_stack_len - 1] = true;
+        ctx.last_step_was_scope[*scope_stack_len - 1] = true;
     }
 
-    if matches!(scope_entries[entry_idx].kind, ScopeKind::Route) && !is_immediate_reenter {
+    if matches!(ctx.scope_entries[entry_idx].kind, ScopeKind::Route) && !is_immediate_reenter {
         let mut finalize_ctx = RouteFinalizeCtx {
-            nodes,
-            scope_entries,
-            scope_controller_roles,
-            scope_route_policy_effs,
-            route_scope_entries,
-            route_scope_offer_lane_words,
-            route_lane_word_len,
+            nodes: ctx.nodes,
+            scope_entries: ctx.scope_entries,
+            scope_controller_roles: ctx.scope_controller_roles,
+            scope_route_policy_effs: ctx.scope_route_policy_effs,
+            route_scope_entries: ctx.route_scope_entries,
+            route_scope_offer_lane_words: ctx.route_scope_offer_lane_words,
+            route_lane_word_len: ctx.route_lane_word_len,
             scope_entries_len,
-            dispatch_table,
-            prefix_actions,
-            prefix_lens,
-            arm_seen_recv,
-            scan_stack,
-            visited,
+            dispatch_table: ctx.dispatch_table,
+            prefix_actions: ctx.prefix_actions,
+            prefix_lens: ctx.prefix_lens,
+            arm_seen_recv: ctx.arm_seen_recv,
+            scan_stack: ctx.scan_stack,
+            visited: ctx.visited,
         };
         offer_entry_locked =
             finalize_route_scope_exit_for_role(&mut finalize_ctx, role, *node_len, entry_idx);
     }
 
-    if matches!(scope_entries[entry_idx].kind, ScopeKind::Route) && !offer_entry_locked {
-        route_scope_entries[entry_idx].offer_entry = if scope_entries[entry_idx].linger {
+    if matches!(ctx.scope_entries[entry_idx].kind, ScopeKind::Route) && !offer_entry_locked {
+        ctx.route_scope_entries[entry_idx].offer_entry = if ctx.scope_entries[entry_idx].linger {
             StateIndex::MAX
         } else {
-            scope_entries[entry_idx].start
+            ctx.scope_entries[entry_idx].start
         };
     }
 
-    scope_entries[entry_idx].end = as_state_index(*node_len);
+    ctx.scope_entries[entry_idx].end = as_state_index(*node_len);
 }
 
 #[inline(never)]
 fn handle_atom_for_role<P: TypestateProgramView>(
+    ctx: &mut RoleWalkCtx<'_>,
     program: &P,
     eff_idx: usize,
     eff: EffStruct,
     role: u8,
-    nodes: &mut [LocalNode],
     node_len_out: &mut usize,
     current_scope: ScopeId,
     loop_scope: Option<ScopeId>,
-    scope_stack: &[ScopeId; MAX_SCOPE_SCRATCH],
-    scope_stack_kinds: &[ScopeKind; MAX_SCOPE_SCRATCH],
-    scope_stack_entries: &[u16; MAX_SCOPE_SCRATCH],
     scope_stack_len: usize,
-    route_current_arm: &[u8; MAX_SCOPE_SCRATCH],
-    scope_controller_roles: &[u8; MAX_SCOPE_SCRATCH],
-    scope_entries: &mut [ScopeRecord],
-    route_scope_entries: &mut [RouteScopeScratchRecord],
-    route_scope_offer_lane_words: &mut [LaneWord],
-    route_scope_arm1_lane_words: &mut [LaneWord],
-    route_lane_word_len: usize,
-    lane_slot_count: usize,
-    scope_lane_first_eff: &mut [EffIndex],
-    scope_lane_last_eff: &mut [EffIndex],
-    route_arm0_lane_last_eff_by_slot: &mut [EffIndex],
-    loop_entry_ids: &mut [ScopeId; MAX_LOOP_TRACKED],
-    loop_entry_states: &mut [StateIndex; MAX_LOOP_TRACKED],
     loop_entry_len_out: &mut usize,
     linger_arm_len: usize,
-    linger_arm_scope_ids: &[ScopeId; MAX_SCOPE_SCRATCH],
-    linger_arm_current: &mut [u8; MAX_SCOPE_SCRATCH],
-    linger_arm_last_node: &mut [[u16; 2]; MAX_SCOPE_SCRATCH],
-    last_step_was_scope: &mut [bool; MAX_SCOPE_SCRATCH],
-    route_arm_last_node: &mut [[StateIndex; 2]; MAX_SCOPE_SCRATCH],
 ) {
     let mut node_len = *node_len_out;
     let mut loop_entry_len = *loop_entry_len_out;
@@ -1321,14 +1316,15 @@ fn handle_atom_for_role<P: TypestateProgramView>(
     } else {
         None
     };
-    if scope_stack_len > 0 && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route) {
-        let entry_idx = scope_stack_entries[scope_stack_len - 1] as usize;
+    if scope_stack_len > 0 && matches!(ctx.scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
+    {
+        let entry_idx = ctx.scope_stack_entries[scope_stack_len - 1] as usize;
         if policy.is_dynamic() || loop_control.is_some() {
             insert_offer_lane(
                 route_scope_lane_words_mut(
-                    route_scope_offer_lane_words,
-                    route_scope_entries[entry_idx].lane_word_start(),
-                    route_lane_word_len,
+                    ctx.route_scope_offer_lane_words,
+                    ctx.route_scope_entries[entry_idx].lane_word_start(),
+                    ctx.route_lane_word_len,
                 ),
                 atom.lane,
             );
@@ -1337,23 +1333,23 @@ fn handle_atom_for_role<P: TypestateProgramView>(
 
     if atom.from == role && atom.to == role {
         let route_arm = if scope_stack_len > 0
-            && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
+            && matches!(ctx.scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
         {
             let stack_idx = scope_stack_len - 1;
-            let arm = route_current_arm[stack_idx] as usize;
-            let entry_idx = scope_stack_entries[stack_idx] as usize;
+            let arm = ctx.route_current_arm[stack_idx] as usize;
+            let entry_idx = ctx.scope_stack_entries[stack_idx] as usize;
 
-            let entry = &mut scope_entries[entry_idx];
+            let entry = &mut ctx.scope_entries[entry_idx];
             debug_assert!(
                 !matches!(entry.kind, ScopeKind::Route)
-                    || scope_controller_roles[entry_idx] != CONTROLLER_ROLE_NONE,
+                    || ctx.scope_controller_roles[entry_idx] != CONTROLLER_ROLE_NONE,
                 "route scope missing controller_role"
             );
             if arm < 2 && entry.arm_entry[arm].is_max() {
                 entry.arm_entry[arm] = as_state_index(node_len);
             }
 
-            Some(route_current_arm[stack_idx])
+            Some(ctx.route_current_arm[stack_idx])
         } else {
             None
         };
@@ -1362,13 +1358,17 @@ fn handle_atom_for_role<P: TypestateProgramView>(
         let mut next = as_state_index(node_len + 1);
         if matches!(loop_control, Some(LoopControlMeaning::Continue))
             && let Some(scope_id) = loop_scope
-            && let Some(entry) =
-                find_loop_entry_state(loop_entry_ids, loop_entry_states, loop_entry_len, scope_id)
+            && let Some(entry) = find_loop_entry_state(
+                ctx.loop_entry_ids,
+                ctx.loop_entry_states,
+                loop_entry_len,
+                scope_id,
+            )
         {
             next = entry;
         }
 
-        nodes[node_len] = LocalNode::local(
+        ctx.nodes[node_len] = LocalNode::local(
             as_eff_index(eff_idx),
             atom.label,
             atom.resource,
@@ -1383,27 +1383,27 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             false,
         );
         let lane_idx = atom.lane as usize;
-        if lane_idx >= lane_slot_count {
+        if lane_idx >= ctx.lane_slot_count {
             panic!("scope lane facts missing lane slot capacity");
         }
         let mut stack_idx = 0usize;
         while stack_idx < scope_stack_len {
-            let entry_idx = scope_stack_entries[stack_idx] as usize;
-            let lane_offset = entry_idx * lane_slot_count + lane_idx;
-            if scope_lane_first_eff[lane_offset] == EffIndex::MAX {
-                scope_lane_first_eff[lane_offset] = as_eff_index(eff_idx);
+            let entry_idx = ctx.scope_stack_entries[stack_idx] as usize;
+            let lane_offset = entry_idx * ctx.lane_slot_count + lane_idx;
+            if ctx.scope_lane_first_eff[lane_offset] == EffIndex::MAX {
+                ctx.scope_lane_first_eff[lane_offset] = as_eff_index(eff_idx);
             }
-            scope_lane_last_eff[lane_offset] = as_eff_index(eff_idx);
-            if matches!(scope_stack_kinds[stack_idx], ScopeKind::Route) {
-                let arm = route_current_arm[stack_idx] as usize;
+            ctx.scope_lane_last_eff[lane_offset] = as_eff_index(eff_idx);
+            if matches!(ctx.scope_stack_kinds[stack_idx], ScopeKind::Route) {
+                let arm = ctx.route_current_arm[stack_idx] as usize;
                 if arm == 0 {
-                    route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
+                    ctx.route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
                 } else if arm == 1 {
                     insert_offer_lane(
                         route_scope_lane_words_mut(
-                            route_scope_arm1_lane_words,
-                            route_scope_entries[entry_idx].lane_word_start(),
-                            route_lane_word_len,
+                            ctx.route_scope_arm1_lane_words,
+                            ctx.route_scope_entries[entry_idx].lane_word_start(),
+                            ctx.route_lane_word_len,
                         ),
                         atom.lane,
                     );
@@ -1415,8 +1415,8 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             && loop_control.is_none()
         {
             store_loop_entry_if_absent(
-                loop_entry_ids,
-                loop_entry_states,
+                ctx.loop_entry_ids,
+                ctx.loop_entry_states,
                 &mut loop_entry_len,
                 scope_id,
                 current_state,
@@ -1425,9 +1425,9 @@ fn handle_atom_for_role<P: TypestateProgramView>(
         if let Some(scope_id) = loop_scope {
             let mut li = 0;
             while li < linger_arm_len {
-                if linger_arm_scope_ids[li].local_ordinal() == scope_id.local_ordinal() {
+                if ctx.linger_arm_scope_ids[li].local_ordinal() == scope_id.local_ordinal() {
                     if matches!(loop_control, Some(LoopControlMeaning::Break)) {
-                        linger_arm_current[li] = 1;
+                        ctx.linger_arm_current[li] = 1;
                     }
                     break;
                 }
@@ -1437,15 +1437,16 @@ fn handle_atom_for_role<P: TypestateProgramView>(
         if linger_arm_len > 0 {
             let mut stack_idx = 0usize;
             while stack_idx < scope_stack_len {
-                let entry_idx = scope_stack_entries[stack_idx] as usize;
-                if scope_entries[entry_idx].linger {
-                    let scope_id = scope_stack[stack_idx];
+                let entry_idx = ctx.scope_stack_entries[stack_idx] as usize;
+                if ctx.scope_entries[entry_idx].linger {
+                    let scope_id = ctx.scope_stack[stack_idx];
                     let mut li = 0usize;
                     while li < linger_arm_len {
-                        if linger_arm_scope_ids[li].local_ordinal() == scope_id.local_ordinal() {
-                            let arm = linger_arm_current[li] as usize;
+                        if ctx.linger_arm_scope_ids[li].local_ordinal() == scope_id.local_ordinal()
+                        {
+                            let arm = ctx.linger_arm_current[li] as usize;
                             if arm < 2 {
-                                linger_arm_last_node[li][arm] = node_len as u16;
+                                ctx.linger_arm_last_node[li][arm] = node_len as u16;
                             }
                             break;
                         }
@@ -1455,34 +1456,35 @@ fn handle_atom_for_role<P: TypestateProgramView>(
                 stack_idx += 1;
             }
         }
-        if scope_stack_len > 0 && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
+        if scope_stack_len > 0
+            && matches!(ctx.scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
         {
             let stack_idx = scope_stack_len - 1;
-            let entry_idx = scope_stack_entries[stack_idx] as usize;
-            if !scope_entries[entry_idx].linger {
-                last_step_was_scope[stack_idx] = false;
+            let entry_idx = ctx.scope_stack_entries[stack_idx] as usize;
+            if !ctx.scope_entries[entry_idx].linger {
+                ctx.last_step_was_scope[stack_idx] = false;
                 if let Some(arm) = route_arm
                     && (arm as usize) < 2
                 {
-                    route_arm_last_node[stack_idx][arm as usize] = as_state_index(node_len);
+                    ctx.route_arm_last_node[stack_idx][arm as usize] = as_state_index(node_len);
                 }
             }
         }
         node_len += 1;
     } else if atom.from == role {
         let route_arm = if scope_stack_len > 0
-            && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
+            && matches!(ctx.scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
         {
             let stack_idx = scope_stack_len - 1;
-            let arm = route_current_arm[stack_idx];
-            let entry_idx = scope_stack_entries[stack_idx] as usize;
-            let controller_role = scope_controller_roles[entry_idx];
+            let arm = ctx.route_current_arm[stack_idx];
+            let entry_idx = ctx.scope_stack_entries[stack_idx] as usize;
+            let controller_role = ctx.scope_controller_roles[entry_idx];
             let is_passive = controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
             if (arm as usize) < 2
                 && is_passive
-                && scope_entries[entry_idx].arm_entry[arm as usize].is_max()
+                && ctx.scope_entries[entry_idx].arm_entry[arm as usize].is_max()
             {
-                scope_entries[entry_idx].arm_entry[arm as usize] = as_state_index(node_len);
+                ctx.scope_entries[entry_idx].arm_entry[arm as usize] = as_state_index(node_len);
             }
             Some(arm)
         } else {
@@ -1493,13 +1495,17 @@ fn handle_atom_for_role<P: TypestateProgramView>(
         let mut next = as_state_index(node_len + 1);
         if matches!(loop_control, Some(LoopControlMeaning::Continue))
             && let Some(scope_id) = loop_scope
-            && let Some(entry) =
-                find_loop_entry_state(loop_entry_ids, loop_entry_states, loop_entry_len, scope_id)
+            && let Some(entry) = find_loop_entry_state(
+                ctx.loop_entry_ids,
+                ctx.loop_entry_states,
+                loop_entry_len,
+                scope_id,
+            )
         {
             next = entry;
         }
 
-        nodes[node_len] = LocalNode::send(
+        ctx.nodes[node_len] = LocalNode::send(
             as_eff_index(eff_idx),
             atom.to,
             atom.label,
@@ -1515,27 +1521,27 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             false,
         );
         let lane_idx = atom.lane as usize;
-        if lane_idx >= lane_slot_count {
+        if lane_idx >= ctx.lane_slot_count {
             panic!("scope lane facts missing lane slot capacity");
         }
         let mut stack_idx = 0usize;
         while stack_idx < scope_stack_len {
-            let entry_idx = scope_stack_entries[stack_idx] as usize;
-            let lane_offset = entry_idx * lane_slot_count + lane_idx;
-            if scope_lane_first_eff[lane_offset] == EffIndex::MAX {
-                scope_lane_first_eff[lane_offset] = as_eff_index(eff_idx);
+            let entry_idx = ctx.scope_stack_entries[stack_idx] as usize;
+            let lane_offset = entry_idx * ctx.lane_slot_count + lane_idx;
+            if ctx.scope_lane_first_eff[lane_offset] == EffIndex::MAX {
+                ctx.scope_lane_first_eff[lane_offset] = as_eff_index(eff_idx);
             }
-            scope_lane_last_eff[lane_offset] = as_eff_index(eff_idx);
-            if matches!(scope_stack_kinds[stack_idx], ScopeKind::Route) {
-                let arm = route_current_arm[stack_idx] as usize;
+            ctx.scope_lane_last_eff[lane_offset] = as_eff_index(eff_idx);
+            if matches!(ctx.scope_stack_kinds[stack_idx], ScopeKind::Route) {
+                let arm = ctx.route_current_arm[stack_idx] as usize;
                 if arm == 0 {
-                    route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
+                    ctx.route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
                 } else if arm == 1 {
                     insert_offer_lane(
                         route_scope_lane_words_mut(
-                            route_scope_arm1_lane_words,
-                            route_scope_entries[entry_idx].lane_word_start(),
-                            route_lane_word_len,
+                            ctx.route_scope_arm1_lane_words,
+                            ctx.route_scope_entries[entry_idx].lane_word_start(),
+                            ctx.route_lane_word_len,
                         ),
                         atom.lane,
                     );
@@ -1547,8 +1553,8 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             && loop_control.is_none()
         {
             store_loop_entry_if_absent(
-                loop_entry_ids,
-                loop_entry_states,
+                ctx.loop_entry_ids,
+                ctx.loop_entry_states,
                 &mut loop_entry_len,
                 scope_id,
                 current_state,
@@ -1557,15 +1563,16 @@ fn handle_atom_for_role<P: TypestateProgramView>(
         if linger_arm_len > 0 {
             let mut stack_idx = 0usize;
             while stack_idx < scope_stack_len {
-                let entry_idx = scope_stack_entries[stack_idx] as usize;
-                if scope_entries[entry_idx].linger {
-                    let scope_id = scope_stack[stack_idx];
+                let entry_idx = ctx.scope_stack_entries[stack_idx] as usize;
+                if ctx.scope_entries[entry_idx].linger {
+                    let scope_id = ctx.scope_stack[stack_idx];
                     let mut li = 0usize;
                     while li < linger_arm_len {
-                        if linger_arm_scope_ids[li].local_ordinal() == scope_id.local_ordinal() {
-                            let arm = linger_arm_current[li] as usize;
+                        if ctx.linger_arm_scope_ids[li].local_ordinal() == scope_id.local_ordinal()
+                        {
+                            let arm = ctx.linger_arm_current[li] as usize;
                             if arm < 2 {
-                                linger_arm_last_node[li][arm] = node_len as u16;
+                                ctx.linger_arm_last_node[li][arm] = node_len as u16;
                             }
                             break;
                         }
@@ -1575,30 +1582,31 @@ fn handle_atom_for_role<P: TypestateProgramView>(
                 stack_idx += 1;
             }
         }
-        if scope_stack_len > 0 && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
+        if scope_stack_len > 0
+            && matches!(ctx.scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
         {
             let stack_idx = scope_stack_len - 1;
-            let entry_idx = scope_stack_entries[stack_idx] as usize;
-            if !scope_entries[entry_idx].linger {
-                last_step_was_scope[stack_idx] = false;
+            let entry_idx = ctx.scope_stack_entries[stack_idx] as usize;
+            if !ctx.scope_entries[entry_idx].linger {
+                ctx.last_step_was_scope[stack_idx] = false;
                 if let Some(arm) = route_arm
                     && (arm as usize) < 2
                 {
-                    route_arm_last_node[stack_idx][arm as usize] = as_state_index(node_len);
+                    ctx.route_arm_last_node[stack_idx][arm as usize] = as_state_index(node_len);
                 }
             }
         }
         node_len += 1;
     } else if atom.to == role {
         let (route_arm, is_choice_determinant) = if scope_stack_len > 0
-            && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
+            && matches!(ctx.scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
         {
             let stack_idx = scope_stack_len - 1;
-            let arm = route_current_arm[stack_idx];
-            let entry_idx = scope_stack_entries[stack_idx] as usize;
-            let entry = &mut scope_entries[entry_idx];
-            let route_entry = &mut route_scope_entries[entry_idx];
-            let controller_role = scope_controller_roles[entry_idx];
+            let arm = ctx.route_current_arm[stack_idx];
+            let entry_idx = ctx.scope_stack_entries[stack_idx] as usize;
+            let entry = &mut ctx.scope_entries[entry_idx];
+            let route_entry = &mut ctx.route_scope_entries[entry_idx];
+            let controller_role = ctx.scope_controller_roles[entry_idx];
             let is_passive = controller_role != CONTROLLER_ROLE_NONE && controller_role != role;
 
             if (arm as usize) < 2 && is_passive {
@@ -1606,7 +1614,7 @@ fn handle_atom_for_role<P: TypestateProgramView>(
                 let should_set = if existing.is_max() {
                     true
                 } else {
-                    let existing_node = nodes[state_index_to_usize(existing)];
+                    let existing_node = ctx.nodes[state_index_to_usize(existing)];
                     !matches!(existing_node.action(), LocalAction::Recv { .. })
                 };
                 if should_set {
@@ -1620,9 +1628,9 @@ fn handle_atom_for_role<P: TypestateProgramView>(
                 route_entry.route_recv[arm as usize] = current_state;
                 insert_offer_lane(
                     route_scope_lane_words_mut(
-                        route_scope_offer_lane_words,
-                        route_scope_entries[entry_idx].lane_word_start(),
-                        route_lane_word_len,
+                        ctx.route_scope_offer_lane_words,
+                        ctx.route_scope_entries[entry_idx].lane_word_start(),
+                        ctx.route_lane_word_len,
                     ),
                     atom.lane,
                 );
@@ -1638,13 +1646,17 @@ fn handle_atom_for_role<P: TypestateProgramView>(
         let mut next = as_state_index(node_len + 1);
         if matches!(loop_control, Some(LoopControlMeaning::Continue))
             && let Some(scope_id) = loop_scope
-            && let Some(entry) =
-                find_loop_entry_state(loop_entry_ids, loop_entry_states, loop_entry_len, scope_id)
+            && let Some(entry) = find_loop_entry_state(
+                ctx.loop_entry_ids,
+                ctx.loop_entry_states,
+                loop_entry_len,
+                scope_id,
+            )
         {
             next = entry;
         }
 
-        nodes[node_len] = LocalNode::recv(
+        ctx.nodes[node_len] = LocalNode::recv(
             as_eff_index(eff_idx),
             atom.from,
             atom.label,
@@ -1660,27 +1672,27 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             is_choice_determinant,
         );
         let lane_idx = atom.lane as usize;
-        if lane_idx >= lane_slot_count {
+        if lane_idx >= ctx.lane_slot_count {
             panic!("scope lane facts missing lane slot capacity");
         }
         let mut stack_idx = 0usize;
         while stack_idx < scope_stack_len {
-            let entry_idx = scope_stack_entries[stack_idx] as usize;
-            let lane_offset = entry_idx * lane_slot_count + lane_idx;
-            if scope_lane_first_eff[lane_offset] == EffIndex::MAX {
-                scope_lane_first_eff[lane_offset] = as_eff_index(eff_idx);
+            let entry_idx = ctx.scope_stack_entries[stack_idx] as usize;
+            let lane_offset = entry_idx * ctx.lane_slot_count + lane_idx;
+            if ctx.scope_lane_first_eff[lane_offset] == EffIndex::MAX {
+                ctx.scope_lane_first_eff[lane_offset] = as_eff_index(eff_idx);
             }
-            scope_lane_last_eff[lane_offset] = as_eff_index(eff_idx);
-            if matches!(scope_stack_kinds[stack_idx], ScopeKind::Route) {
-                let arm = route_current_arm[stack_idx] as usize;
+            ctx.scope_lane_last_eff[lane_offset] = as_eff_index(eff_idx);
+            if matches!(ctx.scope_stack_kinds[stack_idx], ScopeKind::Route) {
+                let arm = ctx.route_current_arm[stack_idx] as usize;
                 if arm == 0 {
-                    route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
+                    ctx.route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
                 } else if arm == 1 {
                     insert_offer_lane(
                         route_scope_lane_words_mut(
-                            route_scope_arm1_lane_words,
-                            route_scope_entries[entry_idx].lane_word_start(),
-                            route_lane_word_len,
+                            ctx.route_scope_arm1_lane_words,
+                            ctx.route_scope_entries[entry_idx].lane_word_start(),
+                            ctx.route_lane_word_len,
                         ),
                         atom.lane,
                     );
@@ -1692,8 +1704,8 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             && loop_control.is_none()
         {
             store_loop_entry_if_absent(
-                loop_entry_ids,
-                loop_entry_states,
+                ctx.loop_entry_ids,
+                ctx.loop_entry_states,
                 &mut loop_entry_len,
                 scope_id,
                 current_state,
@@ -1702,15 +1714,16 @@ fn handle_atom_for_role<P: TypestateProgramView>(
         if linger_arm_len > 0 {
             let mut stack_idx = 0usize;
             while stack_idx < scope_stack_len {
-                let entry_idx = scope_stack_entries[stack_idx] as usize;
-                if scope_entries[entry_idx].linger {
-                    let scope_id = scope_stack[stack_idx];
+                let entry_idx = ctx.scope_stack_entries[stack_idx] as usize;
+                if ctx.scope_entries[entry_idx].linger {
+                    let scope_id = ctx.scope_stack[stack_idx];
                     let mut li = 0usize;
                     while li < linger_arm_len {
-                        if linger_arm_scope_ids[li].local_ordinal() == scope_id.local_ordinal() {
-                            let arm = linger_arm_current[li] as usize;
+                        if ctx.linger_arm_scope_ids[li].local_ordinal() == scope_id.local_ordinal()
+                        {
+                            let arm = ctx.linger_arm_current[li] as usize;
                             if arm < 2 {
-                                linger_arm_last_node[li][arm] = node_len as u16;
+                                ctx.linger_arm_last_node[li][arm] = node_len as u16;
                             }
                             break;
                         }
@@ -1720,16 +1733,17 @@ fn handle_atom_for_role<P: TypestateProgramView>(
                 stack_idx += 1;
             }
         }
-        if scope_stack_len > 0 && matches!(scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
+        if scope_stack_len > 0
+            && matches!(ctx.scope_stack_kinds[scope_stack_len - 1], ScopeKind::Route)
         {
             let stack_idx = scope_stack_len - 1;
-            let entry_idx = scope_stack_entries[stack_idx] as usize;
-            if !scope_entries[entry_idx].linger {
-                last_step_was_scope[stack_idx] = false;
+            let entry_idx = ctx.scope_stack_entries[stack_idx] as usize;
+            if !ctx.scope_entries[entry_idx].linger {
+                ctx.last_step_was_scope[stack_idx] = false;
                 if let Some(arm) = route_arm
                     && (arm as usize) < 2
                 {
-                    route_arm_last_node[stack_idx][arm as usize] = as_state_index(node_len);
+                    ctx.route_arm_last_node[stack_idx][arm as usize] = as_state_index(node_len);
                 }
             }
         }
@@ -1742,66 +1756,73 @@ fn handle_atom_for_role<P: TypestateProgramView>(
 
 #[inline(never)]
 pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
-    nodes_ptr: *mut LocalNode,
-    nodes_cap: usize,
+    role: u8,
+    storage: &mut super::builder::RoleTypestateInitStorage<'_>,
+    scratch: &mut RoleTypestateBuildScratch,
     len_dst: *mut u16,
     scope_registry_dst: *mut super::registry::ScopeRegistry,
-    role: u8,
-    scratch: &mut RoleTypestateBuildScratch,
-    scope_records: &mut [super::registry::ScopeRecord],
-    scope_slots_by_scope: *mut u16,
-    route_dense_by_slot: *mut u16,
-    route_records: *mut RouteScopeRecord,
-    route_offer_lane_words: *mut LaneWord,
-    route_arm1_lane_words: *mut LaneWord,
-    route_lane_word_len: usize,
-    route_dispatch_shapes: *mut super::registry::RouteDispatchShape,
-    route_dispatch_shape_cap: usize,
-    route_dispatch_entries: *mut super::registry::RouteDispatchEntry,
-    route_dispatch_entry_cap: usize,
-    route_dispatch_targets: *mut StateIndex,
-    route_dispatch_target_cap: usize,
-    lane_slot_count: usize,
-    scope_lane_first_eff: *mut EffIndex,
-    scope_lane_last_eff: *mut EffIndex,
-    route_arm0_lane_last_eff_by_slot: *mut EffIndex,
-    route_scope_cap: usize,
     program: P,
 ) {
     let slice = program.as_slice();
     let scope_markers = program.scope_markers();
-    let nodes = unsafe { core::slice::from_raw_parts_mut(nodes_ptr, nodes_cap) };
-    let lane_matrix_len = scope_records.len().saturating_mul(lane_slot_count);
+    let nodes = unsafe { core::slice::from_raw_parts_mut(storage.nodes_ptr, storage.nodes_cap) };
+    let lane_slot_count = storage.lane_slot_count;
+    let scope_slots_by_scope = storage.scope_slots_by_scope;
+    let route_dense_by_slot = storage.route_dense_by_slot;
+    let route_records = storage.route_records;
+    let route_offer_lane_words = storage.route_offer_lane_words;
+    let route_arm1_lane_words = storage.route_arm1_lane_words;
+    let route_lane_word_len = storage.route_lane_word_len;
+    let route_dispatch_shapes = storage.route_dispatch_shapes;
+    let route_dispatch_shape_cap = storage.route_dispatch_shape_cap;
+    let route_dispatch_entries = storage.route_dispatch_entries;
+    let route_dispatch_entry_cap = storage.route_dispatch_entry_cap;
+    let route_dispatch_targets = storage.route_dispatch_targets;
+    let route_dispatch_target_cap = storage.route_dispatch_target_cap;
+    let route_scope_cap = storage.route_scope_cap;
+    let lane_matrix_len = storage
+        .scope_records
+        .len()
+        .saturating_mul(storage.lane_slot_count);
     let scope_lane_first_eff = if lane_matrix_len == 0 {
         &mut []
     } else {
-        unsafe { core::slice::from_raw_parts_mut(scope_lane_first_eff, lane_matrix_len) }
+        unsafe { core::slice::from_raw_parts_mut(storage.scope_lane_first_eff, lane_matrix_len) }
     };
     let scope_lane_last_eff = if lane_matrix_len == 0 {
         &mut []
     } else {
-        unsafe { core::slice::from_raw_parts_mut(scope_lane_last_eff, lane_matrix_len) }
+        unsafe { core::slice::from_raw_parts_mut(storage.scope_lane_last_eff, lane_matrix_len) }
     };
     let route_arm0_lane_last_eff_by_slot = if lane_matrix_len == 0 {
         &mut []
     } else {
         unsafe {
-            core::slice::from_raw_parts_mut(route_arm0_lane_last_eff_by_slot, lane_matrix_len)
+            core::slice::from_raw_parts_mut(
+                storage.route_arm0_lane_last_eff_by_slot,
+                lane_matrix_len,
+            )
         }
     };
     scope_lane_first_eff.fill(EffIndex::MAX);
     scope_lane_last_eff.fill(EffIndex::MAX);
     route_arm0_lane_last_eff_by_slot.fill(EffIndex::MAX);
-    let route_lane_word_cap = route_scope_cap.saturating_mul(route_lane_word_len);
+    let route_lane_word_cap = storage
+        .route_scope_cap
+        .saturating_mul(storage.route_lane_word_len);
     let route_scope_offer_lane_words = if route_lane_word_cap == 0 {
         &mut []
     } else {
-        unsafe { core::slice::from_raw_parts_mut(route_offer_lane_words, route_lane_word_cap) }
+        unsafe {
+            core::slice::from_raw_parts_mut(storage.route_offer_lane_words, route_lane_word_cap)
+        }
     };
     let route_scope_arm1_lane_words = if route_lane_word_cap == 0 {
         &mut []
     } else {
-        unsafe { core::slice::from_raw_parts_mut(route_arm1_lane_words, route_lane_word_cap) }
+        unsafe {
+            core::slice::from_raw_parts_mut(storage.route_arm1_lane_words, route_lane_word_cap)
+        }
     };
     route_scope_offer_lane_words.fill(0);
     route_scope_arm1_lane_words.fill(0);
@@ -1881,7 +1902,7 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
     // Flag indicating this non-linger Route scope has passive tracking (ROLE != controller).
     let route_is_passive = &mut scratch.route_is_passive;
     let mut scope_stack_len = 0usize;
-    let scope_entries = &mut *scope_records;
+    let scope_entries = &mut *storage.scope_records;
     let route_scope_entries = &mut scratch.route_scope_entries;
     let mut scope_entries_len = 0usize;
     let mut scope_range_counter: u16 = 0;
@@ -2117,39 +2138,51 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                     }
                 }
                 ScopeEvent::Exit => {
-                    handle_scope_exit_for_role(
+                    let mut walk_ctx = RoleWalkCtx {
                         nodes,
+                        scope_entries,
+                        route_scope_entries,
+                        route_scope_offer_lane_words,
+                        route_scope_arm1_lane_words,
+                        route_lane_word_len,
+                        lane_slot_count,
+                        scope_lane_first_eff,
+                        scope_lane_last_eff,
+                        route_arm0_lane_last_eff_by_slot,
+                        loop_entry_ids,
+                        loop_entry_states,
+                        linger_arm_scope_ids,
+                        linger_arm_current,
+                        linger_arm_last_node,
+                        jump_backpatch_indices,
+                        jump_backpatch_scopes,
+                        jump_backpatch_kinds,
+                        scope_stack,
+                        scope_stack_kinds,
+                        scope_stack_entries,
+                        route_current_arm,
+                        scope_controller_roles,
+                        scope_route_policy_effs,
+                        last_step_was_scope,
+                        route_arm_last_node,
+                        dispatch_table: &mut scratch.dispatch_table,
+                        prefix_actions: &mut scratch.prefix_actions,
+                        prefix_lens: &mut scratch.prefix_lens,
+                        arm_seen_recv: &mut scratch.arm_seen_recv,
+                        scan_stack: &mut scratch.scan_stack,
+                        visited: &mut scratch.visited,
+                    };
+                    handle_scope_exit_for_role(
+                        &mut walk_ctx,
                         &mut node_len,
                         scope_markers,
                         scope_marker_idx,
                         scope,
                         role,
-                        scope_stack,
-                        scope_stack_kinds,
-                        scope_stack_entries,
                         &mut scope_stack_len,
-                        scope_entries,
                         scope_entries_len,
-                        scope_controller_roles,
-                        scope_route_policy_effs,
-                        route_scope_entries,
-                        route_scope_offer_lane_words,
-                        route_lane_word_len,
                         linger_arm_len,
-                        linger_arm_scope_ids,
-                        linger_arm_last_node,
-                        jump_backpatch_indices,
-                        jump_backpatch_scopes,
-                        jump_backpatch_kinds,
                         &mut jump_backpatch_len,
-                        route_arm_last_node,
-                        last_step_was_scope,
-                        &mut scratch.dispatch_table,
-                        &mut scratch.prefix_actions,
-                        &mut scratch.prefix_lens,
-                        &mut scratch.arm_seen_recv,
-                        &mut scratch.scan_stack,
-                        &mut scratch.visited,
                     );
                 }
             }
@@ -2188,21 +2221,8 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
 
         let eff = slice[eff_idx];
         if matches!(eff.kind, eff::EffKind::Atom) {
-            handle_atom_for_role(
-                &program,
-                eff_idx,
-                eff,
-                role,
+            let mut walk_ctx = RoleWalkCtx {
                 nodes,
-                &mut node_len,
-                current_scope,
-                loop_scope,
-                scope_stack,
-                scope_stack_kinds,
-                scope_stack_entries,
-                scope_stack_len,
-                route_current_arm,
-                scope_controller_roles,
                 scope_entries,
                 route_scope_entries,
                 route_scope_offer_lane_words,
@@ -2214,13 +2234,39 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                 route_arm0_lane_last_eff_by_slot,
                 loop_entry_ids,
                 loop_entry_states,
-                &mut loop_entry_len,
-                linger_arm_len,
                 linger_arm_scope_ids,
                 linger_arm_current,
                 linger_arm_last_node,
+                jump_backpatch_indices,
+                jump_backpatch_scopes,
+                jump_backpatch_kinds,
+                scope_stack,
+                scope_stack_kinds,
+                scope_stack_entries,
+                route_current_arm,
+                scope_controller_roles,
+                scope_route_policy_effs,
                 last_step_was_scope,
                 route_arm_last_node,
+                dispatch_table: &mut scratch.dispatch_table,
+                prefix_actions: &mut scratch.prefix_actions,
+                prefix_lens: &mut scratch.prefix_lens,
+                arm_seen_recv: &mut scratch.arm_seen_recv,
+                scan_stack: &mut scratch.scan_stack,
+                visited: &mut scratch.visited,
+            };
+            handle_atom_for_role(
+                &mut walk_ctx,
+                &program,
+                eff_idx,
+                eff,
+                role,
+                &mut node_len,
+                current_scope,
+                loop_scope,
+                scope_stack_len,
+                &mut loop_entry_len,
+                linger_arm_len,
             );
         }
         eff_idx += 1;

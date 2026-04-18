@@ -1,7 +1,7 @@
 use crate::{
     eff::{self, EffKind},
     global::{
-        compiled::LoweringSummary,
+        compiled::lowering::LoweringSummary,
         const_dsl::{ScopeEvent, ScopeId, ScopeKind},
         role_program::{LaneWord, lane_word_count, logical_lane_count_for_role},
     },
@@ -95,7 +95,7 @@ const fn accumulate_phase_range_facts(
 }
 
 pub(super) const fn exact_role_phase_facts(
-    view: crate::global::compiled::LoweringView<'_>,
+    view: super::LoweringView<'_>,
     role: u8,
 ) -> ExactRolePhaseFacts {
     let nodes = view.as_slice();
@@ -287,7 +287,7 @@ pub(super) const fn exact_role_phase_facts(
 }
 
 pub(super) const fn exact_phase_count_for_role(
-    view: crate::global::compiled::LoweringView<'_>,
+    view: super::LoweringView<'_>,
     role: u8,
 ) -> u16 {
     exact_role_phase_facts(view, role).phase_count
@@ -315,13 +315,13 @@ impl LocalSig {
 }
 
 impl<const ROLE: u8> ProjectionSeal<ROLE> {
-    const fn validate_compiled_layout(view: crate::global::compiled::LoweringView<'_>) {
+    const fn validate_compiled_layout(view: super::LoweringView<'_>) {
         Self::validate_phase_capacity(view);
         Self::validate_scope_capacity(view);
         Self::validate_route_projection_guarantees(view);
     }
 
-    const fn validate_scope_capacity(view: crate::global::compiled::LoweringView<'_>) {
+    const fn validate_scope_capacity(view: super::LoweringView<'_>) {
         let scope_markers = view.scope_markers();
         let mut seen_route_like = [ScopeId::none(); eff::meta::MAX_EFF_NODES];
         let mut seen_route_like_len = 0usize;
@@ -342,7 +342,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         }
     }
 
-    const fn validate_phase_capacity(view: crate::global::compiled::LoweringView<'_>) {
+    const fn validate_phase_capacity(view: super::LoweringView<'_>) {
         let _ = exact_phase_count_for_role(view, ROLE);
     }
 
@@ -361,7 +361,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         false
     }
 
-    const fn validate_route_projection_guarantees(view: crate::global::compiled::LoweringView<'_>) {
+    const fn validate_route_projection_guarantees(view: super::LoweringView<'_>) {
         let scope_markers = view.scope_markers();
         let mut marker_idx = 0usize;
         while marker_idx < scope_markers.len() {
@@ -382,7 +382,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
     }
 
     const fn validate_route_scope(
-        view: crate::global::compiled::LoweringView<'_>,
+        view: super::LoweringView<'_>,
         scope_markers: &[crate::global::const_dsl::ScopeMarker],
         scope_id: ScopeId,
         controller_role: Option<u8>,
@@ -487,7 +487,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
     }
 
     const fn scope_has_dynamic_policy(
-        view: crate::global::compiled::LoweringView<'_>,
+        view: super::LoweringView<'_>,
         arm0_enter_marker_idx: usize,
         arm0_end: usize,
         arm1_enter_marker_idx: usize,
@@ -504,7 +504,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
     }
 
     const fn validate_route_policy_consistency(
-        view: crate::global::compiled::LoweringView<'_>,
+        view: super::LoweringView<'_>,
         arm0_enter_marker_idx: usize,
         arm0_end: usize,
         arm1_enter_marker_idx: usize,
@@ -534,7 +534,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
     }
 
     const fn first_route_head_dynamic_policy_id_in_range(
-        view: crate::global::compiled::LoweringView<'_>,
+        view: super::LoweringView<'_>,
         route_enter_marker_idx: usize,
         end: usize,
     ) -> Option<u16> {
@@ -601,7 +601,7 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
     }
 
     const fn collect_local_sigs(
-        view: crate::global::compiled::LoweringView<'_>,
+        view: super::LoweringView<'_>,
         start: usize,
         end: usize,
         out: &mut [LocalSig; eff::meta::MAX_EFF_NODES],

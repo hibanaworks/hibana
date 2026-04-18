@@ -147,19 +147,19 @@ impl PackedIncomingClassification {
     const FLAG_PRESENT: u8 = 1;
     const FLAG_HAS_FIN: u8 = 1 << 1;
 
-    const EMPTY: Self = Self {
+    pub(super) const EMPTY: Self = Self {
         channel_lo: 0,
         channel_hi: 0,
         meta: 0,
     };
 
     #[inline]
-    const fn is_present(self) -> bool {
+    pub(super) const fn is_present(self) -> bool {
         ((self.meta >> Self::META_FLAGS_SHIFT) as u8 & Self::FLAG_PRESENT) != 0
     }
 
     #[inline]
-    const fn encode(classification: IncomingClassification) -> Self {
+    pub(super) const fn encode(classification: IncomingClassification) -> Self {
         let channel_raw = classification.channel.raw();
         let flags = Self::FLAG_PRESENT | ((classification.has_fin as u8) << 1);
         Self {
@@ -172,7 +172,7 @@ impl PackedIncomingClassification {
     }
 
     #[inline]
-    const fn decode(self) -> IncomingClassification {
+    pub(super) const fn decode(self) -> IncomingClassification {
         let flags = (self.meta >> Self::META_FLAGS_SHIFT) as u8;
         IncomingClassification {
             label: (self.meta & Self::META_LABEL_MASK) as u8,
@@ -182,6 +182,30 @@ impl PackedIncomingClassification {
                 (self.channel_lo as u64) | ((self.channel_hi as u64) << 32),
             ),
         }
+    }
+
+    #[inline]
+    pub(super) const fn from_option(value: Option<IncomingClassification>) -> Self {
+        match value {
+            Some(classification) => Self::encode(classification),
+            None => Self::EMPTY,
+        }
+    }
+
+    #[inline]
+    pub(super) const fn into_option(self) -> Option<IncomingClassification> {
+        if self.is_present() {
+            Some(self.decode())
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub(super) fn take(slot: &mut Self) -> Option<IncomingClassification> {
+        let packed = *slot;
+        *slot = Self::EMPTY;
+        packed.into_option()
     }
 }
 

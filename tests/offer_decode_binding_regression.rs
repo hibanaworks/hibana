@@ -1087,29 +1087,29 @@ fn codec_error_in_public_decode_preserves_preview_branch() {
                                                                 "codec error must not flush transport events for EndpointRx policy",
                                                             );
 
-                                                            let worker_branch = worker
-                                                                .offer()
-                                                                .await
-                                                                .expect(
-                                                                    "re-offer left arm after codec error",
-                                                                );
-                                                            assert_eq!(
-                                                                worker_branch.label(),
-                                                                <Msg<71, u32> as MessageSpec>::LABEL
-                                                            );
                                                             assert_eq!(
                                                                 count_policy_audit_ext_for_slot(
                                                                     tap_events(),
                                                                     SLOT_TAG_ENDPOINT_RX,
                                                                 ),
                                                                 endpoint_rx_audit_before,
-                                                                "re-offer after codec error must still be preview-only",
+                                                                "codec error must leave retry state policy-free until a successful decode",
+                                                            );
+                                                            let worker_branch = worker
+                                                                .offer()
+                                                                .await
+                                                                .expect(
+                                                                    "re-offer left arm after codec mismatch",
+                                                                );
+                                                            assert_eq!(
+                                                                worker_branch.label(),
+                                                                <Msg<71, u32> as MessageSpec>::LABEL
                                                             );
                                                             let data_value = worker_branch
                                                                 .decode::<Msg<71, u32>>()
                                                                 .await
                                                                 .expect(
-                                                                    "decode left data after codec error",
+                                                                    "decode left data after retrying from the endpoint",
                                                                 );
                                                             assert_eq!(data_value, 4444);
                                                             assert_eq!(

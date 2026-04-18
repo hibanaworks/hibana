@@ -12,7 +12,10 @@ mod tls_mut_support;
 #[path = "support/tls_ref.rs"]
 mod tls_ref_support;
 
-use ::core::{cell::UnsafeCell, mem::MaybeUninit};
+use ::core::{
+    cell::UnsafeCell,
+    mem::{MaybeUninit, size_of, size_of_val},
+};
 
 use common::TestTransport;
 use hibana::g::advanced::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
@@ -107,6 +110,9 @@ const INNER_ROUTE_POLICY_ID: u16 = 311;
 type TestKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
 type ControllerEndpoint = hibana::Endpoint<'static, 0, TestKit>;
 type WorkerEndpoint = hibana::Endpoint<'static, 1, TestKit>;
+const ROUTE_BRANCH_BYTES_MAX: usize = 64;
+const OFFER_FUTURE_BYTES_MAX: usize = 288;
+const DECODE_FUTURE_BYTES_MAX: usize = 136;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
@@ -332,6 +338,102 @@ fn nested_branch_commit_stack() {
                                         .expect("decode inner left data");
                                     assert_eq!(observed_inner, 5678);
                                 })
+                            },
+                        );
+                    },
+                );
+            },
+        );
+    });
+}
+
+#[test]
+fn localside_offer_decode_sizes_stay_compact() {
+    with_fixture(|clock, tap_buf, slab| {
+        with_tls_ref(
+            &SESSION_SLOT,
+            |ptr| unsafe {
+                ptr.write(SessionKit::new(clock));
+            },
+            |cluster| {
+                let config = Config::new(tap_buf, slab);
+                let transport = TestTransport::default();
+                let rv_id = cluster
+                    .add_rendezvous_from_config(config, transport)
+                    .expect("register rv");
+                register_route_resolvers(cluster, rv_id);
+
+                let sid = SessionId::new(78);
+
+                with_tls_mut(
+                    &CONTROLLER_ENDPOINT_SLOT,
+                    |ptr| unsafe {
+                        write_value(
+                            ptr,
+                            cluster
+                                .enter(rv_id, sid, &CONTROLLER_PROGRAM, NoBinding)
+                                .expect("attach controller"),
+                        );
+                    },
+                    |controller| {
+                        with_tls_mut(
+                            &WORKER_ENDPOINT_SLOT,
+                            |ptr| unsafe {
+                                write_value(
+                                    ptr,
+                                    cluster
+                                        .enter(rv_id, sid, &WORKER_PROGRAM, NoBinding)
+                                        .expect("attach worker"),
+                                );
+                            },
+                            |worker| {
+                                let offer = worker.offer();
+                                let offer_bytes = size_of_val(&offer);
+                                drop(offer);
+
+                                let route_outcome = futures::executor::block_on(
+                                    controller
+                                        .flow::<Msg<
+                                            { LABEL_ROUTE_DECISION },
+                                            GenericCapToken<RouteDecisionKind>,
+                                            CanonicalControl<RouteDecisionKind>,
+                                        >>()
+                                        .expect("outer left control flow")
+                                        .send(()),
+                                )
+                                .expect("apply outer left control");
+                                assert!(route_outcome.is_canonical());
+
+                                let _outcome = futures::executor::block_on(
+                                    controller
+                                        .flow::<Msg<5, u32>>()
+                                        .expect("outer left data flow")
+                                        .send(&1234),
+                                )
+                                .expect("send outer left data");
+
+                                let branch = futures::executor::block_on(worker.offer())
+                                    .expect("offer route");
+                                let branch_bytes =
+                                    size_of::<hibana::RouteBranch<'static, 'static, 1, TestKit>>();
+                                assert_eq!(branch.label(), 5, "route should expose outer left arm");
+
+                                let decode = branch.decode::<Msg<5, u32>>();
+                                let decode_bytes = size_of_val(&decode);
+                                drop(decode);
+
+                                assert!(
+                                    branch_bytes <= ROUTE_BRANCH_BYTES_MAX,
+                                    "route branch handle regressed: {branch_bytes} > {ROUTE_BRANCH_BYTES_MAX}"
+                                );
+                                assert!(
+                                    offer_bytes <= OFFER_FUTURE_BYTES_MAX,
+                                    "offer future regressed: {offer_bytes} > {OFFER_FUTURE_BYTES_MAX}"
+                                );
+                                assert!(
+                                    decode_bytes <= DECODE_FUTURE_BYTES_MAX,
+                                    "decode future regressed: {decode_bytes} > {DECODE_FUTURE_BYTES_MAX}"
+                                );
                             },
                         );
                     },

@@ -3,6 +3,12 @@
 //! Applications interact with `Endpoint` values that are materialised from
 //! `RoleProgram` projections.
 
+use core::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
+
 use crate::{
     binding::BindingHandle,
     control::cap::mint::{EpochTbl, MintConfig, MintConfigMarker},
@@ -24,6 +30,8 @@ type EndpointBinding<'r> = BindingHandle<'r>;
 type EndpointCfg<'r, K, Mint> = carrier::EndpointCfg<K, Mint, EndpointBinding<'r>>;
 type KernelEndpoint<'r, const ROLE: u8, K, Mint> =
     carrier::KernelCursorEndpoint<'r, ROLE, K, EpochTbl, Mint, EndpointBinding<'r>>;
+type KernelRouteBranch<'r, const ROLE: u8, K, Mint> =
+    carrier::KernelRouteBranch<'r, ROLE, K, EpochTbl, Mint, EndpointBinding<'r>>;
 
 struct EndpointInner<'r, const ROLE: u8, K, Mint>
 where
@@ -52,10 +60,116 @@ where
     K: carrier::SessionKitFamily + 'r,
     Mint: MintConfigMarker,
 {
-    label: u8,
     endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>,
+    branch: Option<KernelRouteBranch<'r, ROLE, K, Mint>>,
     _borrow: core::marker::PhantomData<&'e mut EndpointCfg<'r, K, Mint>>,
     _local_only: crate::local::LocalOnly,
+}
+
+struct OfferFuture<'e, 'r, 'cfg, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint>
+where
+    T: crate::substrate::Transport + 'cfg,
+    U: crate::substrate::runtime::LabelUniverse + 'cfg,
+    C: crate::substrate::runtime::Clock + 'cfg,
+    'cfg: 'r,
+    Mint: MintConfigMarker,
+{
+    endpoint:
+        *mut KernelEndpoint<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
+    inner: kernel::RouteOfferFuture<
+        'e,
+        'r,
+        ROLE,
+        T,
+        U,
+        C,
+        EpochTbl,
+        MAX_RV,
+        Mint,
+        EndpointBinding<'r>,
+    >,
+}
+
+struct DecodeFuture<'e, 'r, 'cfg, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint, M>
+where
+    T: crate::substrate::Transport + 'cfg,
+    U: crate::substrate::runtime::LabelUniverse + 'cfg,
+    C: crate::substrate::runtime::Clock + 'cfg,
+    'cfg: 'r,
+    Mint: MintConfigMarker,
+    M: crate::global::MessageSpec,
+    M::Payload: crate::transport::wire::WirePayload,
+{
+    inner: kernel::RouteDecodeFuture<
+        'e,
+        'r,
+        ROLE,
+        T,
+        U,
+        C,
+        EpochTbl,
+        MAX_RV,
+        Mint,
+        EndpointBinding<'r>,
+        M,
+    >,
+    _cfg: core::marker::PhantomData<&'cfg ()>,
+}
+
+impl<'e, 'r, 'cfg, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint, M>
+    DecodeFuture<'e, 'r, 'cfg, ROLE, T, U, C, MAX_RV, Mint, M>
+where
+    T: crate::substrate::Transport + 'cfg,
+    U: crate::substrate::runtime::LabelUniverse + 'cfg,
+    C: crate::substrate::runtime::Clock + 'cfg,
+    'cfg: 'r,
+    Mint: MintConfigMarker,
+    M: crate::global::MessageSpec,
+    M::Payload: crate::transport::wire::WirePayload,
+{
+    #[inline]
+    fn new(
+        mut branch: RouteBranch<
+            'e,
+            'r,
+            ROLE,
+            crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>,
+            Mint,
+        >,
+    ) -> Self {
+        let endpoint = branch.endpoint;
+        Self {
+            inner: unsafe {
+                (&mut *endpoint).decode_route_branch::<M>(
+                    branch
+                        .branch
+                        .take()
+                        .expect("route branch payload must stay present until consumed"),
+                )
+            },
+            _cfg: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<'e, 'r, 'cfg, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint, M> Future
+    for DecodeFuture<'e, 'r, 'cfg, ROLE, T, U, C, MAX_RV, Mint, M>
+where
+    T: crate::substrate::Transport + 'cfg,
+    U: crate::substrate::runtime::LabelUniverse + 'cfg,
+    C: crate::substrate::runtime::Clock + 'cfg,
+    'cfg: 'r,
+    Mint: MintConfigMarker,
+    M: crate::global::MessageSpec,
+    M::Payload: crate::transport::wire::WirePayload,
+{
+    type Output = RecvResult<
+        <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>,
+    >;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().inner) }.poll(cx)
+    }
 }
 
 impl<'r, const ROLE: u8, K, Mint> EndpointInner<'r, ROLE, K, Mint>
@@ -94,10 +208,13 @@ where
     Mint: MintConfigMarker,
 {
     #[inline]
-    pub(crate) fn from_parts(endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>, label: u8) -> Self {
+    pub(crate) fn from_parts(
+        endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>,
+        branch: KernelRouteBranch<'r, ROLE, K, Mint>,
+    ) -> Self {
         Self {
-            label,
             endpoint,
+            branch: Some(branch),
             _borrow: core::marker::PhantomData,
             _local_only: crate::local::LocalOnly::new(),
         }
@@ -112,6 +229,68 @@ where
     fn drop(&mut self) {
         unsafe {
             core::ptr::drop_in_place(self.inner.endpoint);
+        }
+    }
+}
+
+impl<'e, 'r, const ROLE: u8, K, Mint> Drop for RouteBranch<'e, 'r, ROLE, K, Mint>
+where
+    K: carrier::SessionKitFamily + 'r,
+    Mint: MintConfigMarker,
+{
+    fn drop(&mut self) {
+        if let Some(branch) = self.branch.take() {
+            unsafe {
+                K::restore_materialized_route_branch(self.endpoint, branch);
+            }
+        }
+    }
+}
+
+impl<'e, 'r, 'cfg, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint>
+    OfferFuture<'e, 'r, 'cfg, ROLE, T, U, C, MAX_RV, Mint>
+where
+    T: crate::substrate::Transport + 'cfg,
+    U: crate::substrate::runtime::LabelUniverse + 'cfg,
+    C: crate::substrate::runtime::Clock + 'cfg,
+    'cfg: 'r,
+    Mint: MintConfigMarker,
+{
+    #[inline]
+    fn new(
+        endpoint: &'e mut Endpoint<
+            'r,
+            ROLE,
+            crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>,
+            Mint,
+        >,
+    ) -> Self {
+        Self {
+            endpoint: endpoint.inner.endpoint,
+            inner: unsafe { (&mut *endpoint.inner.endpoint).offer() },
+        }
+    }
+}
+
+impl<'e, 'r, 'cfg, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint> Future
+    for OfferFuture<'e, 'r, 'cfg, ROLE, T, U, C, MAX_RV, Mint>
+where
+    T: crate::substrate::Transport + 'cfg,
+    U: crate::substrate::runtime::LabelUniverse + 'cfg,
+    C: crate::substrate::runtime::Clock + 'cfg,
+    'cfg: 'r,
+    Mint: MintConfigMarker,
+{
+    type Output = RecvResult<
+        RouteBranch<'e, 'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
+    >;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        match Pin::new(&mut this.inner).poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Ready(Ok(branch)) => Poll::Ready(Ok(RouteBranch::from_parts(this.endpoint, branch))),
         }
     }
 }
@@ -143,13 +322,13 @@ where
     }
 
     #[inline]
-    pub fn recv<M>(
-        &mut self,
+    pub fn recv<'e, M>(
+        &'e mut self,
     ) -> impl core::future::Future<
-        Output = RecvResult<<<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'_>>,
-    > + '_
+        Output = RecvResult<<<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>>,
+    > + 'e
     where
-        M: crate::global::MessageSpec,
+        M: crate::global::MessageSpec + 'e,
         M::Payload: crate::transport::wire::WirePayload,
     {
         unsafe { (&mut *self.inner.endpoint).recv_direct::<M>() }
@@ -163,14 +342,7 @@ where
             RouteBranch<'e, 'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
         >,
     > + 'e {
-        async move {
-            let branch = unsafe { (&mut *self.inner.endpoint).offer().await? };
-            let label = branch.label();
-            unsafe {
-                (&mut *self.inner.endpoint).stash_pending_branch_preview(branch);
-            }
-            Ok(RouteBranch::from_parts(self.inner.endpoint, label))
-        }
+        OfferFuture::new(self)
     }
 }
 
@@ -185,7 +357,10 @@ where
 {
     #[inline]
     pub fn label(&self) -> u8 {
-        self.label
+        self.branch
+            .as_ref()
+            .expect("route branch payload must stay present until consumed")
+            .label()
     }
 
     #[inline]
@@ -193,30 +368,12 @@ where
         self,
     ) -> impl core::future::Future<
         Output = RecvResult<<<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>>,
-    > + 'e
+    > + use<'e, 'r, 'cfg, M, ROLE, T, U, C, MAX_RV, Mint>
     where
         M: crate::global::MessageSpec,
         M::Payload: crate::transport::wire::WirePayload,
     {
-        async move {
-            let endpoint = self.endpoint;
-            let mut branch = unsafe { (&mut *endpoint).take_pending_branch_preview() }
-                .expect("route branch preview must stay present until consumed");
-            let payload = match unsafe {
-                (&mut *endpoint)
-                    .decode_branch_ptr::<M>(core::ptr::from_mut(&mut branch))
-                    .await
-            } {
-                Ok(payload) => payload,
-                Err(err) => {
-                    unsafe {
-                        (&mut *endpoint).stash_pending_branch_preview(branch);
-                    }
-                    return Err(err);
-                }
-            };
-            Ok(payload)
-        }
+        DecodeFuture::<'e, 'r, 'cfg, ROLE, T, U, C, MAX_RV, Mint, M>::new(self)
     }
 }
 

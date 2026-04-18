@@ -16,7 +16,7 @@ use crate::{
     eff::EffIndex,
     global::{
         LoopControlMeaning,
-        compiled::{CompiledRoleImage, ControlSemanticsTable, ProgramImage},
+        compiled::images::{CompiledRoleImage, ControlSemanticsTable, ProgramImage},
         const_dsl::{PolicyMode, ScopeId, ScopeKind},
         role_program::{LaneSetView, LaneSteps, PhaseRouteGuard},
     },

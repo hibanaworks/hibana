@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 use super::builder::RoleTypestate;
-use super::builder::RoleTypestateValue;
+use super::builder::{RoleTypestateInitStorage, RoleTypestateValue};
 use super::{
     emit_walk::RoleTypestateBuildScratch,
     facts::{LocalAction, LocalNode, StateIndex, state_index_to_usize},
@@ -10,7 +10,7 @@ use super::{
 use crate::{
     eff::EffIndex,
     global::{
-        compiled::LoweringSummary,
+        compiled::lowering::LoweringSummary,
         const_dsl::{ScopeId, ScopeKind},
     },
 };
@@ -147,57 +147,19 @@ pub(crate) fn phase_route_guard_for_built_state_for_role<const ROLE: u8>(
 #[inline(never)]
 pub(crate) unsafe fn init_value_from_summary_for_role(
     dst: *mut RoleTypestateValue,
-    nodes_ptr: *mut LocalNode,
-    nodes_cap: usize,
     role: u8,
-    scope_records: &mut [super::registry::ScopeRecord],
-    scope_slots_by_scope: *mut u16,
-    route_dense_by_slot: *mut u16,
-    route_records: *mut super::registry::RouteScopeRecord,
-    route_offer_lane_words: *mut crate::global::role_program::LaneWord,
-    route_arm1_lane_words: *mut crate::global::role_program::LaneWord,
-    route_lane_word_len: usize,
-    route_dispatch_shapes: *mut super::registry::RouteDispatchShape,
-    route_dispatch_shape_cap: usize,
-    route_dispatch_entries: *mut super::registry::RouteDispatchEntry,
-    route_dispatch_entry_cap: usize,
-    route_dispatch_targets: *mut StateIndex,
-    route_dispatch_target_cap: usize,
-    lane_slot_count: usize,
-    scope_lane_first_eff: *mut EffIndex,
-    scope_lane_last_eff: *mut EffIndex,
-    route_arm0_lane_last_eff_by_slot: *mut EffIndex,
-    route_scope_cap: usize,
+    storage: &mut RoleTypestateInitStorage<'_>,
     summary: &LoweringSummary,
     scratch: &mut RoleTypestateBuildScratch,
 ) {
     unsafe {
-        core::ptr::addr_of_mut!((*dst).nodes).write(nodes_ptr.cast_const());
+        core::ptr::addr_of_mut!((*dst).nodes).write(storage.nodes_ptr.cast_const());
         super::emit_walk::init_role_typestate_value(
-            nodes_ptr,
-            nodes_cap,
+            role,
+            storage,
+            scratch,
             core::ptr::addr_of_mut!((*dst).len),
             core::ptr::addr_of_mut!((*dst).scope_registry),
-            role,
-            scratch,
-            scope_records,
-            scope_slots_by_scope,
-            route_dense_by_slot,
-            route_records,
-            route_offer_lane_words,
-            route_arm1_lane_words,
-            route_lane_word_len,
-            route_dispatch_shapes,
-            route_dispatch_shape_cap,
-            route_dispatch_entries,
-            route_dispatch_entry_cap,
-            route_dispatch_targets,
-            route_dispatch_target_cap,
-            lane_slot_count,
-            scope_lane_first_eff,
-            scope_lane_last_eff,
-            route_arm0_lane_last_eff_by_slot,
-            route_scope_cap,
             summary.view(),
         );
     }
@@ -857,13 +819,9 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
         scratch: &mut RoleTypestateBuildScratch,
     ) {
         unsafe {
-            super::emit_walk::init_role_typestate_value(
-                core::ptr::addr_of_mut!((*dst).nodes).cast::<LocalNode>(),
-                super::facts::MAX_STATES,
-                core::ptr::addr_of_mut!((*dst).len),
-                core::ptr::addr_of_mut!((*dst).scope_registry),
-                ROLE,
-                scratch,
+            let mut storage = RoleTypestateInitStorage {
+                nodes_ptr: core::ptr::addr_of_mut!((*dst).nodes).cast::<LocalNode>(),
+                nodes_cap: super::facts::MAX_STATES,
                 scope_records,
                 scope_slots_by_scope,
                 route_dense_by_slot,
@@ -882,6 +840,13 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                 scope_lane_last_eff,
                 route_arm0_lane_last_eff_by_slot,
                 route_scope_cap,
+            };
+            super::emit_walk::init_role_typestate_value(
+                ROLE,
+                &mut storage,
+                scratch,
+                core::ptr::addr_of_mut!((*dst).len),
+                core::ptr::addr_of_mut!((*dst).scope_registry),
                 summary.view(),
             );
         }

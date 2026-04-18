@@ -164,11 +164,6 @@ pub(super) fn recv_from_binding<'r, B: BindingSlot + 'r>(
 }
 
 #[inline]
-pub(super) fn deref_mut<'a, T>(ptr: *mut T) -> &'a mut T {
-    unsafe { &mut *ptr }
-}
-
-#[inline]
 pub(super) fn poll_recv<'r, T, E>(
     pending: &mut PendingRecv<'r, T>,
     port: &Port<'r, T, E>,

@@ -11,6 +11,8 @@ mod linear_program;
 mod localside;
 #[path = "../internal/pico_smoke/src/route_control_kinds.rs"]
 mod route_control_kinds;
+#[path = "../internal/pico_smoke/src/route_localside.rs"]
+mod route_localside;
 
 use hibana::{
     g,

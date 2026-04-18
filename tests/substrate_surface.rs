@@ -81,6 +81,7 @@ fn substrate_root_exposes_only_phase6_core_buckets() {
         "pub mod epf {",
         "crate::runtime::mgmt",
         "crate::epf",
+        "WireDecode",
     ] {
         assert!(
             !substrate_rs.contains(forbidden),
@@ -127,6 +128,7 @@ fn substrate_allowlist_tracks_phase6_boundary() {
         "pub mod epf {",
         "crate::runtime::mgmt",
         "crate::epf",
+        "WireDecode",
     ] {
         assert!(
             !allowlist.contains(forbidden),

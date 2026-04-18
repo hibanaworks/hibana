@@ -20,7 +20,7 @@ use core::future::Future;
 
 use crate::{
     eff::EffIndex,
-    transport::wire::{CodecError, Payload, WireDecode, WireEncode},
+    transport::wire::{CodecError, Payload, WireEncode, WirePayload},
 };
 
 /// Congestion control algorithm observed by a transport.
@@ -311,12 +311,15 @@ impl WireEncode for TransportEventKind {
     }
 }
 
-impl<'a> WireDecode<'a> for TransportEventKind {
-    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
-        if input.is_empty() {
+impl WirePayload for TransportEventKind {
+    type Decoded<'a> = Self;
+
+    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
+        let bytes = input.as_bytes();
+        if bytes.is_empty() {
             return Err(CodecError::Truncated);
         }
-        match input[0] {
+        match bytes[0] {
             0 => Ok(TransportEventKind::Ack),
             1 => Ok(TransportEventKind::Loss),
             2 => Ok(TransportEventKind::KeepaliveTx),
@@ -372,13 +375,16 @@ impl WireEncode for TransportEvent {
     }
 }
 
-impl<'a> WireDecode<'a> for TransportEvent {
-    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
+impl WirePayload for TransportEvent {
+    type Decoded<'a> = Self;
+
+    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
         const LEN: usize = 19;
-        if input.len() < LEN {
+        let bytes = input.as_bytes();
+        if bytes.len() < LEN {
             return Err(CodecError::Truncated);
         }
-        let kind = match input[0] {
+        let kind = match bytes[0] {
             0 => TransportEventKind::Ack,
             1 => TransportEventKind::Loss,
             2 => TransportEventKind::KeepaliveTx,
@@ -389,14 +395,14 @@ impl<'a> WireDecode<'a> for TransportEvent {
             7 => TransportEventKind::Timeout,
             _ => return Err(CodecError::Invalid("transport event kind")),
         };
-        let pn_space = input[1];
-        let cid_tag = input[2];
+        let pn_space = bytes[1];
+        let cid_tag = bytes[2];
         let mut pn_bytes = [0u8; 8];
-        pn_bytes.copy_from_slice(&input[3..11]);
+        pn_bytes.copy_from_slice(&bytes[3..11]);
         let mut payload_bytes = [0u8; 4];
-        payload_bytes.copy_from_slice(&input[11..15]);
+        payload_bytes.copy_from_slice(&bytes[11..15]);
         let mut retrans_bytes = [0u8; 4];
-        retrans_bytes.copy_from_slice(&input[15..19]);
+        retrans_bytes.copy_from_slice(&bytes[15..19]);
         Ok(TransportEvent {
             kind,
             packet_number: u64::from_be_bytes(pn_bytes),

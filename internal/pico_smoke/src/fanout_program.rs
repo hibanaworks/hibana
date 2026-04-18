@@ -7,7 +7,7 @@ use hibana::substrate::{
     runtime::{Clock, LabelUniverse},
 };
 
-use super::{localside, route_control_kinds};
+use super::{localside, route_control_kinds, route_localside};
 
 type U8Send<const FROM: u8, const TO: u8, const LABEL: u8> =
     StepCons<SendStep<Role<FROM>, Role<TO>, Msg<LABEL, u8>>, StepNil>;
@@ -326,7 +326,6 @@ const fn suffix_b() -> g::Program<SuffixB> {
     g::seq(program, g::send::<Role<1>, Role<0>, Msg<112, u8>, 0>())
 }
 
-#[inline(never)]
 pub fn run<T, U, C, const MAX_RV: usize>(
     controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
     worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
@@ -379,7 +378,6 @@ fn run_prefix<T, U, C, const MAX_RV: usize>(
     );
 }
 
-#[inline(never)]
 fn run_routes<T, U, C, const MAX_RV: usize>(
     controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
     worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
@@ -394,7 +392,6 @@ fn run_routes<T, U, C, const MAX_RV: usize>(
     run_routes_block_4(controller, worker);
 }
 
-#[inline(never)]
 fn run_routes_block_1<T, U, C, const MAX_RV: usize>(
     controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
     worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
@@ -403,10 +400,10 @@ fn run_routes_block_1<T, U, C, const MAX_RV: usize>(
     U: LabelUniverse + 'static,
     C: Clock + 'static,
 {
-    localside::controller_select::<120, Route1LeftKind, _, _, _, MAX_RV>(controller);
-    localside::controller_send_u32::<81, _, _, _, MAX_RV>(controller, 0);
+    route_localside::controller_select::<120, Route1LeftKind, _, _, _, MAX_RV>(controller);
+    route_localside::controller_send_u32::<81, _, _, _, MAX_RV>(controller, 0);
     assert_eq!(
-        localside::worker_offer_decode_u32::<81, _, _, _, MAX_RV>(worker),
+        route_localside::worker_offer_decode_u32::<81, _, _, _, MAX_RV>(worker),
         0
     );
     localside::worker_send_u8::<97, _, _, _, MAX_RV>(worker, 97);
@@ -415,10 +412,10 @@ fn run_routes_block_1<T, U, C, const MAX_RV: usize>(
         97
     );
 
-    localside::controller_select::<123, Route2RightKind, _, _, _, MAX_RV>(controller);
-    localside::controller_send_u32::<84, _, _, _, MAX_RV>(controller, 0);
+    route_localside::controller_select::<123, Route2RightKind, _, _, _, MAX_RV>(controller);
+    route_localside::controller_send_u32::<84, _, _, _, MAX_RV>(controller, 0);
     assert_eq!(
-        localside::worker_offer_decode_u32::<84, _, _, _, MAX_RV>(worker),
+        route_localside::worker_offer_decode_u32::<84, _, _, _, MAX_RV>(worker),
         0
     );
     localside::worker_send_u8::<98, _, _, _, MAX_RV>(worker, 98);
@@ -428,7 +425,6 @@ fn run_routes_block_1<T, U, C, const MAX_RV: usize>(
     );
 }
 
-#[inline(never)]
 fn run_routes_block_2<T, U, C, const MAX_RV: usize>(
     controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
     worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
@@ -437,10 +433,10 @@ fn run_routes_block_2<T, U, C, const MAX_RV: usize>(
     U: LabelUniverse + 'static,
     C: Clock + 'static,
 {
-    localside::controller_select::<124, Route3LeftKind, _, _, _, MAX_RV>(controller);
-    localside::controller_send_u32::<85, _, _, _, MAX_RV>(controller, 0);
+    route_localside::controller_select::<124, Route3LeftKind, _, _, _, MAX_RV>(controller);
+    route_localside::controller_send_u32::<85, _, _, _, MAX_RV>(controller, 0);
     assert_eq!(
-        localside::worker_offer_decode_u32::<85, _, _, _, MAX_RV>(worker),
+        route_localside::worker_offer_decode_u32::<85, _, _, _, MAX_RV>(worker),
         0
     );
     localside::worker_send_u8::<99, _, _, _, MAX_RV>(worker, 99);
@@ -449,10 +445,10 @@ fn run_routes_block_2<T, U, C, const MAX_RV: usize>(
         99
     );
 
-    localside::controller_select::<127, Route4RightKind, _, _, _, MAX_RV>(controller);
-    localside::controller_send_u32::<88, _, _, _, MAX_RV>(controller, 0);
+    route_localside::controller_select::<127, Route4RightKind, _, _, _, MAX_RV>(controller);
+    route_localside::controller_send_u32::<88, _, _, _, MAX_RV>(controller, 0);
     assert_eq!(
-        localside::worker_offer_decode_u32::<88, _, _, _, MAX_RV>(worker),
+        route_localside::worker_offer_decode_u32::<88, _, _, _, MAX_RV>(worker),
         0
     );
     localside::worker_send_u8::<100, _, _, _, MAX_RV>(worker, 100);
@@ -462,7 +458,6 @@ fn run_routes_block_2<T, U, C, const MAX_RV: usize>(
     );
 }
 
-#[inline(never)]
 fn run_routes_block_3<T, U, C, const MAX_RV: usize>(
     controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
     worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
@@ -471,10 +466,10 @@ fn run_routes_block_3<T, U, C, const MAX_RV: usize>(
     U: LabelUniverse + 'static,
     C: Clock + 'static,
 {
-    localside::controller_select::<120, Route5LeftKind, _, _, _, MAX_RV>(controller);
-    localside::controller_send_u32::<89, _, _, _, MAX_RV>(controller, 0);
+    route_localside::controller_select::<120, Route5LeftKind, _, _, _, MAX_RV>(controller);
+    route_localside::controller_send_u32::<89, _, _, _, MAX_RV>(controller, 0);
     assert_eq!(
-        localside::worker_offer_decode_u32::<89, _, _, _, MAX_RV>(worker),
+        route_localside::worker_offer_decode_u32::<89, _, _, _, MAX_RV>(worker),
         0
     );
     localside::worker_send_u8::<101, _, _, _, MAX_RV>(worker, 101);
@@ -483,10 +478,10 @@ fn run_routes_block_3<T, U, C, const MAX_RV: usize>(
         101
     );
 
-    localside::controller_select::<123, Route6RightKind, _, _, _, MAX_RV>(controller);
-    localside::controller_send_u32::<92, _, _, _, MAX_RV>(controller, 0);
+    route_localside::controller_select::<123, Route6RightKind, _, _, _, MAX_RV>(controller);
+    route_localside::controller_send_u32::<92, _, _, _, MAX_RV>(controller, 0);
     assert_eq!(
-        localside::worker_offer_decode_u32::<92, _, _, _, MAX_RV>(worker),
+        route_localside::worker_offer_decode_u32::<92, _, _, _, MAX_RV>(worker),
         0
     );
     localside::worker_send_u8::<102, _, _, _, MAX_RV>(worker, 102);
@@ -496,7 +491,6 @@ fn run_routes_block_3<T, U, C, const MAX_RV: usize>(
     );
 }
 
-#[inline(never)]
 fn run_routes_block_4<T, U, C, const MAX_RV: usize>(
     controller: &mut localside::ControllerEndpoint<'_, T, U, C, MAX_RV>,
     worker: &mut localside::WorkerEndpoint<'_, T, U, C, MAX_RV>,
@@ -505,10 +499,10 @@ fn run_routes_block_4<T, U, C, const MAX_RV: usize>(
     U: LabelUniverse + 'static,
     C: Clock + 'static,
 {
-    localside::controller_select::<124, Route7LeftKind, _, _, _, MAX_RV>(controller);
-    localside::controller_send_u32::<93, _, _, _, MAX_RV>(controller, 0);
+    route_localside::controller_select::<124, Route7LeftKind, _, _, _, MAX_RV>(controller);
+    route_localside::controller_send_u32::<93, _, _, _, MAX_RV>(controller, 0);
     assert_eq!(
-        localside::worker_offer_decode_u32::<93, _, _, _, MAX_RV>(worker),
+        route_localside::worker_offer_decode_u32::<93, _, _, _, MAX_RV>(worker),
         0
     );
     localside::worker_send_u8::<103, _, _, _, MAX_RV>(worker, 103);
@@ -517,10 +511,10 @@ fn run_routes_block_4<T, U, C, const MAX_RV: usize>(
         103
     );
 
-    localside::controller_select::<127, Route8RightKind, _, _, _, MAX_RV>(controller);
-    localside::controller_send_u32::<96, _, _, _, MAX_RV>(controller, 0);
+    route_localside::controller_select::<127, Route8RightKind, _, _, _, MAX_RV>(controller);
+    route_localside::controller_send_u32::<96, _, _, _, MAX_RV>(controller, 0);
     assert_eq!(
-        localside::worker_offer_decode_u32::<96, _, _, _, MAX_RV>(worker),
+        route_localside::worker_offer_decode_u32::<96, _, _, _, MAX_RV>(worker),
         0
     );
     localside::worker_send_u8::<104, _, _, _, MAX_RV>(worker, 104);

@@ -71,7 +71,6 @@
 //! ```rust,ignore
 //! use core::cell::Cell;
 //! use hibana::substrate::cap::{CapError, GenericCapToken, ResourceKind};
-//! use hibana::substrate::wire::WireDecode;
 //!
 //! #[derive(Clone, Copy, Debug)]
 //! struct PageHandle {
@@ -111,7 +110,10 @@
 //! fn round_trip(token: GenericCapToken<PageResource>) -> GenericCapToken<PageResource> {
 //!     // Convert to bytes and back so the token can traverse message routes.
 //!     let bytes = token.into_bytes();
-//!     GenericCapToken::<PageResource>::decode_from(&bytes).unwrap()
+//!     <GenericCapToken<PageResource> as hibana::substrate::wire::WirePayload>::decode_payload(
+//!         hibana::substrate::wire::Payload::new(&bytes),
+//!     )
+//!     .unwrap()
 //! }
 //! ```
 
@@ -383,7 +385,7 @@ pub const CAP_TOKEN_LEN: usize = CAP_NONCE_LEN + CAP_HEADER_LEN + CAP_TAG_LEN;
 use crate::control::types::Lane;
 use crate::control::types::SessionId;
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
-use crate::transport::wire::{CodecError, WireDecode, WireEncode};
+use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 
 /// Marker trait ensuring that control-plane labels always carry capability tokens.
 pub trait ControlPayload {}
@@ -1114,13 +1116,16 @@ impl<K: ResourceKind> WireEncode for GenericCapToken<K> {
     }
 }
 
-impl<'a, K: ResourceKind> WireDecode<'a> for GenericCapToken<K> {
-    fn decode_from(input: &'a [u8]) -> Result<Self, CodecError> {
-        if input.len() < CAP_TOKEN_LEN {
+impl<K: ResourceKind> WirePayload for GenericCapToken<K> {
+    type Decoded<'a> = Self;
+
+    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
+        let bytes_in = input.as_bytes();
+        if bytes_in.len() < CAP_TOKEN_LEN {
             return Err(CodecError::Truncated);
         }
         let mut bytes = [0u8; CAP_TOKEN_LEN];
-        bytes.copy_from_slice(&input[0..CAP_TOKEN_LEN]);
+        bytes.copy_from_slice(&bytes_in[0..CAP_TOKEN_LEN]);
         Ok(Self {
             bytes,
             _marker: PhantomData,

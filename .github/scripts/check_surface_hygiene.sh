@@ -57,6 +57,14 @@ check_absent \
   src/lib.rs src/substrate.rs src/endpoint.rs src/rendezvous/core.rs src/observe/core.rs
 
 check_absent \
+  "poll_fn|async move|stash_pending_branch_preview|take_pending_branch_preview" \
+  "localside wrapper-future or endpoint-stashed preview residue reintroduced" \
+  src/endpoint.rs \
+  src/endpoint/kernel/recv.rs \
+  src/endpoint/kernel/decode.rs \
+  src/endpoint/kernel/route_frontier/offer.rs
+
+check_absent \
   "Atomic(Bool|U8|U16|U32|U64|Usize|Ptr)" \
   "production runtime atomics reintroduced" \
   src/rendezvous/core.rs src/observe/core.rs
@@ -224,6 +232,36 @@ README_OLD_PROJECTED_LOCAL_WALKTHROUGH="$(
 if [[ -n "${README_OLD_PROJECTED_LOCAL_WALKTHROUGH}" ]]; then
   echo "${README_OLD_PROJECTED_LOCAL_WALKTHROUGH}" >&2
   echo "boundary deny pattern detected: README old projected-local walkthrough" >&2
+  FAILED=1
+fi
+
+README_DUAL_PAYLOAD_STORY="$(
+  rg -n -U 'owned default path|`WireDecode`|WireEncode` and either `WireDecode`|substrate::wire::\{Payload,[[:space:]]*WireDecode,' \
+    README.md || true
+)"
+if [[ -n "${README_DUAL_PAYLOAD_STORY}" ]]; then
+  echo "${README_DUAL_PAYLOAD_STORY}" >&2
+  echo "boundary deny pattern detected: README dual payload story" >&2
+  FAILED=1
+fi
+
+CORE_OWNED_MGMT_EPF_DOCS="$(
+  rg -n -U '`hibana::substrate::mgmt|`hibana::substrate::policy::epf' \
+    README.md docs/spec || true
+)"
+if [[ -n "${CORE_OWNED_MGMT_EPF_DOCS}" ]]; then
+  echo "${CORE_OWNED_MGMT_EPF_DOCS}" >&2
+  echo "boundary deny pattern detected: core-owned mgmt/epf doc wording" >&2
+  FAILED=1
+fi
+
+IN_TREE_CROSS_REPO_HARNESS_DOCS="$(
+  rg -n -U '`integration/cross-repo/`|staging location for cross-repo smoke' \
+    README.md docs/spec || true
+)"
+if [[ -n "${IN_TREE_CROSS_REPO_HARNESS_DOCS}" ]]; then
+  echo "${IN_TREE_CROSS_REPO_HARNESS_DOCS}" >&2
+  echo "boundary deny pattern detected: in-tree cross-repo harness wording" >&2
   FAILED=1
 fi
 

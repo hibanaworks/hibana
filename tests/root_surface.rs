@@ -186,9 +186,12 @@ fn public_api_gate_tracks_g_and_substrate_surfaces() {
 
     for required in [
         "target/doc/hibana.json",
-        "cargo +nightly rustdoc --lib --features std -- -Z unstable-options --output-format json",
+        "rustup which cargo --toolchain nightly",
+        "rustup which rustc --toolchain nightly",
+        "rustup which rustdoc --toolchain nightly",
+        "\"${NIGHTLY_CARGO}\" rustdoc --lib --features std -- -Z unstable-options --output-format json",
         "HIBANA_RUSTDOC_JSON",
-        "cargo +nightly test --test semantic_surface --features std",
+        "\"${NIGHTLY_CARGO}\" test --test semantic_surface --features std",
         "semantic public API check passed",
     ] {
         assert!(
