@@ -265,6 +265,16 @@ if [[ -n "${IN_TREE_CROSS_REPO_HARNESS_DOCS}" ]]; then
   FAILED=1
 fi
 
+README_OLD_PROGRAM_ITEM_PATH="$(
+  rg -n -U '(App code writes `APP: g::Program<_>`|project\(&PROGRAM\)|(const|static)[[:space:]]+(APP|PROGRAM)[[:space:]]*:[[:space:]]*(g::)?Program<_>)' \
+    README.md docs/spec || true
+)"
+if [[ -n "${README_OLD_PROGRAM_ITEM_PATH}" ]]; then
+  echo "${README_OLD_PROGRAM_ITEM_PATH}" >&2
+  echo "boundary deny pattern detected: README/spec old Program item path" >&2
+  FAILED=1
+fi
+
 EXAMPLE_OWNER_HIDING_ALIASES="$(
   rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*(Role<|Msg<|RoleProgram<|Endpoint<|SessionCluster<|g::Program<|StepCons<|SeqSteps<|LoopContinueSteps<|LoopBreakSteps<|LoopDecisionSteps<|<.*as[[:space:]]+ProjectRole<|<.*as[[:space:]]+StepConcat<)" \
     examples || true
@@ -850,6 +860,32 @@ fi
 check_absent "MaybeUninit<ErasedPublicEndpointKernel" \
   "inline public endpoint kernel storage" \
   src/control/cluster/core.rs
+
+check_absent \
+  "pub[[:space:]]+mod[[:space:]]+steps[[:space:]]*\\{" \
+  "public step bucket reintroduced" \
+  src/global.rs src/g.rs src
+
+ITEM_LEVEL_PROGRAM_PLACEHOLDER_RESIDUE="$(
+  rg -n \
+    -g '!tests/docs_surface.rs' \
+    -g '!tests/ui/const_program_placeholder.rs' \
+    -g '!tests/ui/static_program_placeholder.rs' \
+    -g '!tests/ui/*.stderr' \
+    -g '!src/global/program.rs' \
+    "(const|static)[[:space:]]+[A-Z0-9_]+[[:space:]]*:[[:space:]]+(g::)?Program<_" \
+    README.md docs tests examples src || true
+)"
+if [[ -n "${ITEM_LEVEL_PROGRAM_PLACEHOLDER_RESIDUE}" ]]; then
+  echo "${ITEM_LEVEL_PROGRAM_PLACEHOLDER_RESIDUE}" >&2
+  echo "boundary deny pattern detected: item-level inferred Program placeholder reintroduced" >&2
+  FAILED=1
+fi
+
+check_absent \
+  "g::advanced::steps" \
+  "public step names reintroduced in docs/examples" \
+  README.md docs examples
 
 if [[ "${FAILED}" -ne 0 ]]; then
   exit 1

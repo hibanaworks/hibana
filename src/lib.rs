@@ -18,9 +18,9 @@
 //! The crate root stays intentionally small; protocol seams live under
 //! `hibana::g::advanced` and `hibana::substrate`.
 //! Inside [`substrate`], everyday protocol-implementor owners stay at the
-//! module root plus `runtime`, `binding`, `policy`, `wire`, `transport`, and
-//! `mgmt`; heavier detail buckets stay under `substrate::cap::advanced` and
-//! `substrate::policy::{core, epf}`.
+//! module root plus `runtime`, `binding`, `policy`, `wire`, and `transport`;
+//! heavier detail buckets stay under `substrate::cap::advanced` and
+//! `substrate::policy::core`.
 //!
 //! ```rust,ignore
 //! use hibana::g;

@@ -1,0 +1,11 @@
+error[E0121]: the placeholder `_` is not allowed within types on item signatures for constants
+ --> tests/ui/const_program_placeholder.rs:3:27
+  |
+3 | const PROGRAM: g::Program<_> =
+  |                           ^ not allowed in type signatures
+  |
+help: replace this with a fully-specified type
+  |
+3 - const PROGRAM: g::Program<_> =
+3 + const PROGRAM: Program<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<7>, u16>>, hibana::global::steps::StepNil>> =
+  |

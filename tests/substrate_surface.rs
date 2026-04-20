@@ -1,29 +1,24 @@
 mod common;
 
 use std::fs;
+use std::mem::size_of_val;
 use std::path::PathBuf;
 
 use hibana::g;
-use hibana::g::advanced::steps::{SendStep, StepCons, StepNil};
 use hibana::g::advanced::{RoleProgram, project};
 use hibana::substrate::{
     SessionKit,
-    cap::advanced::MintConfig,
     runtime::{CounterClock, DefaultLabelUniverse},
 };
 use hibana::{Endpoint, RouteBranch};
 use static_assertions::assert_not_impl_any;
 
-const PROGRAM: g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>, StepNil>> =
-    g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>();
-static CLIENT_PROGRAM: RoleProgram<'static, 0> = project(&PROGRAM);
-
 type StaticTestKit =
     SessionKit<'static, common::TestTransport, DefaultLabelUniverse, CounterClock, 2>;
 
 assert_not_impl_any!(StaticTestKit: Send, Sync);
-assert_not_impl_any!(Endpoint<'static, 0, StaticTestKit, MintConfig>: Send, Sync);
-assert_not_impl_any!(RouteBranch<'static, 'static, 0, StaticTestKit, MintConfig>: Send, Sync);
+assert_not_impl_any!(Endpoint<'static, 0>: Send, Sync);
+assert_not_impl_any!(RouteBranch<'static, 'static, 0>: Send, Sync);
 
 fn read(path: &str) -> String {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -51,7 +46,20 @@ fn compact_ws(input: &str) -> String {
 
 #[test]
 fn projection_surface_still_builds() {
-    let _: RoleProgram<'static, 0> = CLIENT_PROGRAM;
+    let program = g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>();
+    let _: RoleProgram<0> = project(&program);
+}
+
+#[test]
+fn witness_sizes_stay_small() {
+    let program = g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>();
+    let role: RoleProgram<0> = project(&program);
+
+    assert_eq!(size_of_val(&program), 0, "Program<Steps> must stay ZST");
+    assert!(
+        size_of_val(&role) <= 24,
+        "RoleProgram<ROLE> must stay within the final witness budget"
+    );
 }
 
 #[test]

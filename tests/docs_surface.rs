@@ -29,7 +29,13 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "`hibana::substrate::wire::{Payload, WireEncode, WirePayload}`",
         "`hibana::substrate::policy::PolicySlot`",
         "`hibana::substrate::tap::TapEvent`",
-        "g::seq(MGMT_PREFIX, APP)",
+        "App code builds a local choreography term with `hibana::g`",
+        "the canonical path is local `let` inference rather than a named item",
+        "let program = g::seq(mgmt_prefix, app);",
+        "let client: RoleProgram<0> = project(&program);",
+        "bash ./.github/scripts/check_stable_1_95.sh",
+        "cargo check --all-targets -p hibana",
+        "cargo test -p hibana --test ui --features std",
     ] {
         assert!(
             readme.contains(required),
@@ -63,6 +69,16 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "`hibana::substrate::mgmt::Request::Stats(SlotRequest)`",
         "`integration/cross-repo/`",
         "staging location for cross-repo smoke",
+        "App code writes `APP: g::Program<_>`",
+        "project(&PROGRAM)",
+        "project::<",
+        "const APP: g::Program<_>",
+        "static APP: g::Program<_>",
+        "const PROGRAM: g::Program<_>",
+        "static PROGRAM: g::Program<_>",
+        "cargo +1.95.0 check --all-targets -p hibana",
+        "cargo +1.95.0 test -p hibana --test ui --features std",
+        "`hibana::g::advanced::steps`",
     ] {
         assert!(
             !readme.contains(forbidden),
@@ -85,11 +101,7 @@ fn spec_docs_exist() {
         "docs/spec/downstream_readiness.md",
     ] {
         let full = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(required);
-        assert!(
-            full.exists(),
-            "spec doc must exist: {}",
-            full.display()
-        );
+        assert!(full.exists(), "spec doc must exist: {}", full.display());
     }
 }
 

@@ -629,8 +629,6 @@ impl<'r, Table: EpochTable> EndpointEpoch<'r, Table> {
 // ============================================================================
 
 pub trait EpochType {
-    /// The generation number for this epoch type.
-    const GENERATION: u64;
 }
 
 /// Marker trait representing logical control-plane steps for a lane.
@@ -638,9 +636,7 @@ pub trait EpochStep: EpochType {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct E0;
-impl EpochType for E0 {
-    const GENERATION: u64 = 0;
-}
+impl EpochType for E0 {}
 impl EpochStep for E0 {}
 
 pub trait EpochTable {}
@@ -1224,7 +1220,7 @@ impl<K: ResourceKind> Drop for VerifiedCap<K> {
 mod tests {
     use super::{CAP_FIXED_HEADER_LEN, CAP_HANDLE_LEN, CAP_HEADER_LEN};
     use super::{
-        CapError, CapShot, CapsMask, E0, EndpointHandle, EndpointResource, EpochType,
+        CapError, CapShot, CapsMask, E0, EndpointHandle, EndpointResource,
         GenericCapToken, HandleView, Owner, ResourceKind,
     };
     use crate::{
@@ -1242,7 +1238,6 @@ mod tests {
         with_brand(|rv_brand| {
             let owner: Owner<'_, E0> = Owner::new(rv_brand.guard());
             let _ = owner;
-            assert_eq!(E0::GENERATION, 0);
         });
     }
 

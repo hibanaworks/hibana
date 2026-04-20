@@ -282,6 +282,67 @@ macro_rules! define_control_resource_kind {
 
     // PolicyHash variant: Handle = (u32, u16), no SessionScopedKind
     (
+        vis: $vis:vis,
+        $kind:ident,
+        handle: PolicyHash,
+        tag: $tag:expr,
+        name: $name:expr,
+        label: $label:expr,
+        scope: $scope:ident,
+        tap_id: $tap_id:expr,
+        caps: $caps:expr,
+        handling: $handling:ident $(,)?
+    ) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        $vis struct $kind;
+
+        impl $crate::substrate::cap::ResourceKind for $kind {
+            type Handle = (u32, u16);
+            const TAG: u8 = $tag;
+            const NAME: &'static str = $name;
+            const AUTO_MINT_EXTERNAL: bool = false;
+
+            fn encode_handle(handle: &Self::Handle) -> [u8; $crate::substrate::cap::advanced::CAP_HANDLE_LEN] {
+                let mut buf = [0u8; $crate::substrate::cap::advanced::CAP_HANDLE_LEN];
+                buf[0..4].copy_from_slice(&handle.0.to_le_bytes());
+                buf[4..6].copy_from_slice(&handle.1.to_le_bytes());
+                buf
+            }
+
+            fn decode_handle(
+                data: [u8; $crate::substrate::cap::advanced::CAP_HANDLE_LEN],
+            ) -> Result<Self::Handle, $crate::substrate::cap::advanced::CapError> {
+                let low = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+                let high = u16::from_le_bytes([data[4], data[5]]);
+                Ok((low, high))
+            }
+
+            fn zeroize(_handle: &mut Self::Handle) {}
+
+            fn caps_mask(_handle: &Self::Handle) -> $crate::substrate::cap::advanced::CapsMask {
+                $caps
+            }
+
+            fn scope_id(
+                _handle: &Self::Handle,
+            ) -> Option<$crate::substrate::cap::advanced::ScopeId> {
+                None
+            }
+        }
+
+        impl $crate::substrate::cap::ControlResourceKind for $kind {
+            const LABEL: u8 = $label;
+            const SCOPE: $crate::substrate::cap::advanced::ControlScopeKind =
+                $crate::substrate::cap::advanced::ControlScopeKind::$scope;
+            const TAP_ID: u16 = $tap_id;
+            const SHOT: $crate::substrate::cap::CapShot = $crate::substrate::cap::CapShot::One;
+            const HANDLING: $crate::substrate::cap::advanced::ControlHandling =
+                $crate::substrate::cap::advanced::ControlHandling::$handling;
+        }
+    };
+
+    // PolicyHash variant: Handle = (u32, u16), no SessionScopedKind
+    (
         $kind:ident,
         handle: PolicyHash,
         tag: $tag:expr,
@@ -508,28 +569,9 @@ impl SpliceHandle {
             flags: u16::from_be_bytes([data[20], data[21]]),
         })
     }
-
-    /// Returns true when the handle encodes fence counters.
-    pub const fn has_fences(&self) -> bool {
-        (self.flags & splice_flags::FENCES_PRESENT) != 0
-    }
-
-    /// Returns fence counters if encoded.
-    pub const fn fences(&self) -> Option<(u32, u32)> {
-        if self.has_fences() {
-            Some((self.seq_tx, self.seq_rx))
-        } else {
-            None
-        }
-    }
 }
 
 /// Flags stored inside [`RerouteHandle::flags`].
-pub(crate) mod reroute_flags {
-    /// Indicates that sequence fences are populated.
-    pub(crate) const FENCES_PRESENT: u16 = 0x0001;
-}
-
 /// Handle payload for reroute operations.
 ///
 /// Encoding layout (big-endian):
@@ -541,7 +583,7 @@ pub(crate) mod reroute_flags {
 /// [ 8..12)  seq_tx
 /// [12..16)  seq_rx
 /// [16..20)  shard / policy metadata
-/// [20..22)  flags (see [`reroute_flags`])
+/// [20..22)  flags
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct RerouteHandle {
@@ -580,18 +622,6 @@ impl RerouteHandle {
             shard: u32::from_be_bytes([data[16], data[17], data[18], data[19]]),
             flags: u16::from_be_bytes([data[20], data[21]]),
         })
-    }
-
-    pub const fn has_fences(&self) -> bool {
-        (self.flags & reroute_flags::FENCES_PRESENT) != 0
-    }
-
-    pub const fn fences(&self) -> Option<(u32, u32)> {
-        if self.has_fences() {
-            Some((self.seq_tx, self.seq_rx))
-        } else {
-            None
-        }
     }
 }
 
@@ -1040,134 +1070,7 @@ impl ControlMint for RouteDecisionKind {
 }
 
 define_control_resource_kind!(
-    MgmtRouteLoadKind,
-    handle: RouteDecision,
-    name: "MgmtRouteLoad",
-    label: consts::LABEL_MGMT_ROUTE_LOAD,
-    arm: 0,
-);
-
-define_control_resource_kind!(
-    MgmtRouteActivateKind,
-    handle: RouteDecision,
-    name: "MgmtRouteActivate",
-    label: consts::LABEL_MGMT_ROUTE_ACTIVATE,
-    arm: 0,
-);
-
-define_control_resource_kind!(
-    MgmtRouteRevertKind,
-    handle: RouteDecision,
-    name: "MgmtRouteRevert",
-    label: consts::LABEL_MGMT_ROUTE_REVERT,
-    arm: 0,
-);
-
-define_control_resource_kind!(
-    MgmtRouteStatsKind,
-    handle: RouteDecision,
-    name: "MgmtRouteStats",
-    label: consts::LABEL_MGMT_ROUTE_STATS,
-    arm: 1,
-);
-
-define_control_resource_kind!(
-    MgmtRouteLoadFamilyKind,
-    handle: RouteDecision,
-    name: "MgmtRouteLoadFamily",
-    label: consts::LABEL_MGMT_ROUTE_LOAD_FAMILY,
-    arm: 0,
-);
-
-define_control_resource_kind!(
-    MgmtRouteLoadAndActivateKind,
-    handle: RouteDecision,
-    name: "MgmtRouteLoadAndActivate",
-    label: consts::LABEL_MGMT_ROUTE_LOAD_AND_ACTIVATE,
-    arm: 1,
-);
-
-define_control_resource_kind!(
-    MgmtRouteReplyErrorKind,
-    handle: RouteDecision,
-    name: "MgmtRouteReplyError",
-    label: consts::LABEL_MGMT_ROUTE_REPLY_ERROR,
-    arm: 0,
-);
-
-define_control_resource_kind!(
-    MgmtRouteReplyLoadedKind,
-    handle: RouteDecision,
-    name: "MgmtRouteReplyLoaded",
-    label: consts::LABEL_MGMT_ROUTE_REPLY_LOADED,
-    arm: 0,
-);
-
-define_control_resource_kind!(
-    MgmtRouteReplyActivatedKind,
-    handle: RouteDecision,
-    name: "MgmtRouteReplyActivated",
-    label: consts::LABEL_MGMT_ROUTE_REPLY_ACTIVATED,
-    arm: 0,
-);
-
-define_control_resource_kind!(
-    MgmtRouteReplyRevertedKind,
-    handle: RouteDecision,
-    name: "MgmtRouteReplyReverted",
-    label: consts::LABEL_MGMT_ROUTE_REPLY_REVERTED,
-    arm: 0,
-);
-
-define_control_resource_kind!(
-    MgmtRouteReplyStatsKind,
-    handle: RouteDecision,
-    name: "MgmtRouteReplyStats",
-    label: consts::LABEL_MGMT_ROUTE_REPLY_STATS,
-    arm: 1,
-);
-
-define_control_resource_kind!(
-    MgmtRouteCommandFamilyKind,
-    handle: RouteDecision,
-    name: "MgmtRouteCommandFamily",
-    label: consts::LABEL_MGMT_ROUTE_COMMAND_FAMILY,
-    arm: 1,
-);
-
-define_control_resource_kind!(
-    MgmtRouteCommandTailKind,
-    handle: RouteDecision,
-    name: "MgmtRouteCommandTail",
-    label: consts::LABEL_MGMT_ROUTE_COMMAND_TAIL,
-    arm: 1,
-);
-
-define_control_resource_kind!(
-    MgmtRouteReplySuccessFamilyKind,
-    handle: RouteDecision,
-    name: "MgmtRouteReplySuccessFamily",
-    label: consts::LABEL_MGMT_ROUTE_REPLY_SUCCESS_FAMILY,
-    arm: 1,
-);
-
-define_control_resource_kind!(
-    MgmtRouteReplySuccessTailKind,
-    handle: RouteDecision,
-    name: "MgmtRouteReplySuccessTail",
-    label: consts::LABEL_MGMT_ROUTE_REPLY_SUCCESS_TAIL,
-    arm: 1,
-);
-
-define_control_resource_kind!(
-    MgmtRouteReplySuccessFinalKind,
-    handle: RouteDecision,
-    name: "MgmtRouteReplySuccessFinal",
-    label: consts::LABEL_MGMT_ROUTE_REPLY_SUCCESS_FINAL,
-    arm: 1,
-);
-
-define_control_resource_kind!(
+    vis: pub(crate),
     PolicyLoadKind,
     handle: PolicyHash,
     tag: 0x4A,
@@ -1180,6 +1083,7 @@ define_control_resource_kind!(
 );
 
 define_control_resource_kind!(
+    vis: pub(crate),
     PolicyActivateKind,
     handle: PolicyHash,
     tag: 0x4B,
@@ -1192,6 +1096,7 @@ define_control_resource_kind!(
 );
 
 define_control_resource_kind!(
+    vis: pub(crate),
     PolicyRevertKind,
     handle: PolicyHash,
     tag: 0x4C,
@@ -1207,7 +1112,7 @@ define_control_resource_kind!(
 ///
 /// Payload: `(key:u24, value:u24)` stored as `(u32, u16)` where high 8 bits are zero
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PolicyAnnotateKind;
+pub(crate) struct PolicyAnnotateKind;
 
 impl ResourceKind for PolicyAnnotateKind {
     type Handle = (u32, u32); // (key, value) both u24 but stored as u32
@@ -1255,7 +1160,7 @@ impl ControlResourceKind for PolicyAnnotateKind {
 /// Payload: `(slot:u8, hash_low:u32, hash_high:u8)` - slot + 40-bit hash
 /// Additional metadata (code_len, fuel_max, mem_len) travels as separate wire message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LoadBeginKind;
+pub(crate) struct LoadBeginKind;
 
 impl ResourceKind for LoadBeginKind {
     type Handle = (u8, u64); // (slot, hash40)
@@ -1310,7 +1215,7 @@ impl ControlMint for LoadBeginKind {
 ///
 /// Payload: `(slot:u8, _reserved:u40)`
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LoadCommitKind;
+pub(crate) struct LoadCommitKind;
 
 /// Derive the [`CapsMask`] associated with a resource tag and raw handle bytes.
 ///

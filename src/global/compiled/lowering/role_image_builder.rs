@@ -1,9 +1,9 @@
-use super::LoweringSummary;
 use super::super::images::role::{
     CompiledRoleImage, MACHINE_NO_STEP, RoleResidentFacts, encode_compact_count_u16,
     encode_compact_offset_u16,
 };
 use super::super::materialize::RoleLoweringScratch;
+use super::LoweringSummary;
 use super::role_image_lowering::{
     build_local_steps_into, build_phase_image_from_steps, build_step_index_to_state_into,
 };

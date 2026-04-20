@@ -11,7 +11,6 @@ use core::{
 
 use common::TestTransport;
 use hibana::{
-    g::advanced::steps::{SendStep, StepCons, StepNil},
     g::advanced::{RoleProgram, project},
     g::{self, Msg, Role},
     substrate::{
@@ -23,9 +22,6 @@ use hibana::{
 };
 use runtime_support::with_fixture;
 use tls_ref_support::with_tls_ref;
-
-const PROGRAM: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<1, u32>, 0>, StepNil>> =
-    g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
 
 #[derive(Clone, Copy)]
 struct FramePayload([u8; 4]);
@@ -52,14 +48,6 @@ impl WirePayload for FramePayload {
     }
 }
 
-const BORROWED_PROGRAM: g::Program<
-    StepCons<SendStep<Role<0>, Role<1>, Msg<2, FramePayload>, 0>, StepNil>,
-> = g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
-
-static ORIGIN_PROGRAM: RoleProgram<'static, 0> = project(&PROGRAM);
-static TARGET_PROGRAM: RoleProgram<'static, 1> = project(&PROGRAM);
-static BORROWED_ORIGIN_PROGRAM: RoleProgram<'static, 0> = project(&BORROWED_PROGRAM);
-static BORROWED_TARGET_PROGRAM: RoleProgram<'static, 1> = project(&BORROWED_PROGRAM);
 type TestKit = SessionKit<
     'static,
     TestTransport,
@@ -67,9 +55,12 @@ type TestKit = SessionKit<
     CounterClock,
     2,
 >;
-const ENDPOINT_BYTES_MAX: usize = 8;
-const SEND_FUTURE_BYTES_MAX: usize = 304;
-const RECV_FUTURE_BYTES_MAX: usize = 88;
+// `Endpoint<'r, ROLE>` is already role-only opaque. Keep the measured bound
+// tighter than the public v3 contract (`<= 40`) so regressions trip early even
+// before the remaining future/branch compression lands.
+const ENDPOINT_BYTES_MAX: usize = 24;
+const SEND_FUTURE_BYTES_MAX: usize = 48;
+const RECV_FUTURE_BYTES_MAX: usize = 48;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
@@ -87,16 +78,19 @@ fn cursor_recv_can_return_borrowed_frame_views() {
                 ptr.write(SessionKit::new(clock));
             },
             |cluster| {
+                let borrowed_program = g::send::<Role<0>, Role<1>, Msg<2, FramePayload>, 0>();
+                let borrowed_origin_program: RoleProgram<0> = project(&borrowed_program);
+                let borrowed_target_program: RoleProgram<1> = project(&borrowed_program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(2);
                 let mut origin_endpoint = cluster
-                    .enter(rv_id, sid, &BORROWED_ORIGIN_PROGRAM, NoBinding)
+                    .enter(rv_id, sid, &borrowed_origin_program, NoBinding)
                     .expect("origin endpoint");
                 let mut target_endpoint = cluster
-                    .enter(rv_id, sid, &BORROWED_TARGET_PROGRAM, NoBinding)
+                    .enter(rv_id, sid, &borrowed_target_program, NoBinding)
                     .expect("target endpoint");
 
                 let outcome = futures::executor::block_on(
@@ -131,16 +125,19 @@ fn cursor_send_and_recv_roundtrip() {
                 ptr.write(SessionKit::new(clock));
             },
             |cluster| {
+                let program = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(1);
                 let mut origin_endpoint = cluster
-                    .enter(rv_id, sid, &ORIGIN_PROGRAM, NoBinding)
+                    .enter(rv_id, sid, &origin_program, NoBinding)
                     .expect("origin endpoint");
                 let mut target_endpoint = cluster
-                    .enter(rv_id, sid, &TARGET_PROGRAM, NoBinding)
+                    .enter(rv_id, sid, &target_program, NoBinding)
                     .expect("target endpoint");
 
                 let outcome = futures::executor::block_on(
@@ -170,16 +167,19 @@ fn localside_send_recv_sizes_stay_compact() {
                 ptr.write(SessionKit::new(clock));
             },
             |cluster| {
+                let program = g::send::<Role<0>, Role<1>, Msg<1, u32>, 0>();
+                let origin_program: RoleProgram<0> = project(&program);
+                let target_program: RoleProgram<1> = project(&program);
                 let rv_id = cluster
                     .add_rendezvous_from_config(Config::new(tap_buf, slab), transport)
                     .expect("register rendezvous");
 
                 let sid = SessionId::new(3);
                 let mut origin_endpoint = cluster
-                    .enter(rv_id, sid, &ORIGIN_PROGRAM, NoBinding)
+                    .enter(rv_id, sid, &origin_program, NoBinding)
                     .expect("origin endpoint");
                 let mut target_endpoint = cluster
-                    .enter(rv_id, sid, &TARGET_PROGRAM, NoBinding)
+                    .enter(rv_id, sid, &target_program, NoBinding)
                     .expect("target endpoint");
 
                 let send = origin_endpoint
@@ -188,7 +188,7 @@ fn localside_send_recv_sizes_stay_compact() {
                     .send(&42);
                 let recv = target_endpoint.recv::<Msg<1, u32>>();
 
-                let endpoint_bytes = size_of::<hibana::Endpoint<'static, 0, TestKit>>();
+                let endpoint_bytes = size_of::<hibana::Endpoint<'static, 0>>();
                 let send_future_bytes = size_of_val(&send);
                 let recv_future_bytes = size_of_val(&recv);
 

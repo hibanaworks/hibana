@@ -23,7 +23,7 @@ use crate::runtime::consts::{
 use crate::transport::{Transport, TransportError, wire::Payload};
 use core::{
     cell::{Cell, UnsafeCell},
-    future::{Future, Ready, ready},
+    future::Future,
     marker::PhantomData,
     mem::{MaybeUninit, align_of, size_of},
     pin::pin,
@@ -474,8 +474,8 @@ const NESTED_STATIC_PROGRAM: g::Program<NestedStaticProgramSteps> = g::route(
         NESTED_STATIC_MIDDLE,
     ),
 );
-static NESTED_STATIC_CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&NESTED_STATIC_PROGRAM);
-static NESTED_STATIC_WORKER_PROGRAM: RoleProgram<'static, 1> = project(&NESTED_STATIC_PROGRAM);
+static NESTED_STATIC_CONTROLLER_PROGRAM: RoleProgram<0> = project(&NESTED_STATIC_PROGRAM);
+static NESTED_STATIC_WORKER_PROGRAM: RoleProgram<1> = project(&NESTED_STATIC_PROGRAM);
 type LoopContinueScopedContinueMsg = Msg<
     { crate::runtime::consts::LABEL_LOOP_CONTINUE },
     GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
@@ -521,8 +521,7 @@ const LOOP_SEMANTICS_PROGRAM: g::Program<LoopSemanticsProgramSteps> = g::route(
     g::send::<Role<0>, Role<0>, LoopContinueScopedContinueMsg, 0>(),
     g::send::<Role<0>, Role<0>, LoopContinueScopedBreakMsg, 0>(),
 );
-static LOOP_SEMANTICS_CONTROLLER_PROGRAM: RoleProgram<'static, 0> =
-    project(&LOOP_SEMANTICS_PROGRAM);
+static LOOP_SEMANTICS_CONTROLLER_PROGRAM: RoleProgram<0> = project(&LOOP_SEMANTICS_PROGRAM);
 const LOOP_CONTINUE_SCOPED_PROGRAM: g::Program<LoopContinueScopedProgramSteps> = g::route(
     g::seq(
         g::send::<Role<0>, Role<0>, LoopContinueScopedContinueMsg, 0>(),
@@ -539,7 +538,7 @@ const LOOP_CONTINUE_SCOPED_PROGRAM: g::Program<LoopContinueScopedProgramSteps> =
     ),
     g::send::<Role<0>, Role<0>, LoopContinueScopedBreakMsg, 0>(),
 );
-static LOOP_CONTINUE_SCOPED_CONTROLLER_PROGRAM: RoleProgram<'static, 0> =
+static LOOP_CONTINUE_SCOPED_CONTROLLER_PROGRAM: RoleProgram<0> =
     project(&LOOP_CONTINUE_SCOPED_PROGRAM);
 const LOOP_CONTINUE_PASSIVE_RIGHT_REPLY_LABEL: u8 = 0x51;
 type LoopContinuePassiveOuterLeftMsg = Msg<110, u8>;
@@ -577,9 +576,9 @@ const LOOP_CONTINUE_PASSIVE_PROGRAM: g::Program<LoopContinuePassiveProgramSteps>
     ),
     g::send::<Role<0>, Role<0>, LoopContinueScopedBreakMsg, 0>(),
 );
-static LOOP_CONTINUE_PASSIVE_CONTROLLER_PROGRAM: RoleProgram<'static, 0> =
+static LOOP_CONTINUE_PASSIVE_CONTROLLER_PROGRAM: RoleProgram<0> =
     project(&LOOP_CONTINUE_PASSIVE_PROGRAM);
-static LOOP_CONTINUE_PASSIVE_WORKER_PROGRAM: RoleProgram<'static, 1> =
+static LOOP_CONTINUE_PASSIVE_WORKER_PROGRAM: RoleProgram<1> =
     project(&LOOP_CONTINUE_PASSIVE_PROGRAM);
 type NestedDispatchOuterLeftMsg = Msg<0x10, u8>;
 type NestedDispatchLeafLeftMsg = Msg<0x51, u8>;
@@ -624,9 +623,8 @@ const NESTED_DISPATCH_PROGRAM: g::Program<NestedDispatchProgramSteps> = g::route
         ),
     ),
 );
-static NESTED_DISPATCH_CONTROLLER_PROGRAM: RoleProgram<'static, 0> =
-    project(&NESTED_DISPATCH_PROGRAM);
-static NESTED_DISPATCH_WORKER_PROGRAM: RoleProgram<'static, 1> = project(&NESTED_DISPATCH_PROGRAM);
+static NESTED_DISPATCH_CONTROLLER_PROGRAM: RoleProgram<0> = project(&NESTED_DISPATCH_PROGRAM);
+static NESTED_DISPATCH_WORKER_PROGRAM: RoleProgram<1> = project(&NESTED_DISPATCH_PROGRAM);
 type PendingOfferCluster =
     SessionCluster<'static, PendingTransport, DefaultLabelUniverse, CounterClock, 4>;
 type HintPendingOfferCluster =
@@ -923,10 +921,19 @@ where
     F: Future<Output = Result<T, E>>,
     E: core::fmt::Debug,
 {
-    match fut.as_mut().poll(cx) {
-        Poll::Ready(Ok(value)) => value,
-        Poll::Ready(Err(err)) => panic!("{context} failed: {err:?}"),
-        Poll::Pending => panic!("{context} unexpectedly pending"),
+    let mut spins = 0usize;
+    loop {
+        match fut.as_mut().poll(cx) {
+            Poll::Ready(Ok(value)) => return value,
+            Poll::Ready(Err(err)) => panic!("{context} failed: {err:?}"),
+            Poll::Pending => {
+                spins += 1;
+                if spins > 8 {
+                    panic!("{context} unexpectedly pending");
+                }
+                cx.waker().wake_by_ref();
+            }
+        }
     }
 }
 
@@ -1180,14 +1187,6 @@ impl Transport for HintOnlyTransport {
         = HintOnlyRx
     where
         Self: 'a;
-    type Send<'a>
-        = Ready<Result<(), Self::Error>>
-    where
-        Self: 'a;
-    type Recv<'a>
-        = Ready<Result<Payload<'a>, Self::Error>>
-    where
-        Self: 'a;
     type Metrics = ();
 
     fn open<'a>(&'a self, local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
@@ -1204,20 +1203,27 @@ impl Transport for HintOnlyTransport {
         )
     }
 
-    fn send<'a, 'f>(
+    fn poll_send<'a, 'f>(
         &'a self,
         _tx: &'a mut Self::Tx<'a>,
         _outgoing: crate::transport::Outgoing<'f>,
-    ) -> Self::Send<'a>
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>>
     where
         'a: 'f,
     {
-        ready(Ok(()))
+        Poll::Ready(Ok(()))
     }
 
-    fn recv<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
-        ready(Ok(Payload::new(&[0u8; 1])))
+    fn poll_recv<'a>(
+        &'a self,
+        _rx: &'a mut Self::Rx<'a>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<Payload<'a>, Self::Error>> {
+        Poll::Ready(Ok(Payload::new(&[0u8; 1])))
     }
+
+    fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
     fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
 
@@ -1250,14 +1256,6 @@ impl Transport for HintPendingTransport {
         = HintPendingRx
     where
         Self: 'a;
-    type Send<'a>
-        = Ready<Result<(), Self::Error>>
-    where
-        Self: 'a;
-    type Recv<'a>
-        = PendingRecv<'a>
-    where
-        Self: 'a;
     type Metrics = ();
 
     fn open<'a>(&'a self, local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
@@ -1274,20 +1272,37 @@ impl Transport for HintPendingTransport {
         )
     }
 
-    fn send<'a, 'f>(
+    fn poll_send<'a, 'f>(
         &'a self,
         _tx: &'a mut Self::Tx<'a>,
         _outgoing: crate::transport::Outgoing<'f>,
-    ) -> Self::Send<'a>
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>>
     where
         'a: 'f,
     {
-        ready(Ok(()))
+        Poll::Ready(Ok(()))
     }
 
-    fn recv<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
-        PendingRecv { state: self.state }
+    fn poll_recv<'a>(
+        &'a self,
+        _rx: &'a mut Self::Rx<'a>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Payload<'a>, Self::Error>> {
+        self.state.polls.set(self.state.polls.get().wrapping_add(1));
+        if self.state.ready.get() {
+            self.state.recv_parked.set(false);
+            Poll::Ready(Ok(Payload::new(&[])))
+        } else {
+            self.state.recv_parked.set(true);
+            unsafe {
+                *self.state.waker.get() = Some(cx.waker().clone());
+            }
+            Poll::Pending
+        }
     }
+
+    fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
     fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
 
@@ -1450,14 +1465,39 @@ struct DeferredIngressRx;
 
 struct PendingRx;
 
-struct PendingRecv<'a> {
-    state: &'a PendingTransportState,
-}
+impl Transport for PendingTransport {
+    type Error = TransportError;
+    type Tx<'a>
+        = ()
+    where
+        Self: 'a;
+    type Rx<'a>
+        = PendingRx
+    where
+        Self: 'a;
+    type Metrics = ();
 
-impl<'a> Future for PendingRecv<'a> {
-    type Output = Result<Payload<'a>, TransportError>;
+    fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        ((), PendingRx)
+    }
 
-    fn poll(self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll_send<'a, 'f>(
+        &'a self,
+        _tx: &'a mut Self::Tx<'a>,
+        _outgoing: crate::transport::Outgoing<'f>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>>
+    where
+        'a: 'f,
+    {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_recv<'a>(
+        &'a self,
+        _rx: &'a mut Self::Rx<'a>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Payload<'a>, Self::Error>> {
         self.state.polls.set(self.state.polls.get().wrapping_add(1));
         if self.state.ready.get() {
             self.state.recv_parked.set(false);
@@ -1470,46 +1510,8 @@ impl<'a> Future for PendingRecv<'a> {
             Poll::Pending
         }
     }
-}
 
-impl Transport for PendingTransport {
-    type Error = TransportError;
-    type Tx<'a>
-        = ()
-    where
-        Self: 'a;
-    type Rx<'a>
-        = PendingRx
-    where
-        Self: 'a;
-    type Send<'a>
-        = Ready<Result<(), Self::Error>>
-    where
-        Self: 'a;
-    type Recv<'a>
-        = PendingRecv<'a>
-    where
-        Self: 'a;
-    type Metrics = ();
-
-    fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
-        ((), PendingRx)
-    }
-
-    fn send<'a, 'f>(
-        &'a self,
-        _tx: &'a mut Self::Tx<'a>,
-        _outgoing: crate::transport::Outgoing<'f>,
-    ) -> Self::Send<'a>
-    where
-        'a: 'f,
-    {
-        ready(Ok(()))
-    }
-
-    fn recv<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
-        PendingRecv { state: &self.state }
-    }
+    fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
     fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
 
@@ -1536,37 +1538,36 @@ impl Transport for DeferredIngressTransport {
         = DeferredIngressRx
     where
         Self: 'a;
-    type Send<'a>
-        = Ready<Result<(), Self::Error>>
-    where
-        Self: 'a;
-    type Recv<'a>
-        = Ready<Result<Payload<'a>, Self::Error>>
-    where
-        Self: 'a;
     type Metrics = ();
 
     fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
         ((), DeferredIngressRx)
     }
 
-    fn send<'a, 'f>(
+    fn poll_send<'a, 'f>(
         &'a self,
         _tx: &'a mut Self::Tx<'a>,
         _outgoing: crate::transport::Outgoing<'f>,
-    ) -> Self::Send<'a>
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>>
     where
         'a: 'f,
     {
-        ready(Ok(()))
+        Poll::Ready(Ok(()))
     }
 
-    fn recv<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
+    fn poll_recv<'a>(
+        &'a self,
+        _rx: &'a mut Self::Rx<'a>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<Payload<'a>, Self::Error>> {
         self.state
             .available
             .set(self.state.available.get().wrapping_add(1));
-        ready(Ok(Payload::new(&[])))
+        Poll::Ready(Ok(Payload::new(&[])))
     }
+
+    fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
     fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
 
@@ -1701,8 +1702,8 @@ type HintRouteSteps = RouteSteps<
     SeqSteps<HintRightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<101, u8>>, StepNil>>,
 >;
 const HINT_ROUTE_PROGRAM: g::Program<HintRouteSteps> = g::route(HINT_LEFT_ARM, HINT_RIGHT_ARM);
-static HINT_CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&HINT_ROUTE_PROGRAM);
-static HINT_WORKER_PROGRAM: RoleProgram<'static, 1> = project(&HINT_ROUTE_PROGRAM);
+static HINT_CONTROLLER_PROGRAM: RoleProgram<0> = project(&HINT_ROUTE_PROGRAM);
+static HINT_WORKER_PROGRAM: RoleProgram<1> = project(&HINT_ROUTE_PROGRAM);
 type HintSplitLeftSteps = SeqSteps<HintLeftHead, SendOnly<0, Role<0>, Role<1>, Msg<100, u8>>>;
 type HintSplitRightSteps = SeqSteps<HintRightHead, SendOnly<2, Role<0>, Role<1>, Msg<101, u8>>>;
 type HintSplitRouteSteps = RouteSteps<HintSplitLeftSteps, HintSplitRightSteps>;
@@ -1732,8 +1733,8 @@ const HINT_SPLIT_RIGHT_ARM: g::Program<HintSplitRightSteps> = g::seq(
 );
 const HINT_SPLIT_ROUTE_PROGRAM: g::Program<HintSplitRouteSteps> =
     g::route(HINT_SPLIT_LEFT_ARM, HINT_SPLIT_RIGHT_ARM);
-static HINT_SPLIT_CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&HINT_SPLIT_ROUTE_PROGRAM);
-static HINT_SPLIT_WORKER_PROGRAM: RoleProgram<'static, 1> = project(&HINT_SPLIT_ROUTE_PROGRAM);
+static HINT_SPLIT_CONTROLLER_PROGRAM: RoleProgram<0> = project(&HINT_SPLIT_ROUTE_PROGRAM);
+static HINT_SPLIT_WORKER_PROGRAM: RoleProgram<1> = project(&HINT_SPLIT_ROUTE_PROGRAM);
 const HINT_LEFT_DATA_LABEL: u8 = 100;
 const HINT_RIGHT_DATA_LABEL: u8 = 101;
 type MultiSendRouteLeftMsg = Msg<
@@ -1770,10 +1771,8 @@ const MULTI_SEND_ROUTE_PROGRAM: g::Program<MultiSendRouteSteps> = g::route(
         ),
     ),
 );
-static MULTI_SEND_ROUTE_CONTROLLER_PROGRAM: RoleProgram<'static, 0> =
-    project(&MULTI_SEND_ROUTE_PROGRAM);
-static MULTI_SEND_ROUTE_WORKER_PROGRAM: RoleProgram<'static, 1> =
-    project(&MULTI_SEND_ROUTE_PROGRAM);
+static MULTI_SEND_ROUTE_CONTROLLER_PROGRAM: RoleProgram<0> = project(&MULTI_SEND_ROUTE_PROGRAM);
+static MULTI_SEND_ROUTE_WORKER_PROGRAM: RoleProgram<1> = project(&MULTI_SEND_ROUTE_PROGRAM);
 
 const ENTRY_ARM0_PROGRAM: g::Program<
     SeqSteps<
@@ -1823,8 +1822,8 @@ type EntryRouteSteps = RouteSteps<
 >;
 const ENTRY_ROUTE_PROGRAM: g::Program<EntryRouteSteps> =
     g::route(ENTRY_ARM0_PROGRAM, ENTRY_ARM1_PROGRAM);
-static ENTRY_CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&ENTRY_ROUTE_PROGRAM);
-static ENTRY_WORKER_PROGRAM: RoleProgram<'static, 1> = project(&ENTRY_ROUTE_PROGRAM);
+static ENTRY_CONTROLLER_PROGRAM: RoleProgram<0> = project(&ENTRY_ROUTE_PROGRAM);
+static ENTRY_WORKER_PROGRAM: RoleProgram<1> = project(&ENTRY_ROUTE_PROGRAM);
 type NestedRouteSteps = RouteSteps<HintRouteSteps, EntryRouteSteps>;
 const NESTED_ROUTE_PROGRAM: g::Program<NestedRouteSteps> =
     g::route(HINT_ROUTE_PROGRAM, ENTRY_ROUTE_PROGRAM);
@@ -2643,7 +2642,7 @@ fn attach_endpoint_keeps_primary_lane_on_first_live_application_lane() {
                         .add_rendezvous_from_config(config, transport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(998);
-                    let worker_program: RoleProgram<'_, 1> = project(&LANE_THREE_PROGRAM);
+                    let worker_program: RoleProgram<1> = project(&LANE_THREE_PROGRAM);
                     unsafe {
                         cluster_ref
                             .attach_endpoint_into::<1, _, _, _>(
@@ -4313,7 +4312,7 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
                         .add_rendezvous_from_config(config, transport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(1008);
-                    let worker_program: RoleProgram<'_, 1> = project(&NESTED_SPLIT_ROUTE_PROGRAM);
+                    let worker_program: RoleProgram<1> = project(&NESTED_SPLIT_ROUTE_PROGRAM);
                     unsafe {
                         cluster_ref
                             .attach_endpoint_into::<1, _, _, _>(
@@ -6540,7 +6539,7 @@ fn selected_route_arm_keeps_later_same_lane_sends_available() {
 
                         assert!(
                             controller
-                                .preview_flow_meta::<MultiSendRightFirstMsg>()
+                                .preview_flow::<MultiSendRightFirstMsg>()
                                 .is_ok(),
                             "first payload send must remain available after choosing the route arm"
                         );
@@ -6556,7 +6555,7 @@ fn selected_route_arm_keeps_later_same_lane_sends_available() {
 
                         assert!(
                             controller
-                                .preview_flow_meta::<MultiSendRightSecondMsg>()
+                                .preview_flow::<MultiSendRightSecondMsg>()
                                 .is_ok(),
                             "later payload send on the same route arm must remain available after the first send"
                         );
@@ -8134,7 +8133,7 @@ fn loop_continue_then_nested_custom_route_right_send_stays_well_scoped() {
 
                 let controller = controller_slot.borrow_mut();
                 controller
-                    .preview_flow_meta::<LoopContinueScopedRouteRightMsg>()
+                    .preview_flow::<LoopContinueScopedRouteRightMsg>()
                     .map(|preview| preview.into_parts().0)
                     .expect("open nested route-right send after continue")
             }
@@ -8587,8 +8586,8 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                 ),
                 g::send::<Role<0>, Role<0>, LoopBreakMsg, 3>(),
             );
-            static CLIENT_PROGRAM: RoleProgram<'static, 0> = project(&LOOP_PROGRAM);
-            static SERVER_PROGRAM: RoleProgram<'static, 1> = project(&LOOP_PROGRAM);
+            static CLIENT_PROGRAM: RoleProgram<0> = project(&LOOP_PROGRAM);
+            static SERVER_PROGRAM: RoleProgram<1> = project(&LOOP_PROGRAM);
             type ClientEndpoint = CursorEndpoint<
                 'static,
                 0,
@@ -8999,8 +8998,8 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                 ),
                 g::send::<Role<0>, Role<0>, LoopBreakMsg, 3>(),
             );
-            static CLIENT_PROGRAM: RoleProgram<'static, 0> = project(&LOOP_PROGRAM);
-            static SERVER_PROGRAM: RoleProgram<'static, 1> = project(&LOOP_PROGRAM);
+            static CLIENT_PROGRAM: RoleProgram<0> = project(&LOOP_PROGRAM);
+            static SERVER_PROGRAM: RoleProgram<1> = project(&LOOP_PROGRAM);
             type ClientEndpoint = CursorEndpoint<
                 'static,
                 0,
@@ -9511,8 +9510,8 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                 ),
                 g::send::<Role<0>, Role<0>, LoopBreakMsg, 3>(),
             );
-            static CLIENT_PROGRAM: RoleProgram<'static, 0> = project(&LOOP_PROGRAM);
-            static SERVER_PROGRAM: RoleProgram<'static, 1> = project(&LOOP_PROGRAM);
+            static CLIENT_PROGRAM: RoleProgram<0> = project(&LOOP_PROGRAM);
+            static SERVER_PROGRAM: RoleProgram<1> = project(&LOOP_PROGRAM);
             type ClientEndpoint = CursorEndpoint<
                 'static,
                 0,
@@ -9912,6 +9911,111 @@ fn dropping_pending_decode_future_preserves_preview_branch_state() {
                             assert!(
                                 worker.selected_arm_for_scope(scope).is_none(),
                                 "dropping a pending decode future must not commit route progress"
+                            );
+                        });
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn restoring_public_preview_branch_clears_cached_arm_slot() {
+    run_offer_regression_test(
+        "restoring_public_preview_branch_clears_cached_arm_slot",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, HintPendingOfferCluster, cluster_ref, {
+                with_offer_value_slot!(HintPendingControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(HintPendingWorkerEndpoint, worker_slot, {
+                        with_offer_value_slot!(PendingTransportState, pending_state_slot, {
+                            pending_state_slot.store(PendingTransportState::default());
+                            let pending_state: &'static PendingTransportState =
+                                unsafe { &*pending_state_slot.ptr() };
+                            let transport =
+                                HintPendingTransport::new(pending_state, HINT_LEFT_DATA_LABEL);
+                            let rv_id = cluster_ref
+                                .add_rendezvous_from_config(config, transport)
+                                .expect("register rendezvous");
+                            let sid = SessionId::new(906);
+                            unsafe {
+                                cluster_ref
+                                    .attach_endpoint_into::<0, _, _, _>(
+                                        controller_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &HINT_CONTROLLER_PROGRAM,
+                                        NoBinding,
+                                    )
+                                    .expect("attach controller endpoint");
+                                cluster_ref
+                                    .attach_endpoint_into::<1, _, _, _>(
+                                        worker_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &HINT_WORKER_PROGRAM,
+                                        NoBinding,
+                                    )
+                                    .expect("attach worker endpoint");
+                            }
+
+                            let scope = {
+                                let worker = worker_slot.borrow_mut();
+                                let scope = worker.cursor.node_scope_id();
+                                assert!(!scope.is_none(), "worker must start at route scope");
+                                scope
+                            };
+
+                            {
+                                let controller = controller_slot.borrow_mut();
+                                controller.port_for_lane(0).record_route_decision(scope, 0);
+                            }
+
+                            let worker = worker_slot.borrow_mut();
+                            let mut cx = Context::from_waker(noop_waker_ref());
+
+                            let label = match worker.poll_public_offer(&mut cx) {
+                                Poll::Ready(Ok(label)) => label,
+                                Poll::Ready(Err(err)) => {
+                                    panic!("public offer must materialize preview branch: {err:?}")
+                                }
+                                Poll::Pending => {
+                                    panic!("public offer must not pend once the hinted arm is ready")
+                                }
+                            };
+                            assert_eq!(
+                                label, HINT_LEFT_DATA_LABEL,
+                                "public offer must cache the hinted preview branch"
+                            );
+                            assert!(
+                                worker.public_route_branch.is_some(),
+                                "public offer must park the materialized branch until decode or drop"
+                            );
+
+                            worker.restore_public_route_branch();
+
+                            assert!(
+                                worker.public_route_branch.is_none(),
+                                "restoring the preview branch must clear the cached public arm slot"
+                            );
+
+                            let label = match worker.poll_public_offer(&mut cx) {
+                                Poll::Ready(Ok(label)) => label,
+                                Poll::Ready(Err(err)) => panic!(
+                                    "re-offer after restore must rematerialize the branch: {err:?}"
+                                ),
+                                Poll::Pending => {
+                                    panic!("re-offer after restore must not pend")
+                                }
+                            };
+                            assert_eq!(
+                                label, HINT_LEFT_DATA_LABEL,
+                                "re-offer after restore must rematerialize the same branch from restored state"
+                            );
+                            assert!(
+                                worker.public_route_branch.is_some(),
+                                "re-offer after restore must park a fresh preview branch"
                             );
                         });
                     });

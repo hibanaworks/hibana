@@ -718,9 +718,8 @@ mod tests {
             .policy::<ROUTE_POLICY_ID>(),
         );
         let summary = program.summary();
-        let expected = CompiledProgramImage::persistent_bytes_for_counts(
-            summary.compiled_program_counts(),
-        );
+        let expected =
+            CompiledProgramImage::persistent_bytes_for_counts(summary.compiled_program_counts());
         with_compiled_program_image(&summary, |image| {
             assert_eq!(image.actual_persistent_bytes(), expected);
         });

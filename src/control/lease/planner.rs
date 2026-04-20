@@ -8,11 +8,17 @@
 
 use crate::control::cap::mint::ResourceKind;
 use crate::control::cap::resource_kinds::{
-    CancelAckKind, CancelKind, CheckpointKind, CommitKind, LoadBeginKind, LoadCommitKind,
-    PolicyActivateKind, PolicyAnnotateKind, PolicyLoadKind, PolicyRevertKind, RerouteKind,
-    RollbackKind, SpliceAckKind, SpliceIntentKind,
+    CancelAckKind, CancelKind, CheckpointKind, CommitKind, RerouteKind, RollbackKind,
+    SpliceAckKind, SpliceIntentKind,
 };
 use crate::{global::const_dsl::PolicyMode, runtime::consts};
+
+const TAG_POLICY_LOAD: u8 = 0x4A;
+const TAG_POLICY_ACTIVATE: u8 = 0x4B;
+const TAG_POLICY_REVERT: u8 = 0x4C;
+const TAG_POLICY_ANNOTATE: u8 = 0x4D;
+const TAG_LOAD_BEGIN: u8 = 0x50;
+const TAG_LOAD_COMMIT: u8 = 0x51;
 
 pub(crate) const FACET_CAPS: u8 = 1 << 0;
 pub(crate) const FACET_SLOTS: u8 = 1 << 1;
@@ -311,12 +317,8 @@ const fn base_facets_for_tag(tag: u8) -> LeaseFacetNeeds {
     match tag {
         SpliceIntentKind::TAG | SpliceAckKind::TAG => facets_caps_splice(),
         RerouteKind::TAG => facets_caps_delegation(),
-        LoadBeginKind::TAG
-        | LoadCommitKind::TAG
-        | PolicyLoadKind::TAG
-        | PolicyActivateKind::TAG
-        | PolicyRevertKind::TAG
-        | PolicyAnnotateKind::TAG => facets_slots(),
+        TAG_LOAD_BEGIN | TAG_LOAD_COMMIT | TAG_POLICY_LOAD | TAG_POLICY_ACTIVATE
+        | TAG_POLICY_REVERT | TAG_POLICY_ANNOTATE => facets_slots(),
         CancelKind::TAG
         | CancelAckKind::TAG
         | CheckpointKind::TAG

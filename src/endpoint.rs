@@ -11,8 +11,10 @@ use core::{
 
 use crate::{
     binding::BindingHandle,
-    control::cap::mint::{EpochTbl, MintConfig, MintConfigMarker},
-    transport::{TransportError, wire::CodecError},
+    transport::{
+        TransportError,
+        wire::{CodecError, Payload, WirePayload},
+    },
 };
 
 /// Affine endpoint helpers.
@@ -27,139 +29,104 @@ pub(crate) mod flow;
 pub(crate) mod kernel;
 
 type EndpointBinding<'r> = BindingHandle<'r>;
-type EndpointCfg<'r, K, Mint> = carrier::EndpointCfg<K, Mint, EndpointBinding<'r>>;
-type KernelEndpoint<'r, const ROLE: u8, K, Mint> =
-    carrier::KernelCursorEndpoint<'r, ROLE, K, EpochTbl, Mint, EndpointBinding<'r>>;
-type KernelRouteBranch<'r, const ROLE: u8, K, Mint> =
-    carrier::KernelRouteBranch<'r, ROLE, K, EpochTbl, Mint, EndpointBinding<'r>>;
 
-struct EndpointInner<'r, const ROLE: u8, K, Mint>
-where
-    K: carrier::SessionKitFamily + 'r,
-    Mint: MintConfigMarker,
-{
-    endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>,
-    _cfg: core::marker::PhantomData<EndpointCfg<'r, K, Mint>>,
+#[inline]
+fn validate_wire_payload<P: WirePayload>(payload: Payload<'_>) -> Result<(), CodecError> {
+    P::decode_payload(payload).map(|_| ())
+}
+
+struct EndpointInner<'r, const ROLE: u8> {
+    state: core::ptr::NonNull<()>,
+    ops: *const (),
+    handle: carrier::PackedEndpointHandle,
+    generation: u32,
+    _borrow: core::marker::PhantomData<&'r mut EndpointBinding<'r>>,
     _local_only: crate::local::LocalOnly,
 }
 
 /// Public endpoint facade for app-facing localside interaction.
-#[allow(private_bounds)]
-pub struct Endpoint<'r, const ROLE: u8, K, Mint = MintConfig>
-where
-    K: carrier::SessionKitFamily + 'r,
-    Mint: MintConfigMarker,
-{
-    inner: EndpointInner<'r, ROLE, K, Mint>,
+pub struct Endpoint<'r, const ROLE: u8> {
+    inner: EndpointInner<'r, ROLE>,
 }
 
 /// Public route-branch facade returned by [`Endpoint::offer`].
-#[allow(private_bounds)]
-pub struct RouteBranch<'e, 'r, const ROLE: u8, K, Mint = MintConfig>
-where
-    K: carrier::SessionKitFamily + 'r,
-    Mint: MintConfigMarker,
-{
-    endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>,
-    branch: Option<KernelRouteBranch<'r, ROLE, K, Mint>>,
-    _borrow: core::marker::PhantomData<&'e mut EndpointCfg<'r, K, Mint>>,
+pub struct RouteBranch<'e, 'r, const ROLE: u8> {
+    endpoint: *mut Endpoint<'r, ROLE>,
+    label: u8,
+    _borrow: core::marker::PhantomData<&'e mut EndpointBinding<'r>>,
     _local_only: crate::local::LocalOnly,
 }
 
-struct OfferFuture<'e, 'r, 'cfg, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint>
-where
-    T: crate::substrate::Transport + 'cfg,
-    U: crate::substrate::runtime::LabelUniverse + 'cfg,
-    C: crate::substrate::runtime::Clock + 'cfg,
-    'cfg: 'r,
-    Mint: MintConfigMarker,
-{
-    endpoint:
-        *mut KernelEndpoint<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
-    inner: kernel::RouteOfferFuture<
-        'e,
-        'r,
-        ROLE,
-        T,
-        U,
-        C,
-        EpochTbl,
-        MAX_RV,
-        Mint,
-        EndpointBinding<'r>,
-    >,
+struct OfferFuture<'e, 'r, const ROLE: u8> {
+    endpoint: *mut Endpoint<'r, ROLE>,
+    completed: bool,
+    _borrow: core::marker::PhantomData<&'e mut EndpointBinding<'r>>,
 }
 
-struct DecodeFuture<'e, 'r, 'cfg, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint, M>
+struct DecodeFuture<'e, 'r, const ROLE: u8, M>
 where
-    T: crate::substrate::Transport + 'cfg,
-    U: crate::substrate::runtime::LabelUniverse + 'cfg,
-    C: crate::substrate::runtime::Clock + 'cfg,
-    'cfg: 'r,
-    Mint: MintConfigMarker,
     M: crate::global::MessageSpec,
     M::Payload: crate::transport::wire::WirePayload,
 {
-    inner: kernel::RouteDecodeFuture<
-        'e,
-        'r,
-        ROLE,
-        T,
-        U,
-        C,
-        EpochTbl,
-        MAX_RV,
-        Mint,
-        EndpointBinding<'r>,
-        M,
-    >,
-    _cfg: core::marker::PhantomData<&'cfg ()>,
+    endpoint: *mut Endpoint<'r, ROLE>,
+    completed: bool,
+    _borrow: core::marker::PhantomData<&'e mut EndpointBinding<'r>>,
+    _msg: core::marker::PhantomData<M>,
 }
 
-impl<'e, 'r, 'cfg, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint, M>
-    DecodeFuture<'e, 'r, 'cfg, ROLE, T, U, C, MAX_RV, Mint, M>
+struct RecvFuture<'e, 'r, const ROLE: u8, M>
 where
-    T: crate::substrate::Transport + 'cfg,
-    U: crate::substrate::runtime::LabelUniverse + 'cfg,
-    C: crate::substrate::runtime::Clock + 'cfg,
-    'cfg: 'r,
-    Mint: MintConfigMarker,
+    M: crate::global::MessageSpec,
+    M::Payload: crate::transport::wire::WirePayload,
+{
+    endpoint: *mut Endpoint<'r, ROLE>,
+    completed: bool,
+    _borrow: core::marker::PhantomData<&'e mut EndpointBinding<'r>>,
+    _msg: core::marker::PhantomData<M>,
+}
+
+impl<'e, 'r, const ROLE: u8, M> DecodeFuture<'e, 'r, ROLE, M>
+where
     M: crate::global::MessageSpec,
     M::Payload: crate::transport::wire::WirePayload,
 {
     #[inline]
-    fn new(
-        mut branch: RouteBranch<
-            'e,
-            'r,
-            ROLE,
-            crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>,
-            Mint,
-        >,
-    ) -> Self {
+    fn new(branch: RouteBranch<'e, 'r, ROLE>) -> Self {
         let endpoint = branch.endpoint;
+        let _branch = core::mem::ManuallyDrop::new(branch);
+        unsafe {
+            let _ = (&mut *endpoint).begin_public_decode_state();
+        }
         Self {
-            inner: unsafe {
-                (&mut *endpoint).decode_route_branch::<M>(
-                    branch
-                        .branch
-                        .take()
-                        .expect("route branch payload must stay present until consumed"),
-                )
-            },
-            _cfg: core::marker::PhantomData,
+            endpoint,
+            completed: false,
+            _borrow: core::marker::PhantomData,
+            _msg: core::marker::PhantomData,
         }
     }
 }
 
-impl<'e, 'r, 'cfg, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint, M> Future
-    for DecodeFuture<'e, 'r, 'cfg, ROLE, T, U, C, MAX_RV, Mint, M>
+impl<'e, 'r, const ROLE: u8, M> RecvFuture<'e, 'r, ROLE, M>
 where
-    T: crate::substrate::Transport + 'cfg,
-    U: crate::substrate::runtime::LabelUniverse + 'cfg,
-    C: crate::substrate::runtime::Clock + 'cfg,
-    'cfg: 'r,
-    Mint: MintConfigMarker,
+    M: crate::global::MessageSpec,
+    M::Payload: crate::transport::wire::WirePayload,
+{
+    #[inline]
+    fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
+        unsafe {
+            endpoint.init_public_recv_state();
+        }
+        Self {
+            endpoint: core::ptr::from_mut(endpoint),
+            completed: false,
+            _borrow: core::marker::PhantomData,
+            _msg: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<'e, 'r, const ROLE: u8, M> Future for DecodeFuture<'e, 'r, ROLE, M>
+where
     M: crate::global::MessageSpec,
     M::Payload: crate::transport::wire::WirePayload,
 {
@@ -168,157 +135,316 @@ where
     >;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().inner) }.poll(cx)
-    }
-}
-
-impl<'r, const ROLE: u8, K, Mint> EndpointInner<'r, ROLE, K, Mint>
-where
-    K: carrier::SessionKitFamily + 'r,
-    Mint: MintConfigMarker,
-{
-    #[inline]
-    fn from_ptr(endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>) -> Self {
-        Self {
-            endpoint,
-            _cfg: core::marker::PhantomData,
-            _local_only: crate::local::LocalOnly::new(),
+        let this = unsafe { self.get_unchecked_mut() };
+        let endpoint = unsafe { &mut *this.endpoint };
+        let desc = kernel::DecodeDesc::new(
+            <M as crate::global::MessageSpec>::LABEL,
+            !matches!(
+                <M::ControlKind as crate::global::ControlPayloadKind>::HANDLING,
+                crate::global::ControlHandling::None
+            ),
+            validate_wire_payload::<M::Payload>,
+        );
+        match endpoint.poll_decode(desc, cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(payload)) => {
+                this.completed = true;
+                let payload: Payload<'e> = unsafe { payload.into_payload() };
+                Poll::Ready(
+                    <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::decode_payload(payload)
+                        .map_err(RecvError::Codec),
+                )
+            }
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
     }
 }
 
-#[allow(private_bounds)]
-impl<'r, const ROLE: u8, K, Mint> Endpoint<'r, ROLE, K, Mint>
+impl<'e, 'r, const ROLE: u8, M> Future for RecvFuture<'e, 'r, ROLE, M>
 where
-    K: carrier::SessionKitFamily + 'r,
-    Mint: MintConfigMarker,
+    M: crate::global::MessageSpec,
+    M::Payload: crate::transport::wire::WirePayload,
 {
-    #[inline]
-    pub(crate) fn from_ptr(endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>) -> Self {
-        Self {
-            inner: EndpointInner::from_ptr(endpoint),
+    type Output = RecvResult<
+        <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>,
+    >;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = unsafe { self.get_unchecked_mut() };
+        let endpoint = unsafe { &mut *this.endpoint };
+        let desc = kernel::RecvDesc::new(
+            <M as crate::global::MessageSpec>::LABEL,
+            <M::Payload as WirePayload>::decode_payload(Payload::new(&[])).is_ok(),
+        );
+        match endpoint.poll_recv(desc, cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(payload)) => {
+                this.completed = true;
+                let payload: Payload<'e> = unsafe { payload.into_payload() };
+                Poll::Ready(
+                    <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::decode_payload(payload)
+                        .map_err(RecvError::Codec),
+                )
+            }
+            Poll::Ready(Err(err)) => {
+                this.completed = true;
+                Poll::Ready(Err(err))
+            }
         }
     }
 }
 
-#[allow(private_bounds)]
-impl<'e, 'r, const ROLE: u8, K, Mint> RouteBranch<'e, 'r, ROLE, K, Mint>
+impl<'e, 'r, const ROLE: u8, M> Drop for DecodeFuture<'e, 'r, ROLE, M>
 where
-    K: carrier::SessionKitFamily + 'r,
-    Mint: MintConfigMarker,
+    M: crate::global::MessageSpec,
+    M::Payload: crate::transport::wire::WirePayload,
 {
+    fn drop(&mut self) {
+        if !self.completed {
+            unsafe {
+                (&mut *self.endpoint).reset_public_decode_state();
+            }
+        }
+    }
+}
+
+impl<'e, 'r, const ROLE: u8, M> Drop for RecvFuture<'e, 'r, ROLE, M>
+where
+    M: crate::global::MessageSpec,
+    M::Payload: crate::transport::wire::WirePayload,
+{
+    fn drop(&mut self) {
+        if !self.completed {
+            unsafe {
+                (&mut *self.endpoint).reset_public_recv_state();
+            }
+        }
+    }
+}
+
+impl<'r, const ROLE: u8> EndpointInner<'r, ROLE> {
     #[inline]
-    pub(crate) fn from_parts(
-        endpoint: *mut KernelEndpoint<'r, ROLE, K, Mint>,
-        branch: KernelRouteBranch<'r, ROLE, K, Mint>,
+    fn new<K: carrier::SessionKitFamily + 'r>(
+        kit: &'r K,
+        handle: carrier::PackedEndpointHandle,
+        generation: u32,
     ) -> Self {
         Self {
-            endpoint,
-            branch: Some(branch),
+            state: core::ptr::NonNull::from(kit).cast(),
+            ops: K::endpoint_ops::<ROLE>(),
+            handle,
+            generation,
             _borrow: core::marker::PhantomData,
             _local_only: crate::local::LocalOnly::new(),
         }
     }
 }
 
-impl<'r, const ROLE: u8, K, Mint> Drop for Endpoint<'r, ROLE, K, Mint>
-where
-    K: carrier::SessionKitFamily + 'r,
-    Mint: MintConfigMarker,
-{
-    fn drop(&mut self) {
-        unsafe {
-            core::ptr::drop_in_place(self.inner.endpoint);
-        }
-    }
-}
-
-impl<'e, 'r, const ROLE: u8, K, Mint> Drop for RouteBranch<'e, 'r, ROLE, K, Mint>
-where
-    K: carrier::SessionKitFamily + 'r,
-    Mint: MintConfigMarker,
-{
-    fn drop(&mut self) {
-        if let Some(branch) = self.branch.take() {
-            unsafe {
-                K::restore_materialized_route_branch(self.endpoint, branch);
-            }
-        }
-    }
-}
-
-impl<'e, 'r, 'cfg, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint>
-    OfferFuture<'e, 'r, 'cfg, ROLE, T, U, C, MAX_RV, Mint>
-where
-    T: crate::substrate::Transport + 'cfg,
-    U: crate::substrate::runtime::LabelUniverse + 'cfg,
-    C: crate::substrate::runtime::Clock + 'cfg,
-    'cfg: 'r,
-    Mint: MintConfigMarker,
-{
+impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
-    fn new(
-        endpoint: &'e mut Endpoint<
-            'r,
-            ROLE,
-            crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>,
-            Mint,
-        >,
+    fn ops(&self) -> &carrier::EndpointOps<'r, ROLE> {
+        unsafe { &*self.inner.ops.cast::<carrier::EndpointOps<'r, ROLE>>() }
+    }
+
+    #[inline]
+    pub(crate) fn from_handle<K: carrier::SessionKitFamily + 'r>(
+        kit: &'r K,
+        handle: carrier::PackedEndpointHandle,
+        generation: u32,
     ) -> Self {
         Self {
-            endpoint: endpoint.inner.endpoint,
-            inner: unsafe { (&mut *endpoint.inner.endpoint).offer() },
+            inner: EndpointInner::new(kit, handle, generation),
         }
     }
-}
 
-impl<'e, 'r, 'cfg, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint> Future
-    for OfferFuture<'e, 'r, 'cfg, ROLE, T, U, C, MAX_RV, Mint>
-where
-    T: crate::substrate::Transport + 'cfg,
-    U: crate::substrate::runtime::LabelUniverse + 'cfg,
-    C: crate::substrate::runtime::Clock + 'cfg,
-    'cfg: 'r,
-    Mint: MintConfigMarker,
-{
-    type Output = RecvResult<
-        RouteBranch<'e, 'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
-    >;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        match Pin::new(&mut this.inner).poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
-            Poll::Ready(Ok(branch)) => Poll::Ready(Ok(RouteBranch::from_parts(this.endpoint, branch))),
-        }
-    }
-}
-
-impl<'r, 'cfg, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint>
-    Endpoint<'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>
-where
-    T: crate::substrate::Transport + 'cfg,
-    U: crate::substrate::runtime::LabelUniverse + 'cfg,
-    C: crate::substrate::runtime::Clock + 'cfg,
-    'cfg: 'r,
-    Mint: MintConfigMarker,
-{
     #[inline]
-    pub fn flow<'e, M>(
-        &'e mut self,
-    ) -> SendResult<
-        flow::Flow<'e, 'r, ROLE, M, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
-    >
+    unsafe fn drop_kernel_endpoint(&mut self) {
+        unsafe {
+            (self.ops().drop_endpoint)(self.inner.state, self.inner.handle, self.inner.generation);
+        }
+    }
+
+    #[inline]
+    unsafe fn reset_public_offer_state(&mut self) {
+        unsafe {
+            (self.ops().reset_public_offer_state)(
+                self.inner.state,
+                self.inner.handle,
+                self.inner.generation,
+            );
+        }
+    }
+
+    #[inline]
+    unsafe fn restore_public_route_branch(&mut self) {
+        unsafe {
+            (self.ops().restore_public_route_branch)(
+                self.inner.state,
+                self.inner.handle,
+                self.inner.generation,
+            );
+        }
+    }
+
+    #[inline]
+    unsafe fn init_public_send_state(
+        &mut self,
+        preview: kernel::SendPreview,
+        payload: Option<kernel::RawSendPayload>,
+    ) {
+        unsafe {
+            (self.ops().init_public_send_state)(
+                self.inner.state,
+                self.inner.handle,
+                self.inner.generation,
+                preview,
+                payload,
+            );
+        }
+    }
+
+    #[inline]
+    unsafe fn reset_public_send_state(&mut self) {
+        unsafe {
+            (self.ops().reset_public_send_state)(
+                self.inner.state,
+                self.inner.handle,
+                self.inner.generation,
+            );
+        }
+    }
+
+    #[inline]
+    unsafe fn init_public_recv_state(&mut self) {
+        unsafe {
+            (self.ops().init_public_recv_state)(
+                self.inner.state,
+                self.inner.handle,
+                self.inner.generation,
+            );
+        }
+    }
+
+    #[inline]
+    unsafe fn reset_public_recv_state(&mut self) {
+        unsafe {
+            (self.ops().reset_public_recv_state)(
+                self.inner.state,
+                self.inner.handle,
+                self.inner.generation,
+            );
+        }
+    }
+
+    #[inline]
+    unsafe fn begin_public_decode_state(&mut self) -> RecvResult<()> {
+        unsafe {
+            (self.ops().begin_public_decode_state)(
+                self.inner.state,
+                self.inner.handle,
+                self.inner.generation,
+            );
+        }
+        Ok(())
+    }
+
+    #[inline]
+    unsafe fn reset_public_decode_state(&mut self) {
+        unsafe {
+            (self.ops().reset_public_decode_state)(
+                self.inner.state,
+                self.inner.handle,
+                self.inner.generation,
+            );
+        }
+    }
+    #[inline]
+    fn preview_flow(
+        &mut self,
+        desc: kernel::SendDesc,
+    ) -> SendResult<kernel::SendPreview> {
+        unsafe {
+            (self.ops().preview_flow)(self.inner.state, self.inner.handle, self.inner.generation, desc)
+        }
+    }
+
+    #[inline]
+    fn poll_recv(
+        &mut self,
+        desc: kernel::RecvDesc,
+        cx: &mut Context<'_>,
+    ) -> Poll<RecvResult<carrier::RawPayload>> {
+        unsafe {
+            (self.ops().poll_recv)(
+                self.inner.state,
+                self.inner.handle,
+                self.inner.generation,
+                desc,
+                cx,
+            )
+        }
+    }
+
+    #[inline]
+    fn poll_offer(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<RecvResult<u8>> {
+        unsafe {
+            (self.ops().poll_offer)(
+                self.inner.state,
+                self.inner.handle,
+                self.inner.generation,
+                cx,
+            )
+        }
+    }
+
+    #[inline]
+    fn poll_decode(
+        &mut self,
+        desc: kernel::DecodeDesc,
+        cx: &mut Context<'_>,
+    ) -> Poll<RecvResult<carrier::RawPayload>> {
+        unsafe {
+            (self.ops().poll_decode)(
+                self.inner.state,
+                self.inner.handle,
+                self.inner.generation,
+                desc,
+                cx,
+            )
+        }
+    }
+
+    #[inline]
+    pub(crate) fn poll_send(
+        &mut self,
+        desc: kernel::SendDesc,
+        cx: &mut Context<'_>,
+    ) -> Poll<SendResult<kernel::SendControlOutcome<'r>>> {
+        unsafe {
+            (self.ops().poll_send)(
+                self.inner.state,
+                self.inner.handle,
+                self.inner.generation,
+                desc,
+                cx,
+            )
+        }
+    }
+
+    #[inline]
+    pub fn flow<'e, M>(&'e mut self) -> SendResult<flow::Flow<'e, 'r, ROLE, M>>
     where
         M: crate::global::MessageSpec + crate::global::SendableLabel,
-        'cfg: 'r,
     {
-        unsafe {
-            Ok(flow::Flow::from_cap_flow(
-                (&mut *self.inner.endpoint).flow_for_kit::<M>()?,
-            ))
-        }
+        let endpoint = core::ptr::from_mut(self);
+        let desc = flow::send_desc::<M>();
+        let preview = self.preview_flow(desc)?;
+        Ok(flow::Flow::from_cap_flow(flow::CapFlow::new(
+            endpoint, preview, desc,
+        )))
     }
 
     #[inline]
@@ -331,36 +457,34 @@ where
         M: crate::global::MessageSpec + 'e,
         M::Payload: crate::transport::wire::WirePayload,
     {
-        unsafe { (&mut *self.inner.endpoint).recv_direct::<M>() }
+        RecvFuture::<'e, 'r, ROLE, M>::new(self)
     }
 
     #[inline]
     pub fn offer<'e>(
         &'e mut self,
-    ) -> impl core::future::Future<
-        Output = RecvResult<
-            RouteBranch<'e, 'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
-        >,
-    > + 'e {
+    ) -> impl core::future::Future<Output = RecvResult<RouteBranch<'e, 'r, ROLE>>> + 'e {
         OfferFuture::new(self)
     }
 }
 
-impl<'e, 'r, 'cfg, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint>
-    RouteBranch<'e, 'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>
-where
-    T: crate::substrate::Transport + 'cfg,
-    U: crate::substrate::runtime::LabelUniverse + 'cfg,
-    C: crate::substrate::runtime::Clock + 'cfg,
-    'cfg: 'r,
-    Mint: MintConfigMarker,
-{
+impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
+    #[inline]
+    pub(crate) fn from_parts(
+        endpoint: *mut Endpoint<'r, ROLE>,
+        label: u8,
+    ) -> Self {
+        Self {
+            endpoint,
+            label,
+            _borrow: core::marker::PhantomData,
+            _local_only: crate::local::LocalOnly::new(),
+        }
+    }
+
     #[inline]
     pub fn label(&self) -> u8 {
-        self.branch
-            .as_ref()
-            .expect("route branch payload must stay present until consumed")
-            .label()
+        self.label
     }
 
     #[inline]
@@ -368,12 +492,69 @@ where
         self,
     ) -> impl core::future::Future<
         Output = RecvResult<<<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>>,
-    > + use<'e, 'r, 'cfg, M, ROLE, T, U, C, MAX_RV, Mint>
+    > + use<'e, 'r, M, ROLE>
     where
         M: crate::global::MessageSpec,
         M::Payload: crate::transport::wire::WirePayload,
     {
-        DecodeFuture::<'e, 'r, 'cfg, ROLE, T, U, C, MAX_RV, Mint, M>::new(self)
+        DecodeFuture::<'e, 'r, ROLE, M>::new(self)
+    }
+}
+
+impl<'r, const ROLE: u8> Drop for Endpoint<'r, ROLE> {
+    fn drop(&mut self) {
+        unsafe {
+            self.drop_kernel_endpoint();
+        }
+    }
+}
+
+impl<'e, 'r, const ROLE: u8> Drop for RouteBranch<'e, 'r, ROLE> {
+    fn drop(&mut self) {
+        unsafe {
+            (&mut *self.endpoint).restore_public_route_branch();
+        }
+    }
+}
+
+impl<'e, 'r, const ROLE: u8> OfferFuture<'e, 'r, ROLE> {
+    #[inline]
+    fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
+        let endpoint_ptr = core::ptr::from_mut(endpoint);
+        Self {
+            endpoint: endpoint_ptr,
+            completed: false,
+            _borrow: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<'e, 'r, const ROLE: u8> Future for OfferFuture<'e, 'r, ROLE> {
+    type Output = RecvResult<RouteBranch<'e, 'r, ROLE>>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        match unsafe { (&mut *this.endpoint).poll_offer(cx) } {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(err)) => {
+                this.completed = true;
+                Poll::Ready(Err(err))
+            }
+            Poll::Ready(Ok(label)) => {
+                this.completed = true;
+                Poll::Ready(Ok(RouteBranch::from_parts(this.endpoint, label)))
+            }
+        }
+    }
+}
+
+impl<'e, 'r, const ROLE: u8> Drop for OfferFuture<'e, 'r, ROLE> {
+    fn drop(&mut self) {
+        if !self.completed {
+            unsafe {
+                (&mut *self.endpoint).reset_public_offer_state();
+            }
+        }
     }
 }
 

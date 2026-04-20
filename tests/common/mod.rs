@@ -6,9 +6,7 @@ use hibana::substrate::{
 };
 use std::cell::UnsafeCell;
 use std::{
-    future::Future,
     mem::MaybeUninit,
-    pin::Pin,
     task::{Context, Poll, Waker},
 };
 
@@ -245,7 +243,9 @@ impl TransportPool {
                 [const { MaybeUninit::uninit() }; TEST_TRANSPORT_POOL_CAPACITY],
             ),
             metrics: UnsafeCell::new(
-                [TransportSnapshot::new(None, None); TEST_TRANSPORT_POOL_CAPACITY],
+                [TransportSnapshot::from_parts(
+                    hibana::substrate::transport::TransportSnapshotParts::new(),
+                ); TEST_TRANSPORT_POOL_CAPACITY],
             ),
         }
     }
@@ -276,7 +276,9 @@ impl TransportPool {
                     self.ensure_slot_initialized(idx);
                     refs[idx] = 1;
                     (&mut *states[idx].as_mut_ptr()).reset();
-                    metrics[idx] = TransportSnapshot::new(None, None);
+                    metrics[idx] = TransportSnapshot::from_parts(
+                        hibana::substrate::transport::TransportSnapshotParts::new(),
+                    );
                     return Some(idx);
                 }
                 idx += 1;
@@ -336,7 +338,11 @@ std::thread_local! {
     static TRANSPORT_POOL: TransportPool = const { TransportPool::new() };
 }
 
-pub(crate) struct TestTx;
+#[derive(Default)]
+pub(crate) struct TestTx {
+    pending_role: Option<u8>,
+    pending_frame: Option<FrameOwned>,
+}
 
 pub(crate) struct TestRx<'a> {
     pool: &'a TransportPool,
@@ -381,6 +387,56 @@ impl TestTransport {
             state.roles.iter().all(|role| role.queue.len == 0)
         })
     }
+
+    pub(crate) fn stage_send(&self, tx: &mut TestTx, role: u8, payload: &[u8]) {
+        if tx.pending_frame.is_none() {
+            tx.pending_role = Some(role);
+            tx.pending_frame = Some(FrameOwned::from_bytes(payload));
+        }
+    }
+
+    pub(crate) fn poll_send_staged(&self, tx: &mut TestTx) -> Poll<Result<(), TestTransportError>> {
+        let role = tx.pending_role.take().expect("queued role");
+        let frame = tx.pending_frame.take().expect("queued frame");
+        let waiters = self
+            .pool
+            .state_with_mut(self.slot, |state| state.enqueue(role, frame));
+        waiters.wake_all();
+        Poll::Ready(Ok(()))
+    }
+
+    pub(crate) fn cancel_send_staged(&self, tx: &mut TestTx) {
+        tx.pending_role = None;
+        tx.pending_frame = None;
+    }
+
+    pub(crate) fn poll_recv_current<'a>(
+        &'a self,
+        rx: &'a mut TestRx<'a>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Payload<'a>, TestTransportError>> {
+        if rx.current.is_some() {
+            rx.current = None;
+        }
+        if rx.current.is_none() {
+            let dequeued = rx.pool.state_with_mut(rx.slot, |state| {
+                if let Some(frame) = state.dequeue(rx.role) {
+                    Some(frame)
+                } else {
+                    state.add_waiter(rx.role, cx.waker().clone());
+                    None
+                }
+            });
+            if let Some(frame) = dequeued {
+                rx.current = Some(frame);
+            } else {
+                return Poll::Pending;
+            }
+        }
+        let frame = rx.current.as_ref().expect("current frame");
+        let bytes: &'a [u8] = unsafe { &*(frame.as_slice() as *const [u8]) };
+        Poll::Ready(Ok(Payload::new(bytes)))
+    }
 }
 
 const _: fn(&TestTransport) -> bool = TestTransport::queue_is_empty;
@@ -401,70 +457,6 @@ impl From<TestTransportError> for TransportError {
         match err {
             TestTransportError::Empty => TransportError::Failed,
         }
-    }
-}
-
-pub(crate) struct RecvFuture<'a> {
-    rx: &'a mut TestRx<'a>,
-}
-
-impl<'a> Future for RecvFuture<'a> {
-    type Output = Result<Payload<'a>, TestTransportError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        if this.rx.current.is_none() {
-            let dequeued = this.rx.pool.state_with_mut(this.rx.slot, |state| {
-                if let Some(frame) = state.dequeue(this.rx.role) {
-                    Some(frame)
-                } else {
-                    state.add_waiter(this.rx.role, cx.waker().clone());
-                    None
-                }
-            });
-            if let Some(frame) = dequeued {
-                this.rx.current = Some(frame);
-            } else {
-                return Poll::Pending;
-            }
-        }
-        let frame = this.rx.current.as_ref().expect("current frame");
-        let bytes: &'a [u8] = unsafe { &*(frame.as_slice() as *const [u8]) };
-        Poll::Ready(Ok(Payload::new(bytes)))
-    }
-}
-
-pub(crate) struct SendFuture<'a> {
-    pool: Option<&'a TransportPool>,
-    slot: usize,
-    role: u8,
-    frame: Option<FrameOwned>,
-    _marker: core::marker::PhantomData<&'a ()>,
-}
-
-impl<'a> SendFuture<'a> {
-    fn enqueue(pool: &'a TransportPool, slot: usize, role: u8, payload: &[u8]) -> Self {
-        Self {
-            pool: Some(pool),
-            slot,
-            role,
-            frame: Some(FrameOwned::from_bytes(payload)),
-            _marker: core::marker::PhantomData,
-        }
-    }
-}
-
-impl Future for SendFuture<'_> {
-    type Output = Result<(), TestTransportError>;
-
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        if let Some(pool) = this.pool.take() {
-            let frame = this.frame.take().expect("queued frame");
-            let waiters = pool.state_with_mut(this.slot, |state| state.enqueue(this.role, frame));
-            waiters.wake_all();
-        }
-        Poll::Ready(Ok(()))
     }
 }
 
@@ -489,21 +481,13 @@ impl Transport for TestTransport {
         = TestRx<'a>
     where
         Self: 'a;
-    type Send<'a>
-        = SendFuture<'a>
-    where
-        Self: 'a;
-    type Recv<'a>
-        = RecvFuture<'a>
-    where
-        Self: 'a;
     type Metrics = TestTransportMetrics;
 
     fn open<'a>(&'a self, local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
         self.pool
             .state_with(self.slot, |state| state.ensure_role(local_role));
         (
-            TestTx,
+            TestTx::default(),
             TestRx {
                 pool: self.pool,
                 slot: self.slot,
@@ -513,25 +497,29 @@ impl Transport for TestTransport {
         )
     }
 
-    fn send<'a, 'f>(
+    fn poll_send<'a, 'f>(
         &'a self,
-        _tx: &'a mut Self::Tx<'a>,
+        tx: &'a mut Self::Tx<'a>,
         outgoing: hibana::substrate::transport::Outgoing<'f>,
-    ) -> Self::Send<'a>
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>>
     where
         'a: 'f,
     {
-        SendFuture::enqueue(
-            self.pool,
-            self.slot,
-            outgoing.meta.peer,
-            outgoing.payload.as_bytes(),
-        )
+        self.stage_send(tx, outgoing.meta.peer, outgoing.payload.as_bytes());
+        self.poll_send_staged(tx)
     }
 
-    fn recv<'a>(&'a self, rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
-        rx.current = None;
-        RecvFuture { rx }
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Payload<'a>, Self::Error>> {
+        self.poll_recv_current(rx, cx)
+    }
+
+    fn cancel_send<'a>(&'a self, tx: &'a mut Self::Tx<'a>) {
+        self.cancel_send_staged(tx);
     }
 
     fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {

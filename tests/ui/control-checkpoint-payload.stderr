@@ -2,13 +2,18 @@ error[E0080]: evaluation panicked: control labels require capability payloads
  --> src/global/program.rs
   |
   |         crate::global::const_dsl::const_send_typed::<From, To, Msg, LANE>(),
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::g::advanced::steps::StepCons<hibana::g::advanced::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<61>, ()>>, hibana::g::advanced::steps::StepNil> as hibana::global::program::BuildProgramSource>::SOURCE` failed inside this call
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<61>, ()>>, hibana::global::steps::StepNil> as hibana::global::program::BuildProgramSource>::SOURCE` failed inside this call
   |
 note: inside `hibana::global::const_dsl::const_send_typed::<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<61>, ()>, 0>`
- --> src/global/const_dsl.rs
+ --> $RUST/core/src/panic.rs
+  |
+  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: src/global/const_dsl.rs
   |
   |         panic!("control labels require capability payloads");
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |         ---------------------------------------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global/program.rs
@@ -16,8 +21,8 @@ note: erroneous constant encountered
   |         let _ = <Steps as BuildProgramSource>::SOURCE.scope_budget();
   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-note: erroneous constant encountered
-  --> tests/ui/control-checkpoint-payload.rs:12:13
-   |
-12 |     let _ = BAD;
-   |             ^^^
+note: the above error was encountered while instantiating `fn Program::<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<61>, ()>>, hibana::global::steps::StepNil>>::build`
+ --> src/global.rs
+  |
+  |     Program::build()
+  |     ^^^^^^^^^^^^^^^^

@@ -1,22 +1,21 @@
 //! Transport abstraction bridging Hibana frames onto concrete mediums.
 //!
-//! Implementations are expected to integrate with external async runtimes by
-//! returning `Future`s that complete once I/O finishes. Hibana never polls
-//! transports directly; callers drive futures to completion using the runtime
-//! that suits their environment (unikernel, hypervisor, user-space, ...).
+//! Implementations are expected to integrate with external async runtimes via
+//! explicit `poll_*` methods. The transport owns whatever pending state and
+//! waker bookkeeping it needs inside its `Tx` / `Rx` handles or shared state.
 //!
 //! Receive buffers must be exposed as borrowed views. The rendezvous layer
 //! provides a slab (see [`crate::runtime::config::Config::slab`]) that transports can pin
-//! behind their `Rx` handle so [`Transport::recv`] yields payload views borrowed
+//! behind their `Rx` handle so [`Transport::poll_recv`] yields payload views borrowed
 //! from that storage. This keeps the runtime allocation-free while allowing
 //! DMA/SHM backed zero-copy paths.
 //!
 //! Implementations also bridge device interrupts to the task waker stored by
-//! the futures returned from [`Transport::send`] and [`Transport::recv`]. When a
-//! future parks it must record the current [`core::task::Waker`] so the interrupt
-//! handler can call `wake_by_ref` instead of relying on polling loops.
+//! their pending send/recv state. When a poll parks it must record the current
+//! [`core::task::Waker`] so the interrupt handler can call `wake_by_ref`
+//! instead of relying on polling loops.
 
-use core::future::Future;
+use core::task::{Context, Poll};
 
 use crate::{
     eff::EffIndex,
@@ -31,42 +30,64 @@ pub enum TransportAlgorithm {
     Other(u8),
 }
 
+const SNAPSHOT_LATENCY_US: u16 = 1 << 0;
+const SNAPSHOT_QUEUE_DEPTH: u16 = 1 << 1;
+const SNAPSHOT_PACING_INTERVAL_US: u16 = 1 << 2;
+const SNAPSHOT_CONGESTION_MARKS: u16 = 1 << 3;
+const SNAPSHOT_RETRANSMISSIONS: u16 = 1 << 4;
+const SNAPSHOT_PTO_COUNT: u16 = 1 << 5;
+const SNAPSHOT_SRTT_US: u16 = 1 << 6;
+const SNAPSHOT_LATEST_ACK_PN: u16 = 1 << 7;
+const SNAPSHOT_CONGESTION_WINDOW: u16 = 1 << 8;
+const SNAPSHOT_IN_FLIGHT_BYTES: u16 = 1 << 9;
+const SNAPSHOT_ALGORITHM: u16 = 1 << 10;
+
 /// Snapshot of transport-level observations supplied to routing policies.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TransportSnapshot {
-    /// Estimated one-way latency in microseconds.
+    present: u16,
+    latency_us: u64,
+    queue_depth: u32,
+    pacing_interval_us: u64,
+    congestion_marks: u32,
+    retransmissions: u32,
+    pto_count: u32,
+    srtt_us: u64,
+    latest_ack_pn: u64,
+    congestion_window: u64,
+    in_flight_bytes: u64,
+    algorithm: TransportAlgorithm,
+}
+
+/// Packed input used to construct a [`TransportSnapshot`] in one step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TransportSnapshotParts {
     pub latency_us: Option<u64>,
-    /// Estimated queue depth for pending frames.
     pub queue_depth: Option<u32>,
-    /// Suggested pacing interval between packet transmissions in microseconds.
     pub pacing_interval_us: Option<u64>,
-    /// Count of congestion marks (e.g. ECN-CE) observed within the sampling window.
     pub congestion_marks: Option<u32>,
-    /// Count of retransmissions (or retry attempts) in the sampling window.
     pub retransmissions: Option<u32>,
-    /// Count of PTO (Probe Timeout) events observed by the recovery pipeline.
     pub pto_count: Option<u32>,
-    /// Smoothed RTT estimate (per RFC 9002) in microseconds.
     pub srtt_us: Option<u64>,
-    /// Most recent acknowledged packet number (1-RTT space).
     pub latest_ack_pn: Option<u64>,
-    /// Congestion window estimate in bytes.
     pub congestion_window: Option<u64>,
-    /// Bytes currently counted as in-flight at the transport level.
     pub in_flight_bytes: Option<u64>,
-    /// Congestion control algorithm in effect (if known).
     pub algorithm: Option<TransportAlgorithm>,
 }
 
-impl TransportSnapshot {
-    /// Construct a snapshot from optional latency and queue depth readings.
-    ///
-    /// Additional counters default to `None` and can be populated via the
-    /// builder-style helpers (`with_congestion_marks`, `with_retransmissions`).
-    pub const fn new(latency_us: Option<u64>, queue_depth: Option<u32>) -> Self {
-        let snapshot = Self {
-            latency_us,
-            queue_depth,
+impl Default for TransportSnapshotParts {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TransportSnapshotParts {
+    #[inline]
+    pub const fn new() -> Self {
+        Self {
+            latency_us: None,
+            queue_depth: None,
             pacing_interval_us: None,
             congestion_marks: None,
             retransmissions: None,
@@ -76,61 +97,320 @@ impl TransportSnapshot {
             congestion_window: None,
             in_flight_bytes: None,
             algorithm: None,
-        };
-        snapshot
+        }
+    }
+}
+
+impl Default for TransportSnapshot {
+    fn default() -> Self {
+        Self {
+            present: 0,
+            latency_us: 0,
+            queue_depth: 0,
+            pacing_interval_us: 0,
+            congestion_marks: 0,
+            retransmissions: 0,
+            pto_count: 0,
+            srtt_us: 0,
+            latest_ack_pn: 0,
+            congestion_window: 0,
+            in_flight_bytes: 0,
+            algorithm: TransportAlgorithm::Other(0),
+        }
+    }
+}
+
+impl TransportSnapshot {
+    /// Construct a packed snapshot in a single step.
+    pub const fn from_parts(parts: TransportSnapshotParts) -> Self {
+        Self {
+            present: 0,
+            latency_us: 0,
+            queue_depth: 0,
+            pacing_interval_us: 0,
+            congestion_marks: 0,
+            retransmissions: 0,
+            pto_count: 0,
+            srtt_us: 0,
+            latest_ack_pn: 0,
+            congestion_window: 0,
+            in_flight_bytes: 0,
+            algorithm: TransportAlgorithm::Other(0),
+        }
+        .set_latency_us(parts.latency_us)
+        .set_queue_depth(parts.queue_depth)
+        .set_pacing_interval(parts.pacing_interval_us)
+        .set_congestion_marks(parts.congestion_marks)
+        .set_retransmissions(parts.retransmissions)
+        .set_pto_count(parts.pto_count)
+        .set_srtt(parts.srtt_us)
+        .set_latest_ack(parts.latest_ack_pn)
+        .set_congestion_window(parts.congestion_window)
+        .set_in_flight(parts.in_flight_bytes)
+        .set_algorithm(parts.algorithm)
+    }
+
+    #[inline]
+    pub const fn latency_us(&self) -> Option<u64> {
+        if (self.present & SNAPSHOT_LATENCY_US) != 0 {
+            Some(self.latency_us)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub const fn queue_depth(&self) -> Option<u32> {
+        if (self.present & SNAPSHOT_QUEUE_DEPTH) != 0 {
+            Some(self.queue_depth)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub const fn pacing_interval_us(&self) -> Option<u64> {
+        if (self.present & SNAPSHOT_PACING_INTERVAL_US) != 0 {
+            Some(self.pacing_interval_us)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub const fn congestion_marks(&self) -> Option<u32> {
+        if (self.present & SNAPSHOT_CONGESTION_MARKS) != 0 {
+            Some(self.congestion_marks)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub const fn retransmissions(&self) -> Option<u32> {
+        if (self.present & SNAPSHOT_RETRANSMISSIONS) != 0 {
+            Some(self.retransmissions)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub const fn pto_count(&self) -> Option<u32> {
+        if (self.present & SNAPSHOT_PTO_COUNT) != 0 {
+            Some(self.pto_count)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub const fn srtt_us(&self) -> Option<u64> {
+        if (self.present & SNAPSHOT_SRTT_US) != 0 {
+            Some(self.srtt_us)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub const fn latest_ack_pn(&self) -> Option<u64> {
+        if (self.present & SNAPSHOT_LATEST_ACK_PN) != 0 {
+            Some(self.latest_ack_pn)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub const fn congestion_window(&self) -> Option<u64> {
+        if (self.present & SNAPSHOT_CONGESTION_WINDOW) != 0 {
+            Some(self.congestion_window)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub const fn in_flight_bytes(&self) -> Option<u64> {
+        if (self.present & SNAPSHOT_IN_FLIGHT_BYTES) != 0 {
+            Some(self.in_flight_bytes)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub const fn algorithm(&self) -> Option<TransportAlgorithm> {
+        if (self.present & SNAPSHOT_ALGORITHM) != 0 {
+            Some(self.algorithm)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    const fn set_latency_us(mut self, latency_us: Option<u64>) -> Self {
+        match latency_us {
+            Some(value) => {
+                self.present |= SNAPSHOT_LATENCY_US;
+                self.latency_us = value;
+            }
+            None => {
+                self.present &= !SNAPSHOT_LATENCY_US;
+                self.latency_us = 0;
+            }
+        }
+        self
+    }
+
+    #[inline]
+    const fn set_queue_depth(mut self, queue_depth: Option<u32>) -> Self {
+        match queue_depth {
+            Some(value) => {
+                self.present |= SNAPSHOT_QUEUE_DEPTH;
+                self.queue_depth = value;
+            }
+            None => {
+                self.present &= !SNAPSHOT_QUEUE_DEPTH;
+                self.queue_depth = 0;
+            }
+        }
+        self
     }
 
     /// Attach congestion mark statistics (ECN-CE or equivalent) to the snapshot.
-    pub const fn with_congestion_marks(mut self, congestion_marks: Option<u32>) -> Self {
-        self.congestion_marks = congestion_marks;
+    const fn set_congestion_marks(mut self, congestion_marks: Option<u32>) -> Self {
+        match congestion_marks {
+            Some(value) => {
+                self.present |= SNAPSHOT_CONGESTION_MARKS;
+                self.congestion_marks = value;
+            }
+            None => {
+                self.present &= !SNAPSHOT_CONGESTION_MARKS;
+                self.congestion_marks = 0;
+            }
+        }
         self
     }
 
     /// Attach a pacing interval recommendation (microseconds between packets).
-    pub const fn with_pacing_interval(mut self, pacing_interval_us: Option<u64>) -> Self {
-        self.pacing_interval_us = pacing_interval_us;
+    const fn set_pacing_interval(mut self, pacing_interval_us: Option<u64>) -> Self {
+        match pacing_interval_us {
+            Some(value) => {
+                self.present |= SNAPSHOT_PACING_INTERVAL_US;
+                self.pacing_interval_us = value;
+            }
+            None => {
+                self.present &= !SNAPSHOT_PACING_INTERVAL_US;
+                self.pacing_interval_us = 0;
+            }
+        }
         self
     }
 
     /// Attach retransmission statistics to the snapshot.
-    pub const fn with_retransmissions(mut self, retransmissions: Option<u32>) -> Self {
-        self.retransmissions = retransmissions;
+    const fn set_retransmissions(mut self, retransmissions: Option<u32>) -> Self {
+        match retransmissions {
+            Some(value) => {
+                self.present |= SNAPSHOT_RETRANSMISSIONS;
+                self.retransmissions = value;
+            }
+            None => {
+                self.present &= !SNAPSHOT_RETRANSMISSIONS;
+                self.retransmissions = 0;
+            }
+        }
         self
     }
 
     /// Attach PTO count statistics to the snapshot.
-    pub const fn with_pto_count(mut self, pto_count: Option<u32>) -> Self {
-        self.pto_count = pto_count;
+    const fn set_pto_count(mut self, pto_count: Option<u32>) -> Self {
+        match pto_count {
+            Some(value) => {
+                self.present |= SNAPSHOT_PTO_COUNT;
+                self.pto_count = value;
+            }
+            None => {
+                self.present &= !SNAPSHOT_PTO_COUNT;
+                self.pto_count = 0;
+            }
+        }
         self
     }
 
     /// Attach an RTT estimate (Smoothed RTT in microseconds).
-    pub const fn with_srtt(mut self, srtt_us: Option<u64>) -> Self {
-        self.srtt_us = srtt_us;
+    const fn set_srtt(mut self, srtt_us: Option<u64>) -> Self {
+        match srtt_us {
+            Some(value) => {
+                self.present |= SNAPSHOT_SRTT_US;
+                self.srtt_us = value;
+            }
+            None => {
+                self.present &= !SNAPSHOT_SRTT_US;
+                self.srtt_us = 0;
+            }
+        }
         self
     }
 
     /// Attach the most recent acknowledged packet number.
-    pub const fn with_latest_ack(mut self, latest_ack_pn: Option<u64>) -> Self {
-        self.latest_ack_pn = latest_ack_pn;
+    const fn set_latest_ack(mut self, latest_ack_pn: Option<u64>) -> Self {
+        match latest_ack_pn {
+            Some(value) => {
+                self.present |= SNAPSHOT_LATEST_ACK_PN;
+                self.latest_ack_pn = value;
+            }
+            None => {
+                self.present &= !SNAPSHOT_LATEST_ACK_PN;
+                self.latest_ack_pn = 0;
+            }
+        }
         self
     }
 
     /// Attach a congestion window estimate (bytes) to the snapshot.
-    pub const fn with_congestion_window(mut self, congestion_window: Option<u64>) -> Self {
-        self.congestion_window = congestion_window;
+    const fn set_congestion_window(mut self, congestion_window: Option<u64>) -> Self {
+        match congestion_window {
+            Some(value) => {
+                self.present |= SNAPSHOT_CONGESTION_WINDOW;
+                self.congestion_window = value;
+            }
+            None => {
+                self.present &= !SNAPSHOT_CONGESTION_WINDOW;
+                self.congestion_window = 0;
+            }
+        }
         self
     }
 
     /// Attach the number of bytes currently considered in flight.
-    pub const fn with_in_flight(mut self, in_flight_bytes: Option<u64>) -> Self {
-        self.in_flight_bytes = in_flight_bytes;
+    const fn set_in_flight(mut self, in_flight_bytes: Option<u64>) -> Self {
+        match in_flight_bytes {
+            Some(value) => {
+                self.present |= SNAPSHOT_IN_FLIGHT_BYTES;
+                self.in_flight_bytes = value;
+            }
+            None => {
+                self.present &= !SNAPSHOT_IN_FLIGHT_BYTES;
+                self.in_flight_bytes = 0;
+            }
+        }
         self
     }
 
     /// Attach the congestion control algorithm affecting this snapshot.
-    pub const fn with_algorithm(mut self, algorithm: Option<TransportAlgorithm>) -> Self {
-        self.algorithm = algorithm;
+    const fn set_algorithm(mut self, algorithm: Option<TransportAlgorithm>) -> Self {
+        match algorithm {
+            Some(value) => {
+                self.present |= SNAPSHOT_ALGORITHM;
+                self.algorithm = value;
+            }
+            None => {
+                self.present &= !SNAPSHOT_ALGORITHM;
+                self.algorithm = TransportAlgorithm::Other(0);
+            }
+        }
         self
     }
 
@@ -149,44 +429,44 @@ impl TransportSnapshot {
     ///   * bits 31-16 store the congestion window in KiB (saturated to 16 bits)
     ///   * bits 15-0 store in-flight bytes in KiB (saturated to 16 bits)
     pub fn encode_tap_metrics(&self) -> Option<TransportMetricsTapPayload> {
-        let algorithm = self.algorithm?;
+        let algorithm = self.algorithm()?;
         let algo_bits = match algorithm {
             TransportAlgorithm::Cubic => 1u32,
             TransportAlgorithm::Reno => 2u32,
             TransportAlgorithm::Other(code) => (code as u32).min(0xF).max(1),
         };
         let queue_depth = self
-            .queue_depth
+            .queue_depth()
             .map(|value| value.min(0x0FFE) + 1)
             .unwrap_or(0);
         let srtt_units = self
-            .srtt_us
+            .srtt_us()
             .map(|value| ((value / 32).min(0xFFFE) as u32) + 1)
             .unwrap_or(0);
         let congestion_window = self
-            .congestion_window
+            .congestion_window()
             .map(|bytes| ((bytes / 1024).min(0xFFFE) as u32) + 1)
             .unwrap_or(0);
         let in_flight = self
-            .in_flight_bytes
+            .in_flight_bytes()
             .map(|bytes| ((bytes / 1024).min(0xFFFE) as u32) + 1)
             .unwrap_or(0);
         let arg0 = (algo_bits << 28) | (queue_depth << 16) | srtt_units;
         let arg1 = (congestion_window << 16) | in_flight;
-        let extension_needed = self.retransmissions.is_some()
-            || self.congestion_marks.is_some()
-            || self.pacing_interval_us.is_some();
+        let extension_needed = self.retransmissions().is_some()
+            || self.congestion_marks().is_some()
+            || self.pacing_interval_us().is_some();
         let extension = if extension_needed {
             let retransmissions = self
-                .retransmissions
+                .retransmissions()
                 .map(|value| value.min(0xFFFE) + 1)
                 .unwrap_or(0);
             let congestion_marks = self
-                .congestion_marks
+                .congestion_marks()
                 .map(|value| value.min(0xFFFE) + 1)
                 .unwrap_or(0);
             let pacing_interval = self
-                .pacing_interval_us
+                .pacing_interval_us()
                 .map(|value| {
                     let clamped = value.min(u32::MAX as u64 - 1);
                     (clamped as u32) + 1
@@ -219,7 +499,7 @@ pub trait TransportMetrics {
 
 impl TransportMetrics for () {
     fn snapshot(&self) -> TransportSnapshot {
-        TransportSnapshot::new(None, None)
+        TransportSnapshot::default()
     }
 }
 
@@ -269,7 +549,7 @@ impl SendMeta {
 }
 
 /// Transport-owned outgoing frame.
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Outgoing<'f> {
     pub meta: SendMeta,
     pub payload: Payload<'f>,
@@ -495,21 +775,15 @@ pub enum TransportError {
 /// Asynchronous transport interface with explicit Tx/Rx handles.
 ///
 /// The trait uses GATs so that implementations can borrow buffers from the
-/// surrounding environment without forcing allocations. Each method returns a
-/// future; the crate purposefully avoids exposing a `poll_*` style API.
+/// surrounding environment without forcing allocations. Pending I/O state stays
+/// in transport-owned handles instead of leaking transport future types into
+/// higher layers.
 pub trait Transport {
     type Error: Into<TransportError>;
     type Tx<'a>: 'a
     where
         Self: 'a;
     type Rx<'a>: 'a
-    where
-        Self: 'a;
-    type Send<'a>: Future<Output = Result<(), Self::Error>> + Unpin + 'a
-    where
-        Self: 'a;
-    /// Future returned by [`recv`](Transport::recv).
-    type Recv<'a>: Future<Output = Result<Payload<'a>, Self::Error>> + Unpin + 'a
     where
         Self: 'a;
     type Metrics: TransportMetrics;
@@ -525,28 +799,46 @@ pub trait Transport {
     /// isolate message queues per session.
     fn open<'a>(&'a self, local_role: u8, session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>);
 
-    /// Send a frame using the provided Tx handle.
+    /// Progress a send operation using the provided Tx handle.
     ///
     /// Transport implementations select the appropriate packet class
     /// (for example, pre-auth, handshake, or application-data) based on
     /// internal cryptographic
     /// state, not application-layer metadata.
-    fn send<'a, 'f>(&'a self, tx: &'a mut Self::Tx<'a>, outgoing: Outgoing<'f>) -> Self::Send<'a>
+    fn poll_send<'a, 'f>(
+        &'a self,
+        tx: &'a mut Self::Tx<'a>,
+        outgoing: Outgoing<'f>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>>
     where
         'a: 'f;
 
-    /// Receive a frame using the provided Rx handle.
+    /// Cancel any transport-owned pending send state bound to `tx`.
     ///
-    /// The future must resolve to a [`Payload`] view borrowed from the
-    /// transport-managed receive slab. Borrowing ties the lifetime `'a` to the
-    /// mutable borrow of `rx`, allowing higher layers such as [`crate::Endpoint`]
-    /// to enforce that the view is released before the next receive.
-    /// Implementations should store the current waker whenever the future parks
-    /// so that hardware interrupts or other I/O notifications can wake the task
-    /// directly instead of relying on polling loops.
-    fn recv<'a>(&'a self, rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a>;
+    /// Public endpoint send futures are affine and may be dropped after
+    /// `poll_send` parks. When a transport stages frame state inside `Tx` or
+    /// transport-owned shared state before returning `Poll::Pending`, it must
+    /// discard that staged state here so that a retry cannot flush the
+    /// cancelled payload.
+    fn cancel_send<'a>(&'a self, tx: &'a mut Self::Tx<'a>);
 
-    /// Requeue the most recent frame obtained from [`recv`](Transport::recv).
+    /// Progress a receive operation using the provided Rx handle.
+    ///
+    /// The returned [`Payload`] view is borrowed from the transport-managed
+    /// receive slab. Borrowing ties the lifetime `'a` to the mutable borrow of
+    /// `rx`, allowing higher layers such as [`crate::Endpoint`] to enforce that
+    /// the view is released before the next receive. Implementations should
+    /// store the current waker whenever the poll parks so that hardware
+    /// interrupts or other I/O notifications can wake the task directly instead
+    /// of relying on polling loops.
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Payload<'a>, Self::Error>>;
+
+    /// Requeue the most recent frame obtained from [`poll_recv`](Transport::poll_recv).
     ///
     /// Transports that support requeueing place the frame back onto their
     /// pending queue when higher layers cannot consume it.
@@ -588,8 +880,6 @@ mod tests {
     use crate::transport::wire::Payload;
     use core::{
         cell::{Cell, UnsafeCell},
-        future::{Future, ready},
-        pin::Pin,
         task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
     };
 
@@ -619,25 +909,6 @@ mod tests {
         }
     }
 
-    struct RecvFuture<'a> {
-        state: &'a SharedState,
-        payload: Option<Payload<'a>>,
-    }
-
-    impl<'a> Future for RecvFuture<'a> {
-        type Output = Result<Payload<'a>, TransportError>;
-
-        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-            self.state.store_waker(cx.waker());
-            if self.state.take_ready() {
-                let payload = self.payload.take().expect("payload only produced once");
-                Poll::Ready(Ok(payload))
-            } else {
-                Poll::Pending
-            }
-        }
-    }
-
     struct WakerAwareTransport {
         state: SharedState,
     }
@@ -664,39 +935,39 @@ mod tests {
             = ()
         where
             Self: 'a;
-        type Send<'a>
-            = core::future::Ready<Result<(), Self::Error>>
-        where
-            Self: 'a;
-        type Recv<'a>
-            = RecvFuture<'a>
-        where
-            Self: 'a;
         type Metrics = ();
 
         fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
         }
 
-        fn send<'a, 'f>(
+        fn poll_send<'a, 'f>(
             &'a self,
             _tx: &'a mut Self::Tx<'a>,
             _outgoing: Outgoing<'f>,
-        ) -> Self::Send<'a>
+            _cx: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>>
         where
             'a: 'f,
         {
-            ready(Ok(()))
+            Poll::Ready(Ok(()))
         }
 
-        fn recv<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
+        fn poll_recv<'a>(
+            &'a self,
+            _rx: &'a mut Self::Rx<'a>,
+            cx: &mut Context<'_>,
+        ) -> Poll<Result<Payload<'a>, Self::Error>> {
             static PAYLOAD: [u8; 0] = [];
-            let payload = Payload::new(&PAYLOAD);
-            RecvFuture {
-                state: &self.state,
-                payload: Some(payload),
+            self.state.store_waker(cx.waker());
+            if self.state.take_ready() {
+                Poll::Ready(Ok(Payload::new(&PAYLOAD)))
+            } else {
+                Poll::Pending
             }
         }
+
+        fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
         fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
             let _ = rx;
@@ -749,7 +1020,6 @@ mod tests {
         let transport = WakerAwareTransport::new();
         let shared = transport.state();
         let mut rx = transport.open(0, 0).1;
-        let mut future = transport.recv(&mut rx);
 
         assert!(shared.take_waker().is_none(), "no waker before polling");
 
@@ -757,7 +1027,10 @@ mod tests {
         let waker = unsafe { flag_waker(&wake_flag) };
         let mut cx = Context::from_waker(&waker);
 
-        assert!(matches!(Pin::new(&mut future).poll(&mut cx), Poll::Pending));
+        assert!(matches!(
+            transport.poll_recv(&mut rx, &mut cx),
+            Poll::Pending
+        ));
 
         let stored = shared.take_waker().expect("future recorded waker");
         shared.set_ready();
@@ -765,7 +1038,7 @@ mod tests {
         assert!(wake_flag.get(), "wake flag flipped");
 
         assert!(matches!(
-            Pin::new(&mut future).poll(&mut cx),
+            transport.poll_recv(&mut rx, &mut cx),
             Poll::Ready(Ok(_))
         ));
     }

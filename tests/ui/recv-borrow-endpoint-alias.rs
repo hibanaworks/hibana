@@ -1,10 +1,9 @@
-use hibana::{Endpoint, g};
 use hibana::substrate::{
     SessionKit, Transport,
-    cap::advanced::MintConfigMarker,
     runtime::{Clock, LabelUniverse},
     wire::{CodecError, Payload, WireEncode, WirePayload},
 };
+use hibana::{Endpoint, g};
 
 struct FramePayload([u8; 4]);
 
@@ -30,17 +29,15 @@ impl WirePayload for FramePayload {
     }
 }
 
-fn borrowed_recv_keeps_endpoint_borrow<'r, 'cfg, T, U, C, const MAX_RV: usize, Mint>(
-    endpoint: &mut Endpoint<'r, 0, SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
+fn borrowed_recv_keeps_endpoint_borrow<'r, 'cfg, T, U, C, const MAX_RV: usize>(
+    endpoint: &mut Endpoint<'r, 0, SessionKit<'cfg, T, U, C, MAX_RV>>,
 ) where
     T: Transport + 'cfg,
     U: LabelUniverse + 'cfg,
     C: Clock + 'cfg,
     'cfg: 'r,
-    Mint: MintConfigMarker,
 {
-    let payload =
-        futures::executor::block_on(endpoint.recv::<g::Msg<7, FramePayload>>()).unwrap();
+    let payload = futures::executor::block_on(endpoint.recv::<g::Msg<7, FramePayload>>()).unwrap();
     let _flow_again = endpoint.flow::<g::Msg<8, u8>>().unwrap();
     let _ = payload;
 }

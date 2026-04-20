@@ -1,7 +1,7 @@
+use super::LoweringSummary;
 use crate::control::cluster::effects::ResourceDescriptor;
 use crate::eff::{EffAtom, EffIndex};
 use crate::global::ControlLabelSpec;
-use super::LoweringSummary;
 use crate::global::const_dsl::{
     ControlScopeKind, PolicyMode, ScopeEvent, ScopeId, ScopeKind, ScopeMarker,
 };

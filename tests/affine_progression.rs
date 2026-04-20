@@ -8,19 +8,15 @@ mod tls_ref_support;
 
 use core::{
     cell::{Cell, UnsafeCell},
-    future::Future,
     mem::MaybeUninit,
-    pin::{Pin, pin},
+    pin::pin,
     task::{Context, Poll},
 };
 
-use common::{
-    RecvFuture, SendFuture, TestRx, TestTransport, TestTransportError, TestTransportMetrics, TestTx,
-};
+use common::{TestRx, TestTransport, TestTransportError, TestTransportMetrics, TestTx};
 use futures::task::noop_waker_ref;
 use hibana::{
     g,
-    g::advanced::steps::{SendStep, StepCons, StepNil},
     g::advanced::{RoleProgram, project},
     g::{Msg, Role},
     substrate::{
@@ -35,15 +31,7 @@ use tls_ref_support::with_tls_ref;
 
 const LABEL_SEND: u8 = 10;
 
-type SendOnly<const LABEL: u8, S, D, P> = StepCons<SendStep<S, D, Msg<LABEL, P>, 0>, StepNil>;
 type TestKit<T> = SessionKit<'static, T, DefaultLabelUniverse, CounterClock, 2>;
-
-const SEND_PROTOCOL: g::Program<SendOnly<LABEL_SEND, Role<0>, Role<1>, u32>> =
-    g::send::<Role<0>, Role<1>, Msg<LABEL_SEND, u32>, 0>();
-
-static CONTROLLER_SEND_PROGRAM: RoleProgram<'static, 0> = project(&SEND_PROTOCOL);
-
-static WORKER_SEND_PROGRAM: RoleProgram<'static, 1> = project(&SEND_PROTOCOL);
 
 struct PendingSendState {
     ready: Cell<bool>,
@@ -82,24 +70,6 @@ struct PendingSendTransport {
     state: &'static PendingSendState,
 }
 
-struct PendingSendFuture<'a> {
-    state: &'a PendingSendState,
-    inner: SendFuture<'a>,
-}
-
-impl Future for PendingSendFuture<'_> {
-    type Output = Result<(), TestTransportError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        this.state.polls.set(this.state.polls.get().wrapping_add(1));
-        if !this.state.ready.get() {
-            return Poll::Pending;
-        }
-        Pin::new(&mut this.inner).poll(cx)
-    }
-}
-
 impl Transport for PendingSendTransport {
     type Error = TestTransportError;
     type Tx<'a>
@@ -110,32 +80,41 @@ impl Transport for PendingSendTransport {
         = TestRx<'a>
     where
         Self: 'a;
-    type Send<'a>
-        = PendingSendFuture<'a>
-    where
-        Self: 'a;
-    type Recv<'a>
-        = RecvFuture<'a>
-    where
-        Self: 'a;
     type Metrics = TestTransportMetrics;
 
     fn open<'a>(&'a self, local_role: u8, session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
         self.inner.open(local_role, session_id)
     }
 
-    fn send<'a, 'f>(&'a self, tx: &'a mut Self::Tx<'a>, outgoing: Outgoing<'f>) -> Self::Send<'a>
+    fn poll_send<'a, 'f>(
+        &'a self,
+        tx: &'a mut Self::Tx<'a>,
+        outgoing: Outgoing<'f>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>>
     where
         'a: 'f,
     {
-        PendingSendFuture {
-            state: self.state,
-            inner: self.inner.send(tx, outgoing),
+        self.state.polls.set(self.state.polls.get().wrapping_add(1));
+        self.inner
+            .stage_send(tx, outgoing.meta.peer, outgoing.payload.as_bytes());
+        if !self.state.ready.get() {
+            return Poll::Pending;
         }
+        let _ = outgoing;
+        self.inner.poll_send_staged(tx)
     }
 
-    fn recv<'a>(&'a self, rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
-        self.inner.recv(rx)
+    fn cancel_send<'a>(&'a self, tx: &'a mut Self::Tx<'a>) {
+        self.inner.cancel_send(tx);
+    }
+
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<hibana::substrate::wire::Payload<'a>, Self::Error>> {
+        self.inner.poll_recv_current(rx, cx)
     }
 
     fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
@@ -168,6 +147,9 @@ fn drop_flow_keeps_endpoint_on_same_send_step() {
                 ptr.write(TestKit::<TestTransport>::new(clock));
             },
             |cluster| {
+                let send_protocol = g::send::<Role<0>, Role<1>, Msg<LABEL_SEND, u32>, 0>();
+                let controller_send_program: RoleProgram<0> = project(&send_protocol);
+                let worker_send_program: RoleProgram<1> = project(&send_protocol);
                 let rv_id = cluster
                     .add_rendezvous_from_config(
                         Config::new(tap_buf, slab),
@@ -177,10 +159,10 @@ fn drop_flow_keeps_endpoint_on_same_send_step() {
                 let sid = SessionId::new(401);
 
                 let mut controller = cluster
-                    .enter(rv_id, sid, &CONTROLLER_SEND_PROGRAM, NoBinding)
+                    .enter(rv_id, sid, &controller_send_program, NoBinding)
                     .expect("attach controller");
                 let mut worker = cluster
-                    .enter(rv_id, sid, &WORKER_SEND_PROGRAM, NoBinding)
+                    .enter(rv_id, sid, &worker_send_program, NoBinding)
                     .expect("attach worker");
 
                 futures::executor::block_on(async {
@@ -221,6 +203,9 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
                     ptr.write(TestKit::<PendingSendTransport>::new(clock));
                 },
                 |cluster| {
+                    let send_protocol = g::send::<Role<0>, Role<1>, Msg<LABEL_SEND, u32>, 0>();
+                    let controller_send_program: RoleProgram<0> = project(&send_protocol);
+                    let worker_send_program: RoleProgram<1> = project(&send_protocol);
                     let transport = PendingSendTransport {
                         inner: TestTransport::default(),
                         state,
@@ -231,10 +216,10 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
                     let sid = SessionId::new(402);
 
                     let mut controller = cluster
-                        .enter(rv_id, sid, &CONTROLLER_SEND_PROGRAM, NoBinding)
+                        .enter(rv_id, sid, &controller_send_program, NoBinding)
                         .expect("attach controller");
                     let mut worker = cluster
-                        .enter(rv_id, sid, &WORKER_SEND_PROGRAM, NoBinding)
+                        .enter(rv_id, sid, &worker_send_program, NoBinding)
                         .expect("attach worker");
 
                     let waker = noop_waker_ref();

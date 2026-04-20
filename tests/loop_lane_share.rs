@@ -21,8 +21,6 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 use common::TestTransport;
 use hibana::{
-    g::advanced::steps::SeqSteps,
-    g::advanced::steps::{PolicySteps, RouteSteps, SendStep, StepCons, StepNil},
     g::advanced::{CanonicalControl, RoleProgram, project},
     g::{self, Msg, Role},
     substrate::{
@@ -48,56 +46,17 @@ use tls_ref_support::with_tls_ref;
 const LABEL_LOOP_CONTINUE: u8 = 48;
 const LABEL_LOOP_BREAK: u8 = 49;
 const LOOP_POLICY_ID: u16 = 99;
-type LoopContinueHead = PolicySteps<
-    StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
-        >,
-        StepNil,
-    >,
-    LOOP_POLICY_ID,
->;
-type LoopBreakHead = PolicySteps<
-    StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
-        >,
-        StepNil,
-    >,
-    LOOP_POLICY_ID,
->;
-type LoopContinueArmSteps =
-    SeqSteps<LoopContinueHead, StepCons<SendStep<Role<0>, Role<1>, Msg<7, u32>>, StepNil>>;
-type LoopBreakArmSteps =
-    SeqSteps<LoopBreakHead, StepCons<SendStep<Role<1>, Role<0>, Msg<8, i32>>, StepNil>>;
-type LoopSegmentSteps = RouteSteps<LoopContinueArmSteps, LoopBreakArmSteps>;
-type LoopLaneProgramSteps =
-    SeqSteps<StepCons<SendStep<Role<0>, Role<1>, Msg<10, ()>>, StepNil>, LoopSegmentSteps>;
 type TestKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
-type ControllerEndpoint = hibana::Endpoint<'static, 0, TestKit>;
-type TargetEndpoint = hibana::Endpoint<'static, 1, TestKit>;
 
 std::thread_local! {
     static LOOP_DECISION_INDEX: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
     static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
     };
-    static CONTROLLER_SLOT: UnsafeCell<MaybeUninit<ControllerEndpoint>> = const {
+    static CONTROLLER_SLOT: UnsafeCell<MaybeUninit<hibana::Endpoint<'static, 0>>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
     };
-    static TARGET_SLOT: UnsafeCell<MaybeUninit<TargetEndpoint>> = const {
+    static TARGET_SLOT: UnsafeCell<MaybeUninit<hibana::Endpoint<'static, 1>>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
     };
 }
@@ -120,60 +79,93 @@ fn register_loop_lane_resolvers<const MAX_RV: usize>(
     cluster: &SessionKit<'_, TestTransport, DefaultLabelUniverse, CounterClock, MAX_RV>,
     rv_id: RendezvousId,
 ) {
+    let controller_program = controller_program();
     cluster
-        .set_resolver::<LOOP_POLICY_ID, 0, _>(
+        .set_resolver::<LOOP_POLICY_ID, 0>(
             rv_id,
-            &CONTROLLER_PROGRAM,
+            &controller_program,
             hibana::substrate::policy::ResolverRef::from_fn(loop_lane_resolver),
         )
         .expect("register loop resolver");
 }
 
-const LOOP_BODY: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<7, u32>>, StepNil>> =
-    g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>();
-const LOOP_EXIT: g::Program<StepCons<SendStep<Role<1>, Role<0>, Msg<8, i32>>, StepNil>> =
-    g::send::<Role<1>, Role<0>, Msg<8, i32>, 0>();
+fn controller_program() -> RoleProgram<0> {
+    let loop_body = g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>();
+    let loop_exit = g::send::<Role<1>, Role<0>, Msg<8, i32>, 0>();
+    let loop_continue_arm = g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            0,
+        >()
+        .policy::<LOOP_POLICY_ID>(),
+        loop_body,
+    );
+    let loop_break_arm = g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+            0,
+        >()
+        .policy::<LOOP_POLICY_ID>(),
+        loop_exit,
+    );
+    let loop_segment = g::route(loop_continue_arm, loop_break_arm);
+    let protocol = g::seq(g::send::<Role<0>, Role<1>, Msg<10, ()>, 0>(), loop_segment);
+    project(&protocol)
+}
 
-// Self-send for canonical control: Controller → Controller
-const LOOP_CONTINUE_ARM: g::Program<LoopContinueArmSteps> = g::seq(
-    g::send::<
-        Role<0>,
-        Role<0>,
-        Msg<
-            { LABEL_LOOP_CONTINUE },
-            GenericCapToken<LoopContinueKind>,
-            CanonicalControl<LoopContinueKind>,
-        >,
-        0,
-    >()
-    .policy::<LOOP_POLICY_ID>(),
-    LOOP_BODY,
-);
-const LOOP_BREAK_ARM: g::Program<LoopBreakArmSteps> = g::seq(
-    g::send::<
-        Role<0>,
-        Role<0>,
-        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
-        0,
-    >()
-    .policy::<LOOP_POLICY_ID>(),
-    LOOP_EXIT,
-);
-
-// Route is local to Controller (0 → 0, self-send)
-const LOOP_SEGMENT: g::Program<LoopSegmentSteps> = g::route(LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
-
-const PROTOCOL: g::Program<LoopLaneProgramSteps> =
-    g::seq(g::send::<Role<0>, Role<1>, Msg<10, ()>, 0>(), LOOP_SEGMENT);
-
-static CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&PROTOCOL);
-static TARGET_PROGRAM: RoleProgram<'static, 1> = project(&PROTOCOL);
+fn target_program() -> RoleProgram<1> {
+    let loop_body = g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>();
+    let loop_exit = g::send::<Role<1>, Role<0>, Msg<8, i32>, 0>();
+    let loop_continue_arm = g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            0,
+        >()
+        .policy::<LOOP_POLICY_ID>(),
+        loop_body,
+    );
+    let loop_break_arm = g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_BREAK },
+                GenericCapToken<LoopBreakKind>,
+                CanonicalControl<LoopBreakKind>,
+            >,
+            0,
+        >()
+        .policy::<LOOP_POLICY_ID>(),
+        loop_exit,
+    );
+    let loop_segment = g::route(loop_continue_arm, loop_break_arm);
+    let protocol = g::seq(g::send::<Role<0>, Role<1>, Msg<10, ()>, 0>(), loop_segment);
+    project(&protocol)
+}
 
 fn transport_queue_is_empty(transport: &TestTransport) -> bool {
     transport.queue_is_empty()
 }
 
-fn controller_send_handshake(controller: &mut ControllerEndpoint) {
+fn controller_send_handshake(controller: &mut hibana::Endpoint<'_, 0>) {
     let _outcome = futures::executor::block_on(
         controller
             .flow::<Msg<10, ()>>()
@@ -183,11 +175,11 @@ fn controller_send_handshake(controller: &mut ControllerEndpoint) {
     .expect("handshake send");
 }
 
-fn target_recv_handshake(target: &mut TargetEndpoint) {
+fn target_recv_handshake(target: &mut hibana::Endpoint<'_, 1>) {
     let () = futures::executor::block_on(target.recv::<Msg<10, ()>>()).expect("handshake recv");
 }
 
-fn controller_send_continue(controller: &mut ControllerEndpoint) {
+fn controller_send_continue(controller: &mut hibana::Endpoint<'_, 0>) {
     let _outcome = futures::executor::block_on(
         controller
             .flow::<Msg<
@@ -201,7 +193,7 @@ fn controller_send_continue(controller: &mut ControllerEndpoint) {
     .expect("continue send");
 }
 
-fn controller_send_body(controller: &mut ControllerEndpoint) {
+fn controller_send_body(controller: &mut hibana::Endpoint<'_, 0>) {
     let _outcome = futures::executor::block_on(
         controller
             .flow::<Msg<7, u32>>()
@@ -211,7 +203,7 @@ fn controller_send_body(controller: &mut ControllerEndpoint) {
     .expect("loop body send");
 }
 
-fn target_recv_body(target: &mut TargetEndpoint) {
+fn target_recv_body(target: &mut hibana::Endpoint<'_, 1>) {
     let branch = futures::executor::block_on(target.offer()).expect("target offer iteration 1");
     assert_eq!(
         branch.label(),
@@ -223,7 +215,7 @@ fn target_recv_body(target: &mut TargetEndpoint) {
     assert_eq!(first_body, 1);
 }
 
-fn controller_send_break(controller: &mut ControllerEndpoint) {
+fn controller_send_break(controller: &mut hibana::Endpoint<'_, 0>) {
     let _outcome = futures::executor::block_on(
         controller
             .flow::<Msg<
@@ -237,7 +229,7 @@ fn controller_send_break(controller: &mut ControllerEndpoint) {
     .expect("break send");
 }
 
-fn target_send_exit(target: &mut TargetEndpoint) {
+fn target_send_exit(target: &mut hibana::Endpoint<'_, 1>) {
     let _outcome = futures::executor::block_on(
         target
             .flow::<Msg<8, i32>>()
@@ -247,7 +239,7 @@ fn target_send_exit(target: &mut TargetEndpoint) {
     .expect("exit marker send");
 }
 
-fn controller_recv_exit(controller: &mut ControllerEndpoint) -> i32 {
+fn controller_recv_exit(controller: &mut hibana::Endpoint<'_, 0>) -> i32 {
     futures::executor::block_on(controller.recv::<Msg<8, i32>>()).expect("exit recv")
 }
 
@@ -265,13 +257,15 @@ fn run_loop_lane_share(
     register_loop_lane_resolvers(cluster, rv_id);
 
     let sid = SessionId::new(9);
+    let controller_program = controller_program();
+    let target_program = target_program();
     with_tls_mut(
         &CONTROLLER_SLOT,
         |ptr| unsafe {
             write_value(
                 ptr,
                 cluster
-                    .enter(rv_id, sid, &CONTROLLER_PROGRAM, NoBinding)
+                    .enter(rv_id, sid, &controller_program, NoBinding)
                     .expect("controller attach"),
             );
         },
@@ -282,7 +276,7 @@ fn run_loop_lane_share(
                     write_value(
                         ptr,
                         cluster
-                            .enter(rv_id, sid, &TARGET_PROGRAM, NoBinding)
+                            .enter(rv_id, sid, &target_program, NoBinding)
                             .expect("target attach"),
                     );
                 },

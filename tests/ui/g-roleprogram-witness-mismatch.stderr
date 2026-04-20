@@ -1,3 +1,31 @@
+error[E0107]: struct takes 0 lifetime arguments but 1 lifetime argument was supplied
+ --> tests/ui/g-roleprogram-witness-mismatch.rs:5:13
+  |
+5 |     let _ = RoleProgram::<'static, 0, MintConfig> {
+  |             ^^^^^^^^^^^   ------- help: remove the lifetime argument
+  |             |
+  |             expected 0 lifetime arguments
+  |
+note: struct defined here, with 0 lifetime parameters
+ --> src/global/role_program.rs
+  |
+  | pub struct RoleProgram<const ROLE: u8> {
+  |            ^^^^^^^^^^^
+
+error[E0107]: struct takes 1 generic argument but 2 generic arguments were supplied
+ --> tests/ui/g-roleprogram-witness-mismatch.rs:5:13
+  |
+5 |     let _ = RoleProgram::<'static, 0, MintConfig> {
+  |             ^^^^^^^^^^^             ------------ help: remove the unnecessary generic argument
+  |             |
+  |             expected 1 generic argument
+  |
+note: struct defined here, with 1 generic parameter: `ROLE`
+ --> src/global/role_program.rs
+  |
+  | pub struct RoleProgram<const ROLE: u8> {
+  |            ^^^^^^^^^^^ --------------
+
 warning: unreachable expression
  --> tests/ui/g-roleprogram-witness-mismatch.rs:8:18
   |
@@ -7,36 +35,3 @@ warning: unreachable expression
   |                  ^^^^^^^ unreachable expression
   |
   = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
-  = note: this warning originates in the macro `todo` (in Nightly builds, run with -Z macro-backtrace for more info)
-
-error[E0451]: fields `_borrow`, `_seal`, `summary`, `mint` and `stamp` of struct `RoleProgram` are private
-  --> tests/ui/g-roleprogram-witness-mismatch.rs:6:9
-   |
- 5 |     let _ = RoleProgram::<'static, 0, MintConfig> {
-   |             ------------------------------------- in this type
- 6 |         _borrow: core::marker::PhantomData,
-   |         ^^^^^^^ private field
- 7 |         _seal: todo!(),
-   |         ^^^^^ private field
- 8 |         summary: todo!(),
-   |         ^^^^^^^ private field
- 9 |         mint: MintConfig::INSTANCE,
-   |         ^^^^ private field
-10 |         stamp: todo!(),
-   |         ^^^^^ private field
-
-error: type `hibana::global::compiled::lowering::driver::LoweringSummary` is private
- --> tests/ui/g-roleprogram-witness-mismatch.rs:8:18
-  |
-8 |         summary: todo!(),
-  |                  ^^^^^^^ private type
-  |
-  = note: this error originates in the macro `todo` (in Nightly builds, run with -Z macro-backtrace for more info)
-
-error: type `hibana::global::compiled::lowering::driver::ProgramStamp` is private
-  --> tests/ui/g-roleprogram-witness-mismatch.rs:10:16
-   |
-10 |         stamp: todo!(),
-   |                ^^^^^^^ private type
-   |
-   = note: this error originates in the macro `todo` (in Nightly builds, run with -Z macro-backtrace for more info)

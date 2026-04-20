@@ -1,14 +1,28 @@
-error[E0382]: use of moved value: `branch`
-  --> tests/ui/route-branch-double-decode.rs:44:19
+error[E0107]: struct takes 1 generic argument but 2 generic arguments were supplied
+  --> tests/ui/route-branch-double-decode.rs:33:20
    |
-42 |     let branch = futures::executor::block_on(endpoint.offer()).unwrap();
-   |         ------ move occurs because `branch` has type `RouteBranch<'_, '_, 0, SessionKit<'_, T, U, C, MAX_RV>, Mint>`, which does not implement the `Copy` trait
-43 |     let _first = branch.decode::<g::Msg<7, FramePayload>>();
+33 |     endpoint: &mut Endpoint<'r, 0, SessionKit<'cfg, T, U, C, MAX_RV>>,
+   |                    ^^^^^^^^      ----------------------------------- help: remove the unnecessary generic argument
+   |                    |
+   |                    expected 1 generic argument
+   |
+note: struct defined here, with 1 generic parameter: `ROLE`
+  --> src/endpoint.rs
+   |
+   | pub struct Endpoint<'r, const ROLE: u8> {
+   |            ^^^^^^^^     --------------
+
+error[E0382]: use of moved value: `branch`
+  --> tests/ui/route-branch-double-decode.rs:42:19
+   |
+40 |     let branch = futures::executor::block_on(endpoint.offer()).unwrap();
+   |         ------ move occurs because `branch` has type `RouteBranch<'_, '_, 0>`, which does not implement the `Copy` trait
+41 |     let _first = branch.decode::<g::Msg<7, FramePayload>>();
    |                         ----------------------------------- `branch` moved due to this method call
-44 |     let _second = branch.decode::<g::Msg<7, FramePayload>>();
+42 |     let _second = branch.decode::<g::Msg<7, FramePayload>>();
    |                   ^^^^^^ value used here after move
    |
-note: `RouteBranch::<'e, 'r, ROLE, SessionKit<'cfg, T, U, C, MAX_RV>, Mint>::decode` takes ownership of the receiver `self`, which moves `branch`
+note: `RouteBranch::<'e, 'r, ROLE>::decode` takes ownership of the receiver `self`, which moves `branch`
   --> src/endpoint.rs
    |
    |         self,

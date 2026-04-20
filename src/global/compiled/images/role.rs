@@ -649,7 +649,7 @@ mod tests {
         control::{
             cap::mint::{
                 CAP_HANDLE_LEN, CapError, CapShot, CapsMask, ControlMint, ControlResourceKind,
-                GenericCapToken, MintConfig, ResourceKind, SessionScopedKind,
+                GenericCapToken, ResourceKind, SessionScopedKind,
             },
             cap::resource_kinds::RouteDecisionKind,
             types::{Lane, SessionId},
@@ -660,12 +660,6 @@ mod tests {
             CanonicalControl, ControlHandling, role_program,
             steps::{RouteSteps, SendStep, SeqSteps, StepCons, StepNil},
             typestate::{JumpReason, LocalAction},
-        },
-        runtime::{config::CounterClock, consts::DefaultLabelUniverse},
-        substrate::{
-            Transport,
-            transport::{Outgoing, TransportError, TransportEvent},
-            wire::Payload,
         },
     };
 
@@ -734,61 +728,6 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Copy, Debug, Default)]
-    struct DummyTransport;
-
-    impl Transport for DummyTransport {
-        type Error = TransportError;
-        type Tx<'a>
-            = ()
-        where
-            Self: 'a;
-        type Rx<'a>
-            = ()
-        where
-            Self: 'a;
-        type Send<'a>
-            = core::future::Ready<Result<(), Self::Error>>
-        where
-            Self: 'a;
-        type Recv<'a>
-            = core::future::Ready<Result<Payload<'a>, Self::Error>>
-        where
-            Self: 'a;
-        type Metrics = ();
-
-        fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
-            ((), ())
-        }
-
-        fn send<'a, 'f>(
-            &'a self,
-            _tx: &'a mut Self::Tx<'a>,
-            _outgoing: Outgoing<'f>,
-        ) -> Self::Send<'a>
-        where
-            'a: 'f,
-        {
-            core::future::ready(Ok(()))
-        }
-
-        fn recv<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
-            core::future::ready(Err(TransportError::Failed))
-        }
-
-        fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
-
-        fn drain_events(&self, _emit: &mut dyn FnMut(TransportEvent)) {}
-
-        fn recv_label_hint<'a>(&'a self, _rx: &'a Self::Rx<'a>) -> Option<u8> {
-            None
-        }
-
-        fn metrics(&self) -> Self::Metrics {}
-
-        fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
-    }
-
     fn retain_pico_smoke_fixture_symbols() {
         let _ = fanout_program::ROUTE_SCOPE_COUNT;
         let _ = fanout_program::EXPECTED_WORKER_BRANCH_LABELS;
@@ -799,73 +738,17 @@ mod tests {
         let _ = linear_program::ROUTE_SCOPE_COUNT;
         let _ = linear_program::EXPECTED_WORKER_BRANCH_LABELS;
         let _ = linear_program::ACK_LABELS;
-        let _ = huge_program::run::<DummyTransport, DefaultLabelUniverse, CounterClock, 2>
-            as fn(
-                &mut localside::ControllerEndpoint<
-                    '_,
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-                &mut localside::WorkerEndpoint<
-                    '_,
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-            );
-        let _ = linear_program::run::<DummyTransport, DefaultLabelUniverse, CounterClock, 2>
-            as fn(
-                &mut localside::ControllerEndpoint<
-                    '_,
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-                &mut localside::WorkerEndpoint<
-                    '_,
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-            );
-        let _ = fanout_program::run::<DummyTransport, DefaultLabelUniverse, CounterClock, 2>
-            as fn(
-                &mut localside::ControllerEndpoint<
-                    '_,
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-                &mut localside::WorkerEndpoint<
-                    '_,
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-            );
-        let _ = localside::worker_offer_decode_u8::<
-            0,
-            DummyTransport,
-            DefaultLabelUniverse,
-            CounterClock,
-            2,
-        >
-            as fn(
-                &mut localside::WorkerEndpoint<
-                    '_,
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-            ) -> u8;
+        let _ = huge_program::run
+            as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
+        let _ = huge_program::controller_program as fn() -> role_program::RoleProgram<0>;
+        let _ = linear_program::run
+            as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
+        let _ = linear_program::controller_program as fn() -> role_program::RoleProgram<0>;
+        let _ = fanout_program::run
+            as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
+        let _ = fanout_program::controller_program as fn() -> role_program::RoleProgram<0>;
+        let _ = localside::worker_offer_decode_u8::<0>
+            as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
     }
 
     #[test]
@@ -931,7 +814,7 @@ mod tests {
     type BranchSteps<L, R> = RouteSteps<L, R>;
 
     fn with_compiled_role_image<const ROLE: u8, R>(
-        program: &role_program::RoleProgram<'_, ROLE, MintConfig>,
+        program: &role_program::RoleProgram<ROLE>,
         f: impl FnOnce(&CompiledRoleImage) -> R,
     ) -> R {
         crate::global::compiled::materialize::with_compiled_role_image::<ROLE, _>(
@@ -996,7 +879,7 @@ mod tests {
     fn compiled_role_image_persistent_bytes_match_exact_footprint() {
         const PROGRAM: crate::g::Program<SendOnly<0, Role<0>, Role<1>, Msg<7, ()>>> =
             g::send::<Role<0>, Role<1>, Msg<7, ()>, 0>();
-        let worker: role_program::RoleProgram<'_, 1, MintConfig> = role_program::project(&PROGRAM);
+        let worker: role_program::RoleProgram<1> = role_program::project(&PROGRAM);
         let lowering = crate::global::lowering_input(&worker);
         let expected = CompiledRoleImage::persistent_bytes_for_program(lowering.footprint());
         with_compiled_role_image(&worker, |image| {
@@ -1055,8 +938,7 @@ mod tests {
         const PROGRAM: g::Program<ProgramSteps> = g::route(LEFT, RIGHT);
         let program = PROGRAM;
 
-        let controller: role_program::RoleProgram<'_, 0, MintConfig> =
-            role_program::project(&program);
+        let controller: role_program::RoleProgram<0> = role_program::project(&program);
         with_compiled_role_image(&controller, |controller_compiled| {
             let controller_scope = controller_compiled.typestate_ref().node(0).scope();
             assert_eq!(controller_compiled.role(), 0);
@@ -1082,7 +964,7 @@ mod tests {
             );
         });
 
-        let worker: role_program::RoleProgram<'_, 1, MintConfig> = role_program::project(&program);
+        let worker: role_program::RoleProgram<1> = role_program::project(&program);
         with_compiled_role_image(&worker, |worker_compiled| {
             let worker_scope = worker_compiled.typestate_ref().node(0).scope();
             assert_eq!(worker_compiled.role(), 1);
@@ -1312,13 +1194,12 @@ mod tests {
         const PROGRAM: crate::g::Program<ProgramSteps> = g::seq(PREFIX, g::route(LEFT, RIGHT));
         let program = PROGRAM;
 
-        let worker: role_program::RoleProgram<'_, 1, MintConfig> = role_program::project(&program);
+        let worker: role_program::RoleProgram<1> = role_program::project(&program);
         let lowering = crate::global::lowering_input(&worker);
-        let summary = lowering.summary();
         assert!(
             CompiledRoleImage::persistent_bytes_for_program(lowering.footprint())
                 < CompiledRoleImage::persistent_bytes_for_counts(
-                    summary.stamp().scope_count(),
+                    lowering.footprint().scope_count,
                     lowering.route_scope_count(),
                     lowering.eff_count(),
                 ),
@@ -1349,15 +1230,11 @@ mod tests {
         });
     }
 
-    fn assert_huge_shape_bounds<Steps>(
-        program: &crate::g::Program<Steps>,
+    fn assert_huge_shape_bounds(
+        worker: &role_program::RoleProgram<1>,
         expected_route_scope_count: usize,
         expected_frontier_entries: usize,
-    ) where
-        Steps: crate::global::program::BuildProgramSource
-            + crate::g::advanced::steps::ProjectRole<crate::g::Role<1>>,
-    {
-        let worker: role_program::RoleProgram<'_, 1, MintConfig> = role_program::project(program);
+    ) {
         with_compiled_role_image(&worker, |image| {
             let active_lane_count = image.active_lane_count();
             let layout = image.endpoint_arena_layout_for_binding(true);
@@ -1459,9 +1336,7 @@ mod tests {
 
     #[test]
     fn huge_shape_phase_counts_stay_bounded_by_parallel_markers() {
-        let route_program = huge_program::PROGRAM;
-        let route_worker: role_program::RoleProgram<'_, 1, MintConfig> =
-            role_program::project(&route_program);
+        let route_worker = huge_program::worker_program();
         let route_lowering = crate::global::lowering_input(&route_worker);
         let route_summary = route_lowering.summary();
         let route_parallel_markers = count_parallel_enter_markers(route_summary);
@@ -1491,9 +1366,7 @@ mod tests {
             );
         });
 
-        let linear_program = linear_program::PROGRAM;
-        let linear_worker: role_program::RoleProgram<'_, 1, MintConfig> =
-            role_program::project(&linear_program);
+        let linear_worker = linear_program::worker_program();
         let linear_lowering = crate::global::lowering_input(&linear_worker);
         let linear_summary = linear_lowering.summary();
         let linear_parallel_markers = count_parallel_enter_markers(linear_summary);
@@ -1517,9 +1390,7 @@ mod tests {
             );
         });
 
-        let fanout_program = fanout_program::PROGRAM;
-        let fanout_worker: role_program::RoleProgram<'_, 1, MintConfig> =
-            role_program::project(&fanout_program);
+        let fanout_worker = fanout_program::worker_program();
         let fanout_lowering = crate::global::lowering_input(&fanout_worker);
         let fanout_summary = fanout_lowering.summary();
         let fanout_parallel_markers = count_parallel_enter_markers(fanout_summary);
@@ -1562,7 +1433,7 @@ mod tests {
             g::par(LANE0_PROGRAM, LANE1_PROGRAM);
         const PROGRAM: crate::global::Program<ProgramSteps> = g::par(INNER_PROGRAM, LANE2_PROGRAM);
 
-        let worker: role_program::RoleProgram<'_, 0, MintConfig> = role_program::project(&PROGRAM);
+        let worker: role_program::RoleProgram<0> = role_program::project(&PROGRAM);
         let lowering = crate::global::lowering_input(&worker);
         let counts = lowering.summary().role_lowering_counts::<0>();
 
@@ -1576,20 +1447,13 @@ mod tests {
         });
     }
 
-    fn print_role_tail_breakdown<const ROLE: u8, Steps>(
+    fn print_role_tail_breakdown<const ROLE: u8>(
         name: &str,
-        program: &crate::g::Program<Steps>,
-    ) where
-        Steps: crate::global::program::BuildProgramSource
-            + crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
-        <Steps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
-            crate::global::steps::StepCount,
-    {
-        let worker: role_program::RoleProgram<'_, ROLE, MintConfig> =
-            role_program::project(program);
+        worker: &role_program::RoleProgram<ROLE>,
+    ) {
         let lowering = crate::global::lowering_input(&worker);
         let summary = lowering.summary();
-        let scope_count = summary.stamp().scope_count();
+        let scope_count = lowering.footprint().scope_count;
         let eff_count = lowering.eff_count();
         let route_enter_count = summary
             .view()
@@ -1680,20 +1544,14 @@ mod tests {
 
     #[test]
     fn huge_shape_role_image_tail_breakdown_is_reported() {
-        let route_program = huge_program::PROGRAM;
-        print_role_tail_breakdown::<1, huge_program::ProgramSteps>("route_heavy", &route_program);
+        let route_worker = huge_program::worker_program();
+        print_role_tail_breakdown::<1>("route_heavy", &route_worker);
 
-        let linear_program = linear_program::PROGRAM;
-        print_role_tail_breakdown::<1, linear_program::ProgramSteps>(
-            "linear_heavy",
-            &linear_program,
-        );
+        let linear_worker = linear_program::worker_program();
+        print_role_tail_breakdown::<1>("linear_heavy", &linear_worker);
 
-        let fanout_program = fanout_program::PROGRAM;
-        print_role_tail_breakdown::<1, fanout_program::ProgramSteps>(
-            "fanout_heavy",
-            &fanout_program,
-        );
+        let fanout_worker = fanout_program::worker_program();
+        print_role_tail_breakdown::<1>("fanout_heavy", &fanout_worker);
     }
 
     #[test]
@@ -1779,25 +1637,27 @@ mod tests {
         );
         let program = LOOP_PROGRAM;
 
-        print_role_tail_breakdown::<0, LoopProgramSteps>("offer_admin_snapshot_client", &program);
-        print_role_tail_breakdown::<1, LoopProgramSteps>("offer_admin_snapshot_server", &program);
+        let client: role_program::RoleProgram<0> = role_program::project(&program);
+        print_role_tail_breakdown::<0>("offer_admin_snapshot_client", &client);
+        let server: role_program::RoleProgram<1> = role_program::project(&program);
+        print_role_tail_breakdown::<1>("offer_admin_snapshot_server", &server);
     }
 
     #[test]
     fn huge_route_heavy_shape_keeps_resident_bounds_local() {
-        let program = huge_program::PROGRAM;
-        assert_huge_shape_bounds(&program, huge_program::ROUTE_SCOPE_COUNT, 1);
+        let worker = huge_program::worker_program();
+        assert_huge_shape_bounds(&worker, huge_program::ROUTE_SCOPE_COUNT, 1);
     }
 
     #[test]
     fn huge_linear_heavy_shape_keeps_resident_bounds_local() {
-        let program = linear_program::PROGRAM;
-        assert_huge_shape_bounds(&program, linear_program::ROUTE_SCOPE_COUNT, 0);
+        let worker = linear_program::worker_program();
+        assert_huge_shape_bounds(&worker, linear_program::ROUTE_SCOPE_COUNT, 0);
     }
 
     #[test]
     fn huge_fanout_heavy_shape_keeps_resident_bounds_local() {
-        let program = fanout_program::PROGRAM;
-        assert_huge_shape_bounds(&program, fanout_program::ROUTE_SCOPE_COUNT, 1);
+        let worker = fanout_program::worker_program();
+        assert_huge_shape_bounds(&worker, fanout_program::ROUTE_SCOPE_COUNT, 1);
     }
 }

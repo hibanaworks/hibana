@@ -62,8 +62,8 @@ fn root_visible_surface_stays_minimal() {
             .expect("advanced surface block must exist");
         let rest = &global_rs[start..];
         let end = rest
-            .find("    pub mod steps {")
-            .expect("advanced steps block must exist");
+            .find("#[diagnostic::on_unimplemented(")
+            .expect("advanced surface block must end before route diagnostics");
         &rest[..end]
     };
 
@@ -150,6 +150,7 @@ fn root_visible_surface_stays_minimal() {
         "project, project_ref,",
         "project,\n        with_policy,",
         "typestate::{JumpReason, LocalAction, PassiveArmNavigation, PhaseCursor}",
+        "pub mod steps {",
     ] {
         assert!(
             !advanced_head.contains(forbidden),

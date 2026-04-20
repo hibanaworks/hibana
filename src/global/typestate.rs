@@ -21,7 +21,6 @@ pub(crate) use self::registry::{
 };
 #[cfg(test)]
 pub(crate) use self::{builder::RoleTypestate, emit::phase_route_guard_for_built_state_for_role};
-#[allow(unused_imports)]
 pub(crate) use self::{
     builder::{
         ARM_SHARED, MAX_FIRST_RECV_DISPATCH, RoleTypestateInitStorage, RoleTypestateValue,
@@ -31,8 +30,8 @@ pub(crate) use self::{
     emit::{init_value_from_summary_for_role, phase_route_guard_for_state_for_role},
     emit_walk::RoleTypestateBuildScratch,
     facts::{
-        JumpError, JumpReason, LocalAction, LocalMeta, LocalNode, MAX_STATES, PassiveArmNavigation,
-        RecvMeta, SendMeta, as_eff_index, as_state_index, state_index_to_usize,
+        JumpReason, LocalAction, LocalMeta, LocalNode, MAX_STATES, PassiveArmNavigation, RecvMeta,
+        SendMeta, state_index_to_usize,
     },
 };
 
@@ -100,13 +99,10 @@ mod tests {
         let _ = crate::global::typestate::phase_route_guard_for_built_state_for_role::<0>;
     }
 
-    fn with_compiled_role_image<const ROLE: u8, Mint, R>(
-        program: &RoleProgram<'_, ROLE, Mint>,
+    fn with_compiled_role_image<const ROLE: u8, R>(
+        program: &RoleProgram<ROLE>,
         f: impl FnOnce(&CompiledRoleImage) -> R,
-    ) -> R
-    where
-        Mint: crate::control::cap::mint::MintConfigMarker,
-    {
+    ) -> R {
         crate::global::compiled::materialize::with_compiled_role_image::<ROLE, _>(
             crate::global::lowering_input(program),
             f,
@@ -214,13 +210,13 @@ mod tests {
         g::route(continue_arm, break_arm)
     };
 
-    const CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&LOOP_PROGRAM);
+    const CONTROLLER_PROGRAM: RoleProgram<0> = project(&LOOP_PROGRAM);
 
-    const TARGET_PROGRAM: RoleProgram<'static, 1> = project(&LOOP_PROGRAM);
+    const TARGET_PROGRAM: RoleProgram<1> = project(&LOOP_PROGRAM);
 
     const LOCAL_PROGRAM: g::Program<StepCons<SendStep<Role<0>, Role<0>, Msg<9, ()>>, StepNil>> =
         g::send::<Role<0>, Role<0>, Msg<9, ()>, 0>();
-    const LOCAL_ROLE: role_program::RoleProgram<'static, 0> = role_program::project(&LOCAL_PROGRAM);
+    const LOCAL_ROLE: role_program::RoleProgram<0> = role_program::project(&LOCAL_PROGRAM);
 
     #[test]
     fn state_cursor_rewinds_on_loop_continue() {
@@ -367,7 +363,7 @@ mod tests {
             .policy::<ROUTE_POLICY_ID>(),
         );
 
-        const CONTROLLER: RoleProgram<'static, 0> = project(&ROUTE);
+        const CONTROLLER: RoleProgram<0> = project(&ROUTE);
 
         with_compiled_role_image(&CONTROLLER, |compiled| {
             let summary = ROUTE.summary();
@@ -421,7 +417,7 @@ mod tests {
             ),
             g::send::<Role<1>, Role<1>, Msg<11, ()>, 0>(),
         );
-        const PARALLEL_CONTROLLER: RoleProgram<'static, 0> = project(&PARALLEL_ROUTE_PROGRAM);
+        const PARALLEL_CONTROLLER: RoleProgram<0> = project(&PARALLEL_ROUTE_PROGRAM);
 
         with_compiled_role_image(&PARALLEL_CONTROLLER, |compiled| {
             let typestate = compiled.typestate_ref();
@@ -460,7 +456,7 @@ mod tests {
 
         const NESTED_LOOP_PROGRAM: g::Program<NestedLoopProgramSteps> =
             g::seq(g::send::<Role<0>, Role<1>, Msg<13, ()>, 0>(), LOOP_PROGRAM);
-        const NESTED_LOOP_CONTROLLER: RoleProgram<'static, 0> = project(&NESTED_LOOP_PROGRAM);
+        const NESTED_LOOP_CONTROLLER: RoleProgram<0> = project(&NESTED_LOOP_PROGRAM);
 
         with_compiled_role_image(&NESTED_LOOP_CONTROLLER, |compiled| {
             let typestate = compiled.typestate_ref();
@@ -519,7 +515,7 @@ mod tests {
             let right = g::send::<Role<0>, Role<0>, Msg<21, ()>, 0>();
             g::route(left, right)
         };
-        let outer_controller: RoleProgram<'_, 0> = project(&outer_route_program);
+        let outer_controller: RoleProgram<0> = project(&outer_route_program);
 
         with_compiled_role_image(&outer_controller, |compiled| {
             let typestate = compiled.typestate_ref();
@@ -565,7 +561,7 @@ mod tests {
                 g::seq(g::send::<Role<0>, Role<0>, Msg<0x51, ()>, 0>(), inner),
             )
         };
-        let dispatch_worker: RoleProgram<'_, 1> = project(&dispatch_program);
+        let dispatch_worker: RoleProgram<1> = project(&dispatch_program);
 
         with_compiled_role_image(&dispatch_worker, |compiled| {
             let typestate = compiled.typestate_ref();

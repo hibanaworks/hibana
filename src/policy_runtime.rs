@@ -207,17 +207,17 @@ pub(crate) fn hash_policy_input(input: [u32; 4]) -> u32 {
 #[inline]
 pub(crate) fn hash_transport_snapshot(snapshot: TransportSnapshot) -> u32 {
     let mut hash = FNV32_OFFSET;
-    hash = fnv32_mix_opt_u64(hash, snapshot.latency_us);
-    hash = fnv32_mix_opt_u32(hash, snapshot.queue_depth);
-    hash = fnv32_mix_opt_u64(hash, snapshot.pacing_interval_us);
-    hash = fnv32_mix_opt_u32(hash, snapshot.congestion_marks);
-    hash = fnv32_mix_opt_u32(hash, snapshot.retransmissions);
-    hash = fnv32_mix_opt_u32(hash, snapshot.pto_count);
-    hash = fnv32_mix_opt_u64(hash, snapshot.srtt_us);
-    hash = fnv32_mix_opt_u64(hash, snapshot.latest_ack_pn);
-    hash = fnv32_mix_opt_u64(hash, snapshot.congestion_window);
-    hash = fnv32_mix_opt_u64(hash, snapshot.in_flight_bytes);
-    match snapshot.algorithm {
+    hash = fnv32_mix_opt_u64(hash, snapshot.latency_us());
+    hash = fnv32_mix_opt_u32(hash, snapshot.queue_depth());
+    hash = fnv32_mix_opt_u64(hash, snapshot.pacing_interval_us());
+    hash = fnv32_mix_opt_u32(hash, snapshot.congestion_marks());
+    hash = fnv32_mix_opt_u32(hash, snapshot.retransmissions());
+    hash = fnv32_mix_opt_u32(hash, snapshot.pto_count());
+    hash = fnv32_mix_opt_u64(hash, snapshot.srtt_us());
+    hash = fnv32_mix_opt_u64(hash, snapshot.latest_ack_pn());
+    hash = fnv32_mix_opt_u64(hash, snapshot.congestion_window());
+    hash = fnv32_mix_opt_u64(hash, snapshot.in_flight_bytes());
+    match snapshot.algorithm() {
         Some(crate::transport::TransportAlgorithm::Cubic) => fnv32_mix_u8(hash, 1),
         Some(crate::transport::TransportAlgorithm::Reno) => fnv32_mix_u8(hash, 2),
         Some(crate::transport::TransportAlgorithm::Other(code)) => {
@@ -253,10 +253,10 @@ const fn opt_u32_or_zero(value: Option<u32>) -> u32 {
 #[inline]
 pub(crate) const fn replay_transport_inputs(snapshot: TransportSnapshot) -> [u32; 4] {
     [
-        saturating_u64_to_u32(snapshot.latency_us),
-        opt_u32_or_zero(snapshot.queue_depth),
-        opt_u32_or_zero(snapshot.congestion_marks),
-        opt_u32_or_zero(snapshot.retransmissions),
+        saturating_u64_to_u32(snapshot.latency_us()),
+        opt_u32_or_zero(snapshot.queue_depth()),
+        opt_u32_or_zero(snapshot.congestion_marks()),
+        opt_u32_or_zero(snapshot.retransmissions()),
     ]
 }
 
@@ -264,16 +264,16 @@ pub(crate) const fn replay_transport_inputs(snapshot: TransportSnapshot) -> [u32
 #[inline]
 pub(crate) const fn replay_transport_presence(snapshot: TransportSnapshot) -> u8 {
     let mut mask = 0u8;
-    if snapshot.latency_us.is_some() {
+    if snapshot.latency_us().is_some() {
         mask |= 1 << 0;
     }
-    if snapshot.queue_depth.is_some() {
+    if snapshot.queue_depth().is_some() {
         mask |= 1 << 1;
     }
-    if snapshot.congestion_marks.is_some() {
+    if snapshot.congestion_marks().is_some() {
         mask |= 1 << 2;
     }
-    if snapshot.retransmissions.is_some() {
+    if snapshot.retransmissions().is_some() {
         mask |= 1 << 3;
     }
     mask

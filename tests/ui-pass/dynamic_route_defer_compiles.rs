@@ -3,40 +3,18 @@
 #[path = "../support/control_kinds.rs"]
 mod control_kinds;
 
+use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
+use hibana::g::{self};
 use hibana::substrate::cap::GenericCapToken;
 use hibana::substrate::policy::DynamicResolution;
-use hibana::g::{self};
-use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
-use hibana::g::advanced::steps::{
-    PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil,
-};
 
 type RouteArm100Kind = control_kinds::RouteControl<100, 0>;
 type RouteArm101Kind = control_kinds::RouteControl<101, 0>;
 
 const POLICY_ID: u16 = 77;
 
-const ARM0: g::Program<
-    SeqSteps<
-        PolicySteps<
-            StepCons<
-                SendStep<
-                    g::Role<0>,
-                    g::Role<0>,
-                    g::Msg<
-                        100,
-                        GenericCapToken<RouteArm100Kind>,
-                        CanonicalControl<RouteArm100Kind>,
-                    >,
-                >,
-                StepNil,
-            >,
-            POLICY_ID,
-        >,
-        StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<10, ()>>, StepNil>,
-    >,
-> =
-    g::seq(
+fn main() {
+    let arm0 = g::seq(
         g::send::<
             g::Role<0>,
             g::Role<0>,
@@ -46,28 +24,7 @@ const ARM0: g::Program<
         .policy::<POLICY_ID>(),
         g::send::<g::Role<0>, g::Role<1>, g::Msg<10, ()>, 0>(),
     );
-
-const ARM1: g::Program<
-    SeqSteps<
-        PolicySteps<
-            StepCons<
-                SendStep<
-                    g::Role<0>,
-                    g::Role<0>,
-                    g::Msg<
-                        101,
-                        GenericCapToken<RouteArm101Kind>,
-                        CanonicalControl<RouteArm101Kind>,
-                    >,
-                >,
-                StepNil,
-            >,
-            POLICY_ID,
-        >,
-        StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<20, ()>>, StepNil>,
-    >,
-> =
-    g::seq(
+    let arm1 = g::seq(
         g::send::<
             g::Role<0>,
             g::Role<0>,
@@ -77,52 +34,8 @@ const ARM1: g::Program<
         .policy::<POLICY_ID>(),
         g::send::<g::Role<0>, g::Role<1>, g::Msg<20, ()>, 0>(),
     );
-
-type RouteProgramSteps = RouteSteps<
-    SeqSteps<
-        PolicySteps<
-            StepCons<
-                SendStep<
-                    g::Role<0>,
-                    g::Role<0>,
-                    g::Msg<
-                        100,
-                        GenericCapToken<RouteArm100Kind>,
-                        CanonicalControl<RouteArm100Kind>,
-                    >,
-                >,
-                StepNil,
-            >,
-            POLICY_ID,
-        >,
-        StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<10, ()>>, StepNil>,
-    >,
-    SeqSteps<
-        PolicySteps<
-            StepCons<
-                SendStep<
-                    g::Role<0>,
-                    g::Role<0>,
-                    g::Msg<
-                        101,
-                        GenericCapToken<RouteArm101Kind>,
-                        CanonicalControl<RouteArm101Kind>,
-                    >,
-                >,
-                StepNil,
-            >,
-            POLICY_ID,
-        >,
-        StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<20, ()>>, StepNil>,
-    >,
->;
-
-const ROUTE: g::Program<RouteProgramSteps> = g::route(ARM0, ARM1);
-
-static PASSIVE_PROGRAM: RoleProgram<'static, 1> =
-    project(&ROUTE);
-
-fn main() {
-    let _ = &PASSIVE_PROGRAM;
+    let route = g::route(arm0, arm1);
+    let passive_program: RoleProgram<1> = project(&route);
+    let _ = passive_program;
     let _ = DynamicResolution::Defer { retry_hint: 1 };
 }

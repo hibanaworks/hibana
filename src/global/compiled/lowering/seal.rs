@@ -286,10 +286,7 @@ pub(super) const fn exact_role_phase_facts(
     }
 }
 
-pub(super) const fn exact_phase_count_for_role(
-    view: super::LoweringView<'_>,
-    role: u8,
-) -> u16 {
+pub(super) const fn exact_phase_count_for_role(view: super::LoweringView<'_>, role: u8) -> u16 {
     exact_role_phase_facts(view, role).phase_count
 }
 

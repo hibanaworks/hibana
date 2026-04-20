@@ -400,7 +400,7 @@ impl PolicyMode {
     ///
     /// let route_state = RouteState { preferred_arm: 0 };
     ///
-    /// cluster.set_resolver::<MY_POLICY_ID, 0, _>(
+    /// cluster.set_resolver::<MY_POLICY_ID, 0>(
     ///     rv_id,
     ///     &controller,
     ///     hibana::substrate::policy::ResolverRef::from_state(&route_state, resolve_route),
@@ -1140,9 +1140,7 @@ mod tests {
     use super::{CompactScopeId, ControlMarker, EffList, ScopeId, ScopeKind};
     use crate::g;
     use crate::g::advanced::CanonicalControl;
-    use crate::g::advanced::steps::{
-        PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil,
-    };
+    use crate::global::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
     use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
     use crate::substrate::cap::GenericCapToken;
     use crate::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};

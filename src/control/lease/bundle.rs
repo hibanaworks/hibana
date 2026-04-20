@@ -641,34 +641,33 @@ mod tests {
             = ()
         where
             Self: 'a;
-        type Send<'a>
-            = core::future::Ready<Result<(), Self::Error>>
-        where
-            Self: 'a;
-        type Recv<'a>
-            = core::future::Ready<Result<Payload<'a>, Self::Error>>
-        where
-            Self: 'a;
         type Metrics = ();
 
         fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
         }
 
-        fn send<'a, 'f>(
+        fn poll_send<'a, 'f>(
             &'a self,
             _tx: &'a mut Self::Tx<'a>,
             _outgoing: crate::transport::Outgoing<'f>,
-        ) -> Self::Send<'a>
+            _cx: &mut core::task::Context<'_>,
+        ) -> core::task::Poll<Result<(), Self::Error>>
         where
             'a: 'f,
         {
-            core::future::ready(Ok(()))
+            core::task::Poll::Ready(Ok(()))
         }
 
-        fn recv<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
-            core::future::ready(Err(TransportError::Offline))
+        fn poll_recv<'a>(
+            &'a self,
+            _rx: &'a mut Self::Rx<'a>,
+            _cx: &mut core::task::Context<'_>,
+        ) -> core::task::Poll<Result<Payload<'a>, Self::Error>> {
+            core::task::Poll::Ready(Err(TransportError::Offline))
         }
+
+        fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
         fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
 

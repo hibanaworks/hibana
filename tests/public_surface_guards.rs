@@ -43,6 +43,25 @@ fn transport_context_uses_generic_policy_slot_owner() {
 }
 
 #[test]
+fn core_resource_kind_catalogue_keeps_mgmt_and_policy_lifecycle_internal_only() {
+    let resource_kinds_src = read("src/control/cap/resource_kinds.rs");
+
+    for forbidden in [
+        "pub struct PolicyLoadKind;",
+        "pub struct PolicyActivateKind;",
+        "pub struct PolicyRevertKind;",
+        "pub struct PolicyAnnotateKind;",
+        "pub struct LoadBeginKind;",
+        "pub struct LoadCommitKind;",
+    ] {
+        assert!(
+            !resource_kinds_src.contains(forbidden),
+            "core must not remain the public owner of mgmt/policy lifecycle kinds: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn substrate_tap_surface_stays_on_tapevent_only() {
     let substrate_src = read("src/substrate.rs");
 
@@ -78,6 +97,35 @@ fn substrate_policy_surface_exports_policyslot_only() {
         assert!(
             !substrate_src.contains(forbidden),
             "substrate::policy must not regrow the deleted epf bucket: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn transport_snapshot_surface_stays_getter_only() {
+    let transport_src = read("src/transport.rs");
+
+    assert!(
+        transport_src.contains("pub struct TransportSnapshotParts"),
+        "transport snapshot packing must stay on the single-argument parts owner"
+    );
+    assert!(
+        transport_src.contains("pub const fn from_parts(parts: TransportSnapshotParts) -> Self"),
+        "transport snapshot must expose single-step packed construction"
+    );
+    for forbidden in [
+        "pub const fn new(latency_us: Option<u64>, queue_depth: Option<u32>) -> Self",
+        "pub const fn with_latency_us",
+        "pub const fn with_queue_depth",
+        "pub const fn with_congestion_marks",
+        "pub const fn with_retransmissions",
+        "pub const fn with_congestion_window",
+        "pub const fn with_in_flight",
+        "pub const fn with_algorithm",
+    ] {
+        assert!(
+            !transport_src.contains(forbidden),
+            "transport snapshot builder surface must stay removed: {forbidden}"
         );
     }
 }

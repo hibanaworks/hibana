@@ -3,8 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MANIFEST_PATH="${ROOT_DIR}/Cargo.toml"
+export TOOLCHAIN="${TOOLCHAIN:-stable}"
+bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
 
-cargo test \
+cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --test substrate_surface \
   --features std \
@@ -14,7 +16,7 @@ cargo test \
   --nocapture
 
 TEST_BINARY="$(
-  cargo test \
+  cargo +"${TOOLCHAIN}" test \
     --manifest-path "${MANIFEST_PATH}" \
     --test substrate_surface \
     --features std \
@@ -38,7 +40,7 @@ fi
 
 timeout 30s "${TEST_BINARY}" substrate_facade_projects_before_enter --exact --nocapture
 
-cargo test \
+cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --test public_surface_guards \
   --features std \
@@ -47,7 +49,7 @@ cargo test \
   --exact \
   --nocapture
 
-cargo test \
+cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --test public_surface_guards \
   --features std \

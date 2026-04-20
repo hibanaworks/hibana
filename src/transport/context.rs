@@ -10,6 +10,25 @@
 use crate::substrate::policy::PolicySlot;
 
 const POLICY_ATTRS_CAPACITY: usize = 16;
+const CORE_ATTR_COUNT: usize = 15;
+
+const CORE_ATTR_IDS: [ContextId; CORE_ATTR_COUNT] = [
+    core::RV_ID,
+    core::SESSION_ID,
+    core::LANE,
+    core::TAG,
+    core::LATENCY_US,
+    core::QUEUE_DEPTH,
+    core::PACING_INTERVAL_US,
+    core::CONGESTION_MARKS,
+    core::RETRANSMISSIONS,
+    core::PTO_COUNT,
+    core::SRTT_US,
+    core::LATEST_ACK_PN,
+    core::CONGESTION_WINDOW,
+    core::IN_FLIGHT_BYTES,
+    core::TRANSPORT_ALGORITHM,
+];
 
 /// Reserved core context identifiers surfaced through `ResolverContext::attr()`.
 pub(crate) mod core {
@@ -225,26 +244,32 @@ pub trait PolicySignalsProvider {
     fn signals(&self, slot: PolicySlot) -> PolicySignals<'_>;
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ContextEntry {
-    id: ContextId,
-    value: ContextValue,
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ExtAttr {
+    pub id: ContextId,
+    pub value: ContextValue,
 }
 
-impl ContextEntry {
-    const fn empty() -> Self {
-        Self {
-            id: ContextId::new(0),
-            value: ContextValue::NONE,
-        }
-    }
+impl ExtAttr {
+    const EMPTY: Self = Self {
+        id: ContextId::new(0),
+        value: ContextValue::NONE,
+    };
 }
 
 /// Fixed-size policy attribute map passed by value.
+///
+/// Core transport/runtime attributes live in a packed bitset + value array for
+/// O(1) lookup. Extension attributes stay in a fixed-size side slice so the
+/// type remains `Copy` and allocation-free.
+#[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PolicyAttrs {
-    entries: [ContextEntry; POLICY_ATTRS_CAPACITY],
-    len: u8,
+    present: u32,
+    core_values: [u64; CORE_ATTR_COUNT],
+    ext_attrs: [ExtAttr; POLICY_ATTRS_CAPACITY],
+    ext_len: u8,
 }
 
 impl Default for PolicyAttrs {
@@ -262,8 +287,10 @@ impl PolicyAttrs {
     #[inline]
     pub const fn new() -> Self {
         Self {
-            entries: [ContextEntry::empty(); POLICY_ATTRS_CAPACITY],
-            len: 0,
+            present: 0,
+            core_values: [0; CORE_ATTR_COUNT],
+            ext_attrs: [ExtAttr::EMPTY; POLICY_ATTRS_CAPACITY],
+            ext_len: 0,
         }
     }
 
@@ -271,29 +298,43 @@ impl PolicyAttrs {
     /// Returns `false` when capacity is exhausted.
     #[inline]
     pub fn insert(&mut self, id: ContextId, value: ContextValue) -> bool {
+        if let Some(idx) = core_attr_index(id) {
+            self.present |= 1u32 << idx;
+            self.core_values[idx] = value.raw();
+            return true;
+        }
+
         let mut idx = 0usize;
-        while idx < self.len as usize {
-            if self.entries[idx].id == id {
-                self.entries[idx].value = value;
+        while idx < self.ext_len as usize {
+            if self.ext_attrs[idx].id == id {
+                self.ext_attrs[idx].value = value;
                 return true;
             }
             idx += 1;
         }
-        if self.len as usize >= Self::CAPACITY {
+        if self.ext_len as usize >= Self::CAPACITY {
             return false;
         }
-        self.entries[self.len as usize] = ContextEntry { id, value };
-        self.len += 1;
+        self.ext_attrs[self.ext_len as usize] = ExtAttr { id, value };
+        self.ext_len += 1;
         true
     }
 
     /// Query an attribute by context id.
     #[inline]
     pub fn query(&self, id: ContextId) -> Option<ContextValue> {
+        if let Some(idx) = core_attr_index(id) {
+            let bit = 1u32 << idx;
+            if (self.present & bit) != 0 {
+                return Some(ContextValue::from_u64(self.core_values[idx]));
+            }
+            return None;
+        }
+
         let mut idx = 0usize;
-        while idx < self.len as usize {
-            let entry = self.entries[idx];
-            if entry.id == id {
+        while idx < self.ext_len as usize {
+            let entry = self.ext_attrs[idx];
+            if entry.id.raw() == id.raw() {
                 return Some(entry.value);
             }
             idx += 1;
@@ -303,12 +344,12 @@ impl PolicyAttrs {
 
     #[inline]
     pub const fn is_empty(&self) -> bool {
-        self.len == 0
+        self.present == 0 && self.ext_len == 0
     }
 
     #[inline]
     pub const fn len(&self) -> usize {
-        self.len as usize
+        self.present.count_ones() as usize + self.ext_len as usize
     }
 
     /// Deterministic 32-bit digest of current attributes (FNV-1a).
@@ -342,10 +383,21 @@ impl PolicyAttrs {
             out
         }
 
-        let mut hash = mix_u8(OFFSET, self.len);
+        let mut hash = mix_u8(OFFSET, self.present.count_ones() as u8);
+        hash = mix_u8(hash, self.ext_len);
+
         let mut idx = 0usize;
-        while idx < self.len as usize {
-            let entry = self.entries[idx];
+        while idx < CORE_ATTR_COUNT {
+            if (self.present & (1u32 << idx)) != 0 {
+                hash = mix_u16(hash, CORE_ATTR_IDS[idx].raw());
+                hash = mix_u64(hash, self.core_values[idx]);
+            }
+            idx += 1;
+        }
+
+        idx = 0usize;
+        while idx < self.ext_len as usize {
+            let entry = self.ext_attrs[idx];
             hash = mix_u16(hash, entry.id.raw());
             hash = mix_u64(hash, entry.value.raw());
             idx += 1;
@@ -356,14 +408,66 @@ impl PolicyAttrs {
     /// Copy attributes from another map (best-effort within fixed capacity).
     #[inline]
     pub fn copy_from(&mut self, src: &PolicyAttrs) {
+        self.present |= src.present;
         let mut idx = 0usize;
-        while idx < src.len as usize {
-            let entry = src.entries[idx];
+        while idx < CORE_ATTR_COUNT {
+            if (src.present & (1u32 << idx)) != 0 {
+                self.core_values[idx] = src.core_values[idx];
+            }
+            idx += 1;
+        }
+
+        idx = 0usize;
+        while idx < src.ext_len as usize {
+            let entry = src.ext_attrs[idx];
             if !self.insert(entry.id, entry.value) {
                 return;
             }
             idx += 1;
         }
+    }
+
+    #[inline]
+    pub const fn get(&self, id: ContextId) -> Option<ContextValue> {
+        if let Some(idx) = core_attr_index(id) {
+            let bit = 1u32 << idx;
+            if (self.present & bit) != 0 {
+                return Some(ContextValue::from_u64(self.core_values[idx]));
+            }
+            return None;
+        }
+
+        let mut idx = 0usize;
+        while idx < self.ext_len as usize {
+            let entry = self.ext_attrs[idx];
+            if entry.id.raw() == id.raw() {
+                return Some(entry.value);
+            }
+            idx += 1;
+        }
+        None
+    }
+}
+
+#[inline]
+const fn core_attr_index(id: ContextId) -> Option<usize> {
+    match id.raw() {
+        raw if raw == core::RV_ID.raw() => Some(0),
+        raw if raw == core::SESSION_ID.raw() => Some(1),
+        raw if raw == core::LANE.raw() => Some(2),
+        raw if raw == core::TAG.raw() => Some(3),
+        raw if raw == core::LATENCY_US.raw() => Some(4),
+        raw if raw == core::QUEUE_DEPTH.raw() => Some(5),
+        raw if raw == core::PACING_INTERVAL_US.raw() => Some(6),
+        raw if raw == core::CONGESTION_MARKS.raw() => Some(7),
+        raw if raw == core::RETRANSMISSIONS.raw() => Some(8),
+        raw if raw == core::PTO_COUNT.raw() => Some(9),
+        raw if raw == core::SRTT_US.raw() => Some(10),
+        raw if raw == core::LATEST_ACK_PN.raw() => Some(11),
+        raw if raw == core::CONGESTION_WINDOW.raw() => Some(12),
+        raw if raw == core::IN_FLIGHT_BYTES.raw() => Some(13),
+        raw if raw == core::TRANSPORT_ALGORITHM.raw() => Some(14),
+        _ => None,
     }
 }
 
@@ -415,7 +519,7 @@ mod tests {
         let mut attrs = PolicyAttrs::new();
         for i in 0..PolicyAttrs::CAPACITY {
             assert!(attrs.insert(
-                ContextId::new(i as u16 + 1),
+                ContextId::new(0x8000u16.saturating_add(i as u16)),
                 ContextValue::from_u16(i as u16),
             ));
         }

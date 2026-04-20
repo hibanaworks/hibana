@@ -193,8 +193,7 @@ The app-facing owners at the crate root are:
 The public surface stays small because guarantees are pushed into the type
 system:
 
-- projection stays typed through `RoleProgram<'prog, ROLE, Mint>` and defaults
-  to `RoleProgram<'prog, ROLE>`
+- projection stays typed through `RoleProgram<ROLE>`
 - `g::route` rejects duplicate labels and controller mismatches before runtime
 - `g::par` rejects empty fragments and role/lane overlap before runtime
 - localside runtime is fail-closed for label and payload mismatches
@@ -217,15 +216,19 @@ g::seq(transport prefix, g::seq(appkit prefix, APP))
 
 The intended split is:
 
-1. App code writes `APP: g::Program<_>`
-2. A protocol crate composes transport and appkit prefixes around `APP`
-3. The protocol crate projects a typed role witness with `project(&PROGRAM)`
+1. App code builds a local choreography term with `hibana::g`
+2. A protocol crate composes transport and appkit prefixes around that local term
+3. The protocol crate projects a typed role witness with `project(&program)`
 4. The protocol crate attaches transport, binding, and policy, then returns
    the first app endpoint
 5. App code continues only through the localside core API
 
 This keeps the user-facing path small while preserving typed projection and a
 protocol-neutral core.
+
+`Program<Steps>` stays public as the choreography witness, but on stable Rust
+the canonical path is local `let` inference rather than a named item
+signature. Keep choreography terms local and project them immediately.
 
 ### Driver and Branching
 
@@ -299,11 +302,24 @@ There is no second composition DSL.
 use hibana::g;
 use hibana::g::advanced::{RoleProgram, project};
 
-const PROGRAM: g::Program<_> =
-    g::seq(TRANSPORT_PREFIX, g::seq(APPKIT_PREFIX, APP));
+let transport_prefix = g::seq(
+    g::send::<g::Role<0>, g::Role<1>, g::Msg<1, ()>, 0>(),
+    g::send::<g::Role<1>, g::Role<0>, g::Msg<2, ()>, 0>(),
+);
+let appkit_prefix =
+    g::send::<g::Role<0>, g::Role<1>, g::Msg<3, ()>, 0>();
+let app = g::seq(
+    g::send::<g::Role<0>, g::Role<1>, g::Msg<10, u32>, 0>(),
+    g::send::<g::Role<1>, g::Role<0>, g::Msg<11, u32>, 0>(),
+);
+let program = g::seq(transport_prefix, g::seq(appkit_prefix, app));
 
-let client: RoleProgram<'_, 0> = project(&PROGRAM);
+let client: RoleProgram<0> = project(&program);
 ```
+
+The composed `program` witness is zero-sized. It exists to carry the typed
+choreography into `project(&program)`, not to serve as a reusable item-level
+runtime artifact.
 
 ### Substrate Surface
 
@@ -364,20 +380,19 @@ Handling rules are fixed:
 - the operation itself comes from the control kind's resource tag, not from a
   second DSL
 
-The built-in control kind catalogue lives under
-`hibana::substrate::cap::advanced`:
+Core keeps only the generic control-capability mechanism plus the built-in
+route / loop kinds under `hibana::substrate::cap::advanced`:
 
-- route and loop: `RouteDecisionKind`, `LoopContinueKind`, `LoopBreakKind`
-- checkpoint and recovery: `CheckpointKind`, `CommitKind`, `RollbackKind`,
-  `CancelKind`, `CancelAckKind`
-- splice and reroute: `SpliceIntentKind`, `SpliceAckKind`, `RerouteKind`
-- policy lifecycle: `PolicyLoadKind`, `PolicyActivateKind`, `PolicyRevertKind`,
-  `PolicyAnnotateKind`
-- management load protocol: `LoadBeginKind`, `LoadCommitKind`
+- `RouteDecisionKind`
+- `LoopContinueKind`
+- `LoopBreakKind`
 
 If a protocol needs a custom control kind, implement the capability traits in
 `hibana::substrate::cap::advanced` and carry that kind through
 `GenericCapToken<K>` plus `CanonicalControl<K>` or `ExternalControl<K>`.
+
+Management load kinds and policy lifecycle kinds live in sibling crates. Core
+does not publish those vocabularies.
 
 Control kinds are still just message types in the choreography:
 
@@ -386,8 +401,10 @@ use hibana::g;
 use hibana::g::advanced::{CanonicalControl, ExternalControl};
 use hibana::substrate::cap::{ControlResourceKind, GenericCapToken};
 use hibana::substrate::cap::advanced::{
-    LoopContinueKind, SpliceIntentKind,
+    CAP_HANDLE_LEN, CapError, CapsMask, ControlHandling, ControlScopeKind,
+    ControlMint, LoopContinueKind, ScopeId,
 };
+use hibana::substrate::{Lane, SessionId};
 
 let loop_continue = g::send::<
     g::Role<0>,
@@ -400,13 +417,40 @@ let loop_continue = g::send::<
     0,
 >();
 
-let splice_intent = g::send::<
+struct CustomExternalKind;
+
+impl hibana::substrate::cap::ResourceKind for CustomExternalKind {
+    type Handle = ();
+    const TAG: u8 = 0x90;
+    const NAME: &'static str = "CustomExternal";
+    const AUTO_MINT_EXTERNAL: bool = false;
+
+    fn encode_handle(_: &Self::Handle) -> [u8; CAP_HANDLE_LEN] { [0; CAP_HANDLE_LEN] }
+    fn decode_handle(_: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> { Ok(()) }
+    fn zeroize(_: &mut Self::Handle) {}
+    fn caps_mask(_: &Self::Handle) -> CapsMask { CapsMask::empty() }
+    fn scope_id(_: &Self::Handle) -> Option<ScopeId> { None }
+}
+
+impl hibana::substrate::cap::ControlResourceKind for CustomExternalKind {
+    const LABEL: u8 = 90;
+    const SCOPE: ControlScopeKind = ControlScopeKind::None;
+    const TAP_ID: u16 = 0;
+    const SHOT: hibana::substrate::cap::CapShot = hibana::substrate::cap::CapShot::One;
+    const HANDLING: ControlHandling = ControlHandling::External;
+}
+
+impl ControlMint for CustomExternalKind {
+    fn mint_handle(_: SessionId, _: Lane, _: ScopeId) -> Self::Handle { () }
+}
+
+let custom_external = g::send::<
     g::Role<0>,
     g::Role<1>,
     g::Msg<
-        { <SpliceIntentKind as ControlResourceKind>::LABEL },
-        GenericCapToken<SpliceIntentKind>,
-        ExternalControl<SpliceIntentKind>,
+        { <CustomExternalKind as ControlResourceKind>::LABEL },
+        GenericCapToken<CustomExternalKind>,
+        ExternalControl<CustomExternalKind>,
     >,
     0,
 >();
@@ -425,43 +469,48 @@ Capability-building owners live in two layers:
 
 ### Transport
 
-`hibana::substrate::Transport` is the protocol-neutral I/O seam. It owns send,
-recv, requeue, event draining, hint exposure, metrics, and pacing updates.
-`Send` and `Recv` future types must be `Unpin`.
+`hibana::substrate::Transport` is the protocol-neutral I/O seam. It owns
+`poll_send`, `poll_recv`, requeue, event draining, hint exposure, metrics, and
+pacing updates. Public endpoint futures stay transport-erased; pending state and
+wakers live in transport-owned handles or transport-owned shared state.
 
 ```rust
+use core::task::{Context, Poll};
+
 struct MyTransport;
 
 impl hibana::substrate::Transport for MyTransport {
     type Error = hibana::substrate::transport::TransportError;
     type Tx<'a> = () where Self: 'a;
     type Rx<'a> = () where Self: 'a;
-    type Send<'a> = core::future::Ready<Result<(), Self::Error>> where Self: 'a;
-    type Recv<'a> =
-        core::future::Ready<Result<hibana::substrate::wire::Payload<'a>, Self::Error>>
-    where
-        Self: 'a;
     type Metrics = ();
 
     fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
         ((), ())
     }
 
-    fn send<'a, 'f>(
+    fn poll_send<'a, 'f>(
         &'a self,
         _tx: &'a mut Self::Tx<'a>,
         _outgoing: hibana::substrate::transport::Outgoing<'f>,
-    ) -> Self::Send<'a>
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>>
     where
         'a: 'f,
     {
-        core::future::ready(Ok(()))
+        Poll::Ready(Ok(()))
     }
 
-    fn recv<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
+    fn poll_recv<'a>(
+        &'a self,
+        _rx: &'a mut Self::Rx<'a>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<hibana::substrate::wire::Payload<'a>, Self::Error>> {
         static EMPTY: [u8; 0] = [];
-        core::future::ready(Ok(hibana::substrate::wire::Payload::new(&EMPTY)))
+        Poll::Ready(Ok(hibana::substrate::wire::Payload::new(&EMPTY)))
     }
+
+    fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
     fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
 
@@ -493,6 +542,7 @@ Transport rules:
 
 - `recv()` must yield borrowed payload views
 - `recv()` and `decode()` return the decoded view chosen by the payload owner
+- `cancel_send()` must discard transport-owned staged send state before retry
 - `requeue()` is how transport hands an unconsumed frame back
 - `drain_events()` feeds protocol-neutral transport observation
 - `recv_label_hint()` is a demux hint, not route authority
@@ -621,7 +671,7 @@ Supporting binding owners:
 Dynamic policy stays explicit:
 
 - annotate the choreography with `Program::policy::<POLICY_ID>()`
-- register a resolver with `set_resolver::<POLICY_ID, ROLE, _>(...)`
+- register a resolver with `set_resolver::<POLICY_ID, ROLE>(...)`
 - read inputs through `ResolverContext::input(index)` and attrs through
   `ResolverContext::attr(id)`
 - return `Result<DynamicResolution, ResolverError>`
@@ -681,7 +731,7 @@ fn route_resolver(
 
 let route_policy = RoutePolicy { preferred_arm: 1 };
 
-cluster.set_resolver::<POLICY_ID, 0, _>(
+cluster.set_resolver::<POLICY_ID, 0>(
     rv_id,
     &CLIENT,
     hibana::substrate::policy::ResolverRef::from_state(&route_policy, route_resolver),
@@ -712,14 +762,10 @@ Transport telemetry is surfaced two ways:
 - `TransportMetrics` turns implementation-specific counters into
   `TransportSnapshot`
 
-Example snapshot construction:
+Example snapshot access:
 
 ```rust
-let snapshot = hibana::substrate::transport::TransportSnapshot::new(Some(500), Some(2))
-    .with_retransmissions(Some(1))
-    .with_congestion_window(Some(65_536))
-    .with_in_flight(Some(4096))
-    .with_algorithm(Some(hibana::substrate::transport::TransportAlgorithm::Cubic));
+let snapshot = hibana::substrate::transport::TransportSnapshot::default();
 
 let transport_event = hibana::substrate::transport::TransportEvent::new(
     hibana::substrate::transport::TransportEventKind::Ack,
@@ -728,15 +774,15 @@ let transport_event = hibana::substrate::transport::TransportEvent::new(
     0,
 );
 
-let _ = (snapshot.queue_depth, transport_event.packet_number);
+let _ = (snapshot.queue_depth(), transport_event.packet_number);
 ```
 
-`TransportSnapshot` uses builder-style enrichment:
+`TransportSnapshot` is a packed observation view:
 
-- `TransportSnapshot::new(latency_us, queue_depth)`
-- `with_congestion_marks`, `with_pacing_interval`, `with_retransmissions`
-- `with_pto_count`, `with_srtt`, `with_latest_ack`
-- `with_congestion_window`, `with_in_flight`, `with_algorithm`
+- use getter methods such as `latency_us()`, `queue_depth()`,
+  `retransmissions()`, `congestion_window()`, and `algorithm()`
+- transports own metric collection and publish packed snapshots through
+  `TransportMetrics::snapshot()`
 
 ### Management Boundary
 
@@ -753,11 +799,12 @@ Management-style usage still follows the normal substrate path:
 use hibana::g;
 use hibana::g::advanced::project;
 
-const PROGRAM: g::Program<_> =
-    g::seq(MGMT_PREFIX, APP);
+let mgmt_prefix = build_management_prefix();
+let app = build_app();
+let program = g::seq(mgmt_prefix, app);
 
-let controller_program = project(&PROGRAM);
-let cluster_program = project(&PROGRAM);
+let controller_program: hibana::g::advanced::RoleProgram<0> = project(&program);
+let cluster_program: hibana::g::advanced::RoleProgram<1> = project(&program);
 
 let controller = cluster.enter(
     rv_id,
@@ -803,6 +850,12 @@ cargo test -p hibana --test docs_surface --features std
 
 These checks keep the public surface small, keep `no_std` healthy, and guard
 the compile-time guarantees described above.
+
+Rust 1.95 remains a compatibility lane:
+
+```bash
+bash ./.github/scripts/check_stable_1_95.sh
+```
 
 Before pushing, also verify these invariants:
 

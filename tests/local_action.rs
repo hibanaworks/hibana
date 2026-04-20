@@ -8,7 +8,6 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 use common::TestTransport;
 use hibana::{
-    g::advanced::steps::{SendStep, StepCons, StepNil},
     g::advanced::{RoleProgram, project},
     g::{self, Msg, Role},
     substrate::{
@@ -55,11 +54,6 @@ impl WirePayload for InstallPayload {
     }
 }
 
-const PROGRAM: g::Program<
-    StepCons<SendStep<Role<0>, Role<0>, Msg<7, InstallPayload>, 0>, StepNil>,
-> = g::send::<Role<0>, Role<0>, Msg<7, InstallPayload>, 0>();
-
-static ACTOR_PROGRAM: RoleProgram<'static, 0> = project(&PROGRAM);
 type TestKit = SessionKit<
     'static,
     TestTransport,
@@ -84,6 +78,8 @@ fn run_local_action_flow(
     slab: &'static mut [u8],
     transport: &TestTransport,
 ) {
+    let program = g::send::<Role<0>, Role<0>, Msg<7, InstallPayload>, 0>();
+    let actor_program: RoleProgram<0> = project(&program);
     let rv_id = cluster
         .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
         .expect("register rendezvous");
@@ -95,7 +91,7 @@ fn run_local_action_flow(
     };
 
     let mut endpoint = cluster
-        .enter(rv_id, sid, &ACTOR_PROGRAM, NoBinding)
+        .enter(rv_id, sid, &actor_program, NoBinding)
         .expect("attach actor endpoint");
     let outcome = futures::executor::block_on(
         endpoint

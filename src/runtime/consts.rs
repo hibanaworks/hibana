@@ -24,25 +24,9 @@ pub const LABEL_COMMIT: u8 = 62;
 /// Reserved label used for typed rollback intents.
 pub const LABEL_ROLLBACK: u8 = 63;
 
-/// Reserved management route/load labels retained by core capability metadata.
-pub const LABEL_MGMT_LOAD_BEGIN: u8 = 40; // For GenericCapToken<LoadBeginKind>
-pub const LABEL_MGMT_LOAD_COMMIT: u8 = 43; // For GenericCapToken<LoadCommitKind>
-pub const LABEL_MGMT_ROUTE_LOAD: u8 = 64;
-pub const LABEL_MGMT_ROUTE_ACTIVATE: u8 = 65;
-pub const LABEL_MGMT_ROUTE_REVERT: u8 = 66;
-pub const LABEL_MGMT_ROUTE_STATS: u8 = 67;
-pub const LABEL_MGMT_ROUTE_LOAD_FAMILY: u8 = 68;
-pub const LABEL_MGMT_ROUTE_LOAD_AND_ACTIVATE: u8 = 69;
-pub const LABEL_MGMT_ROUTE_REPLY_ERROR: u8 = 70;
-pub const LABEL_MGMT_ROUTE_REPLY_LOADED: u8 = 71;
-pub const LABEL_MGMT_ROUTE_REPLY_ACTIVATED: u8 = 72;
-pub const LABEL_MGMT_ROUTE_REPLY_REVERTED: u8 = 73;
-pub const LABEL_MGMT_ROUTE_REPLY_STATS: u8 = 74;
-pub const LABEL_MGMT_ROUTE_COMMAND_FAMILY: u8 = 75;
-pub const LABEL_MGMT_ROUTE_COMMAND_TAIL: u8 = 76;
-pub const LABEL_MGMT_ROUTE_REPLY_SUCCESS_FAMILY: u8 = 78;
-pub const LABEL_MGMT_ROUTE_REPLY_SUCCESS_TAIL: u8 = 79;
-pub const LABEL_MGMT_ROUTE_REPLY_SUCCESS_FINAL: u8 = 80;
+/// Reserved management load labels retained for control metadata interop.
+pub const LABEL_MGMT_LOAD_BEGIN: u8 = 40;
+pub const LABEL_MGMT_LOAD_COMMIT: u8 = 43;
 
 // Control message label range (for route.case with GenericCapToken<ResourceKind>)
 // These labels carry GenericCapToken<ResourceKind> payloads for control-plane operations

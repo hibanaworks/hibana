@@ -1,8 +1,8 @@
-pub struct Endpoint<'r, const ROLE: u8, K, Mint = crate::control::cap::mint::MintConfig> where K: carrier::SessionKitFamily + 'r, Mint: MintConfigMarker, {
-pub struct RouteBranch<'e, 'r, const ROLE: u8, K, Mint = crate::control::cap::mint::MintConfig> where K: carrier::SessionKitFamily + 'r, Mint: MintConfigMarker, {
-pub fn flow<'e, M>( &'e mut self, ) -> SendResult< flow::Flow<'e, 'r, ROLE, M, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>, > where M: crate::global::MessageSpec + crate::global::SendableLabel, 'cfg: 'r, {
+pub struct Endpoint<'r, const ROLE: u8> {
+pub struct RouteBranch<'e, 'r, const ROLE: u8> {
+pub fn flow<'e, M>( &'e mut self, ) -> SendResult<flow::Flow<'e, 'r, ROLE, M>> where M: crate::global::MessageSpec + crate::global::SendableLabel, {
 pub fn recv<'e, M>(&'e mut self) -> impl core::future::Future<Output = RecvResult<<<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>>> + 'e where M: crate::global::MessageSpec + 'e, M::Payload: crate::transport::wire::WirePayload, {
-pub fn offer<'e>( &'e mut self, ) -> impl core::future::Future<Output = RecvResult<RouteBranch<'e, 'r, ROLE, crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>, Mint>>> + 'e {
+pub fn offer<'e>( &'e mut self, ) -> impl core::future::Future<Output = RecvResult<RouteBranch<'e, 'r, ROLE>>> + 'e {
 pub fn label(&self) -> u8 {
 pub fn decode<M>(self) -> impl core::future::Future<Output = RecvResult<<<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::Decoded<'e>>> where M: crate::global::MessageSpec, M::Payload: crate::transport::wire::WirePayload, {
 pub enum SendError {

@@ -1,0 +1,11 @@
+error[E0425]: cannot find value `compile` in module `hibana::g`
+ --> tests/ui/public_compile_link_reintroduction.rs:2:24
+  |
+2 |     let _ = hibana::g::compile;
+  |                        ^^^^^^^ not found in `hibana::g`
+
+error[E0425]: cannot find value `link` in module `hibana::g`
+ --> tests/ui/public_compile_link_reintroduction.rs:3:24
+  |
+3 |     let _ = hibana::g::link;
+  |                        ^^^^ not found in `hibana::g`

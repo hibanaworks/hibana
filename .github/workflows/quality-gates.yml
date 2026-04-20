@@ -11,6 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: thumbv6m-none-eabi
       - name: Install ripgrep
         run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Policy surface hygiene gate
@@ -45,6 +48,8 @@ jobs:
         run: ./.github/scripts/check_pico_size_matrix.sh
       - name: Pico smoke gate
         run: ./.github/scripts/check_pico_smoke.sh
+      - name: Rust 1.95 compatibility gate
+        run: ./.github/scripts/check_stable_1_95.sh
       - name: Cargo check
         run: cargo check --all-targets -p hibana
       - name: Cargo test std

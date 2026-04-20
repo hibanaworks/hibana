@@ -743,7 +743,7 @@ impl PhaseCursor {
     ///
     /// Returns `Err(JumpError)` if the Jump chain exceeds MAX_EFF_NODES iterations,
     /// indicating a CFG cycle bug in the typestate compiler.
-    #[inline(always)]
+    #[inline(never)]
     pub(crate) fn try_follow_jumps_in_place(&mut self) -> Result<(), JumpError> {
         let mut iter = 0u32;
         while self.is_jump() {
@@ -772,7 +772,7 @@ impl PhaseCursor {
     /// Advance to the next node, then follow Jump nodes.
     ///
     /// Returns `Err(JumpError)` if the Jump chain exceeds MAX_EFF_NODES iterations.
-    #[inline(always)]
+    #[inline(never)]
     pub(crate) fn try_advance_past_jumps_in_place(&mut self) -> Result<(), JumpError> {
         self.advance_in_place();
         self.try_follow_jumps_in_place()

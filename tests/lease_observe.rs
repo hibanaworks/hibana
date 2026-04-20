@@ -10,9 +10,8 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 use common::TestTransport;
 use hibana::{
-    g::advanced::steps::StepNil,
     g::advanced::{RoleProgram, project},
-    g::{self},
+    g::{self, Msg, Role},
     substrate::{
         Lane, SessionId, SessionKit,
         binding::NoBinding,
@@ -23,9 +22,6 @@ use hibana::{
 use runtime_support::{RING_EVENTS, with_fixture};
 use tls_ref_support::with_tls_ref;
 
-const PROGRAM: g::Program<StepNil> = StepNil::PROGRAM;
-
-static CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&PROGRAM);
 type TestKit = SessionKit<
     'static,
     TestTransport,
@@ -42,6 +38,11 @@ std::thread_local! {
 
 const LANE_ACQUIRE_ID: u16 = 0x0210;
 const LANE_RELEASE_ID: u16 = 0x0211;
+
+fn controller_program() -> RoleProgram<0> {
+    let program = g::send::<Role<0>, Role<1>, Msg<1, ()>, 0>();
+    project(&program)
+}
 
 fn decode_sid_lane(packed: u32) -> (u32, u16) {
     let sid = packed >> 16;
@@ -69,8 +70,9 @@ fn lease_observe_tracks_lane_lifecycle() {
 
                 let sid = SessionId::new(7);
                 let lane = Lane::new(0);
+                let controller_program = controller_program();
                 let _endpoint = cluster
-                    .enter(rv_id, sid, &CONTROLLER_PROGRAM, NoBinding)
+                    .enter(rv_id, sid, &controller_program, NoBinding)
                     .expect("attach cursor");
 
                 (rv_id.raw() as u32, sid.raw(), lane.raw() as u16)

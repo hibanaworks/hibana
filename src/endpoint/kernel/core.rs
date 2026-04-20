@@ -3,10 +3,7 @@
 //! The kernel endpoint owns the rendezvous port outright and advances
 //! according to the typestate cursor obtained from `RoleProgram` projection.
 
-use core::{
-    convert::TryFrom, future::Future, marker::PhantomData, ops::ControlFlow, pin::Pin,
-    task::Poll,
-};
+use core::{convert::TryFrom, ops::ControlFlow, task::Poll};
 
 use super::authority::{
     Arm, DeferReason, DeferSource, LoopDecision, RouteDecisionSource, RouteDecisionToken,
@@ -33,12 +30,9 @@ use crate::global::typestate::{
     ARM_SHARED, JumpReason, LoopMetadata, LoopRole, PassiveArmNavigation, PhaseCursor, RecvMeta,
     SendMeta, StateIndex, state_index_to_usize,
 };
-use crate::global::{
-    CanonicalControl, ControlHandling, ControlPayloadKind, ExternalControl, MessageSpec, NoControl,
-    SendableLabel,
-    compiled::images::{ControlSemanticKind, ControlSemanticsTable},
-};
-use crate::runtime::config::Clock;
+use crate::global::compiled::images::{ControlSemanticKind, ControlSemanticsTable};
+#[cfg(test)]
+use crate::global::{MessageSpec, SendableLabel};
 use crate::{
     control::types::{Lane, RendezvousId, SessionId},
     control::{
@@ -52,7 +46,7 @@ use crate::{
                 CAP_TOKEN_LEN, CapShot, ControlMint, E0, EndpointEpoch, EpochTable, EpochTbl,
                 GenericCapToken, MintConfigMarker, Owner, ResourceKind,
             },
-            typed_tokens::{CapFlowToken, ErasedRegisteredCapToken, RegisteredTokenParts},
+            typed_tokens::{CapFlowToken, RawRegisteredCapToken, RegisteredTokenParts},
         },
         cluster::{
             core::{DynamicResolution, SpliceOperands},
@@ -63,7 +57,7 @@ use crate::{
     endpoint::{
         RecvError, RecvResult, SendError, SendResult,
         affine::LaneGuard,
-        control::{ControlOutcome, SessionControlCtx},
+        control::SessionControlCtx,
     },
     observe::core::{TapEvent, emit},
     observe::scope::ScopeTrace,
@@ -75,7 +69,7 @@ use crate::{
     transport::{
         Transport, TransportMetrics,
         trace::TapFrameMeta,
-        wire::{FrameFlags, Payload, WireEncode},
+        wire::{FrameFlags, Payload},
     },
 };
 
@@ -212,7 +206,7 @@ fn endpoint_scope_label_meta<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize
 where
     T: Transport,
     U: LabelUniverse,
-    C: Clock,
+    C: crate::runtime::config::Clock,
     E: EpochTable,
     Mint: MintConfigMarker,
     B: BindingSlot + 'r,
@@ -442,6 +436,11 @@ pub struct CursorEndpoint<
     pub(super) public_slot: EndpointLeaseId,
     pub(super) public_generation: u32,
     pub(super) public_slot_owned: bool,
+    pub(in crate::endpoint) public_offer_state: OfferState<'r>,
+    pub(in crate::endpoint) public_route_branch: Option<MaterializedRouteBranch<'r>>,
+    pub(in crate::endpoint) public_recv_state: super::recv::RecvState,
+    pub(in crate::endpoint) public_decode_state: super::decode::DecodeState<'r>,
+    pub(in crate::endpoint) public_send_state: SendState<'r>,
     pub(super) control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
     pub(super) route_state: LeasedState<RouteState>,
     pub(super) frontier_state: LeasedState<FrontierState>,
@@ -475,7 +474,22 @@ pub struct RouteBranch<
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum StagedPayload<'a> {
+pub(crate) struct MaterializedRouteBranch<'r> {
+    pub(crate) label: u8,
+    pub(in crate::endpoint::kernel) binding_classification: PackedIncomingClassification,
+    pub(crate) staged_payload: Option<StagedPayload<'r>>,
+    pub(crate) branch_meta: BranchMeta,
+}
+
+impl<'r> MaterializedRouteBranch<'r> {
+    #[inline]
+    pub(crate) const fn label(&self) -> u8 {
+        self.label
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum StagedPayload<'a> {
     Transport { lane: u8, payload: Payload<'a> },
     Binding { lane: u8, payload: Payload<'a> },
 }
@@ -548,26 +562,69 @@ where
     }
 }
 
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
+    From<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> for MaterializedRouteBranch<'r>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker,
+    B: BindingSlot + 'r,
+{
+    #[inline]
+    fn from(branch: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>) -> Self {
+        Self {
+            label: branch.label,
+            binding_classification: branch.binding_classification,
+            staged_payload: branch.staged_payload,
+            branch_meta: branch.branch_meta,
+        }
+    }
+}
+
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B> From<MaterializedRouteBranch<'r>>
+    for RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker,
+    B: BindingSlot + 'r,
+{
+    #[inline]
+    fn from(branch: MaterializedRouteBranch<'r>) -> Self {
+        Self {
+            label: branch.label,
+            binding_classification: branch.binding_classification,
+            staged_payload: branch.staged_payload,
+            branch_meta: branch.branch_meta,
+            _cfg: core::marker::PhantomData,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
-struct ErasedCapFlowToken {
+pub(crate) struct RawCapFlowToken {
     bytes: [u8; CAP_TOKEN_LEN],
 }
 
-impl ErasedCapFlowToken {
+impl RawCapFlowToken {
     #[inline(always)]
-    fn from_typed<K: ResourceKind>(token: CapFlowToken<K>) -> Self {
+    pub(crate) fn from_typed<K: ResourceKind>(token: CapFlowToken<K>) -> Self {
         Self {
             bytes: token.into_bytes(),
         }
     }
 
     #[inline(always)]
-    fn bytes(self) -> [u8; CAP_TOKEN_LEN] {
+    pub(crate) fn bytes(self) -> [u8; CAP_TOKEN_LEN] {
         self.bytes
     }
 
     #[inline(always)]
-    fn into_generic<K: ResourceKind>(self) -> GenericCapToken<K> {
+    pub(crate) fn into_generic<K: ResourceKind>(self) -> GenericCapToken<K> {
         GenericCapToken::from_bytes(self.bytes)
     }
 
@@ -577,33 +634,21 @@ impl ErasedCapFlowToken {
     }
 }
 
-#[derive(Clone, Copy)]
-struct SendDescriptor<E> {
-    label: u8,
-    expects_control: bool,
-    mint_token: MintSendTokenFn<E>,
+struct PreparedSendControl {
+    minted_token: Option<RawCapFlowToken>,
     stage_payload: StageSendPayloadFn,
-    dispatch_control: DispatchSendTokenFn<E>,
-}
-
-struct PreparedSendControl<E> {
-    minted_token: Option<ErasedCapFlowToken>,
-    stage_payload: StageSendPayloadFn,
-    dispatch_control: DispatchSendTokenFn<E>,
+    dispatch_resource_tag: Option<u8>,
 }
 
 #[derive(Clone, Copy)]
 enum StagedSendControl {
     None,
-    Canonical(ErasedCapFlowToken),
+    Canonical(RawCapFlowToken),
     External {
-        dispatch_token: Option<ErasedCapFlowToken>,
-        external_token: Option<ErasedCapFlowToken>,
+        dispatch_token: Option<RawCapFlowToken>,
+        external_token: Option<RawCapFlowToken>,
     },
 }
-
-type MintSendTokenFn<E> = fn(&mut E, SendMeta) -> SendResult<Option<ErasedCapFlowToken>>;
-type DispatchSendTokenFn<E> = fn(&E, ErasedCapFlowToken) -> SendResult<DispatchSendTokenResult>;
 
 enum DispatchSendTokenResult {
     None,
@@ -612,8 +657,8 @@ enum DispatchSendTokenResult {
 }
 
 type StageSendPayloadFn = for<'payload, 'scratch> fn(
-    Option<ErasedCapFlowToken>,
-    Option<lane_port::ErasedSendPayload<'payload>>,
+    Option<RawCapFlowToken>,
+    Option<lane_port::RawSendPayload>,
     &'scratch mut [u8],
 ) -> SendResult<StagedSendPayload>;
 
@@ -622,114 +667,99 @@ struct StagedSendPayload {
     control: StagedSendControl,
 }
 
-struct SendTransportEmission<E> {
+#[derive(Clone, Copy)]
+pub(crate) struct SendTransportEmission {
     control: StagedSendControl,
-    dispatch_control: DispatchSendTokenFn<E>,
+    dispatch_resource_tag: Option<u8>,
 }
 
-struct PendingSendTransport<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-where
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: BindingSlot,
-{
-    transport: lane_port::PendingSend<'r, T>,
+pub(crate) struct PendingSendIo<'r> {
+    transport: lane_port::PendingSend<'r>,
+    lane_idx: usize,
     control: Option<StagedSendControl>,
-    dispatch_control: DispatchSendTokenFn<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>,
+    dispatch_resource_tag: Option<u8>,
 }
 
-enum SendTransportStep<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-where
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: BindingSlot,
-{
-    Immediate(SendTransportEmission<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>),
-    Pending(PendingSendTransport<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>),
+enum SendTransportStep<'r> {
+    Immediate(SendTransportEmission),
+    Pending(PendingSendIo<'r>),
 }
 
-enum ErasedControlOutcome<'rv> {
+enum SendInitOutcome<'r> {
+    Ready(SendResult<SendControlOutcome<'r>>),
+    Pending {
+        meta: SendMeta,
+        preview_cursor_index: Option<StateIndex>,
+        pending: PendingSendIo<'r>,
+    },
+    Commit {
+        meta: SendMeta,
+        preview_cursor_index: Option<StateIndex>,
+        emission: SendTransportEmission,
+    },
+}
+
+pub(crate) enum SendControlOutcome<'rv> {
     None,
-    Canonical(ErasedRegisteredCapToken<'rv>),
-    External(ErasedCapFlowToken),
+    Canonical(RawRegisteredCapToken<'rv>),
+    External(RawCapFlowToken),
 }
 
-enum SendWithPreviewState<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-where
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: BindingSlot,
-    'r: 'a,
-{
+#[derive(Clone, Copy)]
+pub(crate) enum SendHandling {
+    None,
+    Canonical,
+    External { auto_mint_external: bool },
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct SendDesc {
+    label: u8,
+    expects_control: bool,
+    handling: SendHandling,
+    resource_tag: Option<u8>,
+}
+
+impl SendDesc {
+    #[inline]
+    pub(crate) const fn new(
+        label: u8,
+        expects_control: bool,
+        handling: SendHandling,
+        resource_tag: Option<u8>,
+    ) -> Self {
+        Self {
+            label,
+            expects_control,
+            handling,
+            resource_tag,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn label(self) -> u8 {
+        self.label
+    }
+}
+
+pub(crate) enum SendState<'r> {
     Init {
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
-        payload: Option<lane_port::ErasedSendPayload<'a>>,
+        payload: Option<lane_port::RawSendPayload>,
     },
     Sending {
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
-        pending: PendingSendTransport<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        pending: PendingSendIo<'r>,
+    },
+    Committing {
+        meta: SendMeta,
+        preview_cursor_index: Option<StateIndex>,
+        emission: SendTransportEmission,
+        handling: SendHandling,
     },
     Done,
-}
-
-pub(crate) struct SendWithPreviewFuture<
-    'e,
-    'a,
-    'r,
-    const ROLE: u8,
-    T,
-    U,
-    C,
-    E,
-    const MAX_RV: usize,
-    Mint,
-    B,
-    M,
-> where
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: BindingSlot,
-    M: MessageSpec + SendableLabel,
-    M::Payload: WireEncode,
-    M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
-    <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-    'r: 'a,
-{
-    endpoint: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    state: SendWithPreviewState<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    _endpoint_borrow: PhantomData<&'e mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>,
-    _marker: PhantomData<(&'a M::Payload, M)>,
-}
-
-impl<'e, 'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B, M> Unpin
-    for SendWithPreviewFuture<'e, 'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
-where
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: BindingSlot,
-    M: MessageSpec + SendableLabel,
-    M::Payload: WireEncode,
-    M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
-    <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-    'r: 'a,
-{
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -931,15 +961,174 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint) fn decode_route_branch<M>(
+    pub(in crate::endpoint) fn reset_public_offer_state(&mut self) {
+        self.public_offer_state = OfferState::new();
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn restore_public_route_branch(&mut self) {
+        if let Some(branch) = self.public_route_branch.take() {
+            self.restore_materialized_route_branch(branch.into());
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn init_public_send_state(
         &mut self,
-        branch: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    ) -> super::decode::RouteDecodeFuture<'_, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
+        preview: SendPreview,
+        payload: Option<lane_port::RawSendPayload>,
+    ) {
+        let (meta, preview_cursor_index) = preview.into_parts();
+        self.public_send_state = SendState::Init {
+            meta,
+            preview_cursor_index: Some(preview_cursor_index),
+            payload,
+        };
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn reset_public_send_state(&mut self) {
+        let state = core::mem::replace(&mut self.public_send_state, SendState::Done);
+        if let SendState::Sending { mut pending, .. } = state {
+            let port = self.port_for_lane(pending.lane_idx);
+            lane_port::cancel_send_outgoing(&mut pending.transport, port);
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn init_public_recv_state(&mut self) {
+        self.public_recv_state = super::recv::RecvState::new();
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn reset_public_recv_state(&mut self) {
+        self.public_recv_state = super::recv::RecvState::new();
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn begin_public_decode_state(&mut self) {
+        if let Some(branch) = self.public_route_branch.take() {
+            self.public_decode_state = super::decode::DecodeState::new(branch);
+        } else {
+            self.public_decode_state = super::decode::DecodeState::empty();
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn reset_public_decode_state(&mut self) {
+        if self.public_decode_state.restore_on_drop
+            && let Some(branch) = self.public_decode_state.branch.take()
+        {
+            self.restore_materialized_route_branch(branch.into());
+        }
+        self.public_decode_state = super::decode::DecodeState::empty();
+    }
+    #[inline]
+    pub(in crate::endpoint) fn poll_public_offer(
+        &mut self,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<u8>> {
+        if let Some(branch) = self.public_route_branch.as_ref() {
+            return Poll::Ready(Ok(branch.label()));
+        }
+        let mut offer_state = core::mem::replace(&mut self.public_offer_state, OfferState::new());
+        let poll = self.poll_offer_state(&mut offer_state, cx);
+        match poll {
+            Poll::Pending => {
+                self.public_offer_state = offer_state;
+                Poll::Pending
+            }
+            Poll::Ready(Ok(branch)) => {
+                self.public_offer_state = OfferState::new();
+                debug_assert!(
+                    self.public_route_branch.is_none(),
+                    "public route branch slot must be empty before offer materializes a new branch"
+                );
+                if self.public_route_branch.is_some() {
+                    Poll::Ready(Err(RecvError::PhaseInvariant))
+                } else {
+                    let label = branch.label();
+                    self.public_route_branch = Some(branch);
+                    Poll::Ready(Ok(label))
+                }
+            }
+            Poll::Ready(Err(err)) => {
+                self.public_offer_state = OfferState::new();
+                Poll::Ready(Err(err))
+            }
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn poll_public_recv(
+        &mut self,
+        descriptor: super::recv::RecvDesc,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<Payload<'r>>> {
+        let mut recv_state =
+            core::mem::replace(&mut self.public_recv_state, super::recv::RecvState::new());
+        match self.poll_recv_state(descriptor, &mut recv_state, cx) {
+            Poll::Pending => {
+                self.public_recv_state = recv_state;
+                Poll::Pending
+            }
+            Poll::Ready(result) => {
+                self.public_recv_state = super::recv::RecvState::new();
+                Poll::Ready(result)
+            }
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn poll_public_decode(
+        &mut self,
+        descriptor: super::decode::DecodeDesc,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<Payload<'r>>> {
+        let mut decode_state = core::mem::replace(
+            &mut self.public_decode_state,
+            super::decode::DecodeState::empty(),
+        );
+        match self.poll_decode_state(descriptor, &mut decode_state, cx) {
+            Poll::Pending => {
+                self.public_decode_state = decode_state;
+                Poll::Pending
+            }
+            Poll::Ready(result) => {
+                match result {
+                    Ok(payload) => {
+                        self.public_decode_state = super::decode::DecodeState::empty();
+                        Poll::Ready(Ok(payload))
+                    }
+                    Err(err) => {
+                        self.public_decode_state = decode_state;
+                        Poll::Ready(Err(err))
+                    }
+                }
+            }
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint) fn poll_public_send(
+        &mut self,
+        descriptor: SendDesc,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<SendResult<SendControlOutcome<'r>>>
     where
-        M: MessageSpec,
-        M::Payload: crate::transport::wire::WirePayload,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
     {
-        super::decode::RouteDecodeFuture::new(self, branch)
+        let mut send_state = core::mem::replace(&mut self.public_send_state, SendState::Done);
+        match self.poll_send_state(descriptor, &mut send_state, cx) {
+            Poll::Pending => {
+                self.public_send_state = send_state;
+                Poll::Pending
+            }
+            Poll::Ready(result) => {
+                self.public_send_state = SendState::Done;
+                Poll::Ready(result)
+            }
+        }
     }
 
     #[inline(always)]
@@ -1842,18 +2031,10 @@ where
     }
 
     /// Preview the current send transition without mutating endpoint state.
-    pub(super) fn preview_flow_meta<M>(
+    pub(crate) fn preview_flow_meta(
         &mut self,
-    ) -> SendResult<crate::endpoint::kernel::SendPreview>
-    where
-        M: MessageSpec + SendableLabel,
-        T: Transport + 'r,
-        U: LabelUniverse,
-        C: Clock,
-        E: EpochTable,
-        Mint: MintConfigMarker,
-    {
-        let target_label = <M as MessageSpec>::LABEL;
+        target_label: u8,
+    ) -> SendResult<crate::endpoint::kernel::SendPreview> {
         let mut idx = self.preview_flow_start_index(target_label);
         let mut preview_route_arm: Option<(u8, ScopeId, u8)> = None;
 
@@ -2002,6 +2183,21 @@ where
                 actual: target_label,
             });
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn preview_flow<M>(
+        &mut self,
+    ) -> SendResult<crate::endpoint::kernel::SendPreview>
+    where
+        M: MessageSpec + SendableLabel,
+        T: Transport + 'r,
+        U: LabelUniverse,
+        C: crate::runtime::config::Clock,
+        E: EpochTable,
+        Mint: MintConfigMarker,
+    {
+        self.preview_flow_meta(<M as MessageSpec>::LABEL)
     }
 
     fn evaluate_dynamic_policy(&mut self, meta: &SendMeta, target_label: u8) -> SendResult<()> {
@@ -2998,7 +3194,7 @@ where
         }
     }
 
-    #[inline]
+    #[inline(never)]
     fn commit_send_after_emit(
         &mut self,
         preview_cursor_index: Option<StateIndex>,
@@ -3070,6 +3266,11 @@ where
         if let Some(preview_cursor_index) = preview_cursor_index {
             self.set_cursor_index(state_index_to_usize(preview_cursor_index));
         }
+        self.advance_cursor_after_send()
+    }
+
+    #[inline(never)]
+    fn advance_cursor_after_send(&mut self) -> SendResult<()> {
         self.cursor
             .try_advance_past_jumps_in_place()
             .map_err(|_| SendError::PhaseInvariant)
@@ -3091,217 +3292,34 @@ where
         self.maybe_advance_phase();
     }
 
-    fn begin_send_transport<'a>(
-        &'a mut self,
-        meta: SendMeta,
-        payload: Option<lane_port::ErasedSendPayload<'a>>,
-        prepared: PreparedSendControl<Self>,
-    ) -> SendResult<SendTransportStep<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>
-    where
-        'r: 'a,
-    {
-        let mut staged_send = None;
-        let mut pending_transport = None;
-        let is_remote_send = {
-            let port = self.port_for_lane(meta.lane as usize);
-            let payload_view = lane_port::staged_payload(port, |scratch| {
-                let staged = (prepared.stage_payload)(prepared.minted_token, payload, scratch)?;
-                let encoded_len = staged.encoded_len;
-                staged_send = Some(staged);
-                Ok::<usize, SendError>(encoded_len)
-            })?;
-
-            let outgoing = crate::transport::Outgoing {
-                meta: crate::transport::SendMeta {
-                    eff_index: meta.eff_index,
-                    label: meta.label,
-                    peer: meta.peer,
-                    lane: meta.lane,
-                    direction: if meta.peer == ROLE {
-                        crate::transport::LocalDirection::Local
-                    } else {
-                        crate::transport::LocalDirection::Send
-                    },
-                    is_control: meta.is_control,
-                },
-                payload: payload_view,
-            };
-
-            if !outgoing.meta.is_local() {
-                let mut transport = lane_port::PendingSend::new();
-                lane_port::begin_send_outgoing(&mut transport, port, outgoing);
-                pending_transport = Some(transport);
-                true
-            } else {
-                false
-            }
-        };
-
-        let staged_send = staged_send.ok_or(SendError::PhaseInvariant)?;
-        if is_remote_send {
-            Ok(SendTransportStep::Pending(PendingSendTransport {
-                transport: pending_transport.ok_or(SendError::PhaseInvariant)?,
-                control: Some(staged_send.control),
-                dispatch_control: prepared.dispatch_control,
-            }))
-        } else {
-            Ok(SendTransportStep::Immediate(SendTransportEmission {
-                control: staged_send.control,
-                dispatch_control: prepared.dispatch_control,
-            }))
-        }
-    }
-
-    pub(crate) fn send_with_preview_in_place<'e, 'a, M>(
-        &'e mut self,
-        preview: crate::endpoint::kernel::SendPreview,
-        payload: Option<&'a <M as MessageSpec>::Payload>,
-    ) -> SendWithPreviewFuture<'e, 'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
-    where
-        M: MessageSpec + SendableLabel + 'a,
-        M::Payload: WireEncode,
-        M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
-        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-    {
-        let (meta, cursor_index) = preview.into_parts();
-        SendWithPreviewFuture {
-            endpoint: self,
-            state: SendWithPreviewState::Init {
-                meta,
-                preview_cursor_index: Some(cursor_index),
-                payload: payload.map(lane_port::ErasedSendPayload::from_typed::<M::Payload>),
-            },
-            _endpoint_borrow: PhantomData,
-            _marker: PhantomData,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn send_with_meta_in_place<'e, 'a, M>(
-        &'e mut self,
-        meta: SendMeta,
-        payload: Option<&'a <M as MessageSpec>::Payload>,
-    ) -> SendWithPreviewFuture<'e, 'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
-    where
-        M: MessageSpec + SendableLabel,
-        M::Payload: WireEncode,
-        M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
-        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-    {
-        SendWithPreviewFuture {
-            endpoint: self,
-            state: SendWithPreviewState::Init {
-                meta,
-                preview_cursor_index: None,
-                payload: payload.map(lane_port::ErasedSendPayload::from_typed::<M::Payload>),
-            },
-            _endpoint_borrow: PhantomData,
-            _marker: PhantomData,
-        }
-    }
-
     #[inline(always)]
-    fn send_descriptor<M>() -> SendDescriptor<Self>
-    where
-        M: MessageSpec + SendableLabel,
-        M::Payload: WireEncode,
-        M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
-        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-    {
-        let (expects_control, mint_token, stage_payload, dispatch_control): (
-            bool,
-            MintSendTokenFn<Self>,
-            StageSendPayloadFn,
-            DispatchSendTokenFn<Self>,
-        ) = match <M::ControlKind as ControlPayloadKind>::HANDLING {
-            ControlHandling::None => (
-                false,
-                Self::mint_no_send_token,
-                Self::stage_data_send_payload,
-                Self::dispatch_no_send_token,
-            ),
-            ControlHandling::Canonical => (
-                true,
-                Self::mint_send_token::<M>,
-                Self::stage_canonical_send_payload,
-                Self::dispatch_send_token::<M>,
-            ),
-            ControlHandling::External => (
-                true,
-                Self::mint_send_token::<M>,
-                Self::stage_external_send_payload,
-                Self::dispatch_send_token::<M>,
-            ),
-        };
-        SendDescriptor {
-            label: <M as MessageSpec>::LABEL,
-            expects_control,
-            mint_token,
-            stage_payload,
-            dispatch_control,
-        }
-    }
-
-    #[inline(always)]
-    fn mint_no_send_token(
-        _endpoint: &mut Self,
-        _meta: SendMeta,
-    ) -> SendResult<Option<ErasedCapFlowToken>> {
-        Ok(None)
-    }
-
-    #[inline(always)]
-    fn dispatch_no_send_token(
-        _endpoint: &Self,
-        _token: ErasedCapFlowToken,
-    ) -> SendResult<DispatchSendTokenResult> {
-        Ok(DispatchSendTokenResult::None)
-    }
-
-    #[inline(always)]
-    fn mint_send_token<M>(
+    fn mint_send_token_for_kind<K>(
         endpoint: &mut Self,
         meta: SendMeta,
-    ) -> SendResult<Option<ErasedCapFlowToken>>
+    ) -> SendResult<Option<RawCapFlowToken>>
     where
-        M: MessageSpec + SendableLabel,
-        M::Payload: WireEncode,
-        M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
-        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
+        K: ResourceKind + ControlMint,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
     {
-        <M::ControlKind as CanonicalTokenProvider<
-            'r,
-            ROLE,
-            T,
-            U,
-            C,
-            E,
-            Mint,
-            MAX_RV,
-            M,
-            B,
-        >>::into_token(endpoint, &meta)
-        .map(|token| token.map(ErasedCapFlowToken::from_typed))
+        endpoint
+            .canonical_control_token::<K>(&meta)
+            .map(RawCapFlowToken::from_typed)
+            .map(Some)
     }
 
     #[inline(always)]
-    fn dispatch_send_token<M>(
+    fn dispatch_send_token_for_kind<K>(
         endpoint: &Self,
-        token: ErasedCapFlowToken,
+        flow_token: CapFlowToken<K>,
+        allow_canonical_fallback: bool,
     ) -> SendResult<DispatchSendTokenResult>
     where
-        M: MessageSpec + SendableLabel,
-        M::Payload: WireEncode,
-        M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
-        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
+        K: ResourceKind,
     {
         let cluster = endpoint
             .control
             .cluster()
             .ok_or(SendError::PhaseInvariant)?;
-        let flow_token: CapFlowToken<
-            <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind,
-        > = token.into_flow_token();
         let frame = flow_token.into_frame();
         match cluster.dispatch_typed_control_frame(endpoint.rendezvous_id(), frame, None) {
             Ok(Some(registered)) => Ok(DispatchSendTokenResult::Registered(
@@ -3310,10 +3328,7 @@ where
             Ok(None) => Ok(DispatchSendTokenResult::None),
             Err(CpError::Authorisation {
                 effect: CpEffect::SpliceAck,
-            }) if matches!(
-                <M::ControlKind as ControlPayloadKind>::HANDLING,
-                ControlHandling::Canonical
-            ) =>
+            }) if allow_canonical_fallback =>
             {
                 Ok(DispatchSendTokenResult::CanonicalFallback)
             }
@@ -3323,8 +3338,8 @@ where
 
     #[inline(always)]
     fn stage_data_send_payload(
-        minted_token: Option<ErasedCapFlowToken>,
-        payload: Option<lane_port::ErasedSendPayload<'_>>,
+        minted_token: Option<RawCapFlowToken>,
+        payload: Option<lane_port::RawSendPayload>,
         scratch: &mut [u8],
     ) -> SendResult<StagedSendPayload> {
         if minted_token.is_some() {
@@ -3339,8 +3354,8 @@ where
 
     #[inline(always)]
     fn stage_canonical_send_payload(
-        minted_token: Option<ErasedCapFlowToken>,
-        payload: Option<lane_port::ErasedSendPayload<'_>>,
+        minted_token: Option<RawCapFlowToken>,
+        payload: Option<lane_port::RawSendPayload>,
         scratch: &mut [u8],
     ) -> SendResult<StagedSendPayload> {
         if payload.is_some() {
@@ -3357,8 +3372,8 @@ where
 
     #[inline(always)]
     fn stage_external_send_payload(
-        minted_token: Option<ErasedCapFlowToken>,
-        payload: Option<lane_port::ErasedSendPayload<'_>>,
+        minted_token: Option<RawCapFlowToken>,
+        payload: Option<lane_port::RawSendPayload>,
         scratch: &mut [u8],
     ) -> SendResult<StagedSendPayload> {
         if let Some(token) = minted_token {
@@ -3384,11 +3399,137 @@ where
     }
 
     #[inline(never)]
+    fn mint_send_token(
+        &mut self,
+        meta: SendMeta,
+        descriptor: SendDesc,
+    ) -> SendResult<Option<RawCapFlowToken>>
+    where
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+    {
+        let Some(tag) = descriptor.resource_tag else {
+            return Ok(None);
+        };
+        match descriptor.handling {
+            SendHandling::None => Ok(None),
+            SendHandling::Canonical => match tag {
+                LoopContinueKind::TAG => Self::mint_send_token_for_kind::<LoopContinueKind>(self, meta),
+                LoopBreakKind::TAG => Self::mint_send_token_for_kind::<LoopBreakKind>(self, meta),
+                RerouteKind::TAG => Self::mint_send_token_for_kind::<RerouteKind>(self, meta),
+                RouteDecisionKind::TAG => {
+                    Self::mint_send_token_for_kind::<RouteDecisionKind>(self, meta)
+                }
+                SpliceIntentKind::TAG => {
+                    Self::mint_send_token_for_kind::<SpliceIntentKind>(self, meta)
+                }
+                SpliceAckKind::TAG => Self::mint_send_token_for_kind::<SpliceAckKind>(self, meta),
+                CommitKind::TAG => Self::mint_send_token_for_kind::<CommitKind>(self, meta),
+                CheckpointKind::TAG => {
+                    Self::mint_send_token_for_kind::<CheckpointKind>(self, meta)
+                }
+                RollbackKind::TAG => Self::mint_send_token_for_kind::<RollbackKind>(self, meta),
+                CancelKind::TAG => Self::mint_send_token_for_kind::<CancelKind>(self, meta),
+                CancelAckKind::TAG => Self::mint_send_token_for_kind::<CancelAckKind>(self, meta),
+                _ => Err(SendError::PhaseInvariant),
+            },
+            SendHandling::External { auto_mint_external } => {
+                if !auto_mint_external {
+                    return Ok(None);
+                }
+                match tag {
+                    SpliceIntentKind::TAG => {
+                        Self::mint_send_token_for_kind::<SpliceIntentKind>(self, meta)
+                    }
+                    SpliceAckKind::TAG => {
+                        Self::mint_send_token_for_kind::<SpliceAckKind>(self, meta)
+                    }
+                    _ => Err(SendError::PhaseInvariant),
+                }
+            }
+        }
+    }
+
+    #[inline(never)]
+    fn dispatch_send_token(
+        &self,
+        resource_tag: Option<u8>,
+        token: RawCapFlowToken,
+        allow_canonical_fallback: bool,
+    ) -> SendResult<DispatchSendTokenResult> {
+        let Some(tag) = resource_tag else {
+            return Ok(DispatchSendTokenResult::None);
+        };
+        match tag {
+            LoopContinueKind::TAG => {
+                Self::dispatch_send_token_for_kind::<LoopContinueKind>(
+                    self,
+                    token.into_flow_token(),
+                    allow_canonical_fallback,
+                )
+            }
+            LoopBreakKind::TAG => Self::dispatch_send_token_for_kind::<LoopBreakKind>(
+                self,
+                token.into_flow_token(),
+                allow_canonical_fallback,
+            ),
+            RerouteKind::TAG => Self::dispatch_send_token_for_kind::<RerouteKind>(
+                self,
+                token.into_flow_token(),
+                allow_canonical_fallback,
+            ),
+            RouteDecisionKind::TAG => Self::dispatch_send_token_for_kind::<RouteDecisionKind>(
+                self,
+                token.into_flow_token(),
+                allow_canonical_fallback,
+            ),
+            SpliceIntentKind::TAG => Self::dispatch_send_token_for_kind::<SpliceIntentKind>(
+                self,
+                token.into_flow_token(),
+                allow_canonical_fallback,
+            ),
+            SpliceAckKind::TAG => Self::dispatch_send_token_for_kind::<SpliceAckKind>(
+                self,
+                token.into_flow_token(),
+                allow_canonical_fallback,
+            ),
+            CommitKind::TAG => Self::dispatch_send_token_for_kind::<CommitKind>(
+                self,
+                token.into_flow_token(),
+                allow_canonical_fallback,
+            ),
+            CheckpointKind::TAG => Self::dispatch_send_token_for_kind::<CheckpointKind>(
+                self,
+                token.into_flow_token(),
+                allow_canonical_fallback,
+            ),
+            RollbackKind::TAG => Self::dispatch_send_token_for_kind::<RollbackKind>(
+                self,
+                token.into_flow_token(),
+                allow_canonical_fallback,
+            ),
+            CancelKind::TAG => Self::dispatch_send_token_for_kind::<CancelKind>(
+                self,
+                token.into_flow_token(),
+                allow_canonical_fallback,
+            ),
+            CancelAckKind::TAG => Self::dispatch_send_token_for_kind::<CancelAckKind>(
+                self,
+                token.into_flow_token(),
+                allow_canonical_fallback,
+            ),
+            _ => Err(SendError::PhaseInvariant),
+        }
+    }
+
+    #[inline(never)]
     fn prepare_send_control(
         &mut self,
         meta: SendMeta,
-        descriptor: SendDescriptor<Self>,
-    ) -> SendResult<PreparedSendControl<Self>> {
+        descriptor: SendDesc,
+    ) -> SendResult<PreparedSendControl>
+    where
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+    {
         if meta.is_control != descriptor.expects_control {
             return Err(SendError::PhaseInvariant);
         }
@@ -3405,34 +3546,144 @@ where
         );
         self.apply_send_policy(policy_action, meta.scope, lane)?;
 
-        let minted_token = (descriptor.mint_token)(self, meta)?;
+        let minted_token = self.mint_send_token(meta, descriptor)?;
+        let stage_payload = match descriptor.handling {
+            SendHandling::None => Self::stage_data_send_payload,
+            SendHandling::Canonical => Self::stage_canonical_send_payload,
+            SendHandling::External { .. } => Self::stage_external_send_payload,
+        };
 
         Ok(PreparedSendControl {
             minted_token,
-            stage_payload: descriptor.stage_payload,
-            dispatch_control: descriptor.dispatch_control,
+            stage_payload,
+            dispatch_resource_tag: descriptor.resource_tag,
         })
     }
 
-    fn poll_send_transport(
+    #[inline(never)]
+    fn begin_send_transport(
         &mut self,
-        pending: &mut PendingSendTransport<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-        cx: &mut core::task::Context<'_>,
-    ) -> Poll<SendResult<()>> {
-        let _ = self;
-        lane_port::poll_send_outgoing(&mut pending.transport, cx).map_err(SendError::Transport)
+        meta: SendMeta,
+        payload: Option<lane_port::RawSendPayload>,
+        prepared: PreparedSendControl,
+    ) -> SendResult<SendTransportStep<'r>>
+    {
+        let scratch_ptr = {
+            let port = self.port_for_lane(meta.lane as usize);
+            lane_port::scratch_ptr(port)
+        };
+        let staged_send = {
+            let scratch = unsafe { &mut *scratch_ptr };
+            (prepared.stage_payload)(prepared.minted_token, payload, scratch)?
+        };
+        let encoded_len = staged_send.encoded_len;
+
+        let mut pending_transport = None;
+        let is_remote_send = {
+            let port = self.port_for_lane(meta.lane as usize);
+            let payload_view = {
+                let scratch = unsafe { &*scratch_ptr };
+                Payload::new(&scratch[..encoded_len])
+            };
+            let outgoing = crate::transport::Outgoing {
+                meta: crate::transport::SendMeta {
+                    eff_index: meta.eff_index,
+                    label: meta.label,
+                    peer: meta.peer,
+                    lane: port.lane().as_wire(),
+                    direction: if meta.peer == ROLE {
+                        crate::transport::LocalDirection::Local
+                    } else {
+                        crate::transport::LocalDirection::Send
+                    },
+                    is_control: meta.is_control,
+                },
+                payload: payload_view,
+            };
+
+            if !outgoing.meta.is_local() {
+                let mut transport = lane_port::PendingSend::new();
+                lane_port::begin_send_outgoing(&mut transport, port, outgoing);
+                pending_transport = Some(transport);
+                true
+            } else {
+                false
+            }
+        };
+
+        if is_remote_send {
+            Ok(SendTransportStep::Pending(PendingSendIo {
+                transport: pending_transport.ok_or(SendError::PhaseInvariant)?,
+                lane_idx: meta.lane as usize,
+                control: Some(staged_send.control),
+                dispatch_resource_tag: prepared.dispatch_resource_tag,
+            }))
+        } else {
+            Ok(SendTransportStep::Immediate(SendTransportEmission {
+                control: staged_send.control,
+                dispatch_resource_tag: prepared.dispatch_resource_tag,
+            }))
+        }
     }
 
     #[inline(never)]
-    fn finish_send_after_transport_erased(
+    fn poll_send_init(
+        &mut self,
+        descriptor: SendDesc,
+        meta: SendMeta,
+        preview_cursor_index: Option<StateIndex>,
+        payload: Option<lane_port::RawSendPayload>,
+    ) -> SendInitOutcome<'r>
+    where
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+    {
+        let prepared = match self.prepare_send_control(meta, descriptor) {
+            Ok(prepared) => prepared,
+            Err(err) => return SendInitOutcome::Ready(Err(err)),
+        };
+        let step = match self.begin_send_transport(meta, payload, prepared) {
+            Ok(step) => step,
+            Err(err) => return SendInitOutcome::Ready(Err(err)),
+        };
+        match step {
+            SendTransportStep::Immediate(emission) => SendInitOutcome::Commit {
+                meta,
+                preview_cursor_index,
+                emission,
+            },
+            SendTransportStep::Pending(pending) => SendInitOutcome::Pending {
+                meta,
+                preview_cursor_index,
+                pending,
+            },
+        }
+    }
+
+    #[inline(never)]
+    fn poll_send_transport(
+        &mut self,
+        pending: &mut PendingSendIo<'r>,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<SendResult<()>> {
+        let port = self.port_for_lane(pending.lane_idx);
+        lane_port::poll_send_outgoing(&mut pending.transport, port, cx).map_err(SendError::Transport)
+    }
+
+    #[inline(never)]
+    fn finish_send_after_transport_runtime(
         &mut self,
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
-        emission: SendTransportEmission<Self>,
-    ) -> SendResult<ErasedControlOutcome<'r>> {
-        let mut control_outcome = ErasedControlOutcome::None;
+        emission: SendTransportEmission,
+        handling: SendHandling,
+    ) -> SendResult<SendControlOutcome<'r>> {
         self.commit_send_after_emit(preview_cursor_index, meta)?;
+        self.emit_send_after_transport_event(meta);
+        self.resolve_send_control_outcome(emission, handling)
+    }
 
+    #[inline(never)]
+    fn emit_send_after_transport_event(&mut self, meta: SendMeta) {
         let lane_wire = self.port_for_lane(meta.lane as usize).lane().as_wire();
         let logical_meta = TapFrameMeta::new(
             self.sid.raw(),
@@ -3448,182 +3699,195 @@ where
             ids::ENDPOINT_SEND
         };
         self.emit_endpoint_event(event_id, logical_meta, scope_trace, meta.lane);
+    }
 
+    #[inline(never)]
+    fn resolve_send_control_outcome(
+        &mut self,
+        emission: SendTransportEmission,
+        handling: SendHandling,
+    ) -> SendResult<SendControlOutcome<'r>> {
         match emission.control {
-            StagedSendControl::None => {}
-            StagedSendControl::Canonical(token) => {
-                match (emission.dispatch_control)(self, token)? {
-                    DispatchSendTokenResult::Registered(parts) => {
-                        control_outcome = ErasedControlOutcome::Canonical(
-                            ErasedRegisteredCapToken::from_parts(parts),
-                        );
-                    }
-                    DispatchSendTokenResult::CanonicalFallback => {
-                        control_outcome =
-                            ErasedControlOutcome::Canonical(ErasedRegisteredCapToken::from_parts(
-                                RegisteredTokenParts::from_bytes(token.bytes()),
-                            ));
-                    }
-                    DispatchSendTokenResult::None => return Err(SendError::PhaseInvariant),
-                }
-            }
+            StagedSendControl::None => Ok(SendControlOutcome::None),
+            StagedSendControl::Canonical(token) => self.resolve_canonical_send_control_outcome(
+                emission.dispatch_resource_tag,
+                token,
+                handling,
+            ),
             StagedSendControl::External {
                 dispatch_token,
                 external_token,
-            } => {
-                if let Some(token) = dispatch_token {
-                    match (emission.dispatch_control)(self, token)? {
-                        DispatchSendTokenResult::None | DispatchSendTokenResult::Registered(_) => {}
-                        DispatchSendTokenResult::CanonicalFallback => {
-                            return Err(SendError::PhaseInvariant);
-                        }
-                    }
-                }
-                if let Some(token) = external_token {
-                    control_outcome = ErasedControlOutcome::External(token);
+            } => self.resolve_external_send_control_outcome(
+                emission.dispatch_resource_tag,
+                dispatch_token,
+                external_token,
+                handling,
+            ),
+        }
+    }
+
+    #[inline(never)]
+    fn resolve_canonical_send_control_outcome(
+        &self,
+        dispatch_resource_tag: Option<u8>,
+        token: RawCapFlowToken,
+        handling: SendHandling,
+    ) -> SendResult<SendControlOutcome<'r>> {
+        match self.dispatch_send_token(
+            dispatch_resource_tag,
+            token,
+            matches!(handling, SendHandling::Canonical),
+        )? {
+            DispatchSendTokenResult::Registered(parts) => Ok(SendControlOutcome::Canonical(
+                RawRegisteredCapToken::from_parts(parts),
+            )),
+            DispatchSendTokenResult::CanonicalFallback => Ok(SendControlOutcome::Canonical(
+                RawRegisteredCapToken::from_parts(RegisteredTokenParts::from_bytes(
+                    token.bytes(),
+                )),
+            )),
+            DispatchSendTokenResult::None => Err(SendError::PhaseInvariant),
+        }
+    }
+
+    #[inline(never)]
+    fn resolve_external_send_control_outcome(
+        &self,
+        dispatch_resource_tag: Option<u8>,
+        dispatch_token: Option<RawCapFlowToken>,
+        external_token: Option<RawCapFlowToken>,
+        handling: SendHandling,
+    ) -> SendResult<SendControlOutcome<'r>> {
+        if let Some(token) = dispatch_token {
+            match self.dispatch_send_token(
+                dispatch_resource_tag,
+                token,
+                matches!(handling, SendHandling::Canonical),
+            )? {
+                DispatchSendTokenResult::None | DispatchSendTokenResult::Registered(_) => {}
+                DispatchSendTokenResult::CanonicalFallback => {
+                    return Err(SendError::PhaseInvariant);
                 }
             }
         }
 
-        Ok(control_outcome)
+        Ok(match external_token {
+            Some(token) => SendControlOutcome::External(token),
+            None => SendControlOutcome::None,
+        })
     }
 
-    #[inline(always)]
-    fn typed_control_outcome<M>(
-        outcome: ErasedControlOutcome<'r>,
-    ) -> ControlOutcome<'r, <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>
-    where
-        M: MessageSpec + SendableLabel,
-        M::Payload: WireEncode,
-        M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
-        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-    {
-        match outcome {
-            ErasedControlOutcome::None => ControlOutcome::None,
-            ErasedControlOutcome::Canonical(token) => ControlOutcome::Canonical(token.into_typed()),
-            ErasedControlOutcome::External(token) => ControlOutcome::External(token.into_generic()),
+    #[inline(never)]
+    fn poll_send_pending(
+        &mut self,
+        pending: &mut PendingSendIo<'r>,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<SendResult<SendTransportEmission>> {
+        match self.poll_send_transport(pending, cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(())) => {
+                let emission = SendTransportEmission {
+                    control: pending
+                        .control
+                        .take()
+                        .expect("send transport control must remain until completion"),
+                    dispatch_resource_tag: pending.dispatch_resource_tag,
+                };
+                Poll::Ready(Ok(emission))
+            }
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
     }
-}
 
-impl<'e, 'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B, M> Future
-    for SendWithPreviewFuture<'e, 'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
-where
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker + 'a,
-    B: BindingSlot + 'a,
-    M: MessageSpec + SendableLabel,
-    M::Payload: WireEncode,
-    M::ControlKind: CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B>,
-    <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-    'r: 'a,
-{
-    type Output = SendResult<
-        ControlOutcome<'r, <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>,
-    >;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
+    #[inline(never)]
+    pub(crate) fn poll_send_state(
+        &mut self,
+        descriptor: SendDesc,
+        state: &mut SendState<'r>,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<SendResult<SendControlOutcome<'r>>>
+    where
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+    {
         loop {
-            match &mut this.state {
-                SendWithPreviewState::Init {
+            match state {
+                SendState::Init {
                     meta,
                     preview_cursor_index,
                     payload,
-                } => {
-                    let meta = *meta;
-                    let preview_cursor_index = *preview_cursor_index;
-                    let payload = payload.take();
-                    let prepared = match lane_port::deref_mut_ptr::<
-                        CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-                    >(this.endpoint)
-                    .prepare_send_control(meta, CursorEndpoint::send_descriptor::<M>())
-                    {
-                        Ok(prepared) => prepared,
-                        Err(err) => {
-                            this.state = SendWithPreviewState::Done;
-                            return Poll::Ready(Err(err));
-                        }
-                    };
-                    let step = match lane_port::deref_mut_ptr::<
-                        CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-                    >(this.endpoint)
-                    .begin_send_transport(meta, payload, prepared)
-                    {
-                        Ok(step) => step,
-                        Err(err) => {
-                            this.state = SendWithPreviewState::Done;
-                            return Poll::Ready(Err(err));
-                        }
-                    };
-                    match step {
-                        SendTransportStep::Immediate(emission) => {
-                            let outcome = lane_port::deref_mut_ptr::<
-                                CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-                            >(this.endpoint)
-                            .finish_send_after_transport_erased(
-                                meta,
-                                preview_cursor_index,
-                                emission,
-                            )
-                            .map(CursorEndpoint::typed_control_outcome::<M>);
-                            this.state = SendWithPreviewState::Done;
-                            return Poll::Ready(outcome);
-                        }
-                        SendTransportStep::Pending(pending) => {
-                            this.state = SendWithPreviewState::Sending {
-                                meta,
-                                preview_cursor_index,
-                                pending,
-                            };
-                        }
+                } => match self.poll_send_init(
+                    descriptor,
+                    *meta,
+                    *preview_cursor_index,
+                    payload.take(),
+                ) {
+                    SendInitOutcome::Ready(result) => {
+                        *state = SendState::Done;
+                        return Poll::Ready(result);
                     }
-                }
-                SendWithPreviewState::Sending {
+                    SendInitOutcome::Pending {
+                        meta,
+                        preview_cursor_index,
+                        pending,
+                    } => {
+                        *state = SendState::Sending {
+                            meta,
+                            preview_cursor_index,
+                            pending,
+                        };
+                    }
+                    SendInitOutcome::Commit {
+                        meta,
+                        preview_cursor_index,
+                        emission,
+                    } => {
+                        *state = SendState::Committing {
+                            meta,
+                            preview_cursor_index,
+                            emission,
+                            handling: descriptor.handling,
+                        };
+                    }
+                },
+                SendState::Sending {
                     meta,
                     preview_cursor_index,
                     pending,
-                } => match lane_port::deref_mut_ptr::<
-                    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-                >(this.endpoint)
-                .poll_send_transport(pending, cx)
-                {
+                } => match self.poll_send_pending(pending, cx) {
                     Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Ok(())) => {
-                        let endpoint = lane_port::deref_mut_ptr::<
-                            CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-                        >(this.endpoint);
-                        let emission = SendTransportEmission {
-                            control: pending
-                                .control
-                                .take()
-                                .expect("send transport control must remain until completion"),
-                            dispatch_control: pending.dispatch_control,
+                    Poll::Ready(Ok(emission)) => {
+                        *state = SendState::Committing {
+                            meta: *meta,
+                            preview_cursor_index: *preview_cursor_index,
+                            emission,
+                            handling: descriptor.handling,
                         };
-                        let outcome = endpoint
-                            .finish_send_after_transport_erased(
-                                *meta,
-                                *preview_cursor_index,
-                                emission,
-                            )
-                            .map(CursorEndpoint::typed_control_outcome::<M>);
-                        this.state = SendWithPreviewState::Done;
-                        return Poll::Ready(outcome);
                     }
                     Poll::Ready(Err(err)) => {
-                        this.state = SendWithPreviewState::Done;
+                        *state = SendState::Done;
                         return Poll::Ready(Err(err));
                     }
                 },
-                SendWithPreviewState::Done => {
-                    panic!("send future polled after completion");
+                SendState::Committing {
+                    meta,
+                    preview_cursor_index,
+                    emission,
+                    handling,
+                } => {
+                    let result = self.finish_send_after_transport_runtime(
+                        *meta,
+                        *preview_cursor_index,
+                        *emission,
+                        *handling,
+                    );
+                    *state = SendState::Done;
+                    return Poll::Ready(result);
                 }
+                SendState::Done => panic!("send future polled after completion"),
             }
         }
     }
+
 }
 
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
@@ -3686,218 +3950,392 @@ where
     {
         let tag = meta.resource.ok_or(SendError::PhaseInvariant)?;
         let shot = meta.shot.ok_or(SendError::PhaseInvariant)?;
-        let cp_sid = SessionId::new(self.sid.raw());
-        let port = self.port_for_lane(meta.lane as usize);
-        let lane = port.lane();
-        let cp_lane = Lane::new(lane.raw());
-        let src_rv = RendezvousId::new(self.rendezvous_id().raw());
-        port.flush_transport_events();
-        let transport_metrics = port.transport().metrics().snapshot();
-        let signals = self.policy_signals_for_slot(PolicySlot::Route);
-        let attrs = signals.attrs();
-        let bytes = match tag {
+        let bytes = self.canonical_control_token_bytes::<K>(meta, shot, tag)?;
+        Ok(CapFlowToken::new(GenericCapToken::<K>::from_bytes(bytes)))
+    }
+
+    #[inline(never)]
+    fn canonical_control_token_bytes<K>(
+        &mut self,
+        meta: &SendMeta,
+        shot: CapShot,
+        tag: u8,
+    ) -> SendResult<[u8; CAP_TOKEN_LEN]>
+    where
+        K: ResourceKind + ControlMint,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+    {
+        match tag {
             LoopContinueKind::TAG => {
                 if K::TAG != LoopContinueKind::TAG {
                     return Err(SendError::PhaseInvariant);
                 }
-                // Record loop decision before minting token
-                let mut loop_scope = meta.scope;
-                let mut recorded_via_loop_metadata = false;
-                if let Some(metadata) = self.cursor.loop_metadata_inner()
-                    && metadata.role == LoopRole::Controller
-                    && metadata.controller == ROLE
-                {
-                    self.record_loop_decision(&metadata, LoopDecision::Continue, meta.lane)?;
-                    loop_scope = metadata.scope;
-                    recorded_via_loop_metadata = true;
-                }
-                if loop_scope.is_none() {
-                    return Err(SendError::PhaseInvariant);
-                }
-                if !recorded_via_loop_metadata && loop_scope.kind() == ScopeKind::Route {
-                    self.record_route_decision_for_scope_lanes(loop_scope, 0, meta.lane);
-                    self.emit_route_decision(loop_scope, 0, RouteDecisionSource::Ack, meta.lane);
-                }
-                let scope = loop_scope;
-                let handle = LoopDecisionHandle {
-                    sid: self.sid.raw(),
-                    lane: lane.raw() as u16,
-                    scope,
-                };
-                self.mint_control_token_with_handle::<LoopContinueKind>(
-                    meta.peer, shot, lane, handle,
-                )?
-                .into_bytes()
+                let lane = self.port_for_lane(meta.lane as usize).lane();
+                Ok(self.canonical_loop_continue_control_bytes(meta, shot, lane)?)
             }
             LoopBreakKind::TAG => {
                 if K::TAG != LoopBreakKind::TAG {
                     return Err(SendError::PhaseInvariant);
                 }
-                // Record loop decision before minting token
-                let mut loop_scope = meta.scope;
-                let mut recorded_via_loop_metadata = false;
-                if let Some(metadata) = self.cursor.loop_metadata_inner()
-                    && metadata.role == LoopRole::Controller
-                    && metadata.controller == ROLE
-                {
-                    self.record_loop_decision(&metadata, LoopDecision::Break, meta.lane)?;
-                    loop_scope = metadata.scope;
-                    recorded_via_loop_metadata = true;
-                }
-                if loop_scope.is_none() {
-                    return Err(SendError::PhaseInvariant);
-                }
-                if !recorded_via_loop_metadata && loop_scope.kind() == ScopeKind::Route {
-                    self.record_route_decision_for_scope_lanes(loop_scope, 1, meta.lane);
-                    self.emit_route_decision(loop_scope, 1, RouteDecisionSource::Ack, meta.lane);
-                }
-                let scope = loop_scope;
-                let handle = LoopDecisionHandle {
-                    sid: self.sid.raw(),
-                    lane: lane.raw() as u16,
-                    scope,
-                };
-                self.mint_control_token_with_handle::<LoopBreakKind>(meta.peer, shot, lane, handle)?
-                    .into_bytes()
+                let lane = self.port_for_lane(meta.lane as usize).lane();
+                Ok(self.canonical_loop_break_control_bytes(meta, shot, lane)?)
             }
             RerouteKind::TAG => {
                 if K::TAG != RerouteKind::TAG {
                     return Err(SendError::PhaseInvariant);
                 }
-                let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-                let policy = cluster
-                    .policy_mode_for(src_rv, cp_lane, meta.eff_index, tag)
-                    .map_err(|_| SendError::PhaseInvariant)?;
-                let handle = cluster
-                    .prepare_reroute_handle_from_policy(
-                        src_rv,
-                        cp_lane,
-                        meta.eff_index,
-                        tag,
-                        policy,
-                        transport_metrics,
-                        signals.input,
-                        attrs,
-                    )
-                    .map_err(|_| SendError::PhaseInvariant)?;
-                self.mint_control_token_with_handle::<RerouteKind>(meta.peer, shot, lane, handle)?
-                    .into_bytes()
+                let lane = self.port_for_lane(meta.lane as usize).lane();
+                let cp_lane = Lane::new(lane.raw());
+                let src_rv = RendezvousId::new(self.rendezvous_id().raw());
+                Ok(self.canonical_reroute_control_bytes(
+                    meta, shot, lane, src_rv, cp_lane, tag,
+                )?)
             }
             RouteDecisionKind::TAG => {
                 if K::TAG != RouteDecisionKind::TAG {
                     return Err(SendError::PhaseInvariant);
                 }
-                let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-                let policy = cluster
-                    .policy_mode_for(src_rv, cp_lane, meta.eff_index, tag)
-                    .map_err(|_| SendError::PhaseInvariant)?;
-                let scope = meta.scope;
-                let policy_scope = policy.scope();
-                validate_route_decision_scope(scope, policy_scope)?;
-                // Route arm is fixed by the offer/decode decision point.
-                // Canonical route token minting must not re-evaluate policy.
-                let arm = meta.route_arm.ok_or(SendError::PhaseInvariant)?;
-                if arm > 1 {
-                    return Err(SendError::PhaseInvariant);
-                }
-                let handle = RouteDecisionHandle { scope, arm };
-                self.record_route_decision_for_scope_lanes(scope, arm, meta.lane);
-                self.emit_route_decision(scope, arm, RouteDecisionSource::Resolver, meta.lane);
-                self.mint_control_token_with_handle::<RouteDecisionKind>(
-                    meta.peer, shot, lane, handle,
-                )?
-                .into_bytes()
+                let lane = self.port_for_lane(meta.lane as usize).lane();
+                let cp_lane = Lane::new(lane.raw());
+                let src_rv = RendezvousId::new(self.rendezvous_id().raw());
+                Ok(self.canonical_route_decision_control_bytes(
+                    meta, shot, lane, src_rv, cp_lane, tag,
+                )?)
             }
             SpliceIntentKind::TAG => {
                 if K::TAG != SpliceIntentKind::TAG {
                     return Err(SendError::PhaseInvariant);
                 }
-                let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-                let policy = cluster
-                    .policy_mode_for(src_rv, cp_lane, meta.eff_index, tag)
-                    .map_err(|_| SendError::PhaseInvariant)?;
-                let operands = cluster
-                    .prepare_splice_operands_from_policy(
-                        src_rv,
-                        cp_sid,
-                        cp_lane,
-                        meta.eff_index,
-                        tag,
-                        policy,
-                        transport_metrics,
-                        signals.input,
-                        attrs,
-                    )
-                    .map_err(|_| SendError::PhaseInvariant)?;
-                self.mint_control_token_with_handle::<SpliceIntentKind>(
-                    meta.peer,
-                    shot,
-                    lane,
-                    Self::splice_handle_from_operands(operands),
-                )?
-                .into_bytes()
+                let lane = self.port_for_lane(meta.lane as usize).lane();
+                let cp_sid = SessionId::new(self.sid.raw());
+                let cp_lane = Lane::new(lane.raw());
+                let src_rv = RendezvousId::new(self.rendezvous_id().raw());
+                Ok(self.canonical_splice_intent_control_bytes(
+                    meta, shot, lane, src_rv, cp_sid, cp_lane, tag,
+                )?)
             }
             SpliceAckKind::TAG => {
                 if K::TAG != SpliceAckKind::TAG {
                     return Err(SendError::PhaseInvariant);
                 }
-                let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-                let operands = cluster
-                    .take_cached_splice_operands(cp_sid)
-                    .or_else(|| cluster.distributed_operands(cp_sid))
-                    .ok_or(SendError::PhaseInvariant)?;
-                let token = self.mint_control_token_with_handle::<SpliceAckKind>(
-                    meta.peer,
-                    shot,
-                    lane,
-                    Self::splice_handle_from_operands(operands),
-                )?;
-                token.into_bytes()
+                let lane = self.port_for_lane(meta.lane as usize).lane();
+                let cp_sid = SessionId::new(self.sid.raw());
+                Ok(self.canonical_splice_ack_control_bytes(meta, shot, lane, cp_sid)?)
             }
             CommitKind::TAG => {
                 if K::TAG != CommitKind::TAG {
                     return Err(SendError::PhaseInvariant);
                 }
-                self.mint_control_token::<CommitKind>(meta.peer, shot, lane)?
-                    .into_bytes()
+                let lane = self.port_for_lane(meta.lane as usize).lane();
+                Ok(self.mint_control_token_bytes_for_kind::<CommitKind>(
+                    meta.peer, shot, lane,
+                )?)
             }
             CheckpointKind::TAG => {
                 if K::TAG != CheckpointKind::TAG {
                     return Err(SendError::PhaseInvariant);
                 }
-                self.mint_control_token::<CheckpointKind>(meta.peer, shot, lane)?
-                    .into_bytes()
+                let lane = self.port_for_lane(meta.lane as usize).lane();
+                Ok(self.mint_control_token_bytes_for_kind::<CheckpointKind>(
+                    meta.peer, shot, lane,
+                )?)
             }
             RollbackKind::TAG => {
                 if K::TAG != RollbackKind::TAG {
                     return Err(SendError::PhaseInvariant);
                 }
-                self.mint_control_token::<RollbackKind>(meta.peer, shot, lane)?
-                    .into_bytes()
+                let lane = self.port_for_lane(meta.lane as usize).lane();
+                Ok(self.mint_control_token_bytes_for_kind::<RollbackKind>(
+                    meta.peer, shot, lane,
+                )?)
             }
             CancelKind::TAG => {
                 if K::TAG != CancelKind::TAG {
                     return Err(SendError::PhaseInvariant);
                 }
-                self.mint_control_token::<CancelKind>(meta.peer, shot, lane)?
-                    .into_bytes()
+                let lane = self.port_for_lane(meta.lane as usize).lane();
+                Ok(self.mint_control_token_bytes_for_kind::<CancelKind>(
+                    meta.peer, shot, lane,
+                )?)
             }
             CancelAckKind::TAG => {
                 if K::TAG != CancelAckKind::TAG {
                     return Err(SendError::PhaseInvariant);
                 }
-                self.mint_control_token::<CancelAckKind>(meta.peer, shot, lane)?
-                    .into_bytes()
+                let lane = self.port_for_lane(meta.lane as usize).lane();
+                Ok(self.mint_control_token_bytes_for_kind::<CancelAckKind>(
+                    meta.peer, shot, lane,
+                )?)
             }
             // Generic path for external control kinds (e.g., adapter AcceptHookKind).
             // Uses ControlMint trait for extensibility without modifying hibana core.
             _ => {
-                let handle = K::mint_handle(self.sid, lane, meta.scope);
-                self.mint_control_token_with_handle::<K>(meta.peer, shot, lane, handle)?
-                    .into_bytes()
+                let lane = self.port_for_lane(meta.lane as usize).lane();
+                Ok(self.canonical_external_control_bytes::<K>(meta, shot, lane)?)
             }
-        };
-        Ok(CapFlowToken::new(GenericCapToken::<K>::from_bytes(bytes)))
+        }
+    }
+
+    #[inline(never)]
+    fn mint_control_token_bytes_for_kind<K2>(
+        &mut self,
+        peer: u8,
+        shot: CapShot,
+        lane: Lane,
+    ) -> SendResult<[u8; CAP_TOKEN_LEN]>
+    where
+        K2: ResourceKind + crate::control::cap::mint::SessionScopedKind,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+    {
+        Ok(self.mint_control_token::<K2>(peer, shot, lane)?.into_bytes())
+    }
+
+    #[inline(never)]
+    fn mint_control_token_bytes_with_handle<K2>(
+        &mut self,
+        peer: u8,
+        shot: CapShot,
+        lane: Lane,
+        handle: K2::Handle,
+    ) -> SendResult<[u8; CAP_TOKEN_LEN]>
+    where
+        K2: ResourceKind + ControlMint,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+    {
+        Ok(self
+            .mint_control_token_with_handle::<K2>(peer, shot, lane, handle)?
+            .into_bytes())
+    }
+
+    #[inline(never)]
+    fn canonical_loop_continue_control_bytes(
+        &mut self,
+        meta: &SendMeta,
+        shot: CapShot,
+        lane: Lane,
+    ) -> SendResult<[u8; CAP_TOKEN_LEN]>
+    where
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+    {
+        let mut loop_scope = meta.scope;
+        let mut recorded_via_loop_metadata = false;
+        if let Some(metadata) = self.cursor.loop_metadata_inner()
+            && metadata.role == LoopRole::Controller
+            && metadata.controller == ROLE
+        {
+            self.record_loop_decision(&metadata, LoopDecision::Continue, meta.lane)?;
+            loop_scope = metadata.scope;
+            recorded_via_loop_metadata = true;
+        }
+        if loop_scope.is_none() {
+            return Err(SendError::PhaseInvariant);
+        }
+        if !recorded_via_loop_metadata && loop_scope.kind() == ScopeKind::Route {
+            self.record_route_decision_for_scope_lanes(loop_scope, 0, meta.lane);
+            self.emit_route_decision(loop_scope, 0, RouteDecisionSource::Ack, meta.lane);
+        }
+        self.mint_control_token_bytes_with_handle::<LoopContinueKind>(
+            meta.peer,
+            shot,
+            lane,
+            LoopDecisionHandle {
+                sid: self.sid.raw(),
+                lane: lane.raw() as u16,
+                scope: loop_scope,
+            },
+        )
+    }
+
+    #[inline(never)]
+    fn canonical_loop_break_control_bytes(
+        &mut self,
+        meta: &SendMeta,
+        shot: CapShot,
+        lane: Lane,
+    ) -> SendResult<[u8; CAP_TOKEN_LEN]>
+    where
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+    {
+        let mut loop_scope = meta.scope;
+        let mut recorded_via_loop_metadata = false;
+        if let Some(metadata) = self.cursor.loop_metadata_inner()
+            && metadata.role == LoopRole::Controller
+            && metadata.controller == ROLE
+        {
+            self.record_loop_decision(&metadata, LoopDecision::Break, meta.lane)?;
+            loop_scope = metadata.scope;
+            recorded_via_loop_metadata = true;
+        }
+        if loop_scope.is_none() {
+            return Err(SendError::PhaseInvariant);
+        }
+        if !recorded_via_loop_metadata && loop_scope.kind() == ScopeKind::Route {
+            self.record_route_decision_for_scope_lanes(loop_scope, 1, meta.lane);
+            self.emit_route_decision(loop_scope, 1, RouteDecisionSource::Ack, meta.lane);
+        }
+        self.mint_control_token_bytes_with_handle::<LoopBreakKind>(
+            meta.peer,
+            shot,
+            lane,
+            LoopDecisionHandle {
+                sid: self.sid.raw(),
+                lane: lane.raw() as u16,
+                scope: loop_scope,
+            },
+        )
+    }
+
+    #[inline(never)]
+    fn canonical_reroute_control_bytes(
+        &mut self,
+        meta: &SendMeta,
+        shot: CapShot,
+        lane: Lane,
+        src_rv: RendezvousId,
+        cp_lane: Lane,
+        tag: u8,
+    ) -> SendResult<[u8; CAP_TOKEN_LEN]>
+    where
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+    {
+        let port = self.port_for_lane(meta.lane as usize);
+        port.flush_transport_events();
+        let transport_metrics = port.transport().metrics().snapshot();
+        let signals = self.policy_signals_for_slot(PolicySlot::Route);
+        let attrs = signals.attrs();
+        let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
+        let policy = cluster
+            .policy_mode_for(src_rv, cp_lane, meta.eff_index, tag)
+            .map_err(|_| SendError::PhaseInvariant)?;
+        let handle = cluster
+            .prepare_reroute_handle_from_policy(
+                src_rv,
+                cp_lane,
+                meta.eff_index,
+                tag,
+                policy,
+                transport_metrics,
+                signals.input,
+                attrs,
+            )
+            .map_err(|_| SendError::PhaseInvariant)?;
+        self.mint_control_token_bytes_with_handle::<RerouteKind>(meta.peer, shot, lane, handle)
+    }
+
+    #[inline(never)]
+    fn canonical_route_decision_control_bytes(
+        &mut self,
+        meta: &SendMeta,
+        shot: CapShot,
+        lane: Lane,
+        src_rv: RendezvousId,
+        cp_lane: Lane,
+        tag: u8,
+    ) -> SendResult<[u8; CAP_TOKEN_LEN]>
+    where
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+    {
+        let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
+        let policy = cluster
+            .policy_mode_for(src_rv, cp_lane, meta.eff_index, tag)
+            .map_err(|_| SendError::PhaseInvariant)?;
+        let scope = meta.scope;
+        validate_route_decision_scope(scope, policy.scope())?;
+        let arm = meta.route_arm.ok_or(SendError::PhaseInvariant)?;
+        if arm > 1 {
+            return Err(SendError::PhaseInvariant);
+        }
+        self.record_route_decision_for_scope_lanes(scope, arm, meta.lane);
+        self.emit_route_decision(scope, arm, RouteDecisionSource::Resolver, meta.lane);
+        self.mint_control_token_bytes_with_handle::<RouteDecisionKind>(
+            meta.peer,
+            shot,
+            lane,
+            RouteDecisionHandle { scope, arm },
+        )
+    }
+
+    #[inline(never)]
+    fn canonical_splice_intent_control_bytes(
+        &mut self,
+        meta: &SendMeta,
+        shot: CapShot,
+        lane: Lane,
+        src_rv: RendezvousId,
+        cp_sid: SessionId,
+        cp_lane: Lane,
+        tag: u8,
+    ) -> SendResult<[u8; CAP_TOKEN_LEN]>
+    where
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+    {
+        let port = self.port_for_lane(meta.lane as usize);
+        port.flush_transport_events();
+        let transport_metrics = port.transport().metrics().snapshot();
+        let signals = self.policy_signals_for_slot(PolicySlot::Route);
+        let attrs = signals.attrs();
+        let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
+        let policy = cluster
+            .policy_mode_for(src_rv, cp_lane, meta.eff_index, tag)
+            .map_err(|_| SendError::PhaseInvariant)?;
+        let operands = cluster
+            .prepare_splice_operands_from_policy(
+                src_rv,
+                cp_sid,
+                cp_lane,
+                meta.eff_index,
+                tag,
+                policy,
+                transport_metrics,
+                signals.input,
+                attrs,
+            )
+            .map_err(|_| SendError::PhaseInvariant)?;
+        self.mint_control_token_bytes_with_handle::<SpliceIntentKind>(
+            meta.peer,
+            shot,
+            lane,
+            Self::splice_handle_from_operands(operands),
+        )
+    }
+
+    #[inline(never)]
+    fn canonical_splice_ack_control_bytes(
+        &mut self,
+        meta: &SendMeta,
+        shot: CapShot,
+        lane: Lane,
+        cp_sid: SessionId,
+    ) -> SendResult<[u8; CAP_TOKEN_LEN]>
+    where
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+    {
+        let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
+        let operands = cluster
+            .take_cached_splice_operands(cp_sid)
+            .or_else(|| cluster.distributed_operands(cp_sid))
+            .ok_or(SendError::PhaseInvariant)?;
+        self.mint_control_token_bytes_with_handle::<SpliceAckKind>(
+            meta.peer,
+            shot,
+            lane,
+            Self::splice_handle_from_operands(operands),
+        )
+    }
+
+    #[inline(never)]
+    fn canonical_external_control_bytes<K>(
+        &mut self,
+        meta: &SendMeta,
+        shot: CapShot,
+        lane: Lane,
+    ) -> SendResult<[u8; CAP_TOKEN_LEN]>
+    where
+        K: ResourceKind + ControlMint,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+    {
+        let handle = K::mint_handle(self.sid, lane, meta.scope);
+        self.mint_control_token_bytes_with_handle::<K>(meta.peer, shot, lane, handle)
     }
 
     #[inline]
@@ -5321,117 +5759,5 @@ where
             seq_rx: operands.seq_rx,
             flags,
         }
-    }
-}
-pub trait CanonicalTokenProvider<'r, const ROLE: u8, T, U, C, E, Mint, const MAX_RV: usize, M, B>
-where
-    M: MessageSpec + SendableLabel,
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: BindingSlot,
-{
-    fn into_token(
-        endpoint: &mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-        meta: &SendMeta,
-    ) -> SendResult<
-        Option<CapFlowToken<<<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>>,
-    >;
-}
-
-impl<'r, const ROLE: u8, T, U, C, E, Mint, const MAX_RV: usize, M, B>
-    CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B> for NoControl
-where
-    M: MessageSpec + SendableLabel,
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: BindingSlot,
-{
-    #[inline(always)]
-    fn into_token(
-        _endpoint: &mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-        _meta: &SendMeta,
-    ) -> SendResult<
-        Option<CapFlowToken<<<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>>,
-    > {
-        Ok(None)
-    }
-}
-
-impl<'r, const ROLE: u8, T, U, C, E, Mint, const MAX_RV: usize, M, K, B>
-    CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B> for ExternalControl<K>
-where
-    M: MessageSpec + SendableLabel,
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    Mint::Policy: crate::control::cap::mint::AllowsCanonical,
-    <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind:
-        ResourceKind + ControlMint,
-    K: ResourceKind,
-    B: BindingSlot,
-{
-    /// External control: behavior depends on `K::AUTO_MINT_EXTERNAL`.
-    ///
-    /// - When `AUTO_MINT_EXTERNAL = true` (e.g., SpliceIntentKind):
-    ///   Auto-mint a token with proper handle (sid/lane/scope) populated by the resolver.
-    ///
-    /// - When `AUTO_MINT_EXTERNAL = false` (default, e.g., LoadBeginKind):
-    ///   Caller provides the token/payload directly; no auto-minting.
-    #[inline(always)]
-    fn into_token(
-        endpoint: &mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-        meta: &SendMeta,
-    ) -> SendResult<
-        Option<CapFlowToken<<<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>>,
-    > {
-        if K::AUTO_MINT_EXTERNAL {
-            // Auto-mint for external splice kinds
-            endpoint
-                .canonical_control_token::<
-                    <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind,
-                >(meta)
-                .map(Some)
-        } else {
-            // Caller provides the payload directly
-            Ok(None)
-        }
-    }
-}
-
-impl<'r, const ROLE: u8, T, U, C, E, Mint, const MAX_RV: usize, M, K, B>
-    CanonicalTokenProvider<'r, ROLE, T, U, C, E, Mint, MAX_RV, M, B> for CanonicalControl<K>
-where
-    M: MessageSpec + SendableLabel,
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    Mint::Policy: crate::control::cap::mint::AllowsCanonical,
-    <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind:
-        ResourceKind + ControlMint,
-    K: ResourceKind,
-    B: BindingSlot,
-{
-    #[inline(always)]
-    fn into_token(
-        endpoint: &mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-        meta: &SendMeta,
-    ) -> SendResult<
-        Option<CapFlowToken<<<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>>,
-    > {
-        endpoint
-            .canonical_control_token::<
-                <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind,
-            >(meta)
-            .map(Some)
     }
 }

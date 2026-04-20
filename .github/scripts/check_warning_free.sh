@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
+export TOOLCHAIN="${TOOLCHAIN:-stable}"
+bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
+
 run_warning_free() {
   local label="$1"
   shift
@@ -30,12 +33,12 @@ run_warning_free() {
 }
 
 run_warning_free "cargo check --all-targets -p hibana" \
-  cargo check --all-targets -p hibana
+  cargo +"${TOOLCHAIN}" check --all-targets -p hibana
 run_warning_free "cargo check --no-default-features --lib -p hibana" \
-  cargo check --no-default-features --lib -p hibana
+  cargo +"${TOOLCHAIN}" check --no-default-features --lib -p hibana
 run_warning_free "cargo test -p hibana --features std" \
-  cargo test -p hibana --features std
+  cargo +"${TOOLCHAIN}" test -p hibana --features std
 run_warning_free "cargo test -p hibana --test ui --features std" \
-  cargo test -p hibana --test ui --features std
+  cargo +"${TOOLCHAIN}" test -p hibana --test ui --features std
 run_warning_free "cargo test -p hibana --test policy_replay --features std" \
-  cargo test -p hibana --test policy_replay --features std
+  cargo +"${TOOLCHAIN}" test -p hibana --test policy_replay --features std

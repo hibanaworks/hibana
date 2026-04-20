@@ -1,5 +1,5 @@
-error[E0599]: no method named `eff_list` found for struct `RoleProgram<'prog, ROLE, Mint>` in the current scope
-  --> tests/ui/g-efflist-deref.rs:12:21
-   |
-12 |     let _ = program.eff_list();
-   |                     ^^^^^^^^ method not found in `RoleProgram<'_, 0>`
+error[E0599]: no method named `eff_list` found for struct `RoleProgram<ROLE>` in the current scope
+ --> tests/ui/g-efflist-deref.rs:7:21
+  |
+7 |     let _ = program.eff_list();
+  |                     ^^^^^^^^ method not found in `RoleProgram<0>`

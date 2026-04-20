@@ -57,7 +57,7 @@ type PublicEndpointKernel<'r, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint
         crate::binding::BindingHandle<'r>,
     >;
 #[cfg(test)]
-type ErasedPublicEndpointKernel<'cfg, T, U, C, const MAX_RV: usize> =
+type PublicEndpointKernelRaw<'cfg, T, U, C, const MAX_RV: usize> =
     crate::endpoint::kernel::CursorEndpoint<
         'cfg,
         0,
@@ -459,37 +459,40 @@ impl ResolverContext {
             return Some(ContextValue::from_u8(self.tag));
         }
         if raw == context::core::LATENCY_US.raw() {
-            return self.metrics.latency_us.map(ContextValue::from_u64);
+            return self.metrics.latency_us().map(ContextValue::from_u64);
         }
         if raw == context::core::QUEUE_DEPTH.raw() {
-            return self.metrics.queue_depth.map(ContextValue::from_u32);
+            return self.metrics.queue_depth().map(ContextValue::from_u32);
         }
         if raw == context::core::PACING_INTERVAL_US.raw() {
-            return self.metrics.pacing_interval_us.map(ContextValue::from_u64);
+            return self
+                .metrics
+                .pacing_interval_us()
+                .map(ContextValue::from_u64);
         }
         if raw == context::core::CONGESTION_MARKS.raw() {
-            return self.metrics.congestion_marks.map(ContextValue::from_u32);
+            return self.metrics.congestion_marks().map(ContextValue::from_u32);
         }
         if raw == context::core::RETRANSMISSIONS.raw() {
-            return self.metrics.retransmissions.map(ContextValue::from_u32);
+            return self.metrics.retransmissions().map(ContextValue::from_u32);
         }
         if raw == context::core::PTO_COUNT.raw() {
-            return self.metrics.pto_count.map(ContextValue::from_u32);
+            return self.metrics.pto_count().map(ContextValue::from_u32);
         }
         if raw == context::core::SRTT_US.raw() {
-            return self.metrics.srtt_us.map(ContextValue::from_u64);
+            return self.metrics.srtt_us().map(ContextValue::from_u64);
         }
         if raw == context::core::LATEST_ACK_PN.raw() {
-            return self.metrics.latest_ack_pn.map(ContextValue::from_u64);
+            return self.metrics.latest_ack_pn().map(ContextValue::from_u64);
         }
         if raw == context::core::CONGESTION_WINDOW.raw() {
-            return self.metrics.congestion_window.map(ContextValue::from_u64);
+            return self.metrics.congestion_window().map(ContextValue::from_u64);
         }
         if raw == context::core::IN_FLIGHT_BYTES.raw() {
-            return self.metrics.in_flight_bytes.map(ContextValue::from_u64);
+            return self.metrics.in_flight_bytes().map(ContextValue::from_u64);
         }
         if raw == context::core::TRANSPORT_ALGORITHM.raw() {
-            return self.metrics.algorithm.map(encode_transport_algorithm);
+            return self.metrics.algorithm().map(encode_transport_algorithm);
         }
         None
     }
@@ -500,7 +503,7 @@ impl ResolverContext {
         &self,
         id: crate::transport::context::ContextId,
     ) -> Option<crate::transport::context::ContextValue> {
-        self.core_attr(id).or_else(|| self.policy_attrs.query(id))
+        self.core_attr(id).or_else(|| self.policy_attrs.get(id))
     }
 
     /// Read slot-scoped policy input argument by index.
@@ -2224,14 +2227,13 @@ where
         Some(unsafe { slab_ptr.add(offset).cast() })
     }
 
-    fn ensure_program_image<'prog, const ROLE: u8, P, Mint>(
+    fn ensure_program_image<'prog, const ROLE: u8, P>(
         &self,
         rv_id: RendezvousId,
         program: &P,
     ) -> Result<ProgramImage, AttachError>
     where
-        Mint: MintConfigMarker,
-        P: crate::global::RoleProgramView<'prog, ROLE, Mint>,
+        P: crate::global::RoleProgramView<ROLE>,
     {
         let core = unsafe { &mut *self.control_ptr() };
         let rv = core
@@ -2264,14 +2266,13 @@ where
     }
 
     #[inline(never)]
-    fn ensure_role_image_slice<'prog, const ROLE: u8, P, Mint>(
+    fn ensure_role_image_slice<'prog, const ROLE: u8, P>(
         &self,
         rv_id: RendezvousId,
         program: &P,
     ) -> Result<RoleImageSlice<ROLE>, AttachError>
     where
-        Mint: MintConfigMarker,
-        P: crate::global::RoleProgramView<'prog, ROLE, Mint>,
+        P: crate::global::RoleProgramView<ROLE>,
     {
         let core = unsafe { &mut *self.control_ptr() };
         let rv = core
@@ -2319,7 +2320,7 @@ where
                 crate::global::compiled::materialize::LoweringLeaseMode::SummaryAndRoleScratch,
                 |lease| {
                     let (summary, scratch) = lease.into_parts();
-                    Self::materialize_role_image_slice_from_lease::<ROLE, Mint>(
+                    Self::materialize_role_image_slice_from_lease::<ROLE>(
                         rv,
                         program.stamp(),
                         has_program,
@@ -2336,7 +2337,7 @@ where
     }
 
     #[inline(never)]
-    fn materialize_role_image_slice_from_lease<const ROLE: u8, Mint>(
+    fn materialize_role_image_slice_from_lease<const ROLE: u8>(
         rv: &mut crate::rendezvous::core::Rendezvous<'_, 'cfg, T, U, C>,
         stamp: crate::global::compiled::lowering::ProgramStamp,
         has_program: bool,
@@ -2344,10 +2345,7 @@ where
         footprint: crate::global::role_program::RoleFootprint,
         summary: &crate::global::compiled::lowering::LoweringSummary,
         scratch: &mut crate::global::compiled::materialize::RoleLoweringScratch<'_>,
-    ) -> Option<RoleImageSlice<ROLE>>
-    where
-        Mint: MintConfigMarker,
-    {
+    ) -> Option<RoleImageSlice<ROLE>> {
         let program_image = if has_program {
             rv.program_image(stamp)
         } else {
@@ -2367,14 +2365,13 @@ where
     }
 
     #[cfg(test)]
-    fn materialize_test_role_image<'prog, const ROLE: u8, P, Mint>(
+    fn materialize_test_role_image<'prog, const ROLE: u8, P>(
         &self,
         rv_id: RendezvousId,
         program: &P,
     ) -> Result<RoleImageSlice<ROLE>, AttachError>
     where
-        Mint: MintConfigMarker,
-        P: crate::global::RoleProgramView<'prog, ROLE, Mint>,
+        P: crate::global::RoleProgramView<ROLE>,
     {
         self.ensure_role_image_slice(rv_id, program)
     }
@@ -2431,16 +2428,15 @@ where
         }
     }
 
-    fn with_transient_compiled_program<'prog, const ROLE: u8, P, Mint, F, R, E>(
+    fn with_transient_compiled_program<'prog, const ROLE: u8, P, F, R, E>(
         &self,
         rv_id: RendezvousId,
         program: &P,
         f: F,
     ) -> Result<R, E>
     where
-        Mint: MintConfigMarker,
         E: From<CpError>,
-        P: crate::global::RoleProgramView<'prog, ROLE, Mint>,
+        P: crate::global::RoleProgramView<ROLE>,
         F: FnOnce(ProgramImage) -> Result<R, E>,
     {
         let compiled = self
@@ -2453,16 +2449,15 @@ where
     }
 
     #[cfg(test)]
-    fn with_transient_compiled_role<'prog, const ROLE: u8, P, Mint, F, R, E>(
+    fn with_transient_compiled_role<'prog, const ROLE: u8, P, F, R, E>(
         &self,
         rv_id: RendezvousId,
         program: &P,
         f: F,
     ) -> Result<R, E>
     where
-        Mint: MintConfigMarker,
         E: From<CpError>,
-        P: crate::global::RoleProgramView<'prog, ROLE, Mint>,
+        P: crate::global::RoleProgramView<ROLE>,
         F: FnOnce(RoleImageSlice<ROLE>) -> Result<R, E>,
     {
         let role_image = self
@@ -2938,15 +2933,12 @@ where
         unsafe { (*self.resolvers_ref_ptr()).get(key) }
     }
 
-    pub(crate) fn set_resolver<'prog, const POLICY: u16, const ROLE: u8, Mint>(
+    pub(crate) fn set_resolver<'prog, const POLICY: u16, const ROLE: u8>(
         &self,
         rv_id: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<'prog, ROLE, Mint>,
+        program: &crate::g::advanced::RoleProgram<ROLE>,
         resolver: ResolverRef<'cfg>,
-    ) -> Result<(), CpError>
-    where
-        Mint: MintConfigMarker,
-    {
+    ) -> Result<(), CpError> {
         self.with_transient_compiled_program(rv_id, program, |compiled| {
             self.ensure_dynamic_resolver_capacity(
                 rv_id,
@@ -3648,7 +3640,7 @@ where
             | crate::control::cap::resource_kinds::RouteDecisionKind::TAG
             | LoopContinueKind::TAG
             | LoopBreakKind::TAG => {}
-            LoadBeginKind::TAG | LoadCommitKind::TAG => {
+            0x50 | 0x51 => {
                 // Management session load tokens do not require additional control effects.
             }
             // External control kinds (defined in adapter crates, etc.) are simple markers
@@ -4086,22 +4078,21 @@ where
     }
 
     #[inline]
-    pub(crate) fn attach_public_endpoint<'r, const ROLE: u8, Mint>(
+    pub(crate) fn attach_public_endpoint<'r, const ROLE: u8>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Mint>,
+        program: &crate::g::advanced::RoleProgram<ROLE>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
-        Mint: crate::control::cap::mint::MintConfigMarker,
         'cfg: 'r,
     {
         self.attach_public_endpoint_inner(rv_id, sid, program, binding)
     }
 
     #[inline]
-    fn attach_public_endpoint_inner<'r, 'prog, const ROLE: u8, P, Mint>(
+    fn attach_public_endpoint_inner<'r, 'prog, const ROLE: u8, P>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
@@ -4109,8 +4100,7 @@ where
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
-        Mint: crate::control::cap::mint::MintConfigMarker,
-        P: crate::global::RoleProgramView<'prog, ROLE, Mint>,
+        P: crate::global::RoleProgramView<ROLE>,
         'cfg: 'r,
     {
         match self.ensure_role_image_slice(rv_id, program) {
@@ -4120,7 +4110,10 @@ where
                     Self::public_endpoint_storage_requirement(role_image, binding_enabled);
                 let resident_budget = Self::public_endpoint_resident_budget(role_image);
                 let (slot, generation, dst) = match self
-                    .allocate_public_endpoint_storage_for_rv::<ROLE, Mint>(
+                    .allocate_public_endpoint_storage_for_rv::<
+                        ROLE,
+                        crate::control::cap::mint::MintConfig,
+                    >(
                         rv_id,
                         storage_layout.total_bytes,
                         storage_layout.total_align,
@@ -4132,7 +4125,7 @@ where
                 let arena_storage = dst.cast::<u8>().add(storage_layout.arena_offset);
                 if let Err(err) = self.init_endpoint_with_compiled_into::<
                     ROLE,
-                    Mint,
+                    crate::control::cap::mint::MintConfig,
                     crate::binding::BindingHandle<'r>,
                 >(
                     dst,
@@ -4143,7 +4136,7 @@ where
                     slot,
                     generation,
                     true,
-                    program.mint_config(),
+                    crate::control::cap::mint::MintConfig::INSTANCE,
                     binding_enabled,
                     binding,
                 ) {
@@ -4192,9 +4185,9 @@ where
         'cfg: 'r,
         B: crate::binding::BindingSlot,
         Mint: crate::control::cap::mint::MintConfigMarker,
-        P: crate::global::RoleProgramView<'prog, ROLE, Mint>,
+        P: crate::global::RoleProgramView<ROLE>,
     {
-        let role_image = self.ensure_role_image_slice::<ROLE, _, Mint>(rv_id, program)?;
+        let role_image = self.ensure_role_image_slice::<ROLE, _>(rv_id, program)?;
         let binding_enabled = true;
         let resident_budget = Self::public_endpoint_resident_budget(role_image);
         let arena_layout = role_image.endpoint_arena_layout_for_binding(binding_enabled);
@@ -4216,7 +4209,7 @@ where
                 slot,
                 generation,
                 true,
-                program.mint_config(),
+                Mint::INSTANCE,
                 binding_enabled,
                 binding,
             )
@@ -4232,33 +4225,31 @@ where
     }
 
     #[inline]
-    pub(crate) fn enter<'r, const ROLE: u8, Mint>(
+    pub(crate) fn enter<'r, const ROLE: u8>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Mint>,
+        program: &crate::g::advanced::RoleProgram<ROLE>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
-        Mint: crate::control::cap::mint::MintConfigMarker,
         'cfg: 'r,
     {
-        self.enter_with_binding(rv_id, sid, program, binding)
+        self.enter_with_binding::<ROLE>(rv_id, sid, program, binding)
     }
 
     #[inline]
-    fn enter_with_binding<'r, const ROLE: u8, Mint>(
+    fn enter_with_binding<'r, const ROLE: u8>(
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Mint>,
+        program: &crate::g::advanced::RoleProgram<ROLE>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
-        Mint: crate::control::cap::mint::MintConfigMarker,
         'cfg: 'r,
     {
-        self.attach_public_endpoint(rv_id, sid, program, binding)
+        self.attach_public_endpoint::<ROLE>(rv_id, sid, program, binding)
     }
 
     #[inline]
@@ -4454,11 +4445,7 @@ mod tests {
     use crate::runtime::consts::{DefaultLabelUniverse, LABEL_ROUTE_DECISION, RING_EVENTS};
     use crate::transport::{Transport, TransportError, wire::Payload};
     use core::mem::size_of;
-    use core::{
-        cell::UnsafeCell,
-        future::{Ready, ready},
-        mem::MaybeUninit,
-    };
+    use core::{cell::UnsafeCell, mem::MaybeUninit};
     use std::{string::String, thread_local};
 
     type SharedBorrowSteps = StepCons<
@@ -4478,7 +4465,7 @@ mod tests {
     type SharedBorrowProgram = Program<SharedBorrowSteps>;
     type SharedBorrowPolicyProgram<const POLICY_ID: u16> =
         Program<PolicySteps<SharedBorrowSteps, POLICY_ID>>;
-    type SharedBorrowRoleProgram = crate::g::advanced::RoleProgram<'static, 0, MintConfig>;
+    type SharedBorrowRoleProgram = crate::g::advanced::RoleProgram<0>;
 
     static SHARED_BORROW_PROGRAM_A: SharedBorrowProgram = g::send::<
         Role<0>,
@@ -4538,34 +4525,33 @@ mod tests {
             = ()
         where
             Self: 'a;
-        type Send<'a>
-            = Ready<Result<(), Self::Error>>
-        where
-            Self: 'a;
-        type Recv<'a>
-            = Ready<Result<Payload<'a>, Self::Error>>
-        where
-            Self: 'a;
         type Metrics = ();
 
         fn open<'a>(&'a self, _local_role: u8, _session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
             ((), ())
         }
 
-        fn send<'a, 'f>(
+        fn poll_send<'a, 'f>(
             &'a self,
             _tx: &'a mut Self::Tx<'a>,
             _outgoing: crate::transport::Outgoing<'f>,
-        ) -> Self::Send<'a>
+            _cx: &mut core::task::Context<'_>,
+        ) -> core::task::Poll<Result<(), Self::Error>>
         where
             'a: 'f,
         {
-            ready(Ok(()))
+            core::task::Poll::Ready(Ok(()))
         }
 
-        fn recv<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
-            ready(Err(TransportError::Failed))
+        fn poll_recv<'a>(
+            &'a self,
+            _rx: &'a mut Self::Rx<'a>,
+            _cx: &mut core::task::Context<'_>,
+        ) -> core::task::Poll<Result<Payload<'a>, Self::Error>> {
+            core::task::Poll::Ready(Err(TransportError::Failed))
         }
+
+        fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
         fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
 
@@ -4592,73 +4578,17 @@ mod tests {
         let _ = linear_program::ROUTE_SCOPE_COUNT;
         let _ = linear_program::EXPECTED_WORKER_BRANCH_LABELS;
         let _ = linear_program::ACK_LABELS;
-        let _ = huge_program::run::<DummyTransport, DefaultLabelUniverse, CounterClock, 2>
-            as fn(
-                &mut localside::ControllerEndpoint<
-                    '_,
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-                &mut localside::WorkerEndpoint<
-                    '_,
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-            );
-        let _ = linear_program::run::<DummyTransport, DefaultLabelUniverse, CounterClock, 2>
-            as fn(
-                &mut localside::ControllerEndpoint<
-                    '_,
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-                &mut localside::WorkerEndpoint<
-                    '_,
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-            );
-        let _ = fanout_program::run::<DummyTransport, DefaultLabelUniverse, CounterClock, 2>
-            as fn(
-                &mut localside::ControllerEndpoint<
-                    '_,
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-                &mut localside::WorkerEndpoint<
-                    '_,
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-            );
-        let _ = localside::worker_offer_decode_u8::<
-            0,
-            DummyTransport,
-            DefaultLabelUniverse,
-            CounterClock,
-            2,
-        >
-            as fn(
-                &mut localside::WorkerEndpoint<
-                    '_,
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-            ) -> u8;
+        let _ = huge_program::run
+            as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
+        let _ = huge_program::controller_program as fn() -> role_program::RoleProgram<0>;
+        let _ = linear_program::run
+            as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
+        let _ = linear_program::controller_program as fn() -> role_program::RoleProgram<0>;
+        let _ = fanout_program::run
+            as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
+        let _ = fanout_program::controller_program as fn() -> role_program::RoleProgram<0>;
+        let _ = localside::worker_offer_decode_u8::<0>
+            as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
     }
 
     #[test]
@@ -4685,13 +4615,6 @@ mod tests {
         SessionCluster<'static, DummyTransport, DefaultLabelUniverse, CounterClock, MAX_RV>;
 
     const CLUSTER_TEST_SLAB_CAPACITY: usize = 262_144;
-    static ROUTE_HEAVY_PROGRAM: crate::g::Program<huge_program::ProgramSteps> =
-        huge_program::PROGRAM;
-    static LINEAR_HEAVY_PROGRAM: crate::g::Program<linear_program::ProgramSteps> =
-        linear_program::PROGRAM;
-    static FANOUT_HEAVY_PROGRAM: crate::g::Program<fanout_program::ProgramSteps> =
-        fanout_program::PROGRAM;
-
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct MeasuredResidentShape {
         route_scope_count: usize,
@@ -4728,28 +4651,20 @@ mod tests {
         endpoint_padding_bytes: usize,
     }
 
-    fn measure_huge_shape<const ROLE: u8, Steps>(
-        program: &crate::g::Program<Steps>,
-    ) -> MeasuredResidentShape
-    where
-        Steps: crate::global::program::BuildProgramSource
-            + crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>,
-        <Steps as crate::g::advanced::steps::ProjectRole<crate::g::Role<ROLE>>>::Output:
-            crate::global::steps::StepCount,
-    {
+    fn measure_huge_shape<const ROLE: u8>(
+        projected: &role_program::RoleProgram<ROLE>,
+    ) -> MeasuredResidentShape {
         with_cluster_fixture(|clock, config| {
             with_test_cluster(clock, |cluster| {
                 let rv_id = cluster
                     .add_rendezvous_from_config(config, DummyTransport)
                     .expect("register rendezvous");
-                let projected: role_program::RoleProgram<'_, ROLE, MintConfig> =
-                    role_program::project(program);
                 let lowering = crate::global::lowering_input(&projected);
                 let summary = lowering.summary();
                 let counts = summary.compiled_program_counts();
                 let program_bytes = CompiledProgramImage::persistent_bytes_for_counts(counts);
                 let role_image = cluster
-                    .materialize_test_role_image::<ROLE, _, MintConfig>(rv_id, &projected)
+                    .materialize_test_role_image::<ROLE, _>(rv_id, projected)
                     .expect("materialize actual role image");
                 let compiled_role = unsafe { &*role_image.compiled_ptr() };
                 let active_lane_count = compiled_role.active_lane_count();
@@ -4838,7 +4753,7 @@ mod tests {
             "public endpoint lease must stay a small metadata owner"
         );
         let endpoint_storage_bytes = size_of::<
-            ErasedPublicEndpointKernel<
+            PublicEndpointKernelRaw<
                 'static,
                 DummyTransport,
                 DefaultLabelUniverse,
@@ -4861,10 +4776,8 @@ mod tests {
             || {
                 with_cluster_fixture(|clock, config| {
                     with_test_cluster_1(clock, |cluster| {
-                        let controller_program: role_program::RoleProgram<'_, 0, MintConfig> =
-                            role_program::project(&LINEAR_HEAVY_PROGRAM);
-                        let worker_program: role_program::RoleProgram<'_, 1, MintConfig> =
-                            role_program::project(&LINEAR_HEAVY_PROGRAM);
+                        let controller_program = linear_program::controller_program();
+                        let worker_program = linear_program::worker_program();
                         let rv_id = cluster
                             .add_rendezvous_from_config_auto(config, DummyTransport)
                             .expect("register rendezvous");
@@ -5023,14 +4936,13 @@ mod tests {
         let lowering_summary_bytes = size_of::<LoweringSummary>();
         let compiled_program_bytes = size_of::<CompiledProgramImage>();
         let compiled_role_bytes = size_of::<CompiledRoleImage>();
-        let route_heavy_worker: role_program::RoleProgram<'_, 1, MintConfig> =
-            role_program::project(&ROUTE_HEAVY_PROGRAM);
+        let route_heavy_worker = huge_program::worker_program();
         let role_compile_scratch_bytes =
             crate::global::compiled::materialize::role_lowering_scratch_storage_bytes(
                 crate::global::lowering_input(&route_heavy_worker).footprint(),
             );
         let endpoint_storage_bytes = size_of::<
-            ErasedPublicEndpointKernel<
+            PublicEndpointKernelRaw<
                 'static,
                 DummyTransport,
                 DefaultLabelUniverse,
@@ -5100,9 +5012,12 @@ mod tests {
 
     #[test]
     fn huge_shape_matrix_resident_bytes_stay_measured_and_local() {
-        let route = measure_huge_shape::<1, _>(&ROUTE_HEAVY_PROGRAM);
-        let linear = measure_huge_shape::<1, _>(&LINEAR_HEAVY_PROGRAM);
-        let fanout = measure_huge_shape::<1, _>(&FANOUT_HEAVY_PROGRAM);
+        let route_worker = huge_program::worker_program();
+        let route = measure_huge_shape::<1>(&route_worker);
+        let linear_worker = linear_program::worker_program();
+        let linear = measure_huge_shape::<1>(&linear_worker);
+        let fanout_worker = fanout_program::worker_program();
+        let fanout = measure_huge_shape::<1>(&fanout_worker);
 
         for (name, measured) in [
             ("route_heavy", route),
@@ -6118,7 +6033,7 @@ mod tests {
                             .expect("register rendezvous");
 
                         cluster
-                            .set_resolver::<ROUTE_POLICY_ONE, 0, _>(
+                            .set_resolver::<ROUTE_POLICY_ONE, 0>(
                                 rv_id,
                                 &route_policy_projected_one,
                                 ResolverRef::from_fn(route_resolver),
@@ -6202,7 +6117,7 @@ mod tests {
                             .expect("register rendezvous");
 
                         cluster
-                            .set_resolver::<ROUTE_POLICY_TWO, 0, _>(
+                            .set_resolver::<ROUTE_POLICY_TWO, 0>(
                                 rv_id,
                                 &route_policy_projected_two,
                                 ResolverRef::from_fn(route_resolver),

@@ -14,7 +14,6 @@ mod tls_ref_support;
 use ::core::{cell::UnsafeCell, mem::MaybeUninit};
 use common::TestTransport;
 use hibana::{
-    g::advanced::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil},
     g::advanced::{CanonicalControl, RoleProgram, project},
     g::{self, Msg, Role},
     substrate::{
@@ -48,33 +47,6 @@ const LOOP_POLICY_ID: u16 = 10;
 const POLICY_INPUT_ID: ContextId = ContextId::new(0x9001);
 
 type RouteRightKind = route_control_kinds::RouteControl<11, 0>;
-type RouteLeftHead = PolicySteps<
-    StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >,
-        >,
-        StepNil,
-    >,
-    ROUTE_POLICY_ID,
->;
-type RouteRightHead = PolicySteps<
-    StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
-        >,
-        StepNil,
-    >,
-    ROUTE_POLICY_ID,
->;
-type RouteProgramSteps = RouteSteps<RouteLeftHead, RouteRightHead>;
 
 fn block_on_async<F>(future: F) -> F::Output
 where
@@ -83,45 +55,6 @@ where
     futures::executor::block_on(future)
 }
 
-type LoopContinueHead = PolicySteps<
-    StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
-        >,
-        StepNil,
-    >,
-    LOOP_POLICY_ID,
->;
-type LoopBreakHead = PolicySteps<
-    StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
-        >,
-        StepNil,
-    >,
-    LOOP_POLICY_ID,
->;
-type LoopContinueArmSteps = SeqSteps<LoopContinueHead, StepNil>;
-type LoopProgramSteps = RouteSteps<LoopContinueArmSteps, LoopBreakHead>;
-type OuterLoopContinueArmSteps = SeqSteps<LoopContinueArmSteps, LoopProgramSteps>;
-type NestedLoopLeftSteps = SeqSteps<RouteLeftHead, OuterLoopContinueArmSteps>;
-type NestedLoopRightSteps = SeqSteps<RouteRightHead, LoopBreakHead>;
-type NestedLoopProgramSteps = RouteSteps<NestedLoopLeftSteps, NestedLoopRightSteps>;
-type RouteTailLeftSteps = SeqSteps<RouteLeftHead, LoopContinueArmSteps>;
-type RouteTailRightSteps = SeqSteps<RouteRightHead, LoopBreakHead>;
-type RouteTailProgramSteps = RouteSteps<RouteTailLeftSteps, RouteTailRightSteps>;
 type TestKit = SessionKit<
     'static,
     TestTransport,
@@ -129,8 +62,6 @@ type TestKit = SessionKit<
     hibana::substrate::runtime::CounterClock,
     2,
 >;
-type ControllerEndpoint = hibana::Endpoint<'static, 0, TestKit>;
-type WorkerEndpoint = hibana::Endpoint<'static, 1, TestKit>;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
@@ -143,10 +74,10 @@ std::thread_local! {
         UnsafeCell::new(MaybeUninit::uninit())
     };
     static ROUTE_ALLOW: Cell<bool> = const { Cell::new(false) };
-    static CONTROLLER_ENDPOINT_SLOT: UnsafeCell<MaybeUninit<ControllerEndpoint>> = const {
+    static CONTROLLER_ENDPOINT_SLOT: UnsafeCell<MaybeUninit<hibana::Endpoint<'static, 0>>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
     };
-    static WORKER_ENDPOINT_SLOT: UnsafeCell<MaybeUninit<WorkerEndpoint>> = const {
+    static WORKER_ENDPOINT_SLOT: UnsafeCell<MaybeUninit<hibana::Endpoint<'static, 1>>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
     };
 }
@@ -202,37 +133,58 @@ impl BindingSlot for PolicyInputBinding {
     }
 }
 
-const LEFT_ARM: g::Program<RouteLeftHead> = g::send::<
-    Role<0>,
-    Role<0>,
-    Msg<
-        { LABEL_ROUTE_DECISION },
-        GenericCapToken<RouteDecisionKind>,
-        CanonicalControl<RouteDecisionKind>,
-    >,
-    0,
->()
-.policy::<ROUTE_POLICY_ID>();
-const RIGHT_ARM: g::Program<RouteRightHead> = g::send::<
-    Role<0>,
-    Role<0>,
-    Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
-    0,
->()
-.policy::<ROUTE_POLICY_ID>();
-// Route is local to Controller (0 → 0) since all arms are self-sends
-const PROGRAM: g::Program<RouteProgramSteps> = g::route(LEFT_ARM, RIGHT_ARM);
-
-static CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&PROGRAM);
-static WORKER_PROGRAM: RoleProgram<'static, 1> = project(&PROGRAM);
-
 fn transport_queue_is_empty(transport: &TestTransport) -> bool {
     transport.queue_is_empty()
 }
 
-// Self-send for CanonicalControl: Controller → Controller
-const LOOP_CONTINUE_ARM: g::Program<LoopContinueArmSteps> = g::seq(
-    g::send::<
+fn controller_program() -> RoleProgram<0> {
+    let left_arm = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { LABEL_ROUTE_DECISION },
+            GenericCapToken<RouteDecisionKind>,
+            CanonicalControl<RouteDecisionKind>,
+        >,
+        0,
+    >()
+    .policy::<ROUTE_POLICY_ID>();
+    let right_arm = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+        0,
+    >()
+    .policy::<ROUTE_POLICY_ID>();
+    let program = g::route(left_arm, right_arm);
+    project(&program)
+}
+
+fn worker_program() -> RoleProgram<1> {
+    let left_arm = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { LABEL_ROUTE_DECISION },
+            GenericCapToken<RouteDecisionKind>,
+            CanonicalControl<RouteDecisionKind>,
+        >,
+        0,
+    >()
+    .policy::<ROUTE_POLICY_ID>();
+    let right_arm = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+        0,
+    >()
+    .policy::<ROUTE_POLICY_ID>();
+    let program = g::route(left_arm, right_arm);
+    project(&program)
+}
+
+fn loop_controller_program() -> RoleProgram<0> {
+    let loop_continue_arm = g::send::<
         Role<0>,
         Role<0>,
         Msg<
@@ -242,39 +194,171 @@ const LOOP_CONTINUE_ARM: g::Program<LoopContinueArmSteps> = g::seq(
         >,
         0,
     >()
-    .policy::<LOOP_POLICY_ID>(),
-    StepNil::PROGRAM,
-);
-const LOOP_BREAK_ARM: g::Program<LoopBreakHead> = g::send::<
-    Role<0>,
-    Role<0>,
-    Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
-    0,
->()
-.policy::<LOOP_POLICY_ID>();
-// Route is local to Controller (0 → 0)
-const LOOP_PROGRAM: g::Program<LoopProgramSteps> = g::route(LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
+    .policy::<LOOP_POLICY_ID>();
+    let loop_break_arm = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
+        0,
+    >()
+    .policy::<LOOP_POLICY_ID>();
+    let loop_program = g::route(loop_continue_arm, loop_break_arm);
+    project(&loop_program)
+}
 
-static LOOP_CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&LOOP_PROGRAM);
+fn route_tail_controller_program() -> RoleProgram<0> {
+    let left_arm = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { LABEL_ROUTE_DECISION },
+            GenericCapToken<RouteDecisionKind>,
+            CanonicalControl<RouteDecisionKind>,
+        >,
+        0,
+    >()
+    .policy::<ROUTE_POLICY_ID>();
+    let right_arm = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+        0,
+    >()
+    .policy::<ROUTE_POLICY_ID>();
+    let loop_continue_arm = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { LABEL_LOOP_CONTINUE },
+            GenericCapToken<LoopContinueKind>,
+            CanonicalControl<LoopContinueKind>,
+        >,
+        0,
+    >()
+    .policy::<LOOP_POLICY_ID>();
+    let loop_break_arm = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
+        0,
+    >()
+    .policy::<LOOP_POLICY_ID>();
+    let program = g::route(
+        g::seq(left_arm, loop_continue_arm),
+        g::seq(right_arm, loop_break_arm),
+    );
+    project(&program)
+}
 
-const ROUTE_TAIL_LEFT_ARM: g::Program<RouteTailLeftSteps> = g::seq(LEFT_ARM, LOOP_CONTINUE_ARM);
-const ROUTE_TAIL_RIGHT_ARM: g::Program<RouteTailRightSteps> = g::seq(RIGHT_ARM, LOOP_BREAK_ARM);
-const ROUTE_TAIL_PROGRAM: g::Program<RouteTailProgramSteps> =
-    g::route(ROUTE_TAIL_LEFT_ARM, ROUTE_TAIL_RIGHT_ARM);
+fn route_tail_worker_program() -> RoleProgram<1> {
+    let left_arm = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { LABEL_ROUTE_DECISION },
+            GenericCapToken<RouteDecisionKind>,
+            CanonicalControl<RouteDecisionKind>,
+        >,
+        0,
+    >()
+    .policy::<ROUTE_POLICY_ID>();
+    let right_arm = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+        0,
+    >()
+    .policy::<ROUTE_POLICY_ID>();
+    let loop_continue_arm = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { LABEL_LOOP_CONTINUE },
+            GenericCapToken<LoopContinueKind>,
+            CanonicalControl<LoopContinueKind>,
+        >,
+        0,
+    >()
+    .policy::<LOOP_POLICY_ID>();
+    let loop_break_arm = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
+        0,
+    >()
+    .policy::<LOOP_POLICY_ID>();
+    let program = g::route(
+        g::seq(left_arm, loop_continue_arm),
+        g::seq(right_arm, loop_break_arm),
+    );
+    project(&program)
+}
 
-static ROUTE_TAIL_CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&ROUTE_TAIL_PROGRAM);
-static ROUTE_TAIL_WORKER_PROGRAM: RoleProgram<'static, 1> = project(&ROUTE_TAIL_PROGRAM);
-
-const OUTER_LOOP_CONTINUE_ARM: g::Program<OuterLoopContinueArmSteps> =
-    g::seq(LOOP_CONTINUE_ARM, LOOP_PROGRAM);
-const NESTED_LOOP_LEFT_ARM: g::Program<NestedLoopLeftSteps> =
-    g::seq(LEFT_ARM, OUTER_LOOP_CONTINUE_ARM);
-const NESTED_LOOP_RIGHT_ARM: g::Program<NestedLoopRightSteps> = g::seq(RIGHT_ARM, LOOP_BREAK_ARM);
-// Route is local to Controller (0 → 0)
-const NESTED_LOOP_PROGRAM: g::Program<NestedLoopProgramSteps> =
-    g::route(NESTED_LOOP_LEFT_ARM, NESTED_LOOP_RIGHT_ARM);
-
-static NESTED_LOOP_CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&NESTED_LOOP_PROGRAM);
+fn nested_loop_controller_program() -> RoleProgram<0> {
+    let left_arm = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { LABEL_ROUTE_DECISION },
+            GenericCapToken<RouteDecisionKind>,
+            CanonicalControl<RouteDecisionKind>,
+        >,
+        0,
+    >()
+    .policy::<ROUTE_POLICY_ID>();
+    let right_arm = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+        0,
+    >()
+    .policy::<ROUTE_POLICY_ID>();
+    let loop_continue_arm = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<
+            { LABEL_LOOP_CONTINUE },
+            GenericCapToken<LoopContinueKind>,
+            CanonicalControl<LoopContinueKind>,
+        >,
+        0,
+    >()
+    .policy::<LOOP_POLICY_ID>();
+    let loop_break_arm = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
+        0,
+    >()
+    .policy::<LOOP_POLICY_ID>();
+    let loop_program = g::route(loop_continue_arm, loop_break_arm);
+    let outer_loop_continue_arm = g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_LOOP_CONTINUE },
+                GenericCapToken<LoopContinueKind>,
+                CanonicalControl<LoopContinueKind>,
+            >,
+            0,
+        >()
+        .policy::<LOOP_POLICY_ID>(),
+        loop_program,
+    );
+    let nested_loop_break_arm = g::send::<
+        Role<0>,
+        Role<0>,
+        Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, CanonicalControl<LoopBreakKind>>,
+        0,
+    >()
+    .policy::<LOOP_POLICY_ID>();
+    let program = g::route(
+        g::seq(left_arm, outer_loop_continue_arm),
+        g::seq(right_arm, nested_loop_break_arm),
+    );
+    project(&program)
+}
 
 fn route_resolver(ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
     if ctx.attr(core::TAG).map(|value| value.as_u8()) != Some(RouteDecisionKind::TAG) {
@@ -318,9 +402,9 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                     .add_rendezvous_from_config(config, transport.clone())
                     .expect("register rendezvous");
                 cluster
-                    .set_resolver::<ROUTE_POLICY_ID, 0, _>(
+                    .set_resolver::<ROUTE_POLICY_ID, 0>(
                         rv_id,
-                        &CONTROLLER_PROGRAM,
+                        &controller_program(),
                         hibana::substrate::policy::ResolverRef::from_fn(route_resolver),
                     )
                     .expect("register route resolver");
@@ -333,7 +417,7 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                         write_value(
                             ptr,
                             cluster
-                                .enter(rv_id, sid, &WORKER_PROGRAM, NoBinding)
+                                .enter(rv_id, sid, &worker_program(), NoBinding)
                                 .expect("worker endpoint"),
                         );
                     },
@@ -344,7 +428,7 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                                 write_value(
                                     ptr,
                                     cluster
-                                        .enter(rv_id, sid, &CONTROLLER_PROGRAM, NoBinding)
+                                        .enter(rv_id, sid, &controller_program(), NoBinding)
                                         .expect("controller endpoint"),
                                 );
                             },
@@ -379,7 +463,7 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                         write_value(
                             ptr,
                             cluster
-                                .enter(rv_id, sid2, &WORKER_PROGRAM, NoBinding)
+                                .enter(rv_id, sid2, &worker_program(), NoBinding)
                                 .expect("worker endpoint (retry)"),
                         );
                     },
@@ -390,7 +474,7 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                                 write_value(
                                     ptr,
                                     cluster
-                                        .enter(rv_id, sid2, &CONTROLLER_PROGRAM, NoBinding)
+                                        .enter(rv_id, sid2, &controller_program(), NoBinding)
                                         .expect("controller endpoint (retry)"),
                                 );
                             },
@@ -435,9 +519,9 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
                     .add_rendezvous_from_config(config, transport.clone())
                     .expect("register rendezvous");
                 cluster
-                    .set_resolver::<ROUTE_POLICY_ID, 0, _>(
+                    .set_resolver::<ROUTE_POLICY_ID, 0>(
                         rv_id,
-                        &ROUTE_TAIL_CONTROLLER_PROGRAM,
+                        &route_tail_controller_program(),
                         hibana::substrate::policy::ResolverRef::from_fn(route_resolver),
                     )
                     .expect("register route resolver");
@@ -450,7 +534,7 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
                         write_value(
                             ptr,
                             cluster
-                                .enter(rv_id, sid, &ROUTE_TAIL_WORKER_PROGRAM, NoBinding)
+                                .enter(rv_id, sid, &route_tail_worker_program(), NoBinding)
                                 .expect("worker endpoint"),
                         );
                     },
@@ -464,7 +548,7 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
                                         .enter(
                                             rv_id,
                                             sid,
-                                            &ROUTE_TAIL_CONTROLLER_PROGRAM,
+                                            &route_tail_controller_program(),
                                             NoBinding,
                                         )
                                         .expect("controller endpoint"),
@@ -517,9 +601,9 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
                                     .expect("register rendezvous");
 
                                 cluster
-                                    .set_resolver::<ROUTE_POLICY_ID, 0, _>(
+                                    .set_resolver::<ROUTE_POLICY_ID, 0>(
                                         rv_id,
-                                        &CONTROLLER_PROGRAM,
+                                        &controller_program(),
                                         hibana::substrate::policy::ResolverRef::from_fn(
                                             route_policy_input_resolver,
                                         ),
@@ -533,7 +617,7 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
                                         write_value(
                                             ptr,
                                             cluster
-                                                .enter(rv_id, sid, &WORKER_PROGRAM, NoBinding)
+                                                .enter(rv_id, sid, &worker_program(), NoBinding)
                                                 .expect("worker endpoint"),
                                         );
                                     },
@@ -547,7 +631,7 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
                                                         .enter(
                                                             rv_id,
                                                             sid,
-                                                            &CONTROLLER_PROGRAM,
+                                                            &controller_program(),
                                                             controller_binding,
                                                         )
                                                         .expect("controller endpoint"),
@@ -613,7 +697,7 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
 /// This test verifies the type definitions are correct after removing the Target parameter.
 #[test]
 fn loop_dynamic_resolver_policy_abort_and_success() {
-    let _controller_program = &LOOP_CONTROLLER_PROGRAM;
+    let _controller_program = loop_controller_program();
 }
 
 /// Test nested routes with flow().send(()) pattern.
@@ -635,7 +719,7 @@ fn nested_loop_dynamic_send_and_offer() {
                     .add_rendezvous_from_config(config, transport.clone())
                     .expect("register rendezvous");
 
-                let _controller_program = &NESTED_LOOP_CONTROLLER_PROGRAM;
+                let _controller_program = nested_loop_controller_program();
             },
         );
 

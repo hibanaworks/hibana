@@ -8,8 +8,8 @@ use crate::global::{
 use super::super::images::{CompiledProgramImage, CompiledRoleImage};
 #[cfg(test)]
 use super::super::lowering::program_owner::CompiledProgram;
-use super::super::lowering::{program_image_builder, role_image_builder};
 use super::super::lowering::{LoweringSummary, ProgramStamp};
+use super::super::lowering::{program_image_builder, role_image_builder};
 #[cfg(test)]
 use core::ptr;
 
@@ -394,7 +394,7 @@ pub(crate) const fn role_lowering_scratch_storage_bytes(footprint: RoleFootprint
 
 #[inline]
 pub(crate) unsafe fn with_lowering_lease<R>(
-    input: RoleLoweringInput<'_>,
+    input: RoleLoweringInput,
     storage: *mut u8,
     len: usize,
     mode: LoweringLeaseMode,
@@ -452,7 +452,7 @@ pub(crate) unsafe fn init_compiled_role_image_from_summary(
 
 #[cfg(test)]
 pub(crate) fn with_compiled_program<R>(
-    input: RoleLoweringInput<'_>,
+    input: RoleLoweringInput,
     f: impl FnOnce(&CompiledProgram) -> R,
 ) -> R {
     let summary = input.summary();
@@ -467,7 +467,7 @@ pub(crate) fn with_compiled_program<R>(
 
 #[cfg(test)]
 pub(crate) fn with_role_lowering_scratch<R>(
-    input: RoleLoweringInput<'_>,
+    input: RoleLoweringInput,
     f: impl FnOnce(&LoweringSummary, &mut RoleLoweringScratch<'_>) -> R,
 ) -> R {
     let footprint = input.footprint();
@@ -498,7 +498,7 @@ pub(crate) fn with_role_lowering_scratch<R>(
 
 #[cfg(test)]
 pub(crate) fn with_compiled_role_image<const ROLE: u8, R>(
-    input: RoleLoweringInput<'_>,
+    input: RoleLoweringInput,
     f: impl FnOnce(&CompiledRoleImage) -> R,
 ) -> R {
     let footprint = input.footprint();

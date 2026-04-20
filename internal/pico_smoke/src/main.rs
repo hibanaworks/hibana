@@ -24,12 +24,10 @@ use core::{
 
 use hibana::{
     Endpoint,
-    g,
-    g::advanced::project,
+    g::advanced::RoleProgram,
     substrate::{
         SessionId, SessionKit, Transport,
         binding::NoBinding,
-        cap::advanced::MintConfig,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
         tap::TapEvent,
         transport::{Outgoing, TransportError, TransportEvent},
@@ -55,14 +53,16 @@ const QUEUE_CAPACITY: usize = 16;
 const PAYLOAD_CAPACITY: usize = 96;
 
 type PicoKit = SessionKit<'static, PicoTransport, DefaultLabelUniverse, CounterClock, 1>;
-type ControllerEndpoint = Endpoint<'static, 0, PicoKit>;
-type WorkerEndpoint = Endpoint<'static, 1, PicoKit>;
+type ControllerEndpoint = Endpoint<'static, 0>;
+type WorkerEndpoint = Endpoint<'static, 1>;
 
-const PROGRAM: g::Program<sample_program::ProgramSteps> = sample_program::PROGRAM;
-static CONTROLLER_PROGRAM: hibana::g::advanced::RoleProgram<'static, 0, MintConfig> =
-    project(&PROGRAM);
-static WORKER_PROGRAM: hibana::g::advanced::RoleProgram<'static, 1, MintConfig> =
-    project(&PROGRAM);
+fn controller_program() -> RoleProgram<0> {
+    sample_program::controller_program()
+}
+
+fn worker_program() -> RoleProgram<1> {
+    sample_program::worker_program()
+}
 
 #[derive(Clone, Copy)]
 struct FrameOwned {
@@ -306,50 +306,6 @@ struct PicoRx {
     current: Option<FrameOwned>,
 }
 
-struct PicoSendFuture {
-    role: u8,
-    frame: Option<FrameOwned>,
-}
-
-impl Future for PicoSendFuture {
-    type Output = Result<(), TransportError>;
-
-    fn poll(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if let Some(frame) = self.frame.take() {
-            unsafe { &mut *transport_state() }
-                .role_mut(self.role)
-                .queue
-                .push_back(frame);
-        }
-        Poll::Ready(Ok(()))
-    }
-}
-
-struct PicoRecvFuture<'a> {
-    rx: &'a mut PicoRx,
-}
-
-impl<'a> Future for PicoRecvFuture<'a> {
-    type Output = Result<Payload<'a>, TransportError>;
-
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        if this.rx.current.is_none() {
-            let dequeued = unsafe { &mut *transport_state() }
-                .role_mut(this.rx.role)
-                .queue
-                .pop_front();
-            match dequeued {
-                Some(frame) => this.rx.current = Some(frame),
-                None => return Poll::Pending,
-            }
-        }
-        let frame = this.rx.current.as_ref().expect("queued transport frame");
-        let bytes: &'a [u8] = unsafe { &*(frame.as_slice() as *const [u8]) };
-        Poll::Ready(Ok(Payload::new(bytes)))
-    }
-}
-
 impl Transport for PicoTransport {
     type Error = TransportError;
     type Tx<'a>
@@ -358,14 +314,6 @@ impl Transport for PicoTransport {
         Self: 'a;
     type Rx<'a>
         = PicoRx
-    where
-        Self: 'a;
-    type Send<'a>
-        = PicoSendFuture
-    where
-        Self: 'a;
-    type Recv<'a>
-        = PicoRecvFuture<'a>
     where
         Self: 'a;
     type Metrics = ();
@@ -381,20 +329,46 @@ impl Transport for PicoTransport {
         )
     }
 
-    fn send<'a, 'f>(&'a self, _tx: &'a mut Self::Tx<'a>, outgoing: Outgoing<'f>) -> Self::Send<'a>
+    fn poll_send<'a, 'f>(
+        &'a self,
+        _tx: &'a mut Self::Tx<'a>,
+        outgoing: Outgoing<'f>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>>
     where
         'a: 'f,
     {
-        PicoSendFuture {
-            role: outgoing.meta.peer,
-            frame: Some(FrameOwned::from_bytes(outgoing.payload.as_bytes())),
-        }
+        unsafe { &mut *transport_state() }
+            .role_mut(outgoing.meta.peer)
+            .queue
+            .push_back(FrameOwned::from_bytes(outgoing.payload.as_bytes()));
+        Poll::Ready(Ok(()))
     }
 
-    fn recv<'a>(&'a self, rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
-        rx.current = None;
-        PicoRecvFuture { rx }
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<Payload<'a>, Self::Error>> {
+        if rx.current.is_some() {
+            rx.current = None;
+        }
+        if rx.current.is_none() {
+            let dequeued = unsafe { &mut *transport_state() }
+                .role_mut(rx.role)
+                .queue
+                .pop_front();
+            match dequeued {
+                Some(frame) => rx.current = Some(frame),
+                None => return Poll::Pending,
+            }
+        }
+        let frame = rx.current.as_ref().expect("queued transport frame");
+        let bytes: &'a [u8] = unsafe { &*(frame.as_slice() as *const [u8]) };
+        Poll::Ready(Ok(Payload::new(bytes)))
     }
+
+    fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
     fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
         if let Some(frame) = rx.current.take() {
@@ -460,15 +434,8 @@ fn transport_queue_is_empty() -> bool {
 }
 
 fn retain_fixture_symbols() {
-    let _ = localside::worker_offer_decode_u8::<
-        0,
-        PicoTransport,
-        DefaultLabelUniverse,
-        CounterClock,
-        1,
-    > as fn(
-        &mut localside::WorkerEndpoint<'_, PicoTransport, DefaultLabelUniverse, CounterClock, 1>,
-    ) -> u8;
+    let _ = localside::worker_offer_decode_u8::<0>
+        as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
 }
 
 fn run_smoke() {
@@ -492,10 +459,10 @@ fn run_smoke() {
         ));
         let sid = SessionId::new(1);
         let controller_ptr = storage.controller_storage.as_mut_ptr();
-        controller_ptr.write(must(kit.enter(rv_id, sid, &CONTROLLER_PROGRAM, NoBinding)));
+        controller_ptr.write(must(kit.enter(rv_id, sid, &controller_program(), NoBinding)));
         let controller = &mut *controller_ptr;
         let worker_ptr = storage.worker_storage.as_mut_ptr();
-        worker_ptr.write(must(kit.enter(rv_id, sid, &WORKER_PROGRAM, NoBinding)));
+        worker_ptr.write(must(kit.enter(rv_id, sid, &worker_program(), NoBinding)));
         let worker = &mut *worker_ptr;
         sample_program::run(controller, worker);
         assert!(transport_queue_is_empty());

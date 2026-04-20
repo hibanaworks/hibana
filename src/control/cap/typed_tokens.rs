@@ -63,19 +63,6 @@ impl<K: ResourceKind> CapFlowToken<K> {
         self.bytes
     }
 
-    /// Consume the flow token and return the underlying generic token.
-    #[inline]
-    pub fn into_generic(mut self) -> GenericCapToken<K> {
-        self.consumed = true;
-        GenericCapToken::from_bytes(self.bytes)
-    }
-
-    /// Borrow the generic token for inspection.
-    #[inline]
-    pub fn as_generic(&self) -> GenericCapToken<K> {
-        GenericCapToken::from_bytes(self.bytes)
-    }
-
     /// Convert this flow token into a `ControlFrame` for the typed pipeline.
     ///
     /// This is the primary integration point for the ControlFrame DSL:
@@ -219,7 +206,7 @@ impl<'rv, K: ResourceKind> CapRegisteredToken<'rv, K> {
     }
 }
 
-pub(crate) struct ErasedRegisteredCapToken<'rv> {
+pub(crate) struct RawRegisteredCapToken<'rv> {
     bytes: [u8; CAP_TOKEN_LEN],
     nonce: [u8; CAP_NONCE_LEN],
     cap_table: Option<NonNull<CapTable>>,
@@ -268,7 +255,7 @@ impl Drop for RegisteredTokenParts {
     }
 }
 
-impl<'rv> ErasedRegisteredCapToken<'rv> {
+impl<'rv> RawRegisteredCapToken<'rv> {
     #[inline]
     pub(crate) fn from_parts(mut parts: RegisteredTokenParts) -> Self {
         let erased = Self {
@@ -297,7 +284,7 @@ impl<'rv> ErasedRegisteredCapToken<'rv> {
     }
 }
 
-impl<'rv> Drop for ErasedRegisteredCapToken<'rv> {
+impl<'rv> Drop for RawRegisteredCapToken<'rv> {
     fn drop(&mut self) {
         if let Some(table) = self.cap_table.take() {
             unsafe {

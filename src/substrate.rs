@@ -12,54 +12,6 @@ use crate::control::cluster;
 type KernelSessionCluster<'cfg, T, U, C, const MAX_RV: usize> =
     crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>;
 
-pub(crate) unsafe fn public_endpoint_access<
-    'r,
-    'cfg,
-    const ROLE: u8,
-    T,
-    U,
-    C,
-    const MAX_RV: usize,
-    Mint,
->(
-    kit: &'r SessionKit<'cfg, T, U, C, MAX_RV>,
-    handle: crate::endpoint::carrier::PackedEndpointHandle,
-    generation: u32,
-) -> Option<
-    *mut crate::endpoint::carrier::KernelCursorEndpoint<
-        'r,
-        ROLE,
-        SessionKit<'cfg, T, U, C, MAX_RV>,
-        control::cap::mint::EpochTbl,
-        Mint,
-        crate::binding::BindingHandle<'r>,
-    >,
->
-where
-    T: crate::transport::Transport + 'cfg,
-    U: crate::runtime::consts::LabelUniverse + 'cfg,
-    C: crate::runtime::config::Clock + 'cfg,
-    Mint: control::cap::mint::MintConfigMarker,
-    'cfg: 'r,
-{
-    let rv = handle.rendezvous();
-    let slot = handle.slot();
-    unsafe {
-        kit.inner
-            .public_endpoint_ptr::<ROLE, Mint>(rv, slot, generation)
-            .map(|ptr| {
-                ptr.cast::<crate::endpoint::carrier::KernelCursorEndpoint<
-                    'r,
-                    ROLE,
-                    SessionKit<'cfg, T, U, C, MAX_RV>,
-                    control::cap::mint::EpochTbl,
-                    Mint,
-                    crate::binding::BindingHandle<'r>,
-                >>()
-            })
-    }
-}
-
 /// Protocol-neutral session kit facade for protocol implementors.
 ///
 /// The runtime is intentionally local-only: `SessionKit` is neither `Send` nor
@@ -113,17 +65,53 @@ where
     }
 
     #[inline]
+    pub(crate) unsafe fn public_endpoint_kernel_ptr<'r, const ROLE: u8, Mint>(
+        &'r self,
+        handle: crate::endpoint::carrier::PackedEndpointHandle,
+        generation: u32,
+    ) -> Option<
+        *mut crate::endpoint::carrier::KernelCursorEndpoint<
+            'r,
+            ROLE,
+            Self,
+            control::cap::mint::EpochTbl,
+            Mint,
+            crate::binding::BindingHandle<'r>,
+        >,
+    >
+    where
+        Mint: control::cap::mint::MintConfigMarker,
+        'cfg: 'r,
+    {
+        let rv = handle.rendezvous();
+        let slot = handle.slot();
+        unsafe {
+            self.inner
+                .public_endpoint_ptr::<ROLE, Mint>(rv, slot, generation)
+                .map(|ptr| {
+                    ptr.cast::<crate::endpoint::carrier::KernelCursorEndpoint<
+                        'r,
+                        ROLE,
+                        Self,
+                        control::cap::mint::EpochTbl,
+                        Mint,
+                        crate::binding::BindingHandle<'r>,
+                    >>()
+                })
+        }
+    }
+
+    #[inline]
     #[allow(private_bounds)]
-    pub fn enter<'r, const ROLE: u8, Mint, B>(
+    pub fn enter<'r, const ROLE: u8, B>(
         &'r self,
         rv: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Mint>,
+        program: &crate::g::advanced::RoleProgram<ROLE>,
         binding: B,
-    ) -> Result<crate::Endpoint<'r, ROLE, Self, Mint>, AttachError>
+    ) -> Result<crate::Endpoint<'r, ROLE>, AttachError>
     where
         B: crate::binding::BindingArg<'r>,
-        Mint: crate::substrate::cap::advanced::MintConfigMarker,
         'cfg: 'r,
     {
         let binding = binding.into_binding_handle();
@@ -131,38 +119,32 @@ where
     }
 
     #[inline]
-    fn enter_with_binding<'r, const ROLE: u8, Mint>(
+    fn enter_with_binding<'r, const ROLE: u8>(
         &'r self,
         rv: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Mint>,
+        program: &crate::g::advanced::RoleProgram<ROLE>,
         binding: crate::binding::BindingHandle<'r>,
-    ) -> Result<crate::Endpoint<'r, ROLE, Self, Mint>, AttachError>
+    ) -> Result<crate::Endpoint<'r, ROLE>, AttachError>
     where
-        Mint: crate::substrate::cap::advanced::MintConfigMarker,
         'cfg: 'r,
     {
-        let (slot, generation) = self.inner.enter(rv, sid, program, binding)?;
+        let (slot, generation) = self.inner.enter::<ROLE>(rv, sid, program, binding)?;
         let handle = crate::endpoint::carrier::PackedEndpointHandle::new(rv, slot);
-        let endpoint = unsafe {
-            public_endpoint_access::<ROLE, T, U, C, MAX_RV, Mint>(self, handle, generation)
-                .expect("public endpoint must stay addressable immediately after attach")
-        };
-        Ok(crate::endpoint::Endpoint::from_ptr(endpoint))
+        Ok(crate::endpoint::Endpoint::from_handle(
+            self, handle, generation,
+        ))
     }
 
     #[inline]
-    pub fn set_resolver<const POLICY: u16, const ROLE: u8, Mint>(
+    pub fn set_resolver<const POLICY: u16, const ROLE: u8>(
         &self,
         rv: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<'_, ROLE, Mint>,
+        program: &crate::g::advanced::RoleProgram<ROLE>,
         resolver: crate::substrate::policy::ResolverRef<'cfg>,
-    ) -> Result<(), CpError>
-    where
-        Mint: crate::substrate::cap::advanced::MintConfigMarker,
-    {
+    ) -> Result<(), CpError> {
         self.inner
-            .set_resolver::<POLICY, ROLE, Mint>(rv, program, resolver)
+            .set_resolver::<POLICY, ROLE>(rv, program, resolver)
     }
 }
 
@@ -215,16 +197,8 @@ pub mod cap {
             MintConfigMarker, SessionScopedKind,
         };
         pub use crate::control::cap::resource_kinds::{
-            CancelAckKind, CancelKind, CheckpointKind, CommitKind, LoadBeginKind, LoadCommitKind,
-            LoopBreakKind, LoopContinueKind, LoopDecisionHandle, MgmtRouteActivateKind,
-            MgmtRouteCommandFamilyKind, MgmtRouteCommandTailKind, MgmtRouteLoadAndActivateKind,
-            MgmtRouteLoadFamilyKind, MgmtRouteLoadKind, MgmtRouteReplyActivatedKind,
-            MgmtRouteReplyErrorKind, MgmtRouteReplyLoadedKind, MgmtRouteReplyRevertedKind,
-            MgmtRouteReplyStatsKind, MgmtRouteReplySuccessFamilyKind,
-            MgmtRouteReplySuccessFinalKind, MgmtRouteReplySuccessTailKind, MgmtRouteRevertKind,
-            MgmtRouteStatsKind, PolicyActivateKind, PolicyAnnotateKind, PolicyLoadKind,
-            PolicyRevertKind, RerouteKind, RollbackKind, RouteDecisionHandle, RouteDecisionKind,
-            SpliceAckKind, SpliceIntentKind,
+            LoopBreakKind, LoopContinueKind, LoopDecisionHandle, RouteDecisionHandle,
+            RouteDecisionKind,
         };
         pub use crate::global::ControlHandling;
         pub use crate::global::const_dsl::{ControlScopeKind, ScopeId};
@@ -245,7 +219,7 @@ pub mod wire {
 pub mod transport {
     pub use crate::transport::{
         LocalDirection, Outgoing, SendMeta, TransportAlgorithm, TransportError, TransportEvent,
-        TransportEventKind, TransportMetrics, TransportSnapshot,
+        TransportEventKind, TransportMetrics, TransportSnapshot, TransportSnapshotParts,
     };
 }
 
@@ -256,12 +230,10 @@ mod tests {
     use std::cell::UnsafeCell;
 
     use crate::{
-        Endpoint, g,
-        g::advanced::project,
+        Endpoint,
         substrate::{
             SessionId, SessionKit, Transport,
             binding::NoBinding,
-            cap::advanced::MintConfig,
             runtime::{Config, CounterClock, DefaultLabelUniverse},
             transport::{Outgoing, TransportError, TransportEvent},
             wire::Payload,
@@ -321,78 +293,18 @@ mod tests {
     const QUEUE_CAPACITY: usize = 16;
     const PAYLOAD_CAPACITY: usize = 96;
 
-    static ROUTE_HEAVY_PROGRAM: g::Program<huge_program::ProgramSteps> = huge_program::PROGRAM;
-    static LINEAR_HEAVY_PROGRAM: g::Program<linear_program::ProgramSteps> = linear_program::PROGRAM;
-    static FANOUT_HEAVY_PROGRAM: g::Program<fanout_program::ProgramSteps> = fanout_program::PROGRAM;
-
     fn retain_pico_smoke_fixture_symbols() {
-        let _ = huge_program::run::<PicoTransport, DefaultLabelUniverse, CounterClock, 2>
-            as fn(
-                &mut localside::ControllerEndpoint<
-                    '_,
-                    PicoTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-                &mut localside::WorkerEndpoint<
-                    '_,
-                    PicoTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-            );
-        let _ = linear_program::run::<PicoTransport, DefaultLabelUniverse, CounterClock, 2>
-            as fn(
-                &mut localside::ControllerEndpoint<
-                    '_,
-                    PicoTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-                &mut localside::WorkerEndpoint<
-                    '_,
-                    PicoTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-            );
-        let _ = fanout_program::run::<PicoTransport, DefaultLabelUniverse, CounterClock, 2>
-            as fn(
-                &mut localside::ControllerEndpoint<
-                    '_,
-                    PicoTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-                &mut localside::WorkerEndpoint<
-                    '_,
-                    PicoTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-            );
-        let _ = localside::worker_offer_decode_u8::<
-            0,
-            PicoTransport,
-            DefaultLabelUniverse,
-            CounterClock,
-            2,
-        >
-            as fn(
-                &mut localside::WorkerEndpoint<
-                    '_,
-                    PicoTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    2,
-                >,
-            ) -> u8;
+        let _ = huge_program::run
+            as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
+        let _ = huge_program::controller_program as fn() -> crate::g::advanced::RoleProgram<0>;
+        let _ = linear_program::run
+            as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
+        let _ = linear_program::controller_program as fn() -> crate::g::advanced::RoleProgram<0>;
+        let _ = fanout_program::run
+            as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
+        let _ = fanout_program::controller_program as fn() -> crate::g::advanced::RoleProgram<0>;
+        let _ = localside::worker_offer_decode_u8::<0>
+            as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
     }
 
     #[test]
@@ -558,53 +470,8 @@ mod tests {
         current: Option<FrameOwned>,
     }
 
-    struct PicoSendFuture {
-        role: u8,
-        frame: Option<FrameOwned>,
-    }
-
-    struct PicoRecvFuture<'a> {
-        rx: &'a mut PicoRx,
-    }
-
     fn with_transport_state<R>(f: impl FnOnce(&mut PicoTransportState) -> R) -> R {
         FIXTURE_TRANSPORT.with(|state| unsafe { f(&mut *state.get()) })
-    }
-
-    impl core::future::Future for PicoSendFuture {
-        type Output = Result<(), TransportError>;
-
-        fn poll(
-            mut self: core::pin::Pin<&mut Self>,
-            _cx: &mut core::task::Context<'_>,
-        ) -> core::task::Poll<Self::Output> {
-            if let Some(frame) = self.frame.take() {
-                with_transport_state(|state| state.role_mut(self.role).queue.push_back(frame));
-            }
-            core::task::Poll::Ready(Ok(()))
-        }
-    }
-
-    impl<'a> core::future::Future for PicoRecvFuture<'a> {
-        type Output = Result<Payload<'a>, TransportError>;
-
-        fn poll(
-            self: core::pin::Pin<&mut Self>,
-            _cx: &mut core::task::Context<'_>,
-        ) -> core::task::Poll<Self::Output> {
-            let this = self.get_mut();
-            if this.rx.current.is_none() {
-                let dequeued =
-                    with_transport_state(|state| state.role_mut(this.rx.role).queue.pop_front());
-                match dequeued {
-                    Some(frame) => this.rx.current = Some(frame),
-                    None => return core::task::Poll::Pending,
-                }
-            }
-            let frame = this.rx.current.as_ref().expect("queued transport frame");
-            let bytes: &'a [u8] = unsafe { &*(frame.as_slice() as *const [u8]) };
-            core::task::Poll::Ready(Ok(Payload::new(bytes)))
-        }
     }
 
     impl Transport for PicoTransport {
@@ -615,14 +482,6 @@ mod tests {
             Self: 'a;
         type Rx<'a>
             = PicoRx
-        where
-            Self: 'a;
-        type Send<'a>
-            = PicoSendFuture
-        where
-            Self: 'a;
-        type Recv<'a>
-            = PicoRecvFuture<'a>
         where
             Self: 'a;
         type Metrics = ();
@@ -640,24 +499,46 @@ mod tests {
             )
         }
 
-        fn send<'a, 'f>(
+        fn poll_send<'a, 'f>(
             &'a self,
             _tx: &'a mut Self::Tx<'a>,
             outgoing: Outgoing<'f>,
-        ) -> Self::Send<'a>
+            _cx: &mut core::task::Context<'_>,
+        ) -> core::task::Poll<Result<(), Self::Error>>
         where
             'a: 'f,
         {
-            PicoSendFuture {
-                role: outgoing.meta.peer,
-                frame: Some(FrameOwned::from_bytes(outgoing.payload.as_bytes())),
-            }
+            with_transport_state(|state| {
+                state
+                    .role_mut(outgoing.meta.peer)
+                    .queue
+                    .push_back(FrameOwned::from_bytes(outgoing.payload.as_bytes()));
+            });
+            core::task::Poll::Ready(Ok(()))
         }
 
-        fn recv<'a>(&'a self, rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
-            rx.current = None;
-            PicoRecvFuture { rx }
+        fn poll_recv<'a>(
+            &'a self,
+            rx: &'a mut Self::Rx<'a>,
+            _cx: &mut core::task::Context<'_>,
+        ) -> core::task::Poll<Result<Payload<'a>, Self::Error>> {
+            if rx.current.is_some() {
+                rx.current = None;
+            }
+            if rx.current.is_none() {
+                let dequeued =
+                    with_transport_state(|state| state.role_mut(rx.role).queue.pop_front());
+                match dequeued {
+                    Some(frame) => rx.current = Some(frame),
+                    None => return core::task::Poll::Pending,
+                }
+            }
+            let frame = rx.current.as_ref().expect("queued transport frame");
+            let bytes: &'a [u8] = unsafe { &*(frame.as_slice() as *const [u8]) };
+            core::task::Poll::Ready(Ok(Payload::new(bytes)))
         }
+
+        fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
         fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
             if let Some(frame) = rx.current.take() {
@@ -810,18 +691,14 @@ mod tests {
     }
 
     #[inline(never)]
-    fn run_attached_shape<Steps: 'static>(
-        program: &'static g::Program<Steps>,
+    fn run_attached_shape(
         route_scope_count: usize,
         expected_branch_labels: &'static [u8],
         expected_acks: &'static [u8],
-        run: fn(&mut Endpoint<'_, 0, PicoKit>, &mut Endpoint<'_, 1, PicoKit>),
-    ) -> RuntimeShapeMetrics
-    where
-        Steps: crate::global::program::BuildProgramSource
-            + hibana::g::advanced::steps::ProjectRole<g::Role<0>>
-            + hibana::g::advanced::steps::ProjectRole<g::Role<1>>,
-    {
+        controller_program: fn() -> crate::g::advanced::RoleProgram<0>,
+        worker_program: fn() -> crate::g::advanced::RoleProgram<1>,
+        run: fn(&mut Endpoint<'_, 0>, &mut Endpoint<'_, 1>),
+    ) -> RuntimeShapeMetrics {
         let bounds = current_thread_stack_bounds();
         unsafe {
             initialize_stack_canary(bounds);
@@ -833,10 +710,8 @@ mod tests {
         let mut runtime_metrics = None::<RuntimeShapeMetrics>;
         with_pico_fixture(|clock, tap_buf, slab| {
             let transport = PicoTransport;
-            let controller_program: crate::g::advanced::RoleProgram<'_, 0, MintConfig> =
-                project(program);
-            let worker_program: crate::g::advanced::RoleProgram<'_, 1, MintConfig> =
-                project(program);
+            let controller_program = controller_program();
+            let worker_program = worker_program();
             let kit = PicoKit::new(clock);
             let rv_id = kit
                 .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
@@ -904,10 +779,11 @@ mod tests {
         assert_pico_runtime_metrics(
             "route_heavy",
             run_attached_shape(
-                &ROUTE_HEAVY_PROGRAM,
                 huge_program::ROUTE_SCOPE_COUNT,
                 &huge_program::EXPECTED_WORKER_BRANCH_LABELS,
                 &huge_program::ACK_LABELS,
+                huge_program::controller_program,
+                huge_program::worker_program,
                 huge_program::run,
             ),
         );
@@ -919,10 +795,11 @@ mod tests {
         assert_pico_runtime_metrics(
             "linear_heavy",
             run_attached_shape(
-                &LINEAR_HEAVY_PROGRAM,
                 linear_program::ROUTE_SCOPE_COUNT,
                 &linear_program::EXPECTED_WORKER_BRANCH_LABELS,
                 &linear_program::ACK_LABELS,
+                linear_program::controller_program,
+                linear_program::worker_program,
                 linear_program::run,
             ),
         );
@@ -934,10 +811,11 @@ mod tests {
         assert_pico_runtime_metrics(
             "fanout_heavy",
             run_attached_shape(
-                &FANOUT_HEAVY_PROGRAM,
                 fanout_program::ROUTE_SCOPE_COUNT,
                 &fanout_program::EXPECTED_WORKER_BRANCH_LABELS,
                 &fanout_program::ACK_LABELS,
+                fanout_program::controller_program,
+                fanout_program::worker_program,
                 fanout_program::run,
             ),
         );

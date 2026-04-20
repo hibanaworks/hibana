@@ -1,10 +1,9 @@
-use hibana::{Endpoint, g};
 use hibana::substrate::{
     SessionKit, Transport,
-    cap::advanced::MintConfigMarker,
     runtime::{Clock, LabelUniverse},
     wire::{CodecError, Payload, WireEncode, WirePayload},
 };
+use hibana::{Endpoint, g};
 
 struct FramePayload([u8; 4]);
 
@@ -30,14 +29,13 @@ impl WirePayload for FramePayload {
     }
 }
 
-fn branch_decode_is_affine<'r, 'cfg, T, U, C, const MAX_RV: usize, Mint>(
-    endpoint: &mut Endpoint<'r, 0, SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
+fn branch_decode_is_affine<'r, 'cfg, T, U, C, const MAX_RV: usize>(
+    endpoint: &mut Endpoint<'r, 0, SessionKit<'cfg, T, U, C, MAX_RV>>,
 ) where
     T: Transport + 'cfg,
     U: LabelUniverse + 'cfg,
     C: Clock + 'cfg,
     'cfg: 'r,
-    Mint: MintConfigMarker,
 {
     let branch = futures::executor::block_on(endpoint.offer()).unwrap();
     let _first = branch.decode::<g::Msg<7, FramePayload>>();

@@ -1,7 +1,7 @@
 //! Global session type DSL (iso-recursive).
 //!
 //! This module exposes the primitives needed to assemble global choreographies
-//! as const values and project them to role-local views.
+//! as local inferred witnesses and project them to role-local views.
 
 use core::marker::PhantomData;
 
@@ -31,15 +31,6 @@ pub mod advanced {
     pub use super::{
         CanonicalControl, ControlMessage, ControlMessageKind, ExternalControl, MessageSpec,
     };
-
-    pub mod steps {
-        pub use super::super::steps::{
-            LocalAction, LocalRecv, LocalSend, LoopBreakSteps, LoopBreakStepsL, LoopContinueSteps,
-            LoopContinueStepsL, LoopDecisionSteps, LoopDecisionStepsL, LoopSteps, LoopStepsL,
-            ParSteps, PolicySteps, ProjectRole, RouteSteps, SendStep, SeqSteps, StepConcat,
-            StepCons, StepNil,
-        };
-    }
 }
 #[diagnostic::on_unimplemented(
     message = "`g::route(left, right)` arms must begin with a controller self-send",

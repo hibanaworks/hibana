@@ -73,6 +73,14 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
         ::core::ptr::addr_of_mut!((*dst).public_slot).write(public_slot);
         ::core::ptr::addr_of_mut!((*dst).public_generation).write(public_generation);
         ::core::ptr::addr_of_mut!((*dst).public_slot_owned).write(public_slot_owned);
+        ::core::ptr::addr_of_mut!((*dst).public_offer_state)
+            .write(super::offer::OfferState::new());
+        ::core::ptr::addr_of_mut!((*dst).public_route_branch).write(None);
+        ::core::ptr::addr_of_mut!((*dst).public_recv_state)
+            .write(super::recv::RecvState::new());
+        ::core::ptr::addr_of_mut!((*dst).public_decode_state)
+            .write(super::decode::DecodeState::empty());
+        ::core::ptr::addr_of_mut!((*dst).public_send_state).write(super::core::SendState::Done);
         ::core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
         ::core::ptr::addr_of_mut!((*dst).control).write(control);
         ::core::ptr::addr_of_mut!((*dst).mint).write(mint.as_config());

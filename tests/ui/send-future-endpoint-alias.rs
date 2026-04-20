@@ -1,10 +1,9 @@
-use hibana::{Endpoint, g};
 use hibana::substrate::{
     SessionKit, Transport,
-    cap::advanced::MintConfigMarker,
     runtime::{Clock, LabelUniverse},
     wire::{CodecError, WireEncode, WirePayload},
 };
+use hibana::{Endpoint, g};
 
 struct Payload(u8);
 
@@ -34,14 +33,13 @@ impl WirePayload for Payload {
     }
 }
 
-fn pending_send_keeps_endpoint_borrow<'r, 'cfg, T, U, C, const MAX_RV: usize, Mint>(
-    endpoint: &mut Endpoint<'r, 0, SessionKit<'cfg, T, U, C, MAX_RV>, Mint>,
+fn pending_send_keeps_endpoint_borrow<'r, 'cfg, T, U, C, const MAX_RV: usize>(
+    endpoint: &mut Endpoint<'r, 0, SessionKit<'cfg, T, U, C, MAX_RV>>,
 ) where
     T: Transport + 'cfg,
     U: LabelUniverse + 'cfg,
     C: Clock + 'cfg,
     'cfg: 'r,
-    Mint: MintConfigMarker,
 {
     let flow = endpoint.flow::<g::Msg<7, Payload>>().unwrap();
     let send = flow.send(&Payload(1));

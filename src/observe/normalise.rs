@@ -606,6 +606,7 @@ mod tests {
     use crate::observe::events;
     use crate::transport::{
         TransportAlgorithm, TransportEvent, TransportEventKind, TransportSnapshot,
+        TransportSnapshotParts,
     };
     use core::cell::UnsafeCell;
     use std::thread_local;
@@ -790,14 +791,18 @@ mod tests {
     #[test]
     fn transport_metrics_trace_decodes_snapshot() {
         with_normalise_storage(|storage| {
-            let snapshot = TransportSnapshot::new(Some(1500), Some(12))
-                .with_srtt(Some(3200))
-                .with_congestion_window(Some(64 * 1024))
-                .with_in_flight(Some(32 * 1024))
-                .with_retransmissions(Some(7))
-                .with_congestion_marks(Some(3))
-                .with_pacing_interval(Some(500))
-                .with_algorithm(Some(TransportAlgorithm::Cubic));
+            let snapshot = TransportSnapshot::from_parts(TransportSnapshotParts {
+                latency_us: Some(1500),
+                queue_depth: Some(12),
+                srtt_us: Some(3200),
+                congestion_window: Some(64 * 1024),
+                in_flight_bytes: Some(32 * 1024),
+                retransmissions: Some(7),
+                congestion_marks: Some(3),
+                pacing_interval_us: Some(500),
+                algorithm: Some(TransportAlgorithm::Cubic),
+                ..TransportSnapshotParts::new()
+            });
             let payload = snapshot.encode_tap_metrics().expect("metrics encode");
             let (arg0, arg1) = payload.primary;
             storage[0] = events::TransportMetrics::new(0, arg0, arg1);
@@ -822,11 +827,14 @@ mod tests {
     #[test]
     fn transport_metrics_trace_handles_missing_extension() {
         with_normalise_storage(|storage| {
-            let snapshot = TransportSnapshot::new(None, Some(4))
-                .with_srtt(Some(6400))
-                .with_congestion_window(Some(8 * 1024))
-                .with_in_flight(Some(4 * 1024))
-                .with_algorithm(Some(TransportAlgorithm::Reno));
+            let snapshot = TransportSnapshot::from_parts(TransportSnapshotParts {
+                queue_depth: Some(4),
+                srtt_us: Some(6400),
+                congestion_window: Some(8 * 1024),
+                in_flight_bytes: Some(4 * 1024),
+                algorithm: Some(TransportAlgorithm::Reno),
+                ..TransportSnapshotParts::new()
+            });
             let payload = snapshot.encode_tap_metrics().expect("metrics encode");
             let (arg0, arg1) = payload.primary;
             storage[0] = events::TransportMetrics::new(0, arg0, arg1);

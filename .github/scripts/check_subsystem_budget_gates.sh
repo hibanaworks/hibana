@@ -3,9 +3,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MANIFEST_PATH="${ROOT_DIR}/Cargo.toml"
+export TOOLCHAIN="${TOOLCHAIN:-stable}"
+bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
 
 # Compiled-role and resident atlas budgets.
-cargo test \
+cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   --features std \
@@ -14,7 +16,7 @@ cargo test \
   --exact \
   --nocapture
 
-cargo test \
+cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   --features std \
@@ -23,7 +25,7 @@ cargo test \
   --exact \
   --nocapture
 
-cargo test \
+cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   --features std \
@@ -33,7 +35,7 @@ cargo test \
   --nocapture
 
 # Send/policy hot-path ownership.
-cargo test \
+cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   --features std \
@@ -42,7 +44,7 @@ cargo test \
   --exact \
   --nocapture
 
-cargo test \
+cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   --features std \
@@ -51,7 +53,7 @@ cargo test \
   --exact \
   --nocapture
 
-cargo test \
+cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --test public_surface_guards \
   --features std \

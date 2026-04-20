@@ -15,17 +15,8 @@ mod route_control_kinds;
 mod route_localside;
 
 use hibana::{
-    g,
-    g::advanced::{RoleProgram, project},
-    substrate::{
-        cap::advanced::MintConfig,
-        runtime::{CounterClock, DefaultLabelUniverse},
-    },
+    g::advanced::RoleProgram,
 };
-
-static ROUTE_HEAVY_PROGRAM: g::Program<huge_program::ProgramSteps> = huge_program::PROGRAM;
-static LINEAR_HEAVY_PROGRAM: g::Program<linear_program::ProgramSteps> = linear_program::PROGRAM;
-static FANOUT_HEAVY_PROGRAM: g::Program<fanout_program::ProgramSteps> = fanout_program::PROGRAM;
 
 fn drive<F: core::future::Future>(future: F) -> F::Output {
     futures::executor::block_on(future)
@@ -41,73 +32,14 @@ fn retain_pico_smoke_fixture_symbols() {
     let _ = linear_program::ROUTE_SCOPE_COUNT;
     let _ = linear_program::EXPECTED_WORKER_BRANCH_LABELS;
     let _ = linear_program::ACK_LABELS;
-    let _ = huge_program::run::<common::TestTransport, DefaultLabelUniverse, CounterClock, 2>
-        as fn(
-            &mut localside::ControllerEndpoint<
-                '_,
-                common::TestTransport,
-                DefaultLabelUniverse,
-                CounterClock,
-                2,
-            >,
-            &mut localside::WorkerEndpoint<
-                '_,
-                common::TestTransport,
-                DefaultLabelUniverse,
-                CounterClock,
-                2,
-            >,
-        );
-    let _ = linear_program::run::<common::TestTransport, DefaultLabelUniverse, CounterClock, 2>
-        as fn(
-            &mut localside::ControllerEndpoint<
-                '_,
-                common::TestTransport,
-                DefaultLabelUniverse,
-                CounterClock,
-                2,
-            >,
-            &mut localside::WorkerEndpoint<
-                '_,
-                common::TestTransport,
-                DefaultLabelUniverse,
-                CounterClock,
-                2,
-            >,
-        );
-    let _ = fanout_program::run::<common::TestTransport, DefaultLabelUniverse, CounterClock, 2>
-        as fn(
-            &mut localside::ControllerEndpoint<
-                '_,
-                common::TestTransport,
-                DefaultLabelUniverse,
-                CounterClock,
-                2,
-            >,
-            &mut localside::WorkerEndpoint<
-                '_,
-                common::TestTransport,
-                DefaultLabelUniverse,
-                CounterClock,
-                2,
-            >,
-        );
-    let _ = localside::worker_offer_decode_u8::<
-        0,
-        common::TestTransport,
-        DefaultLabelUniverse,
-        CounterClock,
-        2,
-    >
-        as fn(
-            &mut localside::WorkerEndpoint<
-                '_,
-                common::TestTransport,
-                DefaultLabelUniverse,
-                CounterClock,
-                2,
-            >,
-        ) -> u8;
+    let _ = huge_program::run
+        as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
+    let _ = linear_program::run
+        as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
+    let _ = fanout_program::run
+        as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
+    let _ = localside::worker_offer_decode_u8::<0>
+        as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
 }
 
 #[test]
@@ -138,12 +70,12 @@ fn huge_programs_stay_on_direct_program_values() {
 #[test]
 fn huge_program_shape_matrix_projects_both_roles() {
     retain_pico_smoke_fixture_symbols();
-    let route_heavy_controller: RoleProgram<'_, 0, MintConfig> = project(&ROUTE_HEAVY_PROGRAM);
-    let route_heavy_worker: RoleProgram<'_, 1, MintConfig> = project(&ROUTE_HEAVY_PROGRAM);
-    let linear_heavy_controller: RoleProgram<'_, 0, MintConfig> = project(&LINEAR_HEAVY_PROGRAM);
-    let linear_heavy_worker: RoleProgram<'_, 1, MintConfig> = project(&LINEAR_HEAVY_PROGRAM);
-    let fanout_heavy_controller: RoleProgram<'_, 0, MintConfig> = project(&FANOUT_HEAVY_PROGRAM);
-    let fanout_heavy_worker: RoleProgram<'_, 1, MintConfig> = project(&FANOUT_HEAVY_PROGRAM);
+    let route_heavy_controller: RoleProgram<0> = huge_program::controller_program();
+    let route_heavy_worker: RoleProgram<1> = huge_program::worker_program();
+    let linear_heavy_controller: RoleProgram<0> = linear_program::controller_program();
+    let linear_heavy_worker: RoleProgram<1> = linear_program::worker_program();
+    let fanout_heavy_controller: RoleProgram<0> = fanout_program::controller_program();
+    let fanout_heavy_worker: RoleProgram<1> = fanout_program::worker_program();
 
     let _ = (
         &route_heavy_controller,

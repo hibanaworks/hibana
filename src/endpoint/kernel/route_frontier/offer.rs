@@ -1,10 +1,11 @@
 //! Offer-path helpers for scope selection and branch materialization.
 
+use core::{ops::ControlFlow, task::Poll};
+#[cfg(test)]
 use core::{
     future::Future,
-    ops::ControlFlow,
     pin::Pin,
-    task::{Context, Poll},
+    task::Context,
 };
 
 use super::authority::{
@@ -99,6 +100,53 @@ struct OfferResolveState<'a> {
 enum OfferRunStage<'a> {
     CollectEvidence(OfferCollectState<'a>),
     ResolveToken(OfferResolveState<'a>),
+}
+
+#[cfg(test)]
+pub(crate) struct CursorOfferFuture<
+    'a,
+    'r,
+    const ROLE: u8,
+    T,
+    U,
+    C,
+    E,
+    const MAX_RV: usize,
+    Mint,
+    B,
+>
+where
+    T: Transport,
+    U: LabelUniverse,
+    C: Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
+{
+    endpoint: &'a mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    state: OfferState<'r>,
+}
+
+#[cfg(test)]
+impl<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B> Future
+    for CursorOfferFuture<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+where
+    T: Transport,
+    U: LabelUniverse,
+    C: Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker,
+    B: BindingSlot,
+    'r: 'a,
+{
+    type Output = RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        this.endpoint
+            .poll_offer_state(&mut this.state, cx)
+            .map(|result| result.map(Into::into))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -409,7 +457,7 @@ pub(crate) struct BranchMeta {
     /// Classification of the branch for decode() dispatch.
     pub(crate) kind: BranchKind,
     /// Route decision source used when commit emits route-decision events.
-    pub(crate) route_source: RouteDecisionSource,
+    pub(in crate::endpoint::kernel) route_source: RouteDecisionSource,
 }
 
 /// Classification of branch types for `decode()` dispatch.
@@ -449,7 +497,28 @@ pub(super) struct RouteFrontierMachine<
     carried_binding_classification: Option<crate::binding::IncomingClassification>,
     carried_transport_payload: Option<(usize, u8, Payload<'r>)>,
     run_stage: Option<OfferRunStage<'r>>,
-    pending_recv: lane_port::PendingRecv<'r, T>,
+    pending_recv: lane_port::PendingRecv,
+}
+
+pub(crate) struct OfferState<'r> {
+    frontier_visited: Option<FrontierVisitSet>,
+    carried_binding_classification: Option<crate::binding::IncomingClassification>,
+    carried_transport_payload: Option<(usize, u8, Payload<'r>)>,
+    run_stage: Option<OfferRunStage<'r>>,
+    pending_recv: lane_port::PendingRecv,
+}
+
+impl<'r> OfferState<'r> {
+    #[inline]
+    pub(crate) const fn new() -> Self {
+        Self {
+            frontier_visited: None,
+            carried_binding_classification: None,
+            carried_transport_payload: None,
+            run_stage: None,
+            pending_recv: lane_port::PendingRecv::new(),
+        }
+    }
 }
 
 impl<'endpoint, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
@@ -4572,62 +4641,6 @@ where
     }
 }
 
-pub(crate) struct RouteOfferFuture<
-    'endpoint,
-    'r,
-    const ROLE: u8,
-    T: Transport + 'r,
-    U,
-    C,
-    E: EpochTable,
-    const MAX_RV: usize,
-    Mint,
-    B: BindingSlot + 'r,
-> where
-    U: LabelUniverse,
-    C: Clock,
-    Mint: MintConfigMarker,
-{
-    machine: RouteFrontierMachine<'endpoint, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-}
-
-impl<'endpoint, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    RouteOfferFuture<'endpoint, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
-where
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
-{
-    #[inline]
-    pub(crate) const fn new(
-        endpoint: &'endpoint mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    ) -> Self {
-        Self {
-            machine: RouteFrontierMachine::new(endpoint),
-        }
-    }
-}
-
-impl<'endpoint, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B> Future
-    for RouteOfferFuture<'endpoint, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
-where
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
-{
-    type Output = RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.get_mut().machine.poll_run(cx)
-    }
-}
-
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
     CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
 where
@@ -4638,14 +4651,39 @@ where
     Mint: MintConfigMarker,
     B: BindingSlot + 'r,
 {
-    /// Observe an inbound route branch.
-    ///
-    /// Route hints are drained once per call and consumed only when they match
-    /// the current route scope.
-    /// Loop control evidence that resolves a recv-less branch is treated as
-    /// EmptyArmTerminal and skip decode.
-    pub(crate) fn offer(&mut self) -> RouteOfferFuture<'_, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B> {
-        RouteOfferFuture::new(self)
+    pub(crate) fn poll_offer_state(
+        &mut self,
+        state: &mut OfferState<'r>,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<crate::endpoint::kernel::MaterializedRouteBranch<'r>>> {
+        let mut machine = RouteFrontierMachine {
+            endpoint: self,
+            frontier_visited: state.frontier_visited.take(),
+            carried_binding_classification: state.carried_binding_classification.take(),
+            carried_transport_payload: state.carried_transport_payload.take(),
+            run_stage: state.run_stage.take(),
+            pending_recv: core::mem::replace(&mut state.pending_recv, lane_port::PendingRecv::new()),
+        };
+        let poll = machine.poll_run(cx).map(|result| result.map(Into::into));
+        state.frontier_visited = machine.frontier_visited.take();
+        state.carried_binding_classification = machine.carried_binding_classification.take();
+        state.carried_transport_payload = machine.carried_transport_payload.take();
+        state.run_stage = machine.run_stage.take();
+        state.pending_recv = machine.pending_recv;
+        poll
+    }
+
+    #[cfg(test)]
+    pub(crate) fn offer<'a>(
+        &'a mut self,
+    ) -> CursorOfferFuture<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+    where
+        'r: 'a,
+    {
+        CursorOfferFuture {
+            endpoint: self,
+            state: OfferState::new(),
+        }
     }
 
     pub(in crate::endpoint::kernel) fn commit_branch_preview(

@@ -1,14 +1,16 @@
 //! Decode-path helpers for `RouteBranch`.
 
+use core::task::Poll;
+#[cfg(test)]
 use core::{
     future::Future,
     marker::PhantomData,
     pin::Pin,
-    task::{Context, Poll},
+    task::Context,
 };
 
 use super::{
-    core::{CursorEndpoint, RouteBranch},
+    core::{CursorEndpoint, MaterializedRouteBranch, RouteBranch},
     inbox::PackedIncomingClassification,
     lane_port,
 };
@@ -17,19 +19,85 @@ use crate::{
     control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult},
     global::{
-        ControlHandling, ControlPayloadKind, MessageSpec,
         const_dsl::ScopeKind,
         typestate::{ARM_SHARED, JumpReason, LoopMetadata, LoopRole},
     },
     runtime::{config::Clock, consts::LabelUniverse},
     transport::{
         Transport,
-        wire::{Payload, WirePayload},
+        wire::{CodecError, Payload},
     },
 };
 
+#[cfg(test)]
+use crate::{
+    global::{ControlHandling, ControlPayloadKind, MessageSpec},
+    transport::wire::WirePayload,
+};
+
+#[cfg(test)]
 type DecodedPayload<'a, M> = <<M as MessageSpec>::Payload as WirePayload>::Decoded<'a>;
 
+#[cfg(test)]
+#[inline]
+fn validate_decode_payload<P: WirePayload>(payload: Payload<'_>) -> Result<(), CodecError> {
+    P::decode_payload(payload).map(|_| ())
+}
+
+pub(crate) type PayloadValidator = for<'a> fn(Payload<'a>) -> Result<(), CodecError>;
+
+#[derive(Clone, Copy)]
+pub(crate) struct DecodeDesc {
+    label: u8,
+    expects_control: bool,
+    validate_payload: PayloadValidator,
+}
+
+impl DecodeDesc {
+    #[inline]
+    pub(crate) const fn new(
+        label: u8,
+        expects_control: bool,
+        validate_payload: PayloadValidator,
+    ) -> Self {
+        Self {
+            label,
+            expects_control,
+            validate_payload,
+        }
+    }
+}
+
+pub(crate) struct DecodeState<'r> {
+    pub(crate) branch: Option<MaterializedRouteBranch<'r>>,
+    prepared_meta: Option<crate::global::typestate::RecvMeta>,
+    pending_recv: lane_port::PendingRecv,
+    pub(crate) restore_on_drop: bool,
+}
+
+impl<'r> DecodeState<'r> {
+    #[inline]
+    pub(crate) const fn empty() -> Self {
+        Self {
+            branch: None,
+            prepared_meta: None,
+            pending_recv: lane_port::PendingRecv::new(),
+            restore_on_drop: false,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn new(branch: MaterializedRouteBranch<'r>) -> Self {
+        Self {
+            branch: Some(branch),
+            prepared_meta: None,
+            pending_recv: lane_port::PendingRecv::new(),
+            restore_on_drop: true,
+        }
+    }
+}
+
+#[cfg(test)]
 pub(crate) struct RouteDecodeFuture<
     'a,
     'r,
@@ -50,14 +118,12 @@ pub(crate) struct RouteDecodeFuture<
     M::Payload: WirePayload,
 {
     endpoint: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    branch: Option<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>,
-    prepared_meta: Option<crate::global::typestate::RecvMeta>,
-    pending_recv: lane_port::PendingRecv<'r, T>,
-    restore_on_drop: bool,
+    state: DecodeState<'r>,
     _borrow: PhantomData<&'a mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>,
     _msg: PhantomData<M>,
 }
 
+#[cfg(test)]
 impl<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B, M>
     RouteDecodeFuture<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
 where
@@ -71,22 +137,20 @@ where
     M::Payload: WirePayload,
 {
     #[inline]
-    pub(super) const fn new(
+    pub(super) fn new(
         endpoint: &'a mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
         branch: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     ) -> Self {
         Self {
             endpoint: core::ptr::from_mut(endpoint),
-            branch: Some(branch),
-            prepared_meta: None,
-            pending_recv: lane_port::PendingRecv::new(),
-            restore_on_drop: true,
+            state: DecodeState::new(branch.into()),
             _borrow: PhantomData,
             _msg: PhantomData,
         }
     }
 }
 
+#[cfg(test)]
 impl<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B, M> Future
     for RouteDecodeFuture<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
 where
@@ -104,39 +168,26 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = unsafe { self.get_unchecked_mut() };
         let endpoint = unsafe { &mut *this.endpoint };
-        let branch = this.branch.as_mut().ok_or_else(decode_phase_invariant)?;
-        if this.prepared_meta.is_none() {
-            this.prepared_meta = endpoint.prepare_decode_transport_wait::<M>(branch)?;
-        }
-        if let Some(meta) = this.prepared_meta
-            && branch.staged_payload.is_none()
-            && !branch.binding_classification.is_present()
-        {
-            let port = endpoint.port_for_lane(meta.lane as usize);
-            let payload = match lane_port::poll_recv(&mut this.pending_recv, port, cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Ok(payload)) => payload,
-                Poll::Ready(Err(err)) => {
-                    this.prepared_meta = None;
-                    return Poll::Ready(Err(RecvError::Transport(err)));
-                }
-            };
-            branch.staged_payload = Some(super::core::StagedPayload::Transport {
-                lane: meta.lane,
-                payload,
-            });
-        }
-        match endpoint.finish_route_branch_decode::<M>(this.prepared_meta, branch) {
-            Ok(payload) => {
-                let _ = this.branch.take();
-                this.restore_on_drop = false;
-                Poll::Ready(Ok(payload))
+        let desc = DecodeDesc::new(
+            <M as MessageSpec>::LABEL,
+            !matches!(<M::ControlKind as ControlPayloadKind>::HANDLING, ControlHandling::None),
+            validate_decode_payload::<M::Payload>,
+        );
+        match endpoint.poll_decode_state(desc, &mut this.state, cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(payload)) => {
+                let payload_view: Payload<'a> = lane_port::shrink_payload(payload);
+                Poll::Ready(
+                    <<M as MessageSpec>::Payload as WirePayload>::decode_payload(payload_view)
+                        .map_err(RecvError::Codec),
+                )
             }
-            Err(err) => Poll::Ready(Err(err)),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
     }
 }
 
+#[cfg(test)]
 impl<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B, M> Drop
     for RouteDecodeFuture<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
 where
@@ -150,10 +201,10 @@ where
     M::Payload: WirePayload,
 {
     fn drop(&mut self) {
-        if self.restore_on_drop {
-            if let Some(branch) = self.branch.take() {
+        if self.state.restore_on_drop {
+            if let Some(branch) = self.state.branch.take() {
                 unsafe {
-                    (&mut *self.endpoint).restore_materialized_route_branch(branch);
+                    (&mut *self.endpoint).restore_materialized_route_branch(branch.into());
                 }
             }
         }
@@ -170,15 +221,56 @@ where
     Mint: MintConfigMarker,
     B: BindingSlot + 'r,
 {
-    fn prepare_decode_transport_wait<M>(
+    pub(crate) fn poll_decode_state<'a>(
         &mut self,
-        branch: &mut RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    ) -> RecvResult<Option<crate::global::typestate::RecvMeta>>
-    where
-        M: MessageSpec,
-        M::Payload: WirePayload,
-    {
-        let expected = <M as MessageSpec>::LABEL;
+        desc: DecodeDesc,
+        state: &mut DecodeState<'r>,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<Payload<'a>>> {
+        let branch = match state.branch.as_mut() {
+            Some(branch) => branch,
+            None => return Poll::Ready(Err(decode_phase_invariant())),
+        };
+        if state.prepared_meta.is_none() {
+            state.prepared_meta = match self.prepare_decode_transport_wait(branch, desc) {
+                Ok(meta) => meta,
+                Err(err) => return Poll::Ready(Err(err)),
+            };
+        }
+        if let Some(meta) = state.prepared_meta
+            && branch.staged_payload.is_none()
+            && !branch.binding_classification.is_present()
+        {
+            let port = self.port_for_lane(meta.lane as usize);
+            let payload = match lane_port::poll_recv(&mut state.pending_recv, port, cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(payload)) => payload,
+                Poll::Ready(Err(err)) => {
+                    state.prepared_meta = None;
+                    return Poll::Ready(Err(RecvError::Transport(err)));
+                }
+            };
+            branch.staged_payload = Some(super::core::StagedPayload::Transport {
+                lane: meta.lane,
+                payload,
+            });
+        }
+        match self.finish_route_branch_decode(desc, state.prepared_meta, branch) {
+            Ok(payload) => {
+                let _ = state.branch.take();
+                state.restore_on_drop = false;
+                Poll::Ready(Ok(lane_port::shrink_payload(payload)))
+            }
+            Err(err) => Poll::Ready(Err(err)),
+        }
+    }
+
+    fn prepare_decode_transport_wait(
+        &mut self,
+        branch: &MaterializedRouteBranch<'r>,
+        desc: DecodeDesc,
+    ) -> RecvResult<Option<crate::global::typestate::RecvMeta>> {
+        let expected = desc.label;
         if branch.label != expected {
             return Err(RecvError::LabelMismatch {
                 expected,
@@ -195,9 +287,7 @@ where
             .cursor
             .try_recv_meta()
             .ok_or_else(decode_phase_invariant)?;
-        let control_handling = <M::ControlKind as ControlPayloadKind>::HANDLING;
-        let expects_control = !matches!(control_handling, ControlHandling::None);
-        if meta.is_control != expects_control {
+        if meta.is_control != desc.expects_control {
             return Err(decode_phase_invariant());
         }
         if self
@@ -247,20 +337,17 @@ where
         RouteDecodeFuture::new(self, branch.clone())
     }
 
-    fn finish_route_branch_decode<'a, M>(
+    fn finish_route_branch_decode(
         &mut self,
+        desc: DecodeDesc,
         prepared_meta: Option<crate::global::typestate::RecvMeta>,
-        branch: &mut RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    ) -> RecvResult<DecodedPayload<'a, M>>
-    where
-        M: MessageSpec,
-        M::Payload: WirePayload,
-    {
+        branch: &mut MaterializedRouteBranch<'r>,
+    ) -> RecvResult<Payload<'r>> {
         let label = branch.label;
         let binding_classification = branch.binding_classification.into_option();
         let branch_meta = branch.branch_meta;
 
-        let expected = <M as MessageSpec>::LABEL;
+        let expected = desc.label;
         if label != expected {
             return Err(RecvError::LabelMismatch {
                 expected,
@@ -270,13 +357,12 @@ where
 
         match branch_meta.kind {
             super::offer::BranchKind::LocalControl => {
-                static ZERO_BUF: [u8; 64] = [0u8; 64];
-                let payload = <<M as MessageSpec>::Payload as WirePayload>::decode_payload(
-                    Payload::new(&ZERO_BUF),
-                )
-                .map_err(RecvError::Codec)?;
-                self.apply_branch_recv_policy(branch)?;
-                let _ = self.commit_branch_preview(&branch)?;
+                let payload = Payload::new(&[0u8; 64]);
+                (desc.validate_payload)(payload).map_err(RecvError::Codec)?;
+                let typed_branch: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B> =
+                    (*branch).into();
+                self.apply_branch_recv_policy(&typed_branch)?;
+                let _ = self.commit_branch_preview(&typed_branch)?;
 
                 let route_arm = Some(branch_meta.selected_arm);
                 let lane_idx = branch_meta.lane_wire as usize;
@@ -330,13 +416,12 @@ where
             }
 
             super::offer::BranchKind::EmptyArmTerminal => {
-                static ZERO_BUF: [u8; 64] = [0u8; 64];
-                let payload = <<M as MessageSpec>::Payload as WirePayload>::decode_payload(
-                    Payload::new(&ZERO_BUF),
-                )
-                .map_err(RecvError::Codec)?;
-                self.apply_branch_recv_policy(branch)?;
-                let _ = self.commit_branch_preview(&branch)?;
+                let payload = Payload::new(&[0u8; 64]);
+                (desc.validate_payload)(payload).map_err(RecvError::Codec)?;
+                let typed_branch: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B> =
+                    (*branch).into();
+                self.apply_branch_recv_policy(&typed_branch)?;
+                let _ = self.commit_branch_preview(&typed_branch)?;
 
                 let route_arm = Some(branch_meta.selected_arm);
 
@@ -365,13 +450,12 @@ where
             }
 
             super::offer::BranchKind::ArmSendHint => {
-                static ZERO_BUF: [u8; 64] = [0u8; 64];
-                let payload = <<M as MessageSpec>::Payload as WirePayload>::decode_payload(
-                    Payload::new(&ZERO_BUF),
-                )
-                .map_err(RecvError::Codec)?;
-                self.apply_branch_recv_policy(branch)?;
-                let _ = self.commit_branch_preview(&branch)?;
+                let payload = Payload::new(&[0u8; 64]);
+                (desc.validate_payload)(payload).map_err(RecvError::Codec)?;
+                let typed_branch: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B> =
+                    (*branch).into();
+                self.apply_branch_recv_policy(&typed_branch)?;
+                let _ = self.commit_branch_preview(&typed_branch)?;
 
                 let route_arm = Some(branch_meta.selected_arm);
                 let lane_idx = branch_meta.lane_wire as usize;
@@ -434,9 +518,7 @@ where
         } else {
             return Err(decode_phase_invariant());
         };
-        let control_handling = <M::ControlKind as ControlPayloadKind>::HANDLING;
-        let expects_control = !matches!(control_handling, ControlHandling::None);
-        if meta.is_control != expects_control {
+        if meta.is_control != desc.expects_control {
             return Err(decode_phase_invariant());
         }
 
@@ -502,26 +584,23 @@ where
         }
 
         let staged_payload = staged_payload.ok_or_else(decode_phase_invariant)?;
-        let payload_view: Payload<'a> = lane_port::shrink_payload(staged_payload.payload());
-        let payload =
-            match <<M as MessageSpec>::Payload as WirePayload>::decode_payload(payload_view) {
-                Ok(payload) => payload,
-                Err(err) => {
-                    branch.binding_classification =
-                        PackedIncomingClassification::from_option(binding_classification);
-                    branch.staged_payload = Some(staged_payload);
-                    return Err(RecvError::Codec(err));
-                }
-            };
+        let payload = staged_payload.payload();
+        if let Err(err) = (desc.validate_payload)(lane_port::shrink_payload(payload)) {
+            branch.binding_classification =
+                PackedIncomingClassification::from_option(binding_classification);
+            branch.staged_payload = Some(staged_payload);
+            return Err(RecvError::Codec(err));
+        }
 
-        if let Err(err) = self.apply_branch_recv_policy(branch) {
+        let typed_branch: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B> = (*branch).into();
+        if let Err(err) = self.apply_branch_recv_policy(&typed_branch) {
             branch.binding_classification =
                 PackedIncomingClassification::from_option(binding_classification);
             branch.staged_payload = Some(staged_payload);
             return Err(err);
         }
 
-        let meta = match self.commit_branch_preview(&branch) {
+        let meta = match self.commit_branch_preview(&typed_branch) {
             Ok(Some(meta)) => meta,
             Ok(None) => return Err(decode_phase_invariant()),
             Err(err) => return Err(err),
@@ -629,8 +708,9 @@ where
     Mint: MintConfigMarker,
     B: BindingSlot + 'r,
 {
+    #[cfg(test)]
     #[inline]
-    pub(in crate::endpoint) const fn label(&self) -> u8 {
+    pub(super) const fn label(&self) -> u8 {
         self.label
     }
 

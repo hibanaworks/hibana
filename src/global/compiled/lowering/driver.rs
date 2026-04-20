@@ -38,26 +38,12 @@ const EMPTY_CONTROL_SPEC: ControlLabelSpec = ControlLabelSpec {
 pub(crate) struct ProgramStamp {
     lane0: u64,
     lane1: u64,
-    len: u16,
-    scope_budget: u16,
-    scope_markers_len: u16,
-    scope_count: u16,
-    control_markers_len: u16,
-    policy_markers_len: u16,
-    control_specs_len: u16,
 }
 
 impl ProgramStamp {
     pub(crate) const EMPTY: Self = Self {
         lane0: 0,
         lane1: 0,
-        len: 0,
-        scope_budget: 0,
-        scope_markers_len: 0,
-        scope_count: 0,
-        control_markers_len: 0,
-        policy_markers_len: 0,
-        control_specs_len: 0,
     };
 
     const SEED0: u64 = 0xcbf2_9ce4_8422_2325;
@@ -115,11 +101,6 @@ impl ProgramStamp {
         Self::mix_u64(state, spec.handling as u64)
     }
 
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn scope_count(&self) -> usize {
-        self.scope_count as usize
-    }
 }
 
 #[derive(Clone)]
@@ -691,13 +672,6 @@ impl LoweringSummary {
         summary.program.stamp = ProgramStamp {
             lane0,
             lane1,
-            len: eff_list.len() as u16,
-            scope_budget: eff_list.scope_budget(),
-            scope_markers_len: src_scope_markers.len() as u16,
-            scope_count,
-            control_markers_len: src_control_markers.len() as u16,
-            policy_markers_len,
-            control_specs_len,
         };
     }
 
@@ -732,13 +706,6 @@ impl LoweringSummary {
                 stamp: ProgramStamp {
                     lane0: ProgramStamp::SEED0,
                     lane1: ProgramStamp::SEED1,
-                    len: eff_list.len() as u16,
-                    scope_budget: eff_list.scope_budget(),
-                    scope_markers_len: src_scope_markers.len() as u16,
-                    scope_count: 0,
-                    control_markers_len: src_control_markers.len() as u16,
-                    policy_markers_len: 0,
-                    control_specs_len: 0,
                 },
             },
             roles: LoweringRoleData {

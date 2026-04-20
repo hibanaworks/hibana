@@ -1,7 +1,7 @@
-use super::LoweringSummary;
 use super::super::images::program::{
     CompiledProgramImage, CompiledProgramSection, DynamicPolicySite,
 };
+use super::LoweringSummary;
 use super::program_lowering::{
     compiled_program_emit_atom_into_slices, compiled_program_emit_route_controls,
     compiled_program_push_dynamic_policy_site,

@@ -22,4 +22,12 @@ if ! rg -n "pub use crate::policy_runtime::PolicySlot;" src/substrate.rs; then
   exit 1
 fi
 
+# Core must not remain the public owner for management/policy lifecycle kinds.
+if rg -n \
+  "pub struct (PolicyLoadKind|PolicyActivateKind|PolicyRevertKind|PolicyAnnotateKind|LoadBeginKind|LoadCommitKind)" \
+  src/control/cap/resource_kinds.rs; then
+  echo "mgmt boundary violation: lifecycle control kinds must stay internal-only in core" >&2
+  exit 1
+fi
+
 echo "mgmt boundary check passed"

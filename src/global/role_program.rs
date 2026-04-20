@@ -3,17 +3,15 @@
 //! `RoleProgram` is the typed entry point for a role projection witness.
 //! Crate-private lowering facts stay behind this module and the compiled layer.
 
-use core::marker::PhantomData;
-
 use super::compiled::lowering::{ProgramStamp, RoleLoweringCounts};
 use super::{
     program::{BuildProgramSource, Program},
     steps::ProjectRole,
 };
-use crate::control::cap::mint::{CapShot, MintConfig, MintConfigMarker};
+use crate::control::cap::mint::CapShot;
 use crate::{
     eff::EffIndex,
-    global::const_dsl::{CompactScopeId, EffList, ScopeId},
+    global::const_dsl::{CompactScopeId, ScopeId},
     global::{KnownRole, Role},
 };
 
@@ -465,8 +463,7 @@ impl LocalStep {
 
 /// Erased lowering input derived from a typed `RoleProgram` witness.
 #[derive(Clone, Copy)]
-pub(crate) struct RoleLoweringInput<'prog> {
-    _borrow: PhantomData<&'prog EffList>,
+pub(crate) struct RoleLoweringInput {
     summary: &'static crate::global::compiled::lowering::LoweringSummary,
     stamp: ProgramStamp,
     counts: RoleLoweringCounts,
@@ -479,14 +476,9 @@ mod private {
     pub trait RoleProgramViewSeal {}
 }
 
-pub(crate) trait RoleProgramView<'prog, const ROLE: u8, Mint>:
-    private::RoleProgramViewSeal
-where
-    Mint: MintConfigMarker,
-{
+pub(crate) trait RoleProgramView<const ROLE: u8>: private::RoleProgramViewSeal {
     fn stamp(&self) -> ProgramStamp;
-    fn mint_config(&self) -> Mint;
-    fn lowering_input(&self) -> RoleLoweringInput<'prog>;
+    fn lowering_input(&self) -> RoleLoweringInput;
 }
 
 #[derive(Clone, Copy)]
@@ -551,7 +543,7 @@ impl RoleFootprint {
     }
 }
 
-impl<'prog> RoleLoweringInput<'prog> {
+impl RoleLoweringInput {
     #[inline(always)]
     pub(crate) const fn summary(
         &self,
@@ -611,31 +603,20 @@ impl<'prog> RoleLoweringInput<'prog> {
     }
 }
 
-pub struct RoleProgram<'prog, const ROLE: u8, Mint = MintConfig>
-where
-    Mint: MintConfigMarker,
-{
-    _borrow: PhantomData<&'prog EffList>,
+pub struct RoleProgram<const ROLE: u8> {
     _seal: private::RoleProgramSeal,
     summary: &'static crate::global::compiled::lowering::LoweringSummary,
-    mint: Mint,
     stamp: ProgramStamp,
 }
 
-impl<'prog, const ROLE: u8, Mint> RoleProgram<'prog, ROLE, Mint>
-where
-    Mint: MintConfigMarker,
-{
+impl<const ROLE: u8> RoleProgram<ROLE> {
     const fn new(
         summary: &'static crate::global::compiled::lowering::LoweringSummary,
-        mint: Mint,
         stamp: ProgramStamp,
     ) -> Self {
         Self {
-            _borrow: PhantomData,
             _seal: private::RoleProgramSeal,
             summary,
-            mint,
             stamp,
         }
     }
@@ -650,49 +631,27 @@ where
     pub(crate) fn borrow_id(&self) -> usize {
         self.summary as *const crate::global::compiled::lowering::LoweringSummary as usize
     }
-
-    /// Mint configuration baked into the RoleProgram.
-    #[inline(always)]
-    pub(crate) const fn mint_config(&self) -> Mint {
-        self.mint
-    }
 }
 
-impl<'prog, const ROLE: u8, Mint> private::RoleProgramViewSeal for RoleProgram<'prog, ROLE, Mint> where
-    Mint: MintConfigMarker
-{
-}
+impl<const ROLE: u8> private::RoleProgramViewSeal for RoleProgram<ROLE> {}
 
-impl<'prog, const ROLE: u8, Mint> RoleProgramView<'prog, ROLE, Mint>
-    for RoleProgram<'prog, ROLE, Mint>
-where
-    Mint: MintConfigMarker,
-{
+impl<const ROLE: u8> RoleProgramView<ROLE> for RoleProgram<ROLE> {
     #[inline(always)]
     fn stamp(&self) -> ProgramStamp {
         RoleProgram::stamp(self)
     }
 
     #[inline(always)]
-    fn mint_config(&self) -> Mint {
-        RoleProgram::mint_config(self)
-    }
-
-    #[inline(always)]
-    fn lowering_input(&self) -> RoleLoweringInput<'prog> {
+    fn lowering_input(&self) -> RoleLoweringInput {
         lowering_input(self)
     }
 }
 
 #[inline(always)]
-pub(crate) const fn lowering_input<'prog, const ROLE: u8, Mint>(
-    program: &RoleProgram<'prog, ROLE, Mint>,
-) -> RoleLoweringInput<'prog>
-where
-    Mint: MintConfigMarker,
-{
+pub(crate) const fn lowering_input<const ROLE: u8>(
+    program: &RoleProgram<ROLE>,
+) -> RoleLoweringInput {
     RoleLoweringInput {
-        _borrow: PhantomData,
         summary: program.summary,
         stamp: program.stamp,
         counts: program.summary.role_lowering_counts::<ROLE>(),
@@ -701,15 +660,12 @@ where
 
 /// Project a typed program into the local view for `ROLE`.
 #[allow(private_bounds)]
-pub const fn project<'prog, const ROLE: u8, Steps, Mint>(
-    program: &'prog Program<Steps>,
-) -> RoleProgram<'prog, ROLE, Mint>
+pub const fn project<const ROLE: u8, Steps>(program: &Program<Steps>) -> RoleProgram<ROLE>
 where
     Role<ROLE>: KnownRole,
     Steps: BuildProgramSource + ProjectRole<Role<ROLE>>,
-    Mint: MintConfigMarker,
 {
-    RoleProgram::new(program.summary(), Mint::INSTANCE, program.stamp())
+    RoleProgram::new(program.summary(), program.stamp())
 }
 
 #[cfg(test)]
@@ -721,7 +677,7 @@ mod tests {
     use crate::global::steps::{self, ParSteps, RouteSteps, SeqSteps, StepCons, StepNil};
 
     fn with_compiled_role_image<const ROLE: u8, R>(
-        program: &RoleProgram<'_, ROLE>,
+        program: &RoleProgram<ROLE>,
         f: impl FnOnce(&CompiledRoleImage) -> R,
     ) -> R {
         crate::global::compiled::materialize::with_compiled_role_image::<ROLE, _>(
@@ -775,8 +731,8 @@ mod tests {
     #[test]
     fn parallel_projection_keeps_phase_and_lane_split_internal() {
         let parallel_program = PARALLEL_PROGRAM;
-        let client: RoleProgram<'_, 0> = project(&parallel_program);
-        let server: RoleProgram<'_, 1> = project(&parallel_program);
+        let client: RoleProgram<0> = project(&parallel_program);
+        let server: RoleProgram<1> = project(&parallel_program);
 
         with_compiled_role_image(&client, assert_parallel_phase_shape);
         with_compiled_role_image(&server, assert_parallel_phase_shape);
@@ -785,7 +741,7 @@ mod tests {
     #[test]
     fn parallel_route_projection_keeps_scope_markers_without_public_step_surface() {
         let parallel_route_program = PARALLEL_ROUTE_PROGRAM;
-        let program: RoleProgram<'_, 0> = project(&parallel_route_program);
+        let program: RoleProgram<0> = project(&parallel_route_program);
         let scope_markers = super::lowering_input(&program)
             .summary()
             .view()

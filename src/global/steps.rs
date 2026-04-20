@@ -7,7 +7,6 @@
 
 use core::marker::PhantomData;
 
-use super::program::Program;
 use crate::global::{KnownRole, MessageSpec, Role, RoleMarker, SendableLabel};
 
 // =============================================================================
@@ -129,67 +128,22 @@ pub struct ParSteps<Left, Right>(PhantomData<(Left, Right)>);
 pub struct PolicySteps<Inner, const POLICY_ID: u16>(PhantomData<Inner>);
 
 /// Loop continue arm with a controller self-send head.
+#[cfg(test)]
 pub type LoopContinueSteps<Controller, ContMsg, Tail = StepNil> =
     SeqSteps<StepCons<SendStep<Controller, Controller, ContMsg>, StepNil>, Tail>;
 
 /// Loop break arm with a controller self-send head.
+#[cfg(test)]
 pub type LoopBreakSteps<Controller, BreakMsg, Tail = StepNil> =
     StepCons<SendStep<Controller, Controller, BreakMsg>, Tail>;
 
-/// Lane-qualified loop continue arm with a controller self-send head.
-pub type LoopContinueStepsL<Controller, ContMsg, const LANE: u8, Tail = StepNil> =
-    SeqSteps<StepCons<SendStep<Controller, Controller, ContMsg, LANE>, StepNil>, Tail>;
-
-/// Lane-qualified loop break arm with a controller self-send head.
-pub type LoopBreakStepsL<Controller, BreakMsg, const LANE: u8, Tail = StepNil> =
-    StepCons<SendStep<Controller, Controller, BreakMsg, LANE>, Tail>;
-
 /// Binary loop decision witness composed from continue and break arms.
+#[cfg(test)]
 pub type LoopDecisionSteps<Controller, ContMsg, BreakMsg, BreakTail = StepNil, ContTail = StepNil> =
     RouteSteps<
         LoopContinueSteps<Controller, ContMsg, ContTail>,
         LoopBreakSteps<Controller, BreakMsg, BreakTail>,
     >;
-
-/// Lane-qualified binary loop decision witness.
-pub type LoopDecisionStepsL<
-    Controller,
-    ContMsg,
-    BreakMsg,
-    const LANE: u8,
-    BreakTail = StepNil,
-    ContTail = StepNil,
-> = RouteSteps<
-    LoopContinueStepsL<Controller, ContMsg, LANE, ContTail>,
-    LoopBreakStepsL<Controller, BreakMsg, LANE, BreakTail>,
->;
-
-/// Canonical loop witness that preserves the body segment in the continue arm.
-pub type LoopSteps<
-    BodySteps,
-    Controller,
-    ContMsg,
-    BreakMsg,
-    BreakTail = StepNil,
-    ContTail = StepNil,
-> = RouteSteps<
-    LoopContinueSteps<Controller, ContMsg, <BodySteps as StepConcat<ContTail>>::Output>,
-    LoopBreakSteps<Controller, BreakMsg, BreakTail>,
->;
-
-/// Lane-qualified canonical loop witness that preserves the body segment.
-pub type LoopStepsL<
-    BodySteps,
-    Controller,
-    ContMsg,
-    BreakMsg,
-    const LANE: u8,
-    BreakTail = StepNil,
-    ContTail = StepNil,
-> = RouteSteps<
-    LoopContinueStepsL<Controller, ContMsg, LANE, <BodySteps as StepConcat<ContTail>>::Output>,
-    LoopBreakStepsL<Controller, BreakMsg, LANE, BreakTail>,
->;
 
 impl Default for StepNil {
     fn default() -> Self {
@@ -198,9 +152,6 @@ impl Default for StepNil {
 }
 
 impl StepNil {
-    /// Canonical zero-fragment program witness for substrate-side composition.
-    pub const PROGRAM: Program<Self> = Program::<Self>::empty();
-
     pub const fn new() -> Self {
         Self
     }

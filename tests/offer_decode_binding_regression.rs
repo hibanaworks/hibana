@@ -13,14 +13,11 @@ mod tls_mut_support;
 #[path = "support/tls_ref.rs"]
 mod tls_ref_support;
 
-use common::{
-    RecvFuture, SendFuture, TestRx, TestTransport, TestTransportError, TestTransportMetrics, TestTx,
-};
+use common::{TestRx, TestTransport, TestTransportError, TestTransportMetrics, TestTx};
 use core::{
     cell::{Cell, UnsafeCell},
     mem::MaybeUninit,
 };
-use hibana::g::advanced::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
 use hibana::g::advanced::{CanonicalControl, MessageSpec, RoleProgram, project};
 use hibana::g::{self, Msg, Role};
 use hibana::substrate::{
@@ -46,42 +43,8 @@ const POLICY_AUDIT_EXT_ID: u16 = 0x0408;
 const SLOT_TAG_ENDPOINT_RX: u32 = 1;
 const SLOT_TAG_ROUTE: u32 = 4;
 
-use std::pin::Pin;
 const ROUTE_POLICY_ID: u16 = 900;
-type LeftHead = PolicySteps<
-    StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >,
-        >,
-        StepNil,
-    >,
-    ROUTE_POLICY_ID,
->;
-type RightHead = PolicySteps<
-    StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<70, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
-        >,
-        StepNil,
-    >,
-    ROUTE_POLICY_ID,
->;
-type LeftSteps = SeqSteps<LeftHead, StepCons<SendStep<Role<0>, Role<1>, Msg<71, u32>>, StepNil>>;
-type RightSteps = SeqSteps<RightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<72, u32>>, StepNil>>;
-type DecisionSteps = RouteSteps<LeftSteps, RightSteps>;
-type ProgramSteps =
-    SeqSteps<DecisionSteps, StepCons<SendStep<Role<0>, Role<1>, Msg<73, u32>>, StepNil>>;
 type TestKit = SessionKit<'static, FlowTransport, DefaultLabelUniverse, CounterClock, 2>;
-type ControllerEndpoint = hibana::Endpoint<'static, 0, TestKit>;
-type WorkerEndpoint = hibana::Endpoint<'static, 1, TestKit>;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
@@ -96,10 +59,10 @@ std::thread_local! {
     static WORKER_BINDING_SLOT: UnsafeCell<MaybeUninit<FlowBinding>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
     };
-    static CONTROLLER_ENDPOINT_SLOT: UnsafeCell<MaybeUninit<ControllerEndpoint>> = const {
+    static CONTROLLER_ENDPOINT_SLOT: UnsafeCell<MaybeUninit<hibana::Endpoint<'static, 0>>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
     };
-    static WORKER_ENDPOINT_SLOT: UnsafeCell<MaybeUninit<WorkerEndpoint>> = const {
+    static WORKER_ENDPOINT_SLOT: UnsafeCell<MaybeUninit<hibana::Endpoint<'static, 1>>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
     };
     static ROUTE_RESOLVER_CALLS: Cell<usize> = const { Cell::new(0) };
@@ -123,40 +86,65 @@ fn count_policy_audit_ext_for_slot(
         .count()
 }
 
-const LEFT_ARM: g::Program<LeftSteps> = g::seq(
-    g::send::<
-        Role<0>,
-        Role<0>,
-        Msg<
-            { LABEL_ROUTE_DECISION },
-            GenericCapToken<RouteDecisionKind>,
-            CanonicalControl<RouteDecisionKind>,
-        >,
-        0,
-    >()
-    .policy::<ROUTE_POLICY_ID>(),
-    g::send::<Role<0>, Role<1>, Msg<71, u32>, 0>(),
-);
+fn controller_program() -> RoleProgram<0> {
+    let left_arm = g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_ROUTE_DECISION },
+                GenericCapToken<RouteDecisionKind>,
+                CanonicalControl<RouteDecisionKind>,
+            >,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>(),
+        g::send::<Role<0>, Role<1>, Msg<71, u32>, 0>(),
+    );
+    let right_arm = g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<70, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>(),
+        g::send::<Role<0>, Role<1>, Msg<72, u32>, 0>(),
+    );
+    let route = g::route(left_arm, right_arm);
+    let program = g::seq(route, g::send::<Role<0>, Role<1>, Msg<73, u32>, 0>());
+    project(&program)
+}
 
-const RIGHT_ARM: g::Program<RightSteps> = g::seq(
-    g::send::<
-        Role<0>,
-        Role<0>,
-        Msg<70, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
-        0,
-    >()
-    .policy::<ROUTE_POLICY_ID>(),
-    g::send::<Role<0>, Role<1>, Msg<72, u32>, 0>(),
-);
-
-const ROUTE: g::Program<DecisionSteps> = g::route(LEFT_ARM, RIGHT_ARM);
-
-const PROGRAM: g::Program<ProgramSteps> =
-    g::seq(ROUTE, g::send::<Role<0>, Role<1>, Msg<73, u32>, 0>());
-
-static CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&PROGRAM);
-
-static WORKER_PROGRAM: RoleProgram<'static, 1> = project(&PROGRAM);
+fn worker_program() -> RoleProgram<1> {
+    let left_arm = g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_ROUTE_DECISION },
+                GenericCapToken<RouteDecisionKind>,
+                CanonicalControl<RouteDecisionKind>,
+            >,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>(),
+        g::send::<Role<0>, Role<1>, Msg<71, u32>, 0>(),
+    );
+    let right_arm = g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<70, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ID>(),
+        g::send::<Role<0>, Role<1>, Msg<72, u32>, 0>(),
+    );
+    let route = g::route(left_arm, right_arm);
+    let program = g::seq(route, g::send::<Role<0>, Role<1>, Msg<73, u32>, 0>());
+    project(&program)
+}
 
 #[derive(Clone, Copy)]
 struct PendingInbound {
@@ -271,6 +259,7 @@ impl FlowBindingSharedState {
         }
         Err(TransportOpsError::ChannelNotFound)
     }
+
 }
 
 struct FlowBindingShared {
@@ -331,26 +320,6 @@ struct FlowTransport {
     shared: &'static FlowBindingShared,
 }
 
-enum FlowSendFuture<'a> {
-    Inner(SendFuture<'a>),
-    Ready,
-}
-
-impl core::future::Future for FlowSendFuture<'_> {
-    type Output = Result<(), TestTransportError>;
-
-    fn poll(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        let this = self.get_mut();
-        match this {
-            Self::Inner(inner) => Pin::new(inner).poll(cx),
-            Self::Ready => std::task::Poll::Ready(Ok(())),
-        }
-    }
-}
-
 impl FlowTransport {
     fn new(shared: &'static FlowBindingShared) -> Self {
         Self {
@@ -370,21 +339,18 @@ impl Transport for FlowTransport {
         = TestRx<'a>
     where
         Self: 'a;
-    type Send<'a>
-        = FlowSendFuture<'a>
-    where
-        Self: 'a;
-    type Recv<'a>
-        = RecvFuture<'a>
-    where
-        Self: 'a;
     type Metrics = TestTransportMetrics;
 
     fn open<'a>(&'a self, local_role: u8, session_id: u32) -> (Self::Tx<'a>, Self::Rx<'a>) {
         self.inner.open(local_role, session_id)
     }
 
-    fn send<'a, 'f>(&'a self, tx: &'a mut Self::Tx<'a>, outgoing: Outgoing<'f>) -> Self::Send<'a>
+    fn poll_send<'a, 'f>(
+        &'a self,
+        tx: &'a mut Self::Tx<'a>,
+        outgoing: Outgoing<'f>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>>
     where
         'a: 'f,
     {
@@ -409,13 +375,21 @@ impl Transport for FlowTransport {
                     },
                 );
             });
-            return FlowSendFuture::Ready;
+            return std::task::Poll::Ready(Ok(()));
         }
-        FlowSendFuture::Inner(self.inner.send(tx, outgoing))
+        self.inner.poll_send(tx, outgoing, cx)
     }
 
-    fn recv<'a>(&'a self, rx: &'a mut Self::Rx<'a>) -> Self::Recv<'a> {
-        self.inner.recv(rx)
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<hibana::substrate::wire::Payload<'a>, Self::Error>> {
+        self.inner.poll_recv(rx, cx)
+    }
+
+    fn cancel_send<'a>(&'a self, tx: &'a mut Self::Tx<'a>) {
+        self.inner.cancel_send(tx)
     }
 
     fn requeue<'a>(&'a self, rx: &'a mut Self::Rx<'a>) {
@@ -442,16 +416,15 @@ impl Transport for FlowTransport {
     }
 }
 
-fn register_route_resolvers_for_program<const ROLE: u8, Mint, T, const MAX_RV: usize>(
+fn register_route_resolvers_for_program<const ROLE: u8, T, const MAX_RV: usize>(
     cluster: &SessionKit<'_, T, DefaultLabelUniverse, CounterClock, MAX_RV>,
     rv_id: RendezvousId,
-    program: &RoleProgram<'static, ROLE, Mint>,
+    program: &RoleProgram<ROLE>,
 ) where
     T: Transport + 'static,
-    Mint: hibana::substrate::cap::advanced::MintConfigMarker,
 {
     cluster
-        .set_resolver::<ROUTE_POLICY_ID, ROLE, _>(
+        .set_resolver::<ROUTE_POLICY_ID, ROLE>(
             rv_id,
             program,
             hibana::substrate::policy::ResolverRef::from_fn(always_left_route_resolver),
@@ -489,7 +462,11 @@ fn flow_preview_is_policy_free_until_send_consumes_it() {
                             .add_rendezvous_from_config(config, transport.clone())
                             .expect("register rv");
 
-                        register_route_resolvers_for_program(&cluster, rv_id, &CONTROLLER_PROGRAM);
+                        register_route_resolvers_for_program(
+                            &cluster,
+                            rv_id,
+                            &controller_program(),
+                        );
 
                         let sid = SessionId::new(900);
                         with_tls_mut(
@@ -507,7 +484,7 @@ fn flow_preview_is_policy_free_until_send_consumes_it() {
                                                 .enter(
                                                     rv_id,
                                                     sid,
-                                                    &CONTROLLER_PROGRAM,
+                                                    &controller_program(),
                                                     controller_binding,
                                                 )
                                                 .expect("attach controller"),
@@ -595,8 +572,12 @@ fn offer_decode_binding_consumes_classification_once() {
                             .add_rendezvous_from_config(config, transport.clone())
                             .expect("register rv");
 
-                        register_route_resolvers_for_program(&cluster, rv_id, &CONTROLLER_PROGRAM);
-                        register_route_resolvers_for_program(&cluster, rv_id, &WORKER_PROGRAM);
+                        register_route_resolvers_for_program(
+                            &cluster,
+                            rv_id,
+                            &controller_program(),
+                        );
+                        register_route_resolvers_for_program(&cluster, rv_id, &worker_program());
 
                         let sid = SessionId::new(901);
                         with_tls_mut(
@@ -620,7 +601,7 @@ fn offer_decode_binding_consumes_classification_once() {
                                                         .enter(
                                                             rv_id,
                                                             sid,
-                                                            &CONTROLLER_PROGRAM,
+                                                            &controller_program(),
                                                             controller_binding,
                                                         )
                                                         .expect("attach controller"),
@@ -636,7 +617,7 @@ fn offer_decode_binding_consumes_classification_once() {
                                                                 .enter(
                                                                     rv_id,
                                                                     sid,
-                                                                    &WORKER_PROGRAM,
+                                                                    &worker_program(),
                                                                     worker_binding,
                                                                 )
                                                                 .expect("attach worker"),
@@ -736,8 +717,12 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                             .add_rendezvous_from_config(config, transport.clone())
                             .expect("register rv");
 
-                        register_route_resolvers_for_program(&cluster, rv_id, &CONTROLLER_PROGRAM);
-                        register_route_resolvers_for_program(&cluster, rv_id, &WORKER_PROGRAM);
+                        register_route_resolvers_for_program(
+                            &cluster,
+                            rv_id,
+                            &controller_program(),
+                        );
+                        register_route_resolvers_for_program(&cluster, rv_id, &worker_program());
 
                         let sid = SessionId::new(903);
                         with_tls_mut(
@@ -761,7 +746,7 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                         .enter(
                                                             rv_id,
                                                             sid,
-                                                            &CONTROLLER_PROGRAM,
+                                                            &controller_program(),
                                                             controller_binding,
                                                         )
                                                         .expect("attach controller"),
@@ -777,7 +762,7 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                                 .enter(
                                                                     rv_id,
                                                                     sid,
-                                                                    &WORKER_PROGRAM,
+                                                                    &worker_program(),
                                                                     worker_binding,
                                                                 )
                                                                 .expect("attach worker"),
@@ -853,7 +838,7 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                             assert_eq!(
                                                                 shared_ref
                                                                     .state
-                                                                    .with(|state| state.drain_calls),
+                                                                .with(|state| state.drain_calls),
                                                                 drain_calls_before,
                                                                 "dropping preview branch must not flush transport events",
                                                             );
@@ -953,8 +938,12 @@ fn codec_error_in_public_decode_preserves_preview_branch() {
                             .add_rendezvous_from_config(config, transport.clone())
                             .expect("register rv");
 
-                        register_route_resolvers_for_program(&cluster, rv_id, &CONTROLLER_PROGRAM);
-                        register_route_resolvers_for_program(&cluster, rv_id, &WORKER_PROGRAM);
+                        register_route_resolvers_for_program(
+                            &cluster,
+                            rv_id,
+                            &controller_program(),
+                        );
+                        register_route_resolvers_for_program(&cluster, rv_id, &worker_program());
 
                         let sid = SessionId::new(904);
                         with_tls_mut(
@@ -978,7 +967,7 @@ fn codec_error_in_public_decode_preserves_preview_branch() {
                                                         .enter(
                                                             rv_id,
                                                             sid,
-                                                            &CONTROLLER_PROGRAM,
+                                                            &controller_program(),
                                                             controller_binding,
                                                         )
                                                         .expect("attach controller"),
@@ -994,7 +983,7 @@ fn codec_error_in_public_decode_preserves_preview_branch() {
                                                                 .enter(
                                                                     rv_id,
                                                                     sid,
-                                                                    &WORKER_PROGRAM,
+                                                                    &worker_program(),
                                                                     worker_binding,
                                                                 )
                                                                 .expect("attach worker"),
@@ -1179,8 +1168,12 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_classification() {
                             .add_rendezvous_from_config(config, transport.clone())
                             .expect("register rv");
 
-                        register_route_resolvers_for_program(&cluster, rv_id, &CONTROLLER_PROGRAM);
-                        register_route_resolvers_for_program(&cluster, rv_id, &WORKER_PROGRAM);
+                        register_route_resolvers_for_program(
+                            &cluster,
+                            rv_id,
+                            &controller_program(),
+                        );
+                        register_route_resolvers_for_program(&cluster, rv_id, &worker_program());
 
                         let sid = SessionId::new(902);
                         with_tls_mut(
@@ -1204,7 +1197,7 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_classification() {
                                                         .enter(
                                                             rv_id,
                                                             sid,
-                                                            &CONTROLLER_PROGRAM,
+                                                            &controller_program(),
                                                             controller_binding,
                                                         )
                                                         .expect("attach controller"),
@@ -1220,7 +1213,7 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_classification() {
                                                                 .enter(
                                                                     rv_id,
                                                                     sid,
-                                                                    &WORKER_PROGRAM,
+                                                                    &worker_program(),
                                                                     worker_binding,
                                                                 )
                                                                 .expect("attach worker"),

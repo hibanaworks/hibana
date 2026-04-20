@@ -19,15 +19,16 @@ PRACTICAL_FLASH_BUDGET=$((768 * 1024))
 PRACTICAL_STATIC_SRAM_BUDGET=$((48 * 1024))
 PRACTICAL_KERNEL_STACK_BUDGET=$((24 * 1024))
 PRACTICAL_PEAK_SRAM_BUDGET=$((96 * 1024))
-TOOLCHAIN="${HIBANA_PICO_TOOLCHAIN:-stable}"
+export TOOLCHAIN="${HIBANA_PICO_TOOLCHAIN:-stable}"
 FEATURES="${HIBANA_PICO_FEATURES:-}"
+
+bash "${ROOT}/.github/scripts/ensure_rust_toolchain.sh" "$TARGET"
 
 RUSTUP=(rustup run "$TOOLCHAIN")
 TOOLCHAIN_RUSTC="$(rustup which --toolchain "$TOOLCHAIN" rustc)"
 TOOLCHAIN_BIN_DIR="$(dirname "$TOOLCHAIN_RUSTC")"
 TOOLCHAIN_CARGO="$TOOLCHAIN_BIN_DIR/cargo"
 
-rustup target add "$TARGET" --toolchain "$TOOLCHAIN" >/dev/null
 rustup component add llvm-tools-preview --toolchain "$TOOLCHAIN" >/dev/null
 
 SYSROOT="$("${RUSTUP[@]}" rustc --print sysroot)"

@@ -534,15 +534,14 @@ mod tests {
     #[test]
     fn test_interpreter_pure() {
         let program = crate::g::Program::<crate::global::steps::StepNil>::empty();
-        let projected: crate::g::advanced::RoleProgram<
-            '_,
-            0,
-            crate::control::cap::mint::MintConfig,
-        > = crate::g::advanced::project(&program);
-        crate::global::compiled::materialize::with_compiled_program(lowering_input(&projected), |facts| {
-            let projected = facts.effect_envelope();
-            assert!(projected.is_empty());
-        });
+        let projected: crate::g::advanced::RoleProgram<0> = crate::g::advanced::project(&program);
+        crate::global::compiled::materialize::with_compiled_program(
+            lowering_input(&projected),
+            |facts| {
+                let projected = facts.effect_envelope();
+                assert!(projected.is_empty());
+            },
+        );
     }
 
     #[test]
@@ -561,15 +560,14 @@ mod tests {
             >,
             0,
         >();
-        let projected: crate::g::advanced::RoleProgram<
-            '_,
-            0,
-            crate::control::cap::mint::MintConfig,
-        > = crate::g::advanced::project(&program);
-        crate::global::compiled::materialize::with_compiled_program(lowering_input(&projected), |facts| {
-            let projected = facts.effect_envelope();
-            assert_eq!(projected.cp_effects().count(), 1);
-            assert!(projected.tap_events().count() >= 1);
-        });
+        let projected: crate::g::advanced::RoleProgram<0> = crate::g::advanced::project(&program);
+        crate::global::compiled::materialize::with_compiled_program(
+            lowering_input(&projected),
+            |facts| {
+                let projected = facts.effect_envelope();
+                assert_eq!(projected.cp_effects().count(), 1);
+                assert!(projected.tap_events().count() >= 1);
+            },
+        );
     }
 }

@@ -1,9 +1,9 @@
-use super::LoweringSummary;
 use super::super::images::program::{
     CONTROL_SEMANTICS_TABLE, ControlSemanticsTable, DynamicPolicySite,
     MAX_COMPILED_PROGRAM_ROUTE_CONTROLS, MAX_DYNAMIC_POLICY_SITES, RouteControlRecord,
     compiled_program_lookup_route_control,
 };
+use super::LoweringSummary;
 use super::program_lowering::{
     compiled_program_emit_atom, compiled_program_emit_route_controls,
     compiled_program_push_dynamic_policy_site,

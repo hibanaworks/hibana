@@ -265,12 +265,20 @@ where
     const SOURCE: ProgramSourceData = <Steps as BuildProgramSource>::SOURCE.with_policy(POLICY_ID);
 }
 
-/// Public choreography owner for a global protocol fragment.
+/// A typed choreography witness.
+///
+/// `Program<Steps>` is a zero-sized compile-time proof carrier. It is not a
+/// runtime image, not an attached endpoint, and not a transport handle.
+///
+/// On stable Rust, do not write `const APP: Program<_>`.
+/// Compose programs through local `let` inference and immediately project
+/// them through `project(&program)`.
 #[derive(Clone, Copy)]
 pub struct Program<Steps> {
     steps: PhantomData<Steps>,
 }
 
+#[cfg(test)]
 impl Program<StepNil> {
     pub(crate) const fn empty() -> Self {
         Self::new()
@@ -383,9 +391,7 @@ mod tests {
     use super::Program;
     use crate::g;
     use crate::g::advanced::CanonicalControl;
-    use crate::g::advanced::steps::{
-        LoopBreakSteps, LoopContinueSteps, LoopDecisionSteps, StepNil,
-    };
+    use crate::global::steps::{LoopBreakSteps, LoopContinueSteps, LoopDecisionSteps, StepNil};
     use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
     use crate::substrate::cap::GenericCapToken;
     use crate::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
@@ -411,7 +417,7 @@ mod tests {
             >,
             0,
         >(),
-        StepNil::PROGRAM,
+        Program::<StepNil>::empty(),
     );
 
     const LOOP_BREAK_ONLY: Program<
@@ -455,7 +461,7 @@ mod tests {
 
     #[test]
     fn seq_with_empty_suffix_preserves_loop_tail_hint() {
-        let composed = g::seq(LOOP_CONTINUE_ONLY, StepNil::PROGRAM);
+        let composed = g::seq(LOOP_CONTINUE_ONLY, Program::<StepNil>::empty());
         assert!(
             composed.tail_is_loop_control(),
             "empty seq suffix must preserve loop-control tail hints"
@@ -465,7 +471,10 @@ mod tests {
     #[test]
     fn empty_seq_suffix_does_not_change_pending_loop_scope_attachment() {
         let direct = g::seq(LOOP_CONTINUE_ONLY, LOOP_DECISION);
-        let nested = g::seq(g::seq(LOOP_CONTINUE_ONLY, StepNil::PROGRAM), LOOP_DECISION);
+        let nested = g::seq(
+            g::seq(LOOP_CONTINUE_ONLY, Program::<StepNil>::empty()),
+            LOOP_DECISION,
+        );
         assert!(
             direct.summary().equivalent_summary(nested.summary()),
             "empty seq suffix must not change the validated lowering summary"

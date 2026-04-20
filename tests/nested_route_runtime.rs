@@ -18,7 +18,6 @@ use ::core::{
 };
 
 use common::TestTransport;
-use hibana::g::advanced::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
 use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
 use hibana::g::{self, Msg, Role};
 use hibana::substrate::{
@@ -39,89 +38,21 @@ use tls_ref_support::with_tls_ref;
 const LABEL_ROUTE_DECISION: u8 = 57;
 
 type RouteRightKind = route_control_kinds::RouteControl<11, 0>;
-type InnerLeftHead = PolicySteps<
-    StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >,
-        >,
-        StepNil,
-    >,
-    INNER_ROUTE_POLICY_ID,
->;
-type InnerRightHead = PolicySteps<
-    StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
-        >,
-        StepNil,
-    >,
-    INNER_ROUTE_POLICY_ID,
->;
-type InnerLeftArmSteps =
-    SeqSteps<InnerLeftHead, StepCons<SendStep<Role<0>, Role<1>, Msg<7, u32>>, StepNil>>;
-type InnerRightArmSteps =
-    SeqSteps<InnerRightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<8, u32>>, StepNil>>;
-type InnerRouteProgramSteps = RouteSteps<InnerLeftArmSteps, InnerRightArmSteps>;
-type OuterLeftHead = PolicySteps<
-    StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >,
-        >,
-        StepNil,
-    >,
-    OUTER_ROUTE_POLICY_ID,
->;
-type OuterRightHead = PolicySteps<
-    StepCons<
-        SendStep<
-            Role<0>,
-            Role<0>,
-            Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
-        >,
-        StepNil,
-    >,
-    OUTER_ROUTE_POLICY_ID,
->;
-type OuterLeftArmSteps = SeqSteps<
-    OuterLeftHead,
-    SeqSteps<StepCons<SendStep<Role<0>, Role<1>, Msg<5, u32>>, StepNil>, InnerRouteProgramSteps>,
->;
-type OuterRightArmSteps =
-    SeqSteps<OuterRightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<6, u32>>, StepNil>>;
-type ProgramSteps = RouteSteps<OuterLeftArmSteps, OuterRightArmSteps>;
-
-// CanonicalControl requires self-send (From == To)
 const OUTER_ROUTE_POLICY_ID: u16 = 310;
 const INNER_ROUTE_POLICY_ID: u16 = 311;
 type TestKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
-type ControllerEndpoint = hibana::Endpoint<'static, 0, TestKit>;
-type WorkerEndpoint = hibana::Endpoint<'static, 1, TestKit>;
-const ROUTE_BRANCH_BYTES_MAX: usize = 64;
-const OFFER_FUTURE_BYTES_MAX: usize = 288;
-const DECODE_FUTURE_BYTES_MAX: usize = 136;
+const ROUTE_BRANCH_BYTES_MAX: usize = 32;
+const OFFER_FUTURE_BYTES_MAX: usize = 48;
+const DECODE_FUTURE_BYTES_MAX: usize = 48;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<MaybeUninit<TestKit>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
     };
-    static CONTROLLER_ENDPOINT_SLOT: UnsafeCell<MaybeUninit<ControllerEndpoint>> = const {
+    static CONTROLLER_ENDPOINT_SLOT: UnsafeCell<MaybeUninit<hibana::Endpoint<'static, 0>>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
     };
-    static WORKER_ENDPOINT_SLOT: UnsafeCell<MaybeUninit<WorkerEndpoint>> = const {
+    static WORKER_ENDPOINT_SLOT: UnsafeCell<MaybeUninit<hibana::Endpoint<'static, 1>>> = const {
         UnsafeCell::new(MaybeUninit::uninit())
     };
 }
@@ -134,28 +65,35 @@ fn nested_route_resolver(ctx: ResolverContext) -> Result<DynamicResolution, Reso
     Ok(DynamicResolution::RouteArm { arm: 0 })
 }
 
-fn register_route_resolvers<const MAX_RV: usize>(
-    cluster: &SessionKit<'_, TestTransport, DefaultLabelUniverse, CounterClock, MAX_RV>,
-    rv_id: RendezvousId,
-) {
-    cluster
-        .set_resolver::<OUTER_ROUTE_POLICY_ID, 0, _>(
-            rv_id,
-            &CONTROLLER_PROGRAM,
-            hibana::substrate::policy::ResolverRef::from_fn(nested_route_resolver),
-        )
-        .expect("register outer route resolver");
-    cluster
-        .set_resolver::<INNER_ROUTE_POLICY_ID, 0, _>(
-            rv_id,
-            &CONTROLLER_PROGRAM,
-            hibana::substrate::policy::ResolverRef::from_fn(nested_route_resolver),
-        )
-        .expect("register inner route resolver");
-}
+fn controller_program() -> RoleProgram<0> {
+    let inner_route = g::route(
+        g::seq(
+            g::send::<
+                Role<0>,
+                Role<0>,
+                Msg<
+                    { LABEL_ROUTE_DECISION },
+                    GenericCapToken<RouteDecisionKind>,
+                    CanonicalControl<RouteDecisionKind>,
+                >,
+                0,
+            >()
+            .policy::<INNER_ROUTE_POLICY_ID>(),
+            g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>(),
+        ),
+        g::seq(
+            g::send::<
+                Role<0>,
+                Role<0>,
+                Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+                0,
+            >()
+            .policy::<INNER_ROUTE_POLICY_ID>(),
+            g::send::<Role<0>, Role<1>, Msg<8, u32>, 0>(),
+        ),
+    );
 
-const INNER_ROUTE: g::Program<InnerRouteProgramSteps> = g::route(
-    g::seq(
+    let outer_left = g::seq(
         g::send::<
             Role<0>,
             Role<0>,
@@ -166,52 +104,103 @@ const INNER_ROUTE: g::Program<InnerRouteProgramSteps> = g::route(
             >,
             0,
         >()
-        .policy::<INNER_ROUTE_POLICY_ID>(),
-        g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>(),
-    ),
-    g::seq(
+        .policy::<OUTER_ROUTE_POLICY_ID>(),
+        g::seq(g::send::<Role<0>, Role<1>, Msg<5, u32>, 0>(), inner_route),
+    );
+
+    let outer_right = g::seq(
         g::send::<
             Role<0>,
             Role<0>,
             Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
             0,
         >()
-        .policy::<INNER_ROUTE_POLICY_ID>(),
-        g::send::<Role<0>, Role<1>, Msg<8, u32>, 0>(),
-    ),
-);
+        .policy::<OUTER_ROUTE_POLICY_ID>(),
+        g::send::<Role<0>, Role<1>, Msg<6, u32>, 0>(),
+    );
 
-const OUTER_LEFT: g::Program<OuterLeftArmSteps> = g::seq(
-    g::send::<
-        Role<0>,
-        Role<0>,
-        Msg<
-            { LABEL_ROUTE_DECISION },
-            GenericCapToken<RouteDecisionKind>,
-            CanonicalControl<RouteDecisionKind>,
-        >,
-        0,
-    >()
-    .policy::<OUTER_ROUTE_POLICY_ID>(),
-    g::seq(g::send::<Role<0>, Role<1>, Msg<5, u32>, 0>(), INNER_ROUTE),
-);
+    let program = g::route(outer_left, outer_right);
+    project(&program)
+}
 
-const OUTER_RIGHT: g::Program<OuterRightArmSteps> = g::seq(
-    g::send::<
-        Role<0>,
-        Role<0>,
-        Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
-        0,
-    >()
-    .policy::<OUTER_ROUTE_POLICY_ID>(),
-    g::send::<Role<0>, Role<1>, Msg<6, u32>, 0>(),
-);
+fn worker_program() -> RoleProgram<1> {
+    let inner_route = g::route(
+        g::seq(
+            g::send::<
+                Role<0>,
+                Role<0>,
+                Msg<
+                    { LABEL_ROUTE_DECISION },
+                    GenericCapToken<RouteDecisionKind>,
+                    CanonicalControl<RouteDecisionKind>,
+                >,
+                0,
+            >()
+            .policy::<INNER_ROUTE_POLICY_ID>(),
+            g::send::<Role<0>, Role<1>, Msg<7, u32>, 0>(),
+        ),
+        g::seq(
+            g::send::<
+                Role<0>,
+                Role<0>,
+                Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+                0,
+            >()
+            .policy::<INNER_ROUTE_POLICY_ID>(),
+            g::send::<Role<0>, Role<1>, Msg<8, u32>, 0>(),
+        ),
+    );
 
-const PROGRAM: g::Program<ProgramSteps> = g::route(OUTER_LEFT, OUTER_RIGHT);
+    let outer_left = g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<
+                { LABEL_ROUTE_DECISION },
+                GenericCapToken<RouteDecisionKind>,
+                CanonicalControl<RouteDecisionKind>,
+            >,
+            0,
+        >()
+        .policy::<OUTER_ROUTE_POLICY_ID>(),
+        g::seq(g::send::<Role<0>, Role<1>, Msg<5, u32>, 0>(), inner_route),
+    );
 
-static CONTROLLER_PROGRAM: RoleProgram<'static, 0> = project(&PROGRAM);
+    let outer_right = g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+            0,
+        >()
+        .policy::<OUTER_ROUTE_POLICY_ID>(),
+        g::send::<Role<0>, Role<1>, Msg<6, u32>, 0>(),
+    );
 
-static WORKER_PROGRAM: RoleProgram<'static, 1> = project(&PROGRAM);
+    let program = g::route(outer_left, outer_right);
+    project(&program)
+}
+
+fn register_route_resolvers<const MAX_RV: usize>(
+    cluster: &SessionKit<'_, TestTransport, DefaultLabelUniverse, CounterClock, MAX_RV>,
+    rv_id: RendezvousId,
+) {
+    let controller_program = controller_program();
+    cluster
+        .set_resolver::<OUTER_ROUTE_POLICY_ID, 0>(
+            rv_id,
+            &controller_program,
+            hibana::substrate::policy::ResolverRef::from_fn(nested_route_resolver),
+        )
+        .expect("register outer route resolver");
+    cluster
+        .set_resolver::<INNER_ROUTE_POLICY_ID, 0>(
+            rv_id,
+            &controller_program,
+            hibana::substrate::policy::ResolverRef::from_fn(nested_route_resolver),
+        )
+        .expect("register inner route resolver");
+}
 
 // Test nested routes with self-send control pattern via flow().send().
 // Controller uses flow().send(()) for control decisions, Worker uses direct recv().
@@ -232,6 +221,8 @@ fn nested_branch_commit_stack() {
                 register_route_resolvers(cluster, rv_id);
 
                 let sid = SessionId::new(77);
+                let controller_program = controller_program();
+                let worker_program = worker_program();
 
                 with_tls_mut(
                     &CONTROLLER_ENDPOINT_SLOT,
@@ -239,7 +230,7 @@ fn nested_branch_commit_stack() {
                         write_value(
                             ptr,
                             cluster
-                                .enter(rv_id, sid, &CONTROLLER_PROGRAM, NoBinding)
+                                .enter(rv_id, sid, &controller_program, NoBinding)
                                 .expect("attach controller"),
                         );
                     },
@@ -250,7 +241,7 @@ fn nested_branch_commit_stack() {
                                 write_value(
                                     ptr,
                                     cluster
-                                        .enter(rv_id, sid, &WORKER_PROGRAM, NoBinding)
+                                        .enter(rv_id, sid, &worker_program, NoBinding)
                                         .expect("attach worker"),
                                 );
                             },
@@ -364,6 +355,8 @@ fn localside_offer_decode_sizes_stay_compact() {
                 register_route_resolvers(cluster, rv_id);
 
                 let sid = SessionId::new(78);
+                let controller_program = controller_program();
+                let worker_program = worker_program();
 
                 with_tls_mut(
                     &CONTROLLER_ENDPOINT_SLOT,
@@ -371,7 +364,7 @@ fn localside_offer_decode_sizes_stay_compact() {
                         write_value(
                             ptr,
                             cluster
-                                .enter(rv_id, sid, &CONTROLLER_PROGRAM, NoBinding)
+                                .enter(rv_id, sid, &controller_program, NoBinding)
                                 .expect("attach controller"),
                         );
                     },
@@ -382,7 +375,7 @@ fn localside_offer_decode_sizes_stay_compact() {
                                 write_value(
                                     ptr,
                                     cluster
-                                        .enter(rv_id, sid, &WORKER_PROGRAM, NoBinding)
+                                        .enter(rv_id, sid, &worker_program, NoBinding)
                                         .expect("attach worker"),
                                 );
                             },
@@ -415,7 +408,7 @@ fn localside_offer_decode_sizes_stay_compact() {
                                 let branch = futures::executor::block_on(worker.offer())
                                     .expect("offer route");
                                 let branch_bytes =
-                                    size_of::<hibana::RouteBranch<'static, 'static, 1, TestKit>>();
+                                    size_of::<hibana::RouteBranch<'static, 'static, 1>>();
                                 assert_eq!(branch.label(), 5, "route should expose outer left arm");
 
                                 let decode = branch.decode::<Msg<5, u32>>();
