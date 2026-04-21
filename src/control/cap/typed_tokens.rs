@@ -31,12 +31,14 @@ use core::{fmt, marker::PhantomData, ptr::NonNull};
 /// # Affine Semantics
 ///
 /// Dropping without consumption will panic to prevent silent token leakage.
+#[cfg(test)]
 pub struct CapFlowToken<K: ResourceKind> {
     bytes: [u8; CAP_TOKEN_LEN],
     consumed: bool,
     _marker: PhantomData<K>,
 }
 
+#[cfg(test)]
 impl<K: ResourceKind> CapFlowToken<K> {
     /// Create a new flow token from raw token bytes.
     ///
@@ -55,35 +57,14 @@ impl<K: ResourceKind> CapFlowToken<K> {
     }
 
     /// Consume this token and return raw bytes for wire encoding.
-    ///
-    /// This is the primary consumption path for sending tokens over the wire.
     #[inline]
     pub fn into_bytes(mut self) -> [u8; CAP_TOKEN_LEN] {
         self.consumed = true;
         self.bytes
     }
-
-    /// Convert this flow token into a `ControlFrame` for the typed pipeline.
-    ///
-    /// This is the primary integration point for the ControlFrame DSL:
-    /// ```text
-    /// CapFlow::into_token::<K>()
-    ///   → CapFlowToken<K>
-    ///   → into_frame()
-    ///   → ControlFrame<'ctx, K>
-    ///   → HandleBag integration
-    /// ```
-    ///
-    /// # Design Notes
-    ///
-    /// The ControlFrame carries the typed token bytes into the control pipeline
-    /// without widening the resource kind to an untyped runtime payload.
-    #[inline]
-    pub(crate) fn into_frame<'ctx>(self) -> crate::control::handle::frame::ControlFrame<'ctx, K> {
-        crate::control::handle::frame::ControlFrame::from_flow(self)
-    }
 }
 
+#[cfg(test)]
 impl<K: ResourceKind> Drop for CapFlowToken<K> {
     fn drop(&mut self) {
         if !self.consumed {
@@ -99,11 +80,13 @@ impl<K: ResourceKind> Drop for CapFlowToken<K> {
 /// Borrowed capability token from inbound control frame.
 ///
 /// Provides zero-copy access to token bytes from a received frame.
+#[cfg(test)]
 pub struct CapFrameToken<'f, K: ResourceKind> {
     bytes: &'f [u8; CAP_TOKEN_LEN],
     _marker: PhantomData<K>,
 }
 
+#[cfg(test)]
 impl<'f, K: ResourceKind> CapFrameToken<'f, K> {
     /// Create a frame token by borrowing from inbound frame bytes.
     #[inline]
@@ -221,23 +204,24 @@ pub(crate) struct RegisteredTokenParts {
 
 impl RegisteredTokenParts {
     #[inline]
-    pub(crate) fn from_typed<K: ResourceKind>(mut token: CapRegisteredToken<'_, K>) -> Self {
-        let parts = Self {
-            bytes: token.bytes,
-            nonce: token.nonce,
-            cap_table: token.cap_table.take(),
-        };
-        token.bytes.fill(0);
-        token.nonce.fill(0);
-        parts
-    }
-
-    #[inline]
     pub(crate) fn from_bytes(bytes: [u8; CAP_TOKEN_LEN]) -> Self {
         Self {
             bytes,
             nonce: [0u8; CAP_NONCE_LEN],
             cap_table: None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn from_registered_bytes(
+        bytes: [u8; CAP_TOKEN_LEN],
+        nonce: [u8; CAP_NONCE_LEN],
+        cap_table: &CapTable,
+    ) -> Self {
+        Self {
+            bytes,
+            nonce,
+            cap_table: Some(NonNull::from(cap_table)),
         }
     }
 }
@@ -316,26 +300,33 @@ impl<'rv, K: ResourceKind> Drop for CapRegisteredToken<'rv, K> {
 mod tests {
     use super::*;
     use crate::control::cap::mint::{
-        CAP_FIXED_HEADER_LEN, CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TAG_LEN,
-        CAP_TOKEN_LEN, CapShot,
+        CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TAG_LEN, CAP_TOKEN_LEN, CapHeader, CapShot,
+        ControlResourceKind,
     };
     use crate::control::cap::resource_kinds::{LoopContinueKind, LoopDecisionHandle};
     use crate::global::const_dsl::ScopeId;
+    use crate::substrate::{Lane, SessionId};
 
     /// Helper to build a test token
-    fn make_test_token_bytes<K: ResourceKind>(handle: &K::Handle) -> [u8; CAP_TOKEN_LEN] {
-        let handle_bytes = K::encode_handle(handle);
-        let mask = K::caps_mask(handle);
-
+    fn make_test_token_bytes(handle: &LoopDecisionHandle) -> [u8; CAP_TOKEN_LEN] {
+        let handle_bytes = LoopContinueKind::encode_handle(handle);
         let mut header = [0u8; CAP_HEADER_LEN];
-        header[0..4].copy_from_slice(&0u32.to_be_bytes());
-        header[4] = 0; // lane
-        header[5] = 0; // role
-        header[6] = K::TAG;
-        header[7] = CapShot::One.as_u8();
-        header[8..10].copy_from_slice(&mask.bits().to_be_bytes());
-        header[CAP_FIXED_HEADER_LEN..CAP_FIXED_HEADER_LEN + CAP_HANDLE_LEN]
-            .copy_from_slice(&handle_bytes);
+        CapHeader::new(
+            SessionId::new(handle.sid),
+            Lane::new(handle.lane as u32),
+            0,
+            LoopContinueKind::TAG,
+            LoopContinueKind::LABEL,
+            LoopContinueKind::OP,
+            LoopContinueKind::PATH,
+            CapShot::One,
+            LoopContinueKind::SCOPE,
+            0,
+            handle.scope.local_ordinal(),
+            0,
+            handle_bytes,
+        )
+        .encode(&mut header);
 
         let mut bytes = [0u8; CAP_TOKEN_LEN];
         bytes[..CAP_NONCE_LEN].copy_from_slice(&[0u8; CAP_NONCE_LEN]);
@@ -351,7 +342,7 @@ mod tests {
             lane: 7,
             scope: ScopeId::route(5),
         };
-        let bytes = make_test_token_bytes::<LoopContinueKind>(&handle);
+        let bytes = make_test_token_bytes(&handle);
         let token = GenericCapToken::<LoopContinueKind>::from_bytes(bytes);
         let flow_token = CapFlowToken::<LoopContinueKind>::new(token);
 
@@ -366,7 +357,7 @@ mod tests {
             lane: 3,
             scope: ScopeId::loop_scope(2),
         };
-        let bytes = make_test_token_bytes::<LoopContinueKind>(&handle);
+        let bytes = make_test_token_bytes(&handle);
 
         let frame_token = CapFrameToken::<LoopContinueKind>::new(&bytes);
         assert_eq!(frame_token.bytes(), &bytes);
@@ -384,7 +375,7 @@ mod tests {
             lane: 0,
             scope: ScopeId::route(1),
         };
-        let bytes = make_test_token_bytes::<LoopContinueKind>(&handle);
+        let bytes = make_test_token_bytes(&handle);
         let token = GenericCapToken::<LoopContinueKind>::from_bytes(bytes);
         let _flow_token = CapFlowToken::<LoopContinueKind>::new(token);
         // Drop without consumption → panic
@@ -397,7 +388,7 @@ mod tests {
             lane: 2,
             scope: ScopeId::route(6),
         };
-        let bytes = make_test_token_bytes::<LoopContinueKind>(&handle);
+        let bytes = make_test_token_bytes(&handle);
         let token = GenericCapToken::<LoopContinueKind>::from_bytes(bytes);
         let flow_token = CapFlowToken::<LoopContinueKind>::new(token);
         let _consumed = flow_token.into_bytes();

@@ -13,7 +13,7 @@ use std::{
 const TEST_ROLE_CAPACITY: usize = 4;
 const TEST_QUEUE_CAPACITY: usize = 16;
 const TEST_WAITER_CAPACITY: usize = 16;
-const TEST_FRAME_PAYLOAD_CAPACITY: usize = 64;
+const TEST_FRAME_PAYLOAD_CAPACITY: usize = 128;
 const TEST_TRANSPORT_POOL_CAPACITY: usize = 4;
 
 unsafe fn init_option_array<T, const N: usize>(dst: *mut Option<T>) {

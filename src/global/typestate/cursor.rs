@@ -16,7 +16,9 @@ use crate::{
     eff::EffIndex,
     global::{
         LoopControlMeaning,
-        compiled::images::{CompiledRoleImage, ControlSemanticsTable, ProgramImage},
+        compiled::images::{
+            CompiledProgramRef, CompiledRoleImage, ControlSemanticKind, ControlSemanticsTable,
+        },
         const_dsl::{PolicyMode, ScopeId, ScopeKind},
         role_program::{LaneSetView, LaneSteps, PhaseRouteGuard},
     },
@@ -54,7 +56,7 @@ const PHASE_CURSOR_NO_STATE: StateIndex = StateIndex::MAX;
 #[cfg_attr(test, derive(Clone, Copy, PartialEq, Eq))]
 struct PhaseCursorMachine {
     compiled_role: *const CompiledRoleImage,
-    program_image: ProgramImage,
+    program_ref: CompiledProgramRef,
 }
 
 impl PhaseCursorMachine {
@@ -62,11 +64,11 @@ impl PhaseCursorMachine {
     unsafe fn init_from_compiled(
         dst: *mut Self,
         compiled_role: *const CompiledRoleImage,
-        program_image: ProgramImage,
+        program_ref: CompiledProgramRef,
     ) {
         unsafe {
             core::ptr::addr_of_mut!((*dst).compiled_role).write(compiled_role);
-            core::ptr::addr_of_mut!((*dst).program_image).write(program_image);
+            core::ptr::addr_of_mut!((*dst).program_ref).write(program_ref);
         }
     }
 
@@ -82,8 +84,8 @@ impl PhaseCursorMachine {
     }
 
     #[inline(always)]
-    fn program_image(&self) -> &ProgramImage {
-        &self.program_image
+    fn program_ref(&self) -> &CompiledProgramRef {
+        &self.program_ref
     }
 
     #[inline(always)]
@@ -128,17 +130,25 @@ impl PhaseCursorMachine {
 
     #[inline(always)]
     fn control_semantics(&self) -> &ControlSemanticsTable {
-        self.program_image().control_semantics()
+        self.program_ref().control_semantics()
     }
 
     #[inline(always)]
     fn route_controller_role(&self, scope_id: ScopeId) -> Option<u8> {
-        self.program_image().route_controller_role(scope_id)
+        self.program_ref().route_controller_role(scope_id)
     }
 
     #[inline(always)]
-    fn route_controller(&self, scope_id: ScopeId) -> Option<(PolicyMode, EffIndex, u8)> {
-        self.program_image().route_controller(scope_id)
+    fn route_controller(
+        &self,
+        scope_id: ScopeId,
+    ) -> Option<(
+        PolicyMode,
+        EffIndex,
+        u8,
+        crate::control::cap::mint::ControlOp,
+    )> {
+        self.program_ref().route_controller(scope_id)
     }
 }
 
@@ -314,14 +324,14 @@ impl PhaseCursor {
         lane_cursors: *mut u16,
         current_step_labels: *mut u8,
         compiled_role: *const CompiledRoleImage,
-        program_image: ProgramImage,
+        program_ref: CompiledProgramRef,
     ) {
         unsafe {
             core::ptr::addr_of_mut!((*dst).state).write(state);
             PhaseCursorMachine::init_from_compiled(
                 core::ptr::addr_of_mut!((*dst).machine),
                 compiled_role,
-                program_image,
+                program_ref,
             );
             PhaseCursorState::init_empty(
                 state,
@@ -1001,7 +1011,7 @@ impl PhaseCursor {
         scope_id: ScopeId,
         label: u8,
     ) -> Option<(u8, StateIndex)> {
-        if let Some((policy, _, _)) = self.route_scope_controller_policy(scope_id)
+        if let Some((policy, _, _, _)) = self.route_scope_controller_policy(scope_id)
             && policy.is_dynamic()
         {
             return None;
@@ -1135,13 +1145,13 @@ impl PhaseCursor {
         let typestate = self.typestate();
         for i in 0..typestate.len() {
             let node = typestate.node(i);
-            let resource = match node.action() {
-                LocalAction::Send { resource, .. }
-                | LocalAction::Recv { resource, .. }
-                | LocalAction::Local { resource, .. } => resource,
-                LocalAction::Terminate | LocalAction::Jump { .. } => None,
+            let semantic = match node.action() {
+                LocalAction::Send { .. } | LocalAction::Recv { .. } | LocalAction::Local { .. } => {
+                    node.control_semantic()
+                }
+                LocalAction::Terminate | LocalAction::Jump { .. } => continue,
             };
-            if LoopControlMeaning::from_resource_tag(resource) == Some(meaning) {
+            if LoopControlMeaning::from_semantic(semantic) == Some(meaning) {
                 return Some(i);
             }
         }
@@ -1293,20 +1303,40 @@ impl PhaseCursor {
     }
 
     #[inline]
+    pub(crate) fn shared_controller_arm_entry_by_arm(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+    ) -> Option<(StateIndex, u8)> {
+        self.typestate().controller_arm_entry_by_arm(scope_id, arm)
+    }
+
+    #[inline]
+    pub(crate) fn control_semantic_at(&self, idx: usize) -> ControlSemanticKind {
+        self.typestate().node(idx).control_semantic()
+    }
+
+    #[inline]
     pub(crate) fn passive_arm_scope_by_arm(&self, scope_id: ScopeId, arm: u8) -> Option<ScopeId> {
         self.typestate().passive_arm_scope(scope_id, arm)
     }
 
     /// Get route controller policy metadata.
     ///
-    /// The tuple `(PolicyMode, EffIndex, u8)` corresponds to the controller-provided
+    /// The tuple `(PolicyMode, EffIndex, u8, ControlOp)` corresponds to the
+    /// controller-provided
     /// policy mode, the effect index of the send action that declared it, and the
-    /// control resource tag embedded in the DSL. Route policies are tracked for both
-    /// generic route decisions and loop-based routing (LoopContinue/LoopBreak).
+    /// control descriptor metadata embedded in the DSL. Route policies are tracked
+    /// for both generic route decisions and loop-based routing.
     pub(crate) fn route_scope_controller_policy(
         &self,
         scope_id: ScopeId,
-    ) -> Option<(PolicyMode, EffIndex, u8)> {
+    ) -> Option<(
+        PolicyMode,
+        EffIndex,
+        u8,
+        crate::control::cap::mint::ControlOp,
+    )> {
         self.machine().route_controller(scope_id)
     }
 
@@ -1341,22 +1371,18 @@ impl PhaseCursor {
         let node = self.typestate().node(self.idx_usize());
         let action = node.action();
         let role = self.machine().role();
-        let (resource, eff_index, controller, target, role_kind) = match action {
+        let (eff_index, controller, target, role_kind) = match action {
             LocalAction::Send {
-                resource,
-                eff_index,
-                peer,
-                ..
-            } => (resource, eff_index, role, peer, LoopRole::Controller),
+                eff_index, peer, ..
+            } => (eff_index, role, peer, LoopRole::Controller),
             LocalAction::Recv {
-                resource,
-                eff_index,
-                peer,
-                ..
-            } => (resource, eff_index, peer, role, LoopRole::Target),
+                eff_index, peer, ..
+            } => (eff_index, peer, role, LoopRole::Target),
             _ => return None,
         };
-        if LoopControlMeaning::from_resource_tag(resource) != Some(LoopControlMeaning::Continue) {
+        if LoopControlMeaning::from_semantic(node.control_semantic())
+            != Some(LoopControlMeaning::Continue)
+        {
             return None;
         }
         let scope = self.node_loop_scope(self.idx_usize())?;

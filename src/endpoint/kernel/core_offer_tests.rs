@@ -1,26 +1,42 @@
 //! Offer-path kernel regression tests.
 
+mod abort_control_kind {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/support/abort_control.rs"
+    ));
+}
+mod route_control_kinds {
+    extern crate self as hibana;
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/support/route_control_kinds.rs"
+    ));
+}
+mod snapshot_control_kind {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/support/snapshot_control.rs"
+    ));
+}
+
 use super::*;
 use crate::binding::{Channel, IncomingClassification, TransportOpsError};
-use crate::control::cap::mint::{
-    CapError, CapShot, CapsMask, ControlResourceKind, GenericCapToken, ResourceKind,
-    SessionScopedKind,
-};
-use crate::control::cap::resource_kinds::{RouteDecisionHandle, RouteDecisionKind};
+use crate::control::cap::mint::{ControlOp, GenericCapToken, ResourceKind};
+use crate::control::cap::resource_kinds::RouteDecisionKind;
 use crate::control::cluster::core::SessionCluster;
 use crate::g::{self, Msg, Role};
-use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 use crate::global::role_program::{
     LaneSet, LaneSetView, LaneWord, RoleProgram, lane_word_count, project,
 };
 use crate::global::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
-use crate::global::{CanonicalControl, ControlHandling};
 use crate::observe::core::TapEvent;
 use crate::runtime::config::{Config, CounterClock};
 use crate::runtime::consts::{
     DefaultLabelUniverse, LABEL_ROUTE_DECISION, LabelUniverse, RING_EVENTS,
 };
 use crate::transport::{Transport, TransportError, wire::Payload};
+use abort_control_kind::AbortControl;
 use core::{
     cell::{Cell, UnsafeCell},
     future::Future,
@@ -30,11 +46,15 @@ use core::{
     task::{Context, Poll},
 };
 use futures::task::noop_waker_ref;
+use route_control_kinds::RouteControl;
+use snapshot_control_kind::SnapshotControl;
 use std::{task::Waker, thread_local};
 
 type SendOnly<const LANE: u8, S, D, M> = StepCons<SendStep<S, D, M, LANE>, StepNil>;
 type BranchSteps<L, R> = RouteSteps<L, R>;
 const OFFER_FIXTURE_SLAB_CAPACITY: usize = 262_144;
+const ROUTE_HINT_RIGHT_LABEL: u8 = 122;
+type RouteHintRightKind = RouteControl<ROUTE_HINT_RIGHT_LABEL, 0>;
 
 const fn max_usize(values: &[usize]) -> usize {
     let mut idx = 0usize;
@@ -328,13 +348,10 @@ type DeepRightMiddleLeftMsg = Msg<0x51, u8>;
 type DeepRightThirdLeftMsg = Msg<0x52, u8>;
 type DeepRightFinalLeftMsg = Msg<0x53, u8>;
 type DeepRightFinalRightMsg = Msg<0x55, u8>;
-type DeepRightStaticRouteLeftMsg = Msg<
-    { LABEL_ROUTE_DECISION },
-    GenericCapToken<RouteDecisionKind>,
-    CanonicalControl<RouteDecisionKind>,
->;
+type DeepRightStaticRouteLeftMsg =
+    Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>;
 type DeepRightStaticRouteRightMsg =
-    Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>;
+    Msg<ROUTE_HINT_RIGHT_LABEL, GenericCapToken<RouteHintRightKind>, RouteHintRightKind>;
 type DeepRightFinalDecisionLeftSteps = SeqSteps<
     SendOnly<0, Role<0>, Role<0>, DeepRightStaticRouteLeftMsg>,
     SendOnly<0, Role<0>, Role<1>, DeepRightFinalLeftMsg>,
@@ -368,57 +385,69 @@ type DeepRightOuterLeftSteps = SeqSteps<
 type DeepRightOuterRightSteps =
     SeqSteps<SendOnly<0, Role<0>, Role<0>, DeepRightStaticRouteRightMsg>, DeepRightMiddleSteps>;
 type DeepRightProgramSteps = BranchSteps<DeepRightOuterLeftSteps, DeepRightOuterRightSteps>;
-const DEEP_RIGHT_FINAL_DECISION: g::Program<DeepRightFinalDecisionSteps> = g::route(
-    g::seq(
-        g::send::<Role<0>, Role<0>, DeepRightStaticRouteLeftMsg, 0>(),
-        g::send::<Role<0>, Role<1>, DeepRightFinalLeftMsg, 0>(),
-    ),
-    g::seq(
-        g::send::<Role<0>, Role<0>, DeepRightStaticRouteRightMsg, 0>(),
-        g::send::<Role<0>, Role<1>, DeepRightFinalRightMsg, 0>(),
-    ),
-);
-const DEEP_RIGHT_THIRD: g::Program<DeepRightThirdSteps> = g::route(
-    g::seq(
-        g::send::<Role<0>, Role<0>, DeepRightStaticRouteLeftMsg, 0>(),
-        g::send::<Role<0>, Role<1>, DeepRightThirdLeftMsg, 0>(),
-    ),
-    g::seq(
-        g::send::<Role<0>, Role<0>, DeepRightStaticRouteRightMsg, 0>(),
-        DEEP_RIGHT_FINAL_DECISION,
-    ),
-);
-const DEEP_RIGHT_MIDDLE: g::Program<DeepRightMiddleSteps> = g::route(
-    g::seq(
-        g::send::<Role<0>, Role<0>, DeepRightStaticRouteLeftMsg, 0>(),
-        g::send::<Role<0>, Role<1>, DeepRightMiddleLeftMsg, 0>(),
-    ),
-    g::seq(
-        g::send::<Role<0>, Role<0>, DeepRightStaticRouteRightMsg, 0>(),
-        DEEP_RIGHT_THIRD,
-    ),
-);
-const DEEP_RIGHT_PROGRAM: g::Program<DeepRightProgramSteps> = g::route(
-    g::seq(
-        g::send::<Role<0>, Role<0>, DeepRightStaticRouteLeftMsg, 0>(),
-        g::send::<Role<0>, Role<1>, DeepRightOuterLeftMsg, 0>(),
-    ),
-    g::seq(
-        g::send::<Role<0>, Role<0>, DeepRightStaticRouteRightMsg, 0>(),
-        DEEP_RIGHT_MIDDLE,
-    ),
-);
+#[allow(non_snake_case)]
+fn DEEP_RIGHT_FINAL_DECISION() -> g::Program<DeepRightFinalDecisionSteps> {
+    g::route(
+        g::seq(
+            g::send::<Role<0>, Role<0>, DeepRightStaticRouteLeftMsg, 0>(),
+            g::send::<Role<0>, Role<1>, DeepRightFinalLeftMsg, 0>(),
+        ),
+        g::seq(
+            g::send::<Role<0>, Role<0>, DeepRightStaticRouteRightMsg, 0>(),
+            g::send::<Role<0>, Role<1>, DeepRightFinalRightMsg, 0>(),
+        ),
+    )
+}
+
+#[allow(non_snake_case)]
+fn DEEP_RIGHT_THIRD() -> g::Program<DeepRightThirdSteps> {
+    g::route(
+        g::seq(
+            g::send::<Role<0>, Role<0>, DeepRightStaticRouteLeftMsg, 0>(),
+            g::send::<Role<0>, Role<1>, DeepRightThirdLeftMsg, 0>(),
+        ),
+        g::seq(
+            g::send::<Role<0>, Role<0>, DeepRightStaticRouteRightMsg, 0>(),
+            DEEP_RIGHT_FINAL_DECISION(),
+        ),
+    )
+}
+
+#[allow(non_snake_case)]
+fn DEEP_RIGHT_MIDDLE() -> g::Program<DeepRightMiddleSteps> {
+    g::route(
+        g::seq(
+            g::send::<Role<0>, Role<0>, DeepRightStaticRouteLeftMsg, 0>(),
+            g::send::<Role<0>, Role<1>, DeepRightMiddleLeftMsg, 0>(),
+        ),
+        g::seq(
+            g::send::<Role<0>, Role<0>, DeepRightStaticRouteRightMsg, 0>(),
+            DEEP_RIGHT_THIRD(),
+        ),
+    )
+}
+
+#[allow(non_snake_case)]
+fn DEEP_RIGHT_PROGRAM() -> g::Program<DeepRightProgramSteps> {
+    g::route(
+        g::seq(
+            g::send::<Role<0>, Role<0>, DeepRightStaticRouteLeftMsg, 0>(),
+            g::send::<Role<0>, Role<1>, DeepRightOuterLeftMsg, 0>(),
+        ),
+        g::seq(
+            g::send::<Role<0>, Role<0>, DeepRightStaticRouteRightMsg, 0>(),
+            DEEP_RIGHT_MIDDLE(),
+        ),
+    )
+}
 type NestedStaticOuterLeftMsg = Msg<0x50, u8>;
 type NestedStaticLeafLeftMsg = Msg<0x51, u8>;
 type NestedStaticLeafRightMsg = Msg<0x52, u8>;
 type NestedStaticMiddleRightMsg = Msg<0x53, u8>;
-type NestedStaticRouteLeftMsg = Msg<
-    { LABEL_ROUTE_DECISION },
-    GenericCapToken<RouteDecisionKind>,
-    CanonicalControl<RouteDecisionKind>,
->;
+type NestedStaticRouteLeftMsg =
+    Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>;
 type NestedStaticRouteRightMsg =
-    Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>;
+    Msg<ROUTE_HINT_RIGHT_LABEL, GenericCapToken<RouteHintRightKind>, RouteHintRightKind>;
 type NestedStaticInnerLeftSteps = SeqSteps<
     SendOnly<0, Role<0>, Role<0>, NestedStaticRouteLeftMsg>,
     SendOnly<0, Role<0>, Role<1>, NestedStaticLeafLeftMsg>,
@@ -444,57 +473,73 @@ type NestedStaticOuterRightSteps =
     SeqSteps<SendOnly<0, Role<0>, Role<0>, NestedStaticRouteRightMsg>, NestedStaticMiddleSteps>;
 type NestedStaticProgramSteps =
     BranchSteps<NestedStaticOuterLeftSteps, NestedStaticOuterRightSteps>;
-const NESTED_STATIC_INNER: g::Program<NestedStaticInnerSteps> = g::route(
-    g::seq(
-        g::send::<Role<0>, Role<0>, NestedStaticRouteLeftMsg, 0>(),
-        g::send::<Role<0>, Role<1>, NestedStaticLeafLeftMsg, 0>(),
-    ),
-    g::seq(
-        g::send::<Role<0>, Role<0>, NestedStaticRouteRightMsg, 0>(),
-        g::send::<Role<0>, Role<1>, NestedStaticLeafRightMsg, 0>(),
-    ),
-);
-const NESTED_STATIC_MIDDLE: g::Program<NestedStaticMiddleSteps> = g::route(
-    g::seq(
-        g::send::<Role<0>, Role<0>, NestedStaticRouteLeftMsg, 0>(),
-        NESTED_STATIC_INNER,
-    ),
-    g::seq(
-        g::send::<Role<0>, Role<0>, NestedStaticRouteRightMsg, 0>(),
-        g::send::<Role<0>, Role<1>, NestedStaticMiddleRightMsg, 0>(),
-    ),
-);
-const NESTED_STATIC_PROGRAM: g::Program<NestedStaticProgramSteps> = g::route(
-    g::seq(
-        g::send::<Role<0>, Role<0>, NestedStaticRouteLeftMsg, 0>(),
-        g::send::<Role<0>, Role<1>, NestedStaticOuterLeftMsg, 0>(),
-    ),
-    g::seq(
-        g::send::<Role<0>, Role<0>, NestedStaticRouteRightMsg, 0>(),
-        NESTED_STATIC_MIDDLE,
-    ),
-);
-static NESTED_STATIC_CONTROLLER_PROGRAM: RoleProgram<0> = project(&NESTED_STATIC_PROGRAM);
-static NESTED_STATIC_WORKER_PROGRAM: RoleProgram<1> = project(&NESTED_STATIC_PROGRAM);
+#[allow(non_snake_case)]
+fn NESTED_STATIC_INNER() -> g::Program<NestedStaticInnerSteps> {
+    g::route(
+        g::seq(
+            g::send::<Role<0>, Role<0>, NestedStaticRouteLeftMsg, 0>(),
+            g::send::<Role<0>, Role<1>, NestedStaticLeafLeftMsg, 0>(),
+        ),
+        g::seq(
+            g::send::<Role<0>, Role<0>, NestedStaticRouteRightMsg, 0>(),
+            g::send::<Role<0>, Role<1>, NestedStaticLeafRightMsg, 0>(),
+        ),
+    )
+}
+
+#[allow(non_snake_case)]
+fn NESTED_STATIC_MIDDLE() -> g::Program<NestedStaticMiddleSteps> {
+    g::route(
+        g::seq(
+            g::send::<Role<0>, Role<0>, NestedStaticRouteLeftMsg, 0>(),
+            NESTED_STATIC_INNER(),
+        ),
+        g::seq(
+            g::send::<Role<0>, Role<0>, NestedStaticRouteRightMsg, 0>(),
+            g::send::<Role<0>, Role<1>, NestedStaticMiddleRightMsg, 0>(),
+        ),
+    )
+}
+
+#[allow(non_snake_case)]
+fn NESTED_STATIC_PROGRAM() -> g::Program<NestedStaticProgramSteps> {
+    g::route(
+        g::seq(
+            g::send::<Role<0>, Role<0>, NestedStaticRouteLeftMsg, 0>(),
+            g::send::<Role<0>, Role<1>, NestedStaticOuterLeftMsg, 0>(),
+        ),
+        g::seq(
+            g::send::<Role<0>, Role<0>, NestedStaticRouteRightMsg, 0>(),
+            NESTED_STATIC_MIDDLE(),
+        ),
+    )
+}
+
+#[allow(non_snake_case)]
+fn NESTED_STATIC_CONTROLLER_PROGRAM() -> RoleProgram<0> {
+    project(&NESTED_STATIC_PROGRAM())
+}
+
+#[allow(non_snake_case)]
+fn NESTED_STATIC_WORKER_PROGRAM() -> RoleProgram<1> {
+    project(&NESTED_STATIC_PROGRAM())
+}
 type LoopContinueScopedContinueMsg = Msg<
     { crate::runtime::consts::LABEL_LOOP_CONTINUE },
     GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
-    CanonicalControl<crate::control::cap::resource_kinds::LoopContinueKind>,
+    crate::control::cap::resource_kinds::LoopContinueKind,
 >;
 type LoopContinueScopedBreakMsg = Msg<
     { crate::runtime::consts::LABEL_LOOP_BREAK },
     GenericCapToken<crate::control::cap::resource_kinds::LoopBreakKind>,
-    CanonicalControl<crate::control::cap::resource_kinds::LoopBreakKind>,
+    crate::control::cap::resource_kinds::LoopBreakKind,
 >;
-type LoopContinueScopedRouteLeftMsg = Msg<
-    { LABEL_ROUTE_DECISION },
-    GenericCapToken<RouteDecisionKind>,
-    CanonicalControl<RouteDecisionKind>,
->;
+type LoopContinueScopedRouteLeftMsg =
+    Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>;
 type LoopContinueScopedRouteRightMsg =
-    Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>;
-type LoopContinueScopedInnerLeftMsg = Msg<110, u8>;
-type LoopContinueScopedInnerRightMsg = Msg<111, u8>;
+    Msg<ROUTE_HINT_RIGHT_LABEL, GenericCapToken<RouteHintRightKind>, RouteHintRightKind>;
+type LoopContinueScopedInnerLeftMsg = Msg<90, u8>;
+type LoopContinueScopedInnerRightMsg = Msg<91, u8>;
 type LoopContinueScopedInnerLeftSteps = SeqSteps<
     SendOnly<0, Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg>,
     SendOnly<0, Role<0>, Role<1>, LoopContinueScopedInnerLeftMsg>,
@@ -517,31 +562,45 @@ type LoopSemanticsProgramSteps = BranchSteps<
     SendOnly<0, Role<0>, Role<0>, LoopContinueScopedContinueMsg>,
     SendOnly<0, Role<0>, Role<0>, LoopContinueScopedBreakMsg>,
 >;
-const LOOP_SEMANTICS_PROGRAM: g::Program<LoopSemanticsProgramSteps> = g::route(
-    g::send::<Role<0>, Role<0>, LoopContinueScopedContinueMsg, 0>(),
-    g::send::<Role<0>, Role<0>, LoopContinueScopedBreakMsg, 0>(),
-);
-static LOOP_SEMANTICS_CONTROLLER_PROGRAM: RoleProgram<0> = project(&LOOP_SEMANTICS_PROGRAM);
-const LOOP_CONTINUE_SCOPED_PROGRAM: g::Program<LoopContinueScopedProgramSteps> = g::route(
-    g::seq(
+#[allow(non_snake_case)]
+fn LOOP_SEMANTICS_PROGRAM() -> g::Program<LoopSemanticsProgramSteps> {
+    g::route(
         g::send::<Role<0>, Role<0>, LoopContinueScopedContinueMsg, 0>(),
-        g::route(
-            g::seq(
-                g::send::<Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg, 0>(),
-                g::send::<Role<0>, Role<1>, LoopContinueScopedInnerLeftMsg, 0>(),
-            ),
-            g::seq(
-                g::send::<Role<0>, Role<0>, LoopContinueScopedRouteRightMsg, 0>(),
-                g::send::<Role<0>, Role<1>, LoopContinueScopedInnerRightMsg, 0>(),
+        g::send::<Role<0>, Role<0>, LoopContinueScopedBreakMsg, 0>(),
+    )
+}
+
+#[allow(non_snake_case)]
+fn LOOP_SEMANTICS_CONTROLLER_PROGRAM() -> RoleProgram<0> {
+    project(&LOOP_SEMANTICS_PROGRAM())
+}
+
+#[allow(non_snake_case)]
+fn LOOP_CONTINUE_SCOPED_PROGRAM() -> g::Program<LoopContinueScopedProgramSteps> {
+    g::route(
+        g::seq(
+            g::send::<Role<0>, Role<0>, LoopContinueScopedContinueMsg, 0>(),
+            g::route(
+                g::seq(
+                    g::send::<Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg, 0>(),
+                    g::send::<Role<0>, Role<1>, LoopContinueScopedInnerLeftMsg, 0>(),
+                ),
+                g::seq(
+                    g::send::<Role<0>, Role<0>, LoopContinueScopedRouteRightMsg, 0>(),
+                    g::send::<Role<0>, Role<1>, LoopContinueScopedInnerRightMsg, 0>(),
+                ),
             ),
         ),
-    ),
-    g::send::<Role<0>, Role<0>, LoopContinueScopedBreakMsg, 0>(),
-);
-static LOOP_CONTINUE_SCOPED_CONTROLLER_PROGRAM: RoleProgram<0> =
-    project(&LOOP_CONTINUE_SCOPED_PROGRAM);
+        g::send::<Role<0>, Role<0>, LoopContinueScopedBreakMsg, 0>(),
+    )
+}
+
+#[allow(non_snake_case)]
+fn LOOP_CONTINUE_SCOPED_CONTROLLER_PROGRAM() -> RoleProgram<0> {
+    project(&LOOP_CONTINUE_SCOPED_PROGRAM())
+}
 const LOOP_CONTINUE_PASSIVE_RIGHT_REPLY_LABEL: u8 = 0x51;
-type LoopContinuePassiveOuterLeftMsg = Msg<110, u8>;
+type LoopContinuePassiveOuterLeftMsg = Msg<90, u8>;
 type LoopContinuePassiveRightReplyMsg = Msg<{ LOOP_CONTINUE_PASSIVE_RIGHT_REPLY_LABEL }, u8>;
 type LoopContinuePassiveInnerLeftSteps = SeqSteps<
     SendOnly<0, Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg>,
@@ -560,26 +619,35 @@ type LoopContinuePassiveProgramSteps = BranchSteps<
     >,
     SendOnly<0, Role<0>, Role<0>, LoopContinueScopedBreakMsg>,
 >;
-const LOOP_CONTINUE_PASSIVE_PROGRAM: g::Program<LoopContinuePassiveProgramSteps> = g::route(
-    g::seq(
-        g::send::<Role<0>, Role<0>, LoopContinueScopedContinueMsg, 0>(),
-        g::route(
-            g::seq(
-                g::send::<Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg, 0>(),
-                g::send::<Role<0>, Role<1>, LoopContinuePassiveOuterLeftMsg, 0>(),
-            ),
-            g::seq(
-                g::send::<Role<0>, Role<0>, LoopContinueScopedRouteRightMsg, 0>(),
-                g::send::<Role<0>, Role<1>, LoopContinuePassiveRightReplyMsg, 0>(),
+#[allow(non_snake_case)]
+fn LOOP_CONTINUE_PASSIVE_PROGRAM() -> g::Program<LoopContinuePassiveProgramSteps> {
+    g::route(
+        g::seq(
+            g::send::<Role<0>, Role<0>, LoopContinueScopedContinueMsg, 0>(),
+            g::route(
+                g::seq(
+                    g::send::<Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg, 0>(),
+                    g::send::<Role<0>, Role<1>, LoopContinuePassiveOuterLeftMsg, 0>(),
+                ),
+                g::seq(
+                    g::send::<Role<0>, Role<0>, LoopContinueScopedRouteRightMsg, 0>(),
+                    g::send::<Role<0>, Role<1>, LoopContinuePassiveRightReplyMsg, 0>(),
+                ),
             ),
         ),
-    ),
-    g::send::<Role<0>, Role<0>, LoopContinueScopedBreakMsg, 0>(),
-);
-static LOOP_CONTINUE_PASSIVE_CONTROLLER_PROGRAM: RoleProgram<0> =
-    project(&LOOP_CONTINUE_PASSIVE_PROGRAM);
-static LOOP_CONTINUE_PASSIVE_WORKER_PROGRAM: RoleProgram<1> =
-    project(&LOOP_CONTINUE_PASSIVE_PROGRAM);
+        g::send::<Role<0>, Role<0>, LoopContinueScopedBreakMsg, 0>(),
+    )
+}
+
+#[allow(non_snake_case)]
+fn LOOP_CONTINUE_PASSIVE_CONTROLLER_PROGRAM() -> RoleProgram<0> {
+    project(&LOOP_CONTINUE_PASSIVE_PROGRAM())
+}
+
+#[allow(non_snake_case)]
+fn LOOP_CONTINUE_PASSIVE_WORKER_PROGRAM() -> RoleProgram<1> {
+    project(&LOOP_CONTINUE_PASSIVE_PROGRAM())
+}
 type NestedDispatchOuterLeftMsg = Msg<0x10, u8>;
 type NestedDispatchLeafLeftMsg = Msg<0x51, u8>;
 type NestedDispatchLeafRightMsg = Msg<0x52, u8>;
@@ -604,27 +672,38 @@ type NestedDispatchProgramSteps = BranchSteps<
         NestedDispatchInnerSteps,
     >,
 >;
-const NESTED_DISPATCH_PROGRAM: g::Program<NestedDispatchProgramSteps> = g::route(
-    g::seq(
-        g::send::<Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg, 0>(),
-        g::send::<Role<0>, Role<1>, NestedDispatchOuterLeftMsg, 0>(),
-    ),
-    g::seq(
-        g::send::<Role<0>, Role<0>, LoopContinueScopedRouteRightMsg, 0>(),
-        g::route(
-            g::seq(
-                g::send::<Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg, 0>(),
-                g::send::<Role<0>, Role<1>, NestedDispatchLeafLeftMsg, 0>(),
-            ),
-            g::seq(
-                g::send::<Role<0>, Role<0>, LoopContinueScopedRouteRightMsg, 0>(),
-                g::send::<Role<0>, Role<1>, NestedDispatchLeafRightMsg, 0>(),
+#[allow(non_snake_case)]
+fn NESTED_DISPATCH_PROGRAM() -> g::Program<NestedDispatchProgramSteps> {
+    g::route(
+        g::seq(
+            g::send::<Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg, 0>(),
+            g::send::<Role<0>, Role<1>, NestedDispatchOuterLeftMsg, 0>(),
+        ),
+        g::seq(
+            g::send::<Role<0>, Role<0>, LoopContinueScopedRouteRightMsg, 0>(),
+            g::route(
+                g::seq(
+                    g::send::<Role<0>, Role<0>, LoopContinueScopedRouteLeftMsg, 0>(),
+                    g::send::<Role<0>, Role<1>, NestedDispatchLeafLeftMsg, 0>(),
+                ),
+                g::seq(
+                    g::send::<Role<0>, Role<0>, LoopContinueScopedRouteRightMsg, 0>(),
+                    g::send::<Role<0>, Role<1>, NestedDispatchLeafRightMsg, 0>(),
+                ),
             ),
         ),
-    ),
-);
-static NESTED_DISPATCH_CONTROLLER_PROGRAM: RoleProgram<0> = project(&NESTED_DISPATCH_PROGRAM);
-static NESTED_DISPATCH_WORKER_PROGRAM: RoleProgram<1> = project(&NESTED_DISPATCH_PROGRAM);
+    )
+}
+
+#[allow(non_snake_case)]
+fn NESTED_DISPATCH_CONTROLLER_PROGRAM() -> RoleProgram<0> {
+    project(&NESTED_DISPATCH_PROGRAM())
+}
+
+#[allow(non_snake_case)]
+fn NESTED_DISPATCH_WORKER_PROGRAM() -> RoleProgram<1> {
+    project(&NESTED_DISPATCH_PROGRAM())
+}
 type PendingOfferCluster =
     SessionCluster<'static, PendingTransport, DefaultLabelUniverse, CounterClock, 4>;
 type HintPendingOfferCluster =
@@ -1584,75 +1663,13 @@ impl Transport for DeferredIngressTransport {
     fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}
 }
 
-#[derive(Clone, Copy, Debug)]
-struct RouteHintRightKind;
-
-impl ResourceKind for RouteHintRightKind {
-    type Handle = RouteDecisionHandle;
-    const TAG: u8 = RouteDecisionKind::TAG;
-    const NAME: &'static str = "RouteHintRightDecision";
-    const AUTO_MINT_EXTERNAL: bool = false;
-
-    fn encode_handle(handle: &Self::Handle) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN] {
-        handle.encode()
-    }
-
-    fn decode_handle(
-        data: [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
-    ) -> Result<Self::Handle, CapError> {
-        RouteDecisionHandle::decode(data)
-    }
-
-    fn zeroize(handle: &mut Self::Handle) {
-        handle.arm = 0;
-        handle.scope = ScopeId::generic(0);
-    }
-
-    fn caps_mask(_handle: &Self::Handle) -> CapsMask {
-        CapsMask::empty()
-    }
-
-    fn scope_id(handle: &Self::Handle) -> Option<ScopeId> {
-        Some(handle.scope)
-    }
-}
-
-impl SessionScopedKind for RouteHintRightKind {
-    fn handle_for_session(_sid: crate::control::types::SessionId, _lane: Lane) -> Self::Handle {
-        RouteDecisionHandle::default()
-    }
-
-    fn shot() -> CapShot {
-        CapShot::One
-    }
-}
-
-impl crate::control::cap::mint::ControlResourceKind for RouteHintRightKind {
-    const LABEL: u8 = 99;
-    const SCOPE: ControlScopeKind = ControlScopeKind::Route;
-    const TAP_ID: u16 =
-        <RouteDecisionKind as crate::control::cap::mint::ControlResourceKind>::TAP_ID;
-    const SHOT: CapShot = CapShot::One;
-    const HANDLING: ControlHandling = ControlHandling::Canonical;
-}
-
-impl crate::control::cap::mint::ControlMint for RouteHintRightKind {
-    fn mint_handle(_sid: SessionId, _lane: Lane, scope: ScopeId) -> Self::Handle {
-        RouteDecisionHandle { scope, arm: 0 }
-    }
-}
-
 const HINT_ROUTE_POLICY_ID: u16 = 601;
 type HintLeftHead = PolicySteps<
     StepCons<
         SendStep<
             Role<0>,
             Role<0>,
-            Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >,
+            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
         >,
         StepNil,
     >,
@@ -1663,87 +1680,111 @@ type HintRightHead = PolicySteps<
         SendStep<
             Role<0>,
             Role<0>,
-            Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>,
+            Msg<ROUTE_HINT_RIGHT_LABEL, GenericCapToken<RouteHintRightKind>, RouteHintRightKind>,
         >,
         StepNil,
     >,
     HINT_ROUTE_POLICY_ID,
 >;
-const HINT_LEFT_ARM: g::Program<
-    SeqSteps<HintLeftHead, StepCons<SendStep<Role<0>, Role<1>, Msg<100, u8>>, StepNil>>,
-> = g::seq(
-    g::send::<
-        Role<0>,
-        Role<0>,
-        Msg<
-            { LABEL_ROUTE_DECISION },
-            GenericCapToken<RouteDecisionKind>,
-            CanonicalControl<RouteDecisionKind>,
-        >,
-        0,
-    >()
-    .policy::<HINT_ROUTE_POLICY_ID>(),
-    g::send::<Role<0>, Role<1>, Msg<100, u8>, 0>(),
-);
-const HINT_RIGHT_ARM: g::Program<
-    SeqSteps<HintRightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<101, u8>>, StepNil>>,
-> = g::seq(
-    g::send::<
-        Role<0>,
-        Role<0>,
-        Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>,
-        0,
-    >()
-    .policy::<HINT_ROUTE_POLICY_ID>(),
-    g::send::<Role<0>, Role<1>, Msg<101, u8>, 0>(),
-);
+#[allow(non_snake_case)]
+fn HINT_LEFT_ARM()
+-> g::Program<SeqSteps<HintLeftHead, StepCons<SendStep<Role<0>, Role<1>, Msg<100, u8>>, StepNil>>> {
+    g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            0,
+        >()
+        .policy::<HINT_ROUTE_POLICY_ID>(),
+        g::send::<Role<0>, Role<1>, Msg<100, u8>, 0>(),
+    )
+}
+
+#[allow(non_snake_case)]
+fn HINT_RIGHT_ARM()
+-> g::Program<SeqSteps<HintRightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<101, u8>>, StepNil>>>
+{
+    g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<ROUTE_HINT_RIGHT_LABEL, GenericCapToken<RouteHintRightKind>, RouteHintRightKind>,
+            0,
+        >()
+        .policy::<HINT_ROUTE_POLICY_ID>(),
+        g::send::<Role<0>, Role<1>, Msg<101, u8>, 0>(),
+    )
+}
 type HintRouteSteps = RouteSteps<
     SeqSteps<HintLeftHead, StepCons<SendStep<Role<0>, Role<1>, Msg<100, u8>>, StepNil>>,
     SeqSteps<HintRightHead, StepCons<SendStep<Role<0>, Role<1>, Msg<101, u8>>, StepNil>>,
 >;
-const HINT_ROUTE_PROGRAM: g::Program<HintRouteSteps> = g::route(HINT_LEFT_ARM, HINT_RIGHT_ARM);
-static HINT_CONTROLLER_PROGRAM: RoleProgram<0> = project(&HINT_ROUTE_PROGRAM);
-static HINT_WORKER_PROGRAM: RoleProgram<1> = project(&HINT_ROUTE_PROGRAM);
+#[allow(non_snake_case)]
+fn HINT_ROUTE_PROGRAM() -> g::Program<HintRouteSteps> {
+    g::route(HINT_LEFT_ARM(), HINT_RIGHT_ARM())
+}
+
+#[allow(non_snake_case)]
+fn HINT_CONTROLLER_PROGRAM() -> RoleProgram<0> {
+    project(&HINT_ROUTE_PROGRAM())
+}
+
+#[allow(non_snake_case)]
+fn HINT_WORKER_PROGRAM() -> RoleProgram<1> {
+    project(&HINT_ROUTE_PROGRAM())
+}
 type HintSplitLeftSteps = SeqSteps<HintLeftHead, SendOnly<0, Role<0>, Role<1>, Msg<100, u8>>>;
 type HintSplitRightSteps = SeqSteps<HintRightHead, SendOnly<2, Role<0>, Role<1>, Msg<101, u8>>>;
 type HintSplitRouteSteps = RouteSteps<HintSplitLeftSteps, HintSplitRightSteps>;
-const HINT_SPLIT_LEFT_ARM: g::Program<HintSplitLeftSteps> = g::seq(
-    g::send::<
-        Role<0>,
-        Role<0>,
-        Msg<
-            { LABEL_ROUTE_DECISION },
-            GenericCapToken<RouteDecisionKind>,
-            CanonicalControl<RouteDecisionKind>,
-        >,
-        0,
-    >()
-    .policy::<HINT_ROUTE_POLICY_ID>(),
-    g::send::<Role<0>, Role<1>, Msg<100, u8>, 0>(),
-);
-const HINT_SPLIT_RIGHT_ARM: g::Program<HintSplitRightSteps> = g::seq(
-    g::send::<
-        Role<0>,
-        Role<0>,
-        Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>,
-        0,
-    >()
-    .policy::<HINT_ROUTE_POLICY_ID>(),
-    g::send::<Role<0>, Role<1>, Msg<101, u8>, 2>(),
-);
-const HINT_SPLIT_ROUTE_PROGRAM: g::Program<HintSplitRouteSteps> =
-    g::route(HINT_SPLIT_LEFT_ARM, HINT_SPLIT_RIGHT_ARM);
-static HINT_SPLIT_CONTROLLER_PROGRAM: RoleProgram<0> = project(&HINT_SPLIT_ROUTE_PROGRAM);
-static HINT_SPLIT_WORKER_PROGRAM: RoleProgram<1> = project(&HINT_SPLIT_ROUTE_PROGRAM);
+#[allow(non_snake_case)]
+fn HINT_SPLIT_LEFT_ARM() -> g::Program<HintSplitLeftSteps> {
+    g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            0,
+        >()
+        .policy::<HINT_ROUTE_POLICY_ID>(),
+        g::send::<Role<0>, Role<1>, Msg<100, u8>, 0>(),
+    )
+}
+
+#[allow(non_snake_case)]
+fn HINT_SPLIT_RIGHT_ARM() -> g::Program<HintSplitRightSteps> {
+    g::seq(
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<ROUTE_HINT_RIGHT_LABEL, GenericCapToken<RouteHintRightKind>, RouteHintRightKind>,
+            0,
+        >()
+        .policy::<HINT_ROUTE_POLICY_ID>(),
+        g::send::<Role<0>, Role<1>, Msg<101, u8>, 2>(),
+    )
+}
+
+#[allow(non_snake_case)]
+fn HINT_SPLIT_ROUTE_PROGRAM() -> g::Program<HintSplitRouteSteps> {
+    g::route(HINT_SPLIT_LEFT_ARM(), HINT_SPLIT_RIGHT_ARM())
+}
+
+#[allow(non_snake_case)]
+fn HINT_SPLIT_CONTROLLER_PROGRAM() -> RoleProgram<0> {
+    project(&HINT_SPLIT_ROUTE_PROGRAM())
+}
+
+#[allow(non_snake_case)]
+fn HINT_SPLIT_WORKER_PROGRAM() -> RoleProgram<1> {
+    project(&HINT_SPLIT_ROUTE_PROGRAM())
+}
 const HINT_LEFT_DATA_LABEL: u8 = 100;
 const HINT_RIGHT_DATA_LABEL: u8 = 101;
-type MultiSendRouteLeftMsg = Msg<
-    { LABEL_ROUTE_DECISION },
-    GenericCapToken<RouteDecisionKind>,
-    CanonicalControl<RouteDecisionKind>,
->;
+type MultiSendRouteLeftMsg =
+    Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>;
 type MultiSendRouteRightMsg =
-    Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>;
+    Msg<ROUTE_HINT_RIGHT_LABEL, GenericCapToken<RouteHintRightKind>, RouteHintRightKind>;
 type MultiSendLeftPayloadMsg = Msg<0x59, u8>;
 type MultiSendRightFirstMsg = Msg<0x5a, u8>;
 type MultiSendRightSecondMsg = Msg<0x5b, u8>;
@@ -1758,23 +1799,35 @@ type MultiSendLeftSteps = SeqSteps<
 type MultiSendRightSteps =
     SeqSteps<SendOnly<0, Role<0>, Role<0>, MultiSendRouteRightMsg>, MultiSendRightPayloadSteps>;
 type MultiSendRouteSteps = BranchSteps<MultiSendLeftSteps, MultiSendRightSteps>;
-const MULTI_SEND_ROUTE_PROGRAM: g::Program<MultiSendRouteSteps> = g::route(
-    g::seq(
-        g::send::<Role<0>, Role<0>, MultiSendRouteLeftMsg, 0>(),
-        g::send::<Role<0>, Role<1>, MultiSendLeftPayloadMsg, 0>(),
-    ),
-    g::seq(
-        g::send::<Role<0>, Role<0>, MultiSendRouteRightMsg, 0>(),
+#[allow(non_snake_case)]
+fn MULTI_SEND_ROUTE_PROGRAM() -> g::Program<MultiSendRouteSteps> {
+    g::route(
         g::seq(
-            g::send::<Role<0>, Role<1>, MultiSendRightFirstMsg, 0>(),
-            g::send::<Role<0>, Role<1>, MultiSendRightSecondMsg, 0>(),
+            g::send::<Role<0>, Role<0>, MultiSendRouteLeftMsg, 0>(),
+            g::send::<Role<0>, Role<1>, MultiSendLeftPayloadMsg, 0>(),
         ),
-    ),
-);
-static MULTI_SEND_ROUTE_CONTROLLER_PROGRAM: RoleProgram<0> = project(&MULTI_SEND_ROUTE_PROGRAM);
-static MULTI_SEND_ROUTE_WORKER_PROGRAM: RoleProgram<1> = project(&MULTI_SEND_ROUTE_PROGRAM);
+        g::seq(
+            g::send::<Role<0>, Role<0>, MultiSendRouteRightMsg, 0>(),
+            g::seq(
+                g::send::<Role<0>, Role<1>, MultiSendRightFirstMsg, 0>(),
+                g::send::<Role<0>, Role<1>, MultiSendRightSecondMsg, 0>(),
+            ),
+        ),
+    )
+}
 
-const ENTRY_ARM0_PROGRAM: g::Program<
+#[allow(non_snake_case)]
+fn MULTI_SEND_ROUTE_CONTROLLER_PROGRAM() -> RoleProgram<0> {
+    project(&MULTI_SEND_ROUTE_PROGRAM())
+}
+
+#[allow(non_snake_case)]
+fn MULTI_SEND_ROUTE_WORKER_PROGRAM() -> RoleProgram<1> {
+    project(&MULTI_SEND_ROUTE_PROGRAM())
+}
+
+#[allow(non_snake_case)]
+fn ENTRY_ARM0_PROGRAM() -> g::Program<
     SeqSteps<
         StepCons<SendStep<Role<0>, Role<0>, Msg<102, u8>>, StepNil>,
         SeqSteps<
@@ -1782,28 +1835,34 @@ const ENTRY_ARM0_PROGRAM: g::Program<
             StepCons<SendStep<Role<1>, Role<0>, Msg<104, u8>>, StepNil>,
         >,
     >,
-> = g::seq(
-    g::send::<Role<0>, Role<0>, Msg<102, u8>, 0>(),
+> {
     g::seq(
-        g::send::<Role<0>, Role<1>, Msg<103, u8>, 0>(),
-        g::send::<Role<1>, Role<0>, Msg<104, u8>, 0>(),
-    ),
-);
-const ENTRY_ARM1_PROGRAM: g::Program<
+        g::send::<Role<0>, Role<0>, Msg<102, u8>, 0>(),
+        g::seq(
+            g::send::<Role<0>, Role<1>, Msg<103, u8>, 0>(),
+            g::send::<Role<1>, Role<0>, Msg<104, u8>, 0>(),
+        ),
+    )
+}
+
+#[allow(non_snake_case)]
+fn ENTRY_ARM1_PROGRAM() -> g::Program<
     SeqSteps<
         StepCons<SendStep<Role<0>, Role<0>, Msg<105, u8>>, StepNil>,
         SeqSteps<
-            StepCons<SendStep<Role<0>, Role<1>, Msg<106, u8>>, StepNil>,
-            StepCons<SendStep<Role<1>, Role<0>, Msg<107, u8>>, StepNil>,
+            StepCons<SendStep<Role<0>, Role<1>, Msg<86, u8>>, StepNil>,
+            StepCons<SendStep<Role<1>, Role<0>, Msg<87, u8>>, StepNil>,
         >,
     >,
-> = g::seq(
-    g::send::<Role<0>, Role<0>, Msg<105, u8>, 0>(),
+> {
     g::seq(
-        g::send::<Role<0>, Role<1>, Msg<106, u8>, 0>(),
-        g::send::<Role<1>, Role<0>, Msg<107, u8>, 0>(),
-    ),
-);
+        g::send::<Role<0>, Role<0>, Msg<105, u8>, 0>(),
+        g::seq(
+            g::send::<Role<0>, Role<1>, Msg<86, u8>, 0>(),
+            g::send::<Role<1>, Role<0>, Msg<87, u8>, 0>(),
+        ),
+    )
+}
 type EntryRouteSteps = RouteSteps<
     SeqSteps<
         StepCons<SendStep<Role<0>, Role<0>, Msg<102, u8>>, StepNil>,
@@ -1815,18 +1874,31 @@ type EntryRouteSteps = RouteSteps<
     SeqSteps<
         StepCons<SendStep<Role<0>, Role<0>, Msg<105, u8>>, StepNil>,
         SeqSteps<
-            StepCons<SendStep<Role<0>, Role<1>, Msg<106, u8>>, StepNil>,
-            StepCons<SendStep<Role<1>, Role<0>, Msg<107, u8>>, StepNil>,
+            StepCons<SendStep<Role<0>, Role<1>, Msg<86, u8>>, StepNil>,
+            StepCons<SendStep<Role<1>, Role<0>, Msg<87, u8>>, StepNil>,
         >,
     >,
 >;
-const ENTRY_ROUTE_PROGRAM: g::Program<EntryRouteSteps> =
-    g::route(ENTRY_ARM0_PROGRAM, ENTRY_ARM1_PROGRAM);
-static ENTRY_CONTROLLER_PROGRAM: RoleProgram<0> = project(&ENTRY_ROUTE_PROGRAM);
-static ENTRY_WORKER_PROGRAM: RoleProgram<1> = project(&ENTRY_ROUTE_PROGRAM);
+#[allow(non_snake_case)]
+fn ENTRY_ROUTE_PROGRAM() -> g::Program<EntryRouteSteps> {
+    g::route(ENTRY_ARM0_PROGRAM(), ENTRY_ARM1_PROGRAM())
+}
+
+#[allow(non_snake_case)]
+fn ENTRY_CONTROLLER_PROGRAM() -> RoleProgram<0> {
+    project(&ENTRY_ROUTE_PROGRAM())
+}
+
+#[allow(non_snake_case)]
+fn ENTRY_WORKER_PROGRAM() -> RoleProgram<1> {
+    project(&ENTRY_ROUTE_PROGRAM())
+}
+
 type NestedRouteSteps = RouteSteps<HintRouteSteps, EntryRouteSteps>;
-const NESTED_ROUTE_PROGRAM: g::Program<NestedRouteSteps> =
-    g::route(HINT_ROUTE_PROGRAM, ENTRY_ROUTE_PROGRAM);
+#[allow(non_snake_case)]
+fn NESTED_ROUTE_PROGRAM() -> g::Program<NestedRouteSteps> {
+    g::route(HINT_ROUTE_PROGRAM(), ENTRY_ROUTE_PROGRAM())
+}
 const ENTRY_ARM0_SIGNAL_LABEL: u8 = 103;
 
 #[test]
@@ -2441,7 +2513,7 @@ fn refresh_lane_offer_state_caches_scope_label_meta() {
                             worker_slot.ptr(),
                             rv_id,
                             sid,
-                            &HINT_WORKER_PROGRAM,
+                            &HINT_WORKER_PROGRAM(),
                             NoBinding,
                         )
                         .expect("attach worker endpoint");
@@ -2632,7 +2704,7 @@ fn attach_endpoint_keeps_primary_lane_on_first_live_application_lane() {
             offer_fixture!(2048, clock, config);
             type LaneThreeWorkerSteps =
                 StepCons<SendStep<Role<0>, Role<1>, Msg<0x66, u8>, 3>, StepNil>;
-            const LANE_THREE_PROGRAM: g::Program<LaneThreeWorkerSteps> =
+            let lane_three_program: g::Program<LaneThreeWorkerSteps> =
                 g::send::<Role<0>, Role<1>, Msg<0x66, u8>, 3>();
 
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
@@ -2642,7 +2714,7 @@ fn attach_endpoint_keeps_primary_lane_on_first_live_application_lane() {
                         .add_rendezvous_from_config(config, transport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(998);
-                    let worker_program: RoleProgram<1> = project(&LANE_THREE_PROGRAM);
+                    let worker_program: RoleProgram<1> = project(&lane_three_program);
                     unsafe {
                         cluster_ref
                             .attach_endpoint_into::<1, _, _, _>(
@@ -2689,7 +2761,7 @@ fn selection_materialization_helpers_match_reference_lookup_logic() {
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &ENTRY_CONTROLLER_PROGRAM,
+                                    &ENTRY_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -2698,7 +2770,7 @@ fn selection_materialization_helpers_match_reference_lookup_logic() {
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &ENTRY_WORKER_PROGRAM,
+                                    &ENTRY_WORKER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach worker endpoint");
@@ -2851,7 +2923,7 @@ fn scope_arm_materialization_meta_caches_passive_recv_meta_exactly() {
                                 worker_slot.ptr(),
                                 rv_id,
                                 sid,
-                                &ENTRY_WORKER_PROGRAM,
+                                &ENTRY_WORKER_PROGRAM(),
                                 NoBinding,
                             )
                             .expect("attach worker endpoint");
@@ -2862,8 +2934,9 @@ fn scope_arm_materialization_meta_caches_passive_recv_meta_exactly() {
 
                     worker.refresh_lane_offer_state(0);
                     let offer_lane = worker.offer_lane_for_scope(scope);
+                    let materialization_meta = worker.compute_scope_arm_materialization_meta(scope);
                     let passive_recv_meta = worker.compute_scope_passive_recv_meta(
-                        worker.compute_scope_arm_materialization_meta(scope),
+                        materialization_meta,
                         scope,
                         offer_lane,
                     );
@@ -2895,6 +2968,7 @@ fn scope_arm_materialization_meta_caches_passive_recv_meta_exactly() {
                                             label: send_meta.label,
                                             peer: send_meta.peer,
                                             resource: send_meta.resource,
+                                            semantic: send_meta.semantic,
                                             is_control: send_meta.is_control,
                                             next: target_idx,
                                             scope,
@@ -2910,8 +2984,14 @@ fn scope_arm_materialization_meta_caches_passive_recv_meta_exactly() {
                                     let scope_end =
                                         worker.cursor.jump_target_at(target_idx).unwrap_or(0);
                                     if region.linger {
-                                        let synthetic_label =
-                                            controller_arm_label(&worker.cursor, scope, arm)?;
+                                        let (controller_entry, synthetic_label) =
+                                            materialization_meta.controller_arm_entry(arm)?;
+                                        let synthetic_semantic = loop_control_semantic_kind(
+                                            worker.cursor.control_semantic_at(
+                                                state_index_to_usize(controller_entry),
+                                            ),
+                                        )
+                                        .unwrap_or(ControlSemanticKind::RouteArm);
                                         return Some((
                                             scope_end,
                                             RecvMeta {
@@ -2919,6 +2999,7 @@ fn scope_arm_materialization_meta_caches_passive_recv_meta_exactly() {
                                                 label: synthetic_label,
                                                 peer: 1,
                                                 resource: None,
+                                                semantic: synthetic_semantic,
                                                 is_control: true,
                                                 next: scope_end,
                                                 scope,
@@ -2945,6 +3026,7 @@ fn scope_arm_materialization_meta_caches_passive_recv_meta_exactly() {
                                                 label: send_meta.label,
                                                 peer: send_meta.peer,
                                                 resource: send_meta.resource,
+                                                semantic: send_meta.semantic,
                                                 is_control: send_meta.is_control,
                                                 next: scope_end,
                                                 scope,
@@ -2959,8 +3041,14 @@ fn scope_arm_materialization_meta_caches_passive_recv_meta_exactly() {
                                     return None;
                                 }
                                 if region.linger {
-                                    let synthetic_label =
-                                        controller_arm_label(&worker.cursor, scope, arm)?;
+                                    let (controller_entry, synthetic_label) =
+                                        materialization_meta.controller_arm_entry(arm)?;
+                                    let synthetic_semantic = loop_control_semantic_kind(
+                                        worker.cursor.control_semantic_at(state_index_to_usize(
+                                            controller_entry,
+                                        )),
+                                    )
+                                    .unwrap_or(ControlSemanticKind::RouteArm);
                                     return Some((
                                         target_idx,
                                         RecvMeta {
@@ -2968,6 +3056,7 @@ fn scope_arm_materialization_meta_caches_passive_recv_meta_exactly() {
                                             label: synthetic_label,
                                             peer: 1,
                                             resource: None,
+                                            semantic: synthetic_semantic,
                                             is_control: true,
                                             next: target_idx,
                                             scope,
@@ -2986,6 +3075,23 @@ fn scope_arm_materialization_meta_caches_passive_recv_meta_exactly() {
                             .copied()
                             .and_then(|meta| meta.recv_meta());
                         assert_eq!(cached, expected);
+                        if region.linger {
+                            assert!(
+                                materialization_meta.controller_arm_entry(arm).is_some(),
+                                "passive linger route must retain controller arm facts for arm {arm}"
+                            );
+                            let cached_semantic = cached.map(|(_, meta)| meta.semantic);
+                            let expected_semantic = materialization_meta
+                                .controller_arm_entry(arm)
+                                .and_then(|(entry, _)| {
+                                    loop_control_semantic_kind(
+                                        worker
+                                            .cursor
+                                            .control_semantic_at(state_index_to_usize(entry)),
+                                    )
+                                });
+                            assert_eq!(cached_semantic, expected_semantic);
+                        }
                         if arm == 1 {
                             break;
                         }
@@ -3031,7 +3137,7 @@ fn align_cursor_to_selected_scope_skips_observation_for_single_active_entry() {
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach worker endpoint");
@@ -3114,7 +3220,7 @@ fn align_cursor_to_selected_scope_reuses_cached_multi_entry_observation() {
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach worker endpoint");
@@ -3187,7 +3293,7 @@ fn align_cursor_to_selected_scope_ignores_unrelated_lane_binding_changes() {
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach worker endpoint");
@@ -3270,7 +3376,7 @@ fn align_cursor_to_selected_scope_ignores_relevant_lane_binding_content_changes(
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach worker endpoint");
@@ -3359,7 +3465,7 @@ fn align_cursor_to_selected_scope_ignores_unrelated_scope_evidence_changes() {
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach worker endpoint");
@@ -3449,7 +3555,7 @@ fn align_cursor_to_selected_scope_ignores_unrelated_lane_frontier_refresh() {
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach worker endpoint");
@@ -3498,7 +3604,7 @@ fn align_cursor_to_selected_scope_keeps_descended_nested_route_entry_authoritati
         "align_cursor_to_selected_scope_keeps_descended_nested_route_entry_authoritative",
         || {
             offer_fixture!(2048, clock, config);
-            let nested_program = NESTED_ROUTE_PROGRAM;
+            let nested_program = NESTED_ROUTE_PROGRAM();
             let worker_program = project(&nested_program);
             with_offer_cluster!(
                 clock,
@@ -3789,7 +3895,7 @@ fn refresh_cached_frontier_observation_entry_updates_stable_slot_in_place() {
                                 worker_slot.ptr(),
                                 rv_id,
                                 sid,
-                                &HINT_WORKER_PROGRAM,
+                                &HINT_WORKER_PROGRAM(),
                                 NoBinding,
                             )
                             .expect("attach worker endpoint");
@@ -4184,7 +4290,7 @@ fn cached_frontier_changed_entry_slot_mask_ignores_non_representative_route_lane
                                 worker_slot.ptr(),
                                 rv_id,
                                 sid,
-                                &HINT_WORKER_PROGRAM,
+                                &HINT_WORKER_PROGRAM(),
                                 NoBinding,
                             )
                             .expect("attach worker endpoint");
@@ -4251,12 +4357,12 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
         || {
             const OUTER_LEFT_LABEL: u8 = 0x61;
             const OUTER_RIGHT_LABEL: u8 = 0x62;
-            const OUTER_LEFT_DATA_LABEL: u8 = 0x71;
+            const OUTER_LEFT_DATA_LABEL: u8 = 0x53;
             const INNER_LEFT_LABEL: u8 = 0x63;
             const INNER_RIGHT_LABEL: u8 = 0x64;
-            const INNER_LEFT_DATA_LABEL: u8 = 0x73;
-            const INNER_RIGHT_DATA_LABEL: u8 = 0x74;
-            const INNER_REPLY_DATA_LABEL: u8 = 0x75;
+            const INNER_LEFT_DATA_LABEL: u8 = 0x54;
+            const INNER_RIGHT_DATA_LABEL: u8 = 0x55;
+            const INNER_REPLY_DATA_LABEL: u8 = 0x56;
 
             type InnerArm0 = SeqSteps<
                 SendOnly<2, Role<0>, Role<0>, Msg<INNER_LEFT_LABEL, u8>>,
@@ -4280,29 +4386,29 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
             >;
             type NestedSplitRouteSteps = RouteSteps<OuterLeftSteps, OuterRightSteps>;
 
-            const INNER_ARM0_PROGRAM: g::Program<InnerArm0> = g::seq(
+            let inner_arm0_program: g::Program<InnerArm0> = g::seq(
                 g::send::<Role<0>, Role<0>, Msg<INNER_LEFT_LABEL, u8>, 2>(),
                 g::seq(
                     g::send::<Role<0>, Role<1>, Msg<INNER_LEFT_DATA_LABEL, u8>, 2>(),
                     g::send::<Role<1>, Role<0>, Msg<INNER_REPLY_DATA_LABEL, u8>, 2>(),
                 ),
             );
-            const INNER_ARM1_PROGRAM: g::Program<InnerArm1> = g::seq(
+            let inner_arm1_program: g::Program<InnerArm1> = g::seq(
                 g::send::<Role<0>, Role<0>, Msg<INNER_RIGHT_LABEL, u8>, 2>(),
                 g::send::<Role<0>, Role<1>, Msg<INNER_RIGHT_DATA_LABEL, u8>, 2>(),
             );
-            const INNER_ROUTE_PROGRAM: g::Program<InnerRouteSteps> =
-                g::route(INNER_ARM0_PROGRAM, INNER_ARM1_PROGRAM);
-            const OUTER_LEFT_PROGRAM: g::Program<OuterLeftSteps> = g::seq(
+            let inner_route_program: g::Program<InnerRouteSteps> =
+                g::route(inner_arm0_program, inner_arm1_program);
+            let outer_left_program: g::Program<OuterLeftSteps> = g::seq(
                 g::send::<Role<0>, Role<0>, Msg<OUTER_LEFT_LABEL, u8>, 0>(),
                 g::send::<Role<0>, Role<1>, Msg<OUTER_LEFT_DATA_LABEL, u8>, 0>(),
             );
-            const OUTER_RIGHT_PROGRAM: g::Program<OuterRightSteps> = g::seq(
+            let outer_right_program: g::Program<OuterRightSteps> = g::seq(
                 g::send::<Role<0>, Role<0>, Msg<OUTER_RIGHT_LABEL, u8>, 0>(),
-                INNER_ROUTE_PROGRAM,
+                inner_route_program,
             );
-            const NESTED_SPLIT_ROUTE_PROGRAM: g::Program<NestedSplitRouteSteps> =
-                g::route(OUTER_LEFT_PROGRAM, OUTER_RIGHT_PROGRAM);
+            let nested_split_route_program: g::Program<NestedSplitRouteSteps> =
+                g::route(outer_left_program, outer_right_program);
 
             offer_fixture!(2048, clock, config);
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
@@ -4312,7 +4418,7 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
                         .add_rendezvous_from_config(config, transport)
                         .expect("register rendezvous");
                     let sid = SessionId::new(1008);
-                    let worker_program: RoleProgram<1> = project(&NESTED_SPLIT_ROUTE_PROGRAM);
+                    let worker_program: RoleProgram<1> = project(&nested_split_route_program);
                     unsafe {
                         cluster_ref
                             .attach_endpoint_into::<1, _, _, _>(
@@ -5017,7 +5123,7 @@ fn dynamic_route_ignores_hint_classification_for_authority() {
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_CONTROLLER_PROGRAM,
+                                    &HINT_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -5026,7 +5132,7 @@ fn dynamic_route_ignores_hint_classification_for_authority() {
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach worker endpoint");
@@ -5127,7 +5233,7 @@ fn select_scope_prepass_keeps_pending_scope_evidence_non_consuming() {
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_CONTROLLER_PROGRAM,
+                                    &HINT_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -5136,7 +5242,7 @@ fn select_scope_prepass_keeps_pending_scope_evidence_non_consuming() {
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach worker endpoint");
@@ -5252,7 +5358,7 @@ fn preview_offer_entry_evidence_skips_binding_probe_when_ack_already_progresses_
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_CONTROLLER_PROGRAM,
+                                    &HINT_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -5261,7 +5367,7 @@ fn preview_offer_entry_evidence_skips_binding_probe_when_ack_already_progresses_
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     TestBinding::default(),
                                 )
                                 .expect("attach worker endpoint");
@@ -5331,7 +5437,7 @@ fn preview_offer_entry_evidence_defers_binding_poll_until_selected_scope() {
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_CONTROLLER_PROGRAM,
+                                    &HINT_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -5340,7 +5446,7 @@ fn preview_offer_entry_evidence_defers_binding_poll_until_selected_scope() {
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     TestBinding::with_incoming(&[classification]),
                                 )
                                 .expect("attach worker endpoint");
@@ -5428,7 +5534,7 @@ fn hint_or_classification_never_writes_ack_authority() {
                                 controller_slot.ptr(),
                                 rv_id,
                                 sid,
-                                &HINT_CONTROLLER_PROGRAM,
+                                &HINT_CONTROLLER_PROGRAM(),
                                 NoBinding,
                             )
                             .expect("attach controller endpoint");
@@ -5437,7 +5543,7 @@ fn hint_or_classification_never_writes_ack_authority() {
                                 worker_slot.ptr(),
                                 rv_id,
                                 sid,
-                                &HINT_WORKER_PROGRAM,
+                                &HINT_WORKER_PROGRAM(),
                                 TestBinding::with_incoming(&[IncomingClassification {
                                     label: HINT_LEFT_DATA_LABEL,
                                     instance: 0,
@@ -5533,7 +5639,7 @@ fn poll_binding_for_offer_prefers_exact_label_for_ack_arm() {
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_CONTROLLER_PROGRAM,
+                                    &HINT_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -5542,7 +5648,7 @@ fn poll_binding_for_offer_prefers_exact_label_for_ack_arm() {
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     TestBinding::with_incoming(&[
                                         IncomingClassification {
                                             label: HINT_LEFT_DATA_LABEL,
@@ -5653,7 +5759,7 @@ fn poll_binding_for_offer_prefers_buffered_matching_lane_before_empty_poll_lane(
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_CONTROLLER_PROGRAM,
+                                    &HINT_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -5662,7 +5768,7 @@ fn poll_binding_for_offer_prefers_buffered_matching_lane_before_empty_poll_lane(
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     TestBinding::default(),
                                 )
                                 .expect("attach worker endpoint");
@@ -5740,7 +5846,7 @@ fn poll_binding_for_offer_skips_non_demux_lanes_for_authoritative_arm() {
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_CONTROLLER_PROGRAM,
+                                    &HINT_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -5749,7 +5855,7 @@ fn poll_binding_for_offer_skips_non_demux_lanes_for_authoritative_arm() {
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     TestBinding::default(),
                                 )
                                 .expect("attach worker endpoint");
@@ -5846,7 +5952,7 @@ fn poll_binding_for_offer_prefers_authoritative_arm_label_mask_when_non_singleto
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_CONTROLLER_PROGRAM,
+                                    &HINT_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -5855,7 +5961,7 @@ fn poll_binding_for_offer_prefers_authoritative_arm_label_mask_when_non_singleto
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     TestBinding::with_incoming(&[
                                         IncomingClassification {
                                             label: HINT_RIGHT_DATA_LABEL,
@@ -5964,7 +6070,7 @@ fn poll_binding_for_offer_uses_label_mask_to_skip_other_arm_lanes_without_author
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_CONTROLLER_PROGRAM,
+                                    &HINT_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -5973,7 +6079,7 @@ fn poll_binding_for_offer_uses_label_mask_to_skip_other_arm_lanes_without_author
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     TestBinding::default(),
                                 )
                                 .expect("attach worker endpoint");
@@ -6059,7 +6165,7 @@ fn poll_binding_for_offer_buffered_match_skips_drop_only_preferred_lane_for_non_
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_CONTROLLER_PROGRAM,
+                                    &HINT_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -6068,7 +6174,7 @@ fn poll_binding_for_offer_buffered_match_skips_drop_only_preferred_lane_for_non_
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     TestBinding::default(),
                                 )
                                 .expect("attach worker endpoint");
@@ -6161,7 +6267,7 @@ fn poll_binding_for_offer_polls_only_selected_lane_for_unbuffered_generic_mask()
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_SPLIT_CONTROLLER_PROGRAM,
+                                    &HINT_SPLIT_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -6170,7 +6276,7 @@ fn poll_binding_for_offer_polls_only_selected_lane_for_unbuffered_generic_mask()
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_SPLIT_WORKER_PROGRAM,
+                                    &HINT_SPLIT_WORKER_PROGRAM(),
                                     LaneAwareTestBinding::with_lane_incoming(&[(2, matching)]),
                                 )
                                 .expect("attach worker endpoint");
@@ -6256,7 +6362,7 @@ fn poll_binding_for_offer_polls_authoritative_demux_lane_when_current_lane_is_ex
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_SPLIT_CONTROLLER_PROGRAM,
+                                    &HINT_SPLIT_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -6265,7 +6371,7 @@ fn poll_binding_for_offer_polls_authoritative_demux_lane_when_current_lane_is_ex
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_SPLIT_WORKER_PROGRAM,
+                                    &HINT_SPLIT_WORKER_PROGRAM(),
                                     LaneAwareTestBinding::with_lane_incoming(&[(2, matching)]),
                                 )
                                 .expect("attach worker endpoint");
@@ -6335,7 +6441,7 @@ fn record_route_decision_for_scope_lanes_refreshes_sibling_frontier_cache() {
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_SPLIT_CONTROLLER_PROGRAM,
+                                    &HINT_SPLIT_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -6344,7 +6450,7 @@ fn record_route_decision_for_scope_lanes_refreshes_sibling_frontier_cache() {
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_SPLIT_WORKER_PROGRAM,
+                                    &HINT_SPLIT_WORKER_PROGRAM(),
                                     LaneAwareTestBinding::with_lane_incoming(&[(2, matching)]),
                                 )
                                 .expect("attach worker endpoint");
@@ -6404,7 +6510,7 @@ fn take_binding_for_selected_arm_preserves_cached_other_arm_classification() {
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_CONTROLLER_PROGRAM,
+                                    &HINT_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -6413,7 +6519,7 @@ fn take_binding_for_selected_arm_preserves_cached_other_arm_classification() {
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     TestBinding::default(),
                                 )
                                 .expect("attach worker endpoint");
@@ -6512,7 +6618,7 @@ fn selected_route_arm_keeps_later_same_lane_sends_available() {
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &MULTI_SEND_ROUTE_CONTROLLER_PROGRAM,
+                                    &MULTI_SEND_ROUTE_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -6521,7 +6627,7 @@ fn selected_route_arm_keeps_later_same_lane_sends_available() {
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &MULTI_SEND_ROUTE_WORKER_PROGRAM,
+                                    &MULTI_SEND_ROUTE_WORKER_PROGRAM(),
                                     TestBinding::default(),
                                 )
                                 .expect("attach worker endpoint");
@@ -6538,9 +6644,7 @@ fn selected_route_arm_keeps_later_same_lane_sends_available() {
                         }
 
                         assert!(
-                            controller
-                                .preview_flow::<MultiSendRightFirstMsg>()
-                                .is_ok(),
+                            controller.preview_flow::<MultiSendRightFirstMsg>().is_ok(),
                             "first payload send must remain available after choosing the route arm"
                         );
                         {
@@ -6554,9 +6658,7 @@ fn selected_route_arm_keeps_later_same_lane_sends_available() {
                         }
 
                         assert!(
-                            controller
-                                .preview_flow::<MultiSendRightSecondMsg>()
-                                .is_ok(),
+                            controller.preview_flow::<MultiSendRightSecondMsg>().is_ok(),
                             "later payload send on the same route arm must remain available after the first send"
                         );
                         {
@@ -6578,7 +6680,7 @@ fn selected_route_arm_keeps_later_same_lane_sends_available() {
 #[test]
 fn static_passive_binding_label_materializes_poll() {
     run_offer_regression_test("static_passive_binding_label_materializes_poll", || {
-        let entry_route_program = ENTRY_ROUTE_PROGRAM;
+        let entry_route_program = ENTRY_ROUTE_PROGRAM();
         let entry_controller_program = project(&entry_route_program);
         let entry_worker_program = project(&entry_route_program);
         offer_fixture!(2048, clock, config);
@@ -6704,7 +6806,7 @@ fn static_passive_staged_transport_hint_materializes_poll() {
     run_offer_regression_test(
         "static_passive_staged_transport_hint_materializes_poll",
         || {
-            let entry_route_program = ENTRY_ROUTE_PROGRAM;
+            let entry_route_program = ENTRY_ROUTE_PROGRAM();
             let entry_controller_program = project(&entry_route_program);
             let entry_worker_program = project(&entry_route_program);
             offer_fixture!(2048, clock, config);
@@ -6839,7 +6941,7 @@ fn nested_static_passive_binding_dispatch_materializes_poll_on_ancestor_scopes()
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &NESTED_STATIC_CONTROLLER_PROGRAM,
+                                    &NESTED_STATIC_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -6848,7 +6950,7 @@ fn nested_static_passive_binding_dispatch_materializes_poll_on_ancestor_scopes()
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &NESTED_STATIC_WORKER_PROGRAM,
+                                    &NESTED_STATIC_WORKER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach worker endpoint");
@@ -6915,7 +7017,7 @@ fn deep_right_nested_static_passive_binding_dispatch_materializes_poll_on_all_an
     run_offer_regression_test(
         "deep_right_nested_static_passive_binding_dispatch_materializes_poll_on_all_ancestor_scopes",
         || {
-            let deep_right_program = DEEP_RIGHT_PROGRAM;
+            let deep_right_program = DEEP_RIGHT_PROGRAM();
             let deep_right_controller_program = project(&deep_right_program);
             let deep_right_worker_program = project(&deep_right_program);
             offer_fixture!(2048, clock, config);
@@ -7038,7 +7140,7 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label() {
     run_offer_regression_test(
         "deep_right_nested_final_reply_offer_materializes_leaf_label",
         || {
-            let deep_right_program = DEEP_RIGHT_PROGRAM;
+            let deep_right_program = DEEP_RIGHT_PROGRAM();
             let deep_right_controller_program = project(&deep_right_program);
             let deep_right_worker_program = project(&deep_right_program);
             offer_fixture!(2048, clock, config);
@@ -7196,7 +7298,7 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label_with_deferred_bin
     run_offer_regression_test(
         "deep_right_nested_final_reply_offer_materializes_leaf_label_with_deferred_binding_ingress",
         || {
-            let deep_right_program = DEEP_RIGHT_PROGRAM;
+            let deep_right_program = DEEP_RIGHT_PROGRAM();
             let deep_right_controller_program = project(&deep_right_program);
             let deep_right_worker_program = project(&deep_right_program);
             type DeferredCluster = SessionCluster<
@@ -7403,7 +7505,7 @@ fn unique_ready_arm_materializes_poll_without_hint() {
                             worker_slot.ptr(),
                             rv_id,
                             sid,
-                            &HINT_WORKER_PROGRAM,
+                            &HINT_WORKER_PROGRAM(),
                             NoBinding,
                         )
                         .expect("attach worker endpoint");
@@ -7455,7 +7557,7 @@ fn select_scope_recovers_route_state_from_current_arm_position() {
                                 worker_slot.ptr(),
                                 rv_id,
                                 sid,
-                                &ENTRY_WORKER_PROGRAM,
+                                &ENTRY_WORKER_PROGRAM(),
                                 NoBinding,
                             )
                             .expect("attach worker endpoint");
@@ -7578,7 +7680,7 @@ fn defer_never_promotes_to_route_authority() {
     ));
     let handle = resolve_route_decision_handle_with_policy(scope, scope, decision, || {
         delegate_called = true;
-        Ok(RouteDecisionHandle { scope, arm: 1 })
+        Ok(RouteArmHandle { scope, arm: 1 })
     })
     .expect("defer must delegate to resolver");
     assert_eq!(handle.arm, 1);
@@ -7626,7 +7728,7 @@ fn resolver_poll_token_requires_ready_arm_evidence_for_controller_and_observer()
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_CONTROLLER_PROGRAM,
+                                    &HINT_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -7635,7 +7737,7 @@ fn resolver_poll_token_requires_ready_arm_evidence_for_controller_and_observer()
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach worker endpoint");
@@ -7728,7 +7830,7 @@ fn recv_required_arm_needs_ready_arm_evidence_for_all_sources() {
                                 worker_slot.ptr(),
                                 rv_id,
                                 sid,
-                                &HINT_WORKER_PROGRAM,
+                                &HINT_WORKER_PROGRAM(),
                                 NoBinding,
                             )
                             .expect("attach worker endpoint");
@@ -7796,7 +7898,7 @@ fn route_ack_does_not_imply_ready_arm_evidence() {
                             worker_slot.ptr(),
                             rv_id,
                             sid,
-                            &HINT_WORKER_PROGRAM,
+                            &HINT_WORKER_PROGRAM(),
                             NoBinding,
                         )
                         .expect("attach worker endpoint");
@@ -7842,7 +7944,7 @@ fn ready_arm_mask_is_one_shot_and_cleared_on_scope_exit() {
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_CONTROLLER_PROGRAM,
+                                    &HINT_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -7851,7 +7953,7 @@ fn ready_arm_mask_is_one_shot_and_cleared_on_scope_exit() {
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM,
+                                    &HINT_WORKER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach worker endpoint");
@@ -7902,7 +8004,7 @@ fn send_entry_arm_with_later_recv_does_not_require_ready_evidence_to_materialize
                                 controller_slot.ptr(),
                                 rv_id,
                                 sid,
-                                &ENTRY_CONTROLLER_PROGRAM,
+                                &ENTRY_CONTROLLER_PROGRAM(),
                                 NoBinding,
                             )
                             .expect("attach controller endpoint");
@@ -7965,7 +8067,7 @@ fn lane_offer_state_reenters_same_route_scope_using_offer_entry() {
                                 controller_slot.ptr(),
                                 rv_id,
                                 sid,
-                                &HINT_CONTROLLER_PROGRAM,
+                                &HINT_CONTROLLER_PROGRAM(),
                                 NoBinding,
                             )
                             .expect("attach controller endpoint");
@@ -8058,7 +8160,7 @@ fn loop_semantics_are_metadata_authority() {
                             controller_slot.ptr(),
                             rv_id,
                             sid,
-                            &LOOP_SEMANTICS_CONTROLLER_PROGRAM,
+                            &LOOP_SEMANTICS_CONTROLLER_PROGRAM(),
                             NoBinding,
                         )
                         .expect("attach controller endpoint");
@@ -8085,11 +8187,6 @@ fn loop_semantics_are_metadata_authority() {
                     1,
                 )
                 .expect("break arm semantic kind");
-                let continue_label =
-                    controller_arm_label(&controller.cursor, scope, 0).expect("continue arm label");
-                let break_label =
-                    controller_arm_label(&controller.cursor, scope, 1).expect("break arm label");
-
                 assert_eq!(continue_kind, ControlSemanticKind::LoopContinue);
                 assert_eq!(break_kind, ControlSemanticKind::LoopBreak);
                 assert_eq!(
@@ -8101,11 +8198,11 @@ fn loop_semantics_are_metadata_authority() {
                     Some(LoopControlMeaning::Break)
                 );
                 assert_eq!(
-                    controller.control_semantic_kind(continue_label, Some(LoopContinueKind::TAG)),
+                    controller.control_semantic_kind(ControlSemanticKind::LoopContinue),
                     ControlSemanticKind::LoopContinue
                 );
                 assert_eq!(
-                    controller.control_semantic_kind(break_label, Some(LoopBreakKind::TAG)),
+                    controller.control_semantic_kind(ControlSemanticKind::LoopBreak),
                     ControlSemanticKind::LoopBreak
                 );
             });
@@ -8156,6 +8253,7 @@ fn loop_continue_then_nested_custom_route_right_send_stays_well_scoped() {
                         Lane::new(offer_lane.raw()),
                         route_right_meta.eff_index,
                         RouteHintRightKind::TAG,
+                        ControlOp::RouteDecision,
                     )
                     .expect("resolve route-right policy mode");
                 let controller_policy = controller
@@ -8171,10 +8269,21 @@ fn loop_continue_then_nested_custom_route_right_send_stays_well_scoped() {
                     Some(1),
                     "nested route-right send must preserve the selected inner arm after loop continue: meta={route_right_meta:?} policy={policy:?} controller_policy={controller_policy:?}"
                 );
+                let shot = route_right_meta
+                    .shot
+                    .expect("nested route-right send must retain shot metadata");
                 assert!(
                     controller
-                        .canonical_control_token::<RouteHintRightKind>(route_right_meta)
-                        .map(|token| token.into_bytes())
+                        .mint_descriptor_token_bytes(
+                            route_right_meta.peer,
+                            shot,
+                            controller
+                                .port_for_lane(route_right_meta.lane as usize)
+                                .lane(),
+                            route_right_meta.scope,
+                            crate::global::StaticControlDesc::of::<RouteHintRightKind>(),
+                            RouteHintRightKind::encode_handle(&(1, route_right_meta.scope.raw())),
+                        )
                         .is_ok(),
                     "nested route-right canonical mint must succeed after loop continue: meta={route_right_meta:?} policy={policy:?} controller_policy={controller_policy:?} cursor_idx={} node_scope={:?}",
                     controller.cursor.index(),
@@ -8216,7 +8325,7 @@ fn loop_continue_then_nested_custom_route_right_send_stays_well_scoped() {
                                 controller_slot.ptr(),
                                 rv_id,
                                 sid,
-                                &LOOP_CONTINUE_SCOPED_CONTROLLER_PROGRAM,
+                                &LOOP_CONTINUE_SCOPED_CONTROLLER_PROGRAM(),
                                 NoBinding,
                             )
                             .expect("attach controller endpoint");
@@ -8253,7 +8362,7 @@ fn send_preview_commits_ack_route_bookkeeping_on_flow_send() {
                                 controller_slot.ptr(),
                                 rv_id,
                                 sid,
-                                &LOOP_CONTINUE_SCOPED_CONTROLLER_PROGRAM,
+                                &LOOP_CONTINUE_SCOPED_CONTROLLER_PROGRAM(),
                                 NoBinding,
                             )
                             .expect("attach controller endpoint");
@@ -8392,7 +8501,7 @@ fn passive_offer_descends_into_nested_route_after_loop_continue_and_custom_route
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &LOOP_CONTINUE_PASSIVE_CONTROLLER_PROGRAM,
+                                    &LOOP_CONTINUE_PASSIVE_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -8401,7 +8510,7 @@ fn passive_offer_descends_into_nested_route_after_loop_continue_and_custom_route
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &LOOP_CONTINUE_PASSIVE_WORKER_PROGRAM,
+                                    &LOOP_CONTINUE_PASSIVE_WORKER_PROGRAM(),
                                     TestBinding::with_incoming(&[IncomingClassification {
                                         label: LOOP_CONTINUE_PASSIVE_RIGHT_REPLY_LABEL,
                                         instance: 1,
@@ -8436,12 +8545,12 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
             type LoopContinueMsg = Msg<
                 { crate::runtime::consts::LABEL_LOOP_CONTINUE },
                 GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
-                CanonicalControl<crate::control::cap::resource_kinds::LoopContinueKind>,
+                crate::control::cap::resource_kinds::LoopContinueKind,
             >;
             type LoopBreakMsg = Msg<
                 { crate::runtime::consts::LABEL_LOOP_BREAK },
                 GenericCapToken<crate::control::cap::resource_kinds::LoopBreakKind>,
-                CanonicalControl<crate::control::cap::resource_kinds::LoopBreakKind>,
+                crate::control::cap::resource_kinds::LoopBreakKind,
             >;
             type SessionRequestWireMsg = Msg<0x10, u8>;
             type AdminReplyMsg = Msg<0x50, u8>;
@@ -8449,23 +8558,20 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
             type SnapshotRejectedReplyMsg = Msg<0x52, u8>;
             type CommitCandidatesReplyMsg = Msg<0x53, u8>;
             type CommitFinalReplyMsg = Msg<0x55, u8>;
-            type CheckpointMsg = Msg<
-                { CheckpointKind::LABEL },
-                GenericCapToken<CheckpointKind>,
-                CanonicalControl<CheckpointKind>,
-            >;
-            type SessionCancelControlMsg = Msg<
-                { CancelKind::LABEL },
-                GenericCapToken<CancelKind>,
-                CanonicalControl<CancelKind>,
-            >;
+            type CheckpointMsg =
+                Msg<{ SnapshotControl::LABEL }, GenericCapToken<SnapshotControl>, SnapshotControl>;
+            type SessionCancelControlMsg =
+                Msg<{ AbortControl::LABEL }, GenericCapToken<AbortControl>, AbortControl>;
             type StaticRouteLeftMsg = Msg<
                 { LABEL_ROUTE_DECISION },
                 GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
+                RouteDecisionKind,
             >;
-            type StaticRouteRightMsg =
-                Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>;
+            type StaticRouteRightMsg = Msg<
+                ROUTE_HINT_RIGHT_LABEL,
+                GenericCapToken<RouteHintRightKind>,
+                RouteHintRightKind,
+            >;
             type SnapshotReplyLeftSteps = SeqSteps<
                 SendOnly<3, Role<1>, Role<1>, StaticRouteLeftMsg>,
                 SeqSteps<
@@ -8524,7 +8630,7 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
             type BreakArmSteps = SendOnly<3, Role<0>, Role<0>, LoopBreakMsg>;
             type LoopProgramSteps = BranchSteps<ContinueArmSteps, BreakArmSteps>;
 
-            const SNAPSHOT_REPLY_DECISION: g::Program<SnapshotReplyDecisionSteps> = g::route(
+            let snapshot_reply_decision: g::Program<SnapshotReplyDecisionSteps> = g::route(
                 g::seq(
                     g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
                     g::seq(
@@ -8540,7 +8646,7 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                     ),
                 ),
             );
-            const COMMIT_REPLY_DECISION: g::Program<CommitReplyDecisionSteps> = g::route(
+            let commit_reply_decision: g::Program<CommitReplyDecisionSteps> = g::route(
                 g::seq(
                     g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
                     g::seq(
@@ -8556,7 +8662,7 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                     ),
                 ),
             );
-            const REPLY_DECISION: g::Program<ReplyDecisionSteps> = g::route(
+            let reply_decision: g::Program<ReplyDecisionSteps> = g::route(
                 g::seq(
                     g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
                     g::send::<Role<1>, Role<0>, AdminReplyMsg, 3>(),
@@ -8566,28 +8672,28 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                     g::route(
                         g::seq(
                             g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
-                            SNAPSHOT_REPLY_DECISION,
+                            snapshot_reply_decision,
                         ),
                         g::seq(
                             g::send::<Role<1>, Role<1>, StaticRouteRightMsg, 3>(),
-                            COMMIT_REPLY_DECISION,
+                            commit_reply_decision,
                         ),
                     ),
                 ),
             );
-            const REQUEST_EXCHANGE: g::Program<RequestExchangeSteps> = g::seq(
+            let request_exchange: g::Program<RequestExchangeSteps> = g::seq(
                 g::send::<Role<0>, Role<1>, SessionRequestWireMsg, 3>(),
-                REPLY_DECISION,
+                reply_decision,
             );
-            const LOOP_PROGRAM: g::Program<LoopProgramSteps> = g::route(
+            let loop_program: g::Program<LoopProgramSteps> = g::route(
                 g::seq(
                     g::send::<Role<0>, Role<0>, LoopContinueMsg, 3>(),
-                    REQUEST_EXCHANGE,
+                    request_exchange,
                 ),
                 g::send::<Role<0>, Role<0>, LoopBreakMsg, 3>(),
             );
-            static CLIENT_PROGRAM: RoleProgram<0> = project(&LOOP_PROGRAM);
-            static SERVER_PROGRAM: RoleProgram<1> = project(&LOOP_PROGRAM);
+            let client_program: RoleProgram<0> = project(&loop_program);
+            let server_program: RoleProgram<1> = project(&loop_program);
             type ClientEndpoint = CursorEndpoint<
                 'static,
                 0,
@@ -8859,7 +8965,7 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                                         client_slot.ptr(),
                                         rv_id,
                                         sid,
-                                        &CLIENT_PROGRAM,
+                                        &client_program,
                                         TestBinding::with_incoming_and_payloads(
                                             &[IncomingClassification {
                                                 label: 0x51,
@@ -8876,7 +8982,7 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                                         server_slot.ptr(),
                                         rv_id,
                                         sid,
-                                        &SERVER_PROGRAM,
+                                        &server_program,
                                         NoBinding,
                                     )
                                     .expect("attach server endpoint");
@@ -8920,28 +9026,28 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
             type LoopContinueMsg = Msg<
                 { crate::runtime::consts::LABEL_LOOP_CONTINUE },
                 GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
-                CanonicalControl<crate::control::cap::resource_kinds::LoopContinueKind>,
+                crate::control::cap::resource_kinds::LoopContinueKind,
             >;
             type LoopBreakMsg = Msg<
                 { crate::runtime::consts::LABEL_LOOP_BREAK },
                 GenericCapToken<crate::control::cap::resource_kinds::LoopBreakKind>,
-                CanonicalControl<crate::control::cap::resource_kinds::LoopBreakKind>,
+                crate::control::cap::resource_kinds::LoopBreakKind,
             >;
             type SessionRequestWireMsg = Msg<0x10, u8>;
             type AdminReplyMsg = Msg<0x50, u8>;
             type SnapshotCandidatesReplyMsg = Msg<0x51, u8>;
-            type CheckpointMsg = Msg<
-                { CheckpointKind::LABEL },
-                GenericCapToken<CheckpointKind>,
-                CanonicalControl<CheckpointKind>,
-            >;
+            type CheckpointMsg =
+                Msg<{ SnapshotControl::LABEL }, GenericCapToken<SnapshotControl>, SnapshotControl>;
             type StaticRouteLeftMsg = Msg<
                 { LABEL_ROUTE_DECISION },
                 GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
+                RouteDecisionKind,
             >;
-            type StaticRouteRightMsg =
-                Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>;
+            type StaticRouteRightMsg = Msg<
+                ROUTE_HINT_RIGHT_LABEL,
+                GenericCapToken<RouteHintRightKind>,
+                RouteHintRightKind,
+            >;
             type ReplyDecisionLeftSteps = SeqSteps<
                 SendOnly<3, Role<1>, Role<1>, StaticRouteLeftMsg>,
                 SendOnly<3, Role<1>, Role<0>, AdminReplyMsg>,
@@ -8968,7 +9074,7 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
             type BreakArmSteps = SendOnly<3, Role<0>, Role<0>, LoopBreakMsg>;
             type LoopProgramSteps = BranchSteps<ContinueArmSteps, BreakArmSteps>;
 
-            const REPLY_DECISION: g::Program<ReplyDecisionSteps> = g::route(
+            let reply_decision: g::Program<ReplyDecisionSteps> = g::route(
                 g::seq(
                     g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
                     g::send::<Role<1>, Role<0>, AdminReplyMsg, 3>(),
@@ -8987,19 +9093,19 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                     ),
                 ),
             );
-            const REQUEST_EXCHANGE: g::Program<RequestExchangeSteps> = g::seq(
+            let request_exchange: g::Program<RequestExchangeSteps> = g::seq(
                 g::send::<Role<0>, Role<1>, SessionRequestWireMsg, 3>(),
-                REPLY_DECISION,
+                reply_decision,
             );
-            const LOOP_PROGRAM: g::Program<LoopProgramSteps> = g::route(
+            let loop_program: g::Program<LoopProgramSteps> = g::route(
                 g::seq(
                     g::send::<Role<0>, Role<0>, LoopContinueMsg, 3>(),
-                    REQUEST_EXCHANGE,
+                    request_exchange,
                 ),
                 g::send::<Role<0>, Role<0>, LoopBreakMsg, 3>(),
             );
-            static CLIENT_PROGRAM: RoleProgram<0> = project(&LOOP_PROGRAM);
-            static SERVER_PROGRAM: RoleProgram<1> = project(&LOOP_PROGRAM);
+            let client_program: RoleProgram<0> = project(&loop_program);
+            let server_program: RoleProgram<1> = project(&loop_program);
             type ClientEndpoint = CursorEndpoint<
                 'static,
                 0,
@@ -9274,7 +9380,7 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                                         client_slot.ptr(),
                                         rv_id,
                                         sid,
-                                        &CLIENT_PROGRAM,
+                                        &client_program,
                                         TestBinding::with_incoming_and_payloads(
                                             &[
                                                 IncomingClassification {
@@ -9299,7 +9405,7 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                                         server_slot.ptr(),
                                         rv_id,
                                         sid,
-                                        &SERVER_PROGRAM,
+                                        &server_program,
                                         NoBinding,
                                     )
                                     .expect("attach server endpoint");
@@ -9334,35 +9440,32 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
             type LoopContinueMsg = Msg<
                 { crate::runtime::consts::LABEL_LOOP_CONTINUE },
                 GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
-                CanonicalControl<crate::control::cap::resource_kinds::LoopContinueKind>,
+                crate::control::cap::resource_kinds::LoopContinueKind,
             >;
             type LoopBreakMsg = Msg<
                 { crate::runtime::consts::LABEL_LOOP_BREAK },
                 GenericCapToken<crate::control::cap::resource_kinds::LoopBreakKind>,
-                CanonicalControl<crate::control::cap::resource_kinds::LoopBreakKind>,
+                crate::control::cap::resource_kinds::LoopBreakKind,
             >;
             type SessionRequestWireMsg = Msg<0x10, u8>;
             type SnapshotCandidatesReplyMsg = Msg<0x51, u8>;
             type CommitCandidatesReplyMsg = Msg<0x53, u8>;
             type CommitRejectedReplyMsg = Msg<0x54, u8>;
             type CommitFinalReplyMsg = Msg<0x55, u8>;
-            type CheckpointMsg = Msg<
-                { CheckpointKind::LABEL },
-                GenericCapToken<CheckpointKind>,
-                CanonicalControl<CheckpointKind>,
-            >;
-            type SessionCancelControlMsg = Msg<
-                { CancelKind::LABEL },
-                GenericCapToken<CancelKind>,
-                CanonicalControl<CancelKind>,
-            >;
+            type CheckpointMsg =
+                Msg<{ SnapshotControl::LABEL }, GenericCapToken<SnapshotControl>, SnapshotControl>;
+            type SessionCancelControlMsg =
+                Msg<{ AbortControl::LABEL }, GenericCapToken<AbortControl>, AbortControl>;
             type StaticRouteLeftMsg = Msg<
                 { LABEL_ROUTE_DECISION },
                 GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
+                RouteDecisionKind,
             >;
-            type StaticRouteRightMsg =
-                Msg<99, GenericCapToken<RouteHintRightKind>, CanonicalControl<RouteHintRightKind>>;
+            type StaticRouteRightMsg = Msg<
+                ROUTE_HINT_RIGHT_LABEL,
+                GenericCapToken<RouteHintRightKind>,
+                RouteHintRightKind,
+            >;
             type SnapshotRejectedReplyMsg = Msg<0x52, u8>;
             type AdminReplyMsg = Msg<0x50, u8>;
             type SnapshotReplyLeftSteps = SeqSteps<
@@ -9436,7 +9539,7 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
             type BreakArmSteps = SendOnly<3, Role<0>, Role<0>, LoopBreakMsg>;
             type LoopProgramSteps = BranchSteps<ContinueArmSteps, BreakArmSteps>;
 
-            const SNAPSHOT_REPLY_DECISION: g::Program<SnapshotReplyDecisionSteps> = g::route(
+            let snapshot_reply_decision: g::Program<SnapshotReplyDecisionSteps> = g::route(
                 g::seq(
                     g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
                     g::seq(
@@ -9452,7 +9555,7 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                     ),
                 ),
             );
-            const COMMIT_REPLY_DECISION: g::Program<CommitReplyDecisionSteps> = g::route(
+            let commit_reply_decision: g::Program<CommitReplyDecisionSteps> = g::route(
                 g::seq(
                     g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
                     g::seq(
@@ -9480,7 +9583,7 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                     ),
                 ),
             );
-            const REPLY_DECISION: g::Program<ReplyDecisionSteps> = g::route(
+            let reply_decision: g::Program<ReplyDecisionSteps> = g::route(
                 g::seq(
                     g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
                     g::send::<Role<1>, Role<0>, Msg<0x50, u8>, 3>(),
@@ -9490,28 +9593,28 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                     g::route(
                         g::seq(
                             g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
-                            SNAPSHOT_REPLY_DECISION,
+                            snapshot_reply_decision,
                         ),
                         g::seq(
                             g::send::<Role<1>, Role<1>, StaticRouteRightMsg, 3>(),
-                            COMMIT_REPLY_DECISION,
+                            commit_reply_decision,
                         ),
                     ),
                 ),
             );
-            const REQUEST_EXCHANGE: g::Program<RequestExchangeSteps> = g::seq(
+            let request_exchange: g::Program<RequestExchangeSteps> = g::seq(
                 g::send::<Role<0>, Role<1>, SessionRequestWireMsg, 3>(),
-                REPLY_DECISION,
+                reply_decision,
             );
-            const LOOP_PROGRAM: g::Program<LoopProgramSteps> = g::route(
+            let loop_program: g::Program<LoopProgramSteps> = g::route(
                 g::seq(
                     g::send::<Role<0>, Role<0>, LoopContinueMsg, 3>(),
-                    REQUEST_EXCHANGE,
+                    request_exchange,
                 ),
                 g::send::<Role<0>, Role<0>, LoopBreakMsg, 3>(),
             );
-            static CLIENT_PROGRAM: RoleProgram<0> = project(&LOOP_PROGRAM);
-            static SERVER_PROGRAM: RoleProgram<1> = project(&LOOP_PROGRAM);
+            let client_program: RoleProgram<0> = project(&loop_program);
+            let server_program: RoleProgram<1> = project(&loop_program);
             type ClientEndpoint = CursorEndpoint<
                 'static,
                 0,
@@ -9746,7 +9849,7 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                                         client_slot.ptr(),
                                         rv_id,
                                         sid,
-                                        &CLIENT_PROGRAM,
+                                        &client_program,
                                         TestBinding::with_incoming_and_payloads(
                                             &[
                                                 IncomingClassification {
@@ -9771,7 +9874,7 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                                         server_slot.ptr(),
                                         rv_id,
                                         sid,
-                                        &SERVER_PROGRAM,
+                                        &server_program,
                                         NoBinding,
                                     )
                                     .expect("attach server endpoint");
@@ -9840,7 +9943,7 @@ fn dropping_pending_decode_future_preserves_preview_branch_state() {
                                         controller_slot.ptr(),
                                         rv_id,
                                         sid,
-                                        &HINT_CONTROLLER_PROGRAM,
+                                        &HINT_CONTROLLER_PROGRAM(),
                                         NoBinding,
                                     )
                                     .expect("attach controller endpoint");
@@ -9849,7 +9952,7 @@ fn dropping_pending_decode_future_preserves_preview_branch_state() {
                                         worker_slot.ptr(),
                                         rv_id,
                                         sid,
-                                        &HINT_WORKER_PROGRAM,
+                                        &HINT_WORKER_PROGRAM(),
                                         NoBinding,
                                     )
                                     .expect("attach worker endpoint");
@@ -9945,7 +10048,7 @@ fn restoring_public_preview_branch_clears_cached_arm_slot() {
                                         controller_slot.ptr(),
                                         rv_id,
                                         sid,
-                                        &HINT_CONTROLLER_PROGRAM,
+                                        &HINT_CONTROLLER_PROGRAM(),
                                         NoBinding,
                                     )
                                     .expect("attach controller endpoint");
@@ -9954,7 +10057,7 @@ fn restoring_public_preview_branch_clears_cached_arm_slot() {
                                         worker_slot.ptr(),
                                         rv_id,
                                         sid,
-                                        &HINT_WORKER_PROGRAM,
+                                        &HINT_WORKER_PROGRAM(),
                                         NoBinding,
                                     )
                                     .expect("attach worker endpoint");
@@ -9981,7 +10084,9 @@ fn restoring_public_preview_branch_clears_cached_arm_slot() {
                                     panic!("public offer must materialize preview branch: {err:?}")
                                 }
                                 Poll::Pending => {
-                                    panic!("public offer must not pend once the hinted arm is ready")
+                                    panic!(
+                                        "public offer must not pend once the hinted arm is ready"
+                                    )
                                 }
                             };
                             assert_eq!(
@@ -10050,7 +10155,7 @@ fn static_passive_offer_with_known_arm_waits_on_transport_without_busy_restart()
                                         controller_slot.ptr(),
                                         rv_id,
                                         sid,
-                                        &ENTRY_CONTROLLER_PROGRAM,
+                                        &ENTRY_CONTROLLER_PROGRAM(),
                                         NoBinding,
                                     )
                                     .expect("attach controller endpoint");
@@ -10059,7 +10164,7 @@ fn static_passive_offer_with_known_arm_waits_on_transport_without_busy_restart()
                                         worker_slot.ptr(),
                                         rv_id,
                                         sid,
-                                        &ENTRY_WORKER_PROGRAM,
+                                        &ENTRY_WORKER_PROGRAM(),
                                         NoBinding,
                                     )
                                     .expect("attach worker endpoint");
@@ -10115,7 +10220,7 @@ fn parked_passive_offer_does_not_drain_hint_from_same_lane() {
                                 .set(true);
                             let transport = HintPendingTransport::new(
                                 pending_state,
-                                <Msg<106, u8> as MessageSpec>::LABEL,
+                                <Msg<86, u8> as MessageSpec>::LABEL,
                             );
                             let transport_probe = transport;
                             let rv_id = cluster_ref
@@ -10128,7 +10233,7 @@ fn parked_passive_offer_does_not_drain_hint_from_same_lane() {
                                         controller_slot.ptr(),
                                         rv_id,
                                         sid,
-                                        &ENTRY_CONTROLLER_PROGRAM,
+                                        &ENTRY_CONTROLLER_PROGRAM(),
                                         NoBinding,
                                     )
                                     .expect("attach controller endpoint");
@@ -10137,7 +10242,7 @@ fn parked_passive_offer_does_not_drain_hint_from_same_lane() {
                                         worker_slot.ptr(),
                                         rv_id,
                                         sid,
-                                        &ENTRY_WORKER_PROGRAM,
+                                        &ENTRY_WORKER_PROGRAM(),
                                         NoBinding,
                                     )
                                     .expect("attach worker endpoint");
@@ -10231,7 +10336,7 @@ fn nested_dispatch_arm_counts_as_recv_for_known_passive_route() {
                                         controller_slot.ptr(),
                                         rv_id,
                                         sid,
-                                        &NESTED_DISPATCH_CONTROLLER_PROGRAM,
+                                        &NESTED_DISPATCH_CONTROLLER_PROGRAM(),
                                         NoBinding,
                                     )
                                     .expect("attach controller endpoint");
@@ -10240,7 +10345,7 @@ fn nested_dispatch_arm_counts_as_recv_for_known_passive_route() {
                                         worker_slot.ptr(),
                                         rv_id,
                                         sid,
-                                        &NESTED_DISPATCH_WORKER_PROGRAM,
+                                        &NESTED_DISPATCH_WORKER_PROGRAM(),
                                         NoBinding,
                                     )
                                     .expect("attach worker endpoint");
@@ -10288,7 +10393,7 @@ fn scope_local_label_mapping_never_uses_global_scan() {
                                 controller_slot.ptr(),
                                 rv_id,
                                 sid,
-                                &HINT_CONTROLLER_PROGRAM,
+                                &HINT_CONTROLLER_PROGRAM(),
                                 NoBinding,
                             )
                             .expect("attach controller endpoint");
@@ -10297,7 +10402,7 @@ fn scope_local_label_mapping_never_uses_global_scan() {
                                 worker_slot.ptr(),
                                 rv_id,
                                 sid,
-                                &HINT_WORKER_PROGRAM,
+                                &HINT_WORKER_PROGRAM(),
                                 NoBinding,
                             )
                             .expect("attach worker endpoint");
@@ -10308,8 +10413,11 @@ fn scope_local_label_mapping_never_uses_global_scan() {
                     assert!(!scope.is_none(), "worker must start at route scope");
 
                     let foreign_label = (1u8..=u8::MAX).find(|label| {
-                        !worker.is_loop_semantic_label(*label)
-                            && worker.cursor.first_recv_target(scope, *label).is_none()
+                        !matches!(
+                            *label,
+                            crate::runtime::consts::LABEL_LOOP_CONTINUE
+                                | crate::runtime::consts::LABEL_LOOP_BREAK
+                        ) && worker.cursor.first_recv_target(scope, *label).is_none()
                             && worker.cursor.find_arm_for_recv_label(*label).is_some()
                     });
                     let Some(foreign_label) = foreign_label else {

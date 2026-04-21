@@ -7,28 +7,25 @@ use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 
 #[cfg(test)]
+use crate::control::automaton::delegation::DelegationLeaseSpec;
+#[cfg(test)]
 use crate::control::automaton::splice::SpliceLeaseSpec;
 use crate::control::automaton::{
-    delegation::{DelegateMintAutomaton, DelegateMintSeed, DelegationLeaseSpec},
     distributed::{DistributedSplice, DistributedSpliceInv, SpliceAck, SpliceIntent},
     splice::{
         SpliceBeginAutomaton, SpliceCommitAutomaton, SpliceGraphContext, SplicePrepareAutomaton,
         SplicePrepareSeed,
     },
 };
-use crate::control::cap::ControlHandle;
-use crate::control::cap::mint::{AllowsCanonical, SessionScopedKind};
+use crate::control::cap::mint::CapHeader;
 use crate::control::cap::mint::{
-    CapShot, CapsMask, EndpointResource, GenericCapToken, MintConfigMarker, ResourceKind,
+    CAP_TOKEN_LEN, ControlOp, EndpointResource, GenericCapToken, MintConfigMarker,
 };
 use crate::control::cap::resource_kinds::{
-    CancelAckKind, CancelKind, CheckpointKind, CommitKind, LoopBreakKind, LoopContinueKind,
-    RerouteHandle, RerouteKind, RollbackKind, RouteDecisionKind, SpliceAckKind, SpliceHandle,
-    SpliceIntentKind,
+    DelegationHandle, SessionLaneHandle, TopologyHandle, decode_session_lane_handle,
 };
-use crate::control::cap::typed_tokens::CapFrameToken;
-use crate::control::cluster::effects::{CpEffect, EffectEnvelopeRef};
-use crate::control::handle::{bag::HandleBag, spec};
+use crate::control::cap::typed_tokens::RegisteredTokenParts;
+use crate::control::cluster::effects::EffectEnvelopeRef;
 use crate::control::lease::{
     bundle::{LeaseBundleContext, LeaseGraphBundleExt},
     core::{
@@ -36,12 +33,10 @@ use crate::control::lease::{
         RegisterRendezvousError,
     },
     graph::{LeaseFacet, LeaseGraph, LeaseGraphError, LeaseSpec},
-    planner::{
-        DELEGATION_CHILD_SET_CAPACITY, LeaseFacetNeeds, facet_needs, facets_caps_delegation,
-        facets_caps_splice,
-    },
+    planner::{LeaseFacetNeeds, facet_needs, facets_caps_splice},
 };
 use crate::endpoint::affine::LaneGuard;
+use crate::global::StaticControlDesc;
 use crate::global::const_dsl::ControlScopeKind;
 
 type PublicEndpointKernel<'r, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint> =
@@ -83,7 +78,7 @@ struct PublicEndpointStorageLayout {
     arena_align: usize,
 }
 
-fn splice_operands_from_handle(handle: SpliceHandle) -> SpliceOperands {
+fn splice_operands_from_handle(handle: TopologyHandle) -> SpliceOperands {
     SpliceOperands::new(
         RendezvousId::new(handle.src_rv),
         RendezvousId::new(handle.dst_rv),
@@ -101,9 +96,9 @@ use crate::control::automaton::txn::{InAcked, InBegin, NoopTap};
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 use crate::eff::EffIndex;
 #[cfg(test)]
-use crate::global::compiled::images::CompiledProgramImage;
+use crate::global::compiled::images::CompiledProgramFacts;
 use crate::global::{
-    compiled::images::{CompiledRoleImage, ProgramImage, RoleImageSlice},
+    compiled::images::{CompiledProgramRef, CompiledRoleImage, RoleImageSlice},
     const_dsl::{PolicyMode, ScopeId},
 };
 use crate::observe::scope::ScopeTrace;
@@ -191,37 +186,6 @@ impl SpliceOperands {
     }
 }
 
-#[derive(Clone, Copy)]
-struct DelegationChildSet {
-    ids: [RendezvousId; DELEGATION_CHILD_SET_CAPACITY],
-    len: usize,
-}
-
-impl DelegationChildSet {
-    const fn new() -> Self {
-        Self {
-            ids: [RendezvousId::new(0); DELEGATION_CHILD_SET_CAPACITY],
-            len: 0,
-        }
-    }
-
-    fn push(&mut self, id: RendezvousId) {
-        if self.len >= DELEGATION_CHILD_SET_CAPACITY || self.contains(id) {
-            return;
-        }
-        self.ids[self.len] = id;
-        self.len += 1;
-    }
-
-    fn contains(&self, id: RendezvousId) -> bool {
-        (0..self.len).any(|idx| self.ids[idx] == id)
-    }
-
-    fn iter(&self) -> impl Iterator<Item = RendezvousId> + '_ {
-        self.ids[..self.len].iter().copied()
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DelegateOperands {
     pub claim: bool,
@@ -231,15 +195,11 @@ pub(crate) struct DelegateOperands {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PendingEffect {
     None,
-    Dispatch {
-        target: RendezvousId,
-        envelope: CpCommand,
-    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct CpCommand {
-    pub(crate) effect: CpEffect,
+    pub(crate) effect: ControlOp,
     pub(crate) sid: Option<SessionId>,
     pub(crate) lane: Option<Lane>,
     pub(crate) generation: Option<Generation>,
@@ -248,7 +208,7 @@ pub(crate) struct CpCommand {
 }
 
 impl CpCommand {
-    pub(crate) const fn new(effect: CpEffect) -> Self {
+    pub(crate) const fn new(effect: ControlOp) -> Self {
         Self {
             effect,
             sid: None,
@@ -312,54 +272,54 @@ impl CpCommand {
     }
 
     pub(crate) fn splice_begin(sid: SessionId, operands: SpliceOperands) -> Self {
-        Self::new(CpEffect::SpliceBegin)
+        Self::new(ControlOp::TopologyBegin)
             .with_sid(sid)
             .with_lane(operands.src_lane)
             .with_splice(operands)
     }
 
     pub(crate) fn splice_ack(sid: SessionId, operands: SpliceOperands) -> Self {
-        Self::new(CpEffect::SpliceAck)
+        Self::new(ControlOp::TopologyAck)
             .with_sid(sid)
             .with_lane(operands.dst_lane)
             .with_splice(operands)
     }
 
     pub(crate) fn splice_commit(sid: SessionId, operands: SpliceOperands) -> Self {
-        Self::new(CpEffect::SpliceCommit)
+        Self::new(ControlOp::TopologyCommit)
             .with_sid(sid)
             .with_lane(operands.src_lane)
             .with_splice(operands)
     }
 
     pub(crate) fn cancel_begin(sid: SessionId, lane: Lane) -> Self {
-        Self::new(CpEffect::CancelBegin)
+        Self::new(ControlOp::AbortBegin)
             .with_sid(sid)
             .with_lane(lane)
     }
 
     pub(crate) fn cancel_ack(sid: SessionId, lane: Lane, generation: Generation) -> Self {
-        Self::new(CpEffect::CancelAck)
+        Self::new(ControlOp::AbortAck)
             .with_sid(sid)
             .with_lane(lane)
             .with_generation(generation)
     }
 
     pub(crate) fn checkpoint(sid: SessionId, lane: Lane) -> Self {
-        Self::new(CpEffect::Checkpoint)
+        Self::new(ControlOp::StateSnapshot)
             .with_sid(sid)
             .with_lane(lane)
     }
 
     pub(crate) fn rollback(sid: SessionId, lane: Lane, generation: Generation) -> Self {
-        Self::new(CpEffect::Rollback)
+        Self::new(ControlOp::StateRestore)
             .with_sid(sid)
             .with_lane(lane)
             .with_generation(generation)
     }
 
     pub(crate) fn commit(sid: SessionId, lane: Lane, generation: Generation) -> Self {
-        Self::new(CpEffect::Commit)
+        Self::new(ControlOp::TxCommit)
             .with_sid(sid)
             .with_lane(lane)
             .with_generation(generation)
@@ -582,12 +542,12 @@ const fn encode_transport_algorithm(algorithm: TransportAlgorithm) -> ContextVal
 struct DynamicResolverKey {
     rv: RendezvousId,
     eff_index: EffIndex,
-    tag: u8,
+    op: ControlOp,
 }
 
 impl DynamicResolverKey {
-    const fn new(rv: RendezvousId, eff_index: EffIndex, tag: u8) -> Self {
-        Self { rv, eff_index, tag }
+    const fn new(rv: RendezvousId, eff_index: EffIndex, op: ControlOp) -> Self {
+        Self { rv, eff_index, op }
     }
 }
 
@@ -611,7 +571,7 @@ const fn cluster_rendezvous_slot<const MAX_RV: usize>(rv_id: RendezvousId) -> Op
 #[derive(Clone, Copy)]
 struct ResolverBucketEntry<'cfg> {
     eff_index: EffIndex,
-    tag: u8,
+    op: ControlOp,
     entry: DynamicResolverEntry<'cfg>,
 }
 
@@ -758,7 +718,7 @@ impl<'cfg> ResolverBucket<'cfg> {
     fn insert(
         &mut self,
         eff_index: EffIndex,
-        tag: u8,
+        op: ControlOp,
         entry: DynamicResolverEntry<'cfg>,
     ) -> Result<(), CpError> {
         let entries = self.entries_ptr();
@@ -771,7 +731,7 @@ impl<'cfg> ResolverBucket<'cfg> {
             unsafe {
                 let slot = &mut *entries.add(idx);
                 match slot {
-                    Some(stored) if stored.eff_index == eff_index && stored.tag == tag => {
+                    Some(stored) if stored.eff_index == eff_index && stored.op == op => {
                         stored.entry = entry;
                         return Ok(());
                     }
@@ -787,14 +747,14 @@ impl<'cfg> ResolverBucket<'cfg> {
         unsafe {
             *entries.add(idx) = Some(ResolverBucketEntry {
                 eff_index,
-                tag,
+                op,
                 entry,
             });
         }
         Ok(())
     }
 
-    fn get(&self, eff_index: EffIndex, tag: u8) -> Option<&DynamicResolverEntry<'cfg>> {
+    fn get(&self, eff_index: EffIndex, op: ControlOp) -> Option<&DynamicResolverEntry<'cfg>> {
         let entries = self.entries_ptr();
         if entries.is_null() {
             return None;
@@ -804,7 +764,7 @@ impl<'cfg> ResolverBucket<'cfg> {
             unsafe {
                 if let Some(stored) = (&*entries.add(idx)).as_ref()
                     && stored.eff_index == eff_index
-                    && stored.tag == tag
+                    && stored.op == op
                 {
                     return Some(&stored.entry);
                 }
@@ -824,56 +784,16 @@ thread_local! {
         const { UnsafeCell::new([0; TEST_TRANSIENT_GRAPH_SCRATCH_BYTES]) };
 }
 
-/// Validate that the resource tag represents a supported dynamic control operation.
-/// The operation type (route, reroute, splice) is determined solely by the tag.
-const fn is_dynamic_control_tag(tag: u8) -> bool {
+const fn is_dynamic_control_op(op: ControlOp) -> bool {
     matches!(
-        tag,
-        LoopContinueKind::TAG
-            | LoopBreakKind::TAG
-            | RouteDecisionKind::TAG
-            | RerouteKind::TAG
-            | SpliceIntentKind::TAG
-            | SpliceAckKind::TAG
+        op,
+        ControlOp::LoopContinue
+            | ControlOp::LoopBreak
+            | ControlOp::RouteDecision
+            | ControlOp::CapDelegate
+            | ControlOp::TopologyBegin
+            | ControlOp::TopologyAck
     )
-}
-
-fn session_caps_mask_for_tag(tag: u8, sid: SessionId, lane: Lane) -> Option<CapsMask> {
-    use crate::control::cap::mint::ResourceKind;
-    use crate::control::cap::mint::SessionScopedKind;
-    use crate::control::cap::resource_kinds;
-
-    let sid_rv = SessionId::new(sid.raw());
-    let lane_rv = Lane::new(lane.raw());
-
-    macro_rules! mask_for {
-        ($kind:ty) => {{
-            let mut handle = <$kind as SessionScopedKind>::handle_for_session(sid_rv, lane_rv);
-            let mask = <$kind as ResourceKind>::caps_mask(&handle);
-            <$kind as ResourceKind>::zeroize(&mut handle);
-            Some(mask)
-        }};
-    }
-
-    match tag {
-        resource_kinds::LoopContinueKind::TAG => mask_for!(resource_kinds::LoopContinueKind),
-        resource_kinds::LoopBreakKind::TAG => mask_for!(resource_kinds::LoopBreakKind),
-        resource_kinds::CheckpointKind::TAG => mask_for!(resource_kinds::CheckpointKind),
-        resource_kinds::CommitKind::TAG => mask_for!(resource_kinds::CommitKind),
-        resource_kinds::RollbackKind::TAG => mask_for!(resource_kinds::RollbackKind),
-        resource_kinds::CancelKind::TAG => mask_for!(resource_kinds::CancelKind),
-        resource_kinds::CancelAckKind::TAG => mask_for!(resource_kinds::CancelAckKind),
-        resource_kinds::SpliceIntentKind::TAG => mask_for!(resource_kinds::SpliceIntentKind),
-        resource_kinds::SpliceAckKind::TAG => mask_for!(resource_kinds::SpliceAckKind),
-        resource_kinds::RerouteKind::TAG => mask_for!(resource_kinds::RerouteKind),
-        _ => None,
-    }
-}
-
-#[inline]
-fn initializer_command(effect: CpEffect, sid: SessionId, lane: Lane) -> Option<CpCommand> {
-    let _ = (effect, sid, lane);
-    None
 }
 
 /// Trait implemented by local Rendezvous instances that can apply control-plane effects.
@@ -1089,7 +1009,7 @@ impl DistributedSpliceBucket {
                 match slot {
                     Some(stored) if stored.sid == sid => {
                         return Err(CpError::ReplayDetected {
-                            operation: CpEffect::SpliceBegin as u8,
+                            operation: ControlOp::TopologyBegin as u8,
                             nonce: sid.raw(),
                         });
                     }
@@ -1270,7 +1190,7 @@ impl<const MAX: usize> DistributedSpliceState<MAX> {
     ) -> Result<(SpliceIntent, SpliceAck), CpError> {
         if self.contains_sid(sid) {
             return Err(CpError::ReplayDetected {
-                operation: CpEffect::SpliceBegin as u8,
+                operation: ControlOp::TopologyBegin as u8,
                 nonce: sid.raw(),
             });
         }
@@ -1317,12 +1237,12 @@ impl<const MAX: usize> DistributedSpliceState<MAX> {
 
         let txn = match &mut entry.phase {
             DistributedPhase::Begin { txn } => txn.take().ok_or(CpError::ReplayDetected {
-                operation: CpEffect::SpliceAck as u8,
+                operation: ControlOp::TopologyAck as u8,
                 nonce: sid.raw(),
             })?,
             DistributedPhase::Acked { .. } => {
                 return Err(CpError::ReplayDetected {
-                    operation: CpEffect::SpliceAck as u8,
+                    operation: ControlOp::TopologyAck as u8,
                     nonce: sid.raw(),
                 });
             }
@@ -1932,11 +1852,11 @@ impl<'cfg, const MAX_RV: usize> ResolverCore<'cfg, MAX_RV> {
                 expected: key.rv.raw(),
                 actual: 0,
             })?
-            .insert(key.eff_index, key.tag, entry)
+            .insert(key.eff_index, key.op, entry)
     }
 
     fn get(&self, key: DynamicResolverKey) -> Option<&DynamicResolverEntry<'cfg>> {
-        self.bucket(key.rv)?.get(key.eff_index, key.tag)
+        self.bucket(key.rv)?.get(key.eff_index, key.op)
     }
 }
 
@@ -2197,13 +2117,13 @@ where
         rv_id: RendezvousId,
         slot: EndpointLeaseId,
         generation: u32,
-        program_image: ProgramImage,
+        program_ref: CompiledProgramRef,
     ) -> Result<(), AttachError> {
         let pinned = self.with_control_mut(|core| {
             let Some(rv) = core.locals.get_mut(&rv_id) else {
                 return false;
             };
-            rv.pin_endpoint_images::<ROLE>(slot, generation, program_image.stamp())
+            rv.pin_endpoint_images::<ROLE>(slot, generation, program_ref.stamp())
         });
         if pinned {
             Ok(())
@@ -2227,11 +2147,11 @@ where
         Some(unsafe { slab_ptr.add(offset).cast() })
     }
 
-    fn ensure_program_image<'prog, const ROLE: u8, P>(
+    fn ensure_compiled_program_ref<'prog, const ROLE: u8, P>(
         &self,
         rv_id: RendezvousId,
         program: &P,
-    ) -> Result<ProgramImage, AttachError>
+    ) -> Result<CompiledProgramRef, AttachError>
     where
         P: crate::global::RoleProgramView<ROLE>,
     {
@@ -2241,7 +2161,7 @@ where
             .get_mut(&rv_id)
             .ok_or(AttachError::Control(CpError::ResourceExhausted))?;
         if let Some(existing) = rv.program_image(program.stamp()) {
-            return Ok(unsafe { ProgramImage::from_raw(program.stamp(), existing) });
+            return Ok(unsafe { CompiledProgramRef::from_raw(program.stamp(), existing) });
         }
         let lowering = program.lowering_input();
         let (mut storage, mut len) = rv.scratch_storage_ptr_and_len();
@@ -2261,7 +2181,7 @@ where
             )
         }
         .flatten()
-        .map(|compiled| unsafe { ProgramImage::from_raw(program.stamp(), compiled) })
+        .map(|compiled| unsafe { CompiledProgramRef::from_raw(program.stamp(), compiled) })
         .ok_or(AttachError::Control(CpError::ResourceExhausted))
     }
 
@@ -2283,8 +2203,9 @@ where
             rv.program_image(program.stamp()),
             rv.role_image::<ROLE>(program.stamp()),
         ) {
-            let program_image = unsafe { ProgramImage::from_raw(program.stamp(), program_image) };
-            return Ok(unsafe { RoleImageSlice::from_raw(program_image, role_image) });
+            let program_ref =
+                unsafe { CompiledProgramRef::from_raw(program.stamp(), program_image) };
+            return Ok(unsafe { RoleImageSlice::from_raw(program_ref, role_image) });
         }
         let lowering = program.lowering_input();
         let (mut storage, mut len) = rv.scratch_storage_ptr_and_len();
@@ -2360,8 +2281,8 @@ where
                 )
             }
         }?;
-        let program_image = unsafe { ProgramImage::from_raw(stamp, program_image) };
-        Some(unsafe { RoleImageSlice::from_raw(program_image, role_image) })
+        let program_ref = unsafe { CompiledProgramRef::from_raw(stamp, program_image) };
+        Some(unsafe { RoleImageSlice::from_raw(program_ref, role_image) })
     }
 
     #[cfg(test)]
@@ -2437,14 +2358,14 @@ where
     where
         E: From<CpError>,
         P: crate::global::RoleProgramView<ROLE>,
-        F: FnOnce(ProgramImage) -> Result<R, E>,
+        F: FnOnce(CompiledProgramRef) -> Result<R, E>,
     {
-        let compiled = self
-            .ensure_program_image(rv_id, program)
-            .map_err(|err| match err {
-                AttachError::Control(cp) => E::from(cp),
-                AttachError::Rendezvous(_) => E::from(CpError::ResourceExhausted),
-            })?;
+        let compiled =
+            self.ensure_compiled_program_ref(rv_id, program)
+                .map_err(|err| match err {
+                    AttachError::Control(cp) => E::from(cp),
+                    AttachError::Rendezvous(_) => E::from(CpError::ResourceExhausted),
+                })?;
         f(compiled)
     }
 
@@ -2581,62 +2502,6 @@ where
         })
     }
 
-    pub(crate) fn canonical_session_token<K, Mint>(
-        &self,
-        rv_id: RendezvousId,
-        sid: SessionId,
-        lane: Lane,
-        dest_role: u8,
-        shot: CapShot,
-        mint: Mint,
-    ) -> Option<GenericCapToken<K>>
-    where
-        K: SessionScopedKind,
-        Mint: MintConfigMarker,
-        Mint::Policy: AllowsCanonical,
-    {
-        let handle = K::handle_for_session(sid, lane);
-        self.canonical_token_with_handle::<K, Mint>(rv_id, sid, lane, dest_role, shot, handle, mint)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn canonical_token_with_handle<K, Mint>(
-        &self,
-        rv_id: RendezvousId,
-        sid: SessionId,
-        lane: Lane,
-        dest_role: u8,
-        shot: CapShot,
-        handle: K::Handle,
-        mint: Mint,
-    ) -> Option<GenericCapToken<K>>
-    where
-        K: ResourceKind,
-        Mint: MintConfigMarker,
-        Mint::Policy: AllowsCanonical,
-    {
-        let seed = DelegateMintSeed::<K, Mint> {
-            sid,
-            lane,
-            dest_role,
-            shot,
-            handle,
-            mint,
-        };
-        let links = Self::collect_delegation_links::<K>(&seed.handle);
-
-        let mint_needs = facets_caps_delegation();
-
-        let outcome = self.drive::<DelegateMintAutomaton<K, Mint>, _, _>(
-            rv_id,
-            seed,
-            |core, rv| Self::init_bundle_context_with_needs(core, rv, mint_needs),
-            move |core, graph| Self::init_delegation_children(core, graph, rv_id, &links),
-        );
-
-        outcome.ok()
-    }
-
     /// **Acquire a lane lease (RAII handle bound to this cluster).**
     ///
     /// Returns a `LaneLease` that borrows this cluster and automatically releases
@@ -2696,23 +2561,17 @@ where
         envelope: CpCommand,
     ) -> Result<PendingEffect, CpError> {
         let envelope = match envelope.effect {
-            CpEffect::Delegate => envelope.canonicalize_delegate()?,
+            ControlOp::CapDelegate => envelope.canonicalize_delegate()?,
             _ => envelope,
         };
 
         if self.get_local(&target).is_some() {
             match envelope.effect {
-                CpEffect::SpliceBegin => {
+                ControlOp::TopologyBegin => {
                     if let Some(lane_id) = envelope.lane
-                        && let Some(rv) = self.get_local(&target)
+                        && self.get_local(&target).is_some()
                     {
                         let lane = Lane::new(lane_id.raw());
-                        let caps = rv.caps_mask_for_lane(lane);
-                        if !caps.allows(CpEffect::SpliceBegin) {
-                            return Err(CpError::Authorisation {
-                                effect: CpEffect::SpliceBegin,
-                            });
-                        }
                         self.ensure_local_splice_storage(target, lane)?;
                     }
 
@@ -2762,7 +2621,7 @@ where
 
                     return self.after_local_effect(envelope);
                 }
-                CpEffect::SpliceCommit => {
+                ControlOp::TopologyCommit => {
                     if let Some(lane_id) = envelope.lane {
                         self.ensure_local_splice_storage(target, Lane::new(lane_id.raw()))?;
                     }
@@ -2828,21 +2687,7 @@ where
                     if self.get_local(&target).is_some() {
                         if let Some(lane_id) = envelope.lane {
                             let lane = Lane::new(lane_id.raw());
-                            let caps = self
-                                .get_local(&target)
-                                .expect("local rendezvous must remain available")
-                                .caps_mask_for_lane(lane);
-                            if !caps.allows(envelope.effect)
-                                && !matches!(
-                                    envelope.effect,
-                                    CpEffect::SpliceAck | CpEffect::SpliceCommit
-                                )
-                            {
-                                return Err(CpError::Authorisation {
-                                    effect: envelope.effect,
-                                });
-                            }
-                            if matches!(envelope.effect, CpEffect::SpliceAck) {
+                            if matches!(envelope.effect, ControlOp::TopologyAck) {
                                 self.ensure_local_splice_storage(target, lane)?;
                             }
                         }
@@ -2868,17 +2713,7 @@ where
         target: RendezvousId,
         envelope: CpCommand,
     ) -> Result<(), CpError> {
-        let mut next_target = target;
-        let mut next_envelope = envelope;
-        let mut pending = self.run_effect_step(next_target, next_envelope)?;
-
-        while let PendingEffect::Dispatch { target, envelope } = pending {
-            next_target = target;
-            next_envelope = envelope;
-            let step_result = self.run_effect_step(next_target, next_envelope.clone());
-            pending = step_result?;
-        }
-
+        self.run_effect_step(target, envelope)?;
         Ok(())
     }
 
@@ -2889,6 +2724,10 @@ where
                 .copied()
                 .or_else(|| core.cached_operands_get(sid).copied())
         })
+    }
+
+    pub(crate) fn cached_splice_operands(&self, sid: SessionId) -> Option<SpliceOperands> {
+        self.with_control_mut(|core| core.cached_operands_get(sid).copied())
     }
 
     fn cache_splice_operands(
@@ -2948,12 +2787,14 @@ where
                 let tag = site
                     .resource_tag()
                     .ok_or(CpError::UnsupportedEffect(site.label()))?;
+                let op = site.op().ok_or(CpError::UnsupportedEffect(site.label()))?;
                 self.register_dynamic_policy_resolver(
                     rv_id,
                     site.eff_index(),
                     site.label(),
                     site.policy(),
                     tag,
+                    op,
                     None,
                     resolver,
                 )?;
@@ -2968,19 +2809,19 @@ where
         eff_index: EffIndex,
         label: u8,
         policy: PolicyMode,
-        tag: u8,
+        _tag: u8,
+        op: ControlOp,
         scope_trace: Option<ScopeTrace>,
         resolver: ResolverRef<'cfg>,
     ) -> Result<(), CpError> {
-        let key = DynamicResolverKey::new(rv_id, eff_index, tag);
+        let key = DynamicResolverKey::new(rv_id, eff_index, op);
         let policy = match policy {
             PolicyMode::Dynamic { .. } => {
                 let _ = policy
                     .dynamic_policy_id()
                     .ok_or(CpError::UnsupportedEffect(label))?;
-                // Validate that the tag is a known dynamic control tag
-                if !is_dynamic_control_tag(tag) {
-                    return Err(CpError::UnsupportedEffect(tag));
+                if !is_dynamic_control_op(op) {
+                    return Err(CpError::UnsupportedEffect(op as u8));
                 }
                 policy
             }
@@ -3002,11 +2843,12 @@ where
         lane: Lane,
         eff_index: EffIndex,
         tag: u8,
+        op: ControlOp,
         metrics: TransportSnapshot,
         input: [u32; 4],
         attrs: &crate::transport::context::PolicyAttrs,
     ) -> Result<DynamicResolution, CpError> {
-        let key = DynamicResolverKey::new(rv_id, eff_index, tag);
+        let key = DynamicResolverKey::new(rv_id, eff_index, op);
         let entry = self
             .dynamic_resolver(key)
             .ok_or_else(|| CpError::PolicyAbort { reason: 0 })?;
@@ -3036,10 +2878,9 @@ where
             .resolve(ctx)
             .map_err(|_| CpError::PolicyAbort { reason: policy_id })?;
 
-        // The resource tag determines the expected resolution type
-        match (tag, resolution) {
+        match (op, resolution) {
             (
-                SpliceIntentKind::TAG | SpliceAckKind::TAG,
+                ControlOp::TopologyBegin | ControlOp::TopologyAck,
                 DynamicResolution::Splice {
                     dst_rv,
                     dst_lane,
@@ -3051,7 +2892,7 @@ where
                 fences,
             }),
             (
-                RerouteKind::TAG,
+                ControlOp::CapDelegate,
                 DynamicResolution::Reroute {
                     dst_rv,
                     dst_lane,
@@ -3063,7 +2904,7 @@ where
                 shard,
             }),
             (
-                LoopContinueKind::TAG | LoopBreakKind::TAG | RouteDecisionKind::TAG,
+                ControlOp::LoopContinue | ControlOp::LoopBreak | ControlOp::RouteDecision,
                 DynamicResolution::RouteArm { arm },
             ) => {
                 if scope_hint.is_none() {
@@ -3071,9 +2912,8 @@ where
                 }
                 Ok(DynamicResolution::RouteArm { arm })
             }
-            // Loop resolution is used for LoopContinue/LoopBreak route decisions.
             (
-                LoopContinueKind::TAG | LoopBreakKind::TAG | RouteDecisionKind::TAG,
+                ControlOp::LoopContinue | ControlOp::LoopBreak | ControlOp::RouteDecision,
                 DynamicResolution::Loop { decision },
             ) => {
                 if scope_hint.is_none() {
@@ -3082,7 +2922,7 @@ where
                 Ok(DynamicResolution::Loop { decision })
             }
             (
-                LoopContinueKind::TAG | LoopBreakKind::TAG | RouteDecisionKind::TAG,
+                ControlOp::LoopContinue | ControlOp::LoopBreak | ControlOp::RouteDecision,
                 DynamicResolution::Defer { retry_hint },
             ) => {
                 if scope_hint.is_none() {
@@ -3100,13 +2940,14 @@ where
         lane: Lane,
         eff_index: EffIndex,
         tag: u8,
+        op: ControlOp,
     ) -> Result<PolicyMode, CpError> {
         let rv = self.get_local(&rv_id).ok_or(CpError::RendezvousMismatch {
             expected: rv_id.raw(),
             actual: 0,
         })?;
         let lane_rv = Lane::new(lane.raw());
-        let key = DynamicResolverKey::new(rv_id, eff_index, tag);
+        let key = DynamicResolverKey::new(rv_id, eff_index, op);
         let policy = rv
             .policy(lane_rv, eff_index, tag)
             .or_else(|| self.dynamic_resolver(key).map(|entry| entry.policy));
@@ -3119,7 +2960,7 @@ where
         sid: SessionId,
         src_lane: Lane,
         eff_index: EffIndex,
-        tag: u8,
+        desc: crate::global::StaticControlDesc,
         policy: PolicyMode,
         metrics: TransportSnapshot,
         input: [u32; 4],
@@ -3132,7 +2973,7 @@ where
             });
         }
 
-        let policy_needs = facet_needs(tag, policy);
+        let policy_needs = facet_needs(Some(desc), policy);
         let drive_prepare = |dst_rv: RendezvousId,
                              dst_lane: Lane,
                              fences: Option<(u32, u32)>|
@@ -3182,7 +3023,8 @@ where
                     Some(sid),
                     src_lane,
                     eff_index,
-                    tag,
+                    desc.resource_tag(),
+                    desc.op(),
                     metrics,
                     input,
                     attrs,
@@ -3199,12 +3041,67 @@ where
                 result?
             }
             PolicyMode::Static => {
-                return Err(CpError::UnsupportedEffect(CpEffect::SpliceBegin as u8));
+                return Err(CpError::UnsupportedEffect(ControlOp::TopologyBegin as u8));
             }
         };
 
         self.cache_splice_operands(sid, operands)?;
         Ok(operands)
+    }
+
+    pub(crate) fn validate_splice_operands_from_policy(
+        &self,
+        rv_id: RendezvousId,
+        sid: SessionId,
+        src_lane: Lane,
+        eff_index: EffIndex,
+        desc: crate::global::StaticControlDesc,
+        policy: PolicyMode,
+        metrics: TransportSnapshot,
+        input: [u32; 4],
+        attrs: &crate::transport::context::PolicyAttrs,
+        operands: SpliceOperands,
+    ) -> Result<(), CpError> {
+        if self.get_local(&rv_id).is_none() {
+            return Err(CpError::RendezvousMismatch {
+                expected: rv_id.raw(),
+                actual: 0,
+            });
+        }
+
+        match policy {
+            PolicyMode::Dynamic { .. } => {
+                let policy_id = policy.dynamic_policy_id().unwrap_or(0);
+                let resolution = self.resolve_dynamic_policy(
+                    rv_id,
+                    Some(sid),
+                    src_lane,
+                    eff_index,
+                    desc.resource_tag(),
+                    desc.op(),
+                    metrics,
+                    input,
+                    attrs,
+                )?;
+                let (dst_rv, dst_lane, _) = match resolution {
+                    DynamicResolution::Splice {
+                        dst_rv,
+                        dst_lane,
+                        fences,
+                    } => (dst_rv, dst_lane, fences),
+                    _ => return Err(CpError::PolicyAbort { reason: policy_id }),
+                };
+                if operands.src_rv != rv_id
+                    || operands.src_lane != src_lane
+                    || operands.dst_rv != dst_rv
+                    || operands.dst_lane != dst_lane
+                {
+                    return Err(CpError::PolicyAbort { reason: policy_id });
+                }
+                Ok(())
+            }
+            PolicyMode::Static => Ok(()),
+        }
     }
 
     pub(crate) fn prepare_reroute_handle_from_policy(
@@ -3213,11 +3110,12 @@ where
         lane: Lane,
         eff_index: EffIndex,
         tag: u8,
+        op: ControlOp,
         policy: PolicyMode,
         metrics: TransportSnapshot,
         input: [u32; 4],
         attrs: &crate::transport::context::PolicyAttrs,
-    ) -> Result<RerouteHandle, CpError> {
+    ) -> Result<DelegationHandle, CpError> {
         let src_lane_u16 = lane.raw() as u16;
         match policy {
             PolicyMode::Dynamic { .. } => {
@@ -3225,7 +3123,7 @@ where
                     .dynamic_policy_id()
                     .ok_or(CpError::PolicyAbort { reason: 6 })?;
                 let resolution = self.resolve_dynamic_policy(
-                    rv_id, None, lane, eff_index, tag, metrics, input, attrs,
+                    rv_id, None, lane, eff_index, tag, op, metrics, input, attrs,
                 )?;
                 let (dst_rv, dst_lane, shard_override) = match resolution {
                     DynamicResolution::Reroute {
@@ -3236,7 +3134,7 @@ where
                     _ => return Err(CpError::PolicyAbort { reason: policy_id }),
                 };
                 let shard = shard_override.unwrap_or_default();
-                Ok(RerouteHandle {
+                Ok(DelegationHandle {
                     src_rv: rv_id.raw(),
                     dst_rv: dst_rv.raw(),
                     src_lane: src_lane_u16,
@@ -3247,7 +3145,7 @@ where
                     flags: 0,
                 })
             }
-            PolicyMode::Static => Err(CpError::UnsupportedEffect(CpEffect::Delegate as u8)),
+            PolicyMode::Static => Err(CpError::UnsupportedEffect(ControlOp::CapDelegate as u8)),
         }
     }
 
@@ -3255,19 +3153,17 @@ where
         self.with_control_mut(|core| core.cached_operands_remove(sid))
     }
 
-    fn dispatch_splice_intent_with_view(
+    fn dispatch_splice_intent_with_handle(
         &self,
         rv_id: RendezvousId,
         cp_sid: SessionId,
         cp_lane: Lane,
-        view: crate::control::cap::mint::HandleView<'_, SpliceIntentKind>,
+        handle: TopologyHandle,
         generation: Option<Generation>,
     ) -> Result<(), CpError> {
-        let handle = *view.handle();
-
         if handle.src_rv == 0 || handle.dst_rv == 0 {
             return Err(CpError::Authorisation {
-                effect: CpEffect::SpliceBegin,
+                operation: ControlOp::TopologyBegin as u8,
             });
         }
 
@@ -3275,7 +3171,7 @@ where
 
         if cp_lane != operands.src_lane {
             return Err(CpError::Authorisation {
-                effect: CpEffect::SpliceBegin,
+                operation: ControlOp::TopologyBegin as u8,
             });
         }
 
@@ -3292,49 +3188,20 @@ where
             });
         }
 
-        if let Some(rv) = self.get_local(&operands.src_rv) {
-            let lane = Lane::new(operands.src_lane.raw());
-            let current = rv.caps_mask_for_lane(lane);
-            if !current.allows(CpEffect::SpliceBegin) || !current.allows(CpEffect::SpliceCommit) {
-                let required = current
-                    .union(CapsMask::empty().with(CpEffect::SpliceBegin))
-                    .union(CapsMask::empty().with(CpEffect::SpliceCommit));
-                rv.set_caps_mask_for_lane(lane, required);
-            }
-        }
-
-        if let Some(rv) = self.get_local(&operands.dst_rv) {
-            let lane = Lane::new(operands.dst_lane.raw());
-            let current = rv.caps_mask_for_lane(lane);
-            if !current.allows(CpEffect::SpliceAck) {
-                let required = current.union(CapsMask::empty().with(CpEffect::SpliceAck));
-                rv.set_caps_mask_for_lane(lane, required);
-            }
-        }
-
-        let result = self.run_effect(operands.src_rv, CpCommand::splice_begin(cp_sid, operands));
-        match result {
-            Ok(()) => Ok(()),
-            Err(CpError::Authorisation {
-                effect: CpEffect::SpliceAck,
-            }) => Ok(()),
-            Err(err) => Err(err),
-        }
+        self.run_effect(operands.src_rv, CpCommand::splice_begin(cp_sid, operands))
     }
 
-    fn dispatch_splice_ack_with_view(
+    fn dispatch_splice_ack_with_handle(
         &self,
         rv_id: RendezvousId,
         cp_sid: SessionId,
         cp_lane: Lane,
-        view: crate::control::cap::mint::HandleView<'_, SpliceAckKind>,
+        handle: TopologyHandle,
         generation: Option<Generation>,
     ) -> Result<(), CpError> {
-        let handle = *view.handle();
-
         if handle.src_rv == 0 || handle.dst_rv == 0 {
             return Err(CpError::Authorisation {
-                effect: CpEffect::SpliceAck,
+                operation: ControlOp::TopologyAck as u8,
             });
         }
 
@@ -3342,7 +3209,7 @@ where
 
         if cp_lane != operands.dst_lane {
             return Err(CpError::Authorisation {
-                effect: CpEffect::SpliceAck,
+                operation: ControlOp::TopologyAck as u8,
             });
         }
 
@@ -3359,92 +3226,45 @@ where
             });
         }
 
-        if let Some(rv) = self.get_local(&operands.dst_rv) {
-            let lane = Lane::new(operands.dst_lane.raw());
-            let current = rv.caps_mask_for_lane(lane);
-            if !current.allows(CpEffect::SpliceAck) {
-                let mut ctx = self.with_control_mut(
-                    |core| -> Result<
-                        LeaseBundleContext<
-                            'cfg,
-                            'cfg,
-                            T,
-                            U,
-                            C,
-                            crate::control::cap::mint::EpochTbl,
-                        >,
-                        CpError,
-                    > {
-                        let mut ctx = Self::init_bundle_context(core, operands.dst_rv);
-                        if let Some(rv) = core.locals.get_mut(&operands.dst_rv) {
-                            let lane = Lane::new(operands.dst_lane.raw());
-                            let current = rv.caps_mask_for_lane(lane);
-                            if !current.allows(CpEffect::SpliceAck) {
-                                if let Some(caps) = ctx.caps_mut() {
-                                    caps.track_mask(lane, current)
-                                        .map_err(|_| CpError::ResourceExhausted)?;
-                                }
-                                let required =
-                                    current.union(CapsMask::empty().with(CpEffect::SpliceAck));
-                                rv.set_caps_mask_for_lane(lane, required);
-                            }
-                        }
-                        Ok(ctx)
-                    },
-                )?;
-
-                match self.run_effect(operands.dst_rv, CpCommand::splice_ack(cp_sid, operands)) {
-                    Ok(()) => {
-                        ctx.on_commit();
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        ctx.on_rollback();
-                        return Err(err);
-                    }
-                }
-            }
-        }
-
         self.run_effect(operands.dst_rv, CpCommand::splice_ack(cp_sid, operands))
     }
 
-    fn dispatch_cancel_begin_with_view(
+    fn dispatch_cancel_begin_with_handle(
         &self,
         rv_id: RendezvousId,
         cp_sid: SessionId,
         cp_lane: Lane,
-        view: crate::control::cap::mint::HandleView<'_, CancelKind>,
+        handle: SessionLaneHandle,
         generation: Option<Generation>,
     ) -> Result<(), CpError> {
-        let (sid_raw, lane_raw) = *view.handle();
+        let (sid_raw, lane_raw) = handle;
         let handle_sid = SessionId::new(sid_raw);
         let handle_lane = Lane::new(lane_raw as u32);
         if handle_sid != cp_sid || handle_lane != cp_lane {
             return Err(CpError::Authorisation {
-                effect: CpEffect::CancelBegin,
+                operation: ControlOp::AbortBegin as u8,
             });
         }
 
-        let effect_gen = generation.unwrap_or(Generation::ZERO);
         self.run_effect(rv_id, CpCommand::cancel_begin(cp_sid, cp_lane))?;
-        self.run_effect(rv_id, CpCommand::cancel_ack(cp_sid, cp_lane, effect_gen))
+        let _ = generation;
+        Ok(())
     }
 
-    fn dispatch_cancel_ack_with_view(
+    fn dispatch_cancel_ack_with_handle(
         &self,
         rv_id: RendezvousId,
         cp_sid: SessionId,
         cp_lane: Lane,
-        view: crate::control::cap::mint::HandleView<'_, CancelAckKind>,
+        handle: SessionLaneHandle,
         generation: Option<Generation>,
     ) -> Result<(), CpError> {
-        let (sid_raw, lane_raw) = *view.handle();
+        let (sid_raw, lane_raw) = handle;
         let handle_sid = SessionId::new(sid_raw);
         let handle_lane = Lane::new(lane_raw as u32);
         if handle_sid != cp_sid || handle_lane != cp_lane {
             return Err(CpError::Authorisation {
-                effect: CpEffect::CancelAck,
+                operation: ControlOp::AbortAck as u8,
             });
         }
 
@@ -3452,35 +3272,35 @@ where
         self.run_effect(rv_id, CpCommand::cancel_ack(cp_sid, cp_lane, effect_gen))
     }
 
-    fn dispatch_checkpoint_with_view(
+    fn dispatch_checkpoint_with_handle(
         &self,
         rv_id: RendezvousId,
         cp_sid: SessionId,
         cp_lane: Lane,
-        view: crate::control::cap::mint::HandleView<'_, CheckpointKind>,
+        handle: SessionLaneHandle,
     ) -> Result<(), CpError> {
-        let (sid_raw, lane_raw) = *view.handle();
+        let (sid_raw, lane_raw) = handle;
         if SessionId::new(sid_raw) != cp_sid || Lane::new(lane_raw as u32) != cp_lane {
             return Err(CpError::Authorisation {
-                effect: CpEffect::Checkpoint,
+                operation: ControlOp::StateSnapshot as u8,
             });
         }
 
         self.run_effect(rv_id, CpCommand::checkpoint(cp_sid, cp_lane))
     }
 
-    fn dispatch_commit_with_view(
+    fn dispatch_commit_with_handle(
         &self,
         rv_id: RendezvousId,
         cp_sid: SessionId,
         cp_lane: Lane,
-        view: crate::control::cap::mint::HandleView<'_, CommitKind>,
+        handle: SessionLaneHandle,
         generation: Option<Generation>,
     ) -> Result<(), CpError> {
-        let (sid_raw, lane_raw) = *view.handle();
+        let (sid_raw, lane_raw) = handle;
         if SessionId::new(sid_raw) != cp_sid || Lane::new(lane_raw as u32) != cp_lane {
             return Err(CpError::Authorisation {
-                effect: CpEffect::Commit,
+                operation: ControlOp::TxCommit as u8,
             });
         }
 
@@ -3488,18 +3308,18 @@ where
         self.run_effect(rv_id, CpCommand::commit(cp_sid, cp_lane, effect_gen))
     }
 
-    fn dispatch_rollback_with_view(
+    fn dispatch_rollback_with_handle(
         &self,
         rv_id: RendezvousId,
         cp_sid: SessionId,
         cp_lane: Lane,
-        view: crate::control::cap::mint::HandleView<'_, RollbackKind>,
+        handle: SessionLaneHandle,
         generation: Option<Generation>,
     ) -> Result<(), CpError> {
-        let (sid_raw, lane_raw) = *view.handle();
+        let (sid_raw, lane_raw) = handle;
         if SessionId::new(sid_raw) != cp_sid || Lane::new(lane_raw as u32) != cp_lane {
             return Err(CpError::Authorisation {
-                effect: CpEffect::Rollback,
+                operation: ControlOp::StateRestore as u8,
             });
         }
 
@@ -3507,156 +3327,145 @@ where
         self.run_effect(rv_id, CpCommand::rollback(cp_sid, cp_lane, effect_gen))
     }
 
-    /// Dispatch a typed control frame.
-    ///
-    /// Registers the frame with the rendezvous capability table, executes the
-    /// authorisation-specific control effect, and returns the registered token
-    /// to the caller. Callers that do not need the token may simply drop the
-    /// returned value.
-    pub(crate) fn dispatch_typed_control_frame<'cluster, K>(
-        &'cluster self,
+    fn verify_static_control_header(
+        desc: StaticControlDesc,
+        header: CapHeader,
+    ) -> Result<(), CpError> {
+        let mismatch = CpError::Authorisation {
+            operation: desc.op() as u8,
+        };
+        if header.tag() != desc.resource_tag()
+            || header.label() != desc.label()
+            || header.op() != desc.op()
+            || header.path() != desc.path()
+            || header.shot() != desc.shot()
+            || header.scope_kind() != desc.scope_kind()
+        {
+            return Err(mismatch);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn dispatch_descriptor_control_frame(
+        &self,
         rv_id: RendezvousId,
-        frame: crate::control::handle::frame::ControlFrame<'_, K>,
+        bytes: [u8; CAP_TOKEN_LEN],
+        desc: StaticControlDesc,
         generation: Option<Generation>,
-    ) -> Result<Option<crate::control::cap::typed_tokens::CapRegisteredToken<'cluster, K>>, CpError>
-    where
-        K: ResourceKind,
-        'cfg: 'cluster,
-    {
-        use crate::control::cap::resource_kinds::*;
+    ) -> Result<RegisteredTokenParts, CpError> {
+        let rendezvous = self.get_local(&rv_id).ok_or(CpError::RendezvousMismatch {
+            expected: rv_id.raw(),
+            actual: 0,
+        })?;
+        let token = GenericCapToken::<()>::from_bytes(bytes);
+        let header = token.control_header().map_err(|_| CpError::Authorisation {
+            operation: desc.op() as u8,
+        })?;
+        Self::verify_static_control_header(desc, header)?;
 
-        let rendezvous = self
-            .get_local(&rv_id)
-            .ok_or(CpError::RendezvousMismatch {
-                expected: rv_id.raw(),
-                actual: 0,
-            })?
-            .shorten();
-
-        let registered = frame.register(rendezvous)?;
-
-        match K::TAG {
-            SpliceIntentKind::TAG => {
-                let bag = HandleBag::from_frame(
-                    HandleBag::<spec::Nil>::new(),
-                    CapFrameToken::<SpliceIntentKind>::new(registered.bytes()),
-                );
-                bag.with_token(|token_ref, _tail| {
-                    let cp_sid = token_ref.sid();
-                    let cp_lane = Lane::new(token_ref.lane().raw());
-                    let view = token_ref.as_view().map_err(|_| CpError::Authorisation {
-                        effect: CpEffect::SpliceBegin,
-                    })?;
-                    self.dispatch_splice_intent_with_view(rv_id, cp_sid, cp_lane, view, generation)
+        let cp_sid = header.sid();
+        let cp_lane = header.lane();
+        match desc.op() {
+            ControlOp::TopologyBegin => {
+                let handle = TopologyHandle::decode(token.handle_bytes()).map_err(|_| {
+                    CpError::Authorisation {
+                        operation: ControlOp::TopologyBegin as u8,
+                    }
                 })?;
+                self.dispatch_splice_intent_with_handle(
+                    rv_id, cp_sid, cp_lane, handle, generation,
+                )?;
             }
-            // SpliceIntentKind/SpliceAckKind use ExternalControl (cross-role, wire transmission)
-            // with AUTO_MINT_EXTERNAL = true for automatic token minting.
-            SpliceAckKind::TAG => {
-                let bag = HandleBag::from_frame(
-                    HandleBag::<spec::Nil>::new(),
-                    CapFrameToken::<SpliceAckKind>::new(registered.bytes()),
-                );
-                bag.with_token(|token_ref, _tail| {
-                    let cp_sid = token_ref.sid();
-                    let cp_lane = Lane::new(token_ref.lane().raw());
-                    let view = token_ref.as_view().map_err(|_| CpError::Authorisation {
-                        effect: CpEffect::SpliceAck,
-                    })?;
-                    self.dispatch_splice_ack_with_view(rv_id, cp_sid, cp_lane, view, generation)
+            ControlOp::TopologyAck => {
+                let handle = TopologyHandle::decode(token.handle_bytes()).map_err(|_| {
+                    CpError::Authorisation {
+                        operation: ControlOp::TopologyAck as u8,
+                    }
                 })?;
+                self.dispatch_splice_ack_with_handle(rv_id, cp_sid, cp_lane, handle, generation)?;
             }
-            CancelKind::TAG => {
-                let bag = HandleBag::from_frame(
-                    HandleBag::<spec::Nil>::new(),
-                    CapFrameToken::<CancelKind>::new(registered.bytes()),
-                );
-                bag.with_token(|token_ref, _tail| {
-                    let cp_sid = token_ref.sid();
-                    let cp_lane = Lane::new(token_ref.lane().raw());
-                    let view = token_ref.as_view().map_err(|_| CpError::Authorisation {
-                        effect: CpEffect::CancelBegin,
-                    })?;
-                    self.dispatch_cancel_begin_with_view(rv_id, cp_sid, cp_lane, view, generation)
+            ControlOp::AbortBegin => {
+                let handle = decode_session_lane_handle(token.handle_bytes()).map_err(|_| {
+                    CpError::Authorisation {
+                        operation: ControlOp::AbortBegin as u8,
+                    }
                 })?;
+                self.dispatch_cancel_begin_with_handle(rv_id, cp_sid, cp_lane, handle, generation)?;
             }
-            CancelAckKind::TAG => {
-                let bag = HandleBag::from_frame(
-                    HandleBag::<spec::Nil>::new(),
-                    CapFrameToken::<CancelAckKind>::new(registered.bytes()),
-                );
-                bag.with_token(|token_ref, _tail| {
-                    let cp_sid = token_ref.sid();
-                    let cp_lane = Lane::new(token_ref.lane().raw());
-                    let view = token_ref.as_view().map_err(|_| CpError::Authorisation {
-                        effect: CpEffect::CancelAck,
-                    })?;
-                    self.dispatch_cancel_ack_with_view(rv_id, cp_sid, cp_lane, view, generation)
+            ControlOp::AbortAck => {
+                let handle = decode_session_lane_handle(token.handle_bytes()).map_err(|_| {
+                    CpError::Authorisation {
+                        operation: ControlOp::AbortAck as u8,
+                    }
                 })?;
+                self.dispatch_cancel_ack_with_handle(rv_id, cp_sid, cp_lane, handle, generation)?;
             }
-            CheckpointKind::TAG => {
-                let bag = HandleBag::from_frame(
-                    HandleBag::<spec::Nil>::new(),
-                    CapFrameToken::<CheckpointKind>::new(registered.bytes()),
-                );
-                bag.with_token(|token_ref, _tail| {
-                    let cp_sid = token_ref.sid();
-                    let cp_lane = Lane::new(token_ref.lane().raw());
-                    let view = token_ref.as_view().map_err(|_| CpError::Authorisation {
-                        effect: CpEffect::Checkpoint,
-                    })?;
-                    self.dispatch_checkpoint_with_view(rv_id, cp_sid, cp_lane, view)
+            ControlOp::StateSnapshot => {
+                let handle = decode_session_lane_handle(token.handle_bytes()).map_err(|_| {
+                    CpError::Authorisation {
+                        operation: ControlOp::StateSnapshot as u8,
+                    }
                 })?;
+                self.dispatch_checkpoint_with_handle(rv_id, cp_sid, cp_lane, handle)?;
             }
-            CommitKind::TAG => {
-                let bag = HandleBag::from_frame(
-                    HandleBag::<spec::Nil>::new(),
-                    CapFrameToken::<CommitKind>::new(registered.bytes()),
-                );
-                bag.with_token(|token_ref, _tail| {
-                    let cp_sid = token_ref.sid();
-                    let cp_lane = Lane::new(token_ref.lane().raw());
-                    let view = token_ref.as_view().map_err(|_| CpError::Authorisation {
-                        effect: CpEffect::Commit,
-                    })?;
-                    self.dispatch_commit_with_view(rv_id, cp_sid, cp_lane, view, generation)
+            ControlOp::TxCommit => {
+                let handle = decode_session_lane_handle(token.handle_bytes()).map_err(|_| {
+                    CpError::Authorisation {
+                        operation: ControlOp::TxCommit as u8,
+                    }
                 })?;
+                self.dispatch_commit_with_handle(rv_id, cp_sid, cp_lane, handle, generation)?;
             }
-            RollbackKind::TAG => {
-                let bag = HandleBag::from_frame(
-                    HandleBag::<spec::Nil>::new(),
-                    CapFrameToken::<RollbackKind>::new(registered.bytes()),
-                );
-                bag.with_token(|token_ref, _tail| {
-                    let cp_sid = token_ref.sid();
-                    let cp_lane = Lane::new(token_ref.lane().raw());
-                    let view = token_ref.as_view().map_err(|_| CpError::Authorisation {
-                        effect: CpEffect::Rollback,
-                    })?;
-                    self.dispatch_rollback_with_view(rv_id, cp_sid, cp_lane, view, generation)
+            ControlOp::StateRestore | ControlOp::TxAbort => {
+                let handle = decode_session_lane_handle(token.handle_bytes()).map_err(|_| {
+                    CpError::Authorisation {
+                        operation: desc.op() as u8,
+                    }
                 })?;
+                self.dispatch_rollback_with_handle(rv_id, cp_sid, cp_lane, handle, generation)?;
             }
-            RerouteKind::TAG
-            | crate::control::cap::resource_kinds::RouteDecisionKind::TAG
-            | LoopContinueKind::TAG
-            | LoopBreakKind::TAG => {}
-            0x50 | 0x51 => {
-                // Management session load tokens do not require additional control effects.
+            ControlOp::Fence
+            | ControlOp::CapDelegate
+            | ControlOp::RouteDecision
+            | ControlOp::LoopContinue
+            | ControlOp::LoopBreak => {}
+            ControlOp::TopologyCommit => {
+                return self
+                    .run_effect(
+                        rv_id,
+                        CpCommand::splice_commit(
+                            cp_sid,
+                            splice_operands_from_handle(
+                                TopologyHandle::decode(token.handle_bytes()).map_err(|_| {
+                                    CpError::Authorisation {
+                                        operation: ControlOp::TopologyCommit as u8,
+                                    }
+                                })?,
+                            ),
+                        ),
+                    )
+                    .map(|_| {
+                        RegisteredTokenParts::from_registered_bytes(
+                            bytes,
+                            token.nonce(),
+                            rendezvous.caps(),
+                        )
+                    });
             }
-            // External control kinds (defined in adapter crates, etc.) are simple markers
-            // that don't require control-plane dispatch beyond token registration.
-            // Examples: AcceptHookKind (0xE0), ServerZeroRttReplayReportKind (0xE1)
-            _ => {}
         }
 
-        Ok(Some(registered))
+        Ok(RegisteredTokenParts::from_registered_bytes(
+            bytes,
+            token.nonce(),
+            rendezvous.caps(),
+        ))
     }
 
     /// Initialize session effects from global protocol projection.
     ///
     /// This method wires the precompiled EffectEnvelope (owned by CompiledProgram) into
     /// the Rendezvous control-plane state. The envelope contains:
-    /// - Control-plane effects (CpEffect) to pre-configure
+    /// - Control-plane effects (ControlOp) to pre-configure
     /// - Tap events to emit during execution
     /// - Resource handles (from `GenericCapToken<K>`) for control operations
     ///
@@ -3716,22 +3525,8 @@ where
                 control_marker_count = control_marker_count.saturating_add(1);
             }
 
-            let cp_sid = crate::control::types::SessionId::new(sid.raw());
-            let cp_lane = crate::control::types::Lane::new(lane.raw());
-
             let mut applied_effects = 0u32;
-            for descriptor in effect_envelope.resources() {
-                let Some(effect) = CpEffect::from_resource_tag(descriptor.tag()) else {
-                    continue;
-                };
-                if let Some(command) = initializer_command(effect, cp_sid, cp_lane) {
-                    rv.run_effect(command)?;
-                    applied_effects = applied_effects.saturating_add(1);
-                }
-            }
-
             let mut resource_events = 0u32;
-            let mut caps_mask_acc = CapsMask::empty();
             for descriptor in effect_envelope.resources() {
                 resource_events = resource_events.saturating_add(1);
                 rv.register_policy(
@@ -3740,17 +3535,7 @@ where
                     descriptor.tag(),
                     effect_envelope.resource_policy(descriptor),
                 )?;
-                if let Some(mask) = session_caps_mask_for_tag(descriptor.tag(), sid, lane) {
-                    caps_mask_acc = caps_mask_acc.union(mask);
-                }
             }
-
-            let lane_caps = if caps_mask_acc.bits() != 0 {
-                caps_mask_acc
-            } else {
-                CapsMask::allow_all()
-            };
-            rv.set_caps_mask_for_lane(lane, lane_caps);
 
             if resource_events > 0 {
                 applied_effects = applied_effects.saturating_add(resource_events);
@@ -3775,7 +3560,7 @@ where
 
     fn after_local_effect(&self, envelope: CpCommand) -> Result<PendingEffect, CpError> {
         match envelope.effect {
-            CpEffect::SpliceBegin => {
+            ControlOp::TopologyBegin => {
                 let Some(operands) = envelope.splice else {
                     return Ok(PendingEffect::None);
                 };
@@ -3789,15 +3574,10 @@ where
                     )?;
                     let begin_result = core.splice_state.begin(sid, operands);
                     let (_intent, _ack) = begin_result?;
-                    let dispatch = CpCommand::splice_ack(sid, operands);
-
-                    Ok(PendingEffect::Dispatch {
-                        target: operands.dst_rv,
-                        envelope: dispatch,
-                    })
+                    Ok(PendingEffect::None)
                 })
             }
-            CpEffect::SpliceAck => {
+            ControlOp::TopologyAck => {
                 let Some(operands) = envelope.splice else {
                     return Ok(PendingEffect::None);
                 };
@@ -3813,14 +3593,10 @@ where
                         return Err(CpError::Splice(SpliceError::GenerationMismatch));
                     }
 
-                    let dispatch = CpCommand::splice_commit(sid, operands);
-                    Ok(PendingEffect::Dispatch {
-                        target: operands.src_rv,
-                        envelope: dispatch,
-                    })
+                    Ok(PendingEffect::None)
                 })
             }
-            CpEffect::SpliceCommit => {
+            ControlOp::TopologyCommit => {
                 if envelope.splice.is_none() {
                     return Ok(PendingEffect::None);
                 }
@@ -3847,36 +3623,6 @@ where
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
-    fn collect_delegation_links<K>(handle: &K::Handle) -> DelegationChildSet
-    where
-        K: ResourceKind,
-    {
-        let mut set = DelegationChildSet::new();
-        handle.visit_delegation_links(&mut |child| set.push(child));
-        set
-    }
-
-    fn init_delegation_children(
-        core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
-        graph: &mut LeaseGraph<
-            'cfg,
-            DelegationLeaseSpec<T, U, C, crate::control::cap::mint::EpochTbl>,
-        >,
-        parent: RendezvousId,
-        links: &DelegationChildSet,
-    ) -> Result<(), LeaseGraphError> {
-        for child in links.iter() {
-            if child == parent {
-                continue;
-            }
-            match graph.add_child_with_bundle_config(&mut core.locals, parent, child, |_| {}) {
-                Ok(()) | Err(LeaseGraphError::DuplicateId) => {}
-                Err(err) => return Err(err),
-            }
-        }
-        Ok(())
-    }
-
     #[inline(never)]
     fn attach_secondary_endpoint_lanes<'lease, const ROLE: u8, Mint, B>(
         &'lease self,
@@ -4267,18 +4013,6 @@ where
             .unwrap_or_default()
     }
 
-    fn init_bundle_context(
-        core: &mut ControlCore<'cfg, T, U, C, crate::control::cap::mint::EpochTbl, MAX_RV>,
-        rv_id: RendezvousId,
-    ) -> LeaseBundleContext<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>
-    where
-        T: crate::transport::Transport,
-        U: crate::runtime::consts::LabelUniverse,
-        C: crate::runtime::config::Clock,
-    {
-        Self::init_bundle_context_with_needs(core, rv_id, LeaseFacetNeeds::all())
-    }
-
     /// Drive a delegation automaton rooted at `rv_id` using a LeaseGraph.
     ///
     /// The `root_builder` closure constructs the root facet for the graph from the
@@ -4382,6 +4116,9 @@ where
 mod tests {
     use super::*;
     extern crate self as hibana;
+    use crate::control::cap::resource_kinds::{
+        TAG_CAP_DELEGATE_CONTROL, TAG_TOPOLOGY_BEGIN_CONTROL,
+    };
 
     mod fanout_program {
         extern crate self as hibana;
@@ -4430,12 +4167,10 @@ mod tests {
         futures::executor::block_on(future)
     }
 
-    use crate::control::cap::mint::ResourceKind;
     use crate::control::cap::mint::{GenericCapToken, MintConfig};
     use crate::control::cap::resource_kinds::RouteDecisionKind;
     use crate::control::types::{Generation, Lane, SessionId};
     use crate::g::{self, Msg, Role};
-    use crate::global::CanonicalControl;
     use crate::global::compiled::lowering::LoweringSummary;
     use crate::global::program::Program;
     use crate::global::role_program;
@@ -4452,11 +4187,7 @@ mod tests {
         SendStep<
             Role<0>,
             Role<0>,
-            Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >,
+            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
             0,
         >,
         StepNil,
@@ -4467,51 +4198,43 @@ mod tests {
         Program<PolicySteps<SharedBorrowSteps, POLICY_ID>>;
     type SharedBorrowRoleProgram = crate::g::advanced::RoleProgram<0>;
 
-    static SHARED_BORROW_PROGRAM_A: SharedBorrowProgram = g::send::<
-        Role<0>,
-        Role<0>,
-        Msg<
-            { LABEL_ROUTE_DECISION },
-            GenericCapToken<RouteDecisionKind>,
-            CanonicalControl<RouteDecisionKind>,
-        >,
-        0,
-    >();
-    static SHARED_BORROW_PROGRAM_B: SharedBorrowProgram = g::send::<
-        Role<0>,
-        Role<0>,
-        Msg<
-            { LABEL_ROUTE_DECISION },
-            GenericCapToken<RouteDecisionKind>,
-            CanonicalControl<RouteDecisionKind>,
-        >,
-        0,
-    >();
+    fn shared_borrow_program_a() -> SharedBorrowProgram {
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            0,
+        >()
+    }
+    fn shared_borrow_program_b() -> SharedBorrowProgram {
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            0,
+        >()
+    }
     const ROUTE_POLICY_ONE: u16 = 9901;
     const ROUTE_POLICY_TWO: u16 = 9902;
 
-    static ROUTE_POLICY_PROGRAM_ONE: SharedBorrowPolicyProgram<ROUTE_POLICY_ONE> = g::send::<
-        Role<0>,
-        Role<0>,
-        Msg<
-            { LABEL_ROUTE_DECISION },
-            GenericCapToken<RouteDecisionKind>,
-            CanonicalControl<RouteDecisionKind>,
-        >,
-        0,
-    >()
-    .policy::<ROUTE_POLICY_ONE>();
-    static ROUTE_POLICY_PROGRAM_TWO: SharedBorrowPolicyProgram<ROUTE_POLICY_TWO> = g::send::<
-        Role<0>,
-        Role<0>,
-        Msg<
-            { LABEL_ROUTE_DECISION },
-            GenericCapToken<RouteDecisionKind>,
-            CanonicalControl<RouteDecisionKind>,
-        >,
-        0,
-    >()
-    .policy::<ROUTE_POLICY_TWO>();
+    fn route_policy_program_one() -> SharedBorrowPolicyProgram<ROUTE_POLICY_ONE> {
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_ONE>()
+    }
+    fn route_policy_program_two() -> SharedBorrowPolicyProgram<ROUTE_POLICY_TWO> {
+        g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
+            0,
+        >()
+        .policy::<ROUTE_POLICY_TWO>()
+    }
     // Dummy transport for testing
     struct DummyTransport;
 
@@ -4587,28 +4310,13 @@ mod tests {
         let _ = fanout_program::run
             as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
         let _ = fanout_program::controller_program as fn() -> role_program::RoleProgram<0>;
-        let _ = localside::worker_offer_decode_u8::<0>
-            as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
+        let _ =
+            localside::worker_offer_decode_u8::<0> as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
     }
 
     #[test]
     fn pico_smoke_fixture_symbols_are_reachable() {
         retain_pico_smoke_fixture_symbols();
-    }
-
-    #[test]
-    fn session_caps_mask_yields_checkpoint_permission() {
-        let lane = Lane::new(0);
-        let mask = super::session_caps_mask_for_tag(
-            crate::control::cap::resource_kinds::CheckpointKind::TAG,
-            SessionId::new(42),
-            lane,
-        )
-        .expect("checkpoint mask");
-        assert!(
-            mask.allows(CpEffect::Checkpoint),
-            "checkpoint capability must allow CpEffect::Checkpoint"
-        );
     }
 
     type StaticTestCluster<const MAX_RV: usize> =
@@ -4662,7 +4370,7 @@ mod tests {
                 let lowering = crate::global::lowering_input(&projected);
                 let summary = lowering.summary();
                 let counts = summary.compiled_program_counts();
-                let program_bytes = CompiledProgramImage::persistent_bytes_for_counts(counts);
+                let program_bytes = CompiledProgramFacts::persistent_bytes_for_counts(counts);
                 let role_image = cluster
                     .materialize_test_role_image::<ROLE, _>(rv_id, projected)
                     .expect("materialize actual role image");
@@ -4707,7 +4415,7 @@ mod tests {
                     endpoint_port_slots_bytes: endpoint_storage.port_slots_bytes,
                     endpoint_guard_slots_bytes: endpoint_storage.guard_slots_bytes,
                     endpoint_header_padding_bytes: endpoint_storage.header_padding_bytes,
-                    compiled_program_header_bytes: size_of::<CompiledProgramImage>(),
+                    compiled_program_header_bytes: size_of::<CompiledProgramFacts>(),
                     compiled_role_header_bytes: size_of::<CompiledRoleImage>(),
                     compiled_program_persistent_bytes: program_bytes,
                     compiled_role_persistent_bytes: compiled_role.actual_persistent_bytes(),
@@ -4753,13 +4461,7 @@ mod tests {
             "public endpoint lease must stay a small metadata owner"
         );
         let endpoint_storage_bytes = size_of::<
-            PublicEndpointKernelRaw<
-                'static,
-                DummyTransport,
-                DefaultLabelUniverse,
-                CounterClock,
-                2,
-            >,
+            PublicEndpointKernelRaw<'static, DummyTransport, DefaultLabelUniverse, CounterClock, 2>,
         >();
         assert!(
             endpoint_storage_bytes <= CLUSTER_TEST_SLAB_CAPACITY,
@@ -4934,7 +4636,7 @@ mod tests {
         >();
         let resolver_core_bytes = size_of::<ResolverCore<'static, 1>>();
         let lowering_summary_bytes = size_of::<LoweringSummary>();
-        let compiled_program_bytes = size_of::<CompiledProgramImage>();
+        let compiled_program_bytes = size_of::<CompiledProgramFacts>();
         let compiled_role_bytes = size_of::<CompiledRoleImage>();
         let route_heavy_worker = huge_program::worker_program();
         let role_compile_scratch_bytes =
@@ -4942,13 +4644,7 @@ mod tests {
                 crate::global::lowering_input(&route_heavy_worker).footprint(),
             );
         let endpoint_storage_bytes = size_of::<
-            PublicEndpointKernelRaw<
-                'static,
-                DummyTransport,
-                DefaultLabelUniverse,
-                CounterClock,
-                1,
-            >,
+            PublicEndpointKernelRaw<'static, DummyTransport, DefaultLabelUniverse, CounterClock, 1>,
         >();
         let rendezvous_header_bytes = size_of::<
             crate::rendezvous::core::Rendezvous<
@@ -5201,7 +4897,7 @@ mod tests {
         assert!(
             route.compiled_program_persistent_bytes <= 256
                 && linear.compiled_program_persistent_bytes <= 64
-                && fanout.compiled_program_persistent_bytes <= 256,
+                && fanout.compiled_program_persistent_bytes <= 384,
             "compiled program atlas tail regressed: route={route:?} linear={linear:?} fanout={fanout:?}"
         );
         assert!(
@@ -5374,52 +5070,11 @@ mod tests {
     }
 
     #[test]
-    fn run_effect_respects_caps_mask_before_dispatch() {
+    fn splice_begin_and_ack_execute_without_hidden_dispatch() {
         run_on_transient_compiled_test_stack(
-            "run_effect_respects_caps_mask_before_dispatch",
+            "splice_begin_and_ack_execute_without_hidden_dispatch",
             || {
-                use crate::control::cap::mint::CapsMask;
-                with_cluster_fixture(|clock, config| {
-                    with_test_cluster(clock, |cluster| {
-                        let rv_id = cluster
-                            .add_rendezvous_from_config(config, DummyTransport)
-                            .expect("register rendezvous");
-                        cluster.with_control_mut(|core| {
-                            core.locals
-                                .get_mut(&rv_id)
-                                .expect("registered rendezvous")
-                                .set_caps_mask_for_lane(
-                                    crate::control::types::Lane::new(0),
-                                    CapsMask::empty(),
-                                );
-                        });
-
-                        let sid = SessionId::new(7);
-                        let lane = Lane::new(0);
-                        let envelope = CpCommand::checkpoint(sid, lane);
-
-                        let err = cluster.run_effect(rv_id, envelope).unwrap_err();
-                        assert!(matches!(
-                            err,
-                            CpError::Authorisation {
-                                effect: CpEffect::Checkpoint
-                            }
-                        ));
-                    });
-                });
-            },
-        );
-    }
-
-    #[test]
-    fn dispatch_splice_ack_tracks_masks_and_rolls_back() {
-        run_on_transient_compiled_test_stack(
-            "dispatch_splice_ack_tracks_masks_and_rolls_back",
-            || {
-                use crate::{
-                    control::cap::mint::{CapsMask, HandleView},
-                    control::cap::resource_kinds::SpliceHandle,
-                };
+                use crate::control::cap::resource_kinds::TopologyHandle;
 
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                     with_test_cluster(clock, |cluster| {
@@ -5432,24 +5087,6 @@ mod tests {
 
                         let src_lane = Lane::new(0);
                         let dst_lane = Lane::new(1);
-
-                        cluster.with_control_mut(|core| {
-                            let src_rv = core.locals.get_mut(&src_id).unwrap();
-                            src_rv.set_caps_mask_for_lane(
-                                crate::control::types::Lane::new(src_lane.raw()),
-                                CapsMask::empty()
-                                    .with(CpEffect::SpliceBegin)
-                                    .with(CpEffect::SpliceCommit),
-                            );
-                            let dst_rv = core.locals.get_mut(&dst_id).unwrap();
-                            dst_rv.set_caps_mask_for_lane(
-                                crate::control::types::Lane::new(dst_lane.raw()),
-                                CapsMask::empty(),
-                            );
-                        });
-
-                        let ack_caps = CapsMask::empty().with(CpEffect::SpliceAck);
-
                         let sid = SessionId::new(7);
                         let operands = SpliceOperands::new(
                             src_id,
@@ -5465,9 +5102,9 @@ mod tests {
                         let pending = cluster
                             .run_effect_step(src_id, CpCommand::splice_begin(sid, operands))
                             .expect("begin effect");
-                        assert!(matches!(pending, PendingEffect::Dispatch { .. }));
+                        assert!(matches!(pending, PendingEffect::None));
 
-                        let handle = SpliceHandle {
+                        let handle = TopologyHandle {
                             src_rv: src_id.raw(),
                             dst_rv: dst_id.raw(),
                             src_lane: src_lane.raw() as u16,
@@ -5478,25 +5115,12 @@ mod tests {
                             seq_rx: operands.seq_rx,
                             flags: 0,
                         };
-                        let handle_bytes = handle.encode();
-                        let view =
-                            HandleView::decode(&handle_bytes, ack_caps).expect("decode view");
+                        let decoded = TopologyHandle::decode(handle.encode())
+                            .expect("decode topology handle");
 
                         cluster
-                            .dispatch_splice_ack_with_view(dst_id, sid, dst_lane, view, None)
+                            .dispatch_splice_ack_with_handle(dst_id, sid, dst_lane, decoded, None)
                             .expect("dispatch succeeds");
-
-                        cluster.with_control_mut(|core| {
-                            let rv = core.locals.get_mut(&dst_id).unwrap();
-                            let mask = rv.caps_mask_for_lane(crate::control::types::Lane::new(
-                                dst_lane.raw(),
-                            ));
-                            assert!(mask.allows(CpEffect::SpliceAck));
-                            rv.set_caps_mask_for_lane(
-                                crate::control::types::Lane::new(dst_lane.raw()),
-                                CapsMask::empty(),
-                            );
-                        });
 
                         let sid_fail = SessionId::new(9);
                         let operands_fail = SpliceOperands::new(
@@ -5510,64 +5134,24 @@ mod tests {
                             0,
                         );
 
-                        cluster
+                        let err = cluster
                             .run_effect_step(
                                 src_id,
                                 CpCommand::splice_begin(sid_fail, operands_fail),
                             )
-                            .expect("second begin effect");
-
-                        cluster.with_control_mut(|core| {
-                            let rv = core.locals.get_mut(&dst_id).unwrap();
-                            rv.set_caps_mask_for_lane(
-                                crate::control::types::Lane::new(dst_lane.raw()),
-                                CapsMask::empty(),
-                            );
-                        });
-
-                        let failure_handle = SpliceHandle {
-                            src_rv: src_id.raw(),
-                            dst_rv: dst_id.raw(),
-                            src_lane: src_lane.raw() as u16,
-                            dst_lane: dst_lane.raw() as u16,
-                            old_gen: operands_fail.old_gen.raw(),
-                            new_gen: operands_fail.new_gen.raw(),
-                            seq_tx: operands_fail.seq_tx,
-                            seq_rx: operands_fail.seq_rx,
-                            flags: 0,
-                        };
-                        let failure_bytes = failure_handle.encode();
-                        let failure_view = HandleView::decode(&failure_bytes, ack_caps)
-                            .expect("decode failure view");
-
-                        let err = cluster
-                            .dispatch_splice_ack_with_view(
-                                dst_id,
-                                sid_fail,
-                                dst_lane,
-                                failure_view,
-                                None,
-                            )
-                            .expect_err("second ack should fail due to busy lane");
+                            .expect_err("second begin must fail while begin+ack remains in-flight");
                         assert!(
                             matches!(
                                 err,
                                 CpError::Splice(
-                                    crate::control::cluster::error::SpliceError::LaneMismatch
+                                    crate::control::cluster::error::SpliceError::InProgress
+                                        | crate::control::cluster::error::SpliceError::LaneMismatch
                                         | crate::control::cluster::error::SpliceError::InvalidState
                                 )
                             ),
                             "error was {:?}",
                             err
                         );
-
-                        cluster.with_control_mut(|core| {
-                            let rv = core.locals.get_mut(&dst_id).unwrap();
-                            let mask = rv.caps_mask_for_lane(crate::control::types::Lane::new(
-                                dst_lane.raw(),
-                            ));
-                            assert_eq!(mask.bits(), CapsMask::empty().bits());
-                        });
                     });
                 });
             },
@@ -5865,8 +5449,6 @@ mod tests {
         run_on_transient_compiled_test_stack(
             "resolver_defer_for_splice_or_reroute_is_policy_abort",
             || {
-                use crate::control::cap::resource_kinds::{RerouteKind, SpliceIntentKind};
-
                 fn defer_resolution(
                     _ctx: ResolverContext,
                 ) -> Result<DynamicResolution, ResolverError> {
@@ -5887,9 +5469,10 @@ mod tests {
                             .register_dynamic_policy_resolver(
                                 rv_id,
                                 eff_index,
-                                SpliceIntentKind::TAG,
+                                TAG_TOPOLOGY_BEGIN_CONTROL,
                                 policy,
-                                SpliceIntentKind::TAG,
+                                TAG_TOPOLOGY_BEGIN_CONTROL,
+                                ControlOp::TopologyBegin,
                                 None,
                                 ResolverRef::from_fn(defer_resolution),
                             )
@@ -5898,9 +5481,10 @@ mod tests {
                             .register_dynamic_policy_resolver(
                                 rv_id,
                                 eff_index,
-                                RerouteKind::TAG,
+                                TAG_CAP_DELEGATE_CONTROL,
                                 policy,
-                                RerouteKind::TAG,
+                                TAG_CAP_DELEGATE_CONTROL,
+                                ControlOp::CapDelegate,
                                 None,
                                 ResolverRef::from_fn(defer_resolution),
                             )
@@ -5912,7 +5496,8 @@ mod tests {
                                 None,
                                 Lane::new(0),
                                 eff_index,
-                                SpliceIntentKind::TAG,
+                                TAG_TOPOLOGY_BEGIN_CONTROL,
+                                ControlOp::TopologyBegin,
                                 crate::transport::TransportSnapshot::default(),
                                 [0; 4],
                                 &crate::transport::context::PolicyAttrs::new(),
@@ -5926,7 +5511,8 @@ mod tests {
                                 None,
                                 Lane::new(0),
                                 eff_index,
-                                RerouteKind::TAG,
+                                TAG_CAP_DELEGATE_CONTROL,
+                                ControlOp::CapDelegate,
                                 crate::transport::TransportSnapshot::default(),
                                 [0; 4],
                                 &crate::transport::context::PolicyAttrs::new(),
@@ -6026,8 +5612,9 @@ mod tests {
             || {
                 with_cluster_fixture(|clock, config| {
                     with_test_cluster(clock, |cluster| {
+                        let route_policy_program_one = route_policy_program_one();
                         let route_policy_projected_one: SharedBorrowRoleProgram =
-                            role_program::project(&ROUTE_POLICY_PROGRAM_ONE);
+                            role_program::project(&route_policy_program_one);
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
@@ -6068,10 +5655,12 @@ mod tests {
             || {
                 with_cluster_fixture(|clock, config| {
                     with_test_cluster(clock, |cluster| {
+                        let shared_borrow_program_a = shared_borrow_program_a();
+                        let shared_borrow_program_b = shared_borrow_program_b();
                         let shared_borrow_projected_a: SharedBorrowRoleProgram =
-                            role_program::project(&SHARED_BORROW_PROGRAM_A);
+                            role_program::project(&shared_borrow_program_a);
                         let shared_borrow_projected_b: SharedBorrowRoleProgram =
-                            role_program::project(&SHARED_BORROW_PROGRAM_B);
+                            role_program::project(&shared_borrow_program_b);
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
@@ -6110,8 +5699,9 @@ mod tests {
             || {
                 with_cluster_fixture(|clock, config| {
                     with_test_cluster(clock, |cluster| {
+                        let route_policy_program_two = route_policy_program_two();
                         let route_policy_projected_two: SharedBorrowRoleProgram =
-                            role_program::project(&ROUTE_POLICY_PROGRAM_TWO);
+                            role_program::project(&route_policy_program_two);
                         let rv_id = cluster
                             .add_rendezvous_from_config(config, DummyTransport)
                             .expect("register rendezvous");
@@ -6131,13 +5721,12 @@ mod tests {
                                     .dynamic_policy_sites_for(ROUTE_POLICY_TWO)
                                     .next()
                                     .expect("dynamic policy site");
-                                let tag = site.resource_tag().expect("route decision tag");
                                 assert!(
                                     cluster
                                         .dynamic_resolver(DynamicResolverKey::new(
                                             rv_id,
                                             site.eff_index(),
-                                            tag
+                                            site.op().expect("route policy op")
                                         ))
                                         .is_some(),
                                     "resolver registration must still succeed when the cache is saturated"

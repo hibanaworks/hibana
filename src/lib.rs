@@ -112,12 +112,12 @@ mod binding;
 
 mod eff;
 
-/// Rendezvous (internal state machine, evaluates CpEffect)
+/// Rendezvous (internal state machine, evaluates ControlOp)
 ///
 /// **INTERNAL IMPLEMENTATION - DO NOT USE DIRECTLY**
 ///
 /// This module contains the internal implementation of the Rendezvous state machine.
-/// It evaluates `CpEffect` operations and manages local state (lane/gen/cap/splice).
+/// It evaluates `ControlOp` operations and manages local state (lane/gen/cap/splice).
 ///
 /// **For application code**, use:
 /// - [`Endpoint`] for localside choreography execution

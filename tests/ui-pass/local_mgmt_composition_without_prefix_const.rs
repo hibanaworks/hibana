@@ -1,4 +1,4 @@
-use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
+use hibana::g::advanced::{RoleProgram, project};
 use hibana::g::{self};
 use hibana::substrate::cap::GenericCapToken;
 use hibana::substrate::cap::advanced::LoopContinueKind;
@@ -9,7 +9,7 @@ fn main() {
             g::send::<
                 g::Role<0>,
                 g::Role<0>,
-                g::Msg<48, GenericCapToken<LoopContinueKind>, CanonicalControl<LoopContinueKind>>,
+                g::Msg<48, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
                 0,
             >(),
             g::send::<g::Role<0>, g::Role<1>, g::Msg<44, ()>, 0>(),

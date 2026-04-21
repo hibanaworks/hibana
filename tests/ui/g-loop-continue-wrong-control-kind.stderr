@@ -1,40 +1,34 @@
-error[E0080]: evaluation panicked: control handling mismatch
- --> src/global.rs
-  |
-  |         ControlLabelSpec::from_message::<L, K>(ControlHandling::External);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::global::Message<hibana::global::LabelMarker<48>, hibana::substrate::cap::GenericCapToken<hibana::substrate::cap::advanced::LoopContinueKind>, hibana::g::advanced::ExternalControl<hibana::substrate::cap::advanced::LoopContinueKind>> as hibana::global::MessageControlSpec>::CONTROL_SPEC` failed inside this call
-  |
-note: inside `hibana::global::ControlLabelSpec::from_message::<hibana::global::LabelMarker<48>, LoopContinueKind>`
+error[E0080]: evaluation panicked: local control messages require self-send
  --> $RUST/core/src/panic.rs
   |
   |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::send::<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<48>, hibana::substrate::cap::GenericCapToken<hibana::substrate::cap::advanced::LoopContinueKind>, hibana::substrate::cap::advanced::LoopContinueKind>, 0>::{constant#0}` failed here
   |
  ::: src/global.rs
   |
-  |             panic!("control handling mismatch");
-  |             ----------------------------------- in this macro invocation
+  |                     panic!("local control messages require self-send")
+  |                     -------------------------------------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global.rs
   |
-  |         LoopControlMeaning::from_control_spec(Some(<Msg as MessageControlSpec>::CONTROL_SPEC))
-  |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | /     const {
+  | |         crate::global::validate_sendable_message::<M>();
+  | |         if <M as MessageControlSpec>::IS_CONTROL {
+  | |             let is_self_send = <<From as steps::RoleEq<To>>::Output as steps::Bool>::VALUE;
+... |
+  | |     }
+  | |_____^
 
-note: erroneous constant encountered
- --> src/global/program.rs
-  |
-  |         <StepCons<SendStep<From, To, Msg, LANE>, StepNil> as TailLoopControl>::IS_LOOP_CONTROL,
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-note: erroneous constant encountered
- --> src/global/program.rs
-  |
-  |         let _ = <Steps as BuildProgramSource>::SOURCE.scope_budget();
-  |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-note: the above error was encountered while instantiating `fn Program::<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<48>, GenericCapToken<LoopContinueKind>, ExternalControl<LoopContinueKind>>>, hibana::global::steps::StepNil>>::build`
- --> src/global.rs
-  |
-  |     Program::build()
-  |     ^^^^^^^^^^^^^^^^
+note: the above error was encountered while instantiating `fn send::<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<48>, GenericCapToken<LoopContinueKind>, LoopContinueKind>, 0>`
+  --> tests/ui/g-loop-continue-wrong-control-kind.rs:7:13
+   |
+ 7 |       let _ = g::send::<
+   |  _____________^
+ 8 | |         g::Role<0>,
+ 9 | |         g::Role<1>,
+10 | |         g::Msg<
+...  |
+15 | |         0,
+16 | |     >();
+   | |_______^

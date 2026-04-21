@@ -2,12 +2,7 @@
 
 use core::task::Poll;
 #[cfg(test)]
-use core::{
-    future::Future,
-    marker::PhantomData,
-    pin::Pin,
-    task::Context,
-};
+use core::{future::Future, marker::PhantomData, pin::Pin, task::Context};
 
 use super::{
     core::{CursorEndpoint, MaterializedRouteBranch, RouteBranch},
@@ -31,7 +26,7 @@ use crate::{
 
 #[cfg(test)]
 use crate::{
-    global::{ControlHandling, ControlPayloadKind, MessageSpec},
+    global::{ControlPayloadKind, MessageSpec},
     transport::wire::WirePayload,
 };
 
@@ -170,7 +165,7 @@ where
         let endpoint = unsafe { &mut *this.endpoint };
         let desc = DecodeDesc::new(
             <M as MessageSpec>::LABEL,
-            !matches!(<M::ControlKind as ControlPayloadKind>::HANDLING, ControlHandling::None),
+            <M::ControlKind as ControlPayloadKind>::IS_CONTROL,
             validate_decode_payload::<M::Payload>,
         );
         match endpoint.poll_decode_state(desc, &mut this.state, cx) {
@@ -290,9 +285,7 @@ where
         if meta.is_control != desc.expects_control {
             return Err(decode_phase_invariant());
         }
-        if self
-            .control_semantic_kind(meta.label, meta.resource)
-            .is_loop()
+        if self.control_semantic_kind(meta.semantic).is_loop()
             && let Some(LoopMetadata {
                 scope: scope_id,
                 controller,
@@ -522,11 +515,7 @@ where
             return Err(decode_phase_invariant());
         }
 
-        if prepared_meta.is_none()
-            && self
-                .control_semantic_kind(meta.label, meta.resource)
-                .is_loop()
-        {
+        if prepared_meta.is_none() && self.control_semantic_kind(meta.semantic).is_loop() {
             if let Some(LoopMetadata {
                 scope: scope_id,
                 controller,

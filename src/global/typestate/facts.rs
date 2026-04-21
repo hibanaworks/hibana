@@ -4,7 +4,10 @@ use super::builder::RoleTypestateValue;
 use crate::{
     control::cap::mint::CapShot,
     eff::{self, EffIndex},
-    global::const_dsl::{CompactScopeId, PolicyMode, ScopeId},
+    global::{
+        compiled::images::ControlSemanticKind,
+        const_dsl::{CompactScopeId, PolicyMode, ScopeId},
+    },
 };
 
 /// Index identifying a local state within the synthesized typestate graph.
@@ -261,6 +264,8 @@ pub(crate) struct LocalNode {
 impl LocalNode {
     const ROUTE_ARM_NONE: u8 = u8::MAX;
     const FLAG_CHOICE_DETERMINANT: u8 = 1 << 0;
+    const FLAG_SEMANTIC_SHIFT: u8 = 1;
+    const FLAG_SEMANTIC_MASK: u8 = 0b11 << Self::FLAG_SEMANTIC_SHIFT;
 
     #[cfg(test)]
     #[inline(always)]
@@ -286,12 +291,24 @@ impl LocalNode {
     }
 
     #[inline(always)]
-    const fn flags(is_choice_determinant: bool) -> u8 {
+    const fn encode_semantic(semantic: ControlSemanticKind) -> u8 {
+        semantic.packed_bits() << Self::FLAG_SEMANTIC_SHIFT
+    }
+
+    #[inline(always)]
+    const fn decode_semantic(flags: u8) -> ControlSemanticKind {
+        ControlSemanticKind::from_packed_bits(
+            (flags & Self::FLAG_SEMANTIC_MASK) >> Self::FLAG_SEMANTIC_SHIFT,
+        )
+    }
+
+    #[inline(always)]
+    const fn flags(is_choice_determinant: bool, semantic: ControlSemanticKind) -> u8 {
+        let mut flags = Self::encode_semantic(semantic);
         if is_choice_determinant {
-            Self::FLAG_CHOICE_DETERMINANT
-        } else {
-            0
+            flags |= Self::FLAG_CHOICE_DETERMINANT;
         }
+        flags
     }
 
     /// Construct a send node that advances to `next`.
@@ -305,6 +322,7 @@ impl LocalNode {
         shot: Option<CapShot>,
         policy: PolicyMode,
         lane: u8,
+        semantic: ControlSemanticKind,
         next: StateIndex,
         scope: ScopeId,
         _loop_scope: Option<ScopeId>,
@@ -325,7 +343,7 @@ impl LocalNode {
             next,
             scope: CompactScopeId::from_scope_id(scope),
             route_arm_raw: Self::encode_route_arm(route_arm),
-            flags: Self::flags(is_choice_determinant),
+            flags: Self::flags(is_choice_determinant, semantic),
         }
     }
 
@@ -340,6 +358,7 @@ impl LocalNode {
         shot: Option<CapShot>,
         policy: PolicyMode,
         lane: u8,
+        semantic: ControlSemanticKind,
         next: StateIndex,
         scope: ScopeId,
         _loop_scope: Option<ScopeId>,
@@ -360,7 +379,7 @@ impl LocalNode {
             next,
             scope: CompactScopeId::from_scope_id(scope),
             route_arm_raw: Self::encode_route_arm(route_arm),
-            flags: Self::flags(is_choice_determinant),
+            flags: Self::flags(is_choice_determinant, semantic),
         }
     }
 
@@ -374,6 +393,7 @@ impl LocalNode {
         shot: Option<CapShot>,
         policy: PolicyMode,
         lane: u8,
+        semantic: ControlSemanticKind,
         next: StateIndex,
         scope: ScopeId,
         _loop_scope: Option<ScopeId>,
@@ -393,7 +413,7 @@ impl LocalNode {
             next,
             scope: CompactScopeId::from_scope_id(scope),
             route_arm_raw: Self::encode_route_arm(route_arm),
-            flags: Self::flags(is_choice_determinant),
+            flags: Self::flags(is_choice_determinant, semantic),
         }
     }
 
@@ -514,6 +534,11 @@ impl LocalNode {
         (self.flags & Self::FLAG_CHOICE_DETERMINANT) != 0
     }
 
+    #[inline(always)]
+    pub(crate) const fn control_semantic(&self) -> ControlSemanticKind {
+        Self::decode_semantic(self.flags)
+    }
+
     /// Returns a copy of this node with a different `next` value.
     ///
     /// Used for backpatching during typestate construction.
@@ -546,6 +571,7 @@ pub struct SendMeta {
     pub peer: u8,
     pub label: u8,
     pub resource: Option<u8>,
+    pub semantic: ControlSemanticKind,
     pub is_control: bool,
     pub next: usize,
     pub scope: ScopeId,
@@ -562,6 +588,7 @@ impl SendMeta {
         peer: u8,
         label: u8,
         resource: Option<u8>,
+        semantic: ControlSemanticKind,
         is_control: bool,
         next: usize,
         scope: ScopeId,
@@ -575,6 +602,7 @@ impl SendMeta {
             peer,
             label,
             resource,
+            semantic,
             is_control,
             next,
             scope,
@@ -598,6 +626,7 @@ pub(crate) struct RecvMeta {
     pub peer: u8,
     pub label: u8,
     pub resource: Option<u8>,
+    pub semantic: ControlSemanticKind,
     pub is_control: bool,
     pub next: usize,
     pub scope: ScopeId,
@@ -616,6 +645,7 @@ pub(crate) struct LocalMeta {
     pub eff_index: EffIndex,
     pub label: u8,
     pub resource: Option<u8>,
+    pub semantic: ControlSemanticKind,
     pub is_control: bool,
     pub next: usize,
     pub scope: ScopeId,
@@ -643,6 +673,7 @@ pub(crate) fn try_send_meta_value(ts: &RoleTypestateValue, idx: usize) -> Option
             peer,
             label,
             resource,
+            node.control_semantic(),
             is_control,
             state_index_to_usize(node.next()),
             node.scope(),
@@ -672,6 +703,7 @@ pub(crate) fn try_recv_meta_value(ts: &RoleTypestateValue, idx: usize) -> Option
             peer,
             label,
             resource,
+            semantic: node.control_semantic(),
             is_control,
             next: state_index_to_usize(node.next()),
             scope: node.scope(),
@@ -700,6 +732,7 @@ pub(crate) fn try_local_meta_value(ts: &RoleTypestateValue, idx: usize) -> Optio
             eff_index,
             label,
             resource,
+            semantic: node.control_semantic(),
             is_control,
             next: state_index_to_usize(node.next()),
             scope: node.scope(),

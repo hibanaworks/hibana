@@ -7,8 +7,7 @@ use core::marker::PhantomData;
 
 use self::program::Program;
 use self::steps::{ParSteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
-use crate::control::cap::mint::{ControlPayload, ControlResourceKind, ResourceKind};
-use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
+use crate::control::cap::mint::{ControlResourceKind, ResourceKind};
 
 /// Crate-private lowering owners for unified compilation.
 pub(crate) mod compiled;
@@ -28,9 +27,7 @@ pub(crate) mod typestate;
 /// Protocol-implementor compile-time SPI.
 pub mod advanced {
     pub use super::role_program::{RoleProgram, project};
-    pub use super::{
-        CanonicalControl, ControlMessage, ControlMessageKind, ExternalControl, MessageSpec,
-    };
+    pub use super::{MessageSpec, StaticControlDesc};
 }
 #[diagnostic::on_unimplemented(
     message = "`g::route(left, right)` arms must begin with a controller self-send",
@@ -118,80 +115,63 @@ impl<const LABEL_VALUE: u8> LabelTag for LabelMarker<LABEL_VALUE> {
 
 /// Phantom message descriptor tying a label to a payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Message<Label, Payload, Control = NoControl>(PhantomData<(Label, Payload, Control)>);
+pub struct Message<Label, Payload, Control = ()>(PhantomData<(Label, Payload, Control)>);
 
 /// Type alias for convenience when the label is known as a const generic.
-pub type Msg<const LABEL: u8, Payload, Control = NoControl> =
+pub type Msg<const LABEL: u8, Payload, Control = ()> =
     Message<LabelMarker<LABEL>, Payload, Control>;
 
-/// Handling strategy for control payloads.
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ControlHandling {
-    None = 0,
-    Canonical = 1,
-    External = 2,
+fn encode_control_handle_for<K>(
+    sid: crate::substrate::SessionId,
+    lane: crate::substrate::Lane,
+    scope: const_dsl::ScopeId,
+) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN]
+where
+    K: ControlResourceKind,
+{
+    let handle = K::mint_handle(sid, lane, scope);
+    K::encode_handle(&handle)
 }
 
 /// Type-level description of how a control payload is produced.
 pub trait ControlPayloadKind {
     type ResourceKind: ResourceKind;
-    const HANDLING: ControlHandling;
+    const IS_CONTROL: bool;
+    const ENCODE_CONTROL_HANDLE: Option<
+        fn(
+            crate::substrate::SessionId,
+            crate::substrate::Lane,
+            const_dsl::ScopeId,
+        ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
+    >;
 }
 
-/// Marker trait for control payload kinds that mint or import capability tokens.
-pub trait ControlMessageKind: ControlPayloadKind {}
-
-/// Marker indicating the message is not a control payload.
-#[derive(Debug, Clone, Copy)]
-pub struct NoControl;
-
-impl ControlPayloadKind for NoControl {
+impl ControlPayloadKind for () {
     type ResourceKind = ();
-    const HANDLING: ControlHandling = ControlHandling::None;
+    const IS_CONTROL: bool = false;
+    const ENCODE_CONTROL_HANDLE: Option<
+        fn(
+            crate::substrate::SessionId,
+            crate::substrate::Lane,
+            const_dsl::ScopeId,
+        ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
+    > = None;
 }
 
-/// Marker indicating the control payload must be minted locally.
-#[derive(Debug, Clone, Copy)]
-pub struct CanonicalControl<K: ResourceKind>(PhantomData<K>);
-
-impl<K: ResourceKind> ControlPayloadKind for CanonicalControl<K> {
+impl<K> ControlPayloadKind for K
+where
+    K: ControlResourceKind,
+{
     type ResourceKind = K;
-    const HANDLING: ControlHandling = ControlHandling::Canonical;
+    const IS_CONTROL: bool = true;
+    const ENCODE_CONTROL_HANDLE: Option<
+        fn(
+            crate::substrate::SessionId,
+            crate::substrate::Lane,
+            const_dsl::ScopeId,
+        ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
+    > = Some(encode_control_handle_for::<K>);
 }
-
-impl<K: ResourceKind> ControlMessageKind for CanonicalControl<K> {}
-
-/// Marker trait enforcing that `CanonicalControl` messages require self-send (From == To).
-///
-/// This trait is only implemented for valid combinations:
-/// - Any message with `NoControl` or `ExternalControl` (no self-send requirement)
-/// - Messages with `CanonicalControl` only when `IsSelfSend = True`
-///
-/// Using `g::send::<A, B, Msg<..., CanonicalControl<K>>>` where `A ≠ B` will fail to compile
-/// because this trait is not implemented for that combination.
-pub trait RequireSelfSendForCanonical<IsSelfSend: steps::Bool> {}
-
-// NoControl: always allowed (no self-send requirement)
-impl<B: steps::Bool> RequireSelfSendForCanonical<B> for NoControl {}
-
-// ExternalControl: always allowed (no self-send requirement)
-impl<K: ResourceKind, B: steps::Bool> RequireSelfSendForCanonical<B> for ExternalControl<K> {}
-
-// CanonicalControl: ONLY allowed when IsSelfSend = True
-impl<K: ResourceKind> RequireSelfSendForCanonical<steps::True> for CanonicalControl<K> {}
-// Note: No implementation for CanonicalControl<K> + False => compile error
-
-/// Marker indicating the control payload is provided externally.
-#[derive(Debug, Clone, Copy)]
-pub struct ExternalControl<K: ResourceKind>(PhantomData<K>);
-
-impl<K: ResourceKind> ControlPayloadKind for ExternalControl<K> {
-    type ResourceKind = K;
-    const HANDLING: ControlHandling = ControlHandling::External;
-}
-
-impl<K: ResourceKind> ControlMessageKind for ExternalControl<K> {}
 
 /// Compile-time information carried with messages.
 pub trait MessageSpec {
@@ -201,7 +181,9 @@ pub trait MessageSpec {
     type Payload;
     /// Decoded payload view returned by `recv()` / `decode()`.
     type Decoded<'a>;
-    /// Control payload handling strategy for this message.
+    /// Opaque descriptor carrier for control messages.
+    const CONTROL: Option<StaticControlDesc>;
+    /// Control payload kind for this message.
     type ControlKind: ControlPayloadKind;
 }
 
@@ -210,42 +192,34 @@ where
     L: LabelTag,
     P: crate::transport::wire::WirePayload,
     C: ControlPayloadKind,
+    Message<L, P, C>: MessageControlSpec,
 {
     const LABEL: u8 = L::VALUE;
     type Payload = P;
     type Decoded<'a> = <P as crate::transport::wire::WirePayload>::Decoded<'a>;
+    const CONTROL: Option<StaticControlDesc> = <Self as MessageControlSpec>::CONTROL;
     type ControlKind = C;
-}
-
-/// Marker trait implemented by control-plane messages (canonical or external).
-pub trait ControlMessage: MessageSpec {
-    type ResourceKind: ControlResourceKind;
-    const CONTROL_SPEC: ControlLabelSpec;
-}
-
-impl<L, P, C> ControlMessage for Message<L, P, C>
-where
-    L: LabelTag,
-    C: ControlMessageKind,
-    P: crate::transport::wire::WirePayload,
-    P: ControlPayload,
-    <C as ControlPayloadKind>::ResourceKind: ControlResourceKind,
-{
-    type ResourceKind = <C as ControlPayloadKind>::ResourceKind;
-    const CONTROL_SPEC: ControlLabelSpec = ControlLabelSpec::new(
-        L::VALUE,
-        <C as ControlPayloadKind>::ResourceKind::TAG,
-        <C as ControlPayloadKind>::ResourceKind::SCOPE,
-        <C as ControlPayloadKind>::ResourceKind::TAP_ID,
-        <C as ControlPayloadKind>::ResourceKind::SHOT,
-        <C as ControlPayloadKind>::HANDLING,
-    );
 }
 
 /// Marker trait for labels that may appear in outbound messages.
 pub trait SendableLabel {
     const LABEL: u8;
     fn assert_sendable();
+}
+
+pub(crate) const fn validate_sendable_message<M>()
+where
+    M: MessageSpec + MessageControlSpec,
+{
+    let label = <M as MessageSpec>::LABEL;
+    if label > crate::runtime::consts::LABEL_MAX {
+        panic!("label exceeds universe");
+    }
+    if !<M as MessageControlSpec>::IS_CONTROL
+        && crate::global::const_dsl::is_reserved_control_label(label)
+    {
+        panic!("control labels require capability payloads");
+    }
 }
 
 impl<const SEND_LABEL: u8, Payload, Control> SendableLabel
@@ -256,15 +230,7 @@ where
     const LABEL: u8 = SEND_LABEL;
 
     fn assert_sendable() {
-        if SEND_LABEL > crate::runtime::consts::LABEL_MAX {
-            panic!("label exceeds universe");
-        }
-        if SEND_LABEL >= crate::runtime::consts::LABEL_CONTROL_START
-            && SEND_LABEL <= crate::runtime::consts::LABEL_CONTROL_END
-            && !<Self as MessageControlSpec>::IS_CONTROL
-        {
-            panic!("control labels require capability payloads");
-        }
+        crate::global::validate_sendable_message::<Self>();
     }
 }
 
@@ -580,46 +546,98 @@ where
 
 /// Static control-message metadata used across the DSL and runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ControlLabelSpec {
-    pub label: u8,
-    pub resource_tag: u8,
-    pub scope_kind: const_dsl::ControlScopeKind,
-    pub tap_id: u16,
-    pub shot: crate::control::cap::mint::CapShot,
-    pub handling: ControlHandling,
+pub struct StaticControlDesc {
+    label: u8,
+    resource_tag: u8,
+    scope_kind: const_dsl::ControlScopeKind,
+    path: crate::control::cap::mint::ControlPath,
+    tap_id: u16,
+    shot: crate::control::cap::mint::CapShot,
+    op: crate::control::cap::mint::ControlOp,
+    flags: u8,
 }
 
-impl ControlLabelSpec {
-    pub const fn new(
+impl StaticControlDesc {
+    pub(crate) const fn new(
         label: u8,
         resource_tag: u8,
         scope_kind: const_dsl::ControlScopeKind,
+        path: crate::control::cap::mint::ControlPath,
         tap_id: u16,
         shot: crate::control::cap::mint::CapShot,
-        handling: ControlHandling,
+        op: crate::control::cap::mint::ControlOp,
+        flags: u8,
     ) -> Self {
         Self {
             label,
             resource_tag,
             scope_kind,
+            path,
             tap_id,
             shot,
-            handling,
+            op,
+            flags,
         }
     }
 
-    pub const fn from_message<L, K>(handling: ControlHandling) -> Self
+    pub(crate) const fn of<K>() -> Self
     where
-        L: LabelTag,
         K: ControlResourceKind,
     {
-        if L::VALUE != K::LABEL {
-            panic!("control label mismatch");
-        }
-        if K::HANDLING as u8 != handling as u8 {
-            panic!("control handling mismatch");
-        }
-        Self::new(L::VALUE, K::TAG, K::SCOPE, K::TAP_ID, K::SHOT, handling)
+        Self::new(
+            K::LABEL,
+            K::TAG,
+            K::SCOPE,
+            K::PATH,
+            K::TAP_ID,
+            K::SHOT,
+            K::OP,
+            if K::AUTO_MINT_WIRE { 1 } else { 0 },
+        )
+    }
+
+    pub(crate) const fn label(self) -> u8 {
+        self.label
+    }
+
+    pub(crate) const fn resource_tag(self) -> u8 {
+        self.resource_tag
+    }
+
+    pub(crate) const fn scope_kind(self) -> const_dsl::ControlScopeKind {
+        self.scope_kind
+    }
+
+    pub(crate) const fn tap_id(self) -> u16 {
+        self.tap_id
+    }
+
+    pub(crate) const fn path(self) -> crate::control::cap::mint::ControlPath {
+        self.path
+    }
+
+    pub(crate) const fn shot(self) -> crate::control::cap::mint::CapShot {
+        self.shot
+    }
+
+    pub(crate) const fn op(self) -> crate::control::cap::mint::ControlOp {
+        self.op
+    }
+
+    pub(crate) const fn supports_dynamic_policy(self) -> bool {
+        matches!(
+            self.op(),
+            crate::control::cap::mint::ControlOp::RouteDecision
+                | crate::control::cap::mint::ControlOp::LoopContinue
+                | crate::control::cap::mint::ControlOp::LoopBreak
+                | crate::control::cap::mint::ControlOp::TopologyBegin
+                | crate::control::cap::mint::ControlOp::TopologyAck
+                | crate::control::cap::mint::ControlOp::CapDelegate
+        )
+    }
+
+    pub(crate) const fn auto_mint_wire(self) -> bool {
+        (self.flags & 1) != 0
     }
 }
 
@@ -630,22 +648,30 @@ pub(crate) enum LoopControlMeaning {
 }
 
 impl LoopControlMeaning {
-    pub(crate) const fn from_control_spec(spec: Option<ControlLabelSpec>) -> Option<Self> {
+    pub(crate) const fn from_control_spec(spec: Option<StaticControlDesc>) -> Option<Self> {
         match spec {
             Some(spec) => {
-                if !matches!(spec.scope_kind, const_dsl::ControlScopeKind::Loop) {
+                if !matches!(spec.scope_kind(), const_dsl::ControlScopeKind::Loop) {
                     return None;
                 }
-                Self::from_resource_tag(Some(spec.resource_tag))
+                match spec.op() {
+                    crate::control::cap::mint::ControlOp::LoopContinue => Some(Self::Continue),
+                    crate::control::cap::mint::ControlOp::LoopBreak => Some(Self::Break),
+                    _ => None,
+                }
             }
             None => None,
         }
     }
 
-    pub(crate) const fn from_resource_tag(resource_tag: Option<u8>) -> Option<Self> {
-        match resource_tag {
-            Some(LoopContinueKind::TAG) => Some(Self::Continue),
-            Some(LoopBreakKind::TAG) => Some(Self::Break),
+    pub(crate) const fn from_semantic(
+        semantic: crate::global::compiled::images::ControlSemanticKind,
+    ) -> Option<Self> {
+        match semantic {
+            crate::global::compiled::images::ControlSemanticKind::LoopContinue => {
+                Some(Self::Continue)
+            }
+            crate::global::compiled::images::ControlSemanticKind::LoopBreak => Some(Self::Break),
             _ => None,
         }
     }
@@ -661,45 +687,99 @@ impl LoopControlMeaning {
 /// Per-message control metadata helper trait.
 pub trait MessageControlSpec: MessageSpec {
     const IS_CONTROL: bool;
-    const CONTROL_SPEC: ControlLabelSpec;
+    const CONTROL: Option<StaticControlDesc>;
+    const CONTROL_SPEC: StaticControlDesc;
 }
 
-impl<L, P> MessageControlSpec for Message<L, P, NoControl>
+struct ControlLabelContract<const LABEL: u8, K>(PhantomData<fn() -> K>);
+
+trait ValidControlLabel {}
+
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<106, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<107, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<108, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<109, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<110, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<111, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<112, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<113, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<114, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<115, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<116, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<117, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<118, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<119, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<120, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<121, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<122, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<123, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<124, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<125, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<126, K> {}
+impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<127, K> {}
+
+impl ValidControlLabel
+    for ControlLabelContract<
+        { crate::runtime::consts::LABEL_LOOP_CONTINUE },
+        crate::control::cap::resource_kinds::LoopContinueKind,
+    >
+{
+}
+
+impl ValidControlLabel
+    for ControlLabelContract<
+        { crate::runtime::consts::LABEL_LOOP_BREAK },
+        crate::control::cap::resource_kinds::LoopBreakKind,
+    >
+{
+}
+
+impl ValidControlLabel
+    for ControlLabelContract<
+        { crate::runtime::consts::LABEL_ROUTE_DECISION },
+        crate::control::cap::resource_kinds::RouteDecisionKind,
+    >
+{
+}
+
+impl<L, P> MessageControlSpec for Message<L, P, ()>
 where
     L: LabelTag,
     P: crate::transport::wire::WirePayload,
 {
     const IS_CONTROL: bool = false;
-    const CONTROL_SPEC: ControlLabelSpec = ControlLabelSpec::new(
+    const CONTROL: Option<StaticControlDesc> = None;
+    const CONTROL_SPEC: StaticControlDesc = StaticControlDesc::new(
         L::VALUE,
         0,
         const_dsl::ControlScopeKind::None,
+        crate::control::cap::mint::ControlPath::Local,
         0,
         crate::control::cap::mint::CapShot::One,
-        ControlHandling::None,
+        crate::control::cap::mint::ControlOp::Fence,
+        0,
     );
 }
 
-impl<L, K> MessageControlSpec
-    for Message<L, crate::control::cap::mint::GenericCapToken<K>, CanonicalControl<K>>
+impl<const LABEL: u8, K> MessageControlSpec
+    for Message<LabelMarker<LABEL>, crate::control::cap::mint::GenericCapToken<K>, K>
 where
-    L: LabelTag,
     K: ControlResourceKind,
+    ControlLabelContract<LABEL, K>: ValidControlLabel,
 {
     const IS_CONTROL: bool = true;
-    const CONTROL_SPEC: ControlLabelSpec =
-        ControlLabelSpec::from_message::<L, K>(ControlHandling::Canonical);
-}
-
-impl<L, K> MessageControlSpec
-    for Message<L, crate::control::cap::mint::GenericCapToken<K>, ExternalControl<K>>
-where
-    L: LabelTag,
-    K: ControlResourceKind,
-{
-    const IS_CONTROL: bool = true;
-    const CONTROL_SPEC: ControlLabelSpec =
-        ControlLabelSpec::from_message::<L, K>(ControlHandling::External);
+    const CONTROL: Option<StaticControlDesc> = {
+        if LABEL != K::LABEL {
+            panic!("control label mismatch");
+        }
+        Some(StaticControlDesc::of::<K>())
+    };
+    const CONTROL_SPEC: StaticControlDesc = {
+        if LABEL != K::LABEL {
+            panic!("control label mismatch");
+        }
+        StaticControlDesc::of::<K>()
+    };
 }
 
 // -----------------------------------------------------------------------------
@@ -729,10 +809,23 @@ where
     From: KnownRole + RoleMarker + steps::RoleEq<To>,
     To: KnownRole + RoleMarker,
     M: MessageSpec + SendableLabel + MessageControlSpec,
-    // Enforce: CanonicalControl requires self-send (From == To)
-    <M as MessageSpec>::ControlKind:
-        RequireSelfSendForCanonical<<From as steps::RoleEq<To>>::Output>,
 {
+    const {
+        crate::global::validate_sendable_message::<M>();
+        if <M as MessageControlSpec>::IS_CONTROL {
+            let is_self_send = <<From as steps::RoleEq<To>>::Output as steps::Bool>::VALUE;
+            let path = <M as MessageControlSpec>::CONTROL_SPEC.path();
+            match path {
+                crate::control::cap::mint::ControlPath::Local if !is_self_send => {
+                    panic!("local control messages require self-send")
+                }
+                crate::control::cap::mint::ControlPath::Wire if is_self_send => {
+                    panic!("wire control messages require cross-role send")
+                }
+                _ => {}
+            }
+        }
+    }
     Program::build()
 }
 

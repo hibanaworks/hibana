@@ -124,7 +124,11 @@ where
         arm: u8,
     ) -> bool {
         label_meta.loop_meta().loop_label_scope()
-            && self.is_loop_semantic_label(label)
+            && matches!(
+                label,
+                crate::runtime::consts::LABEL_LOOP_CONTINUE
+                    | crate::runtime::consts::LABEL_LOOP_BREAK
+            )
             && label_meta.loop_meta().arm_has_recv(arm)
     }
 
@@ -137,7 +141,7 @@ where
             && !self
                 .cursor
                 .route_scope_controller_policy(scope_id)
-                .map(|(policy, _, _)| policy.is_dynamic())
+                .map(|(policy, _, _, _)| policy.is_dynamic())
                 .unwrap_or(false)
     }
 
@@ -385,19 +389,18 @@ where
     #[inline]
     pub(in crate::endpoint::kernel) fn current_recv_is_scope_local(
         cursor: &PhaseCursor,
-        semantics: &ControlSemanticsTable,
+        _semantics: &ControlSemanticsTable,
         scope_id: ScopeId,
         loop_meta: ScopeLoopMeta,
         label: u8,
-        resource: Option<u8>,
+        semantic: crate::global::compiled::images::ControlSemanticKind,
         arm: u8,
     ) -> bool {
         cursor
             .first_recv_target(scope_id, label)
             .map(|(target_arm, _)| target_arm == arm)
             .unwrap_or(false)
-            || (loop_meta.loop_label_scope()
-                && is_loop_control_label_or_resource(semantics, label, resource))
+            || (loop_meta.loop_label_scope() && is_loop_control_semantic(semantic))
     }
 
     pub(in crate::endpoint::kernel) fn scope_label_to_arm(
@@ -482,9 +485,7 @@ where
                     return false;
                 }
                 if !self.cursor.is_route_controller(scope_id)
-                    && self
-                        .control_semantic_kind(recv_meta.label, recv_meta.resource)
-                        .is_loop()
+                    && self.control_semantic_kind(recv_meta.semantic).is_loop()
                 {
                     return false;
                 }

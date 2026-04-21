@@ -4,7 +4,10 @@
 use crate::{
     binding::BindingSlot,
     control::cap::mint::{AllowsCanonical, EpochTable, MintConfigMarker},
-    endpoint::{SendResult, flow::{FlowSendArg, send_desc}},
+    endpoint::{
+        SendResult,
+        flow::{FlowSendArg, send_desc},
+    },
     global::{ControlPayloadKind, MessageSpec, SendableLabel, typestate::SendMeta},
     runtime::{config::Clock, consts::LabelUniverse},
     transport::{Transport, wire::WireEncode},
@@ -21,7 +24,10 @@ where
     Mint: MintConfigMarker<Policy: AllowsCanonical>,
     B: BindingSlot + 'r,
 {
-    pub(crate) fn send_direct<'a, M, A>(&'a mut self, arg: A) -> impl core::future::Future<Output = SendResult<()>> + 'a
+    pub(crate) fn send_direct<'a, M, A>(
+        &'a mut self,
+        arg: A,
+    ) -> impl core::future::Future<Output = SendResult<()>> + 'a
     where
         M: MessageSpec + SendableLabel + 'a,
         M::Payload: WireEncode + 'a,

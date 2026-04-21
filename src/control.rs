@@ -28,13 +28,13 @@
 //!
 //! ## Design Principles
 //!
-//! 1. **Effect-based decomposition**: All operations map to `CpEffect` enum
+//! 1. **Effect-based decomposition**: All operations map to `ControlOp` enum
 //! 2. **Type-level invariants**: Marker traits prevent misuse at compile time
-//! 3. **Single control kernel**: All external effects collapse into `CpEffect`
+//! 3. **Single control kernel**: All external effects collapse into `ControlOp`
 //!
 //! ## Architecture Notes
 //!
-//! - Effect decomposition: All 13 control operations mapped to `CpEffect`
+//! - Effect decomposition: All 13 control operations mapped to `ControlOp`
 //! - Type-level invariants: NoCrossLaneAliasing, AtMostOnceCommit, Shot discipline
 //! - Unified errors: `CpError` consolidates all control-plane errors
 //! - Tap integration for distributed splice/cap/deleg events
@@ -60,6 +60,7 @@ pub(crate) mod cap;
 /// Control-plane cluster coordination.
 pub(crate) mod cluster;
 /// Control handle definitions.
+#[cfg(test)]
 pub(crate) mod handle;
 /// Lease planning and capacity checks.
 pub(crate) mod lease;

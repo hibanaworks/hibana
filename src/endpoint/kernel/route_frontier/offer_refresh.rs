@@ -251,7 +251,7 @@ where
         let is_dynamic = self
             .cursor
             .route_scope_controller_policy(region.scope_id)
-            .map(|(policy, _, _)| policy.is_dynamic())
+            .map(|(policy, _, _, _)| policy.is_dynamic())
             .unwrap_or(false);
         let static_facts = Self::frontier_static_facts_at(
             &self.cursor,

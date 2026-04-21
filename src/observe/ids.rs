@@ -229,6 +229,7 @@ pub const POLICY_ABORT: u16 = 0x0400;
 ///
 /// - `arg0`: Annotation key (u16 promoted to u32)
 /// - `arg1`: Annotation value (u32)
+#[cfg(test)]
 pub const POLICY_ANNOT: u16 = 0x0401;
 
 /// Policy VM trapped (fuel exhausted, illegal opcode/syscall, verify failure).
@@ -239,13 +240,14 @@ pub const POLICY_TRAP: u16 = 0x0402;
 
 /// Policy VM dispatched a control-plane effect.
 ///
-/// - `arg0`: CpEffect discriminant (u16 promoted to u32)
+/// - `arg0`: ControlOp discriminant (u16 promoted to u32)
 /// - `arg1`: Effect operand when present, otherwise 0
+#[cfg(test)]
 pub const POLICY_EFFECT: u16 = 0x0403;
 
 /// Policy-requested control-plane effect completed successfully.
 ///
-/// - `arg0`: CpEffect discriminant (u16 promoted to u32)
+/// - `arg0`: ControlOp discriminant (u16 promoted to u32)
 /// - `arg1`: Session identifier when known, otherwise 0
 pub const POLICY_RA_OK: u16 = 0x0404;
 
@@ -253,12 +255,14 @@ pub const POLICY_RA_OK: u16 = 0x0404;
 ///
 /// - `arg0`: Slot identifier (0=Forward,1=EndpointRx,2=EndpointTx,3=Rendezvous)
 /// - `arg1`: Activated version identifier
+#[cfg(test)]
 pub const POLICY_COMMIT: u16 = 0x0405;
 
 /// Policy VM slot rolled back to a previous version.
 ///
 /// - `arg0`: Slot identifier (0=Forward,1=EndpointRx,2=EndpointTx,3=Rendezvous)
 /// - `arg1`: Version identifier restored
+#[cfg(test)]
 pub const POLICY_ROLLBACK: u16 = 0x0406;
 
 /// Policy audit core digest tuple.

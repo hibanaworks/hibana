@@ -5,23 +5,23 @@ use crate::{
 };
 
 use super::{
-    program::{CompiledProgramImage, ControlSemanticsTable, DynamicPolicySite},
+    program::{CompiledProgramFacts, ControlSemanticsTable, DynamicPolicySite},
     role::CompiledRoleImage,
 };
 use crate::global::compiled::lowering::ProgramStamp;
 
 /// Sealed runtime owner for immutable program-wide compiled facts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ProgramImage {
+pub(crate) struct CompiledProgramRef {
     stamp: ProgramStamp,
-    compiled: *const CompiledProgramImage,
+    compiled: *const CompiledProgramFacts,
 }
 
-impl ProgramImage {
+impl CompiledProgramRef {
     #[inline(always)]
     pub(crate) unsafe fn from_raw(
         stamp: ProgramStamp,
-        compiled: *const CompiledProgramImage,
+        compiled: *const CompiledProgramFacts,
     ) -> Self {
         debug_assert!(!compiled.is_null());
         Self { stamp, compiled }
@@ -33,7 +33,7 @@ impl ProgramImage {
     }
 
     #[inline(always)]
-    fn compiled(&self) -> &CompiledProgramImage {
+    fn compiled(&self) -> &CompiledProgramFacts {
         debug_assert!(!self.compiled.is_null());
         unsafe { &*self.compiled }
     }
@@ -70,22 +70,27 @@ impl ProgramImage {
     pub(crate) fn route_controller(
         &self,
         scope_id: ScopeId,
-    ) -> Option<(PolicyMode, crate::eff::EffIndex, u8)> {
+    ) -> Option<(
+        PolicyMode,
+        crate::eff::EffIndex,
+        u8,
+        crate::control::cap::mint::ControlOp,
+    )> {
         self.compiled().route_controller(scope_id)
     }
 }
 
-/// Sealed runtime owner for role-local immutable compiled facts within a `ProgramImage`.
+/// Sealed runtime owner for role-local immutable compiled facts within a compiled program ref.
 #[derive(Clone, Copy)]
 pub(crate) struct RoleImageSlice<const ROLE: u8> {
-    program: ProgramImage,
+    program: CompiledProgramRef,
     compiled: *const CompiledRoleImage,
 }
 
 impl<const ROLE: u8> RoleImageSlice<ROLE> {
     #[inline(always)]
     pub(crate) unsafe fn from_raw(
-        program: ProgramImage,
+        program: CompiledProgramRef,
         compiled: *const CompiledRoleImage,
     ) -> Self {
         debug_assert!(!compiled.is_null());
@@ -93,7 +98,7 @@ impl<const ROLE: u8> RoleImageSlice<ROLE> {
     }
 
     #[inline(always)]
-    pub(crate) const fn program(&self) -> ProgramImage {
+    pub(crate) const fn program(&self) -> CompiledProgramRef {
         self.program
     }
 

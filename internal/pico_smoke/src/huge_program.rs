@@ -1,4 +1,3 @@
-use hibana::g::advanced::CanonicalControl;
 use hibana::g::advanced::{RoleProgram, project};
 use hibana::g::{self, Msg, Role};
 use hibana::substrate::cap::GenericCapToken;
@@ -86,11 +85,7 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<
-                    { LABEL_ROUTE_LEFT_CTRL },
-                    GenericCapToken<RouteLeftKind>,
-                    CanonicalControl<RouteLeftKind>,
-                >,
+                Msg<{ LABEL_ROUTE_LEFT_CTRL }, GenericCapToken<RouteLeftKind>, RouteLeftKind>,
                 0,
             >();
             g::seq(
@@ -102,11 +97,7 @@ pub fn controller_program() -> RoleProgram<0> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<
-                    { LABEL_ROUTE_RIGHT_CTRL },
-                    GenericCapToken<RouteRightKind>,
-                    CanonicalControl<RouteRightKind>,
-                >,
+                Msg<{ LABEL_ROUTE_RIGHT_CTRL }, GenericCapToken<RouteRightKind>, RouteRightKind>,
                 0,
             >();
             g::seq(
@@ -234,11 +225,7 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<
-                    { LABEL_ROUTE_LEFT_CTRL },
-                    GenericCapToken<RouteLeftKind>,
-                    CanonicalControl<RouteLeftKind>,
-                >,
+                Msg<{ LABEL_ROUTE_LEFT_CTRL }, GenericCapToken<RouteLeftKind>, RouteLeftKind>,
                 0,
             >();
             g::seq(
@@ -250,11 +237,7 @@ pub fn worker_program() -> RoleProgram<1> {
             let program = g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<
-                    { LABEL_ROUTE_RIGHT_CTRL },
-                    GenericCapToken<RouteRightKind>,
-                    CanonicalControl<RouteRightKind>,
-                >,
+                Msg<{ LABEL_ROUTE_RIGHT_CTRL }, GenericCapToken<RouteRightKind>, RouteRightKind>,
                 0,
             >();
             g::seq(
@@ -349,16 +332,16 @@ fn controller_worker_roundtrip_values(
 }
 
 #[inline(never)]
-fn controller_route_roundtrip_ack<const CTRL: u8, K, const PAYLOAD: u8>(
+fn controller_route_roundtrip_ack<K, const PAYLOAD: u8>(
     controller: &mut localside::ControllerEndpoint<'_>,
     worker: &mut localside::WorkerEndpoint<'_>,
 ) where
     K: hibana::substrate::cap::ResourceKind
         + hibana::substrate::cap::ControlResourceKind
-        + hibana::substrate::cap::advanced::ControlMint
+        + route_localside::PicoSelectableControl
         + 'static,
 {
-    route_localside::controller_select::<CTRL, K>(controller);
+    route_localside::controller_select::<K>(controller);
     route_localside::controller_send_u32::<PAYLOAD>(controller, 0);
     assert_eq!(
         route_localside::worker_offer_decode_u32::<PAYLOAD>(worker),
@@ -392,32 +375,30 @@ fn run_routes(
     controller: &mut localside::ControllerEndpoint<'_>,
     worker: &mut localside::WorkerEndpoint<'_>,
 ) {
-    controller_route_roundtrip_ack::<{ LABEL_ROUTE_LEFT_CTRL }, RouteLeftKind, { LABEL_ROUTE_LEFT_U32 }>(
-        controller,
-        worker,
-    );
+    controller_route_roundtrip_ack::<RouteLeftKind, { LABEL_ROUTE_LEFT_U32 }>(controller, worker);
     localside::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 92);
-    assert_eq!(localside::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 92);
-    controller_route_roundtrip_ack::<
-        { LABEL_ROUTE_RIGHT_CTRL },
-        RouteRightKind,
-        { LABEL_ROUTE_RIGHT_U32 },
-    >(controller, worker);
-    localside::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 93);
-    assert_eq!(localside::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 93);
-    controller_route_roundtrip_ack::<{ LABEL_ROUTE_LEFT_CTRL }, RouteLeftKind, { LABEL_ROUTE_LEFT_U32 }>(
-        controller,
-        worker,
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller),
+        92
     );
+    controller_route_roundtrip_ack::<RouteRightKind, { LABEL_ROUTE_RIGHT_U32 }>(controller, worker);
+    localside::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 93);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller),
+        93
+    );
+    controller_route_roundtrip_ack::<RouteLeftKind, { LABEL_ROUTE_LEFT_U32 }>(controller, worker);
     localside::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 94);
-    assert_eq!(localside::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 94);
-    controller_route_roundtrip_ack::<
-        { LABEL_ROUTE_RIGHT_CTRL },
-        RouteRightKind,
-        { LABEL_ROUTE_RIGHT_U32 },
-    >(controller, worker);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller),
+        94
+    );
+    controller_route_roundtrip_ack::<RouteRightKind, { LABEL_ROUTE_RIGHT_U32 }>(controller, worker);
     localside::worker_send_u8::<{ LABEL_W2C_U8 }>(worker, 95);
-    assert_eq!(localside::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller), 95);
+    assert_eq!(
+        localside::controller_recv_u8::<{ LABEL_W2C_U8 }>(controller),
+        95
+    );
 }
 
 #[inline(never)]

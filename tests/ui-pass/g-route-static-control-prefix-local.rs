@@ -6,19 +6,22 @@
 #[path = "../support/control_kinds.rs"]
 mod control_kinds;
 
-use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
+use hibana::g::advanced::{RoleProgram, project};
 use hibana::g::{self};
 use hibana::substrate::cap::GenericCapToken;
 
-type RouteArm100Kind = control_kinds::RouteControl<100, 0>;
-type RouteArm101Kind = control_kinds::RouteControl<101, 0>;
+const ROUTE_ARM_LEFT_LABEL: u8 = 118;
+const ROUTE_ARM_RIGHT_LABEL: u8 = 119;
+
+type RouteArm100Kind = control_kinds::RouteControl<ROUTE_ARM_LEFT_LABEL, 0>;
+type RouteArm101Kind = control_kinds::RouteControl<ROUTE_ARM_RIGHT_LABEL, 0>;
 
 fn main() {
     let arm0 = g::seq(
         g::send::<
             g::Role<0>,
             g::Role<0>,
-            g::Msg<100, GenericCapToken<RouteArm100Kind>, CanonicalControl<RouteArm100Kind>>,
+            g::Msg<ROUTE_ARM_LEFT_LABEL, GenericCapToken<RouteArm100Kind>, RouteArm100Kind>,
             0,
         >(),
         g::seq(
@@ -30,7 +33,7 @@ fn main() {
         g::send::<
             g::Role<0>,
             g::Role<0>,
-            g::Msg<101, GenericCapToken<RouteArm101Kind>, CanonicalControl<RouteArm101Kind>>,
+            g::Msg<ROUTE_ARM_RIGHT_LABEL, GenericCapToken<RouteArm101Kind>, RouteArm101Kind>,
             0,
         >(),
         g::seq(

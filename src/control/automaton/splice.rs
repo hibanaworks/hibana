@@ -23,13 +23,9 @@ use crate::{
     control::automaton::distributed::{SpliceAck, SpliceIntent},
     control::cluster::error::SpliceError,
     control::{
-        cap::mint::CapsMask,
-        cluster::{
-            core::{EffectRunner, SpliceOperands},
-            effects::CpEffect,
-        },
+        cluster::core::{EffectRunner, SpliceOperands},
         lease::{
-            bundle::{LeaseBundleError, LeaseBundleFacet},
+            bundle::LeaseBundleFacet,
             core::{ControlAutomaton, ControlStep, FullSpec, RendezvousLease, SpliceSpec},
             graph::{InlineLeaseChildStorage, InlineLeaseNodeStorage, LeaseSpec},
         },
@@ -233,29 +229,7 @@ where
     where
         'cfg: 'lease,
     {
-        let lane = Lane::new(intent.src_lane.raw());
-        let mask_update = {
-            let mut handle = graph.root_handle_mut();
-            if let Some(caps) = handle.context().caps_mut() {
-                root_lease.with_rendezvous(|rv| {
-                    let current = rv.caps_mask_for_lane(lane);
-                    let required = current
-                        .union(CapsMask::empty().with(CpEffect::SpliceBegin))
-                        .union(CapsMask::empty().with(CpEffect::SpliceCommit));
-                    if required != current {
-                        caps.track_mask(lane, current)?;
-                        rv.set_caps_mask_for_lane(lane, required);
-                    }
-                    Ok::<(), LeaseBundleError>(())
-                })
-            } else {
-                Ok(())
-            }
-        };
-
-        if let Err(LeaseBundleError::Capacity) = mask_update {
-            return ControlStep::Abort(SpliceError::PendingTableFull);
-        }
+        let _ = graph;
 
         match <Self as ControlAutomaton<T, U, C, E>>::run(root_lease, intent) {
             ControlStep::Complete(intent) => {

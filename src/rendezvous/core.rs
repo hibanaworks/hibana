@@ -18,19 +18,18 @@ use super::{
     port::Port,
     slots::SlotArena,
     splice::{DistributedSpliceTable, PendingSplice, SpliceStateTable},
-    tables::{CheckpointTable, GenTable, LoopTable, PolicyTable, RouteTable, VmCapsTable},
+    tables::{CheckpointTable, GenTable, LoopTable, PolicyTable, RouteTable},
 };
 use crate::{
     control::{
         automaton::txn::{NoopTap, Txn},
         brand::{self, Guard},
         cap::mint::{
-            CapShot, CapsMask, EndpointHandle, EndpointResource, GenericCapToken, NonceSeed,
+            CapShot, ControlOp, EndpointHandle, EndpointResource, GenericCapToken, NonceSeed,
             ResourceKind, VerifiedCap,
         },
         cluster::{
             core::{CpCommand, EffectRunner, SpliceOperands},
-            effects::CpEffect,
             error::CpError,
         },
         types::{IncreasingGen, One},
@@ -38,7 +37,7 @@ use crate::{
     eff::EffIndex,
     endpoint::affine::LaneGuard,
     global::compiled::{
-        images::{CompiledProgramImage, CompiledRoleImage},
+        images::{CompiledProgramFacts, CompiledRoleImage},
         lowering::{LoweringSummary, ProgramStamp},
         materialize::RoleLoweringScratch,
     },
@@ -57,6 +56,7 @@ use crate::{
 const ENDPOINT_TAG: u8 = 0;
 use super::splice::LocalSpliceInvariant;
 use crate::control::automaton::distributed::{SpliceAck, SpliceIntent};
+use crate::control::cluster::effects::control_op_tap_event_id;
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 
 #[repr(transparent)]
@@ -120,7 +120,7 @@ impl core::fmt::Display for EndpointLeaseId {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ProgramImageSlot {
+struct CompiledProgramSlot {
     stamp: ProgramStamp,
     offset: u32,
     len: u32,
@@ -128,7 +128,7 @@ struct ProgramImageSlot {
     occupied: bool,
 }
 
-impl ProgramImageSlot {
+impl CompiledProgramSlot {
     const EMPTY: Self = Self {
         stamp: ProgramStamp::EMPTY,
         offset: 0,
@@ -264,7 +264,7 @@ pub(crate) struct Rendezvous<
     slab_marker: PhantomData<&'cfg mut [u8]>,
     image_frontier: u32,
     scratch_reserved_bytes: u32,
-    program_images: *mut ProgramImageSlot,
+    program_images: *mut CompiledProgramSlot,
     role_images: *mut RoleImageSlot,
     endpoint_leases: *mut EndpointLeaseSlot,
     image_slot_capacity: u8,
@@ -284,7 +284,6 @@ pub(crate) struct Rendezvous<
     loops: LoopTable,
     routes: RouteTable,
     policies: PolicyTable,
-    vm_caps: VmCapsTable,
     slot_arena: SlotArena,
     host_slots: HostSlots<'cfg>,
     clock: C,
@@ -401,10 +400,10 @@ where
         let base = slab_ptr as usize;
         let start = Self::align_up(
             base + self.endpoint_lease_floor(),
-            CompiledProgramImage::persistent_align(),
+            CompiledProgramFacts::persistent_align(),
         )
         .saturating_sub(base);
-        start + CompiledProgramImage::max_persistent_bytes() - self.endpoint_lease_floor()
+        start + CompiledProgramFacts::max_persistent_bytes() - self.endpoint_lease_floor()
     }
 
     #[inline(always)]
@@ -425,8 +424,8 @@ where
         let base = slab_ptr as usize;
         let program_end = Self::align_up(
             base + self.endpoint_lease_floor(),
-            CompiledProgramImage::persistent_align(),
-        ) + CompiledProgramImage::max_persistent_bytes();
+            CompiledProgramFacts::persistent_align(),
+        ) + CompiledProgramFacts::max_persistent_bytes();
         let role_end =
             Self::align_up(program_end, CompiledRoleImage::persistent_align()) + role_image_bytes;
         role_end - self.endpoint_lease_floor() - base
@@ -779,13 +778,13 @@ where
     #[inline]
     unsafe fn program_image_from_slot(
         &self,
-        slot: &ProgramImageSlot,
-    ) -> *const CompiledProgramImage {
+        slot: &CompiledProgramSlot,
+    ) -> *const CompiledProgramFacts {
         let (slab_ptr, _) = self.slab_ptr_and_len();
         unsafe {
             slab_ptr
                 .add(slot.offset as usize)
-                .cast::<CompiledProgramImage>()
+                .cast::<CompiledProgramFacts>()
         }
     }
 
@@ -1127,24 +1126,6 @@ where
         Some(())
     }
 
-    fn ensure_vm_caps_table_storage(&mut self) -> Option<()> {
-        if self.vm_caps.is_bound() || self.lane_slot_count() == 0 {
-            return Some(());
-        }
-        let lane_slots = self.lane_slot_count();
-        let (storage, _) = unsafe {
-            self.allocate_persistent_sidecar_bytes(
-                VmCapsTable::storage_bytes(lane_slots),
-                VmCapsTable::storage_align(),
-            )
-        }?;
-        unsafe {
-            self.vm_caps
-                .bind_from_storage(storage, self.lane_base(), lane_slots);
-        }
-        Some(())
-    }
-
     fn ensure_cap_table_capacity(&mut self, required_entries: usize) -> Option<()> {
         if required_entries == 0 || self.caps.capacity() >= required_entries {
             return Some(());
@@ -1253,7 +1234,6 @@ where
         self.ensure_generation_table_storage()?;
         self.ensure_assoc_table_storage()?;
         self.ensure_checkpoint_table_storage()?;
-        self.ensure_vm_caps_table_storage()?;
         self.ensure_policy_table_storage()?;
         Some(())
     }
@@ -1266,14 +1246,6 @@ where
                 0,
             );
             self.policies = PolicyTable::empty();
-        }
-        if self.vm_caps.is_bound() {
-            self.free_external_persistent_sidecar_bytes(
-                self.vm_caps.storage_ptr(),
-                self.vm_caps.storage_bytes_current(),
-                0,
-            );
-            self.vm_caps = VmCapsTable::empty();
         }
         if self.checkpoints.is_bound() {
             self.free_external_persistent_sidecar_bytes(
@@ -1505,7 +1477,7 @@ where
         &mut self,
         stamp: ProgramStamp,
         summary: &LoweringSummary,
-    ) -> Option<*const CompiledProgramImage> {
+    ) -> Option<*const CompiledProgramFacts> {
         if let Some(idx) = self.program_image_slot_index(stamp) {
             let slot = unsafe { &*self.program_images.add(idx) };
             return Some(unsafe { self.program_image_from_slot(slot) });
@@ -1514,25 +1486,25 @@ where
             return unsafe { self.recycle_program_image_from_summary(stamp, summary) };
         };
         let counts = summary.compiled_program_counts();
-        let bytes = CompiledProgramImage::persistent_bytes_for_counts(counts);
+        let bytes = CompiledProgramFacts::persistent_bytes_for_counts(counts);
         let (ptr, offset) = unsafe {
-            self.allocate_persistent_image_bytes(bytes, CompiledProgramImage::persistent_align())
+            self.allocate_persistent_image_bytes(bytes, CompiledProgramFacts::persistent_align())
         }?;
         unsafe {
             crate::global::compiled::materialize::init_compiled_program_image_from_summary(
-                ptr.cast::<CompiledProgramImage>(),
+                ptr.cast::<CompiledProgramFacts>(),
                 summary,
             );
         }
         let slot = unsafe { &mut *self.program_images.add(insert_idx) };
-        *slot = ProgramImageSlot {
+        *slot = CompiledProgramSlot {
             stamp,
             offset,
             len: bytes as u32,
             pins: 0,
             occupied: true,
         };
-        Some(ptr.cast::<CompiledProgramImage>())
+        Some(ptr.cast::<CompiledProgramFacts>())
     }
 
     #[cold]
@@ -1541,16 +1513,16 @@ where
         &mut self,
         stamp: ProgramStamp,
         summary: &LoweringSummary,
-    ) -> Option<*const CompiledProgramImage> {
+    ) -> Option<*const CompiledProgramFacts> {
         let counts = summary.compiled_program_counts();
-        let bytes = CompiledProgramImage::persistent_bytes_for_counts(counts);
+        let bytes = CompiledProgramFacts::persistent_bytes_for_counts(counts);
         if let Some(insert_idx) = self.first_reusable_program_image_slot(bytes) {
             let slot = unsafe { &mut *self.program_images.add(insert_idx) };
             let ptr = unsafe {
                 self.slab_ptr_and_len()
                     .0
                     .add(slot.offset as usize)
-                    .cast::<CompiledProgramImage>()
+                    .cast::<CompiledProgramFacts>()
             };
             unsafe {
                 crate::global::compiled::materialize::init_compiled_program_image_from_summary(
@@ -1571,14 +1543,14 @@ where
                     self.slab_ptr_and_len()
                         .0
                         .add(offset as usize)
-                        .cast::<CompiledProgramImage>()
+                        .cast::<CompiledProgramFacts>()
                 };
                 (ptr.cast::<u8>(), offset, slot.len, None)
             } else {
                 let (ptr, offset) = unsafe {
                     self.allocate_persistent_image_bytes(
                         bytes,
-                        CompiledProgramImage::persistent_align(),
+                        CompiledProgramFacts::persistent_align(),
                     )
                 }?;
                 (ptr, offset, bytes as u32, Some((slot.offset, slot.len)))
@@ -1586,7 +1558,7 @@ where
         };
         unsafe {
             crate::global::compiled::materialize::init_compiled_program_image_from_summary(
-                ptr.cast::<CompiledProgramImage>(),
+                ptr.cast::<CompiledProgramFacts>(),
                 summary,
             );
         }
@@ -1594,14 +1566,14 @@ where
             self.release_persistent_region(old_offset, old_len);
         }
         let slot = unsafe { &mut *self.program_images.add(insert_idx) };
-        *slot = ProgramImageSlot {
+        *slot = CompiledProgramSlot {
             stamp,
             offset,
             len: reserved_len,
             pins: 0,
             occupied: true,
         };
-        Some(ptr.cast::<CompiledProgramImage>())
+        Some(ptr.cast::<CompiledProgramFacts>())
     }
 
     #[inline]
@@ -1610,7 +1582,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn program_image(&self, stamp: ProgramStamp) -> Option<*const CompiledProgramImage> {
+    pub(crate) fn program_image(&self, stamp: ProgramStamp) -> Option<*const CompiledProgramFacts> {
         let idx = self.program_image_slot_index(stamp)?;
         let slot = unsafe { &*self.program_images.add(idx) };
         Some(unsafe { self.program_image_from_slot(slot) })
@@ -1986,15 +1958,6 @@ where
         self.recompute_scratch_reserved_bytes();
     }
 
-    #[inline]
-    pub(crate) fn shorten<'short>(&'short self) -> &'short Rendezvous<'short, 'cfg, T, U, C, E>
-    where
-        'cfg: 'short,
-    {
-        let ptr: *const Self = self;
-        unsafe { &*ptr.cast::<Rendezvous<'short, 'cfg, T, U, C, E>>() }
-    }
-
     #[cfg(test)]
     #[inline]
     pub(crate) fn slot_bundle<'short>(&'short mut self) -> SlotBundle<'short>
@@ -2048,7 +2011,6 @@ where
         &self,
         slot: PolicySlot,
         event: &crate::observe::core::TapEvent,
-        caps: CapsMask,
         session: Option<SessionId>,
         lane: Option<Lane>,
         configure: F,
@@ -2056,7 +2018,7 @@ where
     where
         F: FnOnce(&mut PolicyCtx<'_>),
     {
-        let mut ctx = PolicyCtx::new(slot, event, caps);
+        let mut ctx = PolicyCtx::new(slot, event);
         if let Some(session) = session {
             ctx.set_session(session);
         }
@@ -2081,11 +2043,11 @@ where
         Ok(SpliceOperands::from_intent(&intent))
     }
 
-    fn emit_effect(&self, effect: CpEffect, sid: SessionId, arg: u32) {
+    fn emit_effect(&self, effect: ControlOp, sid: SessionId, arg: u32) {
         let event_id = match effect {
-            CpEffect::SpliceBegin => ids::SPLICE_BEGIN,
-            CpEffect::SpliceCommit => ids::SPLICE_COMMIT,
-            _ => effect.to_tap_event_id(),
+            ControlOp::TopologyBegin => ids::SPLICE_BEGIN,
+            ControlOp::TopologyCommit => ids::SPLICE_COMMIT,
+            _ => control_op_tap_event_id(effect),
         };
         emit(
             self.tap(),
@@ -2151,7 +2113,7 @@ where
         self.cancel_begin_at_lane(sid, lane);
         let generation = self.r#gen.last(lane).unwrap_or(Generation(0));
         let _ = self.eval_effect(
-            CpEffect::CancelAck,
+            ControlOp::AbortAck,
             EffectContext::new(sid, lane).with_generation(generation),
         );
     }
@@ -2193,7 +2155,7 @@ where
 
     fn perform_effect(&self, envelope: CpCommand) -> Result<(), CpError> {
         match envelope.effect {
-            CpEffect::SpliceBegin => {
+            ControlOp::TopologyBegin => {
                 let sid = envelope.sid.ok_or(CpError::Splice(
                     crate::control::cluster::error::SpliceError::InvalidSession,
                 ))?;
@@ -2216,7 +2178,7 @@ where
                 self.begin_splice(sid, lane, fences, generation)
                     .map_err(map_splice_error)
             }
-            CpEffect::SpliceAck => {
+            ControlOp::TopologyAck => {
                 let sid = envelope.sid.ok_or(CpError::Splice(
                     crate::control::cluster::error::SpliceError::InvalidSession,
                 ))?;
@@ -2227,7 +2189,7 @@ where
                     let sid = SessionId::new(sid.raw());
                     let lane = Lane::new(lane.raw());
                     return match self
-                        .eval_effect(CpEffect::SpliceAck, EffectContext::new(sid, lane))
+                        .eval_effect(ControlOp::TopologyAck, EffectContext::new(sid, lane))
                     {
                         Ok(_) => Ok(()),
                         Err(EffectError::Splice(err)) => Err(map_splice_error(err)),
@@ -2237,10 +2199,10 @@ where
                             ))
                         }
                         Err(EffectError::Unsupported) | Err(EffectError::Delegation(_)) => {
-                            Err(CpError::UnsupportedEffect(CpEffect::SpliceAck as u8))
+                            Err(CpError::UnsupportedEffect(ControlOp::TopologyAck as u8))
                         }
                         Err(EffectError::Commit(_)) => {
-                            Err(CpError::UnsupportedEffect(CpEffect::SpliceAck as u8))
+                            Err(CpError::UnsupportedEffect(ControlOp::TopologyAck as u8))
                         }
                     };
                 };
@@ -2265,7 +2227,7 @@ where
                     .map_err(map_splice_error)?;
                 Ok(())
             }
-            CpEffect::SpliceCommit => {
+            ControlOp::TopologyCommit => {
                 let sid = envelope.sid.ok_or(CpError::Splice(
                     crate::control::cluster::error::SpliceError::InvalidSession,
                 ))?;
@@ -2285,7 +2247,7 @@ where
                 }
                 Ok(())
             }
-            CpEffect::Delegate => {
+            ControlOp::CapDelegate => {
                 let delegate = envelope.delegate.ok_or(CpError::Delegation(
                     crate::control::cluster::error::DelegationError::InvalidToken,
                 ))?;
@@ -2317,11 +2279,11 @@ where
                     token: delegate.token,
                 });
 
-                match self.eval_effect(CpEffect::Delegate, ctx) {
+                match self.eval_effect(ControlOp::CapDelegate, ctx) {
                     Ok(_) => Ok(()),
                     Err(EffectError::Delegation(err)) => Err(map_delegate_error(err)),
                     Err(EffectError::Unsupported) => {
-                        Err(CpError::UnsupportedEffect(CpEffect::Delegate as u8))
+                        Err(CpError::UnsupportedEffect(ControlOp::CapDelegate as u8))
                     }
                     Err(EffectError::Splice(_))
                     | Err(EffectError::MissingGeneration)
@@ -2331,7 +2293,7 @@ where
                     )),
                 }
             }
-            CpEffect::Commit => {
+            ControlOp::TxCommit => {
                 let sid = envelope.sid.ok_or(CpError::Commit(
                     crate::control::cluster::error::CommitError::SessionNotFound,
                 ))?;
@@ -2351,14 +2313,14 @@ where
                 self.commit_at_lane(sid, lane, Generation(generation_input.raw()))
                     .map_err(map_commit_error)
             }
-            CpEffect::CancelBegin => {
+            ControlOp::AbortBegin => {
                 let sid = envelope.sid.ok_or(CpError::Cancel(
                     crate::control::cluster::error::CancelError::SessionNotFound,
                 ))?;
                 self.cancel_begin(SessionId::new(sid.raw()))
                     .map_err(map_cancel_error)
             }
-            CpEffect::CancelAck => {
+            ControlOp::AbortAck => {
                 let sid = envelope.sid.ok_or(CpError::Cancel(
                     crate::control::cluster::error::CancelError::SessionNotFound,
                 ))?;
@@ -2371,7 +2333,7 @@ where
                 )
                 .map_err(map_cancel_error)
             }
-            CpEffect::Checkpoint => {
+            ControlOp::StateSnapshot => {
                 let sid = envelope.sid.ok_or(CpError::Checkpoint(
                     crate::control::cluster::error::CheckpointError::SessionNotFound,
                 ))?;
@@ -2379,7 +2341,7 @@ where
                     .map(|_| ())
                     .map_err(map_checkpoint_error)
             }
-            CpEffect::Rollback => {
+            ControlOp::StateRestore => {
                 let sid = envelope.sid.ok_or(CpError::Rollback(
                     crate::control::cluster::error::RollbackError::SessionNotFound,
                 ))?;
@@ -2398,11 +2360,11 @@ where
 
     fn eval_effect(
         &self,
-        effect: CpEffect,
+        effect: ControlOp,
         ctx: EffectContext,
     ) -> Result<EffectResult, EffectError> {
         match effect {
-            CpEffect::SpliceBegin => {
+            ControlOp::TopologyBegin => {
                 let target = ctx.generation.ok_or(EffectError::MissingGeneration)?;
                 let mut prev = self.r#gen.last(ctx.lane);
                 if prev.is_none() {
@@ -2430,8 +2392,8 @@ where
                 self.emit_effect(effect, ctx.sid, packed);
                 Ok(EffectResult::Generation(target))
             }
-            CpEffect::SpliceAck => Ok(EffectResult::None),
-            CpEffect::SpliceCommit => {
+            ControlOp::TopologyAck => Ok(EffectResult::None),
+            ControlOp::TopologyCommit => {
                 let pending = self.splice.take(ctx.lane).ok_or(EffectError::Splice(
                     SpliceError::NoPending { lane: ctx.lane },
                 ))?;
@@ -2476,7 +2438,7 @@ where
                 self.emit_effect(effect, ctx.sid, packed);
                 Ok(EffectResult::Generation(target))
             }
-            CpEffect::Delegate => {
+            ControlOp::CapDelegate => {
                 let Some(delegate) = ctx.delegate else {
                     return Err(EffectError::Unsupported);
                 };
@@ -2531,7 +2493,7 @@ where
                         .map_err(EffectError::Delegation)
                 }
             }
-            CpEffect::Commit => {
+            ControlOp::TxCommit => {
                 let generation = ctx.generation.ok_or(EffectError::MissingGeneration)?;
                 let checkpoint = self.checkpoints.last(ctx.lane).ok_or(EffectError::Commit(
                     CommitError::NoCheckpoint { sid: ctx.sid },
@@ -2555,22 +2517,22 @@ where
                 self.emit_effect(effect, ctx.sid, generation.0 as u32);
                 Ok(EffectResult::Generation(generation))
             }
-            CpEffect::CancelBegin => {
+            ControlOp::AbortBegin => {
                 self.emit_effect(effect, ctx.sid, ctx.lane.as_wire() as u32);
                 Ok(EffectResult::None)
             }
-            CpEffect::CancelAck => {
+            ControlOp::AbortAck => {
                 let generation = ctx.generation.ok_or(EffectError::MissingGeneration)?;
                 self.emit_effect(effect, ctx.sid, generation.0 as u32);
                 Ok(EffectResult::None)
             }
-            CpEffect::Checkpoint => {
+            ControlOp::StateSnapshot => {
                 let epoch = self.r#gen.last(ctx.lane).unwrap_or(Generation(0));
                 self.checkpoints.record(ctx.lane, epoch);
                 self.emit_effect(effect, ctx.sid, epoch.0 as u32);
                 Ok(EffectResult::Generation(epoch))
             }
-            CpEffect::Rollback => {
+            ControlOp::StateRestore => {
                 let requested = ctx.generation.ok_or(EffectError::MissingGeneration)?;
                 let current = self.r#gen.last(ctx.lane).unwrap_or(Generation(0));
                 let checkpoint = self.checkpoints.last(ctx.lane).ok_or({
@@ -2610,16 +2572,6 @@ where
             }
             _ => Err(EffectError::Unsupported),
         }
-    }
-
-    #[inline]
-    pub(crate) fn caps_mask_for_lane(&self, lane: Lane) -> CapsMask {
-        self.vm_caps.get(lane)
-    }
-
-    #[inline]
-    pub(crate) fn set_caps_mask_for_lane(&self, lane: Lane, caps: CapsMask) {
-        self.vm_caps.set(lane, caps);
     }
 }
 
@@ -2677,8 +2629,8 @@ where
         let base = slab.as_mut_ptr() as usize;
         let len = slab.len();
 
-        let program_offset = Self::align_up(base, core::mem::align_of::<ProgramImageSlot>());
-        let program_bytes = image_slots.checked_mul(core::mem::size_of::<ProgramImageSlot>())?;
+        let program_offset = Self::align_up(base, core::mem::align_of::<CompiledProgramSlot>());
+        let program_bytes = image_slots.checked_mul(core::mem::size_of::<CompiledProgramSlot>())?;
         let role_offset = Self::align_up(
             program_offset.checked_add(program_bytes)?,
             core::mem::align_of::<RoleImageSlot>(),
@@ -2712,7 +2664,7 @@ where
         endpoint_slots: usize,
         image_slots: usize,
     ) -> Option<(
-        *mut ProgramImageSlot,
+        *mut CompiledProgramSlot,
         *mut RoleImageSlot,
         *mut EndpointLeaseSlot,
         u32,
@@ -2728,14 +2680,14 @@ where
             endpoint_lease_capacity,
         ) = Self::runtime_metadata_layout_with_image_slots(slab, endpoint_slots, image_slots)?;
         let base = slab.as_mut_ptr();
-        let program_ptr = unsafe { base.add(program_offset).cast::<ProgramImageSlot>() };
+        let program_ptr = unsafe { base.add(program_offset).cast::<CompiledProgramSlot>() };
         let role_ptr = unsafe { base.add(role_offset).cast::<RoleImageSlot>() };
         let lease_ptr = unsafe { base.add(lease_offset).cast::<EndpointLeaseSlot>() };
 
         let mut idx = 0usize;
         while idx < image_slots {
             unsafe {
-                program_ptr.add(idx).write(ProgramImageSlot::EMPTY);
+                program_ptr.add(idx).write(CompiledProgramSlot::EMPTY);
                 role_ptr.add(idx).write(RoleImageSlot::EMPTY);
             }
             idx += 1;
@@ -2764,7 +2716,7 @@ where
         slab: &mut [u8],
         endpoint_slots: usize,
     ) -> Option<(
-        *mut ProgramImageSlot,
+        *mut CompiledProgramSlot,
         *mut RoleImageSlot,
         *mut EndpointLeaseSlot,
         u32,
@@ -2813,7 +2765,7 @@ where
         slab: &mut [u8],
         endpoint_slots: usize,
     ) -> Option<(
-        *mut ProgramImageSlot,
+        *mut CompiledProgramSlot,
         *mut RoleImageSlot,
         *mut EndpointLeaseSlot,
         u32,
@@ -2834,7 +2786,7 @@ where
     unsafe fn init_runtime_metadata_for_public_path_auto(
         slab: &mut [u8],
     ) -> Option<(
-        *mut ProgramImageSlot,
+        *mut CompiledProgramSlot,
         *mut RoleImageSlot,
         *mut EndpointLeaseSlot,
         u32,
@@ -2845,7 +2797,7 @@ where
             .saturating_add(Self::PUBLIC_ENDPOINT_ATTACH_TAIL_FLOOR);
         let baseline = Self::runtime_metadata_layout_for_public_path(slab, 0)?;
         let mut best = baseline;
-        let per_endpoint_bytes = core::mem::size_of::<ProgramImageSlot>()
+        let per_endpoint_bytes = core::mem::size_of::<CompiledProgramSlot>()
             .saturating_add(core::mem::size_of::<RoleImageSlot>())
             .saturating_add(core::mem::size_of::<EndpointLeaseSlot>());
         let per_endpoint_bytes = core::cmp::max(per_endpoint_bytes, 1);
@@ -2949,7 +2901,6 @@ where
             LoopTable::init_empty(core::ptr::addr_of_mut!((*dst).loops));
             RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
             PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
-            VmCapsTable::init_empty(core::ptr::addr_of_mut!((*dst).vm_caps));
             SlotArena::init_empty(core::ptr::addr_of_mut!((*dst).slot_arena));
             HostSlots::init_empty(core::ptr::addr_of_mut!((*dst).host_slots));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
@@ -3024,7 +2975,6 @@ where
             LoopTable::init_empty(core::ptr::addr_of_mut!((*dst).loops));
             RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
             PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
-            VmCapsTable::init_empty(core::ptr::addr_of_mut!((*dst).vm_caps));
             SlotArena::init_empty(core::ptr::addr_of_mut!((*dst).slot_arena));
             HostSlots::init_empty(core::ptr::addr_of_mut!((*dst).host_slots));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
@@ -3105,7 +3055,6 @@ where
             LoopTable::init_empty(core::ptr::addr_of_mut!((*dst).loops));
             RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
             PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
-            VmCapsTable::init_empty(core::ptr::addr_of_mut!((*dst).vm_caps));
             SlotArena::init_empty(core::ptr::addr_of_mut!((*dst).slot_arena));
             HostSlots::init_empty(core::ptr::addr_of_mut!((*dst).host_slots));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
@@ -3186,7 +3135,7 @@ where
 
     #[inline]
     pub(crate) fn checkpoint_at_lane(&self, sid: SessionId, lane: Lane) -> Generation {
-        match self.eval_effect(CpEffect::Checkpoint, EffectContext::new(sid, lane)) {
+        match self.eval_effect(ControlOp::StateSnapshot, EffectContext::new(sid, lane)) {
             Ok(EffectResult::Generation(epoch)) => epoch,
             Ok(EffectResult::None) => unreachable!("checkpoint effect must yield generation"),
             Err(_) => unreachable!("checkpoint effect cannot fail"),
@@ -3201,7 +3150,7 @@ where
         generation: Generation,
     ) -> Result<(), CommitError> {
         match self.eval_effect(
-            CpEffect::Commit,
+            ControlOp::TxCommit,
             EffectContext::new(sid, lane).with_generation(generation),
         ) {
             Ok(_) => Ok(()),
@@ -3218,7 +3167,7 @@ where
 
     #[inline]
     pub(crate) fn cancel_begin_at_lane(&self, sid: SessionId, lane: Lane) {
-        self.eval_effect(CpEffect::CancelBegin, EffectContext::new(sid, lane))
+        self.eval_effect(ControlOp::AbortBegin, EffectContext::new(sid, lane))
             .expect("cancel begin evaluation must not fail");
     }
 
@@ -3243,7 +3192,6 @@ where
         self.caps.purge_lane(lane);
         self.loops.reset_lane(lane);
         self.routes.reset_lane(lane);
-        self.vm_caps.reset_lane(lane);
     }
 
     #[inline]
@@ -3459,15 +3407,6 @@ where
         &self.caps
     }
 
-    /// Release a capability from the CapTable by nonce.
-    #[inline]
-    pub(crate) fn release_cap_by_nonce(
-        &self,
-        nonce: &[u8; crate::control::cap::mint::CAP_NONCE_LEN],
-    ) {
-        self.caps.release_by_nonce(nonce);
-    }
-
     pub(crate) fn acquire_port<'a>(
         &'a self,
         sid: SessionId,
@@ -3498,12 +3437,12 @@ where
         };
 
         if first_attach {
-            // Emit CpEffect::Open for the lane's inaugural attachment.
+            // Emit lane_open_tap_event_id() for the lane's inaugural attachment.
             emit(
                 self.tap(),
                 RawEvent::new(
                     self.clock.now32(),
-                    crate::control::cluster::effects::CpEffect::Open.to_tap_event_id(),
+                    crate::control::cluster::effects::lane_open_tap_event_id(),
                 )
                 .with_arg0(sid.raw())
                 .with_arg1(lane.0),
@@ -3519,7 +3458,6 @@ where
             &self.transport,
             self.tap(),
             &self.clock,
-            &self.vm_caps,
             &self.loops,
             &self.routes,
             &self.host_slots,
@@ -3632,7 +3570,7 @@ where
         // Use nonce-based claim path (trusted domain - no MAC verification)
         let (exhausted, handle_bytes) = self
             .caps
-            .claim_by_nonce(&nonce, sid, lane, kind_tag, role, shot, token.caps_mask())
+            .claim_by_nonce(&nonce, sid, lane, kind_tag, role, shot)
             .map_err(|e| match e {
                 CapError::UnknownToken => CapError::UnknownToken,
                 CapError::WrongSessionOrLane => CapError::WrongSessionOrLane,
@@ -3854,7 +3792,7 @@ where
             .find_lane(sid)
             .ok_or(CancelError::UnknownSession { sid })?;
         self.eval_effect(
-            CpEffect::CancelAck,
+            ControlOp::AbortAck,
             EffectContext::new(sid, lane).with_generation(r#gen),
         )
         .expect("cancel ack evaluation must not fail");
@@ -3884,7 +3822,7 @@ where
         epoch: Generation,
     ) -> Result<(), RollbackError> {
         match self.eval_effect(
-            CpEffect::Rollback,
+            ControlOp::StateRestore,
             EffectContext::new(sid, lane).with_generation(epoch),
         ) {
             Ok(_) => Ok(()),
@@ -4035,7 +3973,7 @@ where
 {
     /// Begin a local splice operation.
     ///
-    /// This is called by EffectRunner::run_effect() for CpEffect::SpliceBegin.
+    /// This is called by EffectRunner::run_effect() for ControlOp::TopologyBegin.
     fn begin_splice(
         &self,
         sid: SessionId,
@@ -4047,7 +3985,7 @@ where
             .with_generation(generation)
             .with_fences(fences);
 
-        match self.eval_effect(CpEffect::SpliceBegin, ctx) {
+        match self.eval_effect(ControlOp::TopologyBegin, ctx) {
             Ok(_) => Ok(()),
             Err(EffectError::Splice(err)) => Err(err),
             Err(EffectError::MissingGeneration)
@@ -4062,10 +4000,10 @@ where
 
     /// Commit a local splice operation.
     ///
-    /// This is called by EffectRunner::run_effect() for CpEffect::SpliceCommit.
+    /// This is called by EffectRunner::run_effect() for ControlOp::TopologyCommit.
     fn commit_splice(&self, sid: SessionId, lane: Lane) -> Result<(), SpliceError> {
         let ctx = EffectContext::new(sid, lane);
-        match self.eval_effect(CpEffect::SpliceCommit, ctx) {
+        match self.eval_effect(ControlOp::TopologyCommit, ctx) {
             Ok(_) => Ok(()),
             Err(EffectError::Splice(err)) => Err(err),
             Err(EffectError::MissingGeneration)
@@ -4122,26 +4060,21 @@ where
 {
     fn run_effect(&self, envelope: CpCommand) -> Result<(), CpError> {
         let envelope = match envelope.effect {
-            CpEffect::Delegate => envelope.canonicalize_delegate()?,
+            ControlOp::CapDelegate => envelope.canonicalize_delegate()?,
             _ => envelope,
         };
         let lane_opt = envelope.lane.map(|lane| Lane::new(lane.raw()));
         let sid_opt = envelope.sid.map(|sid| SessionId::new(sid.raw()));
-        let caps_mask = lane_opt
-            .map(|lane| self.vm_caps.get(lane))
-            .unwrap_or(CapsMask::allow_all());
 
-        let policy_event = RawEvent::new(self.clock.now32(), envelope.effect.to_tap_event_id())
-            .with_arg0(sid_opt.map_or(0, |sid| sid.raw()))
-            .with_arg1(lane_opt.map_or(0, |lane| lane.raw()));
+        let policy_event =
+            RawEvent::new(self.clock.now32(), control_op_tap_event_id(envelope.effect))
+                .with_arg0(sid_opt.map_or(0, |sid| sid.raw()))
+                .with_arg1(lane_opt.map_or(0, |lane| lane.raw()));
 
-        let handle_data = envelope.delegate.as_ref().map(|delegate| {
-            (
-                delegate.token.resource_tag(),
-                delegate.token.handle_bytes(),
-                delegate.token.caps_mask(),
-            )
-        });
+        let handle_data = envelope
+            .delegate
+            .as_ref()
+            .map(|delegate| (delegate.token.resource_tag(), delegate.token.handle_bytes()));
 
         let _ = self.flush_transport_events();
         let transport_metrics = self.transport.metrics().snapshot();
@@ -4221,7 +4154,6 @@ where
         let action = self.run_policy(
             crate::policy_runtime::PolicySlot::Rendezvous,
             &policy_event,
-            caps_mask,
             sid_opt,
             lane_opt,
             move |ctx| {
@@ -4242,12 +4174,6 @@ where
         );
 
         self.apply_policy_action(action, sid_opt, lane_opt)?;
-
-        if !caps_mask.allows(envelope.effect) {
-            return Err(CpError::Authorisation {
-                effect: envelope.effect,
-            });
-        }
 
         self.perform_effect(envelope)
     }
@@ -4270,7 +4196,6 @@ where
 mod epf_tests {
     use super::*;
     use crate::{
-        control::cap::mint::CapsMask,
         control::cluster::core::{CpCommand, EffectRunner},
         control::types::{Lane, SessionId},
         g::{self, Msg, Role},
@@ -4609,27 +4534,6 @@ mod epf_tests {
     fn route_summary_alt() -> LoweringSummary {
         let program = g::send::<Role<0>, Role<1>, Msg<12, u32>, 0>();
         program.summary().clone()
-    }
-
-    #[test]
-    fn run_effect_requires_authorised_caps() {
-        with_epf_test_rendezvous(|rendezvous| {
-            let sid = SessionId::new(1);
-            let lane = Lane::new(0);
-
-            rendezvous.vm_caps.set(lane, CapsMask::empty());
-
-            let envelope = CpCommand::checkpoint(SessionId::new(sid.raw()), Lane::new(lane.raw()));
-
-            let result = EffectRunner::run_effect(rendezvous, envelope);
-
-            assert!(matches!(
-                result,
-                Err(CpError::Authorisation {
-                    effect: CpEffect::Checkpoint
-                })
-            ));
-        });
     }
 
     #[test]
@@ -5007,11 +4911,6 @@ where
     C: Clock,
     E: crate::control::cap::mint::EpochTable,
 {
-    /// Borrow capability table as a constrained facet.
-    pub(crate) fn caps_facet(&mut self) -> CapsFacet<T, U, C, E> {
-        CapsFacet::new()
-    }
-
     /// Borrow splice coordination state as a constrained facet.
     pub(crate) fn splice_facet(&mut self) -> SpliceFacet<T, U, C, E> {
         SpliceFacet::new()
@@ -5020,73 +4919,6 @@ where
     /// Borrow observation ring as a constrained facet.
     pub(crate) fn observe_facet(&self) -> ObserveFacet<'_, 'cfg> {
         ObserveFacet::new(self.tap())
-    }
-}
-
-/// Capability-focused facet that exposes only CapTable operations.
-#[derive(Default)]
-pub(crate) struct CapsFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable;
-
-impl<T, U, C, E> Copy for CapsFacet<T, U, C, E>
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
-{
-}
-
-impl<T, U, C, E> Clone for CapsFacet<T, U, C, E>
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
-{
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T, U, C, E> CapsFacet<T, U, C, E>
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
-{
-    #[inline]
-    pub(crate) const fn new() -> Self {
-        Self(PhantomData)
-    }
-
-    /// Mint a capability token and register it in the CapTable.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn mint_cap<K: crate::control::cap::mint::ResourceKind>(
-        self,
-        rendezvous: &Rendezvous<'_, '_, T, U, C, E>,
-        sid: SessionId,
-        lane: Lane,
-        shot: crate::control::cap::mint::CapShot,
-        dest_role: u8,
-        nonce: [u8; 16],
-        handle: K::Handle,
-    ) {
-        rendezvous.mint_cap::<K>(sid, lane, shot, dest_role, nonce, handle)
-    }
-
-    /// Generate the next nonce seed for capability minting.
-    #[inline]
-    pub(crate) fn next_nonce_seed(
-        self,
-        rendezvous: &Rendezvous<'_, '_, T, U, C, E>,
-    ) -> crate::control::cap::mint::NonceSeed {
-        rendezvous.next_nonce_seed()
     }
 }
 

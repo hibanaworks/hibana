@@ -10,14 +10,11 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 use common::TestTransport;
 use hibana::{
-    g::advanced::{CanonicalControl, RoleProgram, project},
+    g::advanced::{RoleProgram, project},
     g::{self, Msg, Role},
     substrate::cap::{
         CapShot, ControlResourceKind, GenericCapToken, ResourceKind,
-        advanced::{
-            CAP_HANDLE_LEN, CapError, CapsMask, ControlHandling, ControlMint, ControlScopeKind,
-            ScopeId, SessionScopedKind,
-        },
+        advanced::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId},
     },
     substrate::{
         Lane, SessionId, SessionKit,
@@ -28,9 +25,9 @@ use hibana::{
 use runtime_support::with_fixture;
 use tls_ref_support::with_tls_ref;
 
-const LABEL_CANCEL: u8 = 60;
+const LABEL_CANCEL: u8 = 124;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct CancelKind;
+struct AbortBeginTestControl;
 
 fn encode_session_scoped_handle(sid: u32, lane: u16) -> [u8; CAP_HANDLE_LEN] {
     let mut buf = [0u8; CAP_HANDLE_LEN];
@@ -45,11 +42,10 @@ fn decode_session_scoped_handle(data: [u8; CAP_HANDLE_LEN]) -> (u32, u16) {
     (sid, lane)
 }
 
-impl ResourceKind for CancelKind {
+impl ResourceKind for AbortBeginTestControl {
     type Handle = (u32, u16);
     const TAG: u8 = 0x45;
     const NAME: &'static str = "Cancel";
-    const AUTO_MINT_EXTERNAL: bool = false;
 
     fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
         encode_session_scoped_handle(handle.0, handle.1)
@@ -60,38 +56,20 @@ impl ResourceKind for CancelKind {
     }
 
     fn zeroize(_handle: &mut Self::Handle) {}
-
-    fn caps_mask(_handle: &Self::Handle) -> CapsMask {
-        CapsMask::empty()
-    }
-
-    fn scope_id(_handle: &Self::Handle) -> Option<ScopeId> {
-        None
-    }
 }
 
-impl SessionScopedKind for CancelKind {
-    fn handle_for_session(sid: SessionId, lane: Lane) -> Self::Handle {
-        (sid.raw(), lane.raw() as u16)
-    }
-
-    fn shot() -> CapShot {
-        CapShot::One
-    }
-}
-
-impl ControlMint for CancelKind {
-    fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> Self::Handle {
-        (sid.raw(), lane.raw() as u16)
-    }
-}
-
-impl ControlResourceKind for CancelKind {
+impl ControlResourceKind for AbortBeginTestControl {
     const LABEL: u8 = LABEL_CANCEL;
     const SCOPE: ControlScopeKind = ControlScopeKind::Cancel;
     const TAP_ID: u16 = 0;
     const SHOT: CapShot = CapShot::One;
-    const HANDLING: ControlHandling = ControlHandling::Canonical;
+    const PATH: ControlPath = ControlPath::Local;
+    const OP: ControlOp = ControlOp::AbortBegin;
+    const AUTO_MINT_WIRE: bool = false;
+
+    fn mint_handle(sid: SessionId, lane: Lane, _scope: ScopeId) -> <Self as ResourceKind>::Handle {
+        (sid.raw(), lane.raw() as u16)
+    }
 }
 
 type TestKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
@@ -109,7 +87,7 @@ fn run_cancel_local_action_test(
     let cancel_protocol = g::send::<
         Role<0>,
         Role<0>,
-        Msg<{ LABEL_CANCEL }, GenericCapToken<CancelKind>, CanonicalControl<CancelKind>>,
+        Msg<{ LABEL_CANCEL }, GenericCapToken<AbortBeginTestControl>, AbortBeginTestControl>,
         0,
     >();
     let controller_cancel_program: RoleProgram<0> = project(&cancel_protocol);
@@ -134,8 +112,8 @@ fn run_cancel_local_action_test(
         controller
             .flow::<Msg<
                 { LABEL_CANCEL },
-                GenericCapToken<CancelKind>,
-                CanonicalControl<CancelKind>,
+                GenericCapToken<AbortBeginTestControl>,
+                AbortBeginTestControl,
             >>()
             .expect("cancel flow")
             .send(()),
@@ -145,7 +123,7 @@ fn run_cancel_local_action_test(
 }
 
 /// Test cancel as a local action (self-send) via unified flow().send() API.
-/// CanonicalControl self-send means Controller makes the local decision.
+/// local-control self-send means Controller makes the local decision.
 /// This test verifies that typestate advances correctly through flow().send().
 #[test]
 fn cancel_local_action_advances_typestate() {

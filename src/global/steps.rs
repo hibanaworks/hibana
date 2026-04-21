@@ -338,11 +338,17 @@ impl<Inner, const POLICY_ID: u16> PolicyEligible for PolicySteps<Inner, POLICY_I
 }
 
 /// Type-level booleans used during projection.
-pub trait Bool {}
+pub trait Bool {
+    const VALUE: bool;
+}
 pub struct True;
 pub struct False;
-impl Bool for True {}
-impl Bool for False {}
+impl Bool for True {
+    const VALUE: bool = true;
+}
+impl Bool for False {
+    const VALUE: bool = false;
+}
 
 /// Role equality at the type level.
 pub trait RoleEq<Other> {

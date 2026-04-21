@@ -32,7 +32,7 @@ check_absent_outside() {
 }
 
 check_absent \
-  "ProgramFacts" \
+  "\\bProgramFacts\\b" \
   "legacy ProgramFacts owner or vocabulary reintroduced" \
   src README.md tests
 

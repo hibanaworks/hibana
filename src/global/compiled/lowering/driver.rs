@@ -1,15 +1,16 @@
 use crate::{
-    control::{cluster::effects::CpEffect, lease::planner::LeaseGraphBudget},
+    control::cap::mint::ControlOp,
+    control::lease::planner::LeaseGraphBudget,
     eff::{EffKind, EffStruct},
     global::{
-        ControlLabelSpec,
+        StaticControlDesc,
         const_dsl::{ControlMarker, EffList, PolicyMode, ScopeEvent, ScopeId, ScopeMarker},
     },
 };
 
 use super::super::images::program::{
-    CompiledProgramCounts, MAX_COMPILED_PROGRAM_CONTROLS, MAX_COMPILED_PROGRAM_CP_EFFECTS,
-    MAX_COMPILED_PROGRAM_RESOURCES, MAX_COMPILED_PROGRAM_SCOPES, MAX_COMPILED_PROGRAM_TAP_EVENTS,
+    CompiledProgramCounts, MAX_COMPILED_PROGRAM_CONTROLS, MAX_COMPILED_PROGRAM_RESOURCES,
+    MAX_COMPILED_PROGRAM_SCOPES, MAX_COMPILED_PROGRAM_TAP_EVENTS,
 };
 use super::program_lowering::control_scope_mask_bit;
 
@@ -25,13 +26,15 @@ const fn checked_role_index(role: u8) -> usize {
     }
     role
 }
-const EMPTY_CONTROL_SPEC: ControlLabelSpec = ControlLabelSpec {
+const EMPTY_CONTROL_SPEC: StaticControlDesc = StaticControlDesc {
     label: 0,
     resource_tag: 0,
     scope_kind: crate::global::const_dsl::ControlScopeKind::None,
+    path: crate::control::cap::mint::ControlPath::Local,
     tap_id: 0,
     shot: crate::control::cap::mint::CapShot::One,
-    handling: crate::global::ControlHandling::None,
+    op: crate::control::cap::mint::ControlOp::Fence,
+    flags: 0,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -41,10 +44,7 @@ pub(crate) struct ProgramStamp {
 }
 
 impl ProgramStamp {
-    pub(crate) const EMPTY: Self = Self {
-        lane0: 0,
-        lane1: 0,
-    };
+    pub(crate) const EMPTY: Self = Self { lane0: 0, lane1: 0 };
 
     const SEED0: u64 = 0xcbf2_9ce4_8422_2325;
     const SEED1: u64 = 0x8422_2325_cbf2_9ce4;
@@ -92,15 +92,15 @@ impl ProgramStamp {
     }
 
     #[inline(always)]
-    const fn mix_control_spec(mut state: u64, spec: ControlLabelSpec) -> u64 {
-        state = Self::mix_u64(state, spec.label as u64);
-        state = Self::mix_u64(state, spec.resource_tag as u64);
-        state = Self::mix_u64(state, spec.scope_kind as u64);
-        state = Self::mix_u64(state, spec.tap_id as u64);
-        state = Self::mix_u64(state, spec.shot as u64);
-        Self::mix_u64(state, spec.handling as u64)
+    const fn mix_control_spec(mut state: u64, spec: StaticControlDesc) -> u64 {
+        state = Self::mix_u64(state, spec.label() as u64);
+        state = Self::mix_u64(state, spec.resource_tag() as u64);
+        state = Self::mix_u64(state, spec.scope_kind() as u64);
+        state = Self::mix_u64(state, spec.tap_id() as u64);
+        state = Self::mix_u64(state, spec.shot() as u64);
+        state = Self::mix_u64(state, spec.path() as u64);
+        Self::mix_u64(state, spec.op() as u64)
     }
-
 }
 
 #[derive(Clone)]
@@ -110,7 +110,7 @@ struct LoweringValidationData {
     scope_markers: [ScopeMarker; MAX_LOWERING_NODES],
     scope_marker_len: usize,
     policies: [PolicyMode; MAX_LOWERING_NODES],
-    control_specs: [ControlLabelSpec; MAX_LOWERING_NODES],
+    control_specs: [StaticControlDesc; MAX_LOWERING_NODES],
     control_spec_present: [u8; CONTROL_SPEC_MASK_BYTES],
 }
 
@@ -204,7 +204,7 @@ pub(crate) struct LoweringView<'a> {
     nodes: &'a [EffStruct],
     scope_markers: &'a [ScopeMarker],
     policies: &'a [PolicyMode; MAX_LOWERING_NODES],
-    control_specs: &'a [ControlLabelSpec; MAX_LOWERING_NODES],
+    control_specs: &'a [StaticControlDesc; MAX_LOWERING_NODES],
     control_spec_present: &'a [u8; CONTROL_SPEC_MASK_BYTES],
 }
 
@@ -244,7 +244,7 @@ impl<'a> LoweringView<'a> {
     }
 
     #[inline(always)]
-    pub(crate) const fn control_spec_at(&self, offset: usize) -> Option<ControlLabelSpec> {
+    pub(crate) const fn control_spec_at(&self, offset: usize) -> Option<StaticControlDesc> {
         if offset < self.nodes.len() && self.control_spec_present_at(offset) {
             Some(self.control_specs[offset])
         } else {
@@ -257,7 +257,7 @@ impl<'a> LoweringView<'a> {
         route_scope: ScopeId,
         route_enter_marker_idx: usize,
         scope_end: usize,
-    ) -> Option<(PolicyMode, usize, u8)> {
+    ) -> Option<(PolicyMode, usize, u8, ControlOp)> {
         if route_enter_marker_idx >= self.scope_markers.len() {
             return None;
         }
@@ -318,6 +318,11 @@ impl<'a> LoweringView<'a> {
             if depth_after_exits == 1 && !nested_non_policy_enter {
                 if let Some(policy) = self.policy_at(idx) {
                     if policy.dynamic_policy_id().is_some() {
+                        if let Some(control) = self.control_spec_at(idx)
+                            && !control.supports_dynamic_policy()
+                        {
+                            panic!("dynamic policy attached to unsupported control op");
+                        }
                         let eff_struct = self.nodes[idx];
                         let tag = if matches!(eff_struct.kind, EffKind::Atom) {
                             match eff_struct.atom_data().resource {
@@ -327,7 +332,11 @@ impl<'a> LoweringView<'a> {
                         } else {
                             0
                         };
-                        return Some((policy, idx, tag));
+                        let op = self
+                            .control_spec_at(idx)
+                            .map(StaticControlDesc::op)
+                            .unwrap_or(ControlOp::Fence);
+                        return Some((policy, idx, tag, op));
                     }
                 }
             }
@@ -366,7 +375,7 @@ impl LoweringValidationData {
 
     #[cfg(test)]
     #[inline(always)]
-    const fn control_spec_at(&self, offset: usize) -> Option<ControlLabelSpec> {
+    const fn control_spec_at(&self, offset: usize) -> Option<StaticControlDesc> {
         if offset < self.len && self.control_spec_present_at(offset) {
             Some(self.control_specs[offset])
         } else {
@@ -387,9 +396,6 @@ impl LoweringProgramData {
     const fn validate_projection_program(&self, scope_marker_len: usize) {
         if self.compiled_program_counts.resources > MAX_COMPILED_PROGRAM_RESOURCES {
             panic!("CompiledProgram: MAX_RESOURCES exceeded");
-        }
-        if self.compiled_program_counts.cp_effects > MAX_COMPILED_PROGRAM_CP_EFFECTS {
-            panic!("CompiledProgram: MAX_CP_EFFECTS exceeded");
         }
         if self.compiled_program_counts.tap_events > MAX_COMPILED_PROGRAM_TAP_EVENTS {
             panic!("CompiledProgram: MAX_TAP_EVENTS exceeded");
@@ -530,14 +536,17 @@ impl LoweringSummary {
                 if to + 1 > role_count {
                     role_count = to + 1;
                 }
-                lease_budget = lease_budget.include_atom(atom.label, atom.resource, policy);
+                lease_budget = lease_budget.include_atom(eff_list.control_spec_at(idx), policy);
                 summary.program.compiled_program_counts.tap_events += 1;
                 if atom.is_control {
-                    if let Some(tag) = atom.resource {
+                    if policy.is_dynamic()
+                        && let Some(control_spec) = eff_list.control_spec_at(idx)
+                        && !control_spec.supports_dynamic_policy()
+                    {
+                        panic!("dynamic policy attached to unsupported control op");
+                    }
+                    if atom.resource.is_some() {
                         summary.program.compiled_program_counts.resources += 1;
-                        if CpEffect::from_resource_tag(tag).is_some() {
-                            summary.program.compiled_program_counts.cp_effects += 1;
-                        }
                     }
                 } else if !policy.is_static() && !matches!(policy, PolicyMode::Dynamic { .. }) {
                     panic!("static policy attached to non-control atom");
@@ -669,10 +678,7 @@ impl LoweringSummary {
         } else {
             role_count as u8
         };
-        summary.program.stamp = ProgramStamp {
-            lane0,
-            lane1,
-        };
+        summary.program.stamp = ProgramStamp { lane0, lane1 };
     }
 
     const fn scan_impl(eff_list: &EffList) -> Self {
@@ -694,7 +700,6 @@ impl LoweringSummary {
                 control_marker_len: src_control_markers.len(),
                 lease_budget: LeaseGraphBudget::new(),
                 compiled_program_counts: CompiledProgramCounts {
-                    cp_effects: 0,
                     tap_events: 0,
                     resources: 0,
                     controls: 0,
@@ -729,7 +734,7 @@ impl LoweringSummary {
 
     #[cfg(test)]
     #[inline(always)]
-    const fn control_spec_at(&self, offset: usize) -> Option<ControlLabelSpec> {
+    const fn control_spec_at(&self, offset: usize) -> Option<StaticControlDesc> {
         self.validation.control_spec_at(offset)
     }
 

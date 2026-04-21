@@ -115,12 +115,11 @@ mod send;
 pub(crate) use self::core::cursor_endpoint_storage_layout;
 pub(super) use self::core::*;
 pub(crate) use self::core::{
-    CursorEndpoint, SendControlOutcome, SendDesc, SendHandling,
-    MaterializedRouteBranch, SendPreview,
+    CursorEndpoint, MaterializedRouteBranch, SendControlOutcome, SendDesc, SendPreview,
 };
 pub(crate) use self::decode::DecodeDesc;
 pub(crate) use self::frontier::FrontierScratchLayout;
 pub(crate) use self::frontier::MAX_ROUTE_ARM_STACK;
-pub(crate) use self::layout::EndpointArenaLayout;
 pub(crate) use self::lane_port::RawSendPayload;
+pub(crate) use self::layout::EndpointArenaLayout;
 pub(crate) use self::recv::RecvDesc;

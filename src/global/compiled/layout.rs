@@ -1,7 +1,7 @@
 use crate::control::cluster::effects::ResourceDescriptor;
 use crate::eff::EffIndex;
 use crate::global::compiled::images::program::{
-    CompiledProgramCounts, CompiledProgramImage, DynamicPolicySite, RouteControlRecord,
+    CompiledProgramCounts, CompiledProgramFacts, DynamicPolicySite, RouteControlRecord,
 };
 use crate::global::compiled::images::role::{CompiledRoleImage, PhaseImageHeader, PhaseLaneEntry};
 use crate::global::const_dsl::ControlScopeKind;
@@ -37,7 +37,7 @@ const fn section_bytes<T>(count: usize) -> usize {
 pub(in crate::global::compiled) const fn compiled_program_tail_bytes_for_counts(
     counts: CompiledProgramCounts,
 ) -> usize {
-    let mut offset = core::mem::size_of::<CompiledProgramImage>();
+    let mut offset = core::mem::size_of::<CompiledProgramFacts>();
     offset = align_up(offset, core::mem::align_of::<ResourceDescriptor>());
     offset = offset.saturating_add(section_bytes::<ResourceDescriptor>(counts.resources));
     offset = align_up(offset, core::mem::align_of::<DynamicPolicySite>());
@@ -50,7 +50,7 @@ pub(in crate::global::compiled) const fn compiled_program_tail_bytes_for_counts(
 
 #[inline(always)]
 pub(in crate::global::compiled) const fn compiled_program_tail_align() -> usize {
-    let mut align = core::mem::align_of::<CompiledProgramImage>();
+    let mut align = core::mem::align_of::<CompiledProgramFacts>();
     align = max_align(align, core::mem::align_of::<ResourceDescriptor>());
     align = max_align(align, core::mem::align_of::<ControlScopeKind>());
     align = max_align(align, core::mem::align_of::<DynamicPolicySite>());

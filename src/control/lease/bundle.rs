@@ -3,10 +3,9 @@
 use core::{marker::PhantomData, ptr::NonNull};
 
 use crate::{
-    control::types::{Lane, RendezvousId},
+    control::types::RendezvousId,
     control::{
         automaton::splice::SpliceGraphContext,
-        cap::mint::CapsMask,
         lease::{
             core::{ControlCore, LeaseObserve},
             graph::{LeaseFacet, LeaseGraph, LeaseGraphError, LeaseSpec},
@@ -22,12 +21,12 @@ use crate::{
 use crate::{policy_runtime::PolicySlot, rendezvous::slots::SlotArena};
 
 const CAP_LOG_CAPACITY: usize = 4;
-const CAP_MASK_LOG_CAPACITY: usize = 4;
 #[cfg(test)]
 const SLOT_LOG_CAPACITY: usize = 4;
 
 /// Error returned when a lease bundle handle runs out of tracking capacity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) enum LeaseBundleError {
     Capacity,
 }
@@ -43,20 +42,7 @@ impl CapsMintRecord {
     };
 }
 
-#[derive(Clone, Copy)]
-struct CapsMaskRecord {
-    lane: Lane,
-    mask: CapsMask,
-}
-
-impl CapsMaskRecord {
-    const EMPTY: Self = Self {
-        lane: Lane::new(0),
-        mask: CapsMask::empty(),
-    };
-}
-
-/// Handle that records minted capabilities and capability mask adjustments so rollback can purge them.
+/// Handle that records minted capabilities so rollback can purge them.
 pub(crate) struct CapsBundleHandle<'ctx, 'cfg, T, U, C, E>
 where
     T: Transport,
@@ -64,13 +50,10 @@ where
     C: Clock,
     E: crate::control::cap::mint::EpochTable,
 {
-    rendezvous: NonNull<Rendezvous<'ctx, 'cfg, T, U, C, E>>,
     table: NonNull<CapTable>,
     pending: [CapsMintRecord; CAP_LOG_CAPACITY],
     pending_mask: u8,
-    masks: [CapsMaskRecord; CAP_MASK_LOG_CAPACITY],
-    masks_mask: u8,
-    _marker: PhantomData<&'ctx crate::observe::core::TapRing<'cfg>>,
+    _marker: PhantomData<(&'ctx crate::observe::core::TapRing<'cfg>, T, U, C, E)>,
 }
 
 impl<'ctx, 'cfg, T, U, C, E> CapsBundleHandle<'ctx, 'cfg, T, U, C, E>
@@ -80,22 +63,17 @@ where
     C: Clock,
     E: crate::control::cap::mint::EpochTable,
 {
-    pub(crate) const fn new(
-        rendezvous: NonNull<Rendezvous<'ctx, 'cfg, T, U, C, E>>,
-        table: NonNull<CapTable>,
-    ) -> Self {
+    pub(crate) const fn new(table: NonNull<CapTable>) -> Self {
         Self {
-            rendezvous,
             table,
             pending: [CapsMintRecord::EMPTY; CAP_LOG_CAPACITY],
             pending_mask: 0,
-            masks: [CapsMaskRecord::EMPTY; CAP_MASK_LOG_CAPACITY],
-            masks_mask: 0,
             _marker: PhantomData,
         }
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn track_mint(
         &mut self,
         nonce: [u8; crate::control::cap::mint::CAP_NONCE_LEN],
@@ -123,59 +101,12 @@ where
     }
 
     #[inline]
-    pub(crate) fn track_mask(
-        &mut self,
-        lane: Lane,
-        previous: CapsMask,
-    ) -> Result<(), LeaseBundleError> {
-        let mut free_slot = None;
-        let mut idx = 0usize;
-        while idx < CAP_MASK_LOG_CAPACITY {
-            let bit = 1u8 << idx;
-            if self.masks_mask & bit != 0 {
-                if self.masks[idx].lane == lane {
-                    return Ok(());
-                }
-            } else if free_slot.is_none() {
-                free_slot = Some(idx);
-            }
-            idx += 1;
-        }
-        if let Some(slot) = free_slot {
-            self.masks[slot] = CapsMaskRecord {
-                lane,
-                mask: previous,
-            };
-            self.masks_mask |= 1 << slot;
-            Ok(())
-        } else {
-            Err(LeaseBundleError::Capacity)
-        }
-    }
-
-    #[inline]
     fn on_commit(&mut self) {
         self.pending_mask = 0;
-        self.masks_mask = 0;
     }
 
     fn on_rollback(&mut self) {
         let mut idx = 0usize;
-        while idx < CAP_MASK_LOG_CAPACITY {
-            let bit = 1u8 << idx;
-            if self.masks_mask & bit != 0 {
-                let record = self.masks[idx];
-                // SAFETY: rendezvous pointer originates from an exclusive lease.
-                unsafe {
-                    self.rendezvous
-                        .as_mut()
-                        .set_caps_mask_for_lane(record.lane, record.mask);
-                }
-            }
-            idx += 1;
-        }
-        self.masks_mask = 0;
-        idx = 0;
         while idx < CAP_LOG_CAPACITY {
             let bit = 1u8 << idx;
             if self.pending_mask & bit != 0 {
@@ -393,6 +324,7 @@ where
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn caps_mut(&mut self) -> Option<&mut CapsBundleHandle<'ctx, 'cfg, T, U, C, E>> {
         self.caps.as_mut()
     }
@@ -426,9 +358,8 @@ where
         self.set_observe(LeaseObserve::new(core::ptr::from_ref(observe.tap())));
 
         if needs.requires_caps() || needs.requires_delegation() || needs.requires_splice() {
-            let rendezvous_ptr = NonNull::from(&mut *rendezvous);
             let caps_ptr = NonNull::from(rendezvous.caps());
-            self.set_caps(CapsBundleHandle::new(rendezvous_ptr, caps_ptr));
+            self.set_caps(CapsBundleHandle::new(caps_ptr));
         }
 
         #[cfg(test)]
@@ -616,8 +547,7 @@ mod tests {
     use std::thread_local;
 
     use crate::{
-        control::cap::mint::{CapShot, CapsMask, EndpointResource, ResourceKind},
-        control::cluster::effects::CpEffect,
+        control::cap::mint::{CapShot, EndpointResource, ResourceKind},
         control::types::{Lane, RendezvousId, SessionId},
         observe::core::{TapEvent, TapRing},
         observe::{self},
@@ -939,7 +869,7 @@ mod tests {
 
     #[test]
     fn caps_mint_released_on_rollback() {
-        use crate::control::cap::mint::{CAP_HANDLE_LEN, CAP_NONCE_LEN, CapsMask};
+        use crate::control::cap::mint::{CAP_HANDLE_LEN, CAP_NONCE_LEN};
         use crate::rendezvous::error::CapError;
 
         with_bundle_runtime(|fixture| {
@@ -953,7 +883,6 @@ mod tests {
                         ),
                     )
                     .expect("reserve lazy cap storage");
-                let rv_ptr = NonNull::from(&mut *rendezvous);
                 let cap_ptr = NonNull::from(rendezvous.caps());
                 let cap_table = rendezvous.caps();
                 let mut ctx: LeaseBundleContext<
@@ -964,7 +893,7 @@ mod tests {
                     CounterClock,
                     crate::control::cap::mint::EpochTbl,
                 > = LeaseBundleContext::new();
-                ctx.set_caps(CapsBundleHandle::new(rv_ptr, cap_ptr));
+                ctx.set_caps(CapsBundleHandle::new(cap_ptr));
 
                 let sid = SessionId::new(1);
                 let lane = Lane::new(2);
@@ -994,7 +923,6 @@ mod tests {
                     EndpointResource::TAG,
                     7,
                     CapShot::Many,
-                    CapsMask::allow_all(),
                 );
                 assert!(matches!(claim, Err(CapError::UnknownToken)));
             })
@@ -1080,42 +1008,5 @@ mod tests {
             slots.track_stage(PolicySlot::Route),
             Err(LeaseBundleError::Capacity)
         ));
-    }
-
-    #[test]
-    fn caps_mask_restored_on_rollback() {
-        with_bundle_runtime(|fixture| {
-            let config = fixture.config0::<256>();
-            with_bundle_rendezvous(config, |rendezvous| {
-                let original = rendezvous.caps_mask_for_lane(Lane::new(0));
-                let rv_ptr = NonNull::from(&mut *rendezvous);
-                let cap_ptr = NonNull::from(rendezvous.caps());
-
-                let mut ctx: LeaseBundleContext<
-                    'static,
-                    'static,
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    crate::control::cap::mint::EpochTbl,
-                > = LeaseBundleContext::new();
-                ctx.set_caps(CapsBundleHandle::new(rv_ptr, cap_ptr));
-
-                {
-                    let caps = ctx.caps_mut().expect("caps handle present");
-                    caps.track_mask(Lane::new(0), original).expect("log mask");
-                }
-
-                let updated = original.union(CapsMask::empty().with(CpEffect::SpliceBegin));
-                rendezvous.set_caps_mask_for_lane(Lane::new(0), updated);
-
-                ctx.on_rollback();
-
-                assert_eq!(
-                    rendezvous.caps_mask_for_lane(Lane::new(0)).bits(),
-                    original.bits()
-                );
-            })
-        });
     }
 }

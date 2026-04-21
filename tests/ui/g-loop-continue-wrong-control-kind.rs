@@ -1,5 +1,4 @@
 use hibana::g;
-use hibana::g::advanced::ExternalControl;
 use hibana::substrate::cap::{GenericCapToken, advanced::LoopContinueKind};
 
 const LABEL_LOOP_CONTINUE: u8 = 48;
@@ -11,7 +10,7 @@ fn main() {
         g::Msg<
             { LABEL_LOOP_CONTINUE },
             GenericCapToken<LoopContinueKind>,
-            ExternalControl<LoopContinueKind>,
+            LoopContinueKind,
         >,
         0,
     >();

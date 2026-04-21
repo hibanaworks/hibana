@@ -635,6 +635,12 @@ mod tests {
             "/internal/pico_smoke/src/route_control_kinds.rs"
         ));
     }
+    mod snapshot_control_kind {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/support/snapshot_control.rs"
+        ));
+    }
 
     fn drive<F: core::future::Future>(future: F) -> F::Output {
         futures::executor::block_on(future)
@@ -647,86 +653,21 @@ mod tests {
     };
     use crate::{
         control::{
-            cap::mint::{
-                CAP_HANDLE_LEN, CapError, CapShot, CapsMask, ControlMint, ControlResourceKind,
-                GenericCapToken, ResourceKind, SessionScopedKind,
-            },
+            cap::mint::{ControlResourceKind, GenericCapToken},
             cap::resource_kinds::RouteDecisionKind,
-            types::{Lane, SessionId},
         },
         g::{self, Msg, Role},
         global::compiled::lowering::LoweringSummary,
         global::{
-            CanonicalControl, ControlHandling, role_program,
+            role_program,
             steps::{RouteSteps, SendStep, SeqSteps, StepCons, StepNil},
             typestate::{JumpReason, LocalAction},
         },
     };
+    use snapshot_control_kind::SnapshotControl;
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    struct RouteRightKind;
-
-    impl ResourceKind for RouteRightKind {
-        type Handle = (u8, u64);
-        const TAG: u8 = 241;
-        const NAME: &'static str = "RouteRightKind";
-        const AUTO_MINT_EXTERNAL: bool = false;
-
-        fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
-            let mut out = [0u8; CAP_HANDLE_LEN];
-            out[0] = handle.0;
-            out[1..9].copy_from_slice(&handle.1.to_le_bytes());
-            out
-        }
-
-        fn decode_handle(data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
-            let mut raw = [0u8; 8];
-            raw.copy_from_slice(&data[1..9]);
-            Ok((data[0], u64::from_le_bytes(raw)))
-        }
-
-        fn zeroize(handle: &mut Self::Handle) {
-            handle.0 = 0;
-            handle.1 = 0;
-        }
-
-        fn caps_mask(_handle: &Self::Handle) -> CapsMask {
-            CapsMask::empty()
-        }
-
-        fn scope_id(handle: &Self::Handle) -> Option<crate::global::const_dsl::ScopeId> {
-            Some(crate::global::const_dsl::ScopeId::from_raw(handle.1))
-        }
-    }
-
-    impl SessionScopedKind for RouteRightKind {
-        fn handle_for_session(_sid: SessionId, _lane: Lane) -> Self::Handle {
-            (0, crate::global::const_dsl::ScopeId::none().raw())
-        }
-
-        fn shot() -> CapShot {
-            CapShot::One
-        }
-    }
-
-    impl ControlResourceKind for RouteRightKind {
-        const LABEL: u8 = 99;
-        const SCOPE: crate::global::const_dsl::ControlScopeKind =
-            crate::global::const_dsl::ControlScopeKind::Route;
-        const TAP_ID: u16 = 0x03ff;
-        const SHOT: CapShot = CapShot::One;
-        const HANDLING: ControlHandling = ControlHandling::Canonical;
-    }
-
-    impl ControlMint for RouteRightKind {
-        fn mint_handle(
-            _sid: SessionId,
-            _lane: Lane,
-            scope: crate::global::const_dsl::ScopeId,
-        ) -> Self::Handle {
-            (1, scope.raw())
-        }
-    }
+    const ROUTE_RIGHT_LABEL: u8 = 123;
+    type RouteRightKind = route_control_kinds::RouteControl<ROUTE_RIGHT_LABEL, 1>;
 
     fn retain_pico_smoke_fixture_symbols() {
         let _ = fanout_program::ROUTE_SCOPE_COUNT;
@@ -747,67 +688,13 @@ mod tests {
         let _ = fanout_program::run
             as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
         let _ = fanout_program::controller_program as fn() -> role_program::RoleProgram<0>;
-        let _ = localside::worker_offer_decode_u8::<0>
-            as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
+        let _ =
+            localside::worker_offer_decode_u8::<0> as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
     }
 
     #[test]
     fn pico_smoke_fixture_symbols_are_reachable() {
         retain_pico_smoke_fixture_symbols();
-    }
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    struct CheckpointKind;
-
-    impl ResourceKind for CheckpointKind {
-        type Handle = ();
-        const TAG: u8 = 242;
-        const NAME: &'static str = "CheckpointKind";
-        const AUTO_MINT_EXTERNAL: bool = false;
-
-        fn encode_handle(_handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
-            [0u8; CAP_HANDLE_LEN]
-        }
-
-        fn decode_handle(_data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
-            Ok(())
-        }
-
-        fn zeroize(_handle: &mut Self::Handle) {}
-
-        fn caps_mask(_handle: &Self::Handle) -> CapsMask {
-            CapsMask::empty()
-        }
-
-        fn scope_id(_handle: &Self::Handle) -> Option<crate::global::const_dsl::ScopeId> {
-            None
-        }
-    }
-
-    impl SessionScopedKind for CheckpointKind {
-        fn handle_for_session(_sid: SessionId, _lane: Lane) -> Self::Handle {}
-
-        fn shot() -> CapShot {
-            CapShot::One
-        }
-    }
-
-    impl ControlResourceKind for CheckpointKind {
-        const LABEL: u8 = 0x52;
-        const SCOPE: crate::global::const_dsl::ControlScopeKind =
-            crate::global::const_dsl::ControlScopeKind::Checkpoint;
-        const TAP_ID: u16 = 0x0400;
-        const SHOT: CapShot = CapShot::One;
-        const HANDLING: ControlHandling = ControlHandling::Canonical;
-    }
-
-    impl ControlMint for CheckpointKind {
-        fn mint_handle(
-            _sid: SessionId,
-            _lane: Lane,
-            _scope: crate::global::const_dsl::ScopeId,
-        ) -> Self::Handle {
-        }
     }
 
     type SendOnly<const LANE: u8, S, D, M> = StepCons<SendStep<S, D, M, LANE>, StepNil>;
@@ -877,9 +764,9 @@ mod tests {
 
     #[test]
     fn compiled_role_image_persistent_bytes_match_exact_footprint() {
-        const PROGRAM: crate::g::Program<SendOnly<0, Role<0>, Role<1>, Msg<7, ()>>> =
+        let program: crate::g::Program<SendOnly<0, Role<0>, Role<1>, Msg<7, ()>>> =
             g::send::<Role<0>, Role<1>, Msg<7, ()>, 0>();
-        let worker: role_program::RoleProgram<1> = role_program::project(&PROGRAM);
+        let worker: role_program::RoleProgram<1> = role_program::project(&program);
         let lowering = crate::global::lowering_input(&worker);
         let expected = CompiledRoleImage::persistent_bytes_for_program(lowering.footprint());
         with_compiled_role_image(&worker, |image| {
@@ -897,7 +784,7 @@ mod tests {
                 Msg<
                     { crate::runtime::consts::LABEL_ROUTE_DECISION },
                     GenericCapToken<RouteDecisionKind>,
-                    CanonicalControl<RouteDecisionKind>,
+                    RouteDecisionKind,
                 >,
             >,
             SendOnly<0, Role<0>, Role<1>, Msg<41, ()>>,
@@ -907,36 +794,35 @@ mod tests {
                 0,
                 Role<0>,
                 Role<0>,
-                Msg<99, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+                Msg<ROUTE_RIGHT_LABEL, GenericCapToken<RouteRightKind>, RouteRightKind>,
             >,
             SendOnly<0, Role<0>, Role<1>, Msg<47, ()>>,
         >;
         type ProgramSteps = BranchSteps<LeftSteps, RightSteps>;
 
-        const LEFT: g::Program<LeftSteps> = g::seq(
+        let left: g::Program<LeftSteps> = g::seq(
             g::send::<
                 Role<0>,
                 Role<0>,
                 Msg<
                     { crate::runtime::consts::LABEL_ROUTE_DECISION },
                     GenericCapToken<RouteDecisionKind>,
-                    CanonicalControl<RouteDecisionKind>,
+                    RouteDecisionKind,
                 >,
                 0,
             >(),
             g::send::<Role<0>, Role<1>, Msg<41, ()>, 0>(),
         );
-        const RIGHT: g::Program<RightSteps> = g::seq(
+        let right: g::Program<RightSteps> = g::seq(
             g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<99, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+                Msg<ROUTE_RIGHT_LABEL, GenericCapToken<RouteRightKind>, RouteRightKind>,
                 0,
             >(),
             g::send::<Role<0>, Role<1>, Msg<47, ()>, 0>(),
         );
-        const PROGRAM: g::Program<ProgramSteps> = g::route(LEFT, RIGHT);
-        let program = PROGRAM;
+        let program: g::Program<ProgramSteps> = g::route(left, right);
 
         let controller: role_program::RoleProgram<0> = role_program::project(&program);
         with_compiled_role_image(&controller, |controller_compiled| {
@@ -953,7 +839,7 @@ mod tests {
                 controller_compiled
                     .controller_arm_entry_by_arm(controller_scope, 1)
                     .map(|(_, label)| label),
-                Some(99)
+                Some(ROUTE_RIGHT_LABEL)
             );
             assert!(
                 controller_compiled
@@ -1076,7 +962,7 @@ mod tests {
                     Msg<
                         { crate::runtime::consts::LABEL_ROUTE_DECISION },
                         GenericCapToken<RouteDecisionKind>,
-                        CanonicalControl<RouteDecisionKind>,
+                        RouteDecisionKind,
                     >,
                     0,
                 >,
@@ -1089,7 +975,7 @@ mod tests {
                 SendStep<
                     Role<0>,
                     Role<0>,
-                    Msg<99, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+                    Msg<ROUTE_RIGHT_LABEL, GenericCapToken<RouteRightKind>, RouteRightKind>,
                     0,
                 >,
                 StepNil,
@@ -1098,7 +984,7 @@ mod tests {
         >;
         type ProgramSteps = SeqSteps<PrefixSteps, RouteSteps<LeftSteps, RightSteps>>;
 
-        const PREFIX: crate::g::Program<PrefixSteps> = g::seq(
+        let prefix: crate::g::Program<PrefixSteps> = g::seq(
             g::send::<Role<0>, Role<1>, Msg<1, u8>, 0>(),
             g::seq(
                 g::send::<Role<1>, Role<0>, Msg<2, u8>, 0>(),
@@ -1169,30 +1055,29 @@ mod tests {
                 ),
             ),
         );
-        const LEFT: crate::g::Program<LeftSteps> = g::seq(
+        let left: crate::g::Program<LeftSteps> = g::seq(
             g::send::<
                 Role<0>,
                 Role<0>,
                 Msg<
                     { crate::runtime::consts::LABEL_ROUTE_DECISION },
                     GenericCapToken<RouteDecisionKind>,
-                    CanonicalControl<RouteDecisionKind>,
+                    RouteDecisionKind,
                 >,
                 0,
             >(),
             g::send::<Role<0>, Role<1>, Msg<41, ()>, 0>(),
         );
-        const RIGHT: crate::g::Program<RightSteps> = g::seq(
+        let right: crate::g::Program<RightSteps> = g::seq(
             g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<99, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+                Msg<ROUTE_RIGHT_LABEL, GenericCapToken<RouteRightKind>, RouteRightKind>,
                 0,
             >(),
             g::send::<Role<0>, Role<1>, Msg<47, ()>, 0>(),
         );
-        const PROGRAM: crate::g::Program<ProgramSteps> = g::seq(PREFIX, g::route(LEFT, RIGHT));
-        let program = PROGRAM;
+        let program: crate::g::Program<ProgramSteps> = g::seq(prefix, g::route(left, right));
 
         let worker: role_program::RoleProgram<1> = role_program::project(&program);
         let lowering = crate::global::lowering_input(&worker);
@@ -1423,17 +1308,17 @@ mod tests {
         type InnerSteps = crate::global::steps::ParSteps<Lane0, Lane1>;
         type ProgramSteps = crate::global::steps::ParSteps<InnerSteps, Lane2>;
 
-        const LANE0_PROGRAM: crate::global::Program<Lane0> =
+        let lane0_program: crate::global::Program<Lane0> =
             g::send::<Role<0>, Role<1>, Msg<1, ()>, 0>();
-        const LANE1_PROGRAM: crate::global::Program<Lane1> =
+        let lane1_program: crate::global::Program<Lane1> =
             g::send::<Role<1>, Role<0>, Msg<2, ()>, 1>();
-        const LANE2_PROGRAM: crate::global::Program<Lane2> =
+        let lane2_program: crate::global::Program<Lane2> =
             g::send::<Role<0>, Role<1>, Msg<3, ()>, 2>();
-        const INNER_PROGRAM: crate::global::Program<InnerSteps> =
-            g::par(LANE0_PROGRAM, LANE1_PROGRAM);
-        const PROGRAM: crate::global::Program<ProgramSteps> = g::par(INNER_PROGRAM, LANE2_PROGRAM);
+        let inner_program: crate::global::Program<InnerSteps> =
+            g::par(lane0_program, lane1_program);
+        let program: crate::global::Program<ProgramSteps> = g::par(inner_program, lane2_program);
 
-        let worker: role_program::RoleProgram<0> = role_program::project(&PROGRAM);
+        let worker: role_program::RoleProgram<0> = role_program::project(&program);
         let lowering = crate::global::lowering_input(&worker);
         let counts = lowering.summary().role_lowering_counts::<0>();
 
@@ -1559,28 +1444,25 @@ mod tests {
         type LoopContinueMsg = Msg<
             { crate::runtime::consts::LABEL_LOOP_CONTINUE },
             GenericCapToken<crate::control::cap::resource_kinds::LoopContinueKind>,
-            CanonicalControl<crate::control::cap::resource_kinds::LoopContinueKind>,
+            crate::control::cap::resource_kinds::LoopContinueKind,
         >;
         type LoopBreakMsg = Msg<
             { crate::runtime::consts::LABEL_LOOP_BREAK },
             GenericCapToken<crate::control::cap::resource_kinds::LoopBreakKind>,
-            CanonicalControl<crate::control::cap::resource_kinds::LoopBreakKind>,
+            crate::control::cap::resource_kinds::LoopBreakKind,
         >;
         type SessionRequestWireMsg = Msg<0x10, u8>;
         type AdminReplyMsg = Msg<0x50, u8>;
         type SnapshotCandidatesReplyMsg = Msg<0x51, u8>;
-        type CheckpointMsg = Msg<
-            { CheckpointKind::LABEL },
-            GenericCapToken<CheckpointKind>,
-            CanonicalControl<CheckpointKind>,
-        >;
+        type CheckpointMsg =
+            Msg<{ SnapshotControl::LABEL }, GenericCapToken<SnapshotControl>, SnapshotControl>;
         type StaticRouteLeftMsg = Msg<
             { crate::runtime::consts::LABEL_ROUTE_DECISION },
             GenericCapToken<RouteDecisionKind>,
-            CanonicalControl<RouteDecisionKind>,
+            RouteDecisionKind,
         >;
         type StaticRouteRightMsg =
-            Msg<99, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>;
+            Msg<ROUTE_RIGHT_LABEL, GenericCapToken<RouteRightKind>, RouteRightKind>;
         type ReplyDecisionLeftSteps = SeqSteps<
             SendOnly<3, Role<1>, Role<1>, StaticRouteLeftMsg>,
             SendOnly<3, Role<1>, Role<0>, AdminReplyMsg>,
@@ -1605,7 +1487,7 @@ mod tests {
         type BreakArmSteps = SendOnly<3, Role<0>, Role<0>, LoopBreakMsg>;
         type LoopProgramSteps = BranchSteps<ContinueArmSteps, BreakArmSteps>;
 
-        const REPLY_DECISION: g::Program<ReplyDecisionSteps> = g::route(
+        let reply_decision: g::Program<ReplyDecisionSteps> = g::route(
             g::seq(
                 g::send::<Role<1>, Role<1>, StaticRouteLeftMsg, 3>(),
                 g::send::<Role<1>, Role<0>, AdminReplyMsg, 3>(),
@@ -1624,18 +1506,18 @@ mod tests {
                 ),
             ),
         );
-        const REQUEST_EXCHANGE: g::Program<RequestExchangeSteps> = g::seq(
+        let request_exchange: g::Program<RequestExchangeSteps> = g::seq(
             g::send::<Role<0>, Role<1>, SessionRequestWireMsg, 3>(),
-            REPLY_DECISION,
+            reply_decision,
         );
-        const LOOP_PROGRAM: g::Program<LoopProgramSteps> = g::route(
+        let loop_program: g::Program<LoopProgramSteps> = g::route(
             g::seq(
                 g::send::<Role<0>, Role<0>, LoopContinueMsg, 3>(),
-                REQUEST_EXCHANGE,
+                request_exchange,
             ),
             g::send::<Role<0>, Role<0>, LoopBreakMsg, 3>(),
         );
-        let program = LOOP_PROGRAM;
+        let program = loop_program;
 
         let client: role_program::RoleProgram<0> = role_program::project(&program);
         print_role_tail_breakdown::<0>("offer_admin_snapshot_client", &client);

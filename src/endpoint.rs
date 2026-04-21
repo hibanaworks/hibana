@@ -139,10 +139,7 @@ where
         let endpoint = unsafe { &mut *this.endpoint };
         let desc = kernel::DecodeDesc::new(
             <M as crate::global::MessageSpec>::LABEL,
-            !matches!(
-                <M::ControlKind as crate::global::ControlPayloadKind>::HANDLING,
-                crate::global::ControlHandling::None
-            ),
+            <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
             validate_wire_payload::<M::Payload>,
         );
         match endpoint.poll_decode(desc, cx) {
@@ -359,12 +356,14 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         }
     }
     #[inline]
-    fn preview_flow(
-        &mut self,
-        desc: kernel::SendDesc,
-    ) -> SendResult<kernel::SendPreview> {
+    fn preview_flow(&mut self, desc: kernel::SendDesc) -> SendResult<kernel::SendPreview> {
         unsafe {
-            (self.ops().preview_flow)(self.inner.state, self.inner.handle, self.inner.generation, desc)
+            (self.ops().preview_flow)(
+                self.inner.state,
+                self.inner.handle,
+                self.inner.generation,
+                desc,
+            )
         }
     }
 
@@ -386,10 +385,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    fn poll_offer(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<RecvResult<u8>> {
+    fn poll_offer(&mut self, cx: &mut Context<'_>) -> Poll<RecvResult<u8>> {
         unsafe {
             (self.ops().poll_offer)(
                 self.inner.state,
@@ -470,10 +466,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
 
 impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     #[inline]
-    pub(crate) fn from_parts(
-        endpoint: *mut Endpoint<'r, ROLE>,
-        label: u8,
-    ) -> Self {
+    pub(crate) fn from_parts(endpoint: *mut Endpoint<'r, ROLE>, label: u8) -> Self {
         Self {
             endpoint,
             label,

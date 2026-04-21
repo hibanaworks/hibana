@@ -6,19 +6,13 @@
 //! advertised by each `LeaseSpec`, triggering a compile-time panic when a
 //! program requests more links than the runtime can provision.
 
-use crate::control::cap::mint::ResourceKind;
-use crate::control::cap::resource_kinds::{
-    CancelAckKind, CancelKind, CheckpointKind, CommitKind, RerouteKind, RollbackKind,
-    SpliceAckKind, SpliceIntentKind,
+use crate::{
+    control::cap::mint::ControlOp,
+    global::{
+        StaticControlDesc,
+        const_dsl::{ControlScopeKind, PolicyMode},
+    },
 };
-use crate::{global::const_dsl::PolicyMode, runtime::consts};
-
-const TAG_POLICY_LOAD: u8 = 0x4A;
-const TAG_POLICY_ACTIVATE: u8 = 0x4B;
-const TAG_POLICY_REVERT: u8 = 0x4C;
-const TAG_POLICY_ANNOTATE: u8 = 0x4D;
-const TAG_LOAD_BEGIN: u8 = 0x50;
-const TAG_LOAD_COMMIT: u8 = 0x51;
 
 pub(crate) const FACET_CAPS: u8 = 1 << 0;
 pub(crate) const FACET_SLOTS: u8 = 1 << 1;
@@ -201,11 +195,10 @@ impl LeaseGraphBudget {
     #[inline(always)]
     pub(crate) const fn include_atom(
         mut self,
-        label: u8,
-        tag: Option<u8>,
+        control_spec: Option<StaticControlDesc>,
         policy: PolicyMode,
     ) -> Self {
-        let req = policy_requirements(tag, label, policy);
+        let req = policy_requirements(control_spec, policy);
         if req.delegation_children > self.delegation_children {
             self.delegation_children = req.delegation_children;
         }
@@ -272,58 +265,72 @@ impl LeaseGraphBudget {
 }
 
 #[inline(always)]
-pub(crate) const fn facet_needs(tag: u8, policy: PolicyMode) -> LeaseFacetNeeds {
-    policy_facets(Some(tag), 0, policy)
+pub(crate) const fn facet_needs(
+    control_spec: Option<StaticControlDesc>,
+    policy: PolicyMode,
+) -> LeaseFacetNeeds {
+    policy_facets(control_spec, policy)
 }
 
-const fn policy_facets(tag: Option<u8>, label: u8, policy: PolicyMode) -> LeaseFacetNeeds {
-    policy_requirements(tag, label, policy).facets
+const fn policy_facets(
+    control_spec: Option<StaticControlDesc>,
+    policy: PolicyMode,
+) -> LeaseFacetNeeds {
+    policy_requirements(control_spec, policy).facets
 }
 
 #[inline(always)]
 pub(crate) const fn policy_requirements(
-    tag: Option<u8>,
-    label: u8,
+    control_spec: Option<StaticControlDesc>,
     policy: PolicyMode,
 ) -> PolicyRequirements {
-    let mut req = match tag {
-        Some(tag_value) => PolicyRequirements::with_facets(base_facets_for_tag(tag_value)),
+    let mut req = match control_spec {
+        Some(spec) => PolicyRequirements::with_facets(base_facets_for_control(spec)),
         None => PolicyRequirements::new(),
     };
 
-    let Some(tag_value) = tag else {
-        if label == consts::LABEL_SPLICE_INTENT || label == consts::LABEL_SPLICE_ACK {
-            req.facets = req.facets.union(facets_caps_splice());
-        } else if label == consts::LABEL_REROUTE {
-            req.facets = req.facets.union(facets_caps_delegation());
-        }
+    let Some(spec) = control_spec else {
         return req;
     };
 
-    // Dynamic policies on splice/reroute tags require additional resources.
-    if (tag_value == SpliceIntentKind::TAG || tag_value == SpliceAckKind::TAG)
-        && policy.is_dynamic()
-    {
-        req.delegation_children = 2;
-        req.splice_children = 1;
-    } else if tag_value == RerouteKind::TAG && policy.is_dynamic() {
-        req.delegation_children = 2;
+    // Dynamic policies on splice/reroute control ops require additional resources.
+    if policy.is_dynamic() {
+        match spec.op() {
+            ControlOp::TopologyBegin | ControlOp::TopologyAck => {
+                req.delegation_children = 2;
+                req.splice_children = 1;
+            }
+            ControlOp::CapDelegate => {
+                req.delegation_children = 2;
+            }
+            _ => {}
+        }
     }
 
     req
 }
 
-const fn base_facets_for_tag(tag: u8) -> LeaseFacetNeeds {
-    match tag {
-        SpliceIntentKind::TAG | SpliceAckKind::TAG => facets_caps_splice(),
-        RerouteKind::TAG => facets_caps_delegation(),
-        TAG_LOAD_BEGIN | TAG_LOAD_COMMIT | TAG_POLICY_LOAD | TAG_POLICY_ACTIVATE
-        | TAG_POLICY_REVERT | TAG_POLICY_ANNOTATE => facets_slots(),
-        CancelKind::TAG
-        | CancelAckKind::TAG
-        | CheckpointKind::TAG
-        | CommitKind::TAG
-        | RollbackKind::TAG => facets_caps(),
-        _ => LeaseFacetNeeds::new(),
+const fn base_facets_for_control(spec: StaticControlDesc) -> LeaseFacetNeeds {
+    let mut facets = match spec.op() {
+        ControlOp::TopologyBegin | ControlOp::TopologyAck | ControlOp::TopologyCommit => {
+            facets_caps_splice()
+        }
+        ControlOp::CapDelegate => facets_caps_delegation(),
+        ControlOp::AbortBegin
+        | ControlOp::AbortAck
+        | ControlOp::StateSnapshot
+        | ControlOp::TxCommit
+        | ControlOp::StateRestore
+        | ControlOp::TxAbort => facets_caps(),
+        ControlOp::Fence
+        | ControlOp::RouteDecision
+        | ControlOp::LoopContinue
+        | ControlOp::LoopBreak => LeaseFacetNeeds::new(),
+    };
+
+    if matches!(spec.scope_kind(), ControlScopeKind::Policy) {
+        facets = facets.union(facets_slots());
     }
+
+    facets
 }

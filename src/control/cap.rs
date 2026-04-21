@@ -17,7 +17,7 @@ use crate::control::types::RendezvousId;
 /// This trait enables Handle-Driven Design where delegation link tracking
 /// is determined by the handle's data structure rather than the Kind.
 /// Standard handle types like `(u32, u16)` provide explicit no-op implementations,
-/// while handles with cross-rendezvous references (like `SpliceHandle`)
+/// while handles with cross-rendezvous references (like `TopologyHandle`)
 /// override `visit_delegation_links`.
 pub trait ControlHandle: Copy + Send + Sync + 'static {
     /// Enumerate rendezvous IDs referenced by this handle.

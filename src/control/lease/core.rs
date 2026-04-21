@@ -479,19 +479,7 @@ pub(crate) struct FullSpec;
 /// Spec that exposes only splice operations.
 pub(crate) struct SpliceSpec;
 
-/// Spec that exposes only delegation operations.
-pub(crate) struct DelegationSpec;
-
 impl<T, U, C, E> RendezvousSpec<T, U, C, E> for SpliceSpec
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
-{
-}
-
-impl<T, U, C, E> RendezvousSpec<T, U, C, E> for DelegationSpec
 where
     T: Transport,
     U: LabelUniverse,

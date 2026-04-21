@@ -9,9 +9,8 @@ use core::{
     task::{Context, Poll},
 };
 
-use super::tables::{LoopDisposition, LoopTable, RouteTable, VmCapsTable};
+use super::tables::{LoopDisposition, LoopTable, RouteTable};
 use crate::{
-    control::cap::mint::CapsMask,
     control::types::{Lane, RendezvousId, SessionId},
     endpoint::kernel::FrontierScratchLayout,
     global::const_dsl::ScopeId,
@@ -148,8 +147,6 @@ pub(crate) struct Port<
     loops_marker: PhantomData<&'r LoopTable>,
     routes: *const RouteTable,
     routes_marker: PhantomData<&'r RouteTable>,
-    vm_caps: *const VmCapsTable,
-    vm_caps_marker: PhantomData<&'r VmCapsTable>,
     _epoch: PhantomData<E>,
 }
 
@@ -183,7 +180,6 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         transport: &'r T,
         tap: &'tap TapRing<'tap>,
         clock: &'tap dyn Clock,
-        vm_caps: &'tap VmCapsTable,
         loops: &'tap LoopTable,
         routes: &'tap RouteTable,
         host_slots: &'tap HostSlots<'tap>,
@@ -235,8 +231,6 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
             loops_marker: PhantomData,
             routes: routes as *const RouteTable,
             routes_marker: PhantomData,
-            vm_caps: vm_caps as *const VmCapsTable,
-            vm_caps_marker: PhantomData,
             _epoch: PhantomData,
         }
     }
@@ -499,7 +493,6 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         &self,
         slot: PolicySlot,
         event: &TapEvent,
-        caps: CapsMask,
         session: Option<SessionId>,
         lane: Option<Lane>,
         configure: F,
@@ -507,7 +500,7 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     where
         F: FnOnce(&mut PolicyCtx<'_>),
     {
-        let mut ctx = PolicyCtx::new(slot, event, caps);
+        let mut ctx = PolicyCtx::new(slot, event);
         if let Some(session) = session {
             ctx.set_session(session);
         }
@@ -531,16 +524,6 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     #[inline]
     pub(crate) fn now32(&self) -> u32 {
         self.clock.now32()
-    }
-
-    #[inline]
-    pub(crate) fn vm_caps(&self) -> &VmCapsTable {
-        unsafe { &*self.vm_caps }
-    }
-
-    #[inline]
-    pub(crate) fn caps_mask(&self) -> CapsMask {
-        self.vm_caps().get(self.lane)
     }
 
     #[inline]

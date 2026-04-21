@@ -14,9 +14,7 @@ mod route_control_kinds;
 #[path = "../internal/pico_smoke/src/route_localside.rs"]
 mod route_localside;
 
-use hibana::{
-    g::advanced::RoleProgram,
-};
+use hibana::g::advanced::RoleProgram;
 
 fn drive<F: core::future::Future>(future: F) -> F::Output {
     futures::executor::block_on(future)
@@ -38,8 +36,7 @@ fn retain_pico_smoke_fixture_symbols() {
         as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
     let _ = fanout_program::run
         as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
-    let _ = localside::worker_offer_decode_u8::<0>
-        as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
+    let _ = localside::worker_offer_decode_u8::<0> as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
 }
 
 #[test]

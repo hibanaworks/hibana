@@ -1,7 +1,7 @@
 error[E0107]: struct takes 0 lifetime arguments but 1 lifetime argument was supplied
- --> tests/ui/g-roleprogram-witness-mismatch.rs:5:13
+ --> tests/ui/g-roleprogram-witness-mismatch.rs:4:13
   |
-5 |     let _ = RoleProgram::<'static, 0, MintConfig> {
+4 |     let _ = RoleProgram::<'static, 0, ()> {
   |             ^^^^^^^^^^^   ------- help: remove the lifetime argument
   |             |
   |             expected 0 lifetime arguments
@@ -13,10 +13,10 @@ note: struct defined here, with 0 lifetime parameters
   |            ^^^^^^^^^^^
 
 error[E0107]: struct takes 1 generic argument but 2 generic arguments were supplied
- --> tests/ui/g-roleprogram-witness-mismatch.rs:5:13
+ --> tests/ui/g-roleprogram-witness-mismatch.rs:4:13
   |
-5 |     let _ = RoleProgram::<'static, 0, MintConfig> {
-  |             ^^^^^^^^^^^             ------------ help: remove the unnecessary generic argument
+4 |     let _ = RoleProgram::<'static, 0, ()> {
+  |             ^^^^^^^^^^^             ---- help: remove the unnecessary generic argument
   |             |
   |             expected 1 generic argument
   |
@@ -27,11 +27,11 @@ note: struct defined here, with 1 generic parameter: `ROLE`
   |            ^^^^^^^^^^^ --------------
 
 warning: unreachable expression
- --> tests/ui/g-roleprogram-witness-mismatch.rs:8:18
+ --> tests/ui/g-roleprogram-witness-mismatch.rs:7:18
   |
-7 |         _seal: todo!(),
+6 |         _seal: todo!(),
   |                ------- any code following this expression is unreachable
-8 |         summary: todo!(),
+7 |         summary: todo!(),
   |                  ^^^^^^^ unreachable expression
   |
   = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default

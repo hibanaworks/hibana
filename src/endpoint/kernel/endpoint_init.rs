@@ -6,7 +6,7 @@ use crate::endpoint::control::SessionControlCtx;
 use crate::endpoint::kernel::frontier_state::FrontierState;
 use crate::endpoint::kernel::inbox::BindingInbox;
 use crate::endpoint::kernel::route_state::RouteState;
-use crate::global::compiled::images::{CompiledRoleImage, ProgramImage};
+use crate::global::compiled::images::{CompiledProgramRef, CompiledRoleImage};
 use crate::global::typestate::PhaseCursor;
 use crate::rendezvous::core::EndpointLeaseId;
 use crate::rendezvous::port::Port;
@@ -73,11 +73,9 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
         ::core::ptr::addr_of_mut!((*dst).public_slot).write(public_slot);
         ::core::ptr::addr_of_mut!((*dst).public_generation).write(public_generation);
         ::core::ptr::addr_of_mut!((*dst).public_slot_owned).write(public_slot_owned);
-        ::core::ptr::addr_of_mut!((*dst).public_offer_state)
-            .write(super::offer::OfferState::new());
+        ::core::ptr::addr_of_mut!((*dst).public_offer_state).write(super::offer::OfferState::new());
         ::core::ptr::addr_of_mut!((*dst).public_route_branch).write(None);
-        ::core::ptr::addr_of_mut!((*dst).public_recv_state)
-            .write(super::recv::RecvState::new());
+        ::core::ptr::addr_of_mut!((*dst).public_recv_state).write(super::recv::RecvState::new());
         ::core::ptr::addr_of_mut!((*dst).public_decode_state)
             .write(super::decode::DecodeState::empty());
         ::core::ptr::addr_of_mut!((*dst).public_send_state).write(super::core::SendState::Done);
@@ -95,7 +93,7 @@ unsafe fn init_endpoint_cursor<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     arena_storage: *mut u8,
     arena_layout: &crate::endpoint::kernel::layout::EndpointArenaLayout,
     compiled_role: *const CompiledRoleImage,
-    program_image: ProgramImage,
+    program_ref: CompiledProgramRef,
 ) where
     T: Transport + 'r,
     U: LabelUniverse,
@@ -117,7 +115,7 @@ unsafe fn init_endpoint_cursor<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
                 arena_layout.phase_cursor_current_step_labels(),
             ),
             compiled_role,
-            program_image,
+            program_ref,
         );
     }
 }
@@ -321,7 +319,7 @@ pub(crate) unsafe fn init_empty_from_compiled<
     owner: Owner<'r, E0>,
     epoch: EndpointEpoch<'r, E>,
     compiled_role: *const CompiledRoleImage,
-    program_image: ProgramImage,
+    program_ref: CompiledProgramRef,
     public_rv: RendezvousId,
     public_slot: EndpointLeaseId,
     public_generation: u32,
@@ -371,7 +369,7 @@ pub(crate) unsafe fn init_empty_from_compiled<
             arena_storage,
             &arena_layout,
             compiled_role,
-            program_image,
+            program_ref,
         );
         init_endpoint_route(dst, arena_storage, &arena_layout, compiled_role);
         init_endpoint_frontier(dst, arena_storage, &arena_layout, compiled_role);

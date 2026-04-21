@@ -5,7 +5,6 @@
 //! and deterministic replay helpers needed by the localside kernel.
 
 use crate::{
-    control::cap::mint::CapsMask,
     control::types::{Lane, SessionId},
     observe::core::TapEvent,
     transport::TransportSnapshot,
@@ -460,7 +459,6 @@ pub(crate) const fn slot_default_input(slot: PolicySlot) -> [u32; 4] {
 pub(crate) struct PolicyCtx<'a> {
     _event: core::marker::PhantomData<&'a TapEvent>,
     _slot: Option<PolicySlot>,
-    _caps: Option<CapsMask>,
     _session: Option<SessionId>,
     _lane: Option<Lane>,
     _transport: TransportSnapshot,
@@ -469,11 +467,10 @@ pub(crate) struct PolicyCtx<'a> {
 
 impl<'a> PolicyCtx<'a> {
     #[inline]
-    pub(crate) fn new(slot: PolicySlot, _event: &'a TapEvent, caps: CapsMask) -> Self {
+    pub(crate) fn new(slot: PolicySlot, _event: &'a TapEvent) -> Self {
         Self {
             _event: core::marker::PhantomData,
             _slot: Some(slot),
-            _caps: Some(caps),
             _session: None,
             _lane: None,
             _transport: TransportSnapshot::default(),

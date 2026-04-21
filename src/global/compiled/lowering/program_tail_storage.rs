@@ -2,7 +2,7 @@ use core::ptr::NonNull;
 
 use crate::control::cluster::effects::ResourceDescriptor;
 use crate::global::compiled::images::program::{
-    CompiledProgramCounts, CompiledProgramImage, DynamicPolicySite, RouteControlRecord,
+    CompiledProgramCounts, CompiledProgramFacts, DynamicPolicySite, RouteControlRecord,
 };
 
 pub(in crate::global::compiled) struct CompiledProgramTailStorage {
@@ -39,11 +39,11 @@ impl CompiledProgramTailStorage {
 
     #[inline(always)]
     pub(in crate::global::compiled) unsafe fn from_image_ptr(
-        image: *mut CompiledProgramImage,
+        image: *mut CompiledProgramFacts,
         counts: CompiledProgramCounts,
     ) -> Self {
         let base = image.cast::<u8>();
-        let mut offset = core::mem::size_of::<CompiledProgramImage>();
+        let mut offset = core::mem::size_of::<CompiledProgramFacts>();
         let resources = unsafe { Self::section_ptr(base, &mut offset, counts.resources) };
         let sites = unsafe { Self::section_ptr(base, &mut offset, counts.dynamic_policy_sites) };
         let route_controls = unsafe { Self::section_ptr(base, &mut offset, counts.route_controls) };

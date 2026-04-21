@@ -1,7 +1,7 @@
 //! Authority-path helpers for resolver/ack/poll decisions.
 
 #[cfg(test)]
-use crate::control::cap::resource_kinds::RouteDecisionHandle;
+use crate::control::cap::resource_kinds::RouteArmHandle;
 use crate::{
     endpoint::{SendError, SendResult},
     global::const_dsl::ScopeId,
@@ -192,13 +192,13 @@ pub(super) fn resolve_route_decision_handle_with_policy<F>(
     policy_scope: ScopeId,
     policy_decision: RoutePolicyDecision,
     delegate_resolver: F,
-) -> SendResult<RouteDecisionHandle>
+) -> SendResult<RouteArmHandle>
 where
-    F: FnOnce() -> SendResult<RouteDecisionHandle>,
+    F: FnOnce() -> SendResult<RouteArmHandle>,
 {
     validate_route_decision_scope(scope, policy_scope)?;
     match policy_decision {
-        RoutePolicyDecision::RouteArm(arm) => Ok(RouteDecisionHandle { scope, arm }),
+        RoutePolicyDecision::RouteArm(arm) => Ok(RouteArmHandle { scope, arm }),
         RoutePolicyDecision::Abort(reason) => Err(SendError::PolicyAbort { reason }),
         RoutePolicyDecision::Defer { .. } => delegate_resolver(),
         RoutePolicyDecision::DelegateResolver => delegate_resolver(),

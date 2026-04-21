@@ -9,25 +9,25 @@
 //! The typestate machine ensures that operations are performed in the correct order
 //! and that invariants are maintained at compile time.
 
-use crate::control::cluster::effects::CpEffect;
+use crate::control::cap::mint::ControlOp;
 use crate::control::types::{
     AtMostOnceCommit, Generation, IncreasingGen, Lane, NoCrossLaneAliasing, One,
 };
 use core::marker::PhantomData;
 
-/// Trait for emitting control-plane effects.
+/// Trait for emitting atomic control operations.
 ///
 /// This is typically implemented by the tap/observe infrastructure.
 pub(crate) trait Tap {
-    /// Emit a control-plane effect.
-    fn emit(&mut self, effect: CpEffect);
+    /// Emit a control-plane operation.
+    fn emit(&mut self, op: ControlOp);
 }
 
 /// No-op tap for testing.
 pub(crate) struct NoopTap;
 
 impl Tap for NoopTap {
-    fn emit(&mut self, _effect: CpEffect) {}
+    fn emit(&mut self, _op: ControlOp) {}
 }
 
 /// Transaction handle with typestate-based invariants.
@@ -63,9 +63,9 @@ impl<Inv, GenOrd, Shot> Txn<Inv, GenOrd, Shot> {
 impl<Inv: AtMostOnceCommit + NoCrossLaneAliasing, S> Txn<Inv, IncreasingGen, S> {
     /// Begin a splice operation.
     ///
-    /// Emits `CpEffect::SpliceBegin` and transitions to `InBegin` state.
+    /// Emits `ControlOp::TopologyBegin` and transitions to `InBegin` state.
     pub(crate) fn begin(self, tap: &mut impl Tap) -> InBegin<Inv, S> {
-        tap.emit(CpEffect::SpliceBegin);
+        tap.emit(ControlOp::TopologyBegin);
         InBegin {
             lane: self.lane,
             #[cfg(test)]
@@ -86,9 +86,9 @@ pub(crate) struct InBegin<Inv, Shot> {
 impl<Inv, S> InBegin<Inv, S> {
     /// Acknowledge the splice operation.
     ///
-    /// Emits `CpEffect::SpliceAck` and transitions to `InAcked` state.
+    /// Emits `ControlOp::TopologyAck` and transitions to `InAcked` state.
     pub(crate) fn ack(self, tap: &mut impl Tap) -> InAcked<Inv, S> {
-        tap.emit(CpEffect::SpliceAck);
+        tap.emit(ControlOp::TopologyAck);
         InAcked {
             lane: self.lane,
             #[cfg(test)]
@@ -114,10 +114,10 @@ impl<Inv: AtMostOnceCommit> InAcked<Inv, One> {
 
     /// Commit the transaction.
     ///
-    /// Emits `CpEffect::SpliceCommit` and transitions to `Closed` state.
+    /// Emits `ControlOp::TopologyCommit` and transitions to `Closed` state.
     /// The generation number is bumped.
     pub(crate) fn commit(self, tap: &mut impl Tap) -> Closed<Inv> {
-        tap.emit(CpEffect::SpliceCommit);
+        tap.emit(ControlOp::TopologyCommit);
         Closed {
             #[cfg(test)]
             lane: self.lane,
@@ -130,10 +130,10 @@ impl<Inv: AtMostOnceCommit> InAcked<Inv, One> {
     #[cfg(test)]
     /// Abort the transaction.
     ///
-    /// Emits `CpEffect::Abort` and transitions to `Closed` state.
+    /// Emits `ControlOp::TxAbort` and transitions to `Closed` state.
     /// The generation number is NOT bumped.
     pub(crate) fn abort(self, tap: &mut impl Tap) -> Closed<Inv> {
-        tap.emit(CpEffect::Abort);
+        tap.emit(ControlOp::TxAbort);
         Closed {
             #[cfg(test)]
             lane: self.lane,

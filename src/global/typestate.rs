@@ -75,6 +75,7 @@ mod tests {
     use crate::control::cap::resource_kinds::{LoopBreakKind, LoopContinueKind};
     use crate::eff::EffIndex;
     use crate::g::{self, Msg, Role};
+    use crate::global::MessageSpec;
     use crate::global::compiled::{images::CompiledRoleImage, lowering::CompiledProgram};
     use crate::global::const_dsl::{PolicyMode, ScopeKind};
     use crate::global::role_program;
@@ -82,7 +83,6 @@ mod tests {
     use crate::global::steps::{
         ParSteps, PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil,
     };
-    use crate::global::{CanonicalControl, MessageSpec};
     use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
 
     #[test]
@@ -109,8 +109,9 @@ mod tests {
         )
     }
 
-    const BODY: g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>> =
-        g::send::<Role<0>, Role<1>, Msg<7, ()>, 0>();
+    fn body() -> g::Program<StepCons<SendStep<Role<0>, Role<1>, Msg<7, ()>>, StepNil>> {
+        g::send::<Role<0>, Role<1>, Msg<7, ()>, 0>()
+    }
 
     const LOOP_POLICY_ID: u16 = 9300;
     const ROUTE_POLICY_ID: u16 = 9301;
@@ -119,11 +120,7 @@ mod tests {
             SendStep<
                 Role<0>,
                 Role<0>,
-                Msg<
-                    { LABEL_LOOP_CONTINUE },
-                    GenericCapToken<LoopContinueKind>,
-                    CanonicalControl<LoopContinueKind>,
-                >,
+                Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
             >,
             StepNil,
         >,
@@ -134,11 +131,7 @@ mod tests {
             SendStep<
                 Role<0>,
                 Role<0>,
-                Msg<
-                    { LABEL_LOOP_BREAK },
-                    GenericCapToken<LoopBreakKind>,
-                    CanonicalControl<LoopBreakKind>,
-                >,
+                Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             >,
             StepNil,
         >,
@@ -153,11 +146,7 @@ mod tests {
             SendStep<
                 Role<0>,
                 Role<0>,
-                Msg<
-                    { LABEL_LOOP_CONTINUE },
-                    GenericCapToken<LoopContinueKind>,
-                    CanonicalControl<LoopContinueKind>,
-                >,
+                Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
             >,
             StepNil,
         >,
@@ -168,11 +157,7 @@ mod tests {
             SendStep<
                 Role<0>,
                 Role<0>,
-                Msg<
-                    { LABEL_LOOP_BREAK },
-                    GenericCapToken<LoopBreakKind>,
-                    CanonicalControl<LoopBreakKind>,
-                >,
+                Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             >,
             StepNil,
         >,
@@ -181,46 +166,68 @@ mod tests {
     type RouteScopeProgramSteps = RouteSteps<RouteScopeContinueHead, RouteScopeBreakHead>;
 
     #[allow(clippy::type_complexity)]
-    const LOOP_PROGRAM: g::Program<LoopProgramSteps> = {
-        // Self-send for CanonicalControl: Controller → Controller
+    fn loop_program() -> g::Program<LoopProgramSteps> {
+        // Local control uses self-send: Controller -> Controller
         let continue_control = g::send::<
             Role<0>,
-            Role<0>, // self-send
-            Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
+            Role<0>,
+            Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
             0,
         >()
         .policy::<LOOP_POLICY_ID>();
-        let continue_arm = g::seq(continue_control, BODY);
+        let continue_arm = g::seq(continue_control, body());
         let break_arm = g::send::<
             Role<0>,
-            Role<0>, // self-send
-            Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
+            Role<0>,
+            Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >()
         .policy::<LOOP_POLICY_ID>();
-        // Route decision is local to Controller (0 → 0)
         g::route(continue_arm, break_arm)
-    };
+    }
 
-    const CONTROLLER_PROGRAM: RoleProgram<0> = project(&LOOP_PROGRAM);
+    fn controller_program() -> RoleProgram<0> {
+        let program = loop_program();
+        project(&program)
+    }
 
-    const TARGET_PROGRAM: RoleProgram<1> = project(&LOOP_PROGRAM);
+    fn target_program() -> RoleProgram<1> {
+        let program = loop_program();
+        project(&program)
+    }
 
-    const LOCAL_PROGRAM: g::Program<StepCons<SendStep<Role<0>, Role<0>, Msg<9, ()>>, StepNil>> =
-        g::send::<Role<0>, Role<0>, Msg<9, ()>, 0>();
-    const LOCAL_ROLE: role_program::RoleProgram<0> = role_program::project(&LOCAL_PROGRAM);
+    fn local_program() -> g::Program<StepCons<SendStep<Role<0>, Role<0>, Msg<9, ()>>, StepNil>> {
+        g::send::<Role<0>, Role<0>, Msg<9, ()>, 0>()
+    }
+
+    fn local_role() -> role_program::RoleProgram<0> {
+        let program = local_program();
+        role_program::project(&program)
+    }
+
+    fn route_scope_program() -> g::Program<RouteScopeProgramSteps> {
+        g::route(
+            g::send::<
+                Role<0>,
+                Role<0>,
+                Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+                0,
+            >()
+            .policy::<ROUTE_POLICY_ID>(),
+            g::send::<
+                Role<0>,
+                Role<0>,
+                Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+                0,
+            >()
+            .policy::<ROUTE_POLICY_ID>(),
+        )
+    }
 
     #[test]
     fn state_cursor_rewinds_on_loop_continue() {
-        with_compiled_role_image(&CONTROLLER_PROGRAM, |compiled| {
+        let controller_program = controller_program();
+        with_compiled_role_image(&controller_program, |compiled| {
             let typestate = compiled.typestate_ref();
             let scope_id = typestate.node(0).scope();
             let (continue_entry_idx, continue_label) = compiled
@@ -253,7 +260,8 @@ mod tests {
 
     #[test]
     fn state_cursor_loop_branch_successors() {
-        with_compiled_role_image(&CONTROLLER_PROGRAM, |controller_compiled| {
+        let controller_program = controller_program();
+        with_compiled_role_image(&controller_program, |controller_compiled| {
             let typestate = controller_compiled.typestate_ref();
             let scope_id = typestate.node(0).scope();
             let region = typestate
@@ -297,7 +305,8 @@ mod tests {
             );
         });
 
-        with_compiled_role_image(&TARGET_PROGRAM, |target_compiled| {
+        let target_program = target_program();
+        with_compiled_role_image(&target_program, |target_compiled| {
             let ts = target_compiled.typestate_ref();
             let target_first = ts.node(0);
             match target_first.action() {
@@ -337,36 +346,11 @@ mod tests {
 
     #[test]
     fn route_scope_kind_detected() {
-        // Route is local to Controller (0 → 0)
-        const ROUTE: g::Program<RouteScopeProgramSteps> = g::route(
-            g::send::<
-                Role<0>,
-                Role<0>,
-                Msg<
-                    { LABEL_LOOP_CONTINUE },
-                    GenericCapToken<LoopContinueKind>,
-                    CanonicalControl<LoopContinueKind>,
-                >,
-                0,
-            >()
-            .policy::<ROUTE_POLICY_ID>(),
-            g::send::<
-                Role<0>,
-                Role<0>,
-                Msg<
-                    { LABEL_LOOP_BREAK },
-                    GenericCapToken<LoopBreakKind>,
-                    CanonicalControl<LoopBreakKind>,
-                >,
-                0,
-            >()
-            .policy::<ROUTE_POLICY_ID>(),
-        );
+        let route_program = route_scope_program();
+        let controller: RoleProgram<0> = project(&route_program);
 
-        const CONTROLLER: RoleProgram<0> = project(&ROUTE);
-
-        with_compiled_role_image(&CONTROLLER, |compiled| {
-            let summary = ROUTE.summary();
+        with_compiled_role_image(&controller, |compiled| {
+            let summary = route_program.summary();
             let compiled_program = CompiledProgram::from_summary(&summary);
             let typestate = compiled.typestate_ref();
             let scope_id = typestate.node(0).scope();
@@ -374,7 +358,7 @@ mod tests {
                 .scope_region_for(scope_id)
                 .expect("route scope region present");
             assert_eq!(region.kind, ScopeKind::Route);
-            let (policy, eff_index, _) = compiled_program
+            let (policy, eff_index, _, _) = compiled_program
                 .route_controller(scope_id)
                 .expect("controller policy recorded");
             let expected_policy = PolicyMode::dynamic(ROUTE_POLICY_ID).with_scope(scope_id);
@@ -390,36 +374,13 @@ mod tests {
             StepCons<SendStep<Role<1>, Role<1>, Msg<11, ()>>, StepNil>,
         >;
 
-        const PARALLEL_ROUTE_PROGRAM: g::Program<ParallelRouteProgramSteps> = g::par(
-            g::route(
-                g::send::<
-                    Role<0>,
-                    Role<0>,
-                    Msg<
-                        { LABEL_LOOP_CONTINUE },
-                        GenericCapToken<LoopContinueKind>,
-                        CanonicalControl<LoopContinueKind>,
-                    >,
-                    0,
-                >()
-                .policy::<ROUTE_POLICY_ID>(),
-                g::send::<
-                    Role<0>,
-                    Role<0>,
-                    Msg<
-                        { LABEL_LOOP_BREAK },
-                        GenericCapToken<LoopBreakKind>,
-                        CanonicalControl<LoopBreakKind>,
-                    >,
-                    0,
-                >()
-                .policy::<ROUTE_POLICY_ID>(),
-            ),
+        let parallel_route_program: g::Program<ParallelRouteProgramSteps> = g::par(
+            route_scope_program(),
             g::send::<Role<1>, Role<1>, Msg<11, ()>, 0>(),
         );
-        const PARALLEL_CONTROLLER: RoleProgram<0> = project(&PARALLEL_ROUTE_PROGRAM);
+        let parallel_controller: RoleProgram<0> = project(&parallel_route_program);
 
-        with_compiled_role_image(&PARALLEL_CONTROLLER, |compiled| {
+        with_compiled_role_image(&parallel_controller, |compiled| {
             let typestate = compiled.typestate_ref();
             let mut route_scope = None;
             let mut idx = 0usize;
@@ -454,11 +415,13 @@ mod tests {
         type NestedLoopProgramSteps =
             SeqSteps<StepCons<SendStep<Role<0>, Role<1>, Msg<13, ()>>, StepNil>, LoopProgramSteps>;
 
-        const NESTED_LOOP_PROGRAM: g::Program<NestedLoopProgramSteps> =
-            g::seq(g::send::<Role<0>, Role<1>, Msg<13, ()>, 0>(), LOOP_PROGRAM);
-        const NESTED_LOOP_CONTROLLER: RoleProgram<0> = project(&NESTED_LOOP_PROGRAM);
+        let nested_loop_program: g::Program<NestedLoopProgramSteps> = g::seq(
+            g::send::<Role<0>, Role<1>, Msg<13, ()>, 0>(),
+            loop_program(),
+        );
+        let nested_loop_controller: RoleProgram<0> = project(&nested_loop_program);
 
-        with_compiled_role_image(&NESTED_LOOP_CONTROLLER, |compiled| {
+        with_compiled_role_image(&nested_loop_controller, |compiled| {
             let typestate = compiled.typestate_ref();
             let mut nested_route_scope = None;
             let mut idx = 0usize;
@@ -494,7 +457,7 @@ mod tests {
                     Msg<
                         { LABEL_LOOP_CONTINUE },
                         GenericCapToken<LoopContinueKind>,
-                        CanonicalControl<LoopContinueKind>,
+                        LoopContinueKind,
                     >,
                     0,
                 >()
@@ -502,11 +465,7 @@ mod tests {
                 g::send::<
                     Role<0>,
                     Role<0>,
-                    Msg<
-                        { LABEL_LOOP_BREAK },
-                        GenericCapToken<LoopBreakKind>,
-                        CanonicalControl<LoopBreakKind>,
-                    >,
+                    Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
                     0,
                 >()
                 .policy::<ROUTE_POLICY_ID>(),
@@ -546,11 +505,11 @@ mod tests {
             let inner = g::route(
                 g::seq(
                     g::send::<Role<0>, Role<0>, Msg<0x61, ()>, 1>(),
-                    g::send::<Role<0>, Role<1>, Msg<0x71, ()>, 1>(),
+                    g::send::<Role<0>, Role<1>, Msg<0x63, ()>, 1>(),
                 ),
                 g::seq(
                     g::send::<Role<0>, Role<0>, Msg<0x62, ()>, 0>(),
-                    g::send::<Role<0>, Role<1>, Msg<0x72, ()>, 0>(),
+                    g::send::<Role<0>, Role<1>, Msg<0x64, ()>, 0>(),
                 ),
             );
             g::route(
@@ -591,7 +550,7 @@ mod tests {
             );
             assert_eq!(
                 typestate
-                    .first_recv_dispatch_target_for_label(outer_scope, 0x71)
+                    .first_recv_dispatch_target_for_label(outer_scope, 0x63)
                     .map(|(arm, _)| arm),
                 Some(1)
             );
@@ -610,11 +569,11 @@ mod tests {
             );
             assert_eq!(
                 typestate.first_recv_dispatch_arm_label_mask(outer_scope, 1),
-                (1u128 << 0x71) | (1u128 << 0x72)
+                (1u128 << 0x63) | (1u128 << 0x64)
             );
             assert_eq!(
                 typestate
-                    .first_recv_dispatch_target_for_label(nested_scope, 0x71)
+                    .first_recv_dispatch_target_for_label(nested_scope, 0x63)
                     .map(|(arm, _)| arm),
                 Some(0)
             );
@@ -624,7 +583,8 @@ mod tests {
 
     #[test]
     fn local_action_produces_metadata() {
-        with_compiled_role_image(&LOCAL_ROLE, |compiled| {
+        let local_role = local_role();
+        with_compiled_role_image(&local_role, |compiled| {
             let typestate = compiled.typestate_ref();
             let first = typestate.node(0);
             assert!(first.action().is_local_action());

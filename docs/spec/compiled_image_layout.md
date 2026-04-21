@@ -2,7 +2,7 @@
 
 Compiled images are blob-backed.
 
-- `CompiledProgramImage` is immutable header plus immutable blob
+- `CompiledProgramFacts` is immutable header plus immutable blob
 - `CompiledRoleImage` is immutable header plus immutable blob
 - repeated route/frontier/lane shapes are interned
 

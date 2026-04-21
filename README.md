@@ -335,7 +335,7 @@ Protocol implementors use the protocol-neutral SPI:
 
 The everyday protocol-side owners are:
 
-- `hibana::g::advanced::{project, RoleProgram, CanonicalControl, ExternalControl, MessageSpec, ControlMessage, ControlMessageKind}`
+- `hibana::g::advanced::{project, RoleProgram, MessageSpec, StaticControlDesc}`
 - `hibana::substrate::SessionKit`
 - `hibana::substrate::{AttachError, CpError, EffIndex, Lane, RendezvousId, SessionId}`
 - `hibana::substrate::Transport`
@@ -344,14 +344,15 @@ The everyday protocol-side owners are:
 - `hibana::substrate::runtime::{Clock, Config, CounterClock, DefaultLabelUniverse, LabelUniverse}`
 - `hibana::substrate::tap::TapEvent`
 - `hibana::substrate::cap::{CapShot, ControlResourceKind, GenericCapToken, Many, One, ResourceKind}`
+- `hibana::substrate::cap::advanced::{CAP_HANDLE_LEN, CapError, CapHeader, ControlOp, ControlPath, ControlScopeKind, LoopBreakKind, LoopContinueKind, RouteDecisionKind, ScopeId}`
 - `hibana::substrate::wire::{Payload, WireEncode, WirePayload}`
 - `hibana::substrate::transport::{Outgoing, TransportError, TransportEvent, TransportEventKind, TransportSnapshot}`
 
 Advanced buckets:
 
 - `hibana::substrate::policy::core::*` for fixed context-key ids
-- `hibana::substrate::cap::advanced` for mint details and the built-in
-  control-kind catalogue
+- `hibana::substrate::cap::advanced` for descriptor metadata plus the built-in
+  route / loop control kinds
 - `hibana::substrate::transport` detail owners for send direction, algorithm
   reporting, and metrics translation
 
@@ -364,21 +365,20 @@ There is no public `g::splice`, `g::delegate`, or `g::reroute`.
 
 `delegate`, `splice`, `reroute`, `route`, `loop`, and management-policy
 operations are all expressed as ordinary `g::send()` steps whose message type
-carries a capability token and a control-handling marker.
+carries a capability token and its control kind directly.
 
 The key owners are:
 
-- `CanonicalControl<K>` for locally minted control tokens
-- `ExternalControl<K>` for control tokens carried on the wire
-- `MessageSpec` for label, payload, and control typing
-- `ControlMessage` and `ControlMessageKind` for control-message-only contracts
+- `g::Msg<LABEL, GenericCapToken<K>, K>` for control messages
+- `ControlResourceKind::PATH` for local vs wire behavior
+- `ControlResourceKind::OP` for the atomic runtime action
+- `MessageSpec` and `StaticControlDesc` for descriptor-first lowering
 
-Handling rules are fixed:
+Control-path rules are fixed:
 
-- `CanonicalControl<K>` is compile-time restricted to self-send
-- `ExternalControl<K>` may cross roles and ride the wire
-- the operation itself comes from the control kind's resource tag, not from a
-  second DSL
+- `K::PATH == ControlPath::Local` is compile-time restricted to self-send
+- `K::PATH == ControlPath::Wire` is compile-time restricted to cross-role send
+- the runtime executes exactly one `ControlOp` baked by projection
 
 Core keeps only the generic control-capability mechanism plus the built-in
 route / loop kinds under `hibana::substrate::cap::advanced`:
@@ -389,20 +389,16 @@ route / loop kinds under `hibana::substrate::cap::advanced`:
 
 If a protocol needs a custom control kind, implement the capability traits in
 `hibana::substrate::cap::advanced` and carry that kind through
-`GenericCapToken<K>` plus `CanonicalControl<K>` or `ExternalControl<K>`.
-
-Management load kinds and policy lifecycle kinds live in sibling crates. Core
-does not publish those vocabularies.
+`GenericCapToken<K>` plus `K`.
 
 Control kinds are still just message types in the choreography:
 
 ```rust
 use hibana::g;
-use hibana::g::advanced::{CanonicalControl, ExternalControl};
 use hibana::substrate::cap::{ControlResourceKind, GenericCapToken};
 use hibana::substrate::cap::advanced::{
-    CAP_HANDLE_LEN, CapError, CapsMask, ControlHandling, ControlScopeKind,
-    ControlMint, LoopContinueKind, ScopeId,
+    CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind,
+    LoopContinueKind, ScopeId,
 };
 use hibana::substrate::{Lane, SessionId};
 
@@ -412,45 +408,42 @@ let loop_continue = g::send::<
     g::Msg<
         { <LoopContinueKind as ControlResourceKind>::LABEL },
         GenericCapToken<LoopContinueKind>,
-        CanonicalControl<LoopContinueKind>,
+        LoopContinueKind,
     >,
     0,
 >();
 
-struct CustomExternalKind;
+struct CustomWireKind;
 
-impl hibana::substrate::cap::ResourceKind for CustomExternalKind {
+impl hibana::substrate::cap::ResourceKind for CustomWireKind {
     type Handle = ();
     const TAG: u8 = 0x90;
-    const NAME: &'static str = "CustomExternal";
-    const AUTO_MINT_EXTERNAL: bool = false;
+    const NAME: &'static str = "CustomWire";
 
     fn encode_handle(_: &Self::Handle) -> [u8; CAP_HANDLE_LEN] { [0; CAP_HANDLE_LEN] }
     fn decode_handle(_: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> { Ok(()) }
     fn zeroize(_: &mut Self::Handle) {}
-    fn caps_mask(_: &Self::Handle) -> CapsMask { CapsMask::empty() }
-    fn scope_id(_: &Self::Handle) -> Option<ScopeId> { None }
 }
 
-impl hibana::substrate::cap::ControlResourceKind for CustomExternalKind {
+impl hibana::substrate::cap::ControlResourceKind for CustomWireKind {
     const LABEL: u8 = 90;
     const SCOPE: ControlScopeKind = ControlScopeKind::None;
-    const TAP_ID: u16 = 0;
+    const PATH: ControlPath = ControlPath::Wire;
     const SHOT: hibana::substrate::cap::CapShot = hibana::substrate::cap::CapShot::One;
-    const HANDLING: ControlHandling = ControlHandling::External;
-}
+    const TAP_ID: u16 = 0;
+    const OP: ControlOp = ControlOp::Fence;
+    const AUTO_MINT_WIRE: bool = false;
 
-impl ControlMint for CustomExternalKind {
     fn mint_handle(_: SessionId, _: Lane, _: ScopeId) -> Self::Handle { () }
 }
 
-let custom_external = g::send::<
+let custom_wire = g::send::<
     g::Role<0>,
     g::Role<1>,
     g::Msg<
-        { <CustomExternalKind as ControlResourceKind>::LABEL },
-        GenericCapToken<CustomExternalKind>,
-        ExternalControl<CustomExternalKind>,
+        { <CustomWireKind as ControlResourceKind>::LABEL },
+        GenericCapToken<CustomWireKind>,
+        CustomWireKind,
     >,
     0,
 >();
@@ -461,11 +454,9 @@ Capability-building owners live in two layers:
 - `hibana::substrate::cap::{One, Many}` for affine shot discipline
 - `hibana::substrate::cap::{CapShot, ResourceKind, ControlResourceKind}` for
   runtime capability representation
-- `hibana::substrate::cap::advanced::{MintConfig, MintConfigMarker,
-  ControlMint, SessionScopedKind, AllowsCanonical, EpochTbl, CAP_HANDLE_LEN,
-  CapError, CapsMask}` for mint configuration
-- `hibana::substrate::cap::advanced::{ControlScopeKind, ScopeId,
-  ControlHandling}` for control-scope metadata
+- `hibana::substrate::cap::advanced::{CAP_HANDLE_LEN, CapError, CapHeader,
+  ControlOp, ControlPath, ControlScopeKind, LoopBreakKind, LoopContinueKind,
+  RouteDecisionKind, ScopeId}` for descriptor and built-in control metadata
 
 ### Transport
 
@@ -675,6 +666,10 @@ Dynamic policy stays explicit:
 - read inputs through `ResolverContext::input(index)` and attrs through
   `ResolverContext::attr(id)`
 - return `Result<DynamicResolution, ResolverError>`
+
+Dynamic policy is supported for route/loop decision points and for the
+descriptor-owned splice/reroute control ops. Unsupported control ops are
+rejected at projection time.
 
 `ResolverContext` is intentionally small: `input(index)` and `attr(id)` are the
 only public accessors.

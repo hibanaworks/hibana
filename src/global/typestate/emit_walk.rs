@@ -145,8 +145,8 @@ impl RoleTypestateBuildScratch {
 use crate::{
     eff::{self, EffIndex, EffStruct},
     global::{
-        ControlLabelSpec, LoopControlMeaning,
-        compiled::lowering::LoweringView,
+        LoopControlMeaning, StaticControlDesc,
+        compiled::{images::ControlSemanticKind, lowering::LoweringView},
         const_dsl::{PolicyMode, ScopeEvent, ScopeId, ScopeKind},
         role_program::LaneWord,
     },
@@ -156,13 +156,13 @@ pub(super) trait TypestateProgramView {
     fn as_slice(&self) -> &[EffStruct];
     fn scope_markers(&self) -> &[crate::global::const_dsl::ScopeMarker];
     fn policy_at(&self, offset: usize) -> Option<PolicyMode>;
-    fn control_spec_at(&self, offset: usize) -> Option<ControlLabelSpec>;
+    fn control_spec_at(&self, offset: usize) -> Option<StaticControlDesc>;
     fn first_route_head_dynamic_policy_in_range(
         &self,
         scope_id: ScopeId,
         route_enter_marker_idx: usize,
         scope_end: usize,
-    ) -> Option<(PolicyMode, usize, u8)>;
+    ) -> Option<(PolicyMode, usize, u8, crate::control::cap::mint::ControlOp)>;
 }
 
 impl TypestateProgramView for LoweringView<'_> {
@@ -182,7 +182,7 @@ impl TypestateProgramView for LoweringView<'_> {
     }
 
     #[inline(always)]
-    fn control_spec_at(&self, offset: usize) -> Option<ControlLabelSpec> {
+    fn control_spec_at(&self, offset: usize) -> Option<StaticControlDesc> {
         LoweringView::control_spec_at(self, offset)
     }
 
@@ -192,7 +192,7 @@ impl TypestateProgramView for LoweringView<'_> {
         scope_id: ScopeId,
         route_enter_marker_idx: usize,
         scope_end: usize,
-    ) -> Option<(PolicyMode, usize, u8)> {
+    ) -> Option<(PolicyMode, usize, u8, crate::control::cap::mint::ControlOp)> {
         LoweringView::first_route_head_dynamic_policy_in_range(
             self,
             scope_id,
@@ -1307,6 +1307,7 @@ fn handle_atom_for_role<P: TypestateProgramView>(
     } else {
         None
     };
+    let control_semantic = ControlSemanticKind::from_control_spec(control_spec);
     let loop_control = LoopControlMeaning::from_control_spec(control_spec);
     let shot = if atom.is_control {
         match control_spec {
@@ -1376,6 +1377,7 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             shot,
             policy,
             atom.lane,
+            control_semantic,
             next,
             current_scope,
             loop_scope,
@@ -1514,6 +1516,7 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             shot,
             policy,
             atom.lane,
+            control_semantic,
             next,
             current_scope,
             loop_scope,
@@ -1665,6 +1668,7 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             shot,
             policy,
             atom.lane,
+            control_semantic,
             next,
             current_scope,
             loop_scope,
@@ -2121,7 +2125,7 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                                 }
                                 scan_idx += 1;
                             }
-                            if let Some((policy, eff_offset, tag)) = program
+                            if let Some((policy, eff_offset, tag, _op)) = program
                                 .first_route_head_dynamic_policy_in_range(
                                     scope,
                                     scope_marker_idx,

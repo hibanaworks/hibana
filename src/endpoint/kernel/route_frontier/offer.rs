@@ -1,12 +1,8 @@
 //! Offer-path helpers for scope selection and branch materialization.
 
-use core::{ops::ControlFlow, task::Poll};
 #[cfg(test)]
-use core::{
-    future::Future,
-    pin::Pin,
-    task::Context,
-};
+use core::{future::Future, pin::Pin, task::Context};
+use core::{ops::ControlFlow, task::Poll};
 
 use super::authority::{
     Arm, DeferReason, DeferSource, RouteDecisionSource, RouteDecisionToken, RouteResolveStep,
@@ -33,6 +29,7 @@ use crate::binding::BindingSlot;
 use crate::control::cap::mint::{CapShot, EpochTable, MintConfigMarker};
 use crate::eff::EffIndex;
 use crate::endpoint::{RecvError, RecvResult};
+use crate::global::compiled::images::ControlSemanticKind;
 use crate::global::const_dsl::{PolicyMode, ScopeId, ScopeKind};
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
@@ -114,8 +111,7 @@ pub(crate) struct CursorOfferFuture<
     const MAX_RV: usize,
     Mint,
     B,
->
-where
+> where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
@@ -156,6 +152,7 @@ pub(super) struct CachedRecvMeta {
     pub(super) peer: u8,
     pub(super) label: u8,
     pub(super) resource: Option<u8>,
+    pub(super) semantic: ControlSemanticKind,
     pub(super) is_control: bool,
     pub(super) next: StateIndex,
     pub(super) scope: ScopeId,
@@ -176,6 +173,7 @@ impl CachedRecvMeta {
         peer: 0,
         label: 0,
         resource: None,
+        semantic: ControlSemanticKind::Other,
         is_control: false,
         next: StateIndex::MAX,
         scope: ScopeId::none(),
@@ -204,6 +202,7 @@ impl CachedRecvMeta {
                 peer: self.peer,
                 label: self.label,
                 resource: self.resource,
+                semantic: self.semantic,
                 is_control: self.is_control,
                 next: state_index_to_usize(self.next),
                 scope: self.scope,
@@ -465,7 +464,7 @@ pub(crate) struct BranchMeta {
 pub(crate) enum BranchKind {
     /// Normal wire recv: payload comes from transport/binding.
     WireRecv,
-    /// Synthetic local control: CanonicalControl self-send that doesn't go on wire.
+    /// Synthetic local control: self-send that doesn't go on wire.
     /// Decode from zero buffer; scope settlement uses meta fields directly.
     LocalControl,
     /// Arm starts with Send operation (passive observer scenario).
@@ -1195,7 +1194,7 @@ where
                 .endpoint
                 .cursor
                 .route_scope_controller_policy(scope_id)
-                .map(|(policy, _, _)| policy.is_dynamic())
+                .map(|(policy, _, _, _)| policy.is_dynamic())
                 .unwrap_or(false);
         let static_facts =
             CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::frontier_static_facts_at(
@@ -1659,22 +1658,14 @@ where
 
         let mut route_token = self.endpoint.peek_scope_ack(scope_id);
         if route_token.is_none() && is_route_controller && is_dynamic_route_scope {
-            let is_self_send_route = !CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_has_controller_arm_entry(&self.endpoint.cursor, scope_id);
             loop {
                 let route_signals = self
                     .endpoint
                     .policy_signals_for_slot(PolicySlot::Route)
                     .into_owned();
-                let resolver_step = if is_self_send_route {
-                    self.endpoint
-                        .prepare_route_decision_from_resolver_via_arm_entry(
-                            scope_id,
-                            &route_signals,
-                        )?
-                } else {
-                    self.endpoint
-                        .prepare_route_decision_from_resolver(scope_id, &route_signals)?
-                };
+                let resolver_step = self
+                    .endpoint
+                    .prepare_route_decision_from_resolver(scope_id, &route_signals)?;
                 match resolver_step {
                     RouteResolveStep::Resolved(resolver_arm) => {
                         route_token = Some(RouteDecisionToken::from_resolver(resolver_arm));
@@ -2131,17 +2122,11 @@ where
         // branches can decide whether to wait for one additional ingress turn.
         let passive_linger_loop_label = !is_route_controller
             && self.endpoint.is_linger_route(scope_id)
-            && self
-                .endpoint
-                .control_semantic_kind(meta.label, meta.resource)
-                .is_loop();
+            && self.endpoint.control_semantic_kind(meta.semantic).is_loop();
         let branch_kind = if self.endpoint.cursor.is_recv() {
             if passive_linger_loop_label
                 || (!is_route_controller
-                    && self
-                        .endpoint
-                        .control_semantic_kind(meta.label, meta.resource)
-                        .is_loop()
+                    && self.endpoint.control_semantic_kind(meta.semantic).is_loop()
                     && self.endpoint.selection_non_wire_loop_control_recv(
                         selection,
                         is_route_controller,
@@ -4277,7 +4262,7 @@ where
             .endpoint
             .cursor
             .route_scope_controller_policy(scope_id)
-            .map(|(policy, _, _)| policy.is_dynamic())
+            .map(|(policy, _, _, _)| policy.is_dynamic())
             .unwrap_or(false);
         let suppress_scope_hint = is_dynamic_route_scope;
         let offer_lanes = self.endpoint.offer_lane_set_for_scope(scope_id);
@@ -4662,7 +4647,10 @@ where
             carried_binding_classification: state.carried_binding_classification.take(),
             carried_transport_payload: state.carried_transport_payload.take(),
             run_stage: state.run_stage.take(),
-            pending_recv: core::mem::replace(&mut state.pending_recv, lane_port::PendingRecv::new()),
+            pending_recv: core::mem::replace(
+                &mut state.pending_recv,
+                lane_port::PendingRecv::new(),
+            ),
         };
         let poll = machine.poll_run(cx).map(|result| result.map(Into::into));
         state.frontier_visited = machine.frontier_visited.take();

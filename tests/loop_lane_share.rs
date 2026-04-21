@@ -21,7 +21,7 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 use common::TestTransport;
 use hibana::{
-    g::advanced::{CanonicalControl, RoleProgram, project},
+    g::advanced::{RoleProgram, project},
     g::{self, Msg, Role},
     substrate::{
         RendezvousId,
@@ -96,11 +96,7 @@ fn controller_program() -> RoleProgram<0> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
+            Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
             0,
         >()
         .policy::<LOOP_POLICY_ID>(),
@@ -110,11 +106,7 @@ fn controller_program() -> RoleProgram<0> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
+            Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >()
         .policy::<LOOP_POLICY_ID>(),
@@ -132,11 +124,7 @@ fn target_program() -> RoleProgram<1> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
+            Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
             0,
         >()
         .policy::<LOOP_POLICY_ID>(),
@@ -146,11 +134,7 @@ fn target_program() -> RoleProgram<1> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
+            Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >()
         .policy::<LOOP_POLICY_ID>(),
@@ -185,7 +169,7 @@ fn controller_send_continue(controller: &mut hibana::Endpoint<'_, 0>) {
             .flow::<Msg<
                 { LABEL_LOOP_CONTINUE },
                 GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
+                LoopContinueKind,
             >>()
             .expect("continue flow")
             .send(()),
@@ -218,11 +202,7 @@ fn target_recv_body(target: &mut hibana::Endpoint<'_, 1>) {
 fn controller_send_break(controller: &mut hibana::Endpoint<'_, 0>) {
     let _outcome = futures::executor::block_on(
         controller
-            .flow::<Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >>()
+            .flow::<Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>>()
             .expect("break flow")
             .send(()),
     )

@@ -1,7 +1,8 @@
 use super::LoweringSummary;
+use crate::control::cap::mint::ControlOp;
 use crate::control::cluster::effects::ResourceDescriptor;
 use crate::eff::{EffAtom, EffIndex};
-use crate::global::ControlLabelSpec;
+use crate::global::StaticControlDesc;
 use crate::global::const_dsl::{
     ControlScopeKind, PolicyMode, ScopeEvent, ScopeId, ScopeKind, ScopeMarker,
 };
@@ -9,7 +10,7 @@ use crate::global::const_dsl::{
 use super::super::images::program::{DynamicPolicySite, RouteControlRecord};
 
 #[cfg(test)]
-use crate::control::cluster::effects::{CpEffect, EffectEnvelope};
+use crate::control::cluster::effects::EffectEnvelope;
 
 #[inline(always)]
 pub(super) const fn compiled_program_push_dynamic_policy_site(
@@ -119,18 +120,19 @@ pub(super) fn compiled_program_emit_route_controls(
                 marker.scope_id,
                 default_end,
             );
-            let (route_policy_id, route_policy_eff, route_policy_tag) = match view
+            let (route_policy_id, route_policy_eff, route_policy_tag, route_policy_op) = match view
                 .first_route_head_dynamic_policy_in_range(marker.scope_id, marker_idx, scope_end)
             {
-                Some((policy, eff_offset, tag)) => (
+                Some((policy, eff_offset, tag, op)) => (
                     match policy.dynamic_policy_id() {
                         Some(policy_id) => policy_id,
                         None => u16::MAX,
                     },
                     EffIndex::from_usize(eff_offset),
                     tag,
+                    op,
                 ),
-                None => (u16::MAX, EffIndex::MAX, 0),
+                None => (u16::MAX, EffIndex::MAX, 0, ControlOp::Fence),
             };
             compiled_program_insert_route_control(
                 route_controls,
@@ -141,6 +143,7 @@ pub(super) fn compiled_program_emit_route_controls(
                     route_policy_id,
                     route_policy_eff,
                     route_policy_tag,
+                    route_policy_op,
                 ),
             );
         }
@@ -157,18 +160,25 @@ pub(super) fn compiled_program_emit_atom_into_slices(
     offset: usize,
     policy: PolicyMode,
     resource_policy_site: u16,
-    _control_spec: Option<ControlLabelSpec>,
+    control_spec: Option<StaticControlDesc>,
 ) {
     if atom.is_control {
-        if let Some(resource_kind_tag) = atom.resource {
-            let descriptor = ResourceDescriptor::new(
-                EffIndex::from_usize(offset),
-                atom.label,
-                resource_kind_tag,
-                resource_policy_site,
-            );
-            compiled_program_push_resource(resources, resources_len, descriptor);
+        let resource_kind_tag = atom
+            .resource
+            .expect("control atom must carry a resource tag");
+        let control_spec = control_spec.expect("control atom missing control descriptor");
+        if policy.is_dynamic() && !control_spec.supports_dynamic_policy() {
+            panic!("dynamic policy attached to unsupported control op");
         }
+        if control_spec.label() != atom.label || control_spec.resource_tag() != resource_kind_tag {
+            panic!("control atom/control descriptor mismatch");
+        }
+        let descriptor = ResourceDescriptor::new(
+            EffIndex::from_usize(offset),
+            resource_policy_site,
+            control_spec,
+        );
+        compiled_program_push_resource(resources, resources_len, descriptor);
     } else if !policy.is_static() && !matches!(policy, PolicyMode::Dynamic { .. }) {
         panic!("static policy attached to non-control atom");
     }
@@ -198,28 +208,31 @@ pub(super) fn compiled_program_emit_atom(
     offset: usize,
     policy: PolicyMode,
     resource_policy_site: u16,
-    _control_spec: Option<ControlLabelSpec>,
+    control_spec: Option<StaticControlDesc>,
 ) {
     if atom.is_control {
-        if let Some(resource_kind_tag) = atom.resource {
-            if let Some(effect) = CpEffect::from_resource_tag(resource_kind_tag) {
-                effect_envelope.push_cp_effect(effect);
-                effect_envelope.push_tap_event(effect.to_tap_event_id());
-            } else {
-                let tap_id = 0x0300 + atom.label as u16;
-                effect_envelope.push_tap_event(tap_id);
-            }
-
-            effect_envelope.push_resource(
-                EffIndex::from_usize(offset),
-                atom.label,
-                resource_kind_tag,
-                resource_policy_site,
-            );
-        } else {
-            let tap_id = 0x0300 + atom.label as u16;
-            effect_envelope.push_tap_event(tap_id);
+        let resource_kind_tag = atom
+            .resource
+            .expect("control atom must carry a resource tag");
+        let control_spec = control_spec.expect("control atom missing control descriptor");
+        if policy.is_dynamic() && !control_spec.supports_dynamic_policy() {
+            panic!("dynamic policy attached to unsupported control op");
         }
+        if control_spec.label() != atom.label || control_spec.resource_tag() != resource_kind_tag {
+            panic!("control atom/control descriptor mismatch");
+        }
+        let descriptor = ResourceDescriptor::new(
+            EffIndex::from_usize(offset),
+            resource_policy_site,
+            control_spec,
+        );
+        let tap_id = if control_spec.tap_id() != 0 {
+            control_spec.tap_id()
+        } else {
+            0x0300 + atom.label as u16
+        };
+        effect_envelope.push_tap_event(tap_id);
+        effect_envelope.push_resource(descriptor);
     } else {
         if !policy.is_static() && !matches!(policy, PolicyMode::Dynamic { .. }) {
             panic!("static policy attached to non-control atom");

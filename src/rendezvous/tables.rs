@@ -12,7 +12,6 @@ use core::{
 use super::error::{GenError, GenerationRecord};
 use crate::{
     control::{
-        cap::mint::CapsMask,
         lease::map::ArrayMap,
         types::{Generation, Lane},
     },
@@ -2115,126 +2114,6 @@ impl PolicyTable {
         unsafe {
             (&mut *self.lanes_ptr().add(slot)).reset();
         }
-    }
-}
-
-/// Per-lane capability table for the effect VM.
-pub(crate) struct VmCapsTable {
-    lane_base: u32,
-    lane_slots: u16,
-    lanes: UnsafeCell<*mut CapsMask>,
-    _no_send_sync: PhantomData<*mut ()>,
-}
-
-impl Default for VmCapsTable {
-    fn default() -> Self {
-        Self::empty()
-    }
-}
-
-impl VmCapsTable {
-    pub(crate) const fn empty() -> Self {
-        Self {
-            lane_base: 0,
-            lane_slots: 0,
-            lanes: UnsafeCell::new(core::ptr::null_mut()),
-            _no_send_sync: PhantomData,
-        }
-    }
-
-    pub(crate) unsafe fn init_empty(dst: *mut Self) {
-        unsafe {
-            core::ptr::addr_of_mut!((*dst).lane_base).write(0);
-            core::ptr::addr_of_mut!((*dst).lane_slots).write(0);
-            core::ptr::addr_of_mut!((*dst).lanes).write(UnsafeCell::new(core::ptr::null_mut()));
-            core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
-        }
-    }
-
-    #[inline]
-    pub(crate) const fn storage_align() -> usize {
-        core::mem::align_of::<CapsMask>()
-    }
-
-    #[inline]
-    pub(crate) const fn storage_bytes(lane_slots: usize) -> usize {
-        lane_slots.saturating_mul(core::mem::size_of::<CapsMask>())
-    }
-
-    pub(crate) unsafe fn bind_from_storage(
-        &mut self,
-        storage: *mut u8,
-        lane_base: u32,
-        lane_slots: usize,
-    ) {
-        let lanes = storage.cast::<CapsMask>();
-        let mut idx = 0usize;
-        while idx < lane_slots {
-            unsafe {
-                lanes.add(idx).write(CapsMask::allow_all());
-            }
-            idx += 1;
-        }
-        self.lane_base = lane_base;
-        self.lane_slots = lane_slots as u16;
-        *self.lanes.get_mut() = lanes;
-    }
-
-    #[inline]
-    pub(crate) fn is_bound(&self) -> bool {
-        !unsafe { *self.lanes.get() }.is_null()
-    }
-
-    #[inline]
-    pub(crate) fn storage_ptr(&self) -> *mut u8 {
-        self.lanes_ptr().cast::<u8>()
-    }
-
-    #[inline]
-    pub(crate) const fn storage_bytes_current(&self) -> usize {
-        Self::storage_bytes(self.lane_slots as usize)
-    }
-
-    #[inline]
-    fn lanes_ptr(&self) -> *mut CapsMask {
-        unsafe { *self.lanes.get() }
-    }
-
-    #[inline]
-    fn lane_slot(&self, lane: Lane) -> Option<usize> {
-        let lane_raw = lane.raw();
-        if lane_raw < self.lane_base {
-            return None;
-        }
-        let slot = (lane_raw - self.lane_base) as usize;
-        (slot < self.lane_slots as usize).then_some(slot)
-    }
-
-    /// Set capability bits for a lane.
-    #[inline]
-    pub(crate) fn set(&self, lane: Lane, caps: CapsMask) {
-        let Some(slot) = self.lane_slot(lane) else {
-            return;
-        };
-        unsafe { self.lanes_ptr().add(slot).write(caps) }
-    }
-
-    /// Get capability bits for a lane.
-    #[inline]
-    pub(crate) fn get(&self, lane: Lane) -> CapsMask {
-        let Some(slot) = self.lane_slot(lane) else {
-            return CapsMask::allow_all();
-        };
-        unsafe { *self.lanes_ptr().add(slot) }
-    }
-
-    /// Reset lane (clear permissions).
-    #[inline]
-    pub(crate) fn reset_lane(&self, lane: Lane) {
-        let Some(slot) = self.lane_slot(lane) else {
-            return;
-        };
-        unsafe { self.lanes_ptr().add(slot).write(CapsMask::allow_all()) }
     }
 }
 

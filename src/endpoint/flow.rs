@@ -10,9 +10,9 @@ use core::{
 
 use crate::{
     binding::BindingHandle,
-    control::cap::mint::{AllowsCanonical, MintConfig, MintConfigMarker, ResourceKind},
+    control::cap::mint::{AllowsCanonical, MintConfig, MintConfigMarker},
     endpoint::{SendResult, control::ControlOutcome, kernel},
-    global::{ControlHandling, ControlPayloadKind, MessageSpec, SendableLabel},
+    global::{ControlPayloadKind, MessageSpec, SendableLabel},
     transport::wire::WireEncode,
 };
 
@@ -65,26 +65,14 @@ where
     M: MessageSpec + SendableLabel,
     M::ControlKind: ControlPayloadKind,
 {
-    let handling = match <M::ControlKind as ControlPayloadKind>::HANDLING {
-        ControlHandling::None => kernel::SendHandling::None,
-        ControlHandling::Canonical => kernel::SendHandling::Canonical,
-        ControlHandling::External => kernel::SendHandling::External {
-            auto_mint_external:
-                <<<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind as ResourceKind>::AUTO_MINT_EXTERNAL,
-        },
-    };
-    let expects_control = !matches!(
-        <M::ControlKind as ControlPayloadKind>::HANDLING,
-        ControlHandling::None
-    );
-    let resource_tag = if expects_control {
-        Some(
-            <<<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind as ResourceKind>::TAG,
-        )
-    } else {
-        None
-    };
-    kernel::SendDesc::new(<M as MessageSpec>::LABEL, expects_control, handling, resource_tag)
+    let control = <M as MessageSpec>::CONTROL;
+    let expects_control = <M::ControlKind as ControlPayloadKind>::IS_CONTROL;
+    kernel::SendDesc::new(
+        <M as MessageSpec>::LABEL,
+        expects_control,
+        control,
+        <M::ControlKind as ControlPayloadKind>::ENCODE_CONTROL_HANDLE,
+    )
 }
 
 impl<'e, 'r, const ROLE: u8, M> Flow<'e, 'r, ROLE, M>
@@ -279,13 +267,15 @@ where
     #[inline(always)]
     fn into_payload(self) -> Option<&'a M::Payload> {
         const {
-            let handling = <M::ControlKind as ControlPayloadKind>::HANDLING as u8;
-            let is_canonical = handling == ControlHandling::Canonical as u8;
-            let is_external = handling == ControlHandling::External as u8;
-            let auto_mint = <<M::ControlKind as ControlPayloadKind>::ResourceKind as ResourceKind>::AUTO_MINT_EXTERNAL;
             assert!(
-                is_canonical || (is_external && auto_mint),
-                "Unit () can only be used with Canonical control or External control with AUTO_MINT_EXTERNAL"
+                match <M as MessageSpec>::CONTROL {
+                    Some(desc) => match desc.path() {
+                        crate::control::cap::mint::ControlPath::Local => true,
+                        crate::control::cap::mint::ControlPath::Wire => desc.auto_mint_wire(),
+                    },
+                    None => false,
+                },
+                "Unit () can only be used with local control or wire control with AUTO_MINT_WIRE"
             );
         }
         None
@@ -300,11 +290,17 @@ where
     #[inline(always)]
     fn into_payload(self) -> Option<&'a M::Payload> {
         const {
-            let handling = <M::ControlKind as ControlPayloadKind>::HANDLING as u8;
             assert!(
-                handling == ControlHandling::External as u8
-                    || handling == ControlHandling::None as u8,
-                "Payload reference can only be used with External or None control messages"
+                !<M::ControlKind as ControlPayloadKind>::IS_CONTROL
+                    || matches!(
+                        <M as MessageSpec>::CONTROL,
+                        Some(desc)
+                            if matches!(
+                                desc.path(),
+                                crate::control::cap::mint::ControlPath::Wire
+                            )
+                    ),
+                "Payload reference can only be used with wire control or data messages"
             );
         }
         Some(self)

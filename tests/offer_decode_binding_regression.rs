@@ -18,7 +18,7 @@ use core::{
     cell::{Cell, UnsafeCell},
     mem::MaybeUninit,
 };
-use hibana::g::advanced::{CanonicalControl, MessageSpec, RoleProgram, project};
+use hibana::g::advanced::{MessageSpec, RoleProgram, project};
 use hibana::g::{self, Msg, Role};
 use hibana::substrate::{
     RendezvousId,
@@ -38,7 +38,8 @@ use tls_mut_support::with_tls_mut;
 use tls_ref_support::with_tls_ref;
 
 const LABEL_ROUTE_DECISION: u8 = 57;
-type RouteRightKind = route_control_kinds::RouteControl<70, 0>;
+const LABEL_ROUTE_RIGHT_CONTROL: u8 = 119;
+type RouteRightKind = route_control_kinds::RouteControl<LABEL_ROUTE_RIGHT_CONTROL, 0>;
 const POLICY_AUDIT_EXT_ID: u16 = 0x0408;
 const SLOT_TAG_ENDPOINT_RX: u32 = 1;
 const SLOT_TAG_ROUTE: u32 = 4;
@@ -91,11 +92,7 @@ fn controller_program() -> RoleProgram<0> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >,
+            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
             0,
         >()
         .policy::<ROUTE_POLICY_ID>(),
@@ -105,7 +102,7 @@ fn controller_program() -> RoleProgram<0> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<70, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+            Msg<LABEL_ROUTE_RIGHT_CONTROL, GenericCapToken<RouteRightKind>, RouteRightKind>,
             0,
         >()
         .policy::<ROUTE_POLICY_ID>(),
@@ -121,11 +118,7 @@ fn worker_program() -> RoleProgram<1> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >,
+            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
             0,
         >()
         .policy::<ROUTE_POLICY_ID>(),
@@ -135,7 +128,7 @@ fn worker_program() -> RoleProgram<1> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<70, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+            Msg<LABEL_ROUTE_RIGHT_CONTROL, GenericCapToken<RouteRightKind>, RouteRightKind>,
             0,
         >()
         .policy::<ROUTE_POLICY_ID>(),
@@ -259,7 +252,6 @@ impl FlowBindingSharedState {
         }
         Err(TransportOpsError::ChannelNotFound)
     }
-
 }
 
 struct FlowBindingShared {
@@ -503,7 +495,7 @@ fn flow_preview_is_policy_free_until_send_consumes_it() {
                                             .flow::<Msg<
                                                 { LABEL_ROUTE_DECISION },
                                                 GenericCapToken<RouteDecisionKind>,
-                                                CanonicalControl<RouteDecisionKind>,
+                                                RouteDecisionKind,
                                             >>()
                                             .expect("route control preview");
                                         drop(flow);
@@ -532,7 +524,7 @@ fn flow_preview_is_policy_free_until_send_consumes_it() {
                                                 .flow::<Msg<
                                                     { LABEL_ROUTE_DECISION },
                                                     GenericCapToken<RouteDecisionKind>,
-                                                    CanonicalControl<RouteDecisionKind>,
+                                                    RouteDecisionKind,
                                                 >>()
                                                 .expect("route control preview for send")
                                                 .send(())
@@ -631,9 +623,7 @@ fn offer_decode_binding_consumes_classification_once() {
                                                                     GenericCapToken<
                                                                         RouteDecisionKind,
                                                                     >,
-                                                                    CanonicalControl<
-                                                                        RouteDecisionKind,
-                                                                    >,
+                                                                    RouteDecisionKind,
                                                                 >>(
                                                                 )
                                                                 .expect("control flow")
@@ -776,9 +766,7 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                                     GenericCapToken<
                                                                         RouteDecisionKind,
                                                                     >,
-                                                                    CanonicalControl<
-                                                                        RouteDecisionKind,
-                                                                    >,
+                                                                    RouteDecisionKind,
                                                                 >>(
                                                                 )
                                                                 .expect("control flow")
@@ -997,9 +985,7 @@ fn codec_error_in_public_decode_preserves_preview_branch() {
                                                                     GenericCapToken<
                                                                         RouteDecisionKind,
                                                                     >,
-                                                                    CanonicalControl<
-                                                                        RouteDecisionKind,
-                                                                    >,
+                                                                    RouteDecisionKind,
                                                                 >>(
                                                                 )
                                                                 .expect("control flow")
@@ -1243,9 +1229,7 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_classification() {
                                                                     GenericCapToken<
                                                                         RouteDecisionKind,
                                                                     >,
-                                                                    CanonicalControl<
-                                                                        RouteDecisionKind,
-                                                                    >,
+                                                                    RouteDecisionKind,
                                                                 >>(
                                                                 )
                                                                 .expect("control flow")

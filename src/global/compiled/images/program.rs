@@ -4,19 +4,11 @@ use crate::global::compiled::layout::{
     compiled_program_tail_align, compiled_program_tail_bytes_for_counts,
 };
 use crate::{
-    control::{
-        cap::mint::ResourceKind,
-        cap::resource_kinds::{
-            LoopBreakKind, LoopContinueKind, RerouteKind, RouteDecisionKind, SpliceAckKind,
-            SpliceIntentKind,
-        },
-        cluster::effects::EffectEnvelopeRef,
-    },
+    control::{cap::mint::ControlOp, cluster::effects::EffectEnvelopeRef},
     eff::EffIndex,
-    global::const_dsl::{CompactScopeId, PolicyMode, ScopeId},
-    runtime::consts::{
-        LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE, LABEL_REROUTE, LABEL_ROUTE_DECISION,
-        LABEL_SPLICE_ACK, LABEL_SPLICE_INTENT,
+    global::{
+        StaticControlDesc,
+        const_dsl::{CompactScopeId, PolicyMode, ScopeId},
     },
 };
 
@@ -26,6 +18,7 @@ pub(crate) struct DynamicPolicySite {
     eff_index: EffIndex,
     label: u8,
     resource_tag: Option<u8>,
+    op: Option<ControlOp>,
     policy: PolicyMode,
 }
 
@@ -35,6 +28,7 @@ impl DynamicPolicySite {
         eff_index: EffIndex::ZERO,
         label: 0,
         resource_tag: None,
+        op: None,
         policy: PolicyMode::Static,
     };
 
@@ -43,12 +37,14 @@ impl DynamicPolicySite {
         eff_index: EffIndex,
         label: u8,
         resource_tag: Option<u8>,
+        op: Option<ControlOp>,
         policy: PolicyMode,
     ) -> Self {
         Self {
             eff_index,
             label,
             resource_tag,
+            op,
             policy,
         }
     }
@@ -66,6 +62,11 @@ impl DynamicPolicySite {
     #[inline(always)]
     pub(crate) const fn resource_tag(&self) -> Option<u8> {
         self.resource_tag
+    }
+
+    #[inline(always)]
+    pub(crate) const fn op(&self) -> Option<ControlOp> {
+        self.op
     }
 
     #[inline(always)]
@@ -90,6 +91,7 @@ pub(crate) struct RouteControlRecord {
     scope_id: CompactScopeId,
     controller_role: u8,
     route_policy_tag: u8,
+    route_policy_op: ControlOp,
     route_policy_id: u16,
     route_policy_eff: EffIndex,
 }
@@ -100,6 +102,7 @@ impl RouteControlRecord {
         scope_id: CompactScopeId::none(),
         controller_role: ROUTE_CONTROL_NONE,
         route_policy_tag: 0,
+        route_policy_op: ControlOp::Fence,
         route_policy_id: u16::MAX,
         route_policy_eff: EffIndex::MAX,
     };
@@ -111,6 +114,7 @@ impl RouteControlRecord {
         route_policy_id: u16,
         route_policy_eff: EffIndex,
         route_policy_tag: u8,
+        route_policy_op: ControlOp,
     ) -> Self {
         Self {
             scope_id: CompactScopeId::from_scope_id(scope_id),
@@ -119,6 +123,7 @@ impl RouteControlRecord {
                 None => ROUTE_CONTROL_NONE,
             },
             route_policy_tag,
+            route_policy_op,
             route_policy_id,
             route_policy_eff,
         }
@@ -141,7 +146,7 @@ impl RouteControlRecord {
     #[inline(always)]
     pub(in crate::global::compiled) fn route_controller(
         self,
-    ) -> Option<(PolicyMode, EffIndex, u8)> {
+    ) -> Option<(PolicyMode, EffIndex, u8, ControlOp)> {
         if self.route_policy_eff.raw() == EffIndex::MAX.raw() {
             return None;
         }
@@ -153,7 +158,12 @@ impl RouteControlRecord {
                 scope: self.scope_id,
             }
         };
-        Some((policy, self.route_policy_eff, self.route_policy_tag))
+        Some((
+            policy,
+            self.route_policy_eff,
+            self.route_policy_tag,
+            self.route_policy_op,
+        ))
     }
 }
 
@@ -164,12 +174,48 @@ pub(crate) enum ControlSemanticKind {
     RouteArm = 1,
     LoopContinue = 2,
     LoopBreak = 3,
-    SpliceIntent = 4,
-    SpliceAck = 5,
-    Reroute = 6,
 }
 
 impl ControlSemanticKind {
+    #[inline(always)]
+    pub(crate) const fn packed_bits(self) -> u8 {
+        match self {
+            Self::Other => 0,
+            Self::RouteArm => 1,
+            Self::LoopContinue => 2,
+            Self::LoopBreak => 3,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn from_packed_bits(bits: u8) -> Self {
+        match bits {
+            0 => Self::Other,
+            1 => Self::RouteArm,
+            2 => Self::LoopContinue,
+            3 => Self::LoopBreak,
+            _ => panic!("invalid packed control semantic bits"),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn from_control_op(op: Option<ControlOp>) -> Self {
+        match op {
+            Some(ControlOp::LoopContinue) => Self::LoopContinue,
+            Some(ControlOp::LoopBreak) => Self::LoopBreak,
+            Some(ControlOp::RouteDecision) => Self::RouteArm,
+            _ => Self::Other,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn from_control_spec(spec: Option<StaticControlDesc>) -> Self {
+        match spec {
+            Some(spec) => Self::from_control_op(Some(spec.op())),
+            None => Self::Other,
+        }
+    }
+
     #[inline(always)]
     pub(crate) const fn is_loop(self) -> bool {
         matches!(self, Self::LoopContinue | Self::LoopBreak)
@@ -184,60 +230,10 @@ pub(in crate::global::compiled) static CONTROL_SEMANTICS_TABLE: ControlSemantics
 
 impl ControlSemanticsTable {
     pub(crate) const EMPTY: Self = Self {};
-
-    #[inline(always)]
-    pub(crate) const fn semantic_for_label(&self, label: u8) -> ControlSemanticKind {
-        match label {
-            LABEL_LOOP_CONTINUE => ControlSemanticKind::LoopContinue,
-            LABEL_LOOP_BREAK => ControlSemanticKind::LoopBreak,
-            LABEL_SPLICE_INTENT => ControlSemanticKind::SpliceIntent,
-            LABEL_SPLICE_ACK => ControlSemanticKind::SpliceAck,
-            LABEL_REROUTE => ControlSemanticKind::Reroute,
-            LABEL_ROUTE_DECISION => ControlSemanticKind::RouteArm,
-            _ => ControlSemanticKind::Other,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn semantic_for_resource_tag(
-        &self,
-        resource_tag: Option<u8>,
-    ) -> ControlSemanticKind {
-        match resource_tag {
-            Some(LoopContinueKind::TAG) => ControlSemanticKind::LoopContinue,
-            Some(LoopBreakKind::TAG) => ControlSemanticKind::LoopBreak,
-            Some(SpliceIntentKind::TAG) => ControlSemanticKind::SpliceIntent,
-            Some(SpliceAckKind::TAG) => ControlSemanticKind::SpliceAck,
-            Some(RerouteKind::TAG) => ControlSemanticKind::Reroute,
-            Some(RouteDecisionKind::TAG) => ControlSemanticKind::RouteArm,
-            None => ControlSemanticKind::Other,
-            Some(_) => ControlSemanticKind::Other,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn semantic_for(
-        &self,
-        label: u8,
-        resource_tag: Option<u8>,
-    ) -> ControlSemanticKind {
-        let by_resource = self.semantic_for_resource_tag(resource_tag);
-        if matches!(by_resource, ControlSemanticKind::Other) {
-            self.semantic_for_label(label)
-        } else {
-            by_resource
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn is_loop_label(&self, label: u8) -> bool {
-        self.semantic_for_label(label).is_loop()
-    }
 }
 
 pub(in crate::global::compiled) const MAX_DYNAMIC_POLICY_SITES: usize =
     crate::eff::meta::MAX_EFF_NODES;
-pub(crate) const MAX_COMPILED_PROGRAM_CP_EFFECTS: usize = 256;
 pub(crate) const MAX_COMPILED_PROGRAM_TAP_EVENTS: usize = 512;
 pub(crate) const MAX_COMPILED_PROGRAM_RESOURCES: usize = 128;
 pub(crate) const MAX_COMPILED_PROGRAM_SCOPES: usize = crate::eff::meta::MAX_EFF_NODES;
@@ -311,7 +307,6 @@ impl CompiledProgramSection {
 
 #[derive(Clone, Copy)]
 pub(crate) struct CompiledProgramCounts {
-    pub(crate) cp_effects: usize,
     pub(crate) tap_events: usize,
     pub(crate) resources: usize,
     pub(crate) controls: usize,
@@ -321,7 +316,6 @@ pub(crate) struct CompiledProgramCounts {
 
 impl CompiledProgramCounts {
     const MAX: Self = Self {
-        cp_effects: MAX_COMPILED_PROGRAM_CP_EFFECTS,
         tap_events: MAX_COMPILED_PROGRAM_TAP_EVENTS,
         resources: MAX_COMPILED_PROGRAM_RESOURCES,
         controls: MAX_COMPILED_PROGRAM_CONTROLS,
@@ -332,7 +326,7 @@ impl CompiledProgramCounts {
 
 /// Crate-private runtime image for program-level immutable facts.
 #[derive(Clone)]
-pub(crate) struct CompiledProgramImage {
+pub(crate) struct CompiledProgramFacts {
     pub(in crate::global::compiled) resources: CompiledProgramSection,
     pub(in crate::global::compiled) dynamic_policy_sites: CompiledProgramSection,
     pub(in crate::global::compiled) route_controls: CompiledProgramSection,
@@ -367,7 +361,7 @@ pub(in crate::global::compiled) fn compiled_program_lookup_route_control(
     }
 }
 
-impl CompiledProgramImage {
+impl CompiledProgramFacts {
     #[inline(always)]
     fn section_slice<T>(&self, section: CompiledProgramSection) -> &[T] {
         if section.is_empty() {
@@ -433,7 +427,6 @@ impl CompiledProgramImage {
     pub(crate) fn effect_envelope(&self) -> EffectEnvelopeRef<'_> {
         EffectEnvelopeRef::new(
             &[],
-            &[],
             self.section_slice(self.resources),
             self.section_slice(self.dynamic_policy_sites),
             self.control_scope_mask,
@@ -477,7 +470,10 @@ impl CompiledProgramImage {
     }
 
     #[inline(always)]
-    pub(crate) fn route_controller(&self, scope_id: ScopeId) -> Option<(PolicyMode, EffIndex, u8)> {
+    pub(crate) fn route_controller(
+        &self,
+        scope_id: ScopeId,
+    ) -> Option<(PolicyMode, EffIndex, u8, ControlOp)> {
         compiled_program_lookup_route_control(self.route_controls(), scope_id)
             .and_then(|record| record.route_controller())
     }
@@ -487,31 +483,38 @@ impl CompiledProgramImage {
 mod tests {
     use core::{mem::size_of, ptr};
 
-    use super::{CompiledProgramImage, ControlSemanticKind};
+    mod abort_control_kind {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/support/abort_control.rs"
+        ));
+    }
+    mod delegate_control_kind {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/support/delegate_control.rs"
+        ));
+    }
+
+    use super::{CompiledProgramFacts, ControlSemanticKind};
     use crate::{
         control::cap::{
-            mint::{GenericCapToken, ResourceKind},
-            resource_kinds::{
-                CancelKind, LoopBreakKind, LoopContinueKind, RerouteKind, RouteDecisionKind,
-            },
+            mint::{ControlOp, GenericCapToken, ResourceKind},
+            resource_kinds::{LoopBreakKind, LoopContinueKind, RouteDecisionKind},
         },
         eff::EffIndex,
         g::{self, Msg, Role},
-        global::{
-            CanonicalControl,
-            const_dsl::{PolicyMode, ScopeEvent, ScopeKind},
-        },
-        runtime::consts::{
-            LABEL_CANCEL, LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE, LABEL_REROUTE,
-            LABEL_ROUTE_DECISION,
-        },
+        global::const_dsl::{PolicyMode, ScopeEvent, ScopeKind},
+        runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE, LABEL_ROUTE_DECISION},
     };
+    use abort_control_kind::{AbortControl, LABEL_ABORT_CONTROL};
+    use delegate_control_kind::{DelegateControl, LABEL_DELEGATE_CONTROL};
 
     const ROUTE_POLICY_ID: u16 = 4401;
 
-    fn with_compiled_program_image<R>(
+    fn with_compiled_program_facts<R>(
         summary: &crate::global::compiled::lowering::LoweringSummary,
-        f: impl FnOnce(&CompiledProgramImage) -> R,
+        f: impl FnOnce(&CompiledProgramFacts) -> R,
     ) -> R {
         const fn align_up(value: usize, align: usize) -> usize {
             let mask = align.saturating_sub(1);
@@ -519,12 +522,12 @@ mod tests {
         }
 
         let counts = summary.compiled_program_counts();
-        let bytes = CompiledProgramImage::persistent_bytes_for_counts(counts);
-        let align = CompiledProgramImage::persistent_align();
+        let bytes = CompiledProgramFacts::persistent_bytes_for_counts(counts);
+        let align = CompiledProgramFacts::persistent_align();
         let mut storage = std::vec::Vec::with_capacity(bytes + align);
         storage.resize(bytes + align, 0u8);
         let base = storage.as_mut_ptr() as usize;
-        let aligned = align_up(base, align) as *mut CompiledProgramImage;
+        let aligned = align_up(base, align) as *mut CompiledProgramFacts;
         debug_assert!((aligned as usize) + bytes <= base + storage.len());
         unsafe {
             crate::global::compiled::lowering::program_image_builder::init_compiled_program_image_from_summary(aligned, summary);
@@ -539,11 +542,7 @@ mod tests {
         let program = g::send::<
             Role<0>,
             Role<0>,
-            Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >,
+            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
             0,
         >()
         .policy::<ROUTE_POLICY_ID>();
@@ -566,15 +565,7 @@ mod tests {
         assert!(!budget.requires_delegation());
 
         assert_eq!(
-            compiled
-                .control_semantics()
-                .semantic_for_label(LABEL_ROUTE_DECISION),
-            ControlSemanticKind::RouteArm
-        );
-        assert_eq!(
-            compiled
-                .control_semantics()
-                .semantic_for_resource_tag(Some(RouteDecisionKind::TAG)),
+            ControlSemanticKind::from_control_op(Some(ControlOp::RouteDecision)),
             ControlSemanticKind::RouteArm
         );
     }
@@ -584,22 +575,14 @@ mod tests {
         let left = g::send::<
             Role<0>,
             Role<0>,
-            Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
+            Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
             0,
         >()
         .policy::<ROUTE_POLICY_ID>();
         let right = g::send::<
             Role<0>,
             Role<0>,
-            Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
+            Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >()
         .policy::<ROUTE_POLICY_ID>();
@@ -619,7 +602,7 @@ mod tests {
         let compiled = crate::global::compiled::lowering::CompiledProgram::from_summary(&summary);
 
         assert_eq!(compiled.route_controller_role(scope_id), Some(0));
-        let (policy, eff_index, resource_tag) = compiled
+        let (policy, eff_index, resource_tag, op) = compiled
             .route_controller(scope_id)
             .expect("route controller atlas entry");
         assert_eq!(
@@ -628,6 +611,7 @@ mod tests {
         );
         assert_eq!(eff_index, EffIndex::ZERO);
         assert_eq!(resource_tag, LoopContinueKind::TAG);
+        assert_eq!(op, ControlOp::LoopContinue);
     }
 
     #[test]
@@ -635,14 +619,14 @@ mod tests {
         let nested_left = g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_CANCEL }, GenericCapToken<CancelKind>, CanonicalControl<CancelKind>>,
+            Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
             0,
         >()
         .policy::<ROUTE_POLICY_ID>();
         let nested_right = g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_REROUTE }, GenericCapToken<RerouteKind>, CanonicalControl<RerouteKind>>,
+            Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >()
         .policy::<ROUTE_POLICY_ID>();
@@ -650,11 +634,7 @@ mod tests {
             g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<
-                    { LABEL_LOOP_CONTINUE },
-                    GenericCapToken<LoopContinueKind>,
-                    CanonicalControl<LoopContinueKind>,
-                >,
+                Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
                 0,
             >(),
             g::route(nested_left, nested_right),
@@ -662,11 +642,7 @@ mod tests {
         let right = g::send::<
             Role<0>,
             Role<0>,
-            Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
+            Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >();
         let program = g::route(left, right);
@@ -695,9 +671,9 @@ mod tests {
     #[test]
     fn compiled_program_image_header_stays_compact() {
         assert!(
-            size_of::<super::CompiledProgramImage>() < 192,
-            "CompiledProgramImage header regressed back to pointer-rich layout: {} bytes",
-            size_of::<super::CompiledProgramImage>()
+            size_of::<super::CompiledProgramFacts>() < 192,
+            "CompiledProgramFacts header regressed back to pointer-rich layout: {} bytes",
+            size_of::<super::CompiledProgramFacts>()
         );
     }
 
@@ -711,7 +687,7 @@ mod tests {
                 Msg<
                     { LABEL_ROUTE_DECISION },
                     GenericCapToken<RouteDecisionKind>,
-                    CanonicalControl<RouteDecisionKind>,
+                    RouteDecisionKind,
                 >,
                 0,
             >()
@@ -719,8 +695,8 @@ mod tests {
         );
         let summary = program.summary();
         let expected =
-            CompiledProgramImage::persistent_bytes_for_counts(summary.compiled_program_counts());
-        with_compiled_program_image(&summary, |image| {
+            CompiledProgramFacts::persistent_bytes_for_counts(summary.compiled_program_counts());
+        with_compiled_program_facts(&summary, |image| {
             assert_eq!(image.actual_persistent_bytes(), expected);
         });
     }
@@ -737,59 +713,33 @@ mod tests {
 
     #[test]
     fn compiled_program_marks_loop_control_semantics_from_control_metadata() {
-        let body = g::send::<Role<0>, Role<1>, Msg<7, ()>, 0>();
-        let continue_arm = g::seq(
-            g::send::<
-                Role<0>,
-                Role<0>,
-                Msg<
-                    { LABEL_LOOP_CONTINUE },
-                    GenericCapToken<LoopContinueKind>,
-                    CanonicalControl<LoopContinueKind>,
-                >,
-                0,
-            >(),
-            body,
-        );
-        let break_arm = g::send::<
-            Role<0>,
-            Role<0>,
-            Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
-            0,
-        >();
-        let program = g::route(continue_arm, break_arm);
-
-        let summary = program.summary();
-        let compiled = crate::global::compiled::lowering::CompiledProgram::from_summary(&summary);
-
         assert_eq!(
-            compiled
-                .control_semantics()
-                .semantic_for_label(LABEL_LOOP_CONTINUE),
+            ControlSemanticKind::from_control_op(Some(ControlOp::LoopContinue)),
             ControlSemanticKind::LoopContinue
         );
         assert_eq!(
-            compiled
-                .control_semantics()
-                .semantic_for_label(LABEL_LOOP_BREAK),
+            ControlSemanticKind::from_control_op(Some(ControlOp::LoopBreak)),
             ControlSemanticKind::LoopBreak
         );
-        assert_eq!(
-            compiled
-                .control_semantics()
-                .semantic_for_resource_tag(Some(LoopContinueKind::TAG)),
-            ControlSemanticKind::LoopContinue
-        );
-        assert_eq!(
-            compiled
-                .control_semantics()
-                .semantic_for_resource_tag(Some(LoopBreakKind::TAG)),
-            ControlSemanticKind::LoopBreak
-        );
+    }
+
+    #[test]
+    fn control_semantic_kind_packed_bits_roundtrip() {
+        let kinds = [
+            ControlSemanticKind::Other,
+            ControlSemanticKind::RouteArm,
+            ControlSemanticKind::LoopContinue,
+            ControlSemanticKind::LoopBreak,
+        ];
+        let mut idx = 0usize;
+        while idx < kinds.len() {
+            let kind = kinds[idx];
+            assert_eq!(
+                ControlSemanticKind::from_packed_bits(kind.packed_bits()),
+                kind
+            );
+            idx += 1;
+        }
     }
 
     #[test]
@@ -797,23 +747,19 @@ mod tests {
         let cancel = g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_CANCEL }, GenericCapToken<CancelKind>, CanonicalControl<CancelKind>>,
+            Msg<{ LABEL_ABORT_CONTROL }, GenericCapToken<AbortControl>, AbortControl>,
             0,
         >();
         let reroute = g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_REROUTE }, GenericCapToken<RerouteKind>, CanonicalControl<RerouteKind>>,
+            Msg<{ LABEL_DELEGATE_CONTROL }, GenericCapToken<DelegateControl>, DelegateControl>,
             0,
         >();
         let route = g::send::<
             Role<0>,
             Role<0>,
-            Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >,
+            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
             0,
         >();
         let program = g::seq(cancel, g::seq(reroute, route));

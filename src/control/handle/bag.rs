@@ -132,25 +132,33 @@ where
 mod tests {
     use super::*;
     use crate::control::cap::mint::{
-        CAP_FIXED_HEADER_LEN, CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TAG_LEN,
-        CAP_TOKEN_LEN, CapShot,
+        CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TAG_LEN, CAP_TOKEN_LEN, CapHeader, CapShot,
+        ControlResourceKind,
     };
     use crate::control::cap::resource_kinds::{LoopContinueKind, LoopDecisionHandle};
     use crate::global::const_dsl::ScopeId;
+    use crate::substrate::{Lane, SessionId};
 
     fn make_test_bytes(handle: &LoopDecisionHandle) -> [u8; CAP_TOKEN_LEN] {
         let handle_bytes = LoopContinueKind::encode_handle(handle);
-        let mask = LoopContinueKind::caps_mask(handle);
 
         let mut header = [0u8; CAP_HEADER_LEN];
-        header[0..4].copy_from_slice(&0u32.to_be_bytes());
-        header[4] = 0;
-        header[5] = 0;
-        header[6] = LoopContinueKind::TAG;
-        header[7] = CapShot::One.as_u8();
-        header[8..10].copy_from_slice(&mask.bits().to_be_bytes());
-        header[CAP_FIXED_HEADER_LEN..CAP_FIXED_HEADER_LEN + CAP_HANDLE_LEN]
-            .copy_from_slice(&handle_bytes);
+        CapHeader::new(
+            SessionId::new(handle.sid),
+            Lane::new(handle.lane as u32),
+            0,
+            LoopContinueKind::TAG,
+            LoopContinueKind::LABEL,
+            LoopContinueKind::OP,
+            LoopContinueKind::PATH,
+            CapShot::One,
+            LoopContinueKind::SCOPE,
+            0,
+            handle.scope.local_ordinal(),
+            0,
+            handle_bytes,
+        )
+        .encode(&mut header);
 
         let mut bytes = [0u8; CAP_TOKEN_LEN];
         bytes[..CAP_NONCE_LEN].copy_from_slice(&[0u8; CAP_NONCE_LEN]);

@@ -701,10 +701,15 @@ mod tests {
 
     type ParallelLane0 = StepCons<steps::SendStep<Role<0>, Role<1>, Msg<9, ()>, 0>, StepNil>;
     type ParallelLane1 = StepCons<steps::SendStep<Role<1>, Role<0>, Msg<10, ()>, 1>, StepNil>;
-    const PARALLEL_LANE0: Program<ParallelLane0> = g::send::<Role<0>, Role<1>, Msg<9, ()>, 0>();
-    const PARALLEL_LANE1: Program<ParallelLane1> = g::send::<Role<1>, Role<0>, Msg<10, ()>, 1>();
-    const PARALLEL_PROGRAM: Program<ParSteps<ParallelLane0, ParallelLane1>> =
-        g::par(PARALLEL_LANE0, PARALLEL_LANE1);
+    fn parallel_lane0_program() -> Program<ParallelLane0> {
+        g::send::<Role<0>, Role<1>, Msg<9, ()>, 0>()
+    }
+    fn parallel_lane1_program() -> Program<ParallelLane1> {
+        g::send::<Role<1>, Role<0>, Msg<10, ()>, 1>()
+    }
+    fn parallel_program() -> Program<ParSteps<ParallelLane0, ParallelLane1>> {
+        g::par(parallel_lane0_program(), parallel_lane1_program())
+    }
 
     type RouteLeft = SeqSteps<
         StepCons<steps::SendStep<Role<0>, Role<0>, Msg<14, ()>, 0>, StepNil>,
@@ -714,23 +719,29 @@ mod tests {
         StepCons<steps::SendStep<Role<0>, Role<0>, Msg<16, ()>, 0>, StepNil>,
         StepCons<steps::SendStep<Role<0>, Role<1>, Msg<17, ()>, 0>, StepNil>,
     >;
-    const ROUTE_LEFT_PROGRAM: Program<RouteLeft> = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<14, ()>, 0>(),
-        g::send::<Role<0>, Role<1>, Msg<15, ()>, 0>(),
-    );
-    const ROUTE_RIGHT_PROGRAM: Program<RouteRight> = g::seq(
-        g::send::<Role<0>, Role<0>, Msg<16, ()>, 0>(),
-        g::send::<Role<0>, Role<1>, Msg<17, ()>, 0>(),
-    );
+    fn route_left_program() -> Program<RouteLeft> {
+        g::seq(
+            g::send::<Role<0>, Role<0>, Msg<14, ()>, 0>(),
+            g::send::<Role<0>, Role<1>, Msg<15, ()>, 0>(),
+        )
+    }
+    fn route_right_program() -> Program<RouteRight> {
+        g::seq(
+            g::send::<Role<0>, Role<0>, Msg<16, ()>, 0>(),
+            g::send::<Role<0>, Role<1>, Msg<17, ()>, 0>(),
+        )
+    }
     type RouteProgramSteps = RouteSteps<RouteLeft, RouteRight>;
-    const ROUTE_PROGRAM: Program<RouteProgramSteps> =
-        g::route(ROUTE_LEFT_PROGRAM, ROUTE_RIGHT_PROGRAM);
-    const PARALLEL_ROUTE_PROGRAM: Program<ParSteps<ParallelLane1, RouteProgramSteps>> =
-        g::par(PARALLEL_LANE1, ROUTE_PROGRAM);
+    fn route_program() -> Program<RouteProgramSteps> {
+        g::route(route_left_program(), route_right_program())
+    }
+    fn parallel_route_program() -> Program<ParSteps<ParallelLane1, RouteProgramSteps>> {
+        g::par(parallel_lane1_program(), route_program())
+    }
 
     #[test]
     fn parallel_projection_keeps_phase_and_lane_split_internal() {
-        let parallel_program = PARALLEL_PROGRAM;
+        let parallel_program = parallel_program();
         let client: RoleProgram<0> = project(&parallel_program);
         let server: RoleProgram<1> = project(&parallel_program);
 
@@ -740,7 +751,7 @@ mod tests {
 
     #[test]
     fn parallel_route_projection_keeps_scope_markers_without_public_step_surface() {
-        let parallel_route_program = PARALLEL_ROUTE_PROGRAM;
+        let parallel_route_program = parallel_route_program();
         let program: RoleProgram<0> = project(&parallel_route_program);
         let scope_markers = super::lowering_input(&program)
             .summary()

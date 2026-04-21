@@ -182,8 +182,6 @@ where
         + crate::global::SendableLabel
         + crate::global::MessageControlSpec,
     Tail: BuildProgramSource,
-    <Msg as crate::global::MessageSpec>::ControlKind:
-        crate::global::RequireSelfSendForCanonical<<From as RoleEq<To>>::Output>,
     StepCons<SendStep<From, To, Msg, LANE>, StepNil>: TailLoopControl,
 {
     const SOURCE: ProgramSourceData = ProgramSourceData::from_eff(
@@ -390,78 +388,63 @@ const fn is_binary_loop_route(
 mod tests {
     use super::Program;
     use crate::g;
-    use crate::g::advanced::CanonicalControl;
     use crate::global::steps::{LoopBreakSteps, LoopContinueSteps, LoopDecisionSteps, StepNil};
     use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
     use crate::substrate::cap::GenericCapToken;
     use crate::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
 
-    const LOOP_CONTINUE_ONLY: Program<
+    fn loop_continue_only() -> Program<
         LoopContinueSteps<
             g::Role<0>,
-            g::Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
+            g::Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
             StepNil,
         >,
-    > = g::seq(
+    > {
+        g::seq(
+            g::send::<
+                g::Role<0>,
+                g::Role<0>,
+                g::Msg<
+                    { LABEL_LOOP_CONTINUE },
+                    GenericCapToken<LoopContinueKind>,
+                    LoopContinueKind,
+                >,
+                0,
+            >(),
+            Program::<StepNil>::empty(),
+        )
+    }
+
+    fn loop_break_only() -> Program<
+        LoopBreakSteps<
+            g::Role<0>,
+            g::Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            StepNil,
+        >,
+    > {
         g::send::<
             g::Role<0>,
             g::Role<0>,
-            g::Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
+            g::Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
-        >(),
-        Program::<StepNil>::empty(),
-    );
+        >()
+    }
 
-    const LOOP_BREAK_ONLY: Program<
-        LoopBreakSteps<
-            g::Role<0>,
-            g::Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
-            StepNil,
-        >,
-    > = g::send::<
-        g::Role<0>,
-        g::Role<0>,
-        g::Msg<
-            { LABEL_LOOP_BREAK },
-            GenericCapToken<LoopBreakKind>,
-            CanonicalControl<LoopBreakKind>,
-        >,
-        0,
-    >();
-
-    const LOOP_DECISION: Program<
+    fn loop_decision() -> Program<
         LoopDecisionSteps<
             g::Role<0>,
-            g::Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
-            g::Msg<
-                { LABEL_LOOP_BREAK },
-                GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
-            >,
+            g::Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+            g::Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             StepNil,
             StepNil,
         >,
-    > = g::route(LOOP_CONTINUE_ONLY, LOOP_BREAK_ONLY);
+    > {
+        g::route(loop_continue_only(), loop_break_only())
+    }
 
     #[test]
     fn seq_with_empty_suffix_preserves_loop_tail_hint() {
-        let composed = g::seq(LOOP_CONTINUE_ONLY, Program::<StepNil>::empty());
+        let composed = g::seq(loop_continue_only(), Program::<StepNil>::empty());
         assert!(
             composed.tail_is_loop_control(),
             "empty seq suffix must preserve loop-control tail hints"
@@ -470,10 +453,10 @@ mod tests {
 
     #[test]
     fn empty_seq_suffix_does_not_change_pending_loop_scope_attachment() {
-        let direct = g::seq(LOOP_CONTINUE_ONLY, LOOP_DECISION);
+        let direct = g::seq(loop_continue_only(), loop_decision());
         let nested = g::seq(
-            g::seq(LOOP_CONTINUE_ONLY, Program::<StepNil>::empty()),
-            LOOP_DECISION,
+            g::seq(loop_continue_only(), Program::<StepNil>::empty()),
+            loop_decision(),
         );
         assert!(
             direct.summary().equivalent_summary(nested.summary()),

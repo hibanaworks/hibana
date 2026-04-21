@@ -1,5 +1,5 @@
 use super::super::images::program::{
-    CompiledProgramImage, CompiledProgramSection, DynamicPolicySite,
+    CompiledProgramFacts, CompiledProgramSection, DynamicPolicySite,
 };
 use super::LoweringSummary;
 use super::program_lowering::{
@@ -9,11 +9,12 @@ use super::program_lowering::{
 use super::program_tail_storage::CompiledProgramTailStorage;
 use crate::control::cluster::effects::ResourceDescriptor;
 use crate::eff::{EffIndex, EffKind};
+use crate::global::StaticControlDesc;
 use crate::global::const_dsl::PolicyMode;
 use core::ptr;
 
 pub(crate) unsafe fn init_compiled_program_image_from_summary(
-    dst: *mut CompiledProgramImage,
+    dst: *mut CompiledProgramFacts,
     summary: &LoweringSummary,
 ) {
     let counts = summary.compiled_program_counts();
@@ -75,6 +76,7 @@ pub(crate) unsafe fn init_compiled_program_image_from_summary(
                         EffIndex::from_usize(offset),
                         atom.label,
                         atom.resource,
+                        control_spec.map(StaticControlDesc::op),
                         policy,
                     ),
                 )

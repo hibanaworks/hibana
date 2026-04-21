@@ -3,13 +3,16 @@
 #[path = "../support/control_kinds.rs"]
 mod control_kinds;
 
-use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
+use hibana::g::advanced::{RoleProgram, project};
 use hibana::g::{self};
 use hibana::substrate::cap::GenericCapToken;
 use hibana::substrate::policy::DynamicResolution;
 
-type RouteArm100Kind = control_kinds::RouteControl<100, 0>;
-type RouteArm101Kind = control_kinds::RouteControl<101, 0>;
+const ROUTE_ARM_LEFT_LABEL: u8 = 118;
+const ROUTE_ARM_RIGHT_LABEL: u8 = 119;
+
+type RouteArm100Kind = control_kinds::RouteControl<ROUTE_ARM_LEFT_LABEL, 0>;
+type RouteArm101Kind = control_kinds::RouteControl<ROUTE_ARM_RIGHT_LABEL, 0>;
 
 const POLICY_ID: u16 = 77;
 
@@ -18,7 +21,7 @@ fn main() {
         g::send::<
             g::Role<0>,
             g::Role<0>,
-            g::Msg<100, GenericCapToken<RouteArm100Kind>, CanonicalControl<RouteArm100Kind>>,
+            g::Msg<ROUTE_ARM_LEFT_LABEL, GenericCapToken<RouteArm100Kind>, RouteArm100Kind>,
             0,
         >()
         .policy::<POLICY_ID>(),
@@ -28,7 +31,7 @@ fn main() {
         g::send::<
             g::Role<0>,
             g::Role<0>,
-            g::Msg<101, GenericCapToken<RouteArm101Kind>, CanonicalControl<RouteArm101Kind>>,
+            g::Msg<ROUTE_ARM_RIGHT_LABEL, GenericCapToken<RouteArm101Kind>, RouteArm101Kind>,
             0,
         >()
         .policy::<POLICY_ID>(),

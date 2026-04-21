@@ -193,14 +193,11 @@ pub mod cap {
     /// Deep-dive mint details and the standard control-kind catalogue.
     pub mod advanced {
         pub use super::super::control::cap::mint::{
-            AllowsCanonical, CAP_HANDLE_LEN, CapError, CapsMask, ControlMint, EpochTbl, MintConfig,
-            MintConfigMarker, SessionScopedKind,
+            CAP_HANDLE_LEN, CapError, CapHeader, ControlOp, ControlPath,
         };
         pub use crate::control::cap::resource_kinds::{
-            LoopBreakKind, LoopContinueKind, LoopDecisionHandle, RouteDecisionHandle,
-            RouteDecisionKind,
+            LoopBreakKind, LoopContinueKind, RouteDecisionKind,
         };
-        pub use crate::global::ControlHandling;
         pub use crate::global::const_dsl::{ControlScopeKind, ScopeId};
     }
 
@@ -303,8 +300,8 @@ mod tests {
         let _ = fanout_program::run
             as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
         let _ = fanout_program::controller_program as fn() -> crate::g::advanced::RoleProgram<0>;
-        let _ = localside::worker_offer_decode_u8::<0>
-            as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
+        let _ =
+            localside::worker_offer_decode_u8::<0> as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
     }
 
     #[test]

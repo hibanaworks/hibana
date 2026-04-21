@@ -3,8 +3,6 @@
 //! This module consolidates all control-plane errors into a single `CpError` enum,
 //! making replay detection and rendezvous-ID mismatches part of a unified error surface.
 
-use crate::control::cluster::effects::CpEffect;
-
 /// Errors raised while attaching cursor endpoints to the control cluster.
 #[derive(Debug)]
 pub enum AttachError {
@@ -60,8 +58,8 @@ pub enum CpError {
     /// Resource exhaustion (table full, etc.)
     ResourceExhausted,
 
-    /// Capability check failed (effect not permitted for this lane).
-    Authorisation { effect: CpEffect },
+    /// Capability check failed (operation not permitted for this lane).
+    Authorisation { operation: u8 },
 
     /// Effect not supported by the target control plane.
     UnsupportedEffect(u8),
@@ -265,8 +263,8 @@ impl core::fmt::Display for CpError {
                 )
             }
             Self::ResourceExhausted => write!(f, "Resource exhausted"),
-            Self::Authorisation { effect } => {
-                write!(f, "Effect not authorised: {:?}", effect)
+            Self::Authorisation { operation } => {
+                write!(f, "Operation not authorised: {}", operation)
             }
             Self::UnsupportedEffect(op) => write!(f, "Unsupported effect: {}", op),
             Self::PolicyAbort { reason } => write!(f, "Policy abort requested (reason {})", reason),

@@ -8,7 +8,7 @@
 use crate::control::cap::mint::CapShot;
 use crate::eff::{self, EffStruct};
 use crate::global::{
-    ControlHandling, ControlLabelSpec, MessageControlSpec, MessageSpec, RoleMarker, SendableLabel,
+    MessageControlSpec, MessageSpec, RoleMarker, SendableLabel, StaticControlDesc,
 };
 
 const MAX_CAPACITY: usize = eff::meta::MAX_EFF_NODES;
@@ -373,18 +373,19 @@ impl PolicyMode {
     /// `EPF(Route) -> resolver -> PolicyAbort`.
     ///
     /// The actual control operation (route, splice, reroute) is determined by
-    /// the resource tag of the control message, not by the plan itself.
+    /// the baked control descriptor metadata, not by the proof term itself.
     ///
     /// # Example
     ///
     /// ```ignore
     /// // Define a route with dynamic policy annotation
     /// const MY_POLICY_ID: u16 = 0x1234;
-    /// const MY_ROUTE: Program<Steps> =
-    ///     g::route(arm1.policy::<MY_POLICY_ID>(), arm2.policy::<MY_POLICY_ID>());
+    /// let left = arm1.policy::<MY_POLICY_ID>();
+    /// let right = arm2.policy::<MY_POLICY_ID>();
+    /// let program = g::route(left, right);
     ///
     /// // Register resolver before use
-    /// let controller = hibana::g::advanced::project(&MY_ROUTE);
+    /// let controller = hibana::g::advanced::project(&program);
     /// struct RouteState {
     ///     preferred_arm: u8,
     /// }
@@ -520,25 +521,27 @@ impl ControlMarker {
 #[derive(Clone, Copy)]
 pub(crate) struct ControlSpecMarker {
     pub(crate) offset: usize,
-    pub(crate) spec: ControlLabelSpec,
+    pub(crate) spec: StaticControlDesc,
 }
 
 impl ControlSpecMarker {
     const fn empty() -> Self {
         Self {
             offset: 0,
-            spec: ControlLabelSpec::new(
+            spec: StaticControlDesc::new(
                 0,
                 0,
                 ControlScopeKind::None,
+                crate::control::cap::mint::ControlPath::Local,
                 0,
                 CapShot::One,
-                ControlHandling::None,
+                crate::control::cap::mint::ControlOp::Fence,
+                0,
             ),
         }
     }
 
-    const fn new(offset: usize, spec: ControlLabelSpec) -> Self {
+    const fn new(offset: usize, spec: StaticControlDesc) -> Self {
         Self { offset, spec }
     }
 }
@@ -879,7 +882,7 @@ impl EffList {
         self.push_policy(self.len - 1, policy)
     }
 
-    pub const fn with_control_spec(self, spec: ControlLabelSpec) -> Self {
+    pub(crate) const fn with_control_spec(self, spec: StaticControlDesc) -> Self {
         if self.len == 0 {
             panic!("EffList is empty");
         }
@@ -997,7 +1000,11 @@ impl EffList {
         }
     }
 
-    pub(crate) const fn push_control_spec(mut self, offset: usize, spec: ControlLabelSpec) -> Self {
+    pub(crate) const fn push_control_spec(
+        mut self,
+        offset: usize,
+        spec: StaticControlDesc,
+    ) -> Self {
         if offset >= MAX_CAPACITY {
             panic!("EffList control spec offset out of bounds");
         }
@@ -1017,7 +1024,7 @@ impl EffList {
         self
     }
 
-    pub const fn control_spec_at(&self, offset: usize) -> Option<ControlLabelSpec> {
+    pub(crate) const fn control_spec_at(&self, offset: usize) -> Option<StaticControlDesc> {
         if offset >= MAX_CAPACITY {
             return None;
         }
@@ -1072,24 +1079,29 @@ pub enum ControlScopeKind {
     Route = 7,
 }
 
-const fn is_reserved_control_label(label: u8) -> bool {
+impl ControlScopeKind {
+    #[inline]
+    pub const fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::None),
+            1 => Some(Self::Loop),
+            2 => Some(Self::Checkpoint),
+            3 => Some(Self::Cancel),
+            4 => Some(Self::Splice),
+            5 => Some(Self::Reroute),
+            6 => Some(Self::Policy),
+            7 => Some(Self::Route),
+            _ => None,
+        }
+    }
+}
+
+pub(crate) const fn is_reserved_control_label(label: u8) -> bool {
     match label {
         crate::runtime::consts::LABEL_LOOP_CONTINUE
         | crate::runtime::consts::LABEL_LOOP_BREAK
-        | crate::runtime::consts::LABEL_SPLICE_INTENT
-        | crate::runtime::consts::LABEL_SPLICE_ACK
-        | crate::runtime::consts::LABEL_REROUTE
-        | crate::runtime::consts::LABEL_ROUTE_DECISION
-        | crate::runtime::consts::LABEL_POLICY_LOAD
-        | crate::runtime::consts::LABEL_POLICY_ACTIVATE
-        | crate::runtime::consts::LABEL_POLICY_REVERT
-        | crate::runtime::consts::LABEL_POLICY_ANNOTATE
-        | crate::runtime::consts::LABEL_CANCEL
-        | crate::runtime::consts::LABEL_CHECKPOINT
-        | crate::runtime::consts::LABEL_COMMIT
-        | crate::runtime::consts::LABEL_ROLLBACK
-        | crate::runtime::consts::LABEL_MGMT_LOAD_BEGIN
-        | crate::runtime::consts::LABEL_MGMT_LOAD_COMMIT => true,
+        | crate::runtime::consts::LABEL_ROUTE_DECISION => true,
+        _ if label >= crate::runtime::consts::LABEL_PROTOCOL_CONTROL_MIN => true,
         _ => false,
     }
 }
@@ -1101,13 +1113,8 @@ where
     To: RoleMarker,
     M: MessageSpec + SendableLabel + crate::global::MessageControlSpec,
 {
+    crate::global::validate_sendable_message::<M>();
     let label = <M as MessageSpec>::LABEL;
-    if label > crate::runtime::consts::LABEL_MAX {
-        panic!("label exceeds universe");
-    }
-    if !<M as MessageControlSpec>::IS_CONTROL && is_reserved_control_label(label) {
-        panic!("control labels require capability payloads");
-    }
     let spec = if <M as MessageControlSpec>::IS_CONTROL {
         Some(<M as MessageControlSpec>::CONTROL_SPEC)
     } else {
@@ -1119,14 +1126,14 @@ where
         label,
         is_control: spec.is_some(),
         resource: match spec {
-            Some(rule) => Some(rule.resource_tag),
+            Some(rule) => Some(rule.resource_tag()),
             None => None,
         },
         lane: LANE,
     };
     let mut list = EffList::new().push(EffStruct::atom(atom));
     if let Some(rule) = spec {
-        list = list.with_control(rule.scope_kind, rule.tap_id);
+        list = list.with_control(rule.scope_kind(), rule.tap_id());
         list = list.with_control_spec(rule);
         list = list.with_policy(PolicyMode::static_mode());
     }
@@ -1139,7 +1146,6 @@ mod tests {
 
     use super::{CompactScopeId, ControlMarker, EffList, ScopeId, ScopeKind};
     use crate::g;
-    use crate::g::advanced::CanonicalControl;
     use crate::global::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
     use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
     use crate::substrate::cap::GenericCapToken;
@@ -1154,7 +1160,7 @@ mod tests {
                 g::Msg<
                     { LABEL_LOOP_CONTINUE },
                     GenericCapToken<LoopContinueKind>,
-                    CanonicalControl<LoopContinueKind>,
+                    LoopContinueKind,
                 >,
             >,
             StepNil,
@@ -1166,11 +1172,7 @@ mod tests {
             SendStep<
                 g::Role<0>,
                 g::Role<0>,
-                g::Msg<
-                    { LABEL_LOOP_BREAK },
-                    GenericCapToken<LoopBreakKind>,
-                    CanonicalControl<LoopBreakKind>,
-                >,
+                g::Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             >,
             StepNil,
         >,
@@ -1204,40 +1206,42 @@ mod tests {
         );
     }
 
-    const LOOP_BODY: g::Program<
-        StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u32>>, StepNil>,
-    > = g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u32>, 0>();
-    const LOOP_BREAK_ARM: g::Program<LoopBreakHead> = g::send::<
-        g::Role<0>,
-        g::Role<0>,
-        g::Msg<
-            { LABEL_LOOP_BREAK },
-            GenericCapToken<LoopBreakKind>,
-            CanonicalControl<LoopBreakKind>,
-        >,
-        0,
-    >()
-    .policy::<LOOP_POLICY_ID>();
-    const LOOP_CONTINUE_ARM: g::Program<LoopContinueProgram> = g::seq(
+    fn loop_body() -> g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u32>>, StepNil>>
+    {
+        g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u32>, 0>()
+    }
+    fn loop_break_arm() -> g::Program<LoopBreakHead> {
         g::send::<
             g::Role<0>,
             g::Role<0>,
-            g::Msg<
-                { LABEL_LOOP_CONTINUE },
-                GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
-            >,
+            g::Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
             0,
         >()
-        .policy::<LOOP_POLICY_ID>(),
-        LOOP_BODY,
-    );
-    const LOOP_DECISION: g::Program<LoopDecisionProgram> =
-        g::route(LOOP_CONTINUE_ARM, LOOP_BREAK_ARM);
+        .policy::<LOOP_POLICY_ID>()
+    }
+    fn loop_continue_arm() -> g::Program<LoopContinueProgram> {
+        g::seq(
+            g::send::<
+                g::Role<0>,
+                g::Role<0>,
+                g::Msg<
+                    { LABEL_LOOP_CONTINUE },
+                    GenericCapToken<LoopContinueKind>,
+                    LoopContinueKind,
+                >,
+                0,
+            >()
+            .policy::<LOOP_POLICY_ID>(),
+            loop_body(),
+        )
+    }
+    fn loop_decision() -> g::Program<LoopDecisionProgram> {
+        g::route(loop_continue_arm(), loop_break_arm())
+    }
 
     #[test]
     fn policy_scope_stays_internal() {
-        let _ = LOOP_DECISION.summary();
+        let _ = loop_decision().summary();
         let list: &EffList =
             <LoopDecisionProgram as crate::global::program::BuildProgramSource>::SOURCE.eff_list();
         let mut policies = 0usize;

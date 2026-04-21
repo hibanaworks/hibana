@@ -411,7 +411,10 @@ where
         let mut arm = 0u8;
         while arm <= 1 {
             let arm_idx = arm as usize;
-            if let Some((entry, label)) = self.cursor.controller_arm_entry_by_arm(scope_id, arm) {
+            if let Some((entry, label)) = self
+                .cursor
+                .shared_controller_arm_entry_by_arm(scope_id, arm)
+            {
                 meta.controller_arm_entry[arm_idx] = entry;
                 meta.controller_arm_label[arm_idx] = label;
                 if let Some(recv_meta) = self.cursor.try_recv_meta_at(state_index_to_usize(entry)) {

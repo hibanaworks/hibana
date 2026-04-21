@@ -5,7 +5,7 @@ use crate::global::{
     typestate::{RoleTypestateBuildScratch, StateIndex},
 };
 
-use super::super::images::{CompiledProgramImage, CompiledRoleImage};
+use super::super::images::{CompiledProgramFacts, CompiledRoleImage};
 #[cfg(test)]
 use super::super::lowering::program_owner::CompiledProgram;
 use super::super::lowering::{LoweringSummary, ProgramStamp};
@@ -428,7 +428,7 @@ pub(crate) unsafe fn with_role_lowering_scratch_storage<R>(
 }
 
 pub(crate) unsafe fn init_compiled_program_image_from_summary(
-    dst: *mut CompiledProgramImage,
+    dst: *mut CompiledProgramFacts,
     summary: &LoweringSummary,
 ) {
     unsafe {

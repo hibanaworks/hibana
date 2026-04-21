@@ -3,9 +3,9 @@ pub(super) mod program;
 pub(super) mod role;
 
 pub(crate) use self::{
-    image::{ProgramImage, RoleImageSlice},
+    image::{CompiledProgramRef, RoleImageSlice},
     program::{
-        CompiledProgramImage, ControlSemanticKind, ControlSemanticsTable, DynamicPolicySite,
+        CompiledProgramFacts, ControlSemanticKind, ControlSemanticsTable, DynamicPolicySite,
     },
     role::CompiledRoleImage,
 };

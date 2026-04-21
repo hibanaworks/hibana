@@ -140,8 +140,12 @@ fn root_visible_surface_stays_minimal() {
     }
 
     for forbidden in [
-        "CanonicalControl, ControlHandling, ControlMessage,",
-        "ExternalControl,\n        LoopBreakSteps,",
+        concat!("Canonical", "Control"),
+        concat!("External", "Control"),
+        concat!("Control", "Handling"),
+        concat!("Control", "Message", "Kind"),
+        concat!("Control", "Message"),
+        "LoopBreakSteps,",
         "PolicyMode,",
         "const_dsl::{\n            ControlScopeKind, DynamicMeta,",
         "LocalProgram,",
@@ -158,10 +162,10 @@ fn root_visible_surface_stays_minimal() {
         );
     }
 
-    for required in ["RoleProgram", "project", "CanonicalControl"] {
+    for required in ["RoleProgram", "project", "MessageSpec", "StaticControlDesc"] {
         assert!(
             advanced_head.contains(required),
-            "g::advanced root must stay on projection + control-message SPI only: {required}"
+            "g::advanced root must stay on projection + descriptor SPI only: {required}"
         );
     }
 

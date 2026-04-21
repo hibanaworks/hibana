@@ -5,44 +5,21 @@
 //! allocation or dynamic discovery.
 
 /// Inclusive upper bound for labels supported by the default universe (`0..=127`).
-/// Labels 0-38: Application protocol payloads
-/// Labels 30-47: Management session (reply, load, observe, request)
-/// Labels 48-63: Control labels (loop, splice, reroute, policy, checkpoint, etc.)
-/// Labels 64-74: Internal management route heads
-/// Labels 75-127: Extended application protocol payloads
+///
+/// `hibana` core reserves the built-in route/loop control labels below plus the
+/// protocol control band `106..=127`. Sibling crates must place descriptor-first
+/// control labels in that reserved band; plain payload messages may only use the
+/// remaining protocol-owned labels.
 pub const LABEL_MAX: u8 = 127;
 
-/// Reserved label used for typed cancellation notifications.
-pub const LABEL_CANCEL: u8 = 60;
-
-/// Reserved label used for typed checkpoint proposals.
-pub const LABEL_CHECKPOINT: u8 = 61;
-
-/// Reserved label used for typed commit acknowledgements.
-pub const LABEL_COMMIT: u8 = 62;
-
-/// Reserved label used for typed rollback intents.
-pub const LABEL_ROLLBACK: u8 = 63;
-
-/// Reserved management load labels retained for control metadata interop.
-pub const LABEL_MGMT_LOAD_BEGIN: u8 = 40;
-pub const LABEL_MGMT_LOAD_COMMIT: u8 = 43;
-
-// Control message label range (for route.case with GenericCapToken<ResourceKind>)
-// These labels carry GenericCapToken<ResourceKind> payloads for control-plane operations
-// expressed via route.case arms instead of bespoke combinators.
-pub const LABEL_CONTROL_START: u8 = 48;
+// Control message labels owned by hibana core.
+//
+// The built-in catalogue is intentionally limited to route/loop semantics. Sibling
+// crates own their own protocol control labels.
 pub const LABEL_LOOP_CONTINUE: u8 = 48;
 pub const LABEL_LOOP_BREAK: u8 = 49;
-pub const LABEL_SPLICE_INTENT: u8 = 50;
-pub const LABEL_SPLICE_ACK: u8 = 51;
-pub const LABEL_REROUTE: u8 = 52;
 pub const LABEL_ROUTE_DECISION: u8 = 57;
-pub const LABEL_POLICY_LOAD: u8 = 53;
-pub const LABEL_POLICY_ACTIVATE: u8 = 54;
-pub const LABEL_POLICY_REVERT: u8 = 55;
-pub const LABEL_POLICY_ANNOTATE: u8 = 56;
-pub const LABEL_CONTROL_END: u8 = 58;
+pub(crate) const LABEL_PROTOCOL_CONTROL_MIN: u8 = 106;
 
 /// Maximum number of logical lanes per rendezvous.
 ///

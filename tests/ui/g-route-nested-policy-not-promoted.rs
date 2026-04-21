@@ -1,5 +1,5 @@
 use hibana::g::{self, Msg, Role};
-use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
+use hibana::g::advanced::{RoleProgram, project};
 use hibana::substrate::cap::GenericCapToken;
 use hibana::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
 
@@ -15,7 +15,7 @@ fn main() {
             Msg<
                 { LABEL_LOOP_CONTINUE },
                 GenericCapToken<LoopContinueKind>,
-                CanonicalControl<LoopContinueKind>,
+                LoopContinueKind,
             >,
             0,
         >()
@@ -29,7 +29,7 @@ fn main() {
             Msg<
                 { LABEL_LOOP_BREAK },
                 GenericCapToken<LoopBreakKind>,
-                CanonicalControl<LoopBreakKind>,
+                LoopBreakKind,
             >,
             0,
         >()

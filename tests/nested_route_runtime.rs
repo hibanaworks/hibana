@@ -18,7 +18,7 @@ use ::core::{
 };
 
 use common::TestTransport;
-use hibana::g::advanced::{CanonicalControl, RoleProgram, project};
+use hibana::g::advanced::{RoleProgram, project};
 use hibana::g::{self, Msg, Role};
 use hibana::substrate::{
     RendezvousId,
@@ -36,8 +36,9 @@ use tls_mut_support::with_tls_mut;
 use tls_ref_support::with_tls_ref;
 
 const LABEL_ROUTE_DECISION: u8 = 57;
+const LABEL_ROUTE_RIGHT_CONTROL: u8 = 118;
 
-type RouteRightKind = route_control_kinds::RouteControl<11, 0>;
+type RouteRightKind = route_control_kinds::RouteControl<LABEL_ROUTE_RIGHT_CONTROL, 0>;
 const OUTER_ROUTE_POLICY_ID: u16 = 310;
 const INNER_ROUTE_POLICY_ID: u16 = 311;
 type TestKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
@@ -74,7 +75,7 @@ fn controller_program() -> RoleProgram<0> {
                 Msg<
                     { LABEL_ROUTE_DECISION },
                     GenericCapToken<RouteDecisionKind>,
-                    CanonicalControl<RouteDecisionKind>,
+                    RouteDecisionKind,
                 >,
                 0,
             >()
@@ -85,7 +86,7 @@ fn controller_program() -> RoleProgram<0> {
             g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+                Msg<LABEL_ROUTE_RIGHT_CONTROL, GenericCapToken<RouteRightKind>, RouteRightKind>,
                 0,
             >()
             .policy::<INNER_ROUTE_POLICY_ID>(),
@@ -97,11 +98,7 @@ fn controller_program() -> RoleProgram<0> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >,
+            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
             0,
         >()
         .policy::<OUTER_ROUTE_POLICY_ID>(),
@@ -112,7 +109,7 @@ fn controller_program() -> RoleProgram<0> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+            Msg<LABEL_ROUTE_RIGHT_CONTROL, GenericCapToken<RouteRightKind>, RouteRightKind>,
             0,
         >()
         .policy::<OUTER_ROUTE_POLICY_ID>(),
@@ -132,7 +129,7 @@ fn worker_program() -> RoleProgram<1> {
                 Msg<
                     { LABEL_ROUTE_DECISION },
                     GenericCapToken<RouteDecisionKind>,
-                    CanonicalControl<RouteDecisionKind>,
+                    RouteDecisionKind,
                 >,
                 0,
             >()
@@ -143,7 +140,7 @@ fn worker_program() -> RoleProgram<1> {
             g::send::<
                 Role<0>,
                 Role<0>,
-                Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+                Msg<LABEL_ROUTE_RIGHT_CONTROL, GenericCapToken<RouteRightKind>, RouteRightKind>,
                 0,
             >()
             .policy::<INNER_ROUTE_POLICY_ID>(),
@@ -155,11 +152,7 @@ fn worker_program() -> RoleProgram<1> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<
-                { LABEL_ROUTE_DECISION },
-                GenericCapToken<RouteDecisionKind>,
-                CanonicalControl<RouteDecisionKind>,
-            >,
+            Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
             0,
         >()
         .policy::<OUTER_ROUTE_POLICY_ID>(),
@@ -170,7 +163,7 @@ fn worker_program() -> RoleProgram<1> {
         g::send::<
             Role<0>,
             Role<0>,
-            Msg<11, GenericCapToken<RouteRightKind>, CanonicalControl<RouteRightKind>>,
+            Msg<LABEL_ROUTE_RIGHT_CONTROL, GenericCapToken<RouteRightKind>, RouteRightKind>,
             0,
         >()
         .policy::<OUTER_ROUTE_POLICY_ID>(),
@@ -254,7 +247,7 @@ fn nested_branch_commit_stack() {
                                         .flow::<Msg<
                                             { LABEL_ROUTE_DECISION },
                                             GenericCapToken<RouteDecisionKind>,
-                                            CanonicalControl<RouteDecisionKind>,
+                                            RouteDecisionKind,
                                         >>()
                                         .expect("outer left control flow")
                                         .send(())
@@ -295,7 +288,7 @@ fn nested_branch_commit_stack() {
                                         .flow::<Msg<
                                             { LABEL_ROUTE_DECISION },
                                             GenericCapToken<RouteDecisionKind>,
-                                            CanonicalControl<RouteDecisionKind>,
+                                            RouteDecisionKind,
                                         >>()
                                         .expect("inner left control flow")
                                         .send(())
@@ -389,7 +382,7 @@ fn localside_offer_decode_sizes_stay_compact() {
                                         .flow::<Msg<
                                             { LABEL_ROUTE_DECISION },
                                             GenericCapToken<RouteDecisionKind>,
-                                            CanonicalControl<RouteDecisionKind>,
+                                            RouteDecisionKind,
                                         >>()
                                         .expect("outer left control flow")
                                         .send(()),

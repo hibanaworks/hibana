@@ -1,4 +1,4 @@
-//! Rendezvous state machine for evaluating `control::cluster::effects::CpEffect`.
+//! Rendezvous state machine for evaluating `control::cluster::effects::ControlOp`.
 //!
 //! This module is a low-level building block used by the control plane and
 //! runtime. Prefer the higher-level APIs in `control` and `runtime` unless you

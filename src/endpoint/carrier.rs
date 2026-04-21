@@ -7,9 +7,7 @@ use core::{
 };
 
 use crate::{
-    control::types::RendezvousId,
-    rendezvous::core::EndpointLeaseId,
-    transport::wire::Payload,
+    control::types::RendezvousId, rendezvous::core::EndpointLeaseId, transport::wire::Payload,
 };
 
 pub(crate) struct SessionCfg<K>(pub(crate) PhantomData<fn() -> K>);
@@ -58,12 +56,13 @@ pub(crate) struct EndpointOps<'r, const ROLE: u8> {
         unsafe fn(state: NonNull<()>, handle: PackedEndpointHandle, generation: u32),
     pub(crate) reset_public_decode_state:
         unsafe fn(state: NonNull<()>, handle: PackedEndpointHandle, generation: u32),
-    pub(crate) preview_flow: unsafe fn(
-        state: NonNull<()>,
-        handle: PackedEndpointHandle,
-        generation: u32,
-        desc: crate::endpoint::kernel::SendDesc,
-    ) -> crate::endpoint::SendResult<crate::endpoint::kernel::SendPreview>,
+    pub(crate) preview_flow:
+        unsafe fn(
+            state: NonNull<()>,
+            handle: PackedEndpointHandle,
+            generation: u32,
+            desc: crate::endpoint::kernel::SendDesc,
+        ) -> crate::endpoint::SendResult<crate::endpoint::kernel::SendPreview>,
     pub(crate) poll_recv: unsafe fn(
         state: NonNull<()>,
         handle: PackedEndpointHandle,
@@ -90,7 +89,9 @@ pub(crate) struct EndpointOps<'r, const ROLE: u8> {
         generation: u32,
         desc: crate::endpoint::kernel::SendDesc,
         cx: &mut Context<'_>,
-    ) -> Poll<crate::endpoint::SendResult<crate::endpoint::kernel::SendControlOutcome<'r>>>,
+    ) -> Poll<
+        crate::endpoint::SendResult<crate::endpoint::kernel::SendControlOutcome<'r>>,
+    >,
 }
 
 #[repr(transparent)]
@@ -321,8 +322,7 @@ where
         generation: u32,
         desc: crate::endpoint::kernel::RecvDesc,
         cx: &mut Context<'_>,
-    ) -> Poll<crate::endpoint::RecvResult<RawPayload>>
-    {
+    ) -> Poll<crate::endpoint::RecvResult<RawPayload>> {
         let kernel = unsafe {
             Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
         };

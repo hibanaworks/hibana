@@ -1,11 +1,12 @@
 use hibana::g;
-use hibana::g::advanced::CanonicalControl;
 use hibana::substrate::{
     cap::{CapShot, ControlResourceKind, GenericCapToken, ResourceKind},
-    cap::advanced::{CAP_HANDLE_LEN, CapError, CapsMask, ControlHandling, ControlScopeKind, ScopeId},
+    cap::advanced::{
+        CAP_HANDLE_LEN, CapError, ControlPath, ControlOp, ControlScopeKind, ScopeId,
+    },
 };
 
-const LABEL_MGMT_LOAD_BEGIN: u8 = 40;
+const LABEL_MGMT_LOAD_BEGIN: u8 = 110;
 
 struct LoadBeginKind;
 
@@ -13,7 +14,6 @@ impl ResourceKind for LoadBeginKind {
     type Handle = ();
     const TAG: u8 = 0x50;
     const NAME: &'static str = "LoadBegin";
-    const AUTO_MINT_EXTERNAL: bool = false;
 
     fn encode_handle(_handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
         [0; CAP_HANDLE_LEN]
@@ -24,14 +24,6 @@ impl ResourceKind for LoadBeginKind {
     }
 
     fn zeroize(_handle: &mut Self::Handle) {}
-
-    fn caps_mask(_handle: &Self::Handle) -> CapsMask {
-        CapsMask::empty()
-    }
-
-    fn scope_id(_handle: &Self::Handle) -> Option<ScopeId> {
-        None
-    }
 }
 
 impl ControlResourceKind for LoadBeginKind {
@@ -39,17 +31,26 @@ impl ControlResourceKind for LoadBeginKind {
     const SCOPE: ControlScopeKind = ControlScopeKind::Policy;
     const TAP_ID: u16 = 0;
     const SHOT: CapShot = CapShot::One;
-    const HANDLING: ControlHandling = ControlHandling::External;
+    const PATH: ControlPath = ControlPath::Wire;
+    const OP: ControlOp = ControlOp::Fence;
+    const AUTO_MINT_WIRE: bool = false;
+
+    fn mint_handle(
+        _sid: hibana::substrate::SessionId,
+        _lane: hibana::substrate::Lane,
+        _scope: ScopeId,
+    ) -> <Self as ResourceKind>::Handle {
+    }
 }
 
 fn main() {
     let _ = g::send::<
         g::Role<0>,
-        g::Role<1>,
+        g::Role<0>,
         g::Msg<
             { LABEL_MGMT_LOAD_BEGIN },
             GenericCapToken<LoadBeginKind>,
-            CanonicalControl<LoadBeginKind>,
+            LoadBeginKind,
         >,
         0,
     >();

@@ -119,8 +119,6 @@
 
 use core::marker::PhantomData;
 
-use crate::control::cluster::effects::CpEffect;
-
 // ============================================================================
 // CapMint 2.0 core (const-first / no_std / no_alloc)
 // ============================================================================
@@ -372,14 +370,30 @@ where
 /// Length of the nonce segment inside a capability token.
 pub const CAP_NONCE_LEN: usize = 16;
 /// Length of the header segment inside a capability token.
-pub const CAP_HEADER_LEN: usize = 32;
+pub const CAP_HEADER_LEN: usize = 40;
 /// Length of the authentication tag segment inside a capability token.
 pub const CAP_TAG_LEN: usize = 16;
-/// Number of header bytes reserved for fixed metadata
-/// (sid(4) + lane(1) + role(1) + tag(1) + shot(1) + caps_mask(2)).
-pub const CAP_FIXED_HEADER_LEN: usize = 10;
+/// Number of fixed bytes used by the descriptor-first control header codec.
+///
+/// Layout:
+/// - version: 1
+/// - sid: 4
+/// - lane: 1
+/// - role: 1
+/// - tag: 1
+/// - label: 1
+/// - op: 1
+/// - shot: 1
+/// - path: 1
+/// - scope_kind: 1
+/// - flags: 1
+/// - scope_id: 2
+/// - epoch: 2
+pub const CAP_CONTROL_HEADER_FIXED_LEN: usize = 18;
+/// Compatibility alias for the fixed header prefix size.
+pub const CAP_FIXED_HEADER_LEN: usize = CAP_CONTROL_HEADER_FIXED_LEN;
 /// Number of bytes available for resource-specific handle encoding.
-pub const CAP_HANDLE_LEN: usize = CAP_HEADER_LEN - CAP_FIXED_HEADER_LEN;
+pub const CAP_HANDLE_LEN: usize = CAP_HEADER_LEN - CAP_CONTROL_HEADER_FIXED_LEN;
 /// Total length of a capability token on the wire.
 pub const CAP_TOKEN_LEN: usize = CAP_NONCE_LEN + CAP_HEADER_LEN + CAP_TAG_LEN;
 use crate::control::types::Lane;
@@ -387,21 +401,16 @@ use crate::control::types::SessionId;
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 
-/// Marker trait ensuring that control-plane labels always carry capability tokens.
-pub trait ControlPayload {}
-
-impl<K: ResourceKind> ControlPayload for GenericCapToken<K> {}
-
 // ============================================================================
 // Generic capability abstraction
 // ============================================================================
 
 /// Resource classification for capabilities.
 ///
-/// Each `ResourceKind` supplies a handle type that is encoded into the resource
-/// payload section of the capability header. The first 10 bytes store the
-/// session/lane metadata, while the remaining [`CAP_HANDLE_LEN`] bytes are
-/// entirely owned by the resource kind for encoding operands.
+/// Each `ResourceKind` supplies a handle type that is encoded into the opaque
+/// payload section of the capability header. The fixed descriptor prefix stores
+/// session, routing, and control metadata; the remaining [`CAP_HANDLE_LEN`]
+/// bytes are entirely owned by the resource kind for encoding operands.
 pub trait ResourceKind {
     /// Handle associated with this capability.
     type Handle: super::ControlHandle;
@@ -412,17 +421,6 @@ pub trait ResourceKind {
     /// Human-readable name used for observability.
     const NAME: &'static str;
 
-    /// Whether this resource kind should auto-mint tokens for ExternalControl.
-    ///
-    /// When `true`, the endpoint will automatically mint a token with the proper
-    /// handle (sid/lane/scope) when sending ExternalControl messages. The caller's
-    /// payload is ignored.
-    ///
-    /// When `false`, the caller must provide the token/payload directly.
-    /// This is appropriate for management session tokens where the caller
-    /// constructs the token with specific parameters.
-    const AUTO_MINT_EXTERNAL: bool;
-
     /// Encode the handle into the resource payload area of the header.
     fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN];
 
@@ -431,26 +429,19 @@ pub trait ResourceKind {
 
     /// Zeroize the handle prior to dropping it.
     fn zeroize(handle: &mut Self::Handle);
-
-    /// Control-plane effect mask granted when this handle is owned.
-    ///
-    fn caps_mask(handle: &Self::Handle) -> CapsMask;
-
-    /// Structured scope identifier encoded in this handle, if any.
-    ///
-    /// Control-plane resources that encode `ScopeId` values should return it
-    /// here so that downstream components (CapTable, EPF, observability) can
-    /// extract scope metadata without bespoke decoding.
-    fn scope_id(handle: &Self::Handle) -> Option<ScopeId>;
 }
 
 /// Resource kinds that represent control-plane capabilities.
 pub trait ControlResourceKind: ResourceKind {
     const LABEL: u8;
     const SCOPE: ControlScopeKind;
+    const PATH: ControlPath;
     const TAP_ID: u16;
     const SHOT: CapShot;
-    const HANDLING: crate::global::ControlHandling;
+    const OP: ControlOp;
+    const AUTO_MINT_WIRE: bool;
+
+    fn mint_handle(session: SessionId, lane: Lane, scope: ScopeId) -> Self::Handle;
 }
 
 impl ResourceKind for () {
@@ -458,7 +449,6 @@ impl ResourceKind for () {
 
     const TAG: u8 = 0;
     const NAME: &'static str = "NoControl";
-    const AUTO_MINT_EXTERNAL: bool = false;
 
     fn encode_handle(_handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
         [0u8; CAP_HANDLE_LEN]
@@ -469,31 +459,14 @@ impl ResourceKind for () {
     }
 
     fn zeroize(_handle: &mut Self::Handle) {}
-
-    fn caps_mask(_handle: &Self::Handle) -> CapsMask {
-        CapsMask::empty()
-    }
-
-    fn scope_id(_handle: &Self::Handle) -> Option<ScopeId> {
-        None
-    }
-}
-
-/// Resource kinds whose handles are derived from session/lane context.
-pub trait SessionScopedKind: ResourceKind {
-    /// Construct a handle for the given session/lane.
-    fn handle_for_session(sid: SessionId, lane: Lane) -> Self::Handle;
-
-    /// Shot discipline enforced for automatically minted tokens.
-    fn shot() -> CapShot;
 }
 
 /// Trait for control kinds that can mint their handle from basic context.
 ///
-/// This trait enables external crates to define their own `CanonicalControl`
-/// message types without modifying hibana core. The `canonical_control_token`
-/// function uses this trait for the generic case when the control kind is
-/// not one of the special kinds requiring complex handle preparation.
+/// This trait enables external crates to define their own local control
+/// message types without modifying hibana core. The generic control-token
+/// minting path uses this trait when the control kind does not require
+/// specialized handle preparation.
 ///
 /// # Example
 ///
@@ -515,7 +488,7 @@ pub trait SessionScopedKind: ResourceKind {
 ///     }
 /// }
 /// ```
-pub trait ControlMint: ResourceKind {
+pub(crate) trait ControlMint: ResourceKind {
     /// Create a handle from session/lane/scope context.
     ///
     /// For simple control kinds (like markers), this typically returns `()`.
@@ -557,7 +530,6 @@ impl ResourceKind for EndpointResource {
     type Handle = EndpointHandle;
     const TAG: u8 = 0;
     const NAME: &'static str = "EndpointResource";
-    const AUTO_MINT_EXTERNAL: bool = false;
 
     fn encode_handle(handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
         let mut data = [0u8; CAP_HANDLE_LEN];
@@ -576,14 +548,6 @@ impl ResourceKind for EndpointResource {
 
     fn zeroize(handle: &mut Self::Handle) {
         *handle = EndpointHandle::zeroed();
-    }
-
-    fn caps_mask(_handle: &Self::Handle) -> CapsMask {
-        CapsMask::allow_all()
-    }
-
-    fn scope_id(_handle: &Self::Handle) -> Option<ScopeId> {
-        None
     }
 }
 
@@ -628,8 +592,7 @@ impl<'r, Table: EpochTable> EndpointEpoch<'r, Table> {
 // Epoch Witness System (Ledger-Free Revocation)
 // ============================================================================
 
-pub trait EpochType {
-}
+pub trait EpochType {}
 
 /// Marker trait representing logical control-plane steps for a lane.
 pub trait EpochStep: EpochType {}
@@ -750,61 +713,254 @@ impl CapShot {
     }
 }
 
-/// Bitmask describing which control-plane effect variants a capability may invoke.
-///
-/// Each bit corresponds directly to a `CpEffect` discriminant, allowing the
-/// control plane and EPF VM to perform constant-time authorisation checks
-/// without auxiliary translation layers.
+/// Atomic control-plane execution unit owned by hibana core.
+#[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CapsMask {
-    bits: u16,
+pub enum ControlOp {
+    RouteDecision = 0,
+    LoopContinue = 1,
+    LoopBreak = 2,
+    StateSnapshot = 3,
+    StateRestore = 4,
+    TopologyBegin = 5,
+    TopologyAck = 6,
+    TopologyCommit = 7,
+    CapDelegate = 8,
+    AbortBegin = 9,
+    AbortAck = 10,
+    Fence = 11,
+    TxCommit = 12,
+    TxAbort = 13,
 }
 
-impl CapsMask {
+impl ControlOp {
     #[inline]
-    pub const fn empty() -> Self {
-        Self { bits: 0 }
-    }
-
-    #[inline]
-    pub const fn from_bits(bits: u16) -> Self {
-        Self { bits }
-    }
-
-    #[inline]
-    pub const fn bits(self) -> u16 {
-        self.bits
-    }
-
-    #[inline]
-    pub const fn with(mut self, effect: CpEffect) -> Self {
-        self.bits |= effect.bit();
-        self
-    }
-
-    #[inline]
-    pub const fn allow_all() -> Self {
-        Self {
-            bits: (1u16 << (CpEffect::Rollback as u16 + 1)) - 1,
+    pub const fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::RouteDecision),
+            1 => Some(Self::LoopContinue),
+            2 => Some(Self::LoopBreak),
+            3 => Some(Self::StateSnapshot),
+            4 => Some(Self::StateRestore),
+            5 => Some(Self::TopologyBegin),
+            6 => Some(Self::TopologyAck),
+            7 => Some(Self::TopologyCommit),
+            8 => Some(Self::CapDelegate),
+            9 => Some(Self::AbortBegin),
+            10 => Some(Self::AbortAck),
+            11 => Some(Self::Fence),
+            12 => Some(Self::TxCommit),
+            13 => Some(Self::TxAbort),
+            _ => None,
         }
     }
 
     #[inline]
-    pub const fn allows(self, effect: CpEffect) -> bool {
-        (self.bits & effect.bit()) != 0
-    }
-
-    #[inline]
-    pub const fn union(self, other: Self) -> Self {
-        Self {
-            bits: self.bits | other.bits,
-        }
+    pub const fn as_u8(self) -> u8 {
+        self as u8
     }
 }
 
-impl Default for CapsMask {
-    fn default() -> Self {
-        Self::empty()
+/// Transport crossing mode for control messages.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ControlPath {
+    Local = 0,
+    Wire = 1,
+}
+
+impl ControlPath {
+    #[inline]
+    pub const fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Local),
+            1 => Some(Self::Wire),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub const fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
+
+/// Descriptor-first fixed control header.
+///
+/// This is a wire codec carrier. Callers must use `encode` / `decode` rather
+/// than relying on struct layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CapHeader {
+    version: u8,
+    sid: SessionId,
+    lane: Lane,
+    role: u8,
+    tag: u8,
+    label: u8,
+    op: ControlOp,
+    path: ControlPath,
+    shot: CapShot,
+    scope_kind: ControlScopeKind,
+    flags: u8,
+    scope_id: u16,
+    epoch: u16,
+    handle: [u8; CAP_HEADER_LEN - CAP_CONTROL_HEADER_FIXED_LEN],
+}
+
+impl CapHeader {
+    #[inline]
+    pub const fn new(
+        sid: SessionId,
+        lane: Lane,
+        role: u8,
+        tag: u8,
+        label: u8,
+        op: ControlOp,
+        path: ControlPath,
+        shot: CapShot,
+        scope_kind: ControlScopeKind,
+        flags: u8,
+        scope_id: u16,
+        epoch: u16,
+        handle: [u8; CAP_HEADER_LEN - CAP_CONTROL_HEADER_FIXED_LEN],
+    ) -> Self {
+        Self {
+            version: 1,
+            sid,
+            lane,
+            role,
+            tag,
+            label,
+            op,
+            path,
+            shot,
+            scope_kind,
+            flags,
+            scope_id,
+            epoch,
+            handle,
+        }
+    }
+
+    #[inline]
+    pub fn encode(&self, out: &mut [u8; CAP_HEADER_LEN]) {
+        out[0] = self.version;
+        out[1..5].copy_from_slice(&self.sid.raw().to_be_bytes());
+        out[5] = self.lane.as_wire();
+        out[6] = self.role;
+        out[7] = self.tag;
+        out[8] = self.label;
+        out[9] = self.op.as_u8();
+        out[10] = self.path.as_u8();
+        out[11] = self.shot.as_u8();
+        out[12] = self.scope_kind as u8;
+        out[13] = self.flags;
+        out[14..16].copy_from_slice(&self.scope_id.to_be_bytes());
+        out[16..18].copy_from_slice(&self.epoch.to_be_bytes());
+        out[18..].copy_from_slice(&self.handle);
+    }
+
+    #[inline]
+    pub fn decode(raw: [u8; CAP_HEADER_LEN]) -> Result<Self, CapError> {
+        if raw[0] != 1 {
+            return Err(CapError::Mismatch);
+        }
+        let op = ControlOp::from_u8(raw[9]).ok_or(CapError::Mismatch)?;
+        let path = ControlPath::from_u8(raw[10]).ok_or(CapError::Mismatch)?;
+        let shot = CapShot::from_u8(raw[11]).ok_or(CapError::Mismatch)?;
+        let scope_kind = ControlScopeKind::from_u8(raw[12]).ok_or(CapError::Mismatch)?;
+        let mut handle = [0u8; CAP_HEADER_LEN - CAP_CONTROL_HEADER_FIXED_LEN];
+        handle.copy_from_slice(&raw[18..]);
+        Ok(Self {
+            version: raw[0],
+            sid: SessionId::new(u32::from_be_bytes([raw[1], raw[2], raw[3], raw[4]])),
+            lane: Lane::new(u32::from(raw[5])),
+            role: raw[6],
+            tag: raw[7],
+            label: raw[8],
+            op,
+            path,
+            shot,
+            scope_kind,
+            flags: raw[13],
+            scope_id: u16::from_be_bytes([raw[14], raw[15]]),
+            epoch: u16::from_be_bytes([raw[16], raw[17]]),
+            handle,
+        })
+    }
+
+    #[inline]
+    pub const fn sid(&self) -> SessionId {
+        self.sid
+    }
+
+    #[inline]
+    pub const fn lane(&self) -> Lane {
+        self.lane
+    }
+
+    #[inline]
+    pub const fn role(&self) -> u8 {
+        self.role
+    }
+
+    #[inline]
+    pub const fn tag(&self) -> u8 {
+        self.tag
+    }
+
+    #[inline]
+    pub const fn label(&self) -> u8 {
+        self.label
+    }
+
+    #[inline]
+    pub const fn op(&self) -> ControlOp {
+        self.op
+    }
+
+    #[inline]
+    pub const fn path(&self) -> ControlPath {
+        self.path
+    }
+
+    #[inline]
+    pub const fn shot(&self) -> CapShot {
+        self.shot
+    }
+
+    #[inline]
+    pub const fn scope_kind(&self) -> ControlScopeKind {
+        self.scope_kind
+    }
+
+    #[inline]
+    pub const fn flags(&self) -> u8 {
+        self.flags
+    }
+
+    #[inline]
+    pub const fn scope_id(&self) -> u16 {
+        self.scope_id
+    }
+
+    #[inline]
+    pub const fn epoch(&self) -> u16 {
+        self.epoch
+    }
+
+    #[inline]
+    pub const fn handle(&self) -> &[u8; CAP_HEADER_LEN - CAP_CONTROL_HEADER_FIXED_LEN] {
+        &self.handle
+    }
+}
+
+#[inline]
+const fn scope_hint_from_header(header: CapHeader) -> Option<ScopeId> {
+    match header.scope_kind() {
+        ControlScopeKind::Route => Some(ScopeId::route(header.scope_id())),
+        ControlScopeKind::Loop => Some(ScopeId::loop_scope(header.scope_id())),
+        _ => None,
     }
 }
 
@@ -816,7 +972,6 @@ impl Default for CapsMask {
 pub struct HandleView<'ctx, K: ResourceKind> {
     raw: &'ctx [u8; CAP_HANDLE_LEN],
     handle: K::Handle,
-    caps: CapsMask,
     scope: Option<ScopeId>,
 }
 
@@ -824,32 +979,16 @@ impl<'ctx, K: ResourceKind> HandleView<'ctx, K> {
     #[inline]
     pub(crate) fn decode(
         raw: &'ctx [u8; CAP_HANDLE_LEN],
-        caps: CapsMask,
+        scope: Option<ScopeId>,
     ) -> Result<Self, CapError> {
         let handle = K::decode_handle(*raw)?;
-        let granted = K::caps_mask(&handle);
-        if granted != caps {
-            return Err(CapError::Mismatch);
-        }
-        let scope = K::scope_id(&handle);
-        Ok(Self {
-            raw,
-            handle,
-            caps: granted,
-            scope,
-        })
+        Ok(Self { raw, handle, scope })
     }
 
     /// Borrow the encoded resource payload.
     #[inline]
     pub fn bytes(&self) -> &'ctx [u8; CAP_HANDLE_LEN] {
         self.raw
-    }
-
-    /// Capability mask granted by this handle.
-    #[inline]
-    pub fn grant_mask(&self) -> CapsMask {
-        self.caps
     }
 
     /// Borrow the decoded handle payload.
@@ -987,14 +1126,13 @@ impl<K: ResourceKind> GenericCapToken<K> {
         tag
     }
 
-    pub fn shot(&self) -> Result<CapShot, CapError> {
-        CapShot::from_u8(self.header()[7]).ok_or(CapError::Mismatch)
+    #[inline]
+    pub fn control_header(&self) -> Result<CapHeader, CapError> {
+        CapHeader::decode(self.header())
     }
 
-    pub fn caps_mask(&self) -> CapsMask {
-        let header = self.header();
-        let mask = u16::from_be_bytes([header[8], header[9]]);
-        CapsMask::from_bits(mask)
+    pub fn shot(&self) -> Result<CapShot, CapError> {
+        Ok(self.control_header()?.shot())
     }
 
     /// Extract the structured scope identifier encoded in the handle, if any.
@@ -1003,30 +1141,31 @@ impl<K: ResourceKind> GenericCapToken<K> {
     }
 
     pub fn resource_tag(&self) -> u8 {
-        self.header()[6]
+        self.control_header()
+            .map(|header| header.tag())
+            .unwrap_or_default()
     }
 
     pub fn sid(&self) -> SessionId {
-        let header = self.header_slice();
-        let sid = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
-        SessionId::new(sid)
+        self.control_header()
+            .map(|header| header.sid())
+            .unwrap_or_else(|_| SessionId::new(0))
     }
 
     pub fn lane(&self) -> Lane {
-        let header = self.header_slice();
-        Lane::new(header[4] as u32)
+        self.control_header()
+            .map(|header| header.lane())
+            .unwrap_or_else(|_| Lane::new(0))
     }
 
     pub fn role(&self) -> u8 {
-        self.header_slice()[5]
+        self.control_header()
+            .map(|header| header.role())
+            .unwrap_or(0)
     }
 
     pub fn handle_bytes(&self) -> [u8; CAP_HANDLE_LEN] {
-        let header = self.header_slice();
-        let mut payload = [0u8; CAP_HANDLE_LEN];
-        payload
-            .copy_from_slice(&header[CAP_FIXED_HEADER_LEN..CAP_FIXED_HEADER_LEN + CAP_HANDLE_LEN]);
-        payload
+        *self.handle_bytes_ref()
     }
 
     /// Get a reference to the handle bytes within the token.
@@ -1035,36 +1174,16 @@ impl<K: ResourceKind> GenericCapToken<K> {
     /// to the handle payload embedded in the token header.
     #[inline(always)]
     pub fn handle_bytes_ref(&self) -> &[u8; CAP_HANDLE_LEN] {
-        let header = self.header_slice();
-        header[CAP_FIXED_HEADER_LEN..CAP_FIXED_HEADER_LEN + CAP_HANDLE_LEN]
+        self.header_slice()[CAP_FIXED_HEADER_LEN..CAP_FIXED_HEADER_LEN + CAP_HANDLE_LEN]
             .try_into()
             .expect("CAP_HANDLE_LEN is compile-time constant")
     }
 
-    /// Get the caps_mask embedded in the token header.
-    ///
-    /// This reads directly from the token header at offset 8-9,
-    /// avoiding the need to decode the handle.
-    #[inline]
-    fn caps_mask_embedded(&self) -> CapsMask {
-        let header = self.header_slice();
-        let bits = u16::from_be_bytes([header[8], header[9]]);
-        CapsMask::from_bits(bits)
-    }
-
     pub fn decode_handle(&self) -> Result<K::Handle, CapError> {
-        let header = self.header_slice();
-        if header[6] != K::TAG {
+        if self.resource_tag() != K::TAG {
             return Err(CapError::Mismatch);
         }
         K::decode_handle(self.handle_bytes())
-    }
-
-    pub fn caps_mask_for_token(&self) -> Result<CapsMask, CapError> {
-        let mut handle = self.decode_handle()?;
-        let mask = K::caps_mask(&handle);
-        K::zeroize(&mut handle);
-        Ok(mask)
     }
 
     /// Extract a HandleView from this token.
@@ -1078,23 +1197,16 @@ impl<K: ResourceKind> GenericCapToken<K> {
     /// - `K` matches the token's ResourceKind (via type parameter)
     /// - HandleView cannot outlive the token (via lifetime `'_`)
     ///
-    /// Runtime verification:
-    /// - caps_mask in token header matches `K::caps_mask(&handle)`
-    ///
-    /// # Errors
-    ///
-    /// Returns `CapError::Mismatch` if the embedded caps_mask doesn't match
-    /// the handle's expected capabilities (indicating token corruption or forgery).
-    ///
     /// # Example
     ///
     /// ```ignore
     /// let token = flow.mint_token::<LoopContinueKind>()?;
     /// let view = token.as_view()?;
-    /// // inspect view.handle(), view.grant_mask(), etc.
+    /// // inspect view.handle() and scope metadata.
     /// ```
     pub fn as_view(&self) -> Result<HandleView<'_, K>, CapError> {
-        HandleView::decode(self.handle_bytes_ref(), self.caps_mask_embedded())
+        let header = self.control_header()?;
+        HandleView::decode(self.handle_bytes_ref(), scope_hint_from_header(header))
     }
 }
 
@@ -1218,16 +1330,12 @@ impl<K: ResourceKind> Drop for VerifiedCap<K> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CAP_FIXED_HEADER_LEN, CAP_HANDLE_LEN, CAP_HEADER_LEN};
-    use super::{
-        CapError, CapShot, CapsMask, E0, EndpointHandle, EndpointResource,
-        GenericCapToken, HandleView, Owner, ResourceKind,
-    };
+    use super::{CapHeader, ControlOp, ControlScopeKind};
+    use super::{CapShot, E0, EndpointHandle, EndpointResource, HandleView, Owner, ResourceKind};
     use crate::{
         control::{
             brand::with_brand,
             cap::resource_kinds::{LoopContinueKind, LoopDecisionHandle},
-            cluster::effects::CpEffect,
             types::{Lane, SessionId},
         },
         global::const_dsl::ScopeId,
@@ -1242,36 +1350,6 @@ mod tests {
     }
 
     #[test]
-    fn caps_mask_allows_effect() {
-        let caps = CapsMask::empty()
-            .with(CpEffect::SpliceBegin)
-            .with(CpEffect::Rollback);
-        assert!(caps.allows(CpEffect::SpliceBegin));
-        assert!(caps.allows(CpEffect::Rollback));
-        assert!(!caps.allows(CpEffect::SpliceCommit));
-    }
-
-    #[test]
-    fn cap_token_derives_caps_mask() {
-        let handle = EndpointHandle::new(SessionId::new(7), Lane::new(3), 1);
-        let mask = EndpointResource::caps_mask(&handle);
-        let handle_bytes = EndpointResource::encode_handle(&handle);
-        let mut header = [0u8; CAP_HEADER_LEN];
-        header[0..4].copy_from_slice(&handle.sid.raw().to_be_bytes());
-        header[4] = handle.lane.as_wire();
-        header[5] = handle.role;
-        header[6] = EndpointResource::TAG;
-        header[7] = CapShot::One.as_u8();
-        header[8..10].copy_from_slice(&mask.bits().to_be_bytes());
-        header[CAP_FIXED_HEADER_LEN..CAP_FIXED_HEADER_LEN + CAP_HANDLE_LEN]
-            .copy_from_slice(&handle_bytes);
-        let token = GenericCapToken::<EndpointResource>::from_parts([0u8; 16], header, [0u8; 16]);
-        let caps = token.caps_mask_for_token().expect("caps mask");
-        assert!(caps.allows(CpEffect::SpliceBegin));
-        assert!(caps.allows(CpEffect::Checkpoint));
-    }
-
-    #[test]
     fn handle_view_decodes_payload() {
         let handle = LoopDecisionHandle {
             sid: 12,
@@ -1279,20 +1357,21 @@ mod tests {
             scope: ScopeId::route(3),
         };
         let payload = LoopContinueKind::encode_handle(&handle);
-        let expected_mask = LoopContinueKind::caps_mask(&handle);
-        let view = HandleView::<LoopContinueKind>::decode(&payload, expected_mask).expect("decode");
+        let view =
+            HandleView::<LoopContinueKind>::decode(&payload, Some(handle.scope)).expect("decode");
         assert_eq!(view.bytes(), &payload);
-        assert_eq!(view.grant_mask().bits(), expected_mask.bits());
         assert_eq!(view.handle(), &handle);
+        assert_eq!(view.scope(), Some(handle.scope));
     }
 
     #[test]
-    fn handle_view_rejects_mask_mismatch() {
+    fn handle_view_decodes_endpoint_payload() {
         let handle = EndpointHandle::new(SessionId::new(1), Lane::new(0), 3);
         let payload = EndpointResource::encode_handle(&handle);
-        let wrong_mask = CapsMask::empty();
-        let view = HandleView::<EndpointResource>::decode(&payload, wrong_mask);
-        assert!(matches!(view, Err(CapError::Mismatch)));
+        let view = HandleView::<EndpointResource>::decode(&payload, None).expect("decode");
+        assert_eq!(view.bytes(), &payload);
+        assert_eq!(view.handle(), &handle);
+        assert_eq!(view.scope(), None);
     }
 
     /// Regression test: lending a `HandleView` twice must reject the second
@@ -1306,10 +1385,9 @@ mod tests {
     fn simulate_abort_then_retry() {
         let handle = EndpointHandle::new(SessionId::new(42), Lane::new(1), 2);
         let payload = EndpointResource::encode_handle(&handle);
-        let mask = EndpointResource::caps_mask(&handle);
 
         // First decode succeeds
-        let view1 = HandleView::<EndpointResource>::decode(&payload, mask);
+        let view1 = HandleView::<EndpointResource>::decode(&payload, None);
         assert!(view1.is_ok());
         let view1 = view1.unwrap();
         assert_eq!(view1.handle(), &handle);
@@ -1317,7 +1395,7 @@ mod tests {
         // Second decode uses the same payload again. HandleView::decode is
         // stateless; the rendezvous CapTable owns consumed tracking.
         // See capability.rs::one_shot_exhausts_on_second_claim for that test.
-        let view2 = HandleView::<EndpointResource>::decode(&payload, mask);
+        let view2 = HandleView::<EndpointResource>::decode(&payload, None);
         assert!(view2.is_ok());
     }
 
@@ -1330,24 +1408,28 @@ mod tests {
     /// 4. Verify caps_mask is correctly embedded in header
     #[test]
     fn generic_cap_token_as_view() {
-        use super::{
-            CAP_FIXED_HEADER_LEN, CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TAG_LEN,
-            GenericCapToken,
-        };
+        use super::{CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TAG_LEN, GenericCapToken};
 
         let handle = EndpointHandle::new(SessionId::new(7), Lane::new(3), 1);
-        let mask = EndpointResource::caps_mask(&handle);
         let handle_bytes = EndpointResource::encode_handle(&handle);
 
         let mut header = [0u8; CAP_HEADER_LEN];
-        header[0..4].copy_from_slice(&handle.sid.raw().to_be_bytes());
-        header[4] = handle.lane.as_wire();
-        header[5] = handle.role;
-        header[6] = EndpointResource::TAG;
-        header[7] = CapShot::One.as_u8();
-        header[8..10].copy_from_slice(&mask.bits().to_be_bytes());
-        header[CAP_FIXED_HEADER_LEN..CAP_FIXED_HEADER_LEN + CAP_HANDLE_LEN]
-            .copy_from_slice(&handle_bytes);
+        CapHeader::new(
+            handle.sid,
+            handle.lane,
+            handle.role,
+            EndpointResource::TAG,
+            0,
+            ControlOp::Fence,
+            crate::control::cap::mint::ControlPath::Local,
+            CapShot::One,
+            ControlScopeKind::None,
+            0,
+            0,
+            0,
+            handle_bytes,
+        )
+        .encode(&mut header);
 
         let token = GenericCapToken::<EndpointResource>::from_parts(
             [0u8; CAP_NONCE_LEN],
@@ -1360,18 +1442,12 @@ mod tests {
 
         // Verify handle matches
         assert_eq!(view.handle(), &handle);
-        // Verify caps_mask matches
-        assert_eq!(view.grant_mask().bits(), mask.bits());
         // Verify bytes match
         assert_eq!(view.bytes(), &handle_bytes);
-
-        // Verify caps_mask is correctly embedded in token header
-        let token_bytes = token.into_bytes();
-        let embedded_caps = u16::from_be_bytes([
-            token_bytes[CAP_NONCE_LEN + 8],
-            token_bytes[CAP_NONCE_LEN + 9],
-        ]);
-        assert_eq!(embedded_caps, mask.bits());
+        let header = token.control_header().expect("header");
+        assert_eq!(header.sid(), handle.sid);
+        assert_eq!(header.lane(), handle.lane);
+        assert_eq!(header.role(), handle.role);
     }
 
     #[cfg(feature = "std")]
@@ -1390,9 +1466,7 @@ mod tests {
                 let lane = Lane::new(lane);
                 let handle = EndpointHandle::new(sid, lane, role);
                 let payload = EndpointResource::encode_handle(&handle);
-                let mask = EndpointResource::caps_mask(&handle);
-                let view = HandleView::<EndpointResource>::decode(&payload, mask).expect("decode");
-                prop_assert_eq!(view.grant_mask().bits(), mask.bits());
+                let view = HandleView::<EndpointResource>::decode(&payload, None).expect("decode");
                 prop_assert_eq!(view.handle(), &handle);
                 prop_assert_eq!(view.bytes(), &payload);
             }
@@ -1412,9 +1486,7 @@ mod tests {
                     scope: ScopeId::loop_scope(1),
                 };
                 let payload = LoopContinueKind::encode_handle(&handle);
-                let mask = LoopContinueKind::caps_mask(&handle);
-                let view = HandleView::<LoopContinueKind>::decode(&payload, mask).expect("decode");
-                prop_assert_eq!(view.grant_mask().bits(), mask.bits());
+                let view = HandleView::<LoopContinueKind>::decode(&payload, Some(handle.scope)).expect("decode");
                 prop_assert_eq!(view.handle(), &handle);
                 prop_assert_eq!(view.bytes(), &payload);
             }

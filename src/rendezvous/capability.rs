@@ -7,9 +7,8 @@ use core::{cell::UnsafeCell, marker::PhantomData};
 
 use super::error::CapError;
 use crate::control::cap::mint::{
-    CAP_HANDLE_LEN, CAP_NONCE_LEN, CapShot, CapsMask, EndpointResource, ResourceKind,
+    CAP_HANDLE_LEN, CAP_NONCE_LEN, CapShot, EndpointResource, ResourceKind,
 };
-use crate::control::cap::resource_kinds;
 use crate::control::types::{Lane, SessionId};
 
 /// Maximum number of capability entries used by test-only constructors.
@@ -312,7 +311,6 @@ impl CapTable {
         expected_tag: u8,
         expected_role: u8,
         expected_shot: CapShot,
-        expected_mask: CapsMask,
     ) -> Result<(bool, [u8; CAP_HANDLE_LEN]), CapError> {
         if self.capacity == 0 {
             return Err(CapError::UnknownToken);
@@ -350,23 +348,14 @@ impl CapTable {
                     return Err(CapError::Mismatch);
                 }
 
-                let computed_mask = if expected_tag == EndpointResource::TAG {
+                if expected_tag == EndpointResource::TAG {
                     let mut handle = EndpointResource::decode_handle(entry.handle)
                         .map_err(|_| CapError::Mismatch)?;
                     if handle.sid != sid || handle.lane != lane || handle.role != entry.role {
                         EndpointResource::zeroize(&mut handle);
                         return Err(CapError::Mismatch);
                     }
-                    let mask = EndpointResource::caps_mask(&handle);
                     EndpointResource::zeroize(&mut handle);
-                    mask
-                } else {
-                    resource_kinds::caps_mask_from_tag(expected_tag, entry.handle)
-                        .map_err(|_| CapError::Mismatch)?
-                };
-
-                if expected_mask.bits() != computed_mask.bits() {
-                    return Err(CapError::Mismatch);
                 }
 
                 let handle_bytes = entry.handle;
@@ -390,14 +379,12 @@ impl CapTable {
 mod tests {
     use super::*;
     use crate::control::cap::mint::{EndpointHandle, EndpointResource};
-    use crate::control::cluster::effects::CpEffect;
 
     #[test]
     fn claim_by_nonce_returns_verified_handle() {
         let table = CapTable::new();
         let nonce = [0xAB; 16];
         let endpoint = EndpointHandle::new(SessionId::new(7), Lane::new(3), 9);
-        let caps = EndpointResource::caps_mask(&endpoint);
         let entry = CapEntry {
             sid: SessionId::new(7),
             lane_raw: Lane::new(3).as_wire(),
@@ -417,13 +404,11 @@ mod tests {
                 EndpointResource::TAG,
                 endpoint.role,
                 CapShot::Many,
-                caps,
             )
             .expect("claim succeeds");
 
         assert!(!exhausted);
         assert_eq!(handle_bytes, EndpointResource::encode_handle(&endpoint));
-        assert!(caps.allows(CpEffect::Checkpoint));
     }
 
     #[test]
@@ -431,7 +416,6 @@ mod tests {
         let table = CapTable::new();
         let nonce = [0xCD; 16];
         let endpoint = EndpointHandle::new(SessionId::new(8), Lane::new(2), 5);
-        let caps = EndpointResource::caps_mask(&endpoint);
         let entry = CapEntry {
             sid: SessionId::new(8),
             lane_raw: Lane::new(2).as_wire(),
@@ -452,7 +436,6 @@ mod tests {
                 EndpointResource::TAG,
                 endpoint.role,
                 CapShot::One,
-                caps,
             )
             .expect("first claim succeeds");
         assert!(exhausted, "One shot should be exhausted after first claim");
@@ -465,7 +448,6 @@ mod tests {
             EndpointResource::TAG,
             endpoint.role,
             CapShot::One,
-            caps,
         );
         assert!(
             matches!(result, Err(CapError::Exhausted)),
