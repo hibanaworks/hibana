@@ -540,7 +540,8 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
             emit(tap, events::TransportEvent::new(clock.now32(), arg0, arg1));
         };
         self.transport.drain_events(&mut emit_event);
-        let snapshot = self.transport.metrics().snapshot();
+        let metrics_attrs = self.transport.metrics().attrs();
+        let snapshot = crate::transport::TransportSnapshot::from_policy_attrs(&metrics_attrs);
         if let Some(payload) = snapshot.encode_tap_metrics() {
             let (arg0, arg1) = payload.primary;
             emit(

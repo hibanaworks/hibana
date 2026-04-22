@@ -3,7 +3,6 @@
 use hibana::substrate::{
     policy::{ContextValue, PolicyAttrs, PolicySlot, core as policy_core},
     tap::TapEvent,
-    transport::{TransportAlgorithm, TransportSnapshot},
 };
 
 const POLICY_COMMIT_ID: u16 = 0x0405;
@@ -23,12 +22,12 @@ const TRANSPORT_EVENT_ID: u16 = 0x0212;
 const REPLAY_LOG_CAPACITY: usize = 2048;
 const AUDIT_ROW_CAPACITY: usize = 128;
 
-fn transport_snapshot(
+fn transport_attrs(
     latency_us: Option<u64>,
     queue_depth: Option<u32>,
     congestion_marks: Option<u32>,
     retransmissions: Option<u32>,
-) -> TransportSnapshot {
+) -> PolicyAttrs {
     let mut attrs = PolicyAttrs::new();
     if let Some(value) = latency_us {
         assert!(attrs.insert(policy_core::LATENCY_US, ContextValue::from_u64(value)));
@@ -48,7 +47,7 @@ fn transport_snapshot(
             ContextValue::from_u32(value),
         ));
     }
-    TransportSnapshot::from_policy_attrs(&attrs)
+    attrs
 }
 
 fn raw_event(ts: u32, id: u16) -> TapEvent {
@@ -153,7 +152,7 @@ struct AuditRow {
     mode_tag: u8,
     event: TapEvent,
     policy_input: [u32; 4],
-    transport_snapshot: TransportSnapshot,
+    transport_attrs: PolicyAttrs,
     verdict_meta: u32,
     reason: u32,
     fuel_used: u32,
@@ -284,57 +283,98 @@ fn hash_policy_input(input: [u32; 4]) -> u32 {
     hash
 }
 
-fn hash_transport_snapshot(snapshot: TransportSnapshot) -> u32 {
+fn hash_transport_attrs(attrs: &PolicyAttrs) -> u32 {
     let mut hash = FNV32_OFFSET;
-    hash = fnv32_mix_opt_u64(hash, snapshot.latency_us());
-    hash = fnv32_mix_opt_u32(hash, snapshot.queue_depth());
-    hash = fnv32_mix_opt_u64(hash, snapshot.pacing_interval_us());
-    hash = fnv32_mix_opt_u32(hash, snapshot.congestion_marks());
-    hash = fnv32_mix_opt_u32(hash, snapshot.retransmissions());
-    hash = fnv32_mix_opt_u32(hash, snapshot.pto_count());
-    hash = fnv32_mix_opt_u64(hash, snapshot.srtt_us());
-    hash = fnv32_mix_opt_u64(hash, snapshot.latest_ack_pn());
-    hash = fnv32_mix_opt_u64(hash, snapshot.congestion_window());
-    hash = fnv32_mix_opt_u64(hash, snapshot.in_flight_bytes());
-    match snapshot.algorithm() {
-        Some(TransportAlgorithm::Cubic) => fnv32_mix_u8(hash, 1),
-        Some(TransportAlgorithm::Reno) => fnv32_mix_u8(hash, 2),
-        Some(TransportAlgorithm::Other(code)) => fnv32_mix_u8(fnv32_mix_u8(hash, 3), code),
+    hash = fnv32_mix_opt_u64(hash, attrs.get(policy_core::LATENCY_US).map(ContextValue::as_u64));
+    hash = fnv32_mix_opt_u32(hash, attrs.get(policy_core::QUEUE_DEPTH).map(ContextValue::as_u32));
+    hash = fnv32_mix_opt_u64(
+        hash,
+        attrs
+            .get(policy_core::PACING_INTERVAL_US)
+            .map(ContextValue::as_u64),
+    );
+    hash = fnv32_mix_opt_u32(
+        hash,
+        attrs
+            .get(policy_core::CONGESTION_MARKS)
+            .map(ContextValue::as_u32),
+    );
+    hash = fnv32_mix_opt_u32(
+        hash,
+        attrs
+            .get(policy_core::RETRANSMISSIONS)
+            .map(ContextValue::as_u32),
+    );
+    hash = fnv32_mix_opt_u32(hash, attrs.get(policy_core::PTO_COUNT).map(ContextValue::as_u32));
+    hash = fnv32_mix_opt_u64(hash, attrs.get(policy_core::SRTT_US).map(ContextValue::as_u64));
+    hash = fnv32_mix_opt_u64(
+        hash,
+        attrs
+            .get(policy_core::LATEST_ACK_PN)
+            .map(ContextValue::as_u64),
+    );
+    hash = fnv32_mix_opt_u64(
+        hash,
+        attrs
+            .get(policy_core::CONGESTION_WINDOW)
+            .map(ContextValue::as_u64),
+    );
+    hash = fnv32_mix_opt_u64(
+        hash,
+        attrs
+            .get(policy_core::IN_FLIGHT_BYTES)
+            .map(ContextValue::as_u64),
+    );
+    match attrs
+        .get(policy_core::TRANSPORT_ALGORITHM)
+        .map(ContextValue::as_u32)
+    {
+        Some(1) => fnv32_mix_u8(hash, 1),
+        Some(2) => fnv32_mix_u8(hash, 2),
+        Some(raw) if raw >= 0x100 => fnv32_mix_u8(fnv32_mix_u8(hash, 3), (raw - 0x100) as u8),
+        Some(raw) => fnv32_mix_u8(fnv32_mix_u8(hash, 3), raw as u8),
         None => fnv32_mix_u8(hash, 0),
     }
 }
 
-fn replay_transport_inputs(snapshot: TransportSnapshot) -> [u32; 4] {
-    let latency = snapshot
-        .latency_us()
+fn replay_transport_inputs(attrs: &PolicyAttrs) -> [u32; 4] {
+    let latency = attrs
+        .get(policy_core::LATENCY_US)
+        .map(ContextValue::as_u64)
         .map(|value| value.min(u32::MAX as u64) as u32)
         .unwrap_or(0);
     [
         latency,
-        snapshot.queue_depth().unwrap_or(0),
-        snapshot.congestion_marks().unwrap_or(0),
-        snapshot.retransmissions().unwrap_or(0),
+        attrs.get(policy_core::QUEUE_DEPTH).map(ContextValue::as_u32).unwrap_or(0),
+        attrs
+            .get(policy_core::CONGESTION_MARKS)
+            .map(ContextValue::as_u32)
+            .unwrap_or(0),
+        attrs
+            .get(policy_core::RETRANSMISSIONS)
+            .map(ContextValue::as_u32)
+            .unwrap_or(0),
     ]
 }
 
-fn replay_transport_presence(snapshot: TransportSnapshot) -> u8 {
+fn replay_transport_presence(attrs: &PolicyAttrs) -> u8 {
     let mut mask = 0u8;
-    if snapshot.latency_us().is_some() {
+    if attrs.get(policy_core::LATENCY_US).is_some() {
         mask |= 1 << 0;
     }
-    if snapshot.queue_depth().is_some() {
+    if attrs.get(policy_core::QUEUE_DEPTH).is_some() {
         mask |= 1 << 1;
     }
-    if snapshot.congestion_marks().is_some() {
+    if attrs.get(policy_core::CONGESTION_MARKS).is_some() {
         mask |= 1 << 2;
     }
-    if snapshot.retransmissions().is_some() {
+    if attrs.get(policy_core::RETRANSMISSIONS).is_some() {
         mask |= 1 << 3;
     }
     mask
 }
 
-fn replay_transport_snapshot(values: [u32; 4], presence: u8) -> TransportSnapshot {
+fn replay_transport_attrs(values: [u32; 4], presence: u8) -> PolicyAttrs {
     let latency = if (presence & (1 << 0)) != 0 {
         Some(values[0] as u64)
     } else {
@@ -355,7 +395,7 @@ fn replay_transport_snapshot(values: [u32; 4], presence: u8) -> TransportSnapsho
     } else {
         None
     };
-    transport_snapshot(latency, queue_depth, congestion_marks, retransmissions)
+    transport_attrs(latency, queue_depth, congestion_marks, retransmissions)
 }
 
 fn decode_slot_mode(raw: u32) -> Result<(PolicySlot, u8), &'static str> {
@@ -382,13 +422,13 @@ fn push_policy_audit_tuple(
     mode_tag: u8,
     event: TapEvent,
     policy_input: [u32; 4],
-    transport_snapshot: TransportSnapshot,
+    transport_attrs: PolicyAttrs,
     verdict_meta: u32,
     reason: u32,
     fuel_used: u32,
 ) {
-    let replay_transport = replay_transport_inputs(transport_snapshot);
-    let replay_transport_presence = replay_transport_presence(transport_snapshot);
+    let replay_transport = replay_transport_inputs(&transport_attrs);
+    let replay_transport_presence = replay_transport_presence(&transport_attrs);
     log.push(
         raw_event(ts, POLICY_AUDIT_ID)
             .with_arg0(digest)
@@ -398,7 +438,7 @@ fn push_policy_audit_tuple(
     log.push(
         raw_event(ts, POLICY_AUDIT_EXT_ID)
             .with_arg0(0)
-            .with_arg1(hash_transport_snapshot(transport_snapshot))
+            .with_arg1(hash_transport_attrs(&transport_attrs))
             .with_arg2(((slot_tag(slot) as u32) << 24) | ((mode_tag as u32) << 16)),
     );
     log.push(
@@ -556,11 +596,11 @@ fn replay_audit_rows(log: &ReplayLog, cursor: &mut usize) -> Result<AuditRows, &
                     return Err("input hash mismatch");
                 }
 
-                let transport_snapshot = replay_transport_snapshot(
+                let transport_attrs = replay_transport_attrs(
                     [latency, queue, congestion, retry],
                     transport_presence,
                 );
-                if hash_transport_snapshot(transport_snapshot) != transport_hash {
+                if hash_transport_attrs(&transport_attrs) != transport_hash {
                     return Err("transport hash mismatch");
                 }
 
@@ -570,7 +610,7 @@ fn replay_audit_rows(log: &ReplayLog, cursor: &mut usize) -> Result<AuditRows, &
                     mode_tag,
                     event: replay_event,
                     policy_input,
-                    transport_snapshot,
+                    transport_attrs,
                     verdict_meta: event.arg0,
                     reason: event.arg1,
                     fuel_used: event.arg2,
@@ -635,7 +675,7 @@ fn public_policy_audit_tuple_roundtrips_logged_inputs() {
         .with_arg1(42)
         .with_arg2(99);
     let input_one = [9, 8, 7, 6];
-    let transport_one = transport_snapshot(Some(15), Some(3), Some(2), Some(1));
+    let transport_one = transport_attrs(Some(15), Some(3), Some(2), Some(1));
     push_policy_audit_tuple(
         &mut log,
         100,
@@ -652,7 +692,7 @@ fn public_policy_audit_tuple_roundtrips_logged_inputs() {
 
     let event_two = raw_event(12, TRANSPORT_EVENT_ID).with_arg0(3).with_arg1(4);
     let input_two = [1, 2, 3, 4];
-    let transport_two = transport_snapshot(None, Some(1), None, Some(0));
+    let transport_two = transport_attrs(None, Some(1), None, Some(0));
     push_policy_audit_tuple(
         &mut log,
         101,
@@ -682,7 +722,7 @@ fn public_policy_audit_tuple_roundtrips_logged_inputs() {
     assert_eq!(first.mode_tag, 1);
     assert_eq!(first.event, event_one);
     assert_eq!(first.policy_input, input_one);
-    assert_eq!(first.transport_snapshot, transport_one);
+    assert_eq!(first.transport_attrs, transport_one);
     assert_eq!(first.verdict_meta, 0x0102_0000);
     assert_eq!(first.fuel_used, 5);
 
@@ -692,7 +732,7 @@ fn public_policy_audit_tuple_roundtrips_logged_inputs() {
     assert_eq!(second.mode_tag, 0);
     assert_eq!(second.event, event_two);
     assert_eq!(second.policy_input, input_two);
-    assert_eq!(second.transport_snapshot, transport_two);
+    assert_eq!(second.transport_attrs, transport_two);
     assert_eq!(second.reason, 7);
 }
 
@@ -703,7 +743,7 @@ fn public_policy_audit_tuple_rejects_corruption() {
 
     let event = raw_event(21, ROUTE_DECISION_ID).with_arg0(1).with_arg1(2);
     let input = [4, 3, 2, 1];
-    let transport = transport_snapshot(Some(9), Some(1), Some(0), Some(0));
+    let transport = transport_attrs(Some(9), Some(1), Some(0), Some(0));
     push_policy_audit_tuple(
         &mut log,
         200,

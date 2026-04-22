@@ -346,7 +346,7 @@ The everyday protocol-side owners are:
 - `hibana::substrate::cap::{CapShot, ControlResourceKind, GenericCapToken, Many, One, ResourceKind}`
 - `hibana::substrate::cap::advanced::{CAP_HANDLE_LEN, CapError, CapHeader, ControlOp, ControlPath, ControlScopeKind, LoopBreakKind, LoopContinueKind, RouteDecisionKind, ScopeId}`
 - `hibana::substrate::wire::{Payload, WireEncode, WirePayload}`
-- `hibana::substrate::transport::{Outgoing, TransportError, TransportEvent, TransportEventKind, TransportSnapshot}`
+- `hibana::substrate::transport::{Outgoing, TransportError, TransportEvent, TransportEventKind, TransportMetrics}`
 
 Advanced buckets:
 
@@ -537,7 +537,7 @@ Transport rules:
 - `requeue()` is how transport hands an unconsumed frame back
 - `drain_events()` feeds protocol-neutral transport observation
 - `recv_label_hint()` is a demux hint, not route authority
-- `metrics()` returns `TransportSnapshot` through `TransportMetrics`
+- `metrics()` returns packed `PolicyAttrs` through `TransportMetrics`
 
 ### SessionKit and Endpoint Attachment
 
@@ -738,7 +738,7 @@ cluster.set_resolver::<POLICY_ID, 0>(
 payload seam.
 
 `hibana::substrate::transport::{TransportEvent, TransportEventKind,
-TransportSnapshot}` is the canonical transport-observation seam.
+TransportMetrics}` is the canonical transport event / metrics seam.
 
 If a payload type crosses the wire and is not already a codec type, implement
 `WireEncode` plus `WirePayload`. Borrowed payload views use
@@ -747,19 +747,23 @@ contract with `type Decoded<'a> = Self`.
 
 Transport telemetry is surfaced two ways:
 
-- resolvers read snapshot data through `ResolverContext::attr()` and
+- resolvers read transport attrs through `ResolverContext::attr()` and
   `hibana::substrate::policy::core::*`
 - transports emit semantic events through `TransportEvent` and
   `TransportEventKind`
 - codec failures report through `CodecError`
 - transport failures report through `TransportError`
 - `TransportMetrics` turns implementation-specific counters into
-  `TransportSnapshot`
+  `PolicyAttrs`
 
-Example snapshot access:
+Example transport-attr access:
 
 ```rust
-let snapshot = hibana::substrate::transport::TransportSnapshot::default();
+let mut attrs = hibana::substrate::policy::PolicyAttrs::EMPTY;
+let _ = attrs.insert(
+    hibana::substrate::policy::core::QUEUE_DEPTH,
+    hibana::substrate::policy::ContextValue::from_u32(3),
+);
 
 let transport_event = hibana::substrate::transport::TransportEvent::new(
     hibana::substrate::transport::TransportEventKind::Ack,
@@ -768,15 +772,21 @@ let transport_event = hibana::substrate::transport::TransportEvent::new(
     0,
 );
 
-let _ = (snapshot.queue_depth(), transport_event.packet_number);
+let _ = (
+    attrs
+        .get(hibana::substrate::policy::core::QUEUE_DEPTH)
+        .map(|value| value.as_u32()),
+    transport_event.packet_number,
+);
 ```
 
-`TransportSnapshot` is a packed observation view:
+`PolicyAttrs` is the packed transport-observation view that resolvers see:
 
-- use getter methods such as `latency_us()`, `queue_depth()`,
-  `retransmissions()`, `congestion_window()`, and `algorithm()`
-- transports own metric collection and publish packed snapshots through
-  `TransportMetrics::snapshot()`
+- use `PolicyAttrs::get()` with `hibana::substrate::policy::core::*`
+  identifiers such as `LATENCY_US`, `QUEUE_DEPTH`, `RETRANSMISSIONS`,
+  `CONGESTION_WINDOW`, and `TRANSPORT_ALGORITHM`
+- transports own metric collection and publish packed attrs through
+  `TransportMetrics::attrs()`
 
 ### Management Boundary
 

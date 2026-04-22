@@ -1,7 +1,8 @@
 use core::ptr;
 use hibana::substrate::{
     Transport,
-    transport::{TransportError, TransportEvent, TransportMetrics, TransportSnapshot},
+    policy::PolicyAttrs,
+    transport::{TransportError, TransportEvent, TransportMetrics},
     wire::Payload,
 };
 use std::cell::UnsafeCell;
@@ -231,7 +232,7 @@ struct TransportPool {
     initialized: UnsafeCell<[bool; TEST_TRANSPORT_POOL_CAPACITY]>,
     refs: UnsafeCell<[usize; TEST_TRANSPORT_POOL_CAPACITY]>,
     states: UnsafeCell<[MaybeUninit<TestState>; TEST_TRANSPORT_POOL_CAPACITY]>,
-    metrics: UnsafeCell<[MaybeUninit<TransportSnapshot>; TEST_TRANSPORT_POOL_CAPACITY]>,
+    metrics: UnsafeCell<[MaybeUninit<PolicyAttrs>; TEST_TRANSPORT_POOL_CAPACITY]>,
 }
 
 impl TransportPool {
@@ -274,7 +275,7 @@ impl TransportPool {
                     self.ensure_slot_initialized(idx);
                     refs[idx] = 1;
                     (&mut *states[idx].as_mut_ptr()).reset();
-                    metrics[idx].write(TransportSnapshot::default());
+                    metrics[idx].write(PolicyAttrs::EMPTY);
                     return Some(idx);
                 }
                 idx += 1;
@@ -308,7 +309,7 @@ impl TransportPool {
         unsafe { f(&mut *(*self.states.get())[idx].as_mut_ptr()) }
     }
 
-    fn metrics_get(&self, idx: usize) -> TransportSnapshot {
+    fn metrics_get(&self, idx: usize) -> PolicyAttrs {
         unsafe { (*self.metrics.get())[idx].assume_init_read() }
     }
 }
@@ -458,12 +459,12 @@ impl From<TestTransportError> for TransportError {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct TestTransportMetrics {
-    snapshot: TransportSnapshot,
+    attrs: PolicyAttrs,
 }
 
 impl TransportMetrics for TestTransportMetrics {
-    fn snapshot(&self) -> TransportSnapshot {
-        self.snapshot
+    fn attrs(&self) -> PolicyAttrs {
+        self.attrs
     }
 }
 
@@ -532,8 +533,8 @@ impl Transport for TestTransport {
     }
 
     fn metrics(&self) -> Self::Metrics {
-        let snapshot = self.pool.metrics_get(self.slot);
-        TestTransportMetrics { snapshot }
+        let attrs = self.pool.metrics_get(self.slot);
+        TestTransportMetrics { attrs }
     }
 
     fn apply_pacing_update(&self, _interval_us: u32, _burst_bytes: u16) {}

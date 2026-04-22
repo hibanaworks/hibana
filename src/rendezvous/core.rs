@@ -3966,7 +3966,8 @@ where
             );
         };
         self.transport.drain_events(&mut emit_event);
-        let snapshot = self.transport.metrics().snapshot();
+        let metrics_attrs = self.transport.metrics().attrs();
+        let snapshot = crate::transport::TransportSnapshot::from_policy_attrs(&metrics_attrs);
         if let Some(payload) = snapshot.encode_tap_metrics() {
             let (arg0, arg1) = payload.primary;
             emit(
@@ -4011,18 +4012,18 @@ where
             .map(|delegate| (delegate.token.resource_tag(), delegate.token.handle_bytes()));
 
         let _ = self.flush_transport_events();
-        let transport_metrics = self.transport.metrics().snapshot();
+        let policy_attrs = self.transport.metrics().attrs();
         let policy_input = crate::policy_runtime::slot_default_input(
             crate::policy_runtime::PolicySlot::Rendezvous,
         );
         let policy_digest = self.policy_digest(crate::policy_runtime::PolicySlot::Rendezvous);
         let event_hash = crate::policy_runtime::hash_tap_event(&policy_event);
         let signals_input_hash = crate::policy_runtime::hash_policy_input(policy_input);
-        let transport_snapshot_hash =
-            crate::policy_runtime::hash_transport_snapshot(transport_metrics);
-        let replay_transport = crate::policy_runtime::replay_transport_inputs(transport_metrics);
+        let signals_attrs_hash = policy_attrs.hash32();
+        let transport_snapshot_hash = crate::policy_runtime::hash_transport_attrs(&policy_attrs);
+        let replay_transport = crate::policy_runtime::replay_transport_inputs(&policy_attrs);
         let replay_transport_presence =
-            crate::policy_runtime::replay_transport_presence(transport_metrics);
+            crate::policy_runtime::replay_transport_presence(&policy_attrs);
         let mode_id = crate::policy_runtime::policy_mode_tag(
             self.policy_mode(crate::policy_runtime::PolicySlot::Rendezvous),
         );
@@ -4036,7 +4037,7 @@ where
         self.emit_policy_event_with_arg2(
             ids::POLICY_AUDIT_EXT,
             lane_opt,
-            0,
+            signals_attrs_hash,
             transport_snapshot_hash,
             ((crate::policy_runtime::slot_tag(crate::policy_runtime::PolicySlot::Rendezvous)
                 as u32)
@@ -4092,7 +4093,7 @@ where
             lane_opt,
             move |ctx| {
                 let _ = handle_data;
-                ctx.set_transport_snapshot(transport_metrics);
+                ctx.set_policy_attrs(policy_attrs);
                 ctx.set_policy_input(policy_input);
             },
         );

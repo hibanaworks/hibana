@@ -626,8 +626,11 @@ impl LocalFailureReason {
 
 #[cfg(test)]
 mod tests {
-    use super::{Endpoint, OfferFuture, RouteBranch};
+    use super::{DecodeFuture, Endpoint, OfferFuture, RecvFuture, RouteBranch};
     use core::mem::size_of;
+
+    type RecvFut = RecvFuture<'static, 'static, 0, crate::g::Msg<7, ()>>;
+    type DecodeFut = DecodeFuture<'static, 'static, 0, crate::g::Msg<7, ()>>;
 
     #[test]
     fn endpoint_surface_size_gates_hold() {
@@ -642,6 +645,14 @@ mod tests {
         assert!(
             size_of::<OfferFuture<'static, 'static, 0>>() <= 48,
             "OfferFuture must stay within the localside size budget"
+        );
+        assert!(
+            size_of::<RecvFut>() <= 48,
+            "RecvFuture must stay within the localside size budget"
+        );
+        assert!(
+            size_of::<DecodeFut>() <= 48,
+            "DecodeFuture must stay within the localside size budget"
         );
     }
 }

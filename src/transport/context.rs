@@ -320,28 +320,6 @@ impl PolicyAttrs {
         true
     }
 
-    /// Query an attribute by context id.
-    #[inline]
-    pub fn query(&self, id: ContextId) -> Option<ContextValue> {
-        if let Some(idx) = core_attr_index(id) {
-            let bit = 1u32 << idx;
-            if (self.present & bit) != 0 {
-                return Some(ContextValue::from_u64(self.core_values[idx]));
-            }
-            return None;
-        }
-
-        let mut idx = 0usize;
-        while idx < self.ext_len as usize {
-            let entry = self.ext_attrs[idx];
-            if entry.id.raw() == id.raw() {
-                return Some(entry.value);
-            }
-            idx += 1;
-        }
-        None
-    }
-
     #[inline]
     pub const fn is_empty(&self) -> bool {
         self.present == 0 && self.ext_len == 0
@@ -499,7 +477,7 @@ mod tests {
     }
 
     #[test]
-    fn policy_attrs_insert_query_and_overwrite() {
+    fn policy_attrs_insert_get_and_overwrite() {
         let id0 = ContextId::new(0x0001);
         let id1 = ContextId::new(0x0002);
         let mut attrs = PolicyAttrs::new();
@@ -509,9 +487,9 @@ mod tests {
         assert!(attrs.insert(id0, ContextValue::from_u8(9)));
 
         assert_eq!(attrs.len(), 2);
-        assert_eq!(attrs.query(id0).unwrap().as_u8(), 9);
-        assert_eq!(attrs.query(id1).unwrap().as_u8(), 2);
-        assert!(attrs.query(ContextId::new(0xFFFF)).is_none());
+        assert_eq!(attrs.get(id0).unwrap().as_u8(), 9);
+        assert_eq!(attrs.get(id1).unwrap().as_u8(), 2);
+        assert!(attrs.get(ContextId::new(0xFFFF)).is_none());
     }
 
     #[test]
@@ -553,10 +531,10 @@ mod tests {
         assert_eq!(route.input[0], 1);
         assert_eq!(tx.input[0], 2);
         assert_eq!(
-            route.attrs().query(ContextId::new(0x0100)).unwrap().as_u8(),
+            route.attrs().get(ContextId::new(0x0100)).unwrap().as_u8(),
             1
         );
-        assert_eq!(tx.attrs().query(ContextId::new(0x0100)).unwrap().as_u8(), 2);
+        assert_eq!(tx.attrs().get(ContextId::new(0x0100)).unwrap().as_u8(), 2);
     }
 
     #[test]
@@ -567,8 +545,8 @@ mod tests {
         let mut dst = PolicyAttrs::new();
         assert!(dst.insert(ContextId::new(2), ContextValue::from_u8(1)));
         dst.copy_from(&src);
-        assert_eq!(dst.query(ContextId::new(1)).unwrap().as_u8(), 7);
-        assert_eq!(dst.query(ContextId::new(2)).unwrap().as_u8(), 9);
+        assert_eq!(dst.get(ContextId::new(1)).unwrap().as_u8(), 7);
+        assert_eq!(dst.get(ContextId::new(2)).unwrap().as_u8(), 9);
     }
 
     #[test]

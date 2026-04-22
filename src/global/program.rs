@@ -267,7 +267,7 @@ where
 /// `Program<Steps>` is a zero-sized compile-time proof carrier. It is not a
 /// runtime image, not an attached endpoint, and not a transport handle.
 ///
-/// On stable Rust, do not write `const APP: Program<_>`.
+/// On stable Rust, do not hoist `Program<_>` into `const` or `static` items.
 /// Compose programs through local `let` inference and immediately project
 /// them through `project(&program)`.
 #[derive(Clone, Copy)]

@@ -25,6 +25,12 @@ fn g_rs() -> String {
         .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
 }
 
+fn flow_rs() -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/endpoint/flow.rs");
+    fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+}
+
 fn public_api_script_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join(".github/scripts/check_hibana_public_api.sh");
@@ -55,6 +61,7 @@ fn root_visible_surface_stays_minimal() {
     let endpoint_rs = endpoint_rs();
     let global_rs = global_rs();
     let g_rs = g_rs();
+    let flow_rs = flow_rs();
     let g_ws = compact_ws(&g_rs);
     let advanced_head = {
         let start = global_rs
@@ -137,6 +144,18 @@ fn root_visible_surface_stays_minimal() {
         assert!(
             !endpoint_rs.contains(forbidden),
             "endpoint module must not re-export CursorEndpoint on the app-facing path: {forbidden}"
+        );
+    }
+
+    for forbidden in [
+        "AllowsEndpointMint",
+        "MintConfigMarker",
+        "MintConfig",
+        "#[allow(private_bounds)]",
+    ] {
+        assert!(
+            !flow_rs.contains(forbidden),
+            "app-facing flow surface must not mention mint-policy internals: {forbidden}"
         );
     }
 

@@ -40,6 +40,14 @@ fn transport_context_uses_generic_policy_slot_owner() {
         !context_src.contains("policy::epf::Slot"),
         "transport context must not mention the deleted core EPF slot path"
     );
+    assert!(
+        context_src.contains("pub const fn get(&self, id: ContextId) -> Option<ContextValue>"),
+        "packed policy attrs must keep the single canonical lookup path"
+    );
+    assert!(
+        !context_src.contains("pub fn query(&self, id: ContextId) -> Option<ContextValue>"),
+        "packed policy attrs must not keep duplicate lookup aliases"
+    );
 }
 
 #[test]
@@ -105,10 +113,11 @@ fn substrate_policy_surface_exports_policyslot_only() {
 fn transport_snapshot_surface_stays_getter_only() {
     let transport_src = read("src/transport.rs");
     let substrate_src = read("src/substrate.rs");
+    let readme_src = read("README.md");
 
     assert!(
-        transport_src.contains("pub const fn from_policy_attrs(attrs: &context::PolicyAttrs) -> Self"),
-        "transport snapshot must rebuild from packed PolicyAttrs"
+        !transport_src.contains("pub struct TransportSnapshot"),
+        "TransportSnapshot must stay internal"
     );
     assert!(
         !transport_src.contains("pub struct TransportSnapshotParts"),
@@ -121,6 +130,23 @@ fn transport_snapshot_surface_stays_getter_only() {
     assert!(
         !substrate_src.contains("TransportSnapshotParts"),
         "substrate::transport must not re-export TransportSnapshotParts"
+    );
+    assert!(
+        !substrate_src.contains("TransportSnapshot"),
+        "substrate::transport must not re-export TransportSnapshot"
+    );
+    assert!(
+        !readme_src.contains("TransportSnapshot"),
+        "README must not publish the removed TransportSnapshot surface"
+    );
+    assert!(
+        transport_src.contains("fn attrs(&self) -> context::PolicyAttrs;"),
+        "TransportMetrics must expose packed PolicyAttrs"
+    );
+    assert!(
+        readme_src.contains("`PolicyAttrs`")
+            && readme_src.contains("TransportMetrics::attrs()"),
+        "README must describe PolicyAttrs-based transport observation"
     );
     for required in [
         "pub use crate::transport::context::{",

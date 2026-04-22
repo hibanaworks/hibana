@@ -149,3 +149,30 @@ fn crate_root_docs_do_not_regrow_internal_buckets() {
         );
     }
 }
+
+#[test]
+fn crate_root_docs_keep_descriptor_first_control_story() {
+    let lib_rs = read("src/lib.rs");
+
+    for required in [
+        "descriptor-first control facts",
+        "shot, path, and atomic op are baked into descriptor metadata",
+        "descriptor-baked `ControlOp` values",
+    ] {
+        assert!(
+            lib_rs.contains(required),
+            "crate root docs must describe the descriptor-first control model: {required}"
+        );
+    }
+
+    for forbidden in [
+        "cancel pair, checkpoint/rollback, splice",
+        "shot and permissions are embedded in the const metadata",
+        "manages local state (lane/gen/cap/splice)",
+    ] {
+        assert!(
+            !lib_rs.contains(forbidden),
+            "crate root docs must not describe the removed control execution model: {forbidden}"
+        );
+    }
+}

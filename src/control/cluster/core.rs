@@ -102,7 +102,6 @@ use crate::observe::scope::ScopeTrace;
 use crate::rendezvous::core::{EndpointLeaseId, LaneLease, Rendezvous};
 use crate::rendezvous::error::RendezvousError;
 use crate::transport::context::{self, ContextValue};
-use crate::transport::{TransportAlgorithm, TransportSnapshot};
 
 #[cfg(test)]
 use std::thread_local;
@@ -338,7 +337,6 @@ pub struct ResolverContext {
     lane: Lane,
     eff_index: EffIndex,
     tag: u8,
-    metrics: TransportSnapshot,
     scope_id: ScopeId,
     scope_trace: Option<ScopeTrace>,
     /// Slot-scoped policy input arguments.
@@ -355,80 +353,32 @@ impl ResolverContext {
         lane: Lane,
         eff_index: EffIndex,
         tag: u8,
-        metrics: TransportSnapshot,
         scope_id: ScopeId,
         scope_trace: Option<ScopeTrace>,
         input: [u32; 4],
         attrs: &crate::transport::context::PolicyAttrs,
     ) -> Self {
+        let mut policy_attrs = *attrs;
+        let _ = policy_attrs.insert(context::core::RV_ID, ContextValue::from_u16(rv_id.raw()));
+        if let Some(session) = session {
+            let _ = policy_attrs.insert(
+                context::core::SESSION_ID,
+                ContextValue::from_u32(session.raw()),
+            );
+        }
+        let _ = policy_attrs.insert(context::core::LANE, ContextValue::from_u32(lane.raw()));
+        let _ = policy_attrs.insert(context::core::TAG, ContextValue::from_u8(tag));
         Self {
             rv_id,
             session,
             lane,
             eff_index,
             tag,
-            metrics,
             scope_id,
             scope_trace,
             policy_input: input,
-            policy_attrs: *attrs,
+            policy_attrs,
         }
-    }
-
-    #[inline]
-    fn core_attr(&self, id: context::ContextId) -> Option<ContextValue> {
-        let raw = id.raw();
-        if raw == context::core::RV_ID.raw() {
-            return Some(ContextValue::from_u16(self.rv_id.raw()));
-        }
-        if raw == context::core::SESSION_ID.raw() {
-            return self
-                .session
-                .map(|session| ContextValue::from_u32(session.raw()));
-        }
-        if raw == context::core::LANE.raw() {
-            return Some(ContextValue::from_u32(self.lane.raw()));
-        }
-        if raw == context::core::TAG.raw() {
-            return Some(ContextValue::from_u8(self.tag));
-        }
-        if raw == context::core::LATENCY_US.raw() {
-            return self.metrics.latency_us().map(ContextValue::from_u64);
-        }
-        if raw == context::core::QUEUE_DEPTH.raw() {
-            return self.metrics.queue_depth().map(ContextValue::from_u32);
-        }
-        if raw == context::core::PACING_INTERVAL_US.raw() {
-            return self
-                .metrics
-                .pacing_interval_us()
-                .map(ContextValue::from_u64);
-        }
-        if raw == context::core::CONGESTION_MARKS.raw() {
-            return self.metrics.congestion_marks().map(ContextValue::from_u32);
-        }
-        if raw == context::core::RETRANSMISSIONS.raw() {
-            return self.metrics.retransmissions().map(ContextValue::from_u32);
-        }
-        if raw == context::core::PTO_COUNT.raw() {
-            return self.metrics.pto_count().map(ContextValue::from_u32);
-        }
-        if raw == context::core::SRTT_US.raw() {
-            return self.metrics.srtt_us().map(ContextValue::from_u64);
-        }
-        if raw == context::core::LATEST_ACK_PN.raw() {
-            return self.metrics.latest_ack_pn().map(ContextValue::from_u64);
-        }
-        if raw == context::core::CONGESTION_WINDOW.raw() {
-            return self.metrics.congestion_window().map(ContextValue::from_u64);
-        }
-        if raw == context::core::IN_FLIGHT_BYTES.raw() {
-            return self.metrics.in_flight_bytes().map(ContextValue::from_u64);
-        }
-        if raw == context::core::TRANSPORT_ALGORITHM.raw() {
-            return self.metrics.algorithm().map(encode_transport_algorithm);
-        }
-        None
     }
 
     /// Query a policy attribute by opaque id.
@@ -437,7 +387,7 @@ impl ResolverContext {
         &self,
         id: crate::transport::context::ContextId,
     ) -> Option<crate::transport::context::ContextValue> {
-        self.core_attr(id).or_else(|| self.policy_attrs.get(id))
+        self.policy_attrs.get(id)
     }
 
     /// Read slot-scoped policy input argument by index.
@@ -501,15 +451,6 @@ unsafe fn dispatch_fn(_state: *const (), callback: usize, ctx: ResolverContext) 
     let resolver =
         unsafe { core::mem::transmute::<usize, fn(ResolverContext) -> ResolverResult>(callback) };
     resolver(ctx)
-}
-
-#[inline]
-const fn encode_transport_algorithm(algorithm: TransportAlgorithm) -> ContextValue {
-    match algorithm {
-        TransportAlgorithm::Cubic => ContextValue::from_u32(1),
-        TransportAlgorithm::Reno => ContextValue::from_u32(2),
-        TransportAlgorithm::Other(tag) => ContextValue::from_u32(0x100 | tag as u32),
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2823,7 +2764,6 @@ where
         eff_index: EffIndex,
         tag: u8,
         op: ControlOp,
-        metrics: TransportSnapshot,
         input: [u32; 4],
         attrs: &crate::transport::context::PolicyAttrs,
     ) -> Result<DynamicResolution, CpError> {
@@ -2845,7 +2785,6 @@ where
             lane,
             eff_index,
             tag,
-            metrics,
             scope_hint,
             entry.scope_trace,
             input,
@@ -2917,11 +2856,10 @@ where
         eff_index: EffIndex,
         desc: ControlDesc,
         policy: PolicyMode,
-        metrics: TransportSnapshot,
         input: [u32; 4],
         attrs: &crate::transport::context::PolicyAttrs,
     ) -> Result<SpliceOperands, CpError> {
-        let _ = (rv_id, sid, src_lane, eff_index, desc, policy, metrics, input, attrs);
+        let _ = (rv_id, sid, src_lane, eff_index, desc, policy, input, attrs);
         Err(CpError::UnsupportedEffect(ControlOp::TopologyBegin as u8))
     }
 
@@ -2933,12 +2871,11 @@ where
         eff_index: EffIndex,
         desc: ControlDesc,
         policy: PolicyMode,
-        metrics: TransportSnapshot,
         input: [u32; 4],
         attrs: &crate::transport::context::PolicyAttrs,
         operands: SpliceOperands,
     ) -> Result<(), CpError> {
-        let _ = (rv_id, sid, src_lane, eff_index, desc, metrics, input, attrs, operands);
+        let _ = (rv_id, sid, src_lane, eff_index, desc, input, attrs, operands);
         match policy {
             PolicyMode::Dynamic { .. } => Err(CpError::UnsupportedEffect(ControlOp::TopologyAck as u8)),
             PolicyMode::Static => Ok(()),
@@ -2953,11 +2890,10 @@ where
         tag: u8,
         op: ControlOp,
         policy: PolicyMode,
-        metrics: TransportSnapshot,
         input: [u32; 4],
         attrs: &crate::transport::context::PolicyAttrs,
     ) -> Result<DelegationHandle, CpError> {
-        let _ = (rv_id, lane, eff_index, tag, op, policy, metrics, input, attrs);
+        let _ = (rv_id, lane, eff_index, tag, op, policy, input, attrs);
         Err(CpError::UnsupportedEffect(ControlOp::CapDelegate as u8))
     }
 

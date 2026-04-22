@@ -123,45 +123,6 @@ use core::marker::PhantomData;
 // CapMint 2.0 core (const-first / no_std / no_alloc)
 // ============================================================================
 
-/// Identifier emitted into tap streams for a minting strategy.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MintStrategyId(pub u16);
-
-impl MintStrategyId {
-    #[inline(always)]
-    pub const fn new(id: u16) -> Self {
-        Self(id)
-    }
-
-    #[inline(always)]
-    pub const fn to_u16(self) -> u16 {
-        self.0
-    }
-}
-
-/// Identifier emitted into tap streams for a minting policy.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CapPolicyId(pub u8);
-
-impl CapPolicyId {
-    #[inline(always)]
-    pub const fn new(id: u8) -> Self {
-        Self(id)
-    }
-
-    #[inline(always)]
-    pub const fn to_u8(self) -> u8 {
-        self.0
-    }
-}
-
-/// Static metadata describing whether endpoint minting is permitted.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CapPolicyKind {
-    Endpoint,
-    Caller,
-}
-
 /// Seed provided by the rendezvous during minting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NonceSeed {
@@ -182,9 +143,6 @@ impl NonceSeed {
 
 /// Trait implemented by const minting specifications.
 pub trait CapMintSpec {
-    /// Stable identifier for observability.
-    const STRATEGY_ID: MintStrategyId;
-
     /// Derive the nonce bytes using the rendezvous-provided seed.
     fn nonce(seed: NonceSeed) -> [u8; CAP_NONCE_LEN];
 
@@ -197,8 +155,6 @@ pub trait CapMintSpec {
 pub struct NullMintSpec;
 
 impl CapMintSpec for NullMintSpec {
-    const STRATEGY_ID: MintStrategyId = MintStrategyId::new(0);
-
     #[inline(always)]
     fn nonce(seed: NonceSeed) -> [u8; CAP_NONCE_LEN] {
         let mut out = [0u8; CAP_NONCE_LEN];
@@ -214,22 +170,9 @@ impl CapMintSpec for NullMintSpec {
     }
 }
 
-/// Trait describing endpoint-vs-caller mint policies.
-pub trait CapMintPolicy {
-    const POLICY_ID: CapPolicyId;
-    const KIND: CapPolicyKind;
-    const ALLOWS_ENDPOINT_MINT: bool;
-}
-
 /// Endpoint mint policy – the attached endpoint may mint control payloads.
 #[derive(Clone, Copy, Debug)]
 pub struct EndpointMintPolicy;
-
-impl CapMintPolicy for EndpointMintPolicy {
-    const POLICY_ID: CapPolicyId = CapPolicyId::new(0);
-    const KIND: CapPolicyKind = CapPolicyKind::Endpoint;
-    const ALLOWS_ENDPOINT_MINT: bool = true;
-}
 
 /// Marker trait implemented by policies that permit endpoint minting.
 pub trait AllowsEndpointMint {}
@@ -258,11 +201,6 @@ impl<S: CapMintSpec> CapMintStrategy<S> {
     }
 
     #[inline(always)]
-    pub fn strategy_id(&self) -> MintStrategyId {
-        S::STRATEGY_ID
-    }
-
-    #[inline(always)]
     pub fn derive_nonce(&self, seed: NonceSeed) -> [u8; CAP_NONCE_LEN] {
         S::nonce(seed)
     }
@@ -279,7 +217,7 @@ impl<S: CapMintSpec> CapMintStrategy<S> {
 
 /// Zero-sized mint configuration baked into role programs.
 #[derive(Debug)]
-pub struct MintConfig<S: CapMintSpec = NullMintSpec, P: CapMintPolicy = EndpointMintPolicy> {
+pub struct MintConfig<S: CapMintSpec = NullMintSpec, P: Copy = EndpointMintPolicy> {
     strategy: CapMintStrategy<S>,
     _policy: PhantomData<P>,
 }
@@ -287,14 +225,14 @@ pub struct MintConfig<S: CapMintSpec = NullMintSpec, P: CapMintPolicy = Endpoint
 impl<S, P> Copy for MintConfig<S, P>
 where
     S: CapMintSpec,
-    P: CapMintPolicy,
+    P: Copy,
 {
 }
 
 impl<S, P> Clone for MintConfig<S, P>
 where
     S: CapMintSpec,
-    P: CapMintPolicy,
+    P: Copy,
 {
     #[inline(always)]
     fn clone(&self) -> Self {
@@ -302,13 +240,13 @@ where
     }
 }
 
-impl<S: CapMintSpec, P: CapMintPolicy> Default for MintConfig<S, P> {
+impl<S: CapMintSpec, P: Copy> Default for MintConfig<S, P> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<S: CapMintSpec, P: CapMintPolicy> MintConfig<S, P> {
+impl<S: CapMintSpec, P: Copy> MintConfig<S, P> {
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
@@ -321,32 +259,12 @@ impl<S: CapMintSpec, P: CapMintPolicy> MintConfig<S, P> {
     pub const fn strategy(&self) -> CapMintStrategy<S> {
         self.strategy
     }
-
-    #[inline(always)]
-    pub const fn policy_kind(&self) -> CapPolicyKind {
-        P::KIND
-    }
-
-    #[inline(always)]
-    pub const fn policy_id(&self) -> CapPolicyId {
-        P::POLICY_ID
-    }
-
-    #[inline(always)]
-    pub const fn allows_endpoint_mint(&self) -> bool {
-        P::ALLOWS_ENDPOINT_MINT
-    }
-
-    #[inline(always)]
-    pub const fn strategy_id(&self) -> MintStrategyId {
-        S::STRATEGY_ID
-    }
 }
 
 /// Marker trait enabling `MintConfig` specialisation.
 pub trait MintConfigMarker: Copy {
     type Spec: CapMintSpec;
-    type Policy: CapMintPolicy;
+    type Policy: Copy;
     const INSTANCE: Self;
 
     fn as_config(&self) -> MintConfig<Self::Spec, Self::Policy>;
@@ -355,7 +273,7 @@ pub trait MintConfigMarker: Copy {
 impl<S, P> MintConfigMarker for MintConfig<S, P>
 where
     S: CapMintSpec,
-    P: CapMintPolicy,
+    P: Copy,
 {
     type Spec = S;
     type Policy = P;

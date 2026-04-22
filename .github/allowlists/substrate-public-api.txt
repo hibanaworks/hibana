@@ -22,13 +22,12 @@ pub use crate::transport::context::core::{ CONGESTION_MARKS, CONGESTION_WINDOW, 
 pub use crate::policy_runtime::PolicySlot;
 pub mod cap {
 pub mod advanced {
-pub use super::super::control::cap::mint::{ AllowsCanonical, CAP_HANDLE_LEN, CapError, CapsMask, ControlMint, EpochTbl, MintConfig, MintConfigMarker, SessionScopedKind, };
-pub use crate::control::cap::resource_kinds::{ LoopBreakKind, LoopContinueKind, LoopDecisionHandle, RouteDecisionHandle, RouteDecisionKind, };
-pub use crate::global::ControlHandling;
+pub use super::super::control::cap::mint::{ CAP_HANDLE_LEN, CapError, CapHeader, ControlOp, ControlPath, };
+pub use crate::control::cap::resource_kinds::{ LoopBreakKind, LoopContinueKind, RouteDecisionKind, };
 pub use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 pub use crate::control::cap::mint::{ CapShot, ControlResourceKind, GenericCapToken, ResourceKind, };
 pub use {One, Many};
 pub mod wire {
 pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 pub mod transport {
-pub use crate::transport::{ LocalDirection, Outgoing, SendMeta, TransportAlgorithm, TransportError, TransportEvent, TransportEventKind, TransportMetrics, TransportSnapshot, TransportSnapshotParts, };
+pub use crate::transport::{ LocalDirection, Outgoing, SendMeta, TransportAlgorithm, TransportError, TransportEvent, TransportEventKind, TransportMetrics, };

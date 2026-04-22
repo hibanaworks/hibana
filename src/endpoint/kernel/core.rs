@@ -1632,17 +1632,19 @@ where
             .with_arg0(arg0)
             .with_arg1(arg1);
         let _ = port.flush_transport_events();
-        let transport_metrics = port.transport().metrics().snapshot();
+        let transport_attrs = port.transport().metrics().attrs();
         let signals = self.policy_signals_for_slot(slot);
+        let mut policy_attrs = *signals.attrs();
+        policy_attrs.copy_from(&transport_attrs);
         let policy_input = signals.input;
         let policy_digest = port.policy_digest(slot);
         let event_hash = policy_runtime::hash_tap_event(&event);
         let signals_input_hash = policy_runtime::hash_policy_input(policy_input);
-        let signals_attrs_hash = signals.attrs().hash32();
-        let transport_snapshot_hash = policy_runtime::hash_transport_snapshot(transport_metrics);
-        let replay_transport = policy_runtime::replay_transport_inputs(transport_metrics);
+        let policy_attrs_hash = policy_attrs.hash32();
+        let transport_snapshot_hash = policy_runtime::hash_transport_attrs(&policy_attrs);
+        let replay_transport = policy_runtime::replay_transport_inputs(&policy_attrs);
         let replay_transport_presence =
-            policy_runtime::replay_transport_presence(transport_metrics);
+            policy_runtime::replay_transport_presence(&policy_attrs);
         let slot_id = policy_runtime::slot_tag(slot);
         let mode_id = policy_runtime::policy_mode_tag(port.policy_mode(slot));
         self.emit_policy_audit_event(
@@ -1654,7 +1656,7 @@ where
         );
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT_EXT,
-            signals_attrs_hash,
+            policy_attrs_hash,
             transport_snapshot_hash,
             ((slot_id as u32) << 24) | ((mode_id as u32) << 16),
             lane,
@@ -1696,7 +1698,7 @@ where
             lane,
         );
         let action = port.run_policy(slot, &event, Some(self.sid), Some(lane), move |ctx| {
-            ctx.set_transport_snapshot(transport_metrics);
+            ctx.set_policy_attrs(policy_attrs);
             ctx.set_policy_input(policy_input);
         });
         let verdict = action.verdict();
@@ -2215,7 +2217,9 @@ where
         }
         let port = self.port_for_lane(lane as usize);
         let _ = port.flush_transport_events();
-        let transport_metrics = port.transport().metrics().snapshot();
+        let transport_attrs = port.transport().metrics().attrs();
+        let mut policy_attrs = *signals.attrs();
+        policy_attrs.copy_from(&transport_attrs);
         let policy_input = signals.input;
         let arg0 = route_policy_input_arg0(&policy_input);
         let mut event = events::RawEvent::new(port.now32(), ids::ROUTE_DECISION)
@@ -2227,11 +2231,11 @@ where
         let policy_digest = port.policy_digest(PolicySlot::Route);
         let event_hash = policy_runtime::hash_tap_event(&event);
         let signals_input_hash = policy_runtime::hash_policy_input(policy_input);
-        let signals_attrs_hash = signals.attrs().hash32();
-        let transport_snapshot_hash = policy_runtime::hash_transport_snapshot(transport_metrics);
-        let replay_transport = policy_runtime::replay_transport_inputs(transport_metrics);
+        let policy_attrs_hash = policy_attrs.hash32();
+        let transport_snapshot_hash = policy_runtime::hash_transport_attrs(&policy_attrs);
+        let replay_transport = policy_runtime::replay_transport_inputs(&policy_attrs);
         let replay_transport_presence =
-            policy_runtime::replay_transport_presence(transport_metrics);
+            policy_runtime::replay_transport_presence(&policy_attrs);
         let mode_id = policy_runtime::policy_mode_tag(port.policy_mode(PolicySlot::Route));
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT,
@@ -2242,7 +2246,7 @@ where
         );
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT_EXT,
-            signals_attrs_hash,
+            policy_attrs_hash,
             transport_snapshot_hash,
             ((policy_runtime::slot_tag(PolicySlot::Route) as u32) << 24) | ((mode_id as u32) << 16),
             port.lane(),
@@ -2295,7 +2299,7 @@ where
             Some(self.sid),
             Some(port.lane()),
             move |ctx| {
-                ctx.set_transport_snapshot(transport_metrics);
+                ctx.set_policy_attrs(policy_attrs);
                 ctx.set_policy_input(policy_input);
             },
         );
@@ -2358,8 +2362,8 @@ where
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
         let port = self.port_for_lane(meta.lane as usize);
         port.flush_transport_events();
-        let metrics = port.transport().metrics().snapshot();
-        let attrs = signals.attrs();
+        let mut attrs = *signals.attrs();
+        attrs.copy_from(&port.transport().metrics().attrs());
         let resolution = cluster
             .resolve_dynamic_policy(
                 self.rendezvous_id(),
@@ -2368,9 +2372,8 @@ where
                 meta.eff_index,
                 tag,
                 op,
-                metrics,
                 signals.input,
-                attrs,
+                &attrs,
             )
             .map_err(Self::map_cp_error)?;
 
@@ -2402,8 +2405,8 @@ where
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
         let port = self.port_for_lane(meta.lane as usize);
         port.flush_transport_events();
-        let metrics = port.transport().metrics().snapshot();
-        let attrs = signals.attrs();
+        let mut attrs = *signals.attrs();
+        attrs.copy_from(&port.transport().metrics().attrs());
         let resolution = cluster
             .resolve_dynamic_policy(
                 self.rendezvous_id(),
@@ -2412,9 +2415,8 @@ where
                 meta.eff_index,
                 tag,
                 op,
-                metrics,
                 signals.input,
-                attrs,
+                &attrs,
             )
             .map_err(Self::map_cp_error)?;
 
@@ -3045,8 +3047,8 @@ where
         let rv_id = RendezvousId::new(self.rendezvous_id().raw());
         let port = self.port_for_lane(offer_lane as usize);
         let lane = Lane::new(port.lane().raw());
-        let metrics = port.transport().metrics().snapshot();
-        let attrs = signals.attrs();
+        let mut attrs = *signals.attrs();
+        attrs.copy_from(&port.transport().metrics().attrs());
         let resolution = match cluster.resolve_dynamic_policy(
             rv_id,
             None,
@@ -3054,9 +3056,8 @@ where
             eff_index,
             tag,
             op,
-            metrics,
             signals.input,
-            attrs,
+            &attrs,
         ) {
             Ok(resolution) => resolution,
             Err(CpError::PolicyAbort { reason }) => return Ok(RouteResolveStep::Abort(reason)),
@@ -3937,9 +3938,9 @@ where
     {
         let port = self.port_for_lane(meta.lane as usize);
         port.flush_transport_events();
-        let transport_metrics = port.transport().metrics().snapshot();
         let signals = self.policy_signals_for_slot(PolicySlot::Route);
-        let attrs = signals.attrs();
+        let mut attrs = *signals.attrs();
+        attrs.copy_from(&port.transport().metrics().attrs());
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
         let policy = cluster
             .policy_mode_for(
@@ -3958,9 +3959,8 @@ where
                 control.resource_tag(),
                 control.op(),
                 policy,
-                transport_metrics,
                 signals.input,
-                attrs,
+                &attrs,
             )
             .map_err(Self::map_cp_error)?;
         self.mint_descriptor_token_bytes(
@@ -4033,9 +4033,9 @@ where
     {
         let port = self.port_for_lane(meta.lane as usize);
         port.flush_transport_events();
-        let transport_metrics = port.transport().metrics().snapshot();
         let signals = self.policy_signals_for_slot(PolicySlot::Route);
-        let attrs = signals.attrs();
+        let mut attrs = *signals.attrs();
+        attrs.copy_from(&port.transport().metrics().attrs());
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
         let policy = cluster
             .policy_mode_for(
@@ -4054,9 +4054,8 @@ where
                 meta.eff_index,
                 control,
                 policy,
-                transport_metrics,
                 signals.input,
-                attrs,
+                &attrs,
             )
             .map_err(Self::map_cp_error)?;
         self.mint_descriptor_token_bytes(
@@ -4084,9 +4083,9 @@ where
     {
         let port = self.port_for_lane(meta.lane as usize);
         port.flush_transport_events();
-        let transport_metrics = port.transport().metrics().snapshot();
         let signals = self.policy_signals_for_slot(PolicySlot::Route);
-        let attrs = signals.attrs();
+        let mut attrs = *signals.attrs();
+        attrs.copy_from(&port.transport().metrics().attrs());
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
         let src_rv = RendezvousId::new(self.rendezvous_id().raw());
         let cp_lane = Lane::new(lane.raw());
@@ -4111,9 +4110,8 @@ where
                 meta.eff_index,
                 control,
                 policy,
-                transport_metrics,
                 signals.input,
-                attrs,
+                &attrs,
                 preview_operands,
             )
             .map_err(Self::map_cp_error)?;

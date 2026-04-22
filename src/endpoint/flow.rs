@@ -10,9 +10,7 @@ use core::{
 
 use crate::{
     binding::BindingHandle,
-    control::cap::mint::{
-        AllowsEndpointMint, ControlResourceKind, GenericCapToken, MintConfig, MintConfigMarker,
-    },
+    control::cap::mint::{ControlResourceKind, GenericCapToken},
     endpoint::{SendError, SendResult, kernel},
     global::{ControlDesc, ControlPayloadKind, MessageSpec, SendableLabel},
     transport::wire::WireEncode,
@@ -160,7 +158,6 @@ where
     M::Payload: WireEncode,
     M::ControlKind: SendOutcomeKind<'r>,
     <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-    MintConfig: MintConfigMarker<Policy: AllowsEndpointMint>,
 {
     #[inline]
     pub(crate) fn send<'a, A, O>(
@@ -202,10 +199,8 @@ where
     M::Payload: WireEncode,
     M::ControlKind: SendOutcomeKind<'r>,
     <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-    MintConfig: MintConfigMarker<Policy: AllowsEndpointMint>,
 {
     #[inline]
-    #[allow(private_bounds)]
     pub fn send<'a, A, O>(
         self,
         arg: A,
@@ -230,7 +225,6 @@ where
     M::Payload: WireEncode,
     M::ControlKind: SendOutcomeKind<'r, Output = O>,
     <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-    MintConfig: MintConfigMarker<Policy: AllowsEndpointMint>,
     'r: 'a,
 {
     type Output = SendResult<O>;
@@ -298,7 +292,6 @@ where
 impl<'a, M> FlowSendArg<'a, M> for ()
 where
     M: MessageSpec + SendableLabel,
-    MintConfig: MintConfigMarker<Policy: AllowsEndpointMint>,
     M::ControlKind: ControlPayloadKind,
 {
     #[inline(always)]

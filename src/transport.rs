@@ -42,10 +42,10 @@ const SNAPSHOT_CONGESTION_WINDOW: u16 = 1 << 8;
 const SNAPSHOT_IN_FLIGHT_BYTES: u16 = 1 << 9;
 const SNAPSHOT_ALGORITHM: u16 = 1 << 10;
 
-/// Snapshot of transport-level observations supplied to routing policies.
+/// Internal snapshot of transport-level observations supplied to routing policies.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TransportSnapshot {
+pub(crate) struct TransportSnapshot {
     present: u16,
     latency_us: u64,
     queue_depth: u32,
@@ -122,7 +122,7 @@ impl Default for TransportSnapshot {
 
 impl TransportSnapshot {
     /// Construct a transport snapshot from packed policy attributes.
-    pub const fn from_policy_attrs(attrs: &context::PolicyAttrs) -> Self {
+    pub(crate) const fn from_policy_attrs(attrs: &context::PolicyAttrs) -> Self {
         Self::from_parts(TransportSnapshotParts {
             latency_us: match attrs.get(context::core::LATENCY_US) {
                 Some(value) => Some(value.as_u64()),
@@ -198,15 +198,6 @@ impl TransportSnapshot {
     }
 
     #[inline]
-    pub const fn latency_us(&self) -> Option<u64> {
-        if (self.present & SNAPSHOT_LATENCY_US) != 0 {
-            Some(self.latency_us)
-        } else {
-            None
-        }
-    }
-
-    #[inline]
     pub const fn queue_depth(&self) -> Option<u32> {
         if (self.present & SNAPSHOT_QUEUE_DEPTH) != 0 {
             Some(self.queue_depth)
@@ -243,27 +234,9 @@ impl TransportSnapshot {
     }
 
     #[inline]
-    pub const fn pto_count(&self) -> Option<u32> {
-        if (self.present & SNAPSHOT_PTO_COUNT) != 0 {
-            Some(self.pto_count)
-        } else {
-            None
-        }
-    }
-
-    #[inline]
     pub const fn srtt_us(&self) -> Option<u64> {
         if (self.present & SNAPSHOT_SRTT_US) != 0 {
             Some(self.srtt_us)
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    pub const fn latest_ack_pn(&self) -> Option<u64> {
-        if (self.present & SNAPSHOT_LATEST_ACK_PN) != 0 {
-            Some(self.latest_ack_pn)
         } else {
             None
         }
@@ -555,13 +528,13 @@ pub struct TransportMetricsTapPayload {
 
 /// Metrics facade returned by transports to feed routing SLO checks.
 pub trait TransportMetrics {
-    /// Convert the current readings into a compact snapshot.
-    fn snapshot(&self) -> TransportSnapshot;
+    /// Convert the current readings into packed policy attributes.
+    fn attrs(&self) -> context::PolicyAttrs;
 }
 
 impl TransportMetrics for () {
-    fn snapshot(&self) -> TransportSnapshot {
-        TransportSnapshot::default()
+    fn attrs(&self) -> context::PolicyAttrs {
+        context::PolicyAttrs::EMPTY
     }
 }
 

@@ -216,7 +216,7 @@ pub mod wire {
 pub mod transport {
     pub use crate::transport::{
         LocalDirection, Outgoing, SendMeta, TransportAlgorithm, TransportError, TransportEvent,
-        TransportEventKind, TransportMetrics, TransportSnapshot,
+        TransportEventKind, TransportMetrics,
     };
 }
 

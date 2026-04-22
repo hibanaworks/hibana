@@ -7,7 +7,7 @@
 use crate::{
     control::types::{Lane, SessionId},
     observe::core::TapEvent,
-    transport::TransportSnapshot,
+    transport::context::{self, PolicyAttrs},
 };
 
 /// Generic policy slot identity used by resolver/policy seams.
@@ -202,26 +202,41 @@ pub(crate) fn hash_policy_input(input: [u32; 4]) -> u32 {
     hash
 }
 
-/// Deterministic 32-bit hash of transport snapshot attached to policy context.
 #[inline]
-pub(crate) fn hash_transport_snapshot(snapshot: TransportSnapshot) -> u32 {
+const fn attr_u32(attrs: &PolicyAttrs, id: context::ContextId) -> Option<u32> {
+    match attrs.get(id) {
+        Some(value) => Some(value.as_u32()),
+        None => None,
+    }
+}
+
+#[inline]
+const fn attr_u64(attrs: &PolicyAttrs, id: context::ContextId) -> Option<u64> {
+    match attrs.get(id) {
+        Some(value) => Some(value.as_u64()),
+        None => None,
+    }
+}
+
+/// Deterministic 32-bit hash of transport attrs attached to policy context.
+#[inline]
+pub(crate) fn hash_transport_attrs(attrs: &PolicyAttrs) -> u32 {
     let mut hash = FNV32_OFFSET;
-    hash = fnv32_mix_opt_u64(hash, snapshot.latency_us());
-    hash = fnv32_mix_opt_u32(hash, snapshot.queue_depth());
-    hash = fnv32_mix_opt_u64(hash, snapshot.pacing_interval_us());
-    hash = fnv32_mix_opt_u32(hash, snapshot.congestion_marks());
-    hash = fnv32_mix_opt_u32(hash, snapshot.retransmissions());
-    hash = fnv32_mix_opt_u32(hash, snapshot.pto_count());
-    hash = fnv32_mix_opt_u64(hash, snapshot.srtt_us());
-    hash = fnv32_mix_opt_u64(hash, snapshot.latest_ack_pn());
-    hash = fnv32_mix_opt_u64(hash, snapshot.congestion_window());
-    hash = fnv32_mix_opt_u64(hash, snapshot.in_flight_bytes());
-    match snapshot.algorithm() {
-        Some(crate::transport::TransportAlgorithm::Cubic) => fnv32_mix_u8(hash, 1),
-        Some(crate::transport::TransportAlgorithm::Reno) => fnv32_mix_u8(hash, 2),
-        Some(crate::transport::TransportAlgorithm::Other(code)) => {
-            fnv32_mix_u8(fnv32_mix_u8(hash, 3), code)
-        }
+    hash = fnv32_mix_opt_u64(hash, attr_u64(attrs, context::core::LATENCY_US));
+    hash = fnv32_mix_opt_u32(hash, attr_u32(attrs, context::core::QUEUE_DEPTH));
+    hash = fnv32_mix_opt_u64(hash, attr_u64(attrs, context::core::PACING_INTERVAL_US));
+    hash = fnv32_mix_opt_u32(hash, attr_u32(attrs, context::core::CONGESTION_MARKS));
+    hash = fnv32_mix_opt_u32(hash, attr_u32(attrs, context::core::RETRANSMISSIONS));
+    hash = fnv32_mix_opt_u32(hash, attr_u32(attrs, context::core::PTO_COUNT));
+    hash = fnv32_mix_opt_u64(hash, attr_u64(attrs, context::core::SRTT_US));
+    hash = fnv32_mix_opt_u64(hash, attr_u64(attrs, context::core::LATEST_ACK_PN));
+    hash = fnv32_mix_opt_u64(hash, attr_u64(attrs, context::core::CONGESTION_WINDOW));
+    hash = fnv32_mix_opt_u64(hash, attr_u64(attrs, context::core::IN_FLIGHT_BYTES));
+    match attr_u32(attrs, context::core::TRANSPORT_ALGORITHM) {
+        Some(1) => fnv32_mix_u8(hash, 1),
+        Some(2) => fnv32_mix_u8(hash, 2),
+        Some(raw) if raw >= 0x100 => fnv32_mix_u8(fnv32_mix_u8(hash, 3), (raw - 0x100) as u8),
+        Some(raw) => fnv32_mix_u8(fnv32_mix_u8(hash, 3), raw as u8),
         None => fnv32_mix_u8(hash, 0),
     }
 }
@@ -250,29 +265,29 @@ const fn opt_u32_or_zero(value: Option<u32>) -> u32 {
 
 /// Canonical replay transport inputs consumed by audit tools.
 #[inline]
-pub(crate) const fn replay_transport_inputs(snapshot: TransportSnapshot) -> [u32; 4] {
+pub(crate) const fn replay_transport_inputs(attrs: &PolicyAttrs) -> [u32; 4] {
     [
-        saturating_u64_to_u32(snapshot.latency_us()),
-        opt_u32_or_zero(snapshot.queue_depth()),
-        opt_u32_or_zero(snapshot.congestion_marks()),
-        opt_u32_or_zero(snapshot.retransmissions()),
+        saturating_u64_to_u32(attr_u64(attrs, context::core::LATENCY_US)),
+        opt_u32_or_zero(attr_u32(attrs, context::core::QUEUE_DEPTH)),
+        opt_u32_or_zero(attr_u32(attrs, context::core::CONGESTION_MARKS)),
+        opt_u32_or_zero(attr_u32(attrs, context::core::RETRANSMISSIONS)),
     ]
 }
 
 /// Presence bitmask for replay transport inputs.
 #[inline]
-pub(crate) const fn replay_transport_presence(snapshot: TransportSnapshot) -> u8 {
+pub(crate) const fn replay_transport_presence(attrs: &PolicyAttrs) -> u8 {
     let mut mask = 0u8;
-    if snapshot.latency_us().is_some() {
+    if attr_u64(attrs, context::core::LATENCY_US).is_some() {
         mask |= 1 << 0;
     }
-    if snapshot.queue_depth().is_some() {
+    if attr_u32(attrs, context::core::QUEUE_DEPTH).is_some() {
         mask |= 1 << 1;
     }
-    if snapshot.congestion_marks().is_some() {
+    if attr_u32(attrs, context::core::CONGESTION_MARKS).is_some() {
         mask |= 1 << 2;
     }
-    if snapshot.retransmissions().is_some() {
+    if attr_u32(attrs, context::core::RETRANSMISSIONS).is_some() {
         mask |= 1 << 3;
     }
     mask
@@ -461,7 +476,7 @@ pub(crate) struct PolicyCtx<'a> {
     _slot: Option<PolicySlot>,
     _session: Option<SessionId>,
     _lane: Option<Lane>,
-    _transport: TransportSnapshot,
+    _attrs: PolicyAttrs,
     _input: [u32; 4],
 }
 
@@ -473,7 +488,7 @@ impl<'a> PolicyCtx<'a> {
             _slot: Some(slot),
             _session: None,
             _lane: None,
-            _transport: TransportSnapshot::default(),
+            _attrs: PolicyAttrs::EMPTY,
             _input: [0; 4],
         }
     }
@@ -489,8 +504,8 @@ impl<'a> PolicyCtx<'a> {
     }
 
     #[inline]
-    pub(crate) fn set_transport_snapshot(&mut self, snapshot: TransportSnapshot) {
-        self._transport = snapshot;
+    pub(crate) fn set_policy_attrs(&mut self, attrs: PolicyAttrs) {
+        self._attrs = attrs;
     }
 
     #[inline]

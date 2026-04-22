@@ -61,12 +61,12 @@
 //! - **Local-only runtime**: attached runtime owners are intentionally
 //!   `!Send`/`!Sync`; `hibana` assumes single-core, non-ISR, non-reentrant
 //!   execution with owner-centralized mutation.
-//! - **Observability by construction**: every control decision (loop continue,
-//!   cancel pair, checkpoint/rollback, splice) is annotated in the synthesized
-//!   effect list so the runtime can seed tap events deterministically.
+//! - **Observability by construction**: route / loop built-ins and
+//!   protocol-owned control messages lower into descriptor-first control facts,
+//!   so the runtime can seed tap events deterministically.
 //! - **Capability discipline**: control messages carry capability tokens whose
-//!   shot and permissions are embedded in the const metadata, enabling both
-//!   static validation and EPF policy enforcement.
+//!   shot, path, and atomic op are baked into descriptor metadata, enabling
+//!   static validation and fail-closed enforcement.
 //!
 //! # Cargo Features
 //!
@@ -117,7 +117,7 @@ mod eff;
 /// **INTERNAL IMPLEMENTATION - DO NOT USE DIRECTLY**
 ///
 /// This module contains the internal implementation of the Rendezvous state machine.
-/// It evaluates `ControlOp` operations and manages local state (lane/gen/cap/splice).
+/// It evaluates descriptor-baked `ControlOp` values and manages local control state.
 ///
 /// **For application code**, use:
 /// - [`Endpoint`] for localside choreography execution
