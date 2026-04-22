@@ -1,0 +1,8 @@
+error[E0432]: unresolved imports `hibana::substrate::cap::advanced::RerouteKind`, `hibana::substrate::cap::advanced::SpliceAckKind`, `hibana::substrate::cap::advanced::SpliceIntentKind`
+ --> tests/ui/core_splice_kind_reintroduction.rs:1:40
+  |
+1 | use hibana::substrate::cap::advanced::{RerouteKind, SpliceAckKind, SpliceIntentKind};
+  |                                        ^^^^^^^^^^^  ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^ no `SpliceIntentKind` in `substrate::cap::advanced`
+  |                                        |            |
+  |                                        |            no `SpliceAckKind` in `substrate::cap::advanced`
+  |                                        no `RerouteKind` in `substrate::cap::advanced`

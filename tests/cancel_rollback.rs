@@ -60,8 +60,8 @@ impl ResourceKind for AbortBeginTestControl {
 
 impl ControlResourceKind for AbortBeginTestControl {
     const LABEL: u8 = LABEL_CANCEL;
-    const SCOPE: ControlScopeKind = ControlScopeKind::Cancel;
-    const TAP_ID: u16 = 0;
+    const SCOPE: ControlScopeKind = ControlScopeKind::Abort;
+    const TAP_ID: u16 = 0x0300 + LABEL_CANCEL as u16;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::AbortBegin;
@@ -108,7 +108,7 @@ fn run_cancel_local_action_test(
     let mut controller = cluster
         .enter(rv_id, sid, &controller_cancel_program, NoBinding)
         .expect("attach controller");
-    let outcome = futures::executor::block_on(
+    let _token = futures::executor::block_on(
         controller
             .flow::<Msg<
                 { LABEL_CANCEL },
@@ -119,7 +119,6 @@ fn run_cancel_local_action_test(
             .send(()),
     )
     .expect("cancel action");
-    assert!(outcome.is_canonical());
 }
 
 /// Test cancel as a local action (self-send) via unified flow().send() API.

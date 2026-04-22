@@ -1,7 +1,7 @@
 use crate::control::cap::mint::{
     CAP_HANDLE_LEN, CapError, CapShot, ControlOp, ControlPath, ControlResourceKind, ResourceKind,
 };
-use crate::control::cap::resource_kinds::{
+use crate::control::cap::atomic_codecs::{
     SessionLaneHandle, TAG_STATE_SNAPSHOT_CONTROL, decode_session_lane_handle,
     encode_session_lane_handle, mint_session_lane_handle,
 };
@@ -31,7 +31,7 @@ impl ResourceKind for SnapshotControl {
 
 impl ControlResourceKind for SnapshotControl {
     const LABEL: u8 = LABEL_SNAPSHOT_CONTROL;
-    const SCOPE: ControlScopeKind = ControlScopeKind::Checkpoint;
+    const SCOPE: ControlScopeKind = ControlScopeKind::State;
     const TAP_ID: u16 = crate::observe::ids::CHECKPOINT_REQ;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;

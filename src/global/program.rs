@@ -13,8 +13,8 @@ use crate::global::steps::{
     SendStep, SeqSteps, StepCons, StepNil,
 };
 use crate::global::{
-    DistinctRouteLabels, LoopControlMeaning, NonEmptyParallelArm, RouteArmHead, RouteArmLoopHead,
-    SameRouteController, TailLoopControl,
+    DistinctRouteLabel, LoopControlMeaning, NonEmptyParallelArm, RouteArmHead, RouteArmLoopHead,
+    SameRouteControllerRole, TailLoopControl,
 };
 
 #[derive(Clone, Copy)]
@@ -224,12 +224,11 @@ where
 
 impl<Left, Right> BuildProgramSource for RouteSteps<Left, Right>
 where
-    Left: BuildProgramSource
-        + RouteArmHead
-        + RouteArmLoopHead
-        + SameRouteController<Right>
-        + DistinctRouteLabels<Right>,
+    Left: BuildProgramSource + RouteArmHead + RouteArmLoopHead,
     Right: BuildProgramSource + RouteArmHead + RouteArmLoopHead + TailLoopControl,
+    <Left as RouteArmHead>::Controller:
+        SameRouteControllerRole<<Right as RouteArmHead>::Controller>,
+    <Left as RouteArmHead>::Label: DistinctRouteLabel<<Right as RouteArmHead>::Label>,
 {
     const SOURCE: ProgramSourceData = <Left as BuildProgramSource>::SOURCE.route_with_controller(
         <Right as BuildProgramSource>::SOURCE,
@@ -285,16 +284,8 @@ impl Program<StepNil> {
 
 impl<Steps> Program<Steps> {
     #[inline(always)]
-    const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self { steps: PhantomData }
-    }
-
-    pub(crate) const fn build() -> Self
-    where
-        Steps: BuildProgramSource,
-    {
-        let _ = <Steps as BuildProgramSource>::SOURCE.scope_budget();
-        Self::new()
     }
 
     pub const fn policy<const POLICY_ID: u16>(self) -> Program<PolicySteps<Steps, POLICY_ID>>
@@ -352,8 +343,11 @@ pub(crate) const fn route_binary<LeftSteps, RightSteps>(
     right: Program<RightSteps>,
 ) -> Program<RouteSteps<LeftSteps, RightSteps>>
 where
-    LeftSteps: RouteArmHead + SameRouteController<RightSteps> + DistinctRouteLabels<RightSteps>,
+    LeftSteps: RouteArmHead,
     RightSteps: RouteArmHead + TailLoopControl,
+    <LeftSteps as RouteArmHead>::Controller:
+        SameRouteControllerRole<<RightSteps as RouteArmHead>::Controller>,
+    <LeftSteps as RouteArmHead>::Label: DistinctRouteLabel<<RightSteps as RouteArmHead>::Label>,
 {
     let _ = (left, right);
     Program::new()

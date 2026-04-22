@@ -9,7 +9,7 @@
 use crate::{
     control::cap::mint::ControlOp,
     global::{
-        StaticControlDesc,
+        ControlDesc,
         const_dsl::{ControlScopeKind, PolicyMode},
     },
 };
@@ -195,10 +195,10 @@ impl LeaseGraphBudget {
     #[inline(always)]
     pub(crate) const fn include_atom(
         mut self,
-        control_spec: Option<StaticControlDesc>,
+        control_desc: Option<ControlDesc>,
         policy: PolicyMode,
     ) -> Self {
-        let req = policy_requirements(control_spec, policy);
+        let req = policy_requirements(control_desc, policy);
         if req.delegation_children > self.delegation_children {
             self.delegation_children = req.delegation_children;
         }
@@ -265,37 +265,22 @@ impl LeaseGraphBudget {
 }
 
 #[inline(always)]
-pub(crate) const fn facet_needs(
-    control_spec: Option<StaticControlDesc>,
-    policy: PolicyMode,
-) -> LeaseFacetNeeds {
-    policy_facets(control_spec, policy)
-}
-
-const fn policy_facets(
-    control_spec: Option<StaticControlDesc>,
-    policy: PolicyMode,
-) -> LeaseFacetNeeds {
-    policy_requirements(control_spec, policy).facets
-}
-
-#[inline(always)]
 pub(crate) const fn policy_requirements(
-    control_spec: Option<StaticControlDesc>,
+    control_desc: Option<ControlDesc>,
     policy: PolicyMode,
 ) -> PolicyRequirements {
-    let mut req = match control_spec {
-        Some(spec) => PolicyRequirements::with_facets(base_facets_for_control(spec)),
+    let mut req = match control_desc {
+        Some(desc) => PolicyRequirements::with_facets(base_facets_for_control(desc)),
         None => PolicyRequirements::new(),
     };
 
-    let Some(spec) = control_spec else {
+    let Some(desc) = control_desc else {
         return req;
     };
 
     // Dynamic policies on splice/reroute control ops require additional resources.
     if policy.is_dynamic() {
-        match spec.op() {
+        match desc.op() {
             ControlOp::TopologyBegin | ControlOp::TopologyAck => {
                 req.delegation_children = 2;
                 req.splice_children = 1;
@@ -310,8 +295,8 @@ pub(crate) const fn policy_requirements(
     req
 }
 
-const fn base_facets_for_control(spec: StaticControlDesc) -> LeaseFacetNeeds {
-    let mut facets = match spec.op() {
+const fn base_facets_for_control(desc: ControlDesc) -> LeaseFacetNeeds {
+    let mut facets = match desc.op() {
         ControlOp::TopologyBegin | ControlOp::TopologyAck | ControlOp::TopologyCommit => {
             facets_caps_splice()
         }
@@ -328,7 +313,7 @@ const fn base_facets_for_control(spec: StaticControlDesc) -> LeaseFacetNeeds {
         | ControlOp::LoopBreak => LeaseFacetNeeds::new(),
     };
 
-    if matches!(spec.scope_kind(), ControlScopeKind::Policy) {
+    if matches!(desc.scope_kind(), ControlScopeKind::Policy) {
         facets = facets.union(facets_slots());
     }
 

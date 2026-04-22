@@ -93,15 +93,13 @@ fn run_local_action_flow(
     let mut endpoint = cluster
         .enter(rv_id, sid, &actor_program, NoBinding)
         .expect("attach actor endpoint");
-    let outcome = futures::executor::block_on(
+    let () = futures::executor::block_on(
         endpoint
             .flow::<Msg<7, InstallPayload>>()
             .expect("install flow")
             .send(&payload),
     )
     .expect("local action succeeded");
-
-    assert!(outcome.is_none());
     assert!(transport_queue_is_empty(transport));
 }
 

@@ -3,7 +3,7 @@
 #[cfg(test)]
 use crate::{
     binding::BindingSlot,
-    control::cap::mint::{AllowsCanonical, EpochTable, MintConfigMarker},
+    control::cap::mint::{AllowsEndpointMint, EpochTable, MintConfigMarker},
     endpoint::{
         SendResult,
         flow::{FlowSendArg, send_desc},
@@ -21,7 +21,7 @@ where
     U: LabelUniverse,
     C: Clock,
     E: EpochTable,
-    Mint: MintConfigMarker<Policy: AllowsCanonical>,
+    Mint: MintConfigMarker<Policy: AllowsEndpointMint>,
     B: BindingSlot + 'r,
 {
     pub(crate) fn send_direct<'a, M, A>(

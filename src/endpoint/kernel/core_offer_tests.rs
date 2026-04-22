@@ -8281,7 +8281,8 @@ fn loop_continue_then_nested_custom_route_right_send_stays_well_scoped() {
                                 .port_for_lane(route_right_meta.lane as usize)
                                 .lane(),
                             route_right_meta.scope,
-                            crate::global::StaticControlDesc::of::<RouteHintRightKind>(),
+                            0,
+                            crate::global::ControlDesc::of::<RouteHintRightKind>(),
                             RouteHintRightKind::encode_handle(&(1, route_right_meta.scope.raw())),
                         )
                         .is_ok(),

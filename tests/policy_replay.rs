@@ -1,9 +1,9 @@
 #![cfg(feature = "std")]
 
 use hibana::substrate::{
-    policy::PolicySlot,
+    policy::{ContextValue, PolicyAttrs, PolicySlot, core as policy_core},
     tap::TapEvent,
-    transport::{TransportAlgorithm, TransportSnapshot, TransportSnapshotParts},
+    transport::{TransportAlgorithm, TransportSnapshot},
 };
 
 const POLICY_COMMIT_ID: u16 = 0x0405;
@@ -22,6 +22,34 @@ const ROUTE_DECISION_ID: u16 = 0x0221;
 const TRANSPORT_EVENT_ID: u16 = 0x0212;
 const REPLAY_LOG_CAPACITY: usize = 2048;
 const AUDIT_ROW_CAPACITY: usize = 128;
+
+fn transport_snapshot(
+    latency_us: Option<u64>,
+    queue_depth: Option<u32>,
+    congestion_marks: Option<u32>,
+    retransmissions: Option<u32>,
+) -> TransportSnapshot {
+    let mut attrs = PolicyAttrs::new();
+    if let Some(value) = latency_us {
+        assert!(attrs.insert(policy_core::LATENCY_US, ContextValue::from_u64(value)));
+    }
+    if let Some(value) = queue_depth {
+        assert!(attrs.insert(policy_core::QUEUE_DEPTH, ContextValue::from_u32(value)));
+    }
+    if let Some(value) = congestion_marks {
+        assert!(attrs.insert(
+            policy_core::CONGESTION_MARKS,
+            ContextValue::from_u32(value),
+        ));
+    }
+    if let Some(value) = retransmissions {
+        assert!(attrs.insert(
+            policy_core::RETRANSMISSIONS,
+            ContextValue::from_u32(value),
+        ));
+    }
+    TransportSnapshot::from_policy_attrs(&attrs)
+}
 
 fn raw_event(ts: u32, id: u16) -> TapEvent {
     TapEvent {
@@ -327,13 +355,7 @@ fn replay_transport_snapshot(values: [u32; 4], presence: u8) -> TransportSnapsho
     } else {
         None
     };
-    TransportSnapshot::from_parts(TransportSnapshotParts {
-        latency_us: latency,
-        queue_depth,
-        congestion_marks,
-        retransmissions,
-        ..TransportSnapshotParts::new()
-    })
+    transport_snapshot(latency, queue_depth, congestion_marks, retransmissions)
 }
 
 fn decode_slot_mode(raw: u32) -> Result<(PolicySlot, u8), &'static str> {
@@ -613,13 +635,7 @@ fn public_policy_audit_tuple_roundtrips_logged_inputs() {
         .with_arg1(42)
         .with_arg2(99);
     let input_one = [9, 8, 7, 6];
-    let transport_one = TransportSnapshot::from_parts(TransportSnapshotParts {
-        latency_us: Some(15),
-        queue_depth: Some(3),
-        congestion_marks: Some(2),
-        retransmissions: Some(1),
-        ..TransportSnapshotParts::new()
-    });
+    let transport_one = transport_snapshot(Some(15), Some(3), Some(2), Some(1));
     push_policy_audit_tuple(
         &mut log,
         100,
@@ -636,12 +652,7 @@ fn public_policy_audit_tuple_roundtrips_logged_inputs() {
 
     let event_two = raw_event(12, TRANSPORT_EVENT_ID).with_arg0(3).with_arg1(4);
     let input_two = [1, 2, 3, 4];
-    let transport_two = TransportSnapshot::from_parts(TransportSnapshotParts {
-        queue_depth: Some(1),
-        congestion_marks: None,
-        retransmissions: Some(0),
-        ..TransportSnapshotParts::new()
-    });
+    let transport_two = transport_snapshot(None, Some(1), None, Some(0));
     push_policy_audit_tuple(
         &mut log,
         101,
@@ -692,13 +703,7 @@ fn public_policy_audit_tuple_rejects_corruption() {
 
     let event = raw_event(21, ROUTE_DECISION_ID).with_arg0(1).with_arg1(2);
     let input = [4, 3, 2, 1];
-    let transport = TransportSnapshot::from_parts(TransportSnapshotParts {
-        latency_us: Some(9),
-        queue_depth: Some(1),
-        congestion_marks: Some(0),
-        retransmissions: Some(0),
-        ..TransportSnapshotParts::new()
-    });
+    let transport = transport_snapshot(Some(9), Some(1), Some(0), Some(0));
     push_policy_audit_tuple(
         &mut log,
         200,

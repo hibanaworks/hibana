@@ -1,7 +1,7 @@
 use crate::control::cap::mint::{
     CAP_HANDLE_LEN, CapError, CapShot, ControlOp, ControlPath, ControlResourceKind, ResourceKind,
 };
-use crate::control::cap::resource_kinds::{DelegationHandle, TAG_CAP_DELEGATE_CONTROL};
+use crate::control::cap::atomic_codecs::{DelegationHandle, TAG_CAP_DELEGATE_CONTROL};
 use crate::control::types::{Lane, SessionId};
 use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 
@@ -28,7 +28,7 @@ impl ResourceKind for DelegateControl {
 
 impl ControlResourceKind for DelegateControl {
     const LABEL: u8 = LABEL_DELEGATE_CONTROL;
-    const SCOPE: ControlScopeKind = ControlScopeKind::Reroute;
+    const SCOPE: ControlScopeKind = ControlScopeKind::Delegate;
     const TAP_ID: u16 = crate::observe::ids::ROUTE_PICK;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;

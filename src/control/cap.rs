@@ -5,6 +5,8 @@
 
 /// Capability minting.
 pub(crate) mod mint;
+/// Private codecs for atomic control handles.
+pub(crate) mod atomic_codecs;
 /// Resource kind definitions.
 pub mod resource_kinds;
 /// Typed token wrappers.

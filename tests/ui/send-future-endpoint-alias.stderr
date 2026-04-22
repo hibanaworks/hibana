@@ -28,15 +28,8 @@ note: this call may capture more lifetimes than intended, because Rust 2024 has 
    |
 45 |     let send = flow.send(&Payload(1));
    |                ^^^^^^^^^^^^^^^^^^^^^^
-help: if you can modify this crate, add a precise capturing bound to avoid overcapturing: `+ use<'r, 'a, A, ROLE, M>`
+help: if you can modify this crate, add a precise capturing bound to avoid overcapturing: `+ use<'a, A, O, ROLE, M>`
   --> src/endpoint/flow.rs
    |
-   |       ) -> impl Future<
-   |  __________^
-   | |         Output = SendResult<
-   | |             ControlOutcome<
-   | |                 'r,
-...  |
-   | |         >,
-   | |     > + 'a
-   | |__________^
+   |     ) -> impl Future<Output = SendResult<O>> + 'a
+   |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

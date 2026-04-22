@@ -145,7 +145,7 @@ impl RoleTypestateBuildScratch {
 use crate::{
     eff::{self, EffIndex, EffStruct},
     global::{
-        LoopControlMeaning, StaticControlDesc,
+        ControlDesc, LoopControlMeaning,
         compiled::{images::ControlSemanticKind, lowering::LoweringView},
         const_dsl::{PolicyMode, ScopeEvent, ScopeId, ScopeKind},
         role_program::LaneWord,
@@ -156,7 +156,7 @@ pub(super) trait TypestateProgramView {
     fn as_slice(&self) -> &[EffStruct];
     fn scope_markers(&self) -> &[crate::global::const_dsl::ScopeMarker];
     fn policy_at(&self, offset: usize) -> Option<PolicyMode>;
-    fn control_spec_at(&self, offset: usize) -> Option<StaticControlDesc>;
+    fn control_desc_at(&self, offset: usize) -> Option<ControlDesc>;
     fn first_route_head_dynamic_policy_in_range(
         &self,
         scope_id: ScopeId,
@@ -182,8 +182,8 @@ impl TypestateProgramView for LoweringView<'_> {
     }
 
     #[inline(always)]
-    fn control_spec_at(&self, offset: usize) -> Option<StaticControlDesc> {
-        LoweringView::control_spec_at(self, offset)
+    fn control_desc_at(&self, offset: usize) -> Option<ControlDesc> {
+        LoweringView::control_desc_at(self, offset)
     }
 
     #[inline(always)]
@@ -1302,16 +1302,16 @@ fn handle_atom_for_role<P: TypestateProgramView>(
         Some(policy) => policy.with_scope(current_scope),
         None => PolicyMode::Static,
     };
-    let control_spec = if atom.is_control {
-        program.control_spec_at(eff_idx)
+    let control_desc = if atom.is_control {
+        program.control_desc_at(eff_idx)
     } else {
         None
     };
-    let control_semantic = ControlSemanticKind::from_control_spec(control_spec);
-    let loop_control = LoopControlMeaning::from_control_spec(control_spec);
+    let control_semantic = ControlSemanticKind::from_control_desc(control_desc);
+    let loop_control = LoopControlMeaning::from_control_desc(control_desc);
     let shot = if atom.is_control {
-        match control_spec {
-            Some(spec) => Some(spec.shot),
+        match control_desc {
+            Some(desc) => Some(desc.shot()),
             None => None,
         }
     } else {

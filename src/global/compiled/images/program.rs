@@ -7,7 +7,7 @@ use crate::{
     control::{cap::mint::ControlOp, cluster::effects::EffectEnvelopeRef},
     eff::EffIndex,
     global::{
-        StaticControlDesc,
+        ControlDesc,
         const_dsl::{CompactScopeId, PolicyMode, ScopeId},
     },
 };
@@ -91,7 +91,7 @@ pub(crate) struct RouteControlRecord {
     scope_id: CompactScopeId,
     controller_role: u8,
     route_policy_tag: u8,
-    route_policy_op: ControlOp,
+    route_policy_op: Option<ControlOp>,
     route_policy_id: u16,
     route_policy_eff: EffIndex,
 }
@@ -102,7 +102,7 @@ impl RouteControlRecord {
         scope_id: CompactScopeId::none(),
         controller_role: ROUTE_CONTROL_NONE,
         route_policy_tag: 0,
-        route_policy_op: ControlOp::Fence,
+        route_policy_op: None,
         route_policy_id: u16::MAX,
         route_policy_eff: EffIndex::MAX,
     };
@@ -114,7 +114,7 @@ impl RouteControlRecord {
         route_policy_id: u16,
         route_policy_eff: EffIndex,
         route_policy_tag: u8,
-        route_policy_op: ControlOp,
+        route_policy_op: Option<ControlOp>,
     ) -> Self {
         Self {
             scope_id: CompactScopeId::from_scope_id(scope_id),
@@ -150,6 +150,10 @@ impl RouteControlRecord {
         if self.route_policy_eff.raw() == EffIndex::MAX.raw() {
             return None;
         }
+        let op = match self.route_policy_op {
+            Some(op) => op,
+            None => return None,
+        };
         let policy = if self.route_policy_id == u16::MAX {
             PolicyMode::Static
         } else {
@@ -162,7 +166,7 @@ impl RouteControlRecord {
             policy,
             self.route_policy_eff,
             self.route_policy_tag,
-            self.route_policy_op,
+            op,
         ))
     }
 }
@@ -209,9 +213,9 @@ impl ControlSemanticKind {
     }
 
     #[inline(always)]
-    pub(crate) const fn from_control_spec(spec: Option<StaticControlDesc>) -> Self {
-        match spec {
-            Some(spec) => Self::from_control_op(Some(spec.op())),
+    pub(crate) const fn from_control_desc(desc: Option<ControlDesc>) -> Self {
+        match desc {
+            Some(desc) => Self::from_control_op(Some(desc.op())),
             None => Self::Other,
         }
     }

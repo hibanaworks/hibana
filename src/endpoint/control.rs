@@ -10,8 +10,6 @@ use core::ptr::NonNull;
 
 use crate::{
     control::{
-        cap::mint::{GenericCapToken, ResourceKind},
-        cap::typed_tokens::CapRegisteredToken,
         types::Lane,
     },
     transport::Transport,
@@ -31,50 +29,6 @@ where
 {
     cluster: Option<NonNull<crate::control::cluster::core::SessionCluster<'rv, T, U, C, MAX_RV>>>,
     _marker: core::marker::PhantomData<E>,
-}
-
-/// Outcome of a control payload emission.
-#[derive(Debug)]
-pub enum ControlOutcome<'rv, K: ResourceKind> {
-    /// No control payload was transmitted (pure data message).
-    None,
-    /// Canonical control payload minted locally.
-    Canonical(CapRegisteredToken<'rv, K>),
-    /// External control payload supplied by the caller.
-    External(GenericCapToken<K>),
-}
-
-impl<'rv, K: ResourceKind> ControlOutcome<'rv, K> {
-    #[inline]
-    pub const fn is_none(&self) -> bool {
-        matches!(self, Self::None)
-    }
-
-    #[inline]
-    pub const fn is_canonical(&self) -> bool {
-        matches!(self, Self::Canonical(_))
-    }
-
-    #[inline]
-    pub const fn is_external(&self) -> bool {
-        matches!(self, Self::External(_))
-    }
-
-    #[inline]
-    pub fn into_canonical(self) -> Option<CapRegisteredToken<'rv, K>> {
-        match self {
-            Self::Canonical(token) => Some(token),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub fn into_external(self) -> Option<GenericCapToken<K>> {
-        match self {
-            Self::External(token) => Some(token),
-            _ => None,
-        }
-    }
 }
 
 impl<'rv, T, U, C, E, const MAX_RV: usize> SessionControlCtx<'rv, T, U, C, E, MAX_RV>

@@ -1,0 +1,5 @@
+error[E0425]: cannot find type `CapsMask` in module `hibana::substrate::cap`
+ --> tests/ui/public_caps_mask_reintroduction.rs:2:58
+  |
+2 |     let _ = core::mem::size_of::<hibana::substrate::cap::CapsMask>();
+  |                                                          ^^^^^^^^ not found in `hibana::substrate::cap`

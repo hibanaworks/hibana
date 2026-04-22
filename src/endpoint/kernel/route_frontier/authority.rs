@@ -204,3 +204,32 @@ where
         RoutePolicyDecision::DelegateResolver => delegate_resolver(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::RouteDecisionSource;
+
+    #[test]
+    fn route_authority_exactly_ack_resolver_poll() {
+        assert_eq!(RouteDecisionSource::Ack.as_tap_seq(), 1);
+        assert_eq!(RouteDecisionSource::Resolver.as_tap_seq(), 2);
+        assert_eq!(RouteDecisionSource::Poll.as_tap_seq(), 3);
+
+        assert_eq!(
+            RouteDecisionSource::from_tap_seq(1),
+            Some(RouteDecisionSource::Ack)
+        );
+        assert_eq!(
+            RouteDecisionSource::from_tap_seq(2),
+            Some(RouteDecisionSource::Resolver)
+        );
+        assert_eq!(
+            RouteDecisionSource::from_tap_seq(3),
+            Some(RouteDecisionSource::Poll)
+        );
+
+        for forbidden in [0, 4, u8::MAX] {
+            assert_eq!(RouteDecisionSource::from_tap_seq(forbidden), None);
+        }
+    }
+}

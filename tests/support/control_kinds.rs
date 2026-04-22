@@ -63,10 +63,10 @@ impl<const KIND_LABEL: u8, const ARM: u8> ControlResourceKind for RouteControl<K
 const fn scope_kind(scope: u8) -> ControlScopeKind {
     match scope {
         1 => ControlScopeKind::Loop,
-        2 => ControlScopeKind::Checkpoint,
-        3 => ControlScopeKind::Cancel,
-        4 => ControlScopeKind::Splice,
-        5 => ControlScopeKind::Reroute,
+        2 => ControlScopeKind::State,
+        3 => ControlScopeKind::Abort,
+        4 => ControlScopeKind::Topology,
+        5 => ControlScopeKind::Delegate,
         6 => ControlScopeKind::Policy,
         7 => ControlScopeKind::Route,
         _ => ControlScopeKind::None,

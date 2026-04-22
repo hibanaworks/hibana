@@ -9,7 +9,6 @@ use super::program_lowering::{
 use super::program_tail_storage::CompiledProgramTailStorage;
 use crate::control::cluster::effects::ResourceDescriptor;
 use crate::eff::{EffIndex, EffKind};
-use crate::global::StaticControlDesc;
 use crate::global::const_dsl::PolicyMode;
 use core::ptr;
 
@@ -67,7 +66,7 @@ pub(crate) unsafe fn init_compiled_program_image_from_summary(
                 None => PolicyMode::Static,
             };
             let atom = node.atom_data();
-            let control_spec = view.control_spec_at(offset);
+            let control_desc = view.control_desc_at(offset);
             let resource_policy_site = if policy.is_dynamic() {
                 compiled_program_push_dynamic_policy_site(
                     dynamic_policy_sites,
@@ -76,7 +75,7 @@ pub(crate) unsafe fn init_compiled_program_image_from_summary(
                         EffIndex::from_usize(offset),
                         atom.label,
                         atom.resource,
-                        control_spec.map(StaticControlDesc::op),
+                        control_desc.map(crate::global::ControlDesc::op),
                         policy,
                     ),
                 )
@@ -90,7 +89,7 @@ pub(crate) unsafe fn init_compiled_program_image_from_summary(
                 offset,
                 policy,
                 resource_policy_site,
-                control_spec,
+                control_desc,
             );
         }
         offset += 1;

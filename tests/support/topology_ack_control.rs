@@ -36,8 +36,8 @@ impl ResourceKind for TopologyAckControl {
 
 impl ControlResourceKind for TopologyAckControl {
     const LABEL: u8 = LABEL_TOPOLOGY_ACK_CONTROL;
-    const SCOPE: ControlScopeKind = ControlScopeKind::Splice;
-    const TAP_ID: u16 = 0;
+    const SCOPE: ControlScopeKind = ControlScopeKind::Topology;
+    const TAP_ID: u16 = 0x0300 + LABEL_TOPOLOGY_ACK_CONTROL as u16;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Wire;
     const OP: ControlOp = ControlOp::TopologyAck;

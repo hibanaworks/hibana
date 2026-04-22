@@ -1,7 +1,7 @@
 //! CapMint 2.0 primitives for capability minting and validation.
 //!
 //! Hibana mints control tokens through const-first strategies baked into
-//! `RoleProgram` and endpoint-owned canonical control send paths, with
+//! `RoleProgram` and endpoint-owned local control send paths, with
 //! rendezvous tables enforcing nonce/tag side effects via
 //! `Rendezvous::mint_cap()` and `Rendezvous::claim_cap()`.
 //!
@@ -50,7 +50,7 @@
 //!
 //! # Usage Pattern
 //!
-//! ## SessionCluster-driven canonical minting
+//! ## SessionCluster-driven endpoint minting
 //!
 //! ```rust,ignore
 //! let controller = cluster.enter(rv_id, sid, &CONTROLLER, hibana::substrate::binding::NoBinding)?;
@@ -155,11 +155,11 @@ impl CapPolicyId {
     }
 }
 
-/// Static metadata describing whether canonical control payloads are permitted.
+/// Static metadata describing whether endpoint minting is permitted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CapPolicyKind {
-    Canonical,
-    External,
+    Endpoint,
+    Caller,
 }
 
 /// Seed provided by the rendezvous during minting.
@@ -214,27 +214,27 @@ impl CapMintSpec for NullMintSpec {
     }
 }
 
-/// Trait describing canonical vs. external mint policies.
+/// Trait describing endpoint-vs-caller mint policies.
 pub trait CapMintPolicy {
     const POLICY_ID: CapPolicyId;
     const KIND: CapPolicyKind;
-    const ALLOWS_CANONICAL: bool;
+    const ALLOWS_ENDPOINT_MINT: bool;
 }
 
-/// Canonical mint policy – endpoint may mint canonical control payloads.
+/// Endpoint mint policy – the attached endpoint may mint control payloads.
 #[derive(Clone, Copy, Debug)]
-pub struct CanonicalPolicy;
+pub struct EndpointMintPolicy;
 
-impl CapMintPolicy for CanonicalPolicy {
+impl CapMintPolicy for EndpointMintPolicy {
     const POLICY_ID: CapPolicyId = CapPolicyId::new(0);
-    const KIND: CapPolicyKind = CapPolicyKind::Canonical;
-    const ALLOWS_CANONICAL: bool = true;
+    const KIND: CapPolicyKind = CapPolicyKind::Endpoint;
+    const ALLOWS_ENDPOINT_MINT: bool = true;
 }
 
-/// Marker trait implemented by policies that permit canonical minting.
-pub trait AllowsCanonical {}
+/// Marker trait implemented by policies that permit endpoint minting.
+pub trait AllowsEndpointMint {}
 
-impl AllowsCanonical for CanonicalPolicy {}
+impl AllowsEndpointMint for EndpointMintPolicy {}
 
 /// Zero-sized minting strategy wrapper.
 #[derive(Debug, Default)]
@@ -279,7 +279,7 @@ impl<S: CapMintSpec> CapMintStrategy<S> {
 
 /// Zero-sized mint configuration baked into role programs.
 #[derive(Debug)]
-pub struct MintConfig<S: CapMintSpec = NullMintSpec, P: CapMintPolicy = CanonicalPolicy> {
+pub struct MintConfig<S: CapMintSpec = NullMintSpec, P: CapMintPolicy = EndpointMintPolicy> {
     strategy: CapMintStrategy<S>,
     _policy: PhantomData<P>,
 }
@@ -333,8 +333,8 @@ impl<S: CapMintSpec, P: CapMintPolicy> MintConfig<S, P> {
     }
 
     #[inline(always)]
-    pub const fn allows_canonical(&self) -> bool {
-        P::ALLOWS_CANONICAL
+    pub const fn allows_endpoint_mint(&self) -> bool {
+        P::ALLOWS_ENDPOINT_MINT
     }
 
     #[inline(always)]
@@ -459,41 +459,6 @@ impl ResourceKind for () {
     }
 
     fn zeroize(_handle: &mut Self::Handle) {}
-}
-
-/// Trait for control kinds that can mint their handle from basic context.
-///
-/// This trait enables external crates to define their own local control
-/// message types without modifying hibana core. The generic control-token
-/// minting path uses this trait when the control kind does not require
-/// specialized handle preparation.
-///
-/// # Example
-///
-/// ```ignore
-/// use hibana::substrate::cap::advanced::ScopeId;
-/// use hibana::substrate::{Lane, SessionId};
-/// use hibana::substrate::cap::{ControlMint, ResourceKind};
-///
-/// struct MyMarkerKind;
-///
-/// impl ResourceKind for MyMarkerKind {
-///     type Handle = ();
-///     // ... other required items
-/// }
-///
-/// impl ControlMint for MyMarkerKind {
-///     fn mint_handle(_sid: SessionId, _lane: Lane, _scope: ScopeId) -> Self::Handle {
-///         () // No handle data needed for simple markers
-///     }
-/// }
-/// ```
-pub(crate) trait ControlMint: ResourceKind {
-    /// Create a handle from session/lane/scope context.
-    ///
-    /// For simple control kinds (like markers), this typically returns `()`.
-    /// For session-scoped kinds, this returns `(sid.raw(), lane.raw() as u16)`.
-    fn mint_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> Self::Handle;
 }
 
 /// Handle describing an endpoint rendezvous slot.
@@ -966,9 +931,8 @@ const fn scope_hint_from_header(header: CapHeader) -> Option<ScopeId> {
 
 /// Typed view over a capability handle exposed to the EPF VM.
 ///
-/// The view carries the original resource payload and the capability mask baked
-/// into the token so that policies can reason about both without reinterpreting
-/// the token header.
+/// The view carries the original resource payload together with the structured
+/// scope hint recovered from the descriptor-first control header.
 pub struct HandleView<'ctx, K: ResourceKind> {
     raw: &'ctx [u8; CAP_HANDLE_LEN],
     handle: K::Handle,
@@ -1047,16 +1011,23 @@ pub enum CapError {
     Mismatch,
 }
 
-/// Capability token wire format: `[nonce | header | tag]` = `[16B | 32B | 16B]`.
+/// Capability token wire format: `[nonce | header | tag]` = `[16B | 40B | 16B]`.
 ///
-/// Header layout (big-endian values unless noted):
-/// - `[0..4)`      — session id
-/// - `[4]`         — lane id in wire form
-/// - `[5]`         — role id for endpoint resources (0 for others)
-/// - `[6]`         — resource tag (`ResourceKind::TAG`)
-/// - `[7]`         — shot discipline (`CapShot::as_u8()`)
-/// - `[8..10)`     — capability mask bits
-/// - `[10..32)`    — resource-specific payload supplied by `ResourceKind`
+/// Header layout:
+/// - `[0]`         — version
+/// - `[1..5)`      — session id
+/// - `[5]`         — lane id in wire form
+/// - `[6]`         — role id for endpoint resources (0 for others)
+/// - `[7]`         — resource tag (`ResourceKind::TAG`)
+/// - `[8]`         — control label
+/// - `[9]`         — atomic control op (`ControlOp::as_u8()`)
+/// - `[10]`        — control path (`ControlPath::as_u8()`)
+/// - `[11]`        — shot discipline (`CapShot::as_u8()`)
+/// - `[12]`        — scope kind
+/// - `[13]`        — descriptor flags
+/// - `[14..16)`    — compact scope id
+/// - `[16..18)`    — epoch
+/// - `[18..40)`    — resource-specific payload supplied by `ResourceKind`
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GenericCapToken<K: ResourceKind> {
@@ -1330,7 +1301,7 @@ impl<K: ResourceKind> Drop for VerifiedCap<K> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CapHeader, ControlOp, ControlScopeKind};
+    use super::{CapHeader, ControlOp, ControlResourceKind, ControlScopeKind};
     use super::{CapShot, E0, EndpointHandle, EndpointResource, HandleView, Owner, ResourceKind};
     use crate::{
         control::{
@@ -1404,8 +1375,8 @@ mod tests {
     /// This tests the mint → HandleView extraction chain:
     /// 1. Create a token with embedded handle
     /// 2. Extract HandleView via as_view()
-    /// 3. Verify handle, caps_mask, and bytes match
-    /// 4. Verify caps_mask is correctly embedded in header
+    /// 3. Verify descriptor/header fields survive round-trip
+    /// 4. Verify handle bytes survive round-trip
     #[test]
     fn generic_cap_token_as_view() {
         use super::{CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TAG_LEN, GenericCapToken};
@@ -1450,6 +1421,40 @@ mod tests {
         assert_eq!(header.role(), handle.role);
     }
 
+    #[test]
+    fn cap_header_decode_rejects_unknown_atomic_fields() {
+        let mut raw = [0u8; super::CAP_HEADER_LEN];
+        CapHeader::new(
+            SessionId::new(7),
+            Lane::new(3),
+            1,
+            LoopContinueKind::TAG,
+            LoopContinueKind::LABEL,
+            LoopContinueKind::OP,
+            LoopContinueKind::PATH,
+            CapShot::One,
+            LoopContinueKind::SCOPE,
+            0,
+            1,
+            2,
+            LoopContinueKind::encode_handle(&LoopDecisionHandle {
+                sid: 7,
+                lane: 3,
+                scope: ScopeId::loop_scope(1),
+            }),
+        )
+        .encode(&mut raw);
+
+        for (index, value) in [(9usize, 0xFF), (10, 0xFF), (11, 0xFF), (12, 0xFF)] {
+            let mut corrupted = raw;
+            corrupted[index] = value;
+            assert!(
+                matches!(CapHeader::decode(corrupted), Err(super::CapError::Mismatch)),
+                "unknown control header field at byte {index} must fail closed",
+            );
+        }
+    }
+
     #[cfg(feature = "std")]
     mod proptests {
         use super::*;
@@ -1473,8 +1478,8 @@ mod tests {
 
             /// Property test for `LoopContinueKind`.
             ///
-            /// The handle is represented as a `(u32, u16)` tuple; verify that
-            /// `caps_mask` matches `HandleView::grant_mask()`.
+            /// The handle is represented as a `(u32, u16, scope)` payload;
+            /// verify that HandleView preserves the typed handle and bytes.
             #[test]
             fn handle_view_loop_continue_roundtrip(
                 generation in 0u32..10000,

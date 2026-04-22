@@ -1,0 +1,12 @@
+error[E0432]: unresolved imports `hibana::substrate::cap::advanced::LoadBeginKind`, `hibana::substrate::cap::advanced::LoadCommitKind`, `hibana::substrate::cap::advanced::PolicyActivateKind`, `hibana::substrate::cap::advanced::PolicyAnnotateKind`, `hibana::substrate::cap::advanced::PolicyLoadKind`, `hibana::substrate::cap::advanced::PolicyRevertKind`
+ --> tests/ui/core_policy_lifecycle_kind_reintroduction.rs:2:5
+  |
+2 |     LoadBeginKind, LoadCommitKind, PolicyActivateKind, PolicyAnnotateKind, PolicyLoadKind,
+  |     ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^ no `PolicyLoadKind` in `substrate::cap::advanced`
+  |     |              |               |                   |
+  |     |              |               |                   no `PolicyAnnotateKind` in `substrate::cap::advanced`
+  |     |              |               no `PolicyActivateKind` in `substrate::cap::advanced`
+  |     |              no `LoadCommitKind` in `substrate::cap::advanced`
+  |     no `LoadBeginKind` in `substrate::cap::advanced`
+3 |     PolicyRevertKind,
+  |     ^^^^^^^^^^^^^^^^ no `PolicyRevertKind` in `substrate::cap::advanced`

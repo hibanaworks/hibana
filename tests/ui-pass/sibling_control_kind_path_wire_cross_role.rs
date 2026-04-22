@@ -1,0 +1,51 @@
+use hibana::g;
+use hibana::substrate::{
+    cap::{CapShot, ControlResourceKind, GenericCapToken, ResourceKind},
+    cap::advanced::{
+        CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId,
+    },
+};
+
+struct WireKind;
+
+impl ResourceKind for WireKind {
+    type Handle = ();
+    const TAG: u8 = 0x72;
+    const NAME: &'static str = "WireKind";
+
+    fn encode_handle(_handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
+        [0; CAP_HANDLE_LEN]
+    }
+
+    fn decode_handle(_data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
+        Ok(())
+    }
+
+    fn zeroize(_handle: &mut Self::Handle) {}
+}
+
+impl ControlResourceKind for WireKind {
+    const LABEL: u8 = 122;
+    const SCOPE: ControlScopeKind = ControlScopeKind::Policy;
+    const PATH: ControlPath = ControlPath::Wire;
+    const TAP_ID: u16 = 0x0472;
+    const SHOT: CapShot = CapShot::One;
+    const OP: ControlOp = ControlOp::TxCommit;
+    const AUTO_MINT_WIRE: bool = false;
+
+    fn mint_handle(
+        _session: hibana::substrate::SessionId,
+        _lane: hibana::substrate::Lane,
+        _scope: ScopeId,
+    ) -> Self::Handle {
+    }
+}
+
+fn main() {
+    let _ = g::send::<
+        g::Role<0>,
+        g::Role<1>,
+        g::Msg<122, GenericCapToken<WireKind>, WireKind>,
+        0,
+    >();
+}

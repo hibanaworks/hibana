@@ -231,7 +231,7 @@ struct TransportPool {
     initialized: UnsafeCell<[bool; TEST_TRANSPORT_POOL_CAPACITY]>,
     refs: UnsafeCell<[usize; TEST_TRANSPORT_POOL_CAPACITY]>,
     states: UnsafeCell<[MaybeUninit<TestState>; TEST_TRANSPORT_POOL_CAPACITY]>,
-    metrics: UnsafeCell<[TransportSnapshot; TEST_TRANSPORT_POOL_CAPACITY]>,
+    metrics: UnsafeCell<[MaybeUninit<TransportSnapshot>; TEST_TRANSPORT_POOL_CAPACITY]>,
 }
 
 impl TransportPool {
@@ -243,9 +243,7 @@ impl TransportPool {
                 [const { MaybeUninit::uninit() }; TEST_TRANSPORT_POOL_CAPACITY],
             ),
             metrics: UnsafeCell::new(
-                [TransportSnapshot::from_parts(
-                    hibana::substrate::transport::TransportSnapshotParts::new(),
-                ); TEST_TRANSPORT_POOL_CAPACITY],
+                [const { MaybeUninit::uninit() }; TEST_TRANSPORT_POOL_CAPACITY],
             ),
         }
     }
@@ -276,9 +274,7 @@ impl TransportPool {
                     self.ensure_slot_initialized(idx);
                     refs[idx] = 1;
                     (&mut *states[idx].as_mut_ptr()).reset();
-                    metrics[idx] = TransportSnapshot::from_parts(
-                        hibana::substrate::transport::TransportSnapshotParts::new(),
-                    );
+                    metrics[idx].write(TransportSnapshot::default());
                     return Some(idx);
                 }
                 idx += 1;
@@ -313,7 +309,7 @@ impl TransportPool {
     }
 
     fn metrics_get(&self, idx: usize) -> TransportSnapshot {
-        unsafe { (*self.metrics.get())[idx] }
+        unsafe { (*self.metrics.get())[idx].assume_init_read() }
     }
 }
 

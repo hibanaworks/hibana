@@ -24,7 +24,7 @@ use crate::binding::{BindingSlot, IncomingClassification, NoBinding};
 use crate::eff::EffIndex;
 #[cfg(test)]
 use crate::global::LoopControlMeaning;
-use crate::global::StaticControlDesc;
+use crate::global::ControlDesc;
 use crate::global::compiled::images::{ControlSemanticKind, ControlSemanticsTable};
 use crate::global::const_dsl::{PolicyMode, ScopeId, ScopeKind};
 use crate::global::role_program::LaneSetView;
@@ -37,9 +37,9 @@ use crate::global::{MessageSpec, SendableLabel};
 use crate::{
     control::types::{Lane, RendezvousId, SessionId},
     control::{
+        cap::atomic_codecs::{TopologyHandle, topology_flags},
         cap::resource_kinds::{
-            LoopBreakKind, LoopContinueKind, LoopDecisionHandle, RouteArmHandle, TopologyHandle,
-            splice_flags,
+            LoopBreakKind, LoopContinueKind, LoopDecisionHandle, RouteArmHandle,
         },
         cap::{
             mint::{
@@ -575,7 +575,7 @@ where
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct RawCapFlowToken {
+pub struct RawCapFlowToken {
     bytes: [u8; CAP_TOKEN_LEN],
 }
 
@@ -592,25 +592,48 @@ impl RawCapFlowToken {
 }
 
 struct PreparedSendControl {
-    minted_token: Option<RawCapFlowToken>,
+    minted_control: Option<MintedControlToken>,
     stage_payload: StageSendPayloadFn,
-    dispatch_control: Option<crate::global::StaticControlDesc>,
 }
 
 #[derive(Clone, Copy)]
-enum StagedSendControl {
+struct DescriptorDispatch {
+    desc: ControlDesc,
+    scope_id: u16,
+    epoch: u16,
+}
+
+impl DescriptorDispatch {
+    #[inline(always)]
+    const fn new(desc: ControlDesc, scope: ScopeId, epoch: u16) -> Self {
+        Self {
+            desc,
+            scope_id: scope.local_ordinal(),
+            epoch,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct MintedControlToken {
+    token: RawCapFlowToken,
+    dispatch: DescriptorDispatch,
+}
+
+#[derive(Clone, Copy)]
+enum StagedControlEmission {
     None,
-    Canonical(RawCapFlowToken),
-    External {
+    Registered(RawCapFlowToken),
+    Emitted {
         dispatch_token: Option<RawCapFlowToken>,
-        external_token: Option<RawCapFlowToken>,
+        emitted_token: Option<RawCapFlowToken>,
     },
 }
 
 enum DispatchSendTokenResult {
     None,
     Registered(RegisteredTokenParts),
-    CanonicalFallback,
+    RegisteredFallback,
 }
 
 type StageSendPayloadFn = for<'payload, 'scratch> fn(
@@ -623,20 +646,20 @@ type EncodeControlHandleFn = fn(SessionId, Lane, ScopeId) -> [u8; CAP_HANDLE_LEN
 
 struct StagedSendPayload {
     encoded_len: usize,
-    control: StagedSendControl,
+    control: StagedControlEmission,
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct SendTransportEmission {
-    control: StagedSendControl,
-    dispatch_control: Option<crate::global::StaticControlDesc>,
+    control: StagedControlEmission,
+    dispatch: Option<DescriptorDispatch>,
 }
 
 pub(crate) struct PendingSendIo<'r> {
     transport: lane_port::PendingSend<'r>,
     lane_idx: usize,
-    control: Option<StagedSendControl>,
-    dispatch_control: Option<crate::global::StaticControlDesc>,
+    control: Option<StagedControlEmission>,
+    dispatch: Option<DescriptorDispatch>,
 }
 
 enum SendTransportStep<'r> {
@@ -658,17 +681,17 @@ enum SendInitOutcome<'r> {
     },
 }
 
-pub(crate) enum SendControlOutcome<'rv> {
+pub enum SendControlOutcome<'rv> {
     None,
-    Canonical(RawRegisteredCapToken<'rv>),
-    External(RawCapFlowToken),
+    Registered(RawRegisteredCapToken<'rv>),
+    Emitted(RawCapFlowToken),
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct SendDesc {
     label: u8,
     expects_control: bool,
-    control: Option<crate::global::StaticControlDesc>,
+    control: Option<ControlDesc>,
     encode_control_handle: Option<EncodeControlHandleFn>,
 }
 
@@ -677,7 +700,7 @@ impl SendDesc {
     pub(crate) const fn new(
         label: u8,
         expects_control: bool,
-        control: Option<crate::global::StaticControlDesc>,
+        control: Option<ControlDesc>,
         encode_control_handle: Option<EncodeControlHandleFn>,
     ) -> Self {
         Self {
@@ -694,7 +717,7 @@ impl SendDesc {
     }
 
     #[inline]
-    pub(crate) const fn control(self) -> Option<crate::global::StaticControlDesc> {
+    pub(crate) const fn control(self) -> Option<ControlDesc> {
         self.control
     }
 
@@ -719,7 +742,6 @@ pub(crate) enum SendState<'r> {
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
         emission: SendTransportEmission,
-        control: Option<crate::global::StaticControlDesc>,
     },
     Done,
 }
@@ -1076,7 +1098,7 @@ where
         cx: &mut core::task::Context<'_>,
     ) -> Poll<SendResult<SendControlOutcome<'r>>>
     where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
         let mut send_state = core::mem::replace(&mut self.public_send_state, SendState::Done);
         match self.poll_send_state(descriptor, &mut send_state, cx) {
@@ -2143,7 +2165,7 @@ where
         &mut self,
         meta: &SendMeta,
         target_label: u8,
-        control: Option<StaticControlDesc>,
+        control: Option<ControlDesc>,
     ) -> SendResult<()> {
         if !meta.policy().is_dynamic() {
             return Ok(());
@@ -3055,7 +3077,6 @@ where
                     source: DeferSource::Resolver,
                 });
             }
-            _ => return Err(RecvError::PhaseInvariant),
         };
         let arm = Arm::new(arm).ok_or(RecvError::PhaseInvariant)?;
         self.record_route_decision_for_scope_lanes(scope_id, arm.as_u8(), offer_lane);
@@ -3185,12 +3206,12 @@ where
         let data = payload.ok_or(SendError::PhaseInvariant)?;
         Ok(StagedSendPayload {
             encoded_len: data.encode_into(scratch)?,
-            control: StagedSendControl::None,
+            control: StagedControlEmission::None,
         })
     }
 
     #[inline(always)]
-    fn stage_canonical_send_payload(
+    fn stage_registered_send_payload(
         minted_token: Option<RawCapFlowToken>,
         payload: Option<lane_port::RawSendPayload>,
         scratch: &mut [u8],
@@ -3203,12 +3224,12 @@ where
         scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
         Ok(StagedSendPayload {
             encoded_len: CAP_TOKEN_LEN,
-            control: StagedSendControl::Canonical(token),
+            control: StagedControlEmission::Registered(token),
         })
     }
 
     #[inline(always)]
-    fn stage_external_send_payload(
+    fn stage_emitted_send_payload(
         minted_token: Option<RawCapFlowToken>,
         payload: Option<lane_port::RawSendPayload>,
         scratch: &mut [u8],
@@ -3218,9 +3239,9 @@ where
             scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
             return Ok(StagedSendPayload {
                 encoded_len: CAP_TOKEN_LEN,
-                control: StagedSendControl::External {
+                control: StagedControlEmission::Emitted {
                     dispatch_token: Some(token),
-                    external_token: Some(token),
+                    emitted_token: Some(token),
                 },
             });
         }
@@ -3228,9 +3249,9 @@ where
         let data = payload.ok_or(SendError::PhaseInvariant)?;
         Ok(StagedSendPayload {
             encoded_len: data.encode_into(scratch)?,
-            control: StagedSendControl::External {
+            control: StagedControlEmission::Emitted {
                 dispatch_token: None,
-                external_token: None,
+                emitted_token: None,
             },
         })
     }
@@ -3242,11 +3263,12 @@ where
         shot: CapShot,
         lane: Lane,
         scope: ScopeId,
-        control: crate::global::StaticControlDesc,
+        epoch: u16,
+        control: ControlDesc,
         handle_bytes: [u8; CAP_HANDLE_LEN],
-    ) -> SendResult<[u8; CAP_TOKEN_LEN]>
+    ) -> SendResult<MintedControlToken>
     where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
         let rendezvous = cluster
@@ -3278,24 +3300,29 @@ where
             control.path(),
             shot,
             control.scope_kind(),
-            if control.auto_mint_wire() { 1 } else { 0 },
+            control.header_flags(),
             scope.local_ordinal(),
-            0,
+            epoch,
             handle_bytes,
         )
         .encode(&mut header);
         let tag = strategy.derive_tag(&nonce, &header);
-        Ok(GenericCapToken::<()>::from_parts(nonce, header, tag).bytes)
+        Ok(MintedControlToken {
+            token: RawCapFlowToken {
+                bytes: GenericCapToken::<()>::from_parts(nonce, header, tag).bytes,
+            },
+            dispatch: DescriptorDispatch::new(control, scope, epoch),
+        })
     }
 
     #[inline(never)]
-    fn mint_send_token(
+    fn mint_send_control(
         &mut self,
         meta: SendMeta,
         descriptor: SendDesc,
-    ) -> SendResult<Option<RawCapFlowToken>>
+    ) -> SendResult<Option<MintedControlToken>>
     where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
         let Some(control) = descriptor.control() else {
             return Ok(None);
@@ -3308,20 +3335,20 @@ where
 
         let lane = self.port_for_lane(meta.lane as usize).lane();
         let shot = meta.shot.ok_or(SendError::PhaseInvariant)?;
-        let bytes = match control.op() {
+        let minted = match control.op() {
             ControlOp::LoopContinue => {
-                self.canonical_loop_continue_control_bytes(&meta, shot, lane)?
+                self.mint_local_loop_continue_control(&meta, shot, lane)?
             }
-            ControlOp::LoopBreak => self.canonical_loop_break_control_bytes(&meta, shot, lane)?,
+            ControlOp::LoopBreak => self.mint_local_loop_break_control(&meta, shot, lane)?,
             ControlOp::CapDelegate => {
                 let cp_lane = Lane::new(lane.raw());
                 let src_rv = RendezvousId::new(self.rendezvous_id().raw());
-                self.canonical_reroute_control_bytes(&meta, shot, lane, src_rv, cp_lane, control)?
+                self.mint_local_reroute_control(&meta, shot, lane, src_rv, cp_lane, control)?
             }
             ControlOp::RouteDecision => {
                 let cp_lane = Lane::new(lane.raw());
                 let src_rv = RendezvousId::new(self.rendezvous_id().raw());
-                self.canonical_route_decision_control_bytes(
+                self.mint_local_route_decision_control(
                     &meta, shot, lane, src_rv, cp_lane, control,
                 )?
             }
@@ -3329,13 +3356,13 @@ where
                 let cp_sid = SessionId::new(self.sid.raw());
                 let cp_lane = Lane::new(lane.raw());
                 let src_rv = RendezvousId::new(self.rendezvous_id().raw());
-                self.canonical_splice_intent_control_bytes(
+                self.mint_local_splice_intent_control(
                     &meta, shot, lane, src_rv, cp_sid, cp_lane, control,
                 )?
             }
             ControlOp::TopologyAck => {
                 let cp_sid = SessionId::new(self.sid.raw());
-                self.canonical_splice_ack_control_bytes(&meta, shot, lane, cp_sid, control)?
+                self.mint_local_splice_ack_control(&meta, shot, lane, cp_sid, control)?
             }
             _ => {
                 let encode_control_handle = descriptor
@@ -3346,37 +3373,40 @@ where
                     shot,
                     lane,
                     meta.scope,
+                    0,
                     control,
                     encode_control_handle(self.sid, lane, meta.scope),
                 )?
             }
         };
-        Ok(Some(RawCapFlowToken { bytes }))
+        Ok(Some(minted))
     }
 
     #[inline(never)]
     fn dispatch_send_token(
         &self,
-        control: Option<crate::global::StaticControlDesc>,
+        dispatch: Option<DescriptorDispatch>,
         token: RawCapFlowToken,
-        allow_canonical_fallback: bool,
+        allow_registered_fallback: bool,
     ) -> SendResult<DispatchSendTokenResult> {
-        let Some(control) = control else {
+        let Some(dispatch) = dispatch else {
             return Ok(DispatchSendTokenResult::None);
         };
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
         match cluster.dispatch_descriptor_control_frame(
             self.rendezvous_id(),
             token.bytes(),
-            control,
+            dispatch.desc,
+            dispatch.scope_id,
+            dispatch.epoch,
             None,
         ) {
             Ok(parts) => Ok(DispatchSendTokenResult::Registered(parts)),
-            Err(CpError::Authorisation { operation }) if allow_canonical_fallback => {
+            Err(CpError::Authorisation { operation }) if allow_registered_fallback => {
                 if operation != ControlOp::TopologyAck as u8 {
                     return Err(SendError::PhaseInvariant);
                 }
-                Ok(DispatchSendTokenResult::CanonicalFallback)
+                Ok(DispatchSendTokenResult::RegisteredFallback)
             }
             Err(_) => Err(SendError::PhaseInvariant),
         }
@@ -3389,7 +3419,7 @@ where
         descriptor: SendDesc,
     ) -> SendResult<PreparedSendControl>
     where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
         if meta.is_control != descriptor.expects_control {
             return Err(SendError::PhaseInvariant);
@@ -3408,19 +3438,18 @@ where
         );
         self.apply_send_policy(policy_action, meta.scope, lane)?;
 
-        let minted_token = self.mint_send_token(meta, descriptor)?;
+        let minted_control = self.mint_send_control(meta, descriptor)?;
         let stage_payload = match control {
             None => Self::stage_data_send_payload,
             Some(control) => match control.path() {
-                crate::control::cap::mint::ControlPath::Local => Self::stage_canonical_send_payload,
-                crate::control::cap::mint::ControlPath::Wire => Self::stage_external_send_payload,
+                crate::control::cap::mint::ControlPath::Local => Self::stage_registered_send_payload,
+                crate::control::cap::mint::ControlPath::Wire => Self::stage_emitted_send_payload,
             },
         };
 
         Ok(PreparedSendControl {
-            minted_token,
+            minted_control,
             stage_payload,
-            dispatch_control: control,
         })
     }
 
@@ -3437,7 +3466,11 @@ where
         };
         let staged_send = {
             let scratch = unsafe { &mut *scratch_ptr };
-            (prepared.stage_payload)(prepared.minted_token, payload, scratch)?
+            (prepared.stage_payload)(
+                prepared.minted_control.map(|control| control.token),
+                payload,
+                scratch,
+            )?
         };
         let encoded_len = staged_send.encoded_len;
 
@@ -3479,12 +3512,12 @@ where
                 transport: pending_transport.ok_or(SendError::PhaseInvariant)?,
                 lane_idx: meta.lane as usize,
                 control: Some(staged_send.control),
-                dispatch_control: prepared.dispatch_control,
+                dispatch: prepared.minted_control.map(|control| control.dispatch),
             }))
         } else {
             Ok(SendTransportStep::Immediate(SendTransportEmission {
                 control: staged_send.control,
-                dispatch_control: prepared.dispatch_control,
+                dispatch: prepared.minted_control.map(|control| control.dispatch),
             }))
         }
     }
@@ -3498,7 +3531,7 @@ where
         payload: Option<lane_port::RawSendPayload>,
     ) -> SendInitOutcome<'r>
     where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
         let prepared = match self.prepare_send_control(meta, descriptor) {
             Ok(prepared) => prepared,
@@ -3539,11 +3572,10 @@ where
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
         emission: SendTransportEmission,
-        control: Option<crate::global::StaticControlDesc>,
     ) -> SendResult<SendControlOutcome<'r>> {
         self.commit_send_after_emit(preview_cursor_index, meta)?;
         self.emit_send_after_transport_event(meta);
-        self.resolve_send_control_outcome(emission, control)
+        self.resolve_send_control_outcome(emission)
     }
 
     #[inline(never)]
@@ -3569,80 +3601,79 @@ where
     fn resolve_send_control_outcome(
         &mut self,
         emission: SendTransportEmission,
-        control: Option<crate::global::StaticControlDesc>,
     ) -> SendResult<SendControlOutcome<'r>> {
         match emission.control {
-            StagedSendControl::None => Ok(SendControlOutcome::None),
-            StagedSendControl::Canonical(token) => self.resolve_canonical_send_control_outcome(
-                emission.dispatch_control,
-                token,
-                control,
-            ),
-            StagedSendControl::External {
+            StagedControlEmission::None => Ok(SendControlOutcome::None),
+            StagedControlEmission::Registered(token) => {
+                self.resolve_registered_send_control_outcome(emission.dispatch, token)
+            }
+            StagedControlEmission::Emitted {
                 dispatch_token,
-                external_token,
-            } => self.resolve_external_send_control_outcome(
-                emission.dispatch_control,
+                emitted_token,
+            } => self.resolve_emitted_send_control_outcome(
+                emission.dispatch,
                 dispatch_token,
-                external_token,
-                control,
+                emitted_token,
             ),
         }
     }
 
     #[inline(never)]
-    fn resolve_canonical_send_control_outcome(
+    fn resolve_registered_send_control_outcome(
         &self,
-        dispatch_control: Option<crate::global::StaticControlDesc>,
+        dispatch: Option<DescriptorDispatch>,
         token: RawCapFlowToken,
-        control: Option<crate::global::StaticControlDesc>,
     ) -> SendResult<SendControlOutcome<'r>> {
         match self.dispatch_send_token(
-            dispatch_control,
+            dispatch,
             token,
             matches!(
-                control,
-                Some(control)
-                    if matches!(control.path(), crate::control::cap::mint::ControlPath::Local)
+                dispatch,
+                Some(dispatch)
+                    if matches!(dispatch.desc.path(), crate::control::cap::mint::ControlPath::Local)
             ),
         )? {
-            DispatchSendTokenResult::Registered(parts) => Ok(SendControlOutcome::Canonical(
+            DispatchSendTokenResult::Registered(parts) => Ok(SendControlOutcome::Registered(
                 RawRegisteredCapToken::from_parts(parts),
             )),
-            DispatchSendTokenResult::CanonicalFallback => Ok(SendControlOutcome::Canonical(
+            DispatchSendTokenResult::RegisteredFallback => {
+                Ok(SendControlOutcome::Registered(
                 RawRegisteredCapToken::from_parts(RegisteredTokenParts::from_bytes(token.bytes())),
-            )),
+                ))
+            }
             DispatchSendTokenResult::None => Err(SendError::PhaseInvariant),
         }
     }
 
     #[inline(never)]
-    fn resolve_external_send_control_outcome(
+    fn resolve_emitted_send_control_outcome(
         &self,
-        dispatch_control: Option<crate::global::StaticControlDesc>,
+        dispatch: Option<DescriptorDispatch>,
         dispatch_token: Option<RawCapFlowToken>,
-        external_token: Option<RawCapFlowToken>,
-        control: Option<crate::global::StaticControlDesc>,
+        emitted_token: Option<RawCapFlowToken>,
     ) -> SendResult<SendControlOutcome<'r>> {
         if let Some(token) = dispatch_token {
             match self.dispatch_send_token(
-                dispatch_control,
+                dispatch,
                 token,
                 matches!(
-                    control,
-                    Some(control)
-                        if matches!(control.path(), crate::control::cap::mint::ControlPath::Local)
+                    dispatch,
+                    Some(dispatch)
+                        if matches!(
+                            dispatch.desc.path(),
+                            crate::control::cap::mint::ControlPath::Local
+                        )
                 ),
             )? {
                 DispatchSendTokenResult::None | DispatchSendTokenResult::Registered(_) => {}
-                DispatchSendTokenResult::CanonicalFallback => {
+                DispatchSendTokenResult::RegisteredFallback => {
                     return Err(SendError::PhaseInvariant);
                 }
             }
         }
 
-        Ok(match external_token {
-            Some(token) => SendControlOutcome::External(token),
+        Ok(match emitted_token {
+            Some(token) => SendControlOutcome::Emitted(token),
             None => SendControlOutcome::None,
         })
     }
@@ -3661,7 +3692,7 @@ where
                         .control
                         .take()
                         .expect("send transport control must remain until completion"),
-                    dispatch_control: pending.dispatch_control,
+                    dispatch: pending.dispatch,
                 };
                 Poll::Ready(Ok(emission))
             }
@@ -3677,7 +3708,7 @@ where
         cx: &mut core::task::Context<'_>,
     ) -> Poll<SendResult<SendControlOutcome<'r>>>
     where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
         loop {
             match state {
@@ -3715,7 +3746,6 @@ where
                             meta,
                             preview_cursor_index,
                             emission,
-                            control: descriptor.control(),
                         };
                     }
                 },
@@ -3730,7 +3760,6 @@ where
                             meta: *meta,
                             preview_cursor_index: *preview_cursor_index,
                             emission,
-                            control: descriptor.control(),
                         };
                     }
                     Poll::Ready(Err(err)) => {
@@ -3742,13 +3771,11 @@ where
                     meta,
                     preview_cursor_index,
                     emission,
-                    control,
                 } => {
                     let result = self.finish_send_after_transport_runtime(
                         *meta,
                         *preview_cursor_index,
                         *emission,
-                        *control,
                     );
                     *state = SendState::Done;
                     return Poll::Ready(result);
@@ -3774,7 +3801,7 @@ where
         metadata: &LoopMetadata,
         decision: LoopDecision,
         lane: u8,
-    ) -> SendResult<()> {
+    ) -> SendResult<u16> {
         let idx = Self::loop_index(metadata.scope).ok_or(SendError::PhaseInvariant)?;
         let port = self.port_for_lane(lane as usize);
         let disposition = match decision {
@@ -3806,26 +3833,27 @@ where
             self.record_route_decision_for_scope_lanes(metadata.scope, arm, lane);
             self.emit_route_decision(metadata.scope, arm, RouteDecisionSource::Ack, lane);
         }
-        Ok(())
+        Ok(epoch)
     }
 
     #[inline(never)]
-    fn canonical_loop_continue_control_bytes(
+    fn mint_local_loop_continue_control(
         &mut self,
         meta: &SendMeta,
         shot: CapShot,
         lane: Lane,
-    ) -> SendResult<[u8; CAP_TOKEN_LEN]>
+    ) -> SendResult<MintedControlToken>
     where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
         let mut loop_scope = meta.scope;
+        let mut epoch = 0;
         let mut recorded_via_loop_metadata = false;
         if let Some(metadata) = self.cursor.loop_metadata_inner()
             && metadata.role == LoopRole::Controller
             && metadata.controller == ROLE
         {
-            self.record_loop_decision(&metadata, LoopDecision::Continue, meta.lane)?;
+            epoch = self.record_loop_decision(&metadata, LoopDecision::Continue, meta.lane)?;
             loop_scope = metadata.scope;
             recorded_via_loop_metadata = true;
         }
@@ -3835,12 +3863,14 @@ where
         if !recorded_via_loop_metadata && loop_scope.kind() == ScopeKind::Route {
             self.record_route_decision_for_scope_lanes(loop_scope, 0, meta.lane);
             self.emit_route_decision(loop_scope, 0, RouteDecisionSource::Ack, meta.lane);
+            epoch = self.port_for_lane(meta.lane as usize).route_change_epoch();
         }
         self.mint_control_token_bytes_with_handle::<LoopContinueKind>(
             meta.peer,
             shot,
             lane,
             loop_scope,
+            epoch,
             LoopDecisionHandle {
                 sid: self.sid.raw(),
                 lane: lane.raw() as u16,
@@ -3850,22 +3880,23 @@ where
     }
 
     #[inline(never)]
-    fn canonical_loop_break_control_bytes(
+    fn mint_local_loop_break_control(
         &mut self,
         meta: &SendMeta,
         shot: CapShot,
         lane: Lane,
-    ) -> SendResult<[u8; CAP_TOKEN_LEN]>
+    ) -> SendResult<MintedControlToken>
     where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
         let mut loop_scope = meta.scope;
+        let mut epoch = 0;
         let mut recorded_via_loop_metadata = false;
         if let Some(metadata) = self.cursor.loop_metadata_inner()
             && metadata.role == LoopRole::Controller
             && metadata.controller == ROLE
         {
-            self.record_loop_decision(&metadata, LoopDecision::Break, meta.lane)?;
+            epoch = self.record_loop_decision(&metadata, LoopDecision::Break, meta.lane)?;
             loop_scope = metadata.scope;
             recorded_via_loop_metadata = true;
         }
@@ -3875,12 +3906,14 @@ where
         if !recorded_via_loop_metadata && loop_scope.kind() == ScopeKind::Route {
             self.record_route_decision_for_scope_lanes(loop_scope, 1, meta.lane);
             self.emit_route_decision(loop_scope, 1, RouteDecisionSource::Ack, meta.lane);
+            epoch = self.port_for_lane(meta.lane as usize).route_change_epoch();
         }
         self.mint_control_token_bytes_with_handle::<LoopBreakKind>(
             meta.peer,
             shot,
             lane,
             loop_scope,
+            epoch,
             LoopDecisionHandle {
                 sid: self.sid.raw(),
                 lane: lane.raw() as u16,
@@ -3890,17 +3923,17 @@ where
     }
 
     #[inline(never)]
-    fn canonical_reroute_control_bytes(
+    fn mint_local_reroute_control(
         &mut self,
         meta: &SendMeta,
         shot: CapShot,
         lane: Lane,
         src_rv: RendezvousId,
         cp_lane: Lane,
-        control: crate::global::StaticControlDesc,
-    ) -> SendResult<[u8; CAP_TOKEN_LEN]>
+        control: ControlDesc,
+    ) -> SendResult<MintedControlToken>
     where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
         let port = self.port_for_lane(meta.lane as usize);
         port.flush_transport_events();
@@ -3935,23 +3968,24 @@ where
             shot,
             lane,
             meta.scope,
+            0,
             control,
             handle.encode(),
         )
     }
 
     #[inline(never)]
-    fn canonical_route_decision_control_bytes(
+    fn mint_local_route_decision_control(
         &mut self,
         meta: &SendMeta,
         shot: CapShot,
         lane: Lane,
         src_rv: RendezvousId,
         cp_lane: Lane,
-        control: crate::global::StaticControlDesc,
-    ) -> SendResult<[u8; CAP_TOKEN_LEN]>
+        control: ControlDesc,
+    ) -> SendResult<MintedControlToken>
     where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
         let policy = cluster
@@ -3971,18 +4005,20 @@ where
         }
         self.record_route_decision_for_scope_lanes(scope, arm, meta.lane);
         self.emit_route_decision(scope, arm, RouteDecisionSource::Resolver, meta.lane);
+        let epoch = self.port_for_lane(meta.lane as usize).route_change_epoch();
         self.mint_descriptor_token_bytes(
             meta.peer,
             shot,
             lane,
             scope,
+            epoch,
             control,
             RouteArmHandle { scope, arm }.encode(),
         )
     }
 
     #[inline(never)]
-    fn canonical_splice_intent_control_bytes(
+    fn mint_local_splice_intent_control(
         &mut self,
         meta: &SendMeta,
         shot: CapShot,
@@ -3990,10 +4026,10 @@ where
         src_rv: RendezvousId,
         cp_sid: SessionId,
         cp_lane: Lane,
-        control: crate::global::StaticControlDesc,
-    ) -> SendResult<[u8; CAP_TOKEN_LEN]>
+        control: ControlDesc,
+    ) -> SendResult<MintedControlToken>
     where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
         let port = self.port_for_lane(meta.lane as usize);
         port.flush_transport_events();
@@ -4028,22 +4064,23 @@ where
             shot,
             lane,
             meta.scope,
+            0,
             control,
             Self::splice_handle_from_operands(operands).encode(),
         )
     }
 
     #[inline(never)]
-    fn canonical_splice_ack_control_bytes(
+    fn mint_local_splice_ack_control(
         &mut self,
         meta: &SendMeta,
         shot: CapShot,
         lane: Lane,
         cp_sid: SessionId,
-        control: crate::global::StaticControlDesc,
-    ) -> SendResult<[u8; CAP_TOKEN_LEN]>
+        control: ControlDesc,
+    ) -> SendResult<MintedControlToken>
     where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
         let port = self.port_for_lane(meta.lane as usize);
         port.flush_transport_events();
@@ -4089,6 +4126,7 @@ where
             shot,
             lane,
             meta.scope,
+            0,
             control,
             Self::splice_handle_from_operands(operands).encode(),
         )
@@ -4101,18 +4139,20 @@ where
         shot: CapShot,
         lane: Lane,
         scope: ScopeId,
+        epoch: u16,
         handle: K::Handle,
-    ) -> SendResult<[u8; CAP_TOKEN_LEN]>
+    ) -> SendResult<MintedControlToken>
     where
         K: ResourceKind + crate::control::cap::mint::ControlResourceKind,
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsCanonical,
+        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
         self.mint_descriptor_token_bytes(
             peer,
             shot,
             lane,
             scope,
-            crate::global::StaticControlDesc::of::<K>(),
+            epoch,
+            ControlDesc::of::<K>(),
             K::encode_handle(&handle),
         )
     }
@@ -5484,7 +5524,7 @@ where
     fn splice_handle_from_operands(operands: SpliceOperands) -> TopologyHandle {
         let mut flags = 0u16;
         if operands.seq_tx != 0 || operands.seq_rx != 0 {
-            flags |= splice_flags::FENCES_PRESENT;
+            flags |= topology_flags::FENCES_PRESENT;
         }
         TopologyHandle {
             src_rv: operands.src_rv.raw(),

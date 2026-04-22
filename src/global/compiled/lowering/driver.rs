@@ -3,7 +3,7 @@ use crate::{
     control::lease::planner::LeaseGraphBudget,
     eff::{EffKind, EffStruct},
     global::{
-        StaticControlDesc,
+        ControlDesc,
         const_dsl::{ControlMarker, EffList, PolicyMode, ScopeEvent, ScopeId, ScopeMarker},
     },
 };
@@ -15,7 +15,6 @@ use super::super::images::program::{
 use super::program_lowering::control_scope_mask_bit;
 
 const MAX_LOWERING_NODES: usize = crate::eff::meta::MAX_EFF_NODES;
-const CONTROL_SPEC_MASK_BYTES: usize = (MAX_LOWERING_NODES + 7) / 8;
 const ROUTE_SCOPE_ORDINAL_WORDS: usize = (MAX_LOWERING_NODES + 63) / 64;
 const MAX_TRACKED_ROLE_FACTS: usize = u8::MAX as usize + 1;
 #[inline(always)]
@@ -26,17 +25,6 @@ const fn checked_role_index(role: u8) -> usize {
     }
     role
 }
-const EMPTY_CONTROL_SPEC: StaticControlDesc = StaticControlDesc {
-    label: 0,
-    resource_tag: 0,
-    scope_kind: crate::global::const_dsl::ControlScopeKind::None,
-    path: crate::control::cap::mint::ControlPath::Local,
-    tap_id: 0,
-    shot: crate::control::cap::mint::CapShot::One,
-    op: crate::control::cap::mint::ControlOp::Fence,
-    flags: 0,
-};
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ProgramStamp {
     lane0: u64,
@@ -92,14 +80,14 @@ impl ProgramStamp {
     }
 
     #[inline(always)]
-    const fn mix_control_spec(mut state: u64, spec: StaticControlDesc) -> u64 {
-        state = Self::mix_u64(state, spec.label() as u64);
-        state = Self::mix_u64(state, spec.resource_tag() as u64);
-        state = Self::mix_u64(state, spec.scope_kind() as u64);
-        state = Self::mix_u64(state, spec.tap_id() as u64);
-        state = Self::mix_u64(state, spec.shot() as u64);
-        state = Self::mix_u64(state, spec.path() as u64);
-        Self::mix_u64(state, spec.op() as u64)
+    const fn mix_control_desc(mut state: u64, desc: ControlDesc) -> u64 {
+        state = Self::mix_u64(state, desc.label() as u64);
+        state = Self::mix_u64(state, desc.resource_tag() as u64);
+        state = Self::mix_u64(state, desc.scope_kind() as u64);
+        state = Self::mix_u64(state, desc.tap_id() as u64);
+        state = Self::mix_u64(state, desc.shot() as u64);
+        state = Self::mix_u64(state, desc.path() as u64);
+        Self::mix_u64(state, desc.op() as u64)
     }
 }
 
@@ -110,8 +98,7 @@ struct LoweringValidationData {
     scope_markers: [ScopeMarker; MAX_LOWERING_NODES],
     scope_marker_len: usize,
     policies: [PolicyMode; MAX_LOWERING_NODES],
-    control_specs: [StaticControlDesc; MAX_LOWERING_NODES],
-    control_spec_present: [u8; CONTROL_SPEC_MASK_BYTES],
+    control_descs: [Option<ControlDesc>; MAX_LOWERING_NODES],
 }
 
 #[derive(Clone)]
@@ -204,21 +191,10 @@ pub(crate) struct LoweringView<'a> {
     nodes: &'a [EffStruct],
     scope_markers: &'a [ScopeMarker],
     policies: &'a [PolicyMode; MAX_LOWERING_NODES],
-    control_specs: &'a [StaticControlDesc; MAX_LOWERING_NODES],
-    control_spec_present: &'a [u8; CONTROL_SPEC_MASK_BYTES],
+    control_descs: &'a [Option<ControlDesc>; MAX_LOWERING_NODES],
 }
 
 impl<'a> LoweringView<'a> {
-    #[inline(always)]
-    const fn control_spec_present_at(&self, offset: usize) -> bool {
-        if offset >= MAX_LOWERING_NODES {
-            return false;
-        }
-        let byte = offset / 8;
-        let bit = offset & 7;
-        (self.control_spec_present[byte] & (1u8 << bit)) != 0
-    }
-
     #[inline(always)]
     pub(crate) const fn as_slice(&self) -> &'a [EffStruct] {
         self.nodes
@@ -244,9 +220,9 @@ impl<'a> LoweringView<'a> {
     }
 
     #[inline(always)]
-    pub(crate) const fn control_spec_at(&self, offset: usize) -> Option<StaticControlDesc> {
-        if offset < self.nodes.len() && self.control_spec_present_at(offset) {
-            Some(self.control_specs[offset])
+    pub(crate) const fn control_desc_at(&self, offset: usize) -> Option<ControlDesc> {
+        if offset < self.nodes.len() {
+            self.control_descs[offset]
         } else {
             None
         }
@@ -318,25 +294,14 @@ impl<'a> LoweringView<'a> {
             if depth_after_exits == 1 && !nested_non_policy_enter {
                 if let Some(policy) = self.policy_at(idx) {
                     if policy.dynamic_policy_id().is_some() {
-                        if let Some(control) = self.control_spec_at(idx)
-                            && !control.supports_dynamic_policy()
-                        {
+                        let control = match self.control_desc_at(idx) {
+                            Some(control) => control,
+                            None => panic!("dynamic route policy requires controller control op"),
+                        };
+                        if !control.supports_dynamic_policy() {
                             panic!("dynamic policy attached to unsupported control op");
                         }
-                        let eff_struct = self.nodes[idx];
-                        let tag = if matches!(eff_struct.kind, EffKind::Atom) {
-                            match eff_struct.atom_data().resource {
-                                Some(tag) => tag,
-                                None => 0,
-                            }
-                        } else {
-                            0
-                        };
-                        let op = self
-                            .control_spec_at(idx)
-                            .map(StaticControlDesc::op)
-                            .unwrap_or(ControlOp::Fence);
-                        return Some((policy, idx, tag, op));
+                        return Some((policy, idx, control.resource_tag(), control.op()));
                     }
                 }
             }
@@ -357,27 +322,14 @@ impl LoweringValidationData {
                 core::slice::from_raw_parts(self.scope_markers.as_ptr(), self.scope_marker_len)
             },
             policies: &self.policies,
-            control_specs: &self.control_specs,
-            control_spec_present: &self.control_spec_present,
+            control_descs: &self.control_descs,
         }
     }
 
-    #[cfg(test)]
     #[inline(always)]
-    const fn control_spec_present_at(&self, offset: usize) -> bool {
-        if offset >= MAX_LOWERING_NODES {
-            return false;
-        }
-        let byte = offset / 8;
-        let bit = offset & 7;
-        (self.control_spec_present[byte] & (1u8 << bit)) != 0
-    }
-
-    #[cfg(test)]
-    #[inline(always)]
-    const fn control_spec_at(&self, offset: usize) -> Option<StaticControlDesc> {
-        if offset < self.len && self.control_spec_present_at(offset) {
-            Some(self.control_specs[offset])
+    const fn control_desc_at(&self, offset: usize) -> Option<ControlDesc> {
+        if offset < self.len {
+            self.control_descs[offset]
         } else {
             None
         }
@@ -494,7 +446,6 @@ impl LoweringSummary {
         let mut lane1 = ProgramStamp::mix_u64(ProgramStamp::SEED1, eff_list.scope_budget() as u64);
         let mut scope_count = 0u16;
         let mut policy_markers_len = 0u16;
-        let mut control_specs_len = 0u16;
         let mut role_count = 0usize;
         let mut route_scope_ordinals = [0u64; ROUTE_SCOPE_ORDINAL_WORDS];
         let mut lease_budget = LeaseGraphBudget::new();
@@ -513,11 +464,11 @@ impl LoweringSummary {
                 lane1 = ProgramStamp::mix_policy(lane1, policy);
             }
             if let Some(spec) = eff_list.control_spec_at(idx) {
-                summary.validation.control_specs[idx] = spec;
-                summary.validation.control_spec_present[idx / 8] |= 1u8 << (idx & 7);
-                control_specs_len = control_specs_len.saturating_add(1);
+                let desc = ControlDesc::from_static(spec)
+                    .with_sites(crate::eff::EffIndex::from_usize(idx), ControlDesc::STATIC_POLICY_SITE);
+                summary.validation.control_descs[idx] = Some(desc);
                 lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
-                lane1 = ProgramStamp::mix_control_spec(lane1, spec);
+                lane1 = ProgramStamp::mix_control_desc(lane1, desc);
             }
             if matches!(node.kind, EffKind::Atom) {
                 let atom = node.atom_data();
@@ -536,11 +487,11 @@ impl LoweringSummary {
                 if to + 1 > role_count {
                     role_count = to + 1;
                 }
-                lease_budget = lease_budget.include_atom(eff_list.control_spec_at(idx), policy);
+                lease_budget = lease_budget.include_atom(summary.validation.control_desc_at(idx), policy);
                 summary.program.compiled_program_counts.tap_events += 1;
                 if atom.is_control {
                     if policy.is_dynamic()
-                        && let Some(control_spec) = eff_list.control_spec_at(idx)
+                        && let Some(control_spec) = summary.validation.control_desc_at(idx)
                         && !control_spec.supports_dynamic_policy()
                     {
                         panic!("dynamic policy attached to unsupported control op");
@@ -692,8 +643,7 @@ impl LoweringSummary {
                 scope_markers: [ScopeMarker::empty(); MAX_LOWERING_NODES],
                 scope_marker_len: src_scope_markers.len(),
                 policies: [PolicyMode::Static; MAX_LOWERING_NODES],
-                control_specs: [EMPTY_CONTROL_SPEC; MAX_LOWERING_NODES],
-                control_spec_present: [0u8; CONTROL_SPEC_MASK_BYTES],
+                control_descs: [None; MAX_LOWERING_NODES],
             },
             program: LoweringProgramData {
                 control_markers: [ControlMarker::empty(); MAX_LOWERING_NODES],
@@ -734,8 +684,8 @@ impl LoweringSummary {
 
     #[cfg(test)]
     #[inline(always)]
-    const fn control_spec_at(&self, offset: usize) -> Option<StaticControlDesc> {
-        self.validation.control_spec_at(offset)
+    const fn control_desc_at(&self, offset: usize) -> Option<ControlDesc> {
+        self.validation.control_desc_at(offset)
     }
 
     #[inline(always)]
@@ -793,7 +743,7 @@ impl LoweringSummary {
             if self.validation.policies[idx] != other.validation.policies[idx] {
                 return false;
             }
-            if self.control_spec_at(idx) != other.control_spec_at(idx) {
+            if self.control_desc_at(idx) != other.control_desc_at(idx) {
                 return false;
             }
             idx += 1;

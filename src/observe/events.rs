@@ -327,7 +327,9 @@ impl DelegBegin {
 }
 
 /// Delegation splice completed.
+#[cfg(test)]
 pub(crate) struct DelegSplice;
+#[cfg(test)]
 impl DelegSplice {
     /// Create with pre-packed arg0 and sid.
     #[inline(always)]

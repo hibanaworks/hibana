@@ -623,3 +623,25 @@ impl LocalFailureReason {
         Self { code: raw }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Endpoint, OfferFuture, RouteBranch};
+    use core::mem::size_of;
+
+    #[test]
+    fn endpoint_surface_size_gates_hold() {
+        assert!(
+            size_of::<Endpoint<'static, 0>>() <= 40,
+            "Endpoint<'_, ROLE> must stay role-only and compact"
+        );
+        assert!(
+            size_of::<RouteBranch<'static, 'static, 0>>() <= 32,
+            "RouteBranch<'_, '_, ROLE> must stay compact"
+        );
+        assert!(
+            size_of::<OfferFuture<'static, 'static, 0>>() <= 48,
+            "OfferFuture must stay within the localside size budget"
+        );
+    }
+}

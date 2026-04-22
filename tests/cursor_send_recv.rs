@@ -93,14 +93,13 @@ fn cursor_recv_can_return_borrowed_frame_views() {
                     .enter(rv_id, sid, &borrowed_target_program, NoBinding)
                     .expect("target endpoint");
 
-                let outcome = futures::executor::block_on(
+                let () = futures::executor::block_on(
                     origin_endpoint
                         .flow::<Msg<2, FramePayload>>()
                         .expect("send flow")
                         .send(&FramePayload(*b"hiba")),
                 )
                 .expect("send succeeds");
-                assert!(outcome.is_none());
                 let payload =
                     futures::executor::block_on(target_endpoint.recv::<Msg<2, FramePayload>>())
                         .expect("recv succeeds");
@@ -140,14 +139,13 @@ fn cursor_send_and_recv_roundtrip() {
                     .enter(rv_id, sid, &target_program, NoBinding)
                     .expect("target endpoint");
 
-                let outcome = futures::executor::block_on(
+                let () = futures::executor::block_on(
                     origin_endpoint
                         .flow::<Msg<1, u32>>()
                         .expect("send flow")
                         .send(&42),
                 )
                 .expect("send succeeds");
-                assert!(outcome.is_none());
                 let payload = futures::executor::block_on(target_endpoint.recv::<Msg<1, u32>>())
                     .expect("recv succeeds");
                 assert_eq!(payload, 42u32);

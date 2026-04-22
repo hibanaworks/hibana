@@ -430,7 +430,7 @@ impl hibana::substrate::cap::ControlResourceKind for CustomWireKind {
     const SCOPE: ControlScopeKind = ControlScopeKind::None;
     const PATH: ControlPath = ControlPath::Wire;
     const SHOT: hibana::substrate::cap::CapShot = hibana::substrate::cap::CapShot::One;
-    const TAP_ID: u16 = 0;
+    const TAP_ID: u16 = 0x0300 + 90;
     const OP: ControlOp = ControlOp::Fence;
     const AUTO_MINT_WIRE: bool = false;
 
@@ -667,9 +667,8 @@ Dynamic policy stays explicit:
   `ResolverContext::attr(id)`
 - return `Result<DynamicResolution, ResolverError>`
 
-Dynamic policy is supported for route/loop decision points and for the
-descriptor-owned splice/reroute control ops. Unsupported control ops are
-rejected at projection time.
+Dynamic policy is supported for route/loop decision points only. Other control
+ops are rejected at projection time.
 
 `ResolverContext` is intentionally small: `input(index)` and `attr(id)` are the
 only public accessors.

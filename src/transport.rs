@@ -60,20 +60,20 @@ pub struct TransportSnapshot {
     algorithm: TransportAlgorithm,
 }
 
-/// Packed input used to construct a [`TransportSnapshot`] in one step.
+/// Packed input used to construct a [`TransportSnapshot`] inside the crate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TransportSnapshotParts {
-    pub latency_us: Option<u64>,
-    pub queue_depth: Option<u32>,
-    pub pacing_interval_us: Option<u64>,
-    pub congestion_marks: Option<u32>,
-    pub retransmissions: Option<u32>,
-    pub pto_count: Option<u32>,
-    pub srtt_us: Option<u64>,
-    pub latest_ack_pn: Option<u64>,
-    pub congestion_window: Option<u64>,
-    pub in_flight_bytes: Option<u64>,
-    pub algorithm: Option<TransportAlgorithm>,
+pub(crate) struct TransportSnapshotParts {
+    pub(crate) latency_us: Option<u64>,
+    pub(crate) queue_depth: Option<u32>,
+    pub(crate) pacing_interval_us: Option<u64>,
+    pub(crate) congestion_marks: Option<u32>,
+    pub(crate) retransmissions: Option<u32>,
+    pub(crate) pto_count: Option<u32>,
+    pub(crate) srtt_us: Option<u64>,
+    pub(crate) latest_ack_pn: Option<u64>,
+    pub(crate) congestion_window: Option<u64>,
+    pub(crate) in_flight_bytes: Option<u64>,
+    pub(crate) algorithm: Option<TransportAlgorithm>,
 }
 
 impl Default for TransportSnapshotParts {
@@ -84,7 +84,7 @@ impl Default for TransportSnapshotParts {
 
 impl TransportSnapshotParts {
     #[inline]
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             latency_us: None,
             queue_depth: None,
@@ -121,8 +121,55 @@ impl Default for TransportSnapshot {
 }
 
 impl TransportSnapshot {
+    /// Construct a transport snapshot from packed policy attributes.
+    pub const fn from_policy_attrs(attrs: &context::PolicyAttrs) -> Self {
+        Self::from_parts(TransportSnapshotParts {
+            latency_us: match attrs.get(context::core::LATENCY_US) {
+                Some(value) => Some(value.as_u64()),
+                None => None,
+            },
+            queue_depth: match attrs.get(context::core::QUEUE_DEPTH) {
+                Some(value) => Some(value.as_u32()),
+                None => None,
+            },
+            pacing_interval_us: match attrs.get(context::core::PACING_INTERVAL_US) {
+                Some(value) => Some(value.as_u64()),
+                None => None,
+            },
+            congestion_marks: match attrs.get(context::core::CONGESTION_MARKS) {
+                Some(value) => Some(value.as_u32()),
+                None => None,
+            },
+            retransmissions: match attrs.get(context::core::RETRANSMISSIONS) {
+                Some(value) => Some(value.as_u32()),
+                None => None,
+            },
+            pto_count: match attrs.get(context::core::PTO_COUNT) {
+                Some(value) => Some(value.as_u32()),
+                None => None,
+            },
+            srtt_us: match attrs.get(context::core::SRTT_US) {
+                Some(value) => Some(value.as_u64()),
+                None => None,
+            },
+            latest_ack_pn: match attrs.get(context::core::LATEST_ACK_PN) {
+                Some(value) => Some(value.as_u64()),
+                None => None,
+            },
+            congestion_window: match attrs.get(context::core::CONGESTION_WINDOW) {
+                Some(value) => Some(value.as_u64()),
+                None => None,
+            },
+            in_flight_bytes: match attrs.get(context::core::IN_FLIGHT_BYTES) {
+                Some(value) => Some(value.as_u64()),
+                None => None,
+            },
+            algorithm: decode_transport_algorithm(attrs.get(context::core::TRANSPORT_ALGORITHM)),
+        })
+    }
+
     /// Construct a packed snapshot in a single step.
-    pub const fn from_parts(parts: TransportSnapshotParts) -> Self {
+    pub(crate) const fn from_parts(parts: TransportSnapshotParts) -> Self {
         Self {
             present: 0,
             latency_us: 0,
@@ -481,6 +528,21 @@ impl TransportSnapshot {
             primary: (arg0, arg1),
             extension,
         })
+    }
+}
+
+#[inline]
+const fn decode_transport_algorithm(
+    value: Option<context::ContextValue>,
+) -> Option<TransportAlgorithm> {
+    match value {
+        Some(value) => match value.as_u32() {
+            1 => Some(TransportAlgorithm::Cubic),
+            2 => Some(TransportAlgorithm::Reno),
+            raw if raw >= 0x100 => Some(TransportAlgorithm::Other((raw - 0x100) as u8)),
+            raw => Some(TransportAlgorithm::Other(raw as u8)),
+        },
+        None => None,
     }
 }
 

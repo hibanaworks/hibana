@@ -36,8 +36,8 @@ impl ResourceKind for CapDelegateControl {
 
 impl ControlResourceKind for CapDelegateControl {
     const LABEL: u8 = LABEL_CAP_DELEGATE_CONTROL;
-    const SCOPE: ControlScopeKind = ControlScopeKind::Reroute;
-    const TAP_ID: u16 = 0;
+    const SCOPE: ControlScopeKind = ControlScopeKind::Delegate;
+    const TAP_ID: u16 = 0x0300 + LABEL_CAP_DELEGATE_CONTROL as u16;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Wire;
     const OP: ControlOp = ControlOp::CapDelegate;

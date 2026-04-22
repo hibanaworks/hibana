@@ -31,7 +31,7 @@ pub(crate) struct CapEntry {
 ///
 /// Tracks nonce-minted capability tokens scoped to a rendezvous. Each entry
 /// stores the originating session/lane pair, shot discipline, resource tag,
-/// and the precomputed capability mask for constant-time authorisation.
+/// and the encoded handle bytes needed for descriptor/header validation.
 pub(crate) struct CapTable {
     slots: UnsafeCell<*mut Option<CapEntry>>,
     capacity: usize,

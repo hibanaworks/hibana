@@ -1,7 +1,7 @@
 use crate::control::cap::mint::{
     CAP_HANDLE_LEN, CapError, CapShot, ControlOp, ControlPath, ControlResourceKind, ResourceKind,
 };
-use crate::control::cap::resource_kinds::{
+use crate::control::cap::atomic_codecs::{
     SessionLaneHandle, TAG_ABORT_BEGIN_CONTROL, decode_session_lane_handle,
     encode_session_lane_handle, mint_session_lane_handle,
 };
@@ -31,7 +31,7 @@ impl ResourceKind for AbortControl {
 
 impl ControlResourceKind for AbortControl {
     const LABEL: u8 = LABEL_ABORT_CONTROL;
-    const SCOPE: ControlScopeKind = ControlScopeKind::Cancel;
+    const SCOPE: ControlScopeKind = ControlScopeKind::Abort;
     const TAP_ID: u16 = crate::observe::ids::CANCEL_BEGIN;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;

@@ -92,6 +92,7 @@ fn root_visible_surface_stays_minimal() {
         "pub use control::cap::{",
         "pub use control::types::LaneId as Lane;",
         "pub use control::types::{Gen, LaneId, RendezvousId, SessionId};",
+        "pub use endpoint::{ControlEmission, CursorEndpoint};",
         "pub use endpoint::{ControlOutcome, CursorEndpoint};",
         "pub use epf::Slot;",
         "pub use epf::TapEvent;",

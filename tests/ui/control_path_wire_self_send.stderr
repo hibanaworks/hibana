@@ -1,0 +1,33 @@
+error[E0080]: evaluation panicked: wire control messages require cross-role send
+ --> $RUST/core/src/panic.rs
+  |
+  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::send::<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<110>, hibana::substrate::cap::GenericCapToken<LoadBeginKind>, LoadBeginKind>, 0>::{constant#0}` failed here
+  |
+ ::: src/global.rs
+  |
+  |                     panic!("wire control messages require cross-role send")
+  |                     ------------------------------------------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/global.rs
+  |
+  | /     const {
+  | |         crate::global::validate_sendable_message::<M>();
+  | |         if <M as MessageControlSpec>::IS_CONTROL {
+  | |             let is_self_send = <<From as steps::RoleEq<To>>::Output as steps::Bool>::VALUE;
+... |
+  | |     }
+  | |_____^
+
+note: the above error was encountered while instantiating `fn send::<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<110>, GenericCapToken<LoadBeginKind>, LoadBeginKind>, 0>`
+  --> tests/ui/control_path_wire_self_send.rs:45:13
+   |
+45 |       let _ = g::send::<
+   |  _____________^
+46 | |         g::Role<0>,
+47 | |         g::Role<0>,
+48 | |         g::Msg<110, GenericCapToken<LoadBeginKind>, LoadBeginKind>,
+49 | |         0,
+50 | |     >();
+   | |_______^

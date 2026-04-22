@@ -12,16 +12,13 @@ use crate::control::automaton::delegation::DelegationLeaseSpec;
 use crate::control::automaton::splice::SpliceLeaseSpec;
 use crate::control::automaton::{
     distributed::{DistributedSplice, DistributedSpliceInv, SpliceAck, SpliceIntent},
-    splice::{
-        SpliceBeginAutomaton, SpliceCommitAutomaton, SpliceGraphContext, SplicePrepareAutomaton,
-        SplicePrepareSeed,
-    },
+    splice::{SpliceBeginAutomaton, SpliceCommitAutomaton, SpliceGraphContext},
 };
 use crate::control::cap::mint::CapHeader;
 use crate::control::cap::mint::{
     CAP_TOKEN_LEN, ControlOp, EndpointResource, GenericCapToken, MintConfigMarker,
 };
-use crate::control::cap::resource_kinds::{
+use crate::control::cap::atomic_codecs::{
     DelegationHandle, SessionLaneHandle, TopologyHandle, decode_session_lane_handle,
 };
 use crate::control::cap::typed_tokens::RegisteredTokenParts;
@@ -33,10 +30,10 @@ use crate::control::lease::{
         RegisterRendezvousError,
     },
     graph::{LeaseFacet, LeaseGraph, LeaseGraphError, LeaseSpec},
-    planner::{LeaseFacetNeeds, facet_needs, facets_caps_splice},
+    planner::{LeaseFacetNeeds, facets_caps_splice},
 };
 use crate::endpoint::affine::LaneGuard;
-use crate::global::StaticControlDesc;
+use crate::global::ControlDesc;
 use crate::global::const_dsl::ControlScopeKind;
 
 type PublicEndpointKernel<'r, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint> =
@@ -143,19 +140,6 @@ impl SpliceOperands {
             new_gen,
             seq_tx,
             seq_rx,
-        }
-    }
-
-    pub(crate) fn from_intent(intent: &SpliceIntent) -> Self {
-        Self {
-            src_rv: intent.src_rv,
-            dst_rv: intent.dst_rv,
-            src_lane: intent.src_lane,
-            dst_lane: intent.dst_lane,
-            old_gen: intent.old_gen,
-            new_gen: intent.new_gen,
-            seq_tx: intent.seq_tx,
-            seq_rx: intent.seq_rx,
         }
     }
 
@@ -328,16 +312,6 @@ impl CpCommand {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DynamicResolution {
-    Splice {
-        dst_rv: RendezvousId,
-        dst_lane: Lane,
-        fences: Option<(u32, u32)>,
-    },
-    Reroute {
-        dst_rv: RendezvousId,
-        dst_lane: Lane,
-        shard: Option<u32>,
-    },
     RouteArm {
         arm: u8,
     },
@@ -790,23 +764,12 @@ const fn is_dynamic_control_op(op: ControlOp) -> bool {
         ControlOp::LoopContinue
             | ControlOp::LoopBreak
             | ControlOp::RouteDecision
-            | ControlOp::CapDelegate
-            | ControlOp::TopologyBegin
-            | ControlOp::TopologyAck
     )
 }
 
 /// Trait implemented by local Rendezvous instances that can apply control-plane effects.
 pub(crate) trait EffectRunner {
     fn run_effect(&self, envelope: CpCommand) -> Result<(), CpError>;
-    fn prepare_splice_operands(
-        &self,
-        sid: SessionId,
-        src_lane: Lane,
-        dst_rv: RendezvousId,
-        dst_lane: Lane,
-        fences: Option<(u32, u32)>,
-    ) -> Result<SpliceOperands, CpError>;
 }
 
 enum DistributedPhase {
@@ -1326,6 +1289,7 @@ impl CachedSpliceBucket {
         core::mem::align_of::<Option<CachedSpliceBucketEntry>>()
     }
 
+    #[cfg(test)]
     #[inline]
     const fn storage_bytes(capacity: usize) -> usize {
         capacity.saturating_mul(core::mem::size_of::<Option<CachedSpliceBucketEntry>>())
@@ -1342,6 +1306,7 @@ impl CachedSpliceBucket {
             .map_addr(|addr| addr & !Self::STORAGE_TAG_MASK)
     }
 
+    #[cfg(test)]
     #[inline]
     fn encode_entries_ptr(
         entries: *mut Option<CachedSpliceBucketEntry>,
@@ -1352,26 +1317,31 @@ impl CachedSpliceBucket {
         entries.map_addr(|addr| addr | reclaim_delta)
     }
 
+    #[cfg(test)]
     #[inline]
     fn storage_ptr(&self) -> *mut u8 {
         self.entries_ptr().cast::<u8>()
     }
 
+    #[cfg(test)]
     #[inline]
     fn storage_reclaim_delta(&self) -> usize {
         self.raw_entries().addr() & Self::STORAGE_TAG_MASK
     }
 
+    #[cfg(test)]
     #[inline]
     fn storage_len(&self) -> usize {
         Self::storage_bytes(self.capacity)
     }
 
+    #[cfg(test)]
     #[inline]
     fn capacity(&self) -> usize {
         self.capacity
     }
 
+    #[cfg(test)]
     fn occupied_len(&self) -> usize {
         let entries = self.entries_ptr();
         if entries.is_null() {
@@ -1390,6 +1360,7 @@ impl CachedSpliceBucket {
         occupied
     }
 
+    #[cfg(test)]
     unsafe fn bind_from_storage(
         &mut self,
         storage: *mut u8,
@@ -1408,6 +1379,7 @@ impl CachedSpliceBucket {
         self.capacity = capacity;
     }
 
+    #[cfg(test)]
     unsafe fn rebind_from_storage(
         &mut self,
         storage: *mut u8,
@@ -1444,6 +1416,7 @@ impl CachedSpliceBucket {
         self.capacity = new_capacity;
     }
 
+    #[cfg(test)]
     fn contains_sid(&self, sid: SessionId) -> bool {
         let entries = self.entries_ptr();
         if entries.is_null() {
@@ -1482,6 +1455,7 @@ impl CachedSpliceBucket {
         None
     }
 
+    #[cfg(test)]
     fn insert(&mut self, sid: SessionId, operands: SpliceOperands) -> Result<(), CpError> {
         let entries = self.entries_ptr();
         if entries.is_null() {
@@ -1623,6 +1597,7 @@ where
         }
     }
 
+    #[cfg(test)]
     #[inline]
     fn cached_operands_slot(rv_id: RendezvousId) -> Option<usize> {
         cluster_rendezvous_slot::<MAX_RV>(rv_id)
@@ -1639,6 +1614,7 @@ where
         None
     }
 
+    #[cfg(test)]
     fn cached_operands_remove_other_shards(&mut self, sid: SessionId, keep_slot: usize) {
         let mut slot = 0usize;
         while slot < MAX_RV {
@@ -1649,6 +1625,7 @@ where
         }
     }
 
+    #[cfg(test)]
     fn cached_operands_insert(
         &mut self,
         sid: SessionId,
@@ -1682,6 +1659,7 @@ where
         None
     }
 
+    #[cfg(test)]
     fn ensure_cached_operands_capacity(
         &mut self,
         rv_id: RendezvousId,
@@ -2730,6 +2708,7 @@ where
         self.with_control_mut(|core| core.cached_operands_get(sid).copied())
     }
 
+    #[cfg(test)]
     fn cache_splice_operands(
         &self,
         sid: SessionId,
@@ -2880,30 +2859,6 @@ where
 
         match (op, resolution) {
             (
-                ControlOp::TopologyBegin | ControlOp::TopologyAck,
-                DynamicResolution::Splice {
-                    dst_rv,
-                    dst_lane,
-                    fences,
-                },
-            ) => Ok(DynamicResolution::Splice {
-                dst_rv,
-                dst_lane,
-                fences,
-            }),
-            (
-                ControlOp::CapDelegate,
-                DynamicResolution::Reroute {
-                    dst_rv,
-                    dst_lane,
-                    shard,
-                },
-            ) => Ok(DynamicResolution::Reroute {
-                dst_rv,
-                dst_lane,
-                shard,
-            }),
-            (
                 ControlOp::LoopContinue | ControlOp::LoopBreak | ControlOp::RouteDecision,
                 DynamicResolution::RouteArm { arm },
             ) => {
@@ -2960,93 +2915,14 @@ where
         sid: SessionId,
         src_lane: Lane,
         eff_index: EffIndex,
-        desc: crate::global::StaticControlDesc,
+        desc: ControlDesc,
         policy: PolicyMode,
         metrics: TransportSnapshot,
         input: [u32; 4],
         attrs: &crate::transport::context::PolicyAttrs,
     ) -> Result<SpliceOperands, CpError> {
-        if self.get_local(&rv_id).is_none() {
-            return Err(CpError::RendezvousMismatch {
-                expected: rv_id.raw(),
-                actual: 0,
-            });
-        }
-
-        let policy_needs = facet_needs(Some(desc), policy);
-        let drive_prepare = |dst_rv: RendezvousId,
-                             dst_lane: Lane,
-                             fences: Option<(u32, u32)>|
-         -> Result<SpliceOperands, CpError> {
-            let result = self.drive::<SplicePrepareAutomaton, _, _>(
-                rv_id,
-                SplicePrepareSeed {
-                    sid,
-                    src_lane,
-                    dst_rv,
-                    dst_lane,
-                    fences,
-                },
-                |core, rv| {
-                    let mut ctx = Self::init_bundle_context_with_needs(core, rv, policy_needs);
-                    ctx.set_splice(SpliceGraphContext::default());
-                    ctx
-                },
-                |core, graph| {
-                    if dst_rv != rv_id && policy_needs.requires_splice() {
-                        graph.add_child_with_bundle_config(
-                            &mut core.locals,
-                            rv_id,
-                            dst_rv,
-                            |child_ctx| {
-                                child_ctx.set_splice(SpliceGraphContext::default());
-                            },
-                        )?;
-                    }
-                    Ok(())
-                },
-            );
-            match result {
-                Ok(operands) => Ok(operands),
-                Err(DelegationDriveError::Lease(_)) | Err(DelegationDriveError::Graph(_)) => {
-                    Err(CpError::Splice(SpliceError::InvalidState))
-                }
-                Err(DelegationDriveError::Automaton(err)) => Err(err),
-            }
-        };
-
-        let operands = match policy {
-            PolicyMode::Dynamic { .. } => {
-                let policy_id = policy.dynamic_policy_id().unwrap_or(0);
-                let resolution = self.resolve_dynamic_policy(
-                    rv_id,
-                    Some(sid),
-                    src_lane,
-                    eff_index,
-                    desc.resource_tag(),
-                    desc.op(),
-                    metrics,
-                    input,
-                    attrs,
-                )?;
-                let (dst_rv, dst_lane, fences) = match resolution {
-                    DynamicResolution::Splice {
-                        dst_rv,
-                        dst_lane,
-                        fences,
-                    } => (dst_rv, dst_lane, fences),
-                    _ => return Err(CpError::PolicyAbort { reason: policy_id }),
-                };
-                let result = drive_prepare(dst_rv, dst_lane, fences);
-                result?
-            }
-            PolicyMode::Static => {
-                return Err(CpError::UnsupportedEffect(ControlOp::TopologyBegin as u8));
-            }
-        };
-
-        self.cache_splice_operands(sid, operands)?;
-        Ok(operands)
+        let _ = (rv_id, sid, src_lane, eff_index, desc, policy, metrics, input, attrs);
+        Err(CpError::UnsupportedEffect(ControlOp::TopologyBegin as u8))
     }
 
     pub(crate) fn validate_splice_operands_from_policy(
@@ -3055,51 +2931,16 @@ where
         sid: SessionId,
         src_lane: Lane,
         eff_index: EffIndex,
-        desc: crate::global::StaticControlDesc,
+        desc: ControlDesc,
         policy: PolicyMode,
         metrics: TransportSnapshot,
         input: [u32; 4],
         attrs: &crate::transport::context::PolicyAttrs,
         operands: SpliceOperands,
     ) -> Result<(), CpError> {
-        if self.get_local(&rv_id).is_none() {
-            return Err(CpError::RendezvousMismatch {
-                expected: rv_id.raw(),
-                actual: 0,
-            });
-        }
-
+        let _ = (rv_id, sid, src_lane, eff_index, desc, metrics, input, attrs, operands);
         match policy {
-            PolicyMode::Dynamic { .. } => {
-                let policy_id = policy.dynamic_policy_id().unwrap_or(0);
-                let resolution = self.resolve_dynamic_policy(
-                    rv_id,
-                    Some(sid),
-                    src_lane,
-                    eff_index,
-                    desc.resource_tag(),
-                    desc.op(),
-                    metrics,
-                    input,
-                    attrs,
-                )?;
-                let (dst_rv, dst_lane, _) = match resolution {
-                    DynamicResolution::Splice {
-                        dst_rv,
-                        dst_lane,
-                        fences,
-                    } => (dst_rv, dst_lane, fences),
-                    _ => return Err(CpError::PolicyAbort { reason: policy_id }),
-                };
-                if operands.src_rv != rv_id
-                    || operands.src_lane != src_lane
-                    || operands.dst_rv != dst_rv
-                    || operands.dst_lane != dst_lane
-                {
-                    return Err(CpError::PolicyAbort { reason: policy_id });
-                }
-                Ok(())
-            }
+            PolicyMode::Dynamic { .. } => Err(CpError::UnsupportedEffect(ControlOp::TopologyAck as u8)),
             PolicyMode::Static => Ok(()),
         }
     }
@@ -3116,37 +2957,8 @@ where
         input: [u32; 4],
         attrs: &crate::transport::context::PolicyAttrs,
     ) -> Result<DelegationHandle, CpError> {
-        let src_lane_u16 = lane.raw() as u16;
-        match policy {
-            PolicyMode::Dynamic { .. } => {
-                let policy_id = policy
-                    .dynamic_policy_id()
-                    .ok_or(CpError::PolicyAbort { reason: 6 })?;
-                let resolution = self.resolve_dynamic_policy(
-                    rv_id, None, lane, eff_index, tag, op, metrics, input, attrs,
-                )?;
-                let (dst_rv, dst_lane, shard_override) = match resolution {
-                    DynamicResolution::Reroute {
-                        dst_rv,
-                        dst_lane,
-                        shard,
-                    } => (dst_rv, dst_lane, shard),
-                    _ => return Err(CpError::PolicyAbort { reason: policy_id }),
-                };
-                let shard = shard_override.unwrap_or_default();
-                Ok(DelegationHandle {
-                    src_rv: rv_id.raw(),
-                    dst_rv: dst_rv.raw(),
-                    src_lane: src_lane_u16,
-                    dst_lane: dst_lane.raw() as u16,
-                    seq_tx: 0,
-                    seq_rx: 0,
-                    shard,
-                    flags: 0,
-                })
-            }
-            PolicyMode::Static => Err(CpError::UnsupportedEffect(ControlOp::CapDelegate as u8)),
-        }
+        let _ = (rv_id, lane, eff_index, tag, op, policy, metrics, input, attrs);
+        Err(CpError::UnsupportedEffect(ControlOp::CapDelegate as u8))
     }
 
     pub(crate) fn take_cached_splice_operands(&self, sid: SessionId) -> Option<SpliceOperands> {
@@ -3327,9 +3139,11 @@ where
         self.run_effect(rv_id, CpCommand::rollback(cp_sid, cp_lane, effect_gen))
     }
 
-    fn verify_static_control_header(
-        desc: StaticControlDesc,
+    fn verify_control_header(
+        desc: ControlDesc,
         header: CapHeader,
+        expected_scope_id: u16,
+        expected_epoch: u16,
     ) -> Result<(), CpError> {
         let mismatch = CpError::Authorisation {
             operation: desc.op() as u8,
@@ -3340,6 +3154,9 @@ where
             || header.path() != desc.path()
             || header.shot() != desc.shot()
             || header.scope_kind() != desc.scope_kind()
+            || header.flags() != desc.header_flags()
+            || header.scope_id() != expected_scope_id
+            || header.epoch() != expected_epoch
         {
             return Err(mismatch);
         }
@@ -3350,7 +3167,9 @@ where
         &self,
         rv_id: RendezvousId,
         bytes: [u8; CAP_TOKEN_LEN],
-        desc: StaticControlDesc,
+        desc: ControlDesc,
+        expected_scope_id: u16,
+        expected_epoch: u16,
         generation: Option<Generation>,
     ) -> Result<RegisteredTokenParts, CpError> {
         let rendezvous = self.get_local(&rv_id).ok_or(CpError::RendezvousMismatch {
@@ -3361,7 +3180,7 @@ where
         let header = token.control_header().map_err(|_| CpError::Authorisation {
             operation: desc.op() as u8,
         })?;
-        Self::verify_static_control_header(desc, header)?;
+        Self::verify_control_header(desc, header, expected_scope_id, expected_epoch)?;
 
         let cp_sid = header.sid();
         let cp_lane = header.lane();
@@ -3516,7 +3335,7 @@ where
             rv.reset_policy(lane);
             let mut control_marker_count = 0u32;
             for scope_kind in effect_envelope.control_scopes() {
-                if matches!(scope_kind, ControlScopeKind::Splice) {
+                if matches!(scope_kind, ControlScopeKind::Topology) {
                     rv.prepare_splice_control_scope(lane)
                         .ok_or(CpError::ResourceExhausted)?;
                 } else {
@@ -4116,7 +3935,7 @@ where
 mod tests {
     use super::*;
     extern crate self as hibana;
-    use crate::control::cap::resource_kinds::{
+    use crate::control::cap::atomic_codecs::{
         TAG_CAP_DELEGATE_CONTROL, TAG_TOPOLOGY_BEGIN_CONTROL,
     };
 
@@ -4167,8 +3986,11 @@ mod tests {
         futures::executor::block_on(future)
     }
 
-    use crate::control::cap::mint::{GenericCapToken, MintConfig};
-    use crate::control::cap::resource_kinds::RouteDecisionKind;
+    use crate::control::cap::mint::{
+        CAP_HANDLE_LEN, CapError, ControlPath, ControlResourceKind, GenericCapToken, MintConfig,
+        ResourceKind,
+    };
+    use crate::control::cap::resource_kinds::{RouteArmHandle, RouteDecisionKind};
     use crate::control::types::{Generation, Lane, SessionId};
     use crate::g::{self, Msg, Role};
     use crate::global::compiled::lowering::LoweringSummary;
@@ -4317,6 +4139,240 @@ mod tests {
     #[test]
     fn pico_smoke_fixture_symbols_are_reachable() {
         retain_pico_smoke_fixture_symbols();
+    }
+
+    fn route_decision_header(scope_id: u16, epoch: u16, flags: u8) -> (ControlDesc, CapHeader) {
+        let desc = ControlDesc::of::<RouteDecisionKind>();
+        let handle = RouteArmHandle {
+            scope: ScopeId::route(scope_id),
+            arm: 1,
+        };
+        (
+            desc,
+            CapHeader::new(
+                SessionId::new(7),
+                Lane::new(0),
+                0,
+                desc.resource_tag(),
+                desc.label(),
+                desc.op(),
+                desc.path(),
+                desc.shot(),
+                desc.scope_kind(),
+                flags,
+                scope_id,
+                epoch,
+                RouteDecisionKind::encode_handle(&handle),
+            ),
+        )
+    }
+
+    struct DecodePoisonKind;
+
+    impl ResourceKind for DecodePoisonKind {
+        type Handle = ();
+        const TAG: u8 = 0x7C;
+        const NAME: &'static str = "DecodePoison";
+
+        fn encode_handle(_handle: &Self::Handle) -> [u8; CAP_HANDLE_LEN] {
+            [0; CAP_HANDLE_LEN]
+        }
+
+        fn decode_handle(_data: [u8; CAP_HANDLE_LEN]) -> Result<Self::Handle, CapError> {
+            panic!("core auth must not decode the typed handle")
+        }
+
+        fn zeroize(_handle: &mut Self::Handle) {}
+    }
+
+    impl ControlResourceKind for DecodePoisonKind {
+        const LABEL: u8 = 0x7C;
+        const SCOPE: ControlScopeKind = ControlScopeKind::Route;
+        const PATH: ControlPath = ControlPath::Local;
+        const TAP_ID: u16 = 0x047C;
+        const SHOT: crate::control::cap::mint::CapShot =
+            crate::control::cap::mint::CapShot::One;
+        const OP: ControlOp = ControlOp::Fence;
+        const AUTO_MINT_WIRE: bool = false;
+
+        fn mint_handle(
+            _session: SessionId,
+            _lane: Lane,
+            _scope: ScopeId,
+        ) -> Self::Handle {
+        }
+    }
+
+    #[test]
+    fn descriptor_control_header_accepts_exact_match() {
+        let (desc, header) = route_decision_header(3, 11, 0);
+        StaticTestCluster::<1>::verify_control_header(desc, header, 3, 11)
+            .expect("exact descriptor/header match must verify");
+    }
+
+    #[test]
+    fn descriptor_control_header_rejects_flags_scope_and_epoch_mismatch() {
+        let (desc, header) =
+            route_decision_header(3, 11, ControlDesc::of::<RouteDecisionKind>().header_flags());
+        assert!(
+            matches!(
+                StaticTestCluster::<1>::verify_control_header(
+                    desc,
+                    CapHeader::new(
+                        header.sid(),
+                        header.lane(),
+                        header.role(),
+                        header.tag(),
+                        header.label(),
+                        header.op(),
+                        header.path(),
+                        header.shot(),
+                        header.scope_kind(),
+                        header.flags() | 0x80,
+                        header.scope_id(),
+                        header.epoch(),
+                        *header.handle(),
+                    ),
+                    3,
+                    11,
+                ),
+                Err(CpError::Authorisation { operation })
+                    if operation == desc.op() as u8
+            ),
+            "reserved flag bits must fail closed",
+        );
+        assert!(
+            matches!(
+                StaticTestCluster::<1>::verify_control_header(desc, header, 4, 11),
+                Err(CpError::Authorisation { operation })
+                    if operation == desc.op() as u8
+            ),
+            "scope mismatch must fail closed",
+        );
+        assert!(
+            matches!(
+                StaticTestCluster::<1>::verify_control_header(desc, header, 3, 12),
+                Err(CpError::Authorisation { operation })
+                    if operation == desc.op() as u8
+            ),
+            "epoch mismatch must fail closed",
+        );
+    }
+
+    #[test]
+    fn descriptor_control_header_rejects_tag_label_op_path_and_shot_mismatch() {
+        let (desc, header) =
+            route_decision_header(3, 11, ControlDesc::of::<RouteDecisionKind>().header_flags());
+
+        for mismatched in [
+            CapHeader::new(
+                header.sid(),
+                header.lane(),
+                header.role(),
+                header.tag().wrapping_add(1),
+                header.label(),
+                header.op(),
+                header.path(),
+                header.shot(),
+                header.scope_kind(),
+                header.flags(),
+                header.scope_id(),
+                header.epoch(),
+                *header.handle(),
+            ),
+            CapHeader::new(
+                header.sid(),
+                header.lane(),
+                header.role(),
+                header.tag(),
+                header.label().wrapping_add(1),
+                header.op(),
+                header.path(),
+                header.shot(),
+                header.scope_kind(),
+                header.flags(),
+                header.scope_id(),
+                header.epoch(),
+                *header.handle(),
+            ),
+            CapHeader::new(
+                header.sid(),
+                header.lane(),
+                header.role(),
+                header.tag(),
+                header.label(),
+                ControlOp::LoopContinue,
+                header.path(),
+                header.shot(),
+                header.scope_kind(),
+                header.flags(),
+                header.scope_id(),
+                header.epoch(),
+                *header.handle(),
+            ),
+            CapHeader::new(
+                header.sid(),
+                header.lane(),
+                header.role(),
+                header.tag(),
+                header.label(),
+                header.op(),
+                crate::control::cap::mint::ControlPath::Wire,
+                header.shot(),
+                header.scope_kind(),
+                header.flags(),
+                header.scope_id(),
+                header.epoch(),
+                *header.handle(),
+            ),
+            CapHeader::new(
+                header.sid(),
+                header.lane(),
+                header.role(),
+                header.tag(),
+                header.label(),
+                header.op(),
+                header.path(),
+                crate::control::cap::mint::CapShot::Many,
+                header.scope_kind(),
+                header.flags(),
+                header.scope_id(),
+                header.epoch(),
+                *header.handle(),
+            ),
+        ] {
+            assert!(
+                matches!(
+                    StaticTestCluster::<1>::verify_control_header(desc, mismatched, 3, 11),
+                    Err(CpError::Authorisation { operation })
+                        if operation == desc.op() as u8
+                ),
+                "descriptor/header mismatch must fail closed",
+            );
+        }
+    }
+
+    #[test]
+    fn no_handle_decode_in_core_auth() {
+        let desc = ControlDesc::of::<DecodePoisonKind>();
+        let header = CapHeader::new(
+            SessionId::new(7),
+            Lane::new(0),
+            0,
+            desc.resource_tag(),
+            desc.label(),
+            desc.op(),
+            desc.path(),
+            desc.shot(),
+            desc.scope_kind(),
+            desc.header_flags(),
+            3,
+            11,
+            DecodePoisonKind::encode_handle(&()),
+        );
+
+        StaticTestCluster::<1>::verify_control_header(desc, header, 3, 11)
+            .expect("core auth must not decode the typed handle");
     }
 
     type StaticTestCluster<const MAX_RV: usize> =
@@ -5074,7 +5130,7 @@ mod tests {
         run_on_transient_compiled_test_stack(
             "splice_begin_and_ack_execute_without_hidden_dispatch",
             || {
-                use crate::control::cap::resource_kinds::TopologyHandle;
+                use crate::control::cap::atomic_codecs::TopologyHandle;
 
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
                     with_test_cluster(clock, |cluster| {
@@ -5445,9 +5501,9 @@ mod tests {
     }
 
     #[test]
-    fn resolver_defer_for_splice_or_reroute_is_policy_abort() {
+    fn register_dynamic_resolver_rejects_splice_and_reroute_ops() {
         run_on_transient_compiled_test_stack(
-            "resolver_defer_for_splice_or_reroute_is_policy_abort",
+            "register_dynamic_resolver_rejects_splice_and_reroute_ops",
             || {
                 fn defer_resolution(
                     _ctx: ResolverContext,
@@ -5476,7 +5532,7 @@ mod tests {
                                 None,
                                 ResolverRef::from_fn(defer_resolution),
                             )
-                            .expect("register splice resolver");
+                            .expect_err("splice resolver must be rejected");
                         cluster
                             .register_dynamic_policy_resolver(
                                 rv_id,
@@ -5488,37 +5544,7 @@ mod tests {
                                 None,
                                 ResolverRef::from_fn(defer_resolution),
                             )
-                            .expect("register reroute resolver");
-
-                        let splice_err = cluster
-                            .resolve_dynamic_policy(
-                                rv_id,
-                                None,
-                                Lane::new(0),
-                                eff_index,
-                                TAG_TOPOLOGY_BEGIN_CONTROL,
-                                ControlOp::TopologyBegin,
-                                crate::transport::TransportSnapshot::default(),
-                                [0; 4],
-                                &crate::transport::context::PolicyAttrs::new(),
-                            )
-                            .expect_err("splice defer must be rejected");
-                        assert_eq!(splice_err, CpError::PolicyAbort { reason: policy_id });
-
-                        let reroute_err = cluster
-                            .resolve_dynamic_policy(
-                                rv_id,
-                                None,
-                                Lane::new(0),
-                                eff_index,
-                                TAG_CAP_DELEGATE_CONTROL,
-                                ControlOp::CapDelegate,
-                                crate::transport::TransportSnapshot::default(),
-                                [0; 4],
-                                &crate::transport::context::PolicyAttrs::new(),
-                            )
-                            .expect_err("reroute defer must be rejected");
-                        assert_eq!(reroute_err, CpError::PolicyAbort { reason: policy_id });
+                            .expect_err("reroute resolver must be rejected");
                     });
                 });
             },

@@ -104,15 +104,35 @@ fn substrate_policy_surface_exports_policyslot_only() {
 #[test]
 fn transport_snapshot_surface_stays_getter_only() {
     let transport_src = read("src/transport.rs");
+    let substrate_src = read("src/substrate.rs");
 
     assert!(
-        transport_src.contains("pub struct TransportSnapshotParts"),
-        "transport snapshot packing must stay on the single-argument parts owner"
+        transport_src.contains("pub const fn from_policy_attrs(attrs: &context::PolicyAttrs) -> Self"),
+        "transport snapshot must rebuild from packed PolicyAttrs"
     );
     assert!(
-        transport_src.contains("pub const fn from_parts(parts: TransportSnapshotParts) -> Self"),
-        "transport snapshot must expose single-step packed construction"
+        !transport_src.contains("pub struct TransportSnapshotParts"),
+        "transport snapshot option-bag constructor must stay internal"
     );
+    assert!(
+        !transport_src.contains("pub const fn from_parts(parts: TransportSnapshotParts) -> Self"),
+        "transport snapshot parts constructor must stay internal"
+    );
+    assert!(
+        !substrate_src.contains("TransportSnapshotParts"),
+        "substrate::transport must not re-export TransportSnapshotParts"
+    );
+    for required in [
+        "pub use crate::transport::context::{",
+        "ContextId",
+        "ContextValue",
+        "PolicyAttrs",
+    ] {
+        assert!(
+            substrate_src.contains(required),
+            "packed policy attrs must remain publicly reachable: {required}"
+        );
+    }
     for forbidden in [
         "pub const fn new(latency_us: Option<u64>, queue_depth: Option<u32>) -> Self",
         "pub const fn with_latency_us",

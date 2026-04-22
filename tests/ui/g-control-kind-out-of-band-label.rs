@@ -27,7 +27,7 @@ impl ResourceKind for OutOfBandKind {
 impl ControlResourceKind for OutOfBandKind {
     const LABEL: u8 = 40;
     const SCOPE: ControlScopeKind = ControlScopeKind::Policy;
-    const TAP_ID: u16 = 0;
+    const TAP_ID: u16 = 0x0300 + 40;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Wire;
     const OP: ControlOp = ControlOp::Fence;

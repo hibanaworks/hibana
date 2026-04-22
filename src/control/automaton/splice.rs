@@ -23,10 +23,9 @@ use crate::{
     control::automaton::distributed::{SpliceAck, SpliceIntent},
     control::cluster::error::SpliceError,
     control::{
-        cluster::core::{EffectRunner, SpliceOperands},
         lease::{
             bundle::LeaseBundleFacet,
-            core::{ControlAutomaton, ControlStep, FullSpec, RendezvousLease, SpliceSpec},
+            core::{ControlAutomaton, ControlStep, RendezvousLease, SpliceSpec},
             graph::{InlineLeaseChildStorage, InlineLeaseNodeStorage, LeaseSpec},
         },
         types::{Generation, Lane, RendezvousId, SessionId},
@@ -75,79 +74,6 @@ where
         Self: 'graph;
     const MAX_NODES: usize = SPLICE_LEASE_MAX_NODES;
     const MAX_CHILDREN: usize = SPLICE_LEASE_MAX_CHILDREN;
-}
-
-/// Seed used for splice operand preparation.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct SplicePrepareSeed {
-    pub(crate) sid: SessionId,
-    pub(crate) src_lane: Lane,
-    pub(crate) dst_rv: RendezvousId,
-    pub(crate) dst_lane: Lane,
-    pub(crate) fences: Option<(u32, u32)>,
-}
-
-/// Automaton that prepares splice operands through a lease graph.
-pub(crate) struct SplicePrepareAutomaton;
-
-impl<T, U, C, E> ControlAutomaton<T, U, C, E> for SplicePrepareAutomaton
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
-{
-    type Spec = FullSpec;
-    type Seed = SplicePrepareSeed;
-    type Output = SpliceOperands;
-    type Error = crate::control::cluster::error::CpError;
-    type GraphSpec = SpliceLeaseSpec<T, U, C, E>;
-
-    fn run<'lease, 'lease_cfg>(
-        _lease: &mut RendezvousLease<'lease, 'lease_cfg, T, U, C, E, Self::Spec>,
-        _seed: Self::Seed,
-    ) -> ControlStep<Self::Output, Self::Error>
-    where
-        'lease_cfg: 'lease,
-    {
-        ControlStep::Abort(crate::control::cluster::error::CpError::Splice(
-            SpliceError::InvalidState,
-        ))
-    }
-
-    fn run_with_graph<'lease, 'lease_cfg, 'graph>(
-        graph: &'graph mut crate::control::lease::graph::LeaseGraph<
-            'graph,
-            SpliceLeaseSpec<T, U, C, E>,
-        >,
-        root_lease: &mut RendezvousLease<'lease, 'lease_cfg, T, U, C, E, Self::Spec>,
-        seed: Self::Seed,
-    ) -> ControlStep<Self::Output, Self::Error>
-    where
-        'lease_cfg: 'lease,
-    {
-        match root_lease.with_rendezvous(|rv| {
-            EffectRunner::prepare_splice_operands(
-                rv,
-                seed.sid,
-                seed.src_lane,
-                seed.dst_rv,
-                seed.dst_lane,
-                seed.fences,
-            )
-        }) {
-            Ok(operands) => {
-                {
-                    let mut handle = graph.root_handle_mut();
-                    if let Some(splice) = handle.context().splice() {
-                        splice.clear();
-                    }
-                }
-                ControlStep::Complete(operands)
-            }
-            Err(err) => ControlStep::Abort(err),
-        }
-    }
 }
 
 /// Begin automaton for distributed splice.

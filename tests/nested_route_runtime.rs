@@ -243,7 +243,7 @@ fn nested_branch_commit_stack() {
                                     // =========================================================================
                                     // Outer route: Controller self-send control via flow().send(())
                                     // =========================================================================
-                                    let outer_outcome = controller
+                                    let _outer_token = controller
                                         .flow::<Msg<
                                             { LABEL_ROUTE_DECISION },
                                             GenericCapToken<RouteDecisionKind>,
@@ -253,7 +253,6 @@ fn nested_branch_commit_stack() {
                                         .send(())
                                         .await
                                         .expect("apply outer left control");
-                                    assert!(outer_outcome.is_canonical());
 
                                     // =========================================================================
                                     // Outer route: Controller sends wire data to Worker
@@ -284,7 +283,7 @@ fn nested_branch_commit_stack() {
                                     // =========================================================================
                                     // Inner route: Controller self-send control via flow().send(())
                                     // =========================================================================
-                                    let inner_outcome = controller
+                                    let _inner_token = controller
                                         .flow::<Msg<
                                             { LABEL_ROUTE_DECISION },
                                             GenericCapToken<RouteDecisionKind>,
@@ -294,7 +293,6 @@ fn nested_branch_commit_stack() {
                                         .send(())
                                         .await
                                         .expect("apply inner left control");
-                                    assert!(inner_outcome.is_canonical());
 
                                     // =========================================================================
                                     // Inner route: Controller sends wire data to Worker
@@ -377,7 +375,7 @@ fn localside_offer_decode_sizes_stay_compact() {
                                 let offer_bytes = size_of_val(&offer);
                                 drop(offer);
 
-                                let route_outcome = futures::executor::block_on(
+                                let _route_token = futures::executor::block_on(
                                     controller
                                         .flow::<Msg<
                                             { LABEL_ROUTE_DECISION },
@@ -388,7 +386,6 @@ fn localside_offer_decode_sizes_stay_compact() {
                                         .send(()),
                                 )
                                 .expect("apply outer left control");
-                                assert!(route_outcome.is_canonical());
 
                                 let _outcome = futures::executor::block_on(
                                     controller

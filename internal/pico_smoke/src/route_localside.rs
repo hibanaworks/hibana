@@ -26,209 +26,193 @@ pub(crate) trait PicoSelectableControl:
 
 impl<const ARM: u8> PicoSelectableControl for RouteControl<112, ARM> {
     fn select(controller: &mut ControllerEndpoint<'_>) {
-        let outcome = drive(
+        let _token = drive(
             controller
                 .flow::<g::Msg<112, GenericCapToken<Self>, Self>>()
                 .expect("controller control flow")
                 .send(()),
         )
         .expect("controller control send");
-        assert!(outcome.is_canonical());
     }
 }
 
 impl<const ARM: u8> PicoSelectableControl for RouteControl<113, ARM> {
     fn select(controller: &mut ControllerEndpoint<'_>) {
-        let outcome = drive(
+        let _token = drive(
             controller
                 .flow::<g::Msg<113, GenericCapToken<Self>, Self>>()
                 .expect("controller control flow")
                 .send(()),
         )
         .expect("controller control send");
-        assert!(outcome.is_canonical());
     }
 }
 
 impl<const ARM: u8> PicoSelectableControl for RouteControl<114, ARM> {
     fn select(controller: &mut ControllerEndpoint<'_>) {
-        let outcome = drive(
+        let _token = drive(
             controller
                 .flow::<g::Msg<114, GenericCapToken<Self>, Self>>()
                 .expect("controller control flow")
                 .send(()),
         )
         .expect("controller control send");
-        assert!(outcome.is_canonical());
     }
 }
 
 impl<const ARM: u8> PicoSelectableControl for RouteControl<115, ARM> {
     fn select(controller: &mut ControllerEndpoint<'_>) {
-        let outcome = drive(
+        let _token = drive(
             controller
                 .flow::<g::Msg<115, GenericCapToken<Self>, Self>>()
                 .expect("controller control flow")
                 .send(()),
         )
         .expect("controller control send");
-        assert!(outcome.is_canonical());
     }
 }
 
 impl<const ARM: u8> PicoSelectableControl for RouteControl<116, ARM> {
     fn select(controller: &mut ControllerEndpoint<'_>) {
-        let outcome = drive(
+        let _token = drive(
             controller
                 .flow::<g::Msg<116, GenericCapToken<Self>, Self>>()
                 .expect("controller control flow")
                 .send(()),
         )
         .expect("controller control send");
-        assert!(outcome.is_canonical());
     }
 }
 
 impl<const ARM: u8> PicoSelectableControl for RouteControl<117, ARM> {
     fn select(controller: &mut ControllerEndpoint<'_>) {
-        let outcome = drive(
+        let _token = drive(
             controller
                 .flow::<g::Msg<117, GenericCapToken<Self>, Self>>()
                 .expect("controller control flow")
                 .send(()),
         )
         .expect("controller control send");
-        assert!(outcome.is_canonical());
     }
 }
 
 impl<const ARM: u8> PicoSelectableControl for RouteControl<118, ARM> {
     fn select(controller: &mut ControllerEndpoint<'_>) {
-        let outcome = drive(
+        let _token = drive(
             controller
                 .flow::<g::Msg<118, GenericCapToken<Self>, Self>>()
                 .expect("controller control flow")
                 .send(()),
         )
         .expect("controller control send");
-        assert!(outcome.is_canonical());
     }
 }
 
 impl<const ARM: u8> PicoSelectableControl for RouteControl<119, ARM> {
     fn select(controller: &mut ControllerEndpoint<'_>) {
-        let outcome = drive(
+        let _token = drive(
             controller
                 .flow::<g::Msg<119, GenericCapToken<Self>, Self>>()
                 .expect("controller control flow")
                 .send(()),
         )
         .expect("controller control send");
-        assert!(outcome.is_canonical());
     }
 }
 
 impl<const ARM: u8> PicoSelectableControl for RouteControl<120, ARM> {
     fn select(controller: &mut ControllerEndpoint<'_>) {
-        let outcome = drive(
+        let _token = drive(
             controller
                 .flow::<g::Msg<120, GenericCapToken<Self>, Self>>()
                 .expect("controller control flow")
                 .send(()),
         )
         .expect("controller control send");
-        assert!(outcome.is_canonical());
     }
 }
 
 impl<const ARM: u8> PicoSelectableControl for RouteControl<121, ARM> {
     fn select(controller: &mut ControllerEndpoint<'_>) {
-        let outcome = drive(
+        let _token = drive(
             controller
                 .flow::<g::Msg<121, GenericCapToken<Self>, Self>>()
                 .expect("controller control flow")
                 .send(()),
         )
         .expect("controller control send");
-        assert!(outcome.is_canonical());
     }
 }
 
 impl<const ARM: u8> PicoSelectableControl for RouteControl<122, ARM> {
     fn select(controller: &mut ControllerEndpoint<'_>) {
-        let outcome = drive(
+        let _token = drive(
             controller
                 .flow::<g::Msg<122, GenericCapToken<Self>, Self>>()
                 .expect("controller control flow")
                 .send(()),
         )
         .expect("controller control send");
-        assert!(outcome.is_canonical());
     }
 }
 
 impl<const ARM: u8> PicoSelectableControl for RouteControl<123, ARM> {
     fn select(controller: &mut ControllerEndpoint<'_>) {
-        let outcome = drive(
+        let _token = drive(
             controller
                 .flow::<g::Msg<123, GenericCapToken<Self>, Self>>()
                 .expect("controller control flow")
                 .send(()),
         )
         .expect("controller control send");
-        assert!(outcome.is_canonical());
     }
 }
 
 impl<const ARM: u8> PicoSelectableControl for RouteControl<124, ARM> {
     fn select(controller: &mut ControllerEndpoint<'_>) {
-        let outcome = drive(
+        let _token = drive(
             controller
                 .flow::<g::Msg<124, GenericCapToken<Self>, Self>>()
                 .expect("controller control flow")
                 .send(()),
         )
         .expect("controller control send");
-        assert!(outcome.is_canonical());
     }
 }
 
 impl<const ARM: u8> PicoSelectableControl for RouteControl<125, ARM> {
     fn select(controller: &mut ControllerEndpoint<'_>) {
-        let outcome = drive(
+        let _token = drive(
             controller
                 .flow::<g::Msg<125, GenericCapToken<Self>, Self>>()
                 .expect("controller control flow")
                 .send(()),
         )
         .expect("controller control send");
-        assert!(outcome.is_canonical());
     }
 }
 
 impl<const ARM: u8> PicoSelectableControl for RouteControl<126, ARM> {
     fn select(controller: &mut ControllerEndpoint<'_>) {
-        let outcome = drive(
+        let _token = drive(
             controller
                 .flow::<g::Msg<126, GenericCapToken<Self>, Self>>()
                 .expect("controller control flow")
                 .send(()),
         )
         .expect("controller control send");
-        assert!(outcome.is_canonical());
     }
 }
 
 impl<const ARM: u8> PicoSelectableControl for RouteControl<127, ARM> {
     fn select(controller: &mut ControllerEndpoint<'_>) {
-        let outcome = drive(
+        let _token = drive(
             controller
                 .flow::<g::Msg<127, GenericCapToken<Self>, Self>>()
                 .expect("controller control flow")
                 .send(()),
         )
         .expect("controller control send");
-        assert!(outcome.is_canonical());
     }
 }
 

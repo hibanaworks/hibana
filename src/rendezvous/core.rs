@@ -29,7 +29,7 @@ use crate::{
             ResourceKind, VerifiedCap,
         },
         cluster::{
-            core::{CpCommand, EffectRunner, SpliceOperands},
+            core::{CpCommand, EffectRunner},
             error::CpError,
         },
         types::{IncreasingGen, One},
@@ -44,7 +44,7 @@ use crate::{
     global::const_dsl::{ControlScopeKind, PolicyMode},
     observe::core::{TapEvent, TapRing, emit},
     observe::{
-        events::{DelegBegin, DelegSplice, LaneRelease, RawEvent, RollbackOk},
+        events::{DelegBegin, LaneRelease, RawEvent, RollbackOk},
         ids, policy_abort, policy_trap,
     },
     policy_runtime::{self, AbortInfo, Action, HostSlots, PolicyCtx, PolicySlot},
@@ -1208,7 +1208,7 @@ where
 
     pub(crate) fn prepare_splice_control_scope(&mut self, lane: Lane) -> Option<()> {
         self.ensure_splice_control_storage()?;
-        self.initialise_control_scope(lane, ControlScopeKind::Splice);
+        self.initialise_control_scope(lane, ControlScopeKind::Topology);
         Some(())
     }
 
@@ -2027,20 +2027,6 @@ where
         }
         configure(&mut ctx);
         Action::Proceed
-    }
-
-    fn prepare_distributed_splice_operands(
-        &self,
-        sid: SessionId,
-        src_lane: Lane,
-        dst_rv: RendezvousId,
-        dst_lane: Lane,
-        fences: Option<(u32, u32)>,
-    ) -> Result<SpliceOperands, CpError> {
-        let intent = self
-            .begin_distributed_splice(sid, src_lane, dst_rv, dst_lane, fences)
-            .map_err(map_splice_error)?;
-        Ok(SpliceOperands::from_intent(&intent))
     }
 
     fn emit_effect(&self, effect: ControlOp, sid: SessionId, arg: u32) {
@@ -3119,14 +3105,14 @@ where
             ControlScopeKind::Loop => {
                 self.loops.reset_lane(lane);
             }
-            ControlScopeKind::Checkpoint => {
+            ControlScopeKind::State => {
                 self.checkpoints.reset_lane(lane);
             }
-            ControlScopeKind::Cancel => {}
-            ControlScopeKind::Splice => {
+            ControlScopeKind::Abort => {}
+            ControlScopeKind::Topology => {
                 self.splice.reset_lane(lane);
             }
-            ControlScopeKind::Reroute
+            ControlScopeKind::Delegate
             | ControlScopeKind::Policy
             | ControlScopeKind::Route
             | ControlScopeKind::None => {}
@@ -3606,58 +3592,6 @@ where
     // ============================================================================
     // Distributed splice methods
     // ============================================================================
-
-    pub(crate) fn begin_distributed_splice(
-        &self,
-        sid: SessionId,
-        src_lane: Lane,
-        dst_rv: RendezvousId,
-        dst_lane: Lane,
-        fences: Option<(u32, u32)>,
-    ) -> Result<SpliceIntent, SpliceError> {
-        // Verify session exists and is on the expected lane
-        if self.assoc.get_sid(src_lane) != Some(sid) {
-            return Err(SpliceError::UnknownSession { sid });
-        }
-
-        // Get current generation and calculate next
-        let old_gen = self.r#gen.last(src_lane).unwrap_or(Generation(0));
-        let new_gen = Generation(old_gen.0.saturating_add(1));
-
-        if new_gen.0 == 0 {
-            return Err(SpliceError::GenerationOverflow {
-                lane: src_lane,
-                last: old_gen,
-            });
-        }
-
-        let intent = SpliceIntent::new(
-            self.id,
-            dst_rv,
-            sid.raw(),
-            old_gen,
-            new_gen,
-            fences.map(|f| f.0).unwrap_or(0),
-            fences.map(|f| f.1).unwrap_or(0),
-            src_lane,
-            dst_lane,
-        );
-
-        // Store intent locally
-        self.distributed_splice.insert(intent)?;
-
-        // Emit tap event
-        emit(
-            self.tap(),
-            DelegSplice::new(
-                self.clock.now32(),
-                src_lane.0 | (dst_lane.0 << 8) | ((new_gen.0 as u32) << 16),
-                sid.raw(),
-            ),
-        );
-
-        Ok(intent)
-    }
 
     pub(crate) fn take_cached_distributed_intent(
         &self,
@@ -4178,16 +4112,6 @@ where
         self.perform_effect(envelope)
     }
 
-    fn prepare_splice_operands(
-        &self,
-        sid: SessionId,
-        src_lane: Lane,
-        dst_rv: RendezvousId,
-        dst_lane: Lane,
-        fences: Option<(u32, u32)>,
-    ) -> Result<SpliceOperands, CpError> {
-        self.prepare_distributed_splice_operands(sid, src_lane, dst_rv, dst_lane, fences)
-    }
 }
 
 // ============================================================================

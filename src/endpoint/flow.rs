@@ -10,13 +10,51 @@ use core::{
 
 use crate::{
     binding::BindingHandle,
-    control::cap::mint::{AllowsCanonical, MintConfig, MintConfigMarker},
-    endpoint::{SendResult, control::ControlOutcome, kernel},
-    global::{ControlPayloadKind, MessageSpec, SendableLabel},
+    control::cap::mint::{
+        AllowsEndpointMint, ControlResourceKind, GenericCapToken, MintConfig, MintConfigMarker,
+    },
+    endpoint::{SendError, SendResult, kernel},
+    global::{ControlDesc, ControlPayloadKind, MessageSpec, SendableLabel},
     transport::wire::WireEncode,
 };
 
 type EndpointBinding<'r> = BindingHandle<'r>;
+
+pub trait SendOutcomeKind<'r>: ControlPayloadKind {
+    type Output;
+
+    fn finish_send(outcome: kernel::SendControlOutcome<'r>) -> SendResult<Self::Output>;
+}
+
+impl<'r> SendOutcomeKind<'r> for () {
+    type Output = ();
+
+    #[inline]
+    fn finish_send(outcome: kernel::SendControlOutcome<'r>) -> SendResult<Self::Output> {
+        match outcome {
+            kernel::SendControlOutcome::None => Ok(()),
+            _ => Err(SendError::PhaseInvariant),
+        }
+    }
+}
+
+impl<'r, K> SendOutcomeKind<'r> for K
+where
+    K: ControlResourceKind + 'r,
+{
+    type Output = GenericCapToken<K>;
+
+    #[inline]
+    fn finish_send(outcome: kernel::SendControlOutcome<'r>) -> SendResult<Self::Output> {
+        match outcome {
+            kernel::SendControlOutcome::None => Err(SendError::PhaseInvariant),
+            kernel::SendControlOutcome::Registered(token) => {
+                Ok(token.into_typed::<K>().into_handle())
+            }
+            kernel::SendControlOutcome::Emitted(token) => Ok(token.into_generic()),
+        }
+    }
+}
 
 /// Affine flow handle for a pending send transition.
 pub(crate) struct CapFlow<'e, 'r, const ROLE: u8, M>
@@ -43,11 +81,11 @@ where
     inner: FlowInner<'e, 'r, ROLE, M>,
 }
 
-struct SendFuture<'e, 'a, 'r, const ROLE: u8, M>
+struct SendFuture<'e, 'a, 'r, const ROLE: u8, M, O>
 where
     M: MessageSpec + SendableLabel,
     M::Payload: WireEncode,
-    M::ControlKind: ControlPayloadKind,
+    M::ControlKind: SendOutcomeKind<'r, Output = O>,
     <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
     'r: 'a,
 {
@@ -57,6 +95,7 @@ where
     _borrow: PhantomData<&'e mut EndpointBinding<'r>>,
     _payload: PhantomData<&'a M::Payload>,
     _msg: PhantomData<M>,
+    _output: PhantomData<O>,
 }
 
 #[inline]
@@ -65,7 +104,7 @@ where
     M: MessageSpec + SendableLabel,
     M::ControlKind: ControlPayloadKind,
 {
-    let control = <M as MessageSpec>::CONTROL;
+    let control = <M as MessageSpec>::CONTROL.map(ControlDesc::from_static);
     let expects_control = <M::ControlKind as ControlPayloadKind>::IS_CONTROL;
     kernel::SendDesc::new(
         <M as MessageSpec>::LABEL,
@@ -119,24 +158,19 @@ impl<'e, 'r, const ROLE: u8, M> CapFlow<'e, 'r, ROLE, M>
 where
     M: MessageSpec + SendableLabel,
     M::Payload: WireEncode,
-    M::ControlKind: ControlPayloadKind,
+    M::ControlKind: SendOutcomeKind<'r>,
     <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-    MintConfig: MintConfigMarker<Policy: AllowsCanonical>,
+    MintConfig: MintConfigMarker<Policy: AllowsEndpointMint>,
 {
     #[inline]
-    pub(crate) fn send<'a, A>(
+    pub(crate) fn send<'a, A, O>(
         self,
         arg: A,
-    ) -> impl Future<
-        Output = SendResult<
-            ControlOutcome<
-                'r,
-                <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind,
-            >,
-        >,
-    > + 'a
+    ) -> impl Future<Output = SendResult<O>> + 'a
     where
         A: FlowSendArg<'a, M>,
+        M::ControlKind: SendOutcomeKind<'r, Output = O>,
+        O: 'a,
         M::Payload: 'a,
         M: 'a,
         A: 'a,
@@ -150,13 +184,14 @@ where
         unsafe {
             (&mut *endpoint).init_public_send_state(preview, payload);
         }
-        SendFuture::<'e, 'a, 'r, ROLE, M> {
+        SendFuture::<'e, 'a, 'r, ROLE, M, O> {
             endpoint,
             desc,
             completed: false,
             _borrow: PhantomData,
             _payload: PhantomData,
             _msg: PhantomData,
+            _output: PhantomData,
         }
     }
 }
@@ -165,24 +200,20 @@ impl<'e, 'r, const ROLE: u8, M> Flow<'e, 'r, ROLE, M>
 where
     M: MessageSpec + SendableLabel,
     M::Payload: WireEncode,
-    M::ControlKind: ControlPayloadKind,
+    M::ControlKind: SendOutcomeKind<'r>,
     <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-    MintConfig: MintConfigMarker<Policy: AllowsCanonical>,
+    MintConfig: MintConfigMarker<Policy: AllowsEndpointMint>,
 {
     #[inline]
-    pub fn send<'a, A>(
+    #[allow(private_bounds)]
+    pub fn send<'a, A, O>(
         self,
         arg: A,
-    ) -> impl Future<
-        Output = SendResult<
-            ControlOutcome<
-                'r,
-                <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind,
-            >,
-        >,
-    > + 'a
+    ) -> impl Future<Output = SendResult<O>> + 'a
     where
         A: FlowSendArg<'a, M>,
+        M::ControlKind: SendOutcomeKind<'r, Output = O>,
+        O: 'a,
         M::Payload: 'a,
         M: 'a,
         A: 'a,
@@ -193,18 +224,16 @@ where
     }
 }
 
-impl<'e, 'a, 'r, const ROLE: u8, M> Future for SendFuture<'e, 'a, 'r, ROLE, M>
+impl<'e, 'a, 'r, const ROLE: u8, M, O> Future for SendFuture<'e, 'a, 'r, ROLE, M, O>
 where
     M: MessageSpec + SendableLabel,
     M::Payload: WireEncode,
-    M::ControlKind: ControlPayloadKind,
+    M::ControlKind: SendOutcomeKind<'r, Output = O>,
     <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-    MintConfig: MintConfigMarker<Policy: AllowsCanonical>,
+    MintConfig: MintConfigMarker<Policy: AllowsEndpointMint>,
     'r: 'a,
 {
-    type Output = SendResult<
-        ControlOutcome<'r, <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind>,
-    >;
+    type Output = SendResult<O>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = unsafe { self.get_unchecked_mut() };
@@ -213,15 +242,7 @@ where
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(outcome)) => {
                 this.completed = true;
-                Poll::Ready(Ok(match outcome {
-                    kernel::SendControlOutcome::None => ControlOutcome::None,
-                    kernel::SendControlOutcome::Canonical(token) => {
-                        ControlOutcome::Canonical(token.into_typed())
-                    }
-                    kernel::SendControlOutcome::External(token) => {
-                        ControlOutcome::External(token.into_generic())
-                    }
-                }))
+                Poll::Ready(<M::ControlKind as SendOutcomeKind<'r>>::finish_send(outcome))
             }
             Poll::Ready(Err(err)) => {
                 this.completed = true;
@@ -231,11 +252,11 @@ where
     }
 }
 
-impl<'e, 'a, 'r, const ROLE: u8, M> Drop for SendFuture<'e, 'a, 'r, ROLE, M>
+impl<'e, 'a, 'r, const ROLE: u8, M, O> Drop for SendFuture<'e, 'a, 'r, ROLE, M, O>
 where
     M: MessageSpec + SendableLabel,
     M::Payload: WireEncode,
-    M::ControlKind: ControlPayloadKind,
+    M::ControlKind: SendOutcomeKind<'r, Output = O>,
     <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
     'r: 'a,
 {
@@ -245,6 +266,22 @@ where
                 (&mut *self.endpoint).reset_public_send_state();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SendFuture;
+    use core::mem::size_of;
+
+    type SendFut = SendFuture<'static, 'static, 'static, 0, crate::g::Msg<7, ()>, ()>;
+
+    #[test]
+    fn send_future_stays_within_size_budget() {
+        assert!(
+            size_of::<SendFut>() <= 48,
+            "SendFuture must stay within the localside size budget"
+        );
     }
 }
 
@@ -261,7 +298,7 @@ where
 impl<'a, M> FlowSendArg<'a, M> for ()
 where
     M: MessageSpec + SendableLabel,
-    MintConfig: MintConfigMarker<Policy: AllowsCanonical>,
+    MintConfig: MintConfigMarker<Policy: AllowsEndpointMint>,
     M::ControlKind: ControlPayloadKind,
 {
     #[inline(always)]

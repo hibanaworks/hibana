@@ -520,7 +520,7 @@ fn flow_preview_is_policy_free_until_send_consumes_it() {
                                         );
 
                                         futures::executor::block_on(async {
-                                            let outcome = controller
+                                            let _token = controller
                                                 .flow::<Msg<
                                                     { LABEL_ROUTE_DECISION },
                                                     GenericCapToken<RouteDecisionKind>,
@@ -530,7 +530,6 @@ fn flow_preview_is_policy_free_until_send_consumes_it() {
                                                 .send(())
                                                 .await
                                                 .expect("send route control");
-                                            assert!(outcome.is_canonical());
                                         });
                                     },
                                 )
@@ -617,7 +616,7 @@ fn offer_decode_binding_consumes_classification_once() {
                                                     },
                                                     |worker| {
                                                         futures::executor::block_on(async move {
-                                                            let outcome = controller
+                                                            let _token = controller
                                                                 .flow::<Msg<
                                                                     { LABEL_ROUTE_DECISION },
                                                                     GenericCapToken<
@@ -630,7 +629,6 @@ fn offer_decode_binding_consumes_classification_once() {
                                                                 .send(())
                                                                 .await
                                                                 .expect("send route control");
-                                                            assert!(outcome.is_canonical());
 
                                                             let _outcome = controller
                                                                 .flow::<Msg<71, u32>>()
@@ -760,7 +758,7 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                     },
                                                     |worker| {
                                                         futures::executor::block_on(async move {
-                                                            let outcome = controller
+                                                            let _token = controller
                                                                 .flow::<Msg<
                                                                     { LABEL_ROUTE_DECISION },
                                                                     GenericCapToken<
@@ -773,7 +771,6 @@ fn drop_public_preview_branch_preserves_offer_progression() {
                                                                 .send(())
                                                                 .await
                                                                 .expect("send route control");
-                                                            assert!(outcome.is_canonical());
 
                                                             let _outcome = controller
                                                                 .flow::<Msg<71, u32>>()
@@ -979,7 +976,7 @@ fn codec_error_in_public_decode_preserves_preview_branch() {
                                                     },
                                                     |worker| {
                                                         futures::executor::block_on(async move {
-                                                            let outcome = controller
+                                                            let _token = controller
                                                                 .flow::<Msg<
                                                                     { LABEL_ROUTE_DECISION },
                                                                     GenericCapToken<
@@ -992,7 +989,6 @@ fn codec_error_in_public_decode_preserves_preview_branch() {
                                                                 .send(())
                                                                 .await
                                                                 .expect("send route control");
-                                                            assert!(outcome.is_canonical());
 
                                                             let _outcome = controller
                                                                 .flow::<Msg<71, u32>>()
@@ -1223,7 +1219,7 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_classification() {
                                                                 );
                                                             });
 
-                                                            let outcome = controller
+                                                            let _token = controller
                                                                 .flow::<Msg<
                                                                     { LABEL_ROUTE_DECISION },
                                                                     GenericCapToken<
@@ -1236,7 +1232,6 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_classification() {
                                                                 .send(())
                                                                 .await
                                                                 .expect("send route control");
-                                                            assert!(outcome.is_canonical());
 
                                                             let _outcome = controller
                                                                 .flow::<Msg<71, u32>>()

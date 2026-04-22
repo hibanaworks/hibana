@@ -1,15 +1,8 @@
-error[E0277]: `g::route(left, right)` arms must start with the same controller self-send
- --> tests/ui/g-route-controller-mismatch.rs:7:22
+error[E0271]: type mismatch resolving `<StepCons<SendStep<Role<0>, Role<0>, Message<LabelMarker<6>, ()>>, StepNil> as RouteArmHead>::Controller == Role<2>`
+ --> tests/ui/g-route-controller-mismatch.rs:7:13
   |
 7 |     let _ = g::route(bad_arm, good_arm);
-  |                      ^^^^^^^ route arms use different controller self-sends
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `2`, found `0`
   |
-  = help: the trait `hibana::global::SameRouteController<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<6>, ()>>, hibana::global::steps::StepNil>>` is not implemented for `hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<2>, Role<2>, hibana::global::Message<hibana::global::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>`
-note: required by a bound in `route`
- --> src/global.rs
-  |
-  | pub const fn route<LeftSteps, RightSteps>(
-  |              ----- required by a bound in this function
-...
-  |     LeftSteps: RouteArmHead + SameRouteController<RightSteps> + DistinctRouteLabels<RightSteps>,
-  |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `route`
+  = note: expected struct `Role<2>`
+             found struct `Role<0>`

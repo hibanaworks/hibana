@@ -4,10 +4,10 @@
 use core::{mem::MaybeUninit, ptr};
 
 use crate::{
-    control::cap::mint::{CapShot, ControlOp},
+    control::cap::mint::ControlOp,
     eff::EffIndex,
     global::{
-        StaticControlDesc,
+        ControlDesc,
         compiled::images::DynamicPolicySite,
         const_dsl::{ControlScopeKind, PolicyMode},
     },
@@ -117,10 +117,10 @@ impl Iterator for ControlScopeIter {
             let bit = 1u8 << self.next;
             let scope_kind = match self.next {
                 0 => ControlScopeKind::Loop,
-                1 => ControlScopeKind::Checkpoint,
-                2 => ControlScopeKind::Cancel,
-                3 => ControlScopeKind::Splice,
-                4 => ControlScopeKind::Reroute,
+                1 => ControlScopeKind::State,
+                2 => ControlScopeKind::Abort,
+                3 => ControlScopeKind::Topology,
+                4 => ControlScopeKind::Delegate,
                 5 => ControlScopeKind::Policy,
                 6 => ControlScopeKind::Route,
                 _ => unreachable!(),
@@ -195,72 +195,39 @@ impl<'a> EffectEnvelopeRef<'a> {
 /// Metadata describing a control resource discovered during projection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ResourceDescriptor {
-    /// Effect index associated with the control atom.
-    eff_index: EffIndex,
-    /// Dynamic-policy site index, or [`Self::STATIC_POLICY_SITE`] for static policy.
-    policy_site: u16,
-    /// Stable tap-event ID baked from the owning control kind.
-    tap_id: u16,
-    /// Label associated with the control message.
-    label: u8,
-    /// Resource kind tag (maps to [`crate::control::cap::resource_kinds`]).
-    tag: u8,
-    /// Atomic runtime operation for this control message.
-    op: ControlOp,
-    /// Encoded control-scope owner.
-    scope_kind: ControlScopeKind,
-    /// Packed path/shot flags.
-    handling_shot_flags: u8,
+    control: ControlDesc,
 }
 
 impl ResourceDescriptor {
-    pub(crate) const STATIC_POLICY_SITE: u16 = u16::MAX;
-    const SHOT_BIT: u8 = 0b0000_0100;
+    pub(crate) const STATIC_POLICY_SITE: u16 = ControlDesc::STATIC_POLICY_SITE;
 
     #[inline(always)]
-    pub(crate) const fn new(
-        eff_index: EffIndex,
-        policy_site: u16,
-        control: StaticControlDesc,
-    ) -> Self {
-        let mut handling_shot_flags = control.path() as u8;
-        if matches!(control.shot(), CapShot::Many) {
-            handling_shot_flags |= Self::SHOT_BIT;
-        }
-        Self {
-            eff_index,
-            policy_site,
-            tap_id: control.tap_id(),
-            label: control.label(),
-            tag: control.resource_tag(),
-            op: control.op(),
-            scope_kind: control.scope_kind(),
-            handling_shot_flags,
-        }
+    pub(crate) const fn new(control: ControlDesc) -> Self {
+        Self { control }
     }
 
     #[inline(always)]
     pub(crate) const fn eff_index(&self) -> EffIndex {
-        self.eff_index
+        self.control.eff_index()
     }
 
     #[inline(always)]
     pub(crate) const fn tag(&self) -> u8 {
-        self.tag
+        self.control.resource_tag()
     }
 
     #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn op(&self) -> ControlOp {
-        self.op
+        self.control.op()
     }
 
     #[inline(always)]
     pub(crate) fn policy(&self, dynamic_policy_sites: &[DynamicPolicySite]) -> PolicyMode {
-        if self.policy_site == Self::STATIC_POLICY_SITE {
+        if self.control.policy_site() == Self::STATIC_POLICY_SITE {
             PolicyMode::Static
         } else {
-            dynamic_policy_sites[self.policy_site as usize].policy()
+            dynamic_policy_sites[self.control.policy_site() as usize].policy()
         }
     }
 }
@@ -419,6 +386,13 @@ mod tests {
         assert!(control_op_modifies_history(ControlOp::StateSnapshot));
         assert!(control_op_modifies_history(ControlOp::StateRestore));
         assert!(!control_op_modifies_history(ControlOp::TxCommit));
+    }
+
+    #[test]
+    fn fence_performs_no_state_mutation() {
+        assert!(!control_op_requires_gen_bump(ControlOp::Fence));
+        assert!(!control_op_is_terminal(ControlOp::Fence));
+        assert!(!control_op_modifies_history(ControlOp::Fence));
     }
 
     #[test]

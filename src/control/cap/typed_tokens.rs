@@ -17,7 +17,6 @@
 
 use crate::{
     control::cap::mint::{CAP_NONCE_LEN, CAP_TOKEN_LEN, GenericCapToken, ResourceKind},
-    global::const_dsl::ScopeId,
     rendezvous::capability::CapTable,
 };
 use core::{fmt, marker::PhantomData, ptr::NonNull};
@@ -117,7 +116,6 @@ pub struct CapRegisteredToken<'rv, K: ResourceKind> {
     bytes: [u8; CAP_TOKEN_LEN],
     nonce: [u8; CAP_NONCE_LEN],
     cap_table: Option<NonNull<CapTable>>,
-    scope: Option<ScopeId>,
     _marker: PhantomData<&'rv CapTable>,
     _resource: PhantomData<K>,
 }
@@ -133,13 +131,10 @@ impl<'rv, K: ResourceKind> fmt::Debug for CapRegisteredToken<'rv, K> {
 impl<'rv, K: ResourceKind> CapRegisteredToken<'rv, K> {
     #[inline]
     pub(crate) fn from_bytes(bytes: [u8; CAP_TOKEN_LEN]) -> Self {
-        let token = GenericCapToken::<K>::from_bytes(bytes);
-        let scope = token.scope_hint();
         Self {
-            bytes: token.into_bytes(),
+            bytes,
             nonce: [0u8; CAP_NONCE_LEN],
             cap_table: None,
-            scope,
             _marker: PhantomData,
             _resource: PhantomData,
         }
@@ -150,34 +145,14 @@ impl<'rv, K: ResourceKind> CapRegisteredToken<'rv, K> {
         bytes: [u8; CAP_TOKEN_LEN],
         nonce: [u8; CAP_NONCE_LEN],
         cap_table: &'rv CapTable,
-        scope: Option<ScopeId>,
     ) -> Self {
         Self {
             bytes,
             nonce,
             cap_table: Some(NonNull::from(cap_table)),
-            scope,
             _marker: PhantomData,
             _resource: PhantomData,
         }
-    }
-
-    /// Get the raw token bytes.
-    #[inline]
-    pub fn bytes(&self) -> &[u8; CAP_TOKEN_LEN] {
-        &self.bytes
-    }
-
-    /// Structured scope identifier carried by the canonical control token, if any.
-    #[inline]
-    pub fn scope(&self) -> Option<ScopeId> {
-        self.scope
-    }
-
-    /// Interpret this token as GenericCapToken<K>.
-    #[inline]
-    pub fn as_generic(&self) -> GenericCapToken<K> {
-        GenericCapToken::from_bytes(self.bytes)
     }
 
     /// Consume and zeroize the registered token, returning an owned handle.
@@ -189,7 +164,7 @@ impl<'rv, K: ResourceKind> CapRegisteredToken<'rv, K> {
     }
 }
 
-pub(crate) struct RawRegisteredCapToken<'rv> {
+pub struct RawRegisteredCapToken<'rv> {
     bytes: [u8; CAP_TOKEN_LEN],
     nonce: [u8; CAP_NONCE_LEN],
     cap_table: Option<NonNull<CapTable>>,
@@ -260,9 +235,8 @@ impl<'rv> RawRegisteredCapToken<'rv> {
         let cap_table = self.cap_table.take();
         self.bytes.fill(0);
         self.nonce.fill(0);
-        let scope = GenericCapToken::<K>::from_bytes(bytes).scope_hint();
         match cap_table {
-            Some(table) => CapRegisteredToken::new(bytes, nonce, unsafe { table.as_ref() }, scope),
+            Some(table) => CapRegisteredToken::new(bytes, nonce, unsafe { table.as_ref() }),
             None => CapRegisteredToken::from_bytes(bytes),
         }
     }

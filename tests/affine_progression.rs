@@ -171,13 +171,12 @@ fn drop_flow_keeps_endpoint_on_same_send_step() {
                         .expect("initial flow preview");
                     drop(flow);
 
-                    let outcome = controller
+                    let () = controller
                         .flow::<Msg<LABEL_SEND, u32>>()
                         .expect("flow must remain available after drop")
                         .send(&77)
                         .await
                         .expect("send after dropped flow");
-                    assert!(outcome.is_none());
 
                     let payload = worker
                         .recv::<Msg<LABEL_SEND, u32>>()
@@ -236,13 +235,12 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
 
                     state.set_ready(true);
                     futures::executor::block_on(async {
-                        let outcome = controller
+                        let () = controller
                             .flow::<Msg<LABEL_SEND, u32>>()
                             .expect("flow must remain available after cancellation")
                             .send(&99)
                             .await
                             .expect("send after cancelled future");
-                        assert!(outcome.is_none());
 
                         let payload = worker
                             .recv::<Msg<LABEL_SEND, u32>>()

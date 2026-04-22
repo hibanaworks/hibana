@@ -282,6 +282,7 @@ impl DistributedSpliceTable {
     }
 
     /// Insert a new splice intent.
+    #[cfg(test)]
     pub(super) fn insert(&self, intent: SpliceIntent) -> Result<(), SpliceError> {
         let entries = self.entries_ptr();
         if entries.is_null() {

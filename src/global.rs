@@ -8,6 +8,7 @@ use core::marker::PhantomData;
 use self::program::Program;
 use self::steps::{ParSteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
 use crate::control::cap::mint::{ControlResourceKind, ResourceKind};
+use crate::eff::EffIndex;
 
 /// Crate-private lowering owners for unified compilation.
 pub(crate) mod compiled;
@@ -33,7 +34,7 @@ pub mod advanced {
     message = "`g::route(left, right)` arms must begin with a controller self-send",
     label = "route arm must begin with a controller self-send"
 )]
-pub trait RouteArmHead {
+pub(crate) trait RouteArmHead {
     type Controller: RoleMarker;
     type Label: LabelTag;
 }
@@ -54,19 +55,19 @@ pub(crate) trait FragmentShape {
     message = "`g::route(left, right)` arms must start with the same controller self-send",
     label = "route arms use different controller self-sends"
 )]
-pub trait SameRouteController<Other> {}
+pub(crate) trait SameRouteControllerRole<Other> {}
 
 #[diagnostic::on_unimplemented(
     message = "`g::route(left, right)` arms must use distinct labels",
     label = "route arms reuse the same label"
 )]
-pub trait DistinctRouteLabels<Other> {}
+pub(crate) trait DistinctRouteLabel<Other> {}
 
 #[diagnostic::on_unimplemented(
     message = "`g::par(left, right)` arms must be non-empty protocol fragments",
     label = "parallel arm is empty"
 )]
-pub trait NonEmptyParallelArm {
+pub(crate) trait NonEmptyParallelArm {
     const ROLE_LANE_SET: steps::RoleLaneSet;
 }
 
@@ -282,9 +283,9 @@ where
     RouteController: RoleMarker,
     Message<LabelMarker<LABEL>, Payload, Control>: MessageSpec + MessageControlSpec + SendableLabel,
 {
-    const LOOP_MEANING: Option<LoopControlMeaning> = LoopControlMeaning::from_control_spec(Some(
-        <Message<LabelMarker<LABEL>, Payload, Control> as MessageControlSpec>::CONTROL_SPEC,
-    ));
+    const LOOP_MEANING: Option<LoopControlMeaning> = LoopControlMeaning::from_control_spec(
+        <Message<LabelMarker<LABEL>, Payload, Control> as MessageControlSpec>::CONTROL,
+    );
 }
 
 #[diagnostic::do_not_recommend]
@@ -356,30 +357,16 @@ where
 }
 
 #[diagnostic::do_not_recommend]
-impl<Left, Right, Controller> SameRouteController<Right> for Left
+impl<Controller> SameRouteControllerRole<Controller> for Controller where Controller: RoleMarker {}
+
+#[diagnostic::do_not_recommend]
+impl<Left, Right> DistinctRouteLabel<Right> for Left
 where
-    Left: RouteArmHead<Controller = Controller>,
-    Right: RouteArmHead<Controller = Controller>,
-    Controller: RoleMarker,
+    Left: LabelTag + LabelEq<Right>,
+    Right: LabelTag,
+    <Left as LabelEq<Right>>::Output: RequireFalse,
 {
 }
-
-#[diagnostic::do_not_recommend]
-impl<Left> SameRouteController<StepNil> for Left where Left: RouteArmHead {}
-
-#[diagnostic::do_not_recommend]
-impl<Left, Right> DistinctRouteLabels<Right> for Left
-where
-    Left: RouteArmHead,
-    Right: RouteArmHead,
-    <Left as RouteArmHead>::Label: LabelEq<<Right as RouteArmHead>::Label>,
-    <<Left as RouteArmHead>::Label as LabelEq<<Right as RouteArmHead>::Label>>::Output:
-        RequireFalse,
-{
-}
-
-#[diagnostic::do_not_recommend]
-impl<Left> DistinctRouteLabels<StepNil> for Left where Left: RouteArmHead {}
 
 #[diagnostic::do_not_recommend]
 impl<Head, Tail> NonEmptyParallelArm for StepCons<Head, Tail>
@@ -500,8 +487,7 @@ where
     Tail: FragmentShape + TailLoopControl,
 {
     const IS_LOOP_CONTROL: bool = if <Tail as FragmentShape>::IS_EMPTY {
-        LoopControlMeaning::from_control_spec(Some(<Msg as MessageControlSpec>::CONTROL_SPEC))
-            .is_some()
+        LoopControlMeaning::from_control_spec(<Msg as MessageControlSpec>::CONTROL).is_some()
     } else {
         <Tail as TailLoopControl>::IS_LOOP_CONTROL
     };
@@ -558,42 +544,23 @@ pub struct StaticControlDesc {
 }
 
 impl StaticControlDesc {
-    pub(crate) const fn new(
-        label: u8,
-        resource_tag: u8,
-        scope_kind: const_dsl::ControlScopeKind,
-        path: crate::control::cap::mint::ControlPath,
-        tap_id: u16,
-        shot: crate::control::cap::mint::CapShot,
-        op: crate::control::cap::mint::ControlOp,
-        flags: u8,
-    ) -> Self {
-        Self {
-            label,
-            resource_tag,
-            scope_kind,
-            path,
-            tap_id,
-            shot,
-            op,
-            flags,
-        }
-    }
-
     pub(crate) const fn of<K>() -> Self
     where
         K: ControlResourceKind,
     {
-        Self::new(
-            K::LABEL,
-            K::TAG,
-            K::SCOPE,
-            K::PATH,
-            K::TAP_ID,
-            K::SHOT,
-            K::OP,
-            if K::AUTO_MINT_WIRE { 1 } else { 0 },
-        )
+        if K::TAP_ID == 0 {
+            panic!("control TAP_ID must be explicit");
+        }
+        Self {
+            label: K::LABEL,
+            resource_tag: K::TAG,
+            scope_kind: K::SCOPE,
+            path: K::PATH,
+            tap_id: K::TAP_ID,
+            shot: K::SHOT,
+            op: K::OP,
+            flags: if K::AUTO_MINT_WIRE { 1 } else { 0 },
+        }
     }
 
     pub(crate) const fn label(self) -> u8 {
@@ -624,20 +591,168 @@ impl StaticControlDesc {
         self.op
     }
 
+    pub(crate) const fn auto_mint_wire(self) -> bool {
+        (self.flags & 1) != 0
+    }
+
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ControlDesc {
+    eff_index: EffIndex,
+    policy_site: u16,
+    tap_id: u16,
+    label: u8,
+    resource_tag: u8,
+    op: crate::control::cap::mint::ControlOp,
+    scope_kind: const_dsl::ControlScopeKind,
+    flags: u8,
+}
+
+impl ControlDesc {
+    pub(crate) const STATIC_POLICY_SITE: u16 = u16::MAX;
+    const PATH_MASK: u8 = 0b0000_0001;
+    const SHOT_MASK: u8 = 0b0000_0010;
+    const AUTO_MINT_WIRE_MASK: u8 = 0b0000_0100;
+
+    #[inline(always)]
+    pub(crate) const fn of<K: ControlResourceKind>() -> Self {
+        Self::from_static(StaticControlDesc::of::<K>())
+    }
+
+    #[inline(always)]
+    pub(crate) const fn from_static(spec: StaticControlDesc) -> Self {
+        Self::new(
+            EffIndex::MAX,
+            Self::STATIC_POLICY_SITE,
+            spec.tap_id(),
+            spec.label(),
+            spec.resource_tag(),
+            spec.op(),
+            spec.scope_kind(),
+            spec.path(),
+            spec.shot(),
+            spec.auto_mint_wire(),
+        )
+    }
+
+    #[inline(always)]
+    pub(crate) const fn with_sites(self, eff_index: EffIndex, policy_site: u16) -> Self {
+        Self {
+            eff_index,
+            policy_site,
+            tap_id: self.tap_id,
+            label: self.label,
+            resource_tag: self.resource_tag,
+            op: self.op,
+            scope_kind: self.scope_kind,
+            flags: self.flags,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn new(
+        eff_index: EffIndex,
+        policy_site: u16,
+        tap_id: u16,
+        label: u8,
+        resource_tag: u8,
+        op: crate::control::cap::mint::ControlOp,
+        scope_kind: const_dsl::ControlScopeKind,
+        path: crate::control::cap::mint::ControlPath,
+        shot: crate::control::cap::mint::CapShot,
+        auto_mint_wire: bool,
+    ) -> Self {
+        let mut flags = path.as_u8() & Self::PATH_MASK;
+        if matches!(shot, crate::control::cap::mint::CapShot::Many) {
+            flags |= Self::SHOT_MASK;
+        }
+        if auto_mint_wire {
+            flags |= Self::AUTO_MINT_WIRE_MASK;
+        }
+        Self {
+            eff_index,
+            policy_site,
+            tap_id,
+            label,
+            resource_tag,
+            op,
+            scope_kind,
+            flags,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn eff_index(self) -> EffIndex {
+        self.eff_index
+    }
+
+    #[inline(always)]
+    pub(crate) const fn policy_site(self) -> u16 {
+        self.policy_site
+    }
+
+    #[inline(always)]
+    pub(crate) const fn tap_id(self) -> u16 {
+        self.tap_id
+    }
+
+    #[inline(always)]
+    pub(crate) const fn label(self) -> u8 {
+        self.label
+    }
+
+    #[inline(always)]
+    pub(crate) const fn resource_tag(self) -> u8 {
+        self.resource_tag
+    }
+
+    #[inline(always)]
+    pub(crate) const fn op(self) -> crate::control::cap::mint::ControlOp {
+        self.op
+    }
+
+    #[inline(always)]
+    pub(crate) const fn scope_kind(self) -> const_dsl::ControlScopeKind {
+        self.scope_kind
+    }
+
+    #[inline(always)]
+    pub(crate) const fn path(self) -> crate::control::cap::mint::ControlPath {
+        if (self.flags & Self::PATH_MASK) == 0 {
+            crate::control::cap::mint::ControlPath::Local
+        } else {
+            crate::control::cap::mint::ControlPath::Wire
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn shot(self) -> crate::control::cap::mint::CapShot {
+        if (self.flags & Self::SHOT_MASK) == 0 {
+            crate::control::cap::mint::CapShot::One
+        } else {
+            crate::control::cap::mint::CapShot::Many
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn auto_mint_wire(self) -> bool {
+        (self.flags & Self::AUTO_MINT_WIRE_MASK) != 0
+    }
+
+    #[inline(always)]
+    pub(crate) const fn header_flags(self) -> u8 {
+        if self.auto_mint_wire() { 1 } else { 0 }
+    }
+
+    #[inline(always)]
     pub(crate) const fn supports_dynamic_policy(self) -> bool {
         matches!(
             self.op(),
             crate::control::cap::mint::ControlOp::RouteDecision
                 | crate::control::cap::mint::ControlOp::LoopContinue
                 | crate::control::cap::mint::ControlOp::LoopBreak
-                | crate::control::cap::mint::ControlOp::TopologyBegin
-                | crate::control::cap::mint::ControlOp::TopologyAck
-                | crate::control::cap::mint::ControlOp::CapDelegate
         )
-    }
-
-    pub(crate) const fn auto_mint_wire(self) -> bool {
-        (self.flags & 1) != 0
     }
 }
 
@@ -648,18 +763,25 @@ pub(crate) enum LoopControlMeaning {
 }
 
 impl LoopControlMeaning {
-    pub(crate) const fn from_control_spec(spec: Option<StaticControlDesc>) -> Option<Self> {
-        match spec {
-            Some(spec) => {
-                if !matches!(spec.scope_kind(), const_dsl::ControlScopeKind::Loop) {
+    pub(crate) const fn from_control_desc(desc: Option<ControlDesc>) -> Option<Self> {
+        match desc {
+            Some(desc) => {
+                if !matches!(desc.scope_kind(), const_dsl::ControlScopeKind::Loop) {
                     return None;
                 }
-                match spec.op() {
+                match desc.op() {
                     crate::control::cap::mint::ControlOp::LoopContinue => Some(Self::Continue),
                     crate::control::cap::mint::ControlOp::LoopBreak => Some(Self::Break),
                     _ => None,
                 }
             }
+            None => None,
+        }
+    }
+
+    pub(crate) const fn from_control_spec(spec: Option<StaticControlDesc>) -> Option<Self> {
+        match spec {
+            Some(spec) => Self::from_control_desc(Some(ControlDesc::from_static(spec))),
             None => None,
         }
     }
@@ -688,58 +810,69 @@ impl LoopControlMeaning {
 pub trait MessageControlSpec: MessageSpec {
     const IS_CONTROL: bool;
     const CONTROL: Option<StaticControlDesc>;
-    const CONTROL_SPEC: StaticControlDesc;
 }
 
-struct ControlLabelContract<const LABEL: u8, K>(PhantomData<fn() -> K>);
-
-trait ValidControlLabel {}
-
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<106, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<107, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<108, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<109, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<110, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<111, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<112, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<113, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<114, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<115, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<116, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<117, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<118, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<119, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<120, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<121, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<122, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<123, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<124, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<125, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<126, K> {}
-impl<K: ControlResourceKind> ValidControlLabel for ControlLabelContract<127, K> {}
-
-impl ValidControlLabel
-    for ControlLabelContract<
-        { crate::runtime::consts::LABEL_LOOP_CONTINUE },
-        crate::control::cap::resource_kinds::LoopContinueKind,
-    >
-{
+const fn str_eq(lhs: &str, rhs: &str) -> bool {
+    let lhs = lhs.as_bytes();
+    let rhs = rhs.as_bytes();
+    if lhs.len() != rhs.len() {
+        return false;
+    }
+    let mut idx = 0usize;
+    while idx < lhs.len() {
+        if lhs[idx] != rhs[idx] {
+            return false;
+        }
+        idx += 1;
+    }
+    true
 }
 
-impl ValidControlLabel
-    for ControlLabelContract<
-        { crate::runtime::consts::LABEL_LOOP_BREAK },
-        crate::control::cap::resource_kinds::LoopBreakKind,
-    >
+const fn matches_builtin_control_kind<K, BuiltIn>() -> bool
+where
+    K: ControlResourceKind,
+    BuiltIn: ControlResourceKind,
 {
+    K::TAG == BuiltIn::TAG
+        && K::SCOPE as u8 == BuiltIn::SCOPE as u8
+        && K::PATH as u8 == BuiltIn::PATH as u8
+        && K::SHOT as u8 == BuiltIn::SHOT as u8
+        && K::TAP_ID == BuiltIn::TAP_ID
+        && K::OP as u8 == BuiltIn::OP as u8
+        && str_eq(K::NAME, BuiltIn::NAME)
 }
 
-impl ValidControlLabel
-    for ControlLabelContract<
-        { crate::runtime::consts::LABEL_ROUTE_DECISION },
-        crate::control::cap::resource_kinds::RouteDecisionKind,
-    >
+const fn validate_control_label_contract<const LABEL: u8, K>()
+where
+    K: ControlResourceKind,
 {
+    if LABEL != K::LABEL {
+        panic!("control label mismatch");
+    }
+    match LABEL {
+        crate::runtime::consts::LABEL_LOOP_CONTINUE => {
+            if !matches_builtin_control_kind::<K, crate::control::cap::resource_kinds::LoopContinueKind>()
+            {
+                panic!("core-owned control label is reserved");
+            }
+        }
+        crate::runtime::consts::LABEL_LOOP_BREAK => {
+            if !matches_builtin_control_kind::<K, crate::control::cap::resource_kinds::LoopBreakKind>()
+            {
+                panic!("core-owned control label is reserved");
+            }
+        }
+        crate::runtime::consts::LABEL_ROUTE_DECISION => {
+            if !matches_builtin_control_kind::<K, crate::control::cap::resource_kinds::RouteDecisionKind>()
+            {
+                panic!("core-owned control label is reserved");
+            }
+        }
+        _ if LABEL < crate::runtime::consts::LABEL_PROTOCOL_CONTROL_MIN => {
+            panic!("control labels must stay inside the reserved protocol-control range");
+        }
+        _ => {}
+    }
 }
 
 impl<L, P> MessageControlSpec for Message<L, P, ()>
@@ -749,36 +882,17 @@ where
 {
     const IS_CONTROL: bool = false;
     const CONTROL: Option<StaticControlDesc> = None;
-    const CONTROL_SPEC: StaticControlDesc = StaticControlDesc::new(
-        L::VALUE,
-        0,
-        const_dsl::ControlScopeKind::None,
-        crate::control::cap::mint::ControlPath::Local,
-        0,
-        crate::control::cap::mint::CapShot::One,
-        crate::control::cap::mint::ControlOp::Fence,
-        0,
-    );
 }
 
 impl<const LABEL: u8, K> MessageControlSpec
     for Message<LabelMarker<LABEL>, crate::control::cap::mint::GenericCapToken<K>, K>
 where
     K: ControlResourceKind,
-    ControlLabelContract<LABEL, K>: ValidControlLabel,
 {
     const IS_CONTROL: bool = true;
     const CONTROL: Option<StaticControlDesc> = {
-        if LABEL != K::LABEL {
-            panic!("control label mismatch");
-        }
+        validate_control_label_contract::<LABEL, K>();
         Some(StaticControlDesc::of::<K>())
-    };
-    const CONTROL_SPEC: StaticControlDesc = {
-        if LABEL != K::LABEL {
-            panic!("control label mismatch");
-        }
-        StaticControlDesc::of::<K>()
     };
 }
 
@@ -814,7 +928,10 @@ where
         crate::global::validate_sendable_message::<M>();
         if <M as MessageControlSpec>::IS_CONTROL {
             let is_self_send = <<From as steps::RoleEq<To>>::Output as steps::Bool>::VALUE;
-            let path = <M as MessageControlSpec>::CONTROL_SPEC.path();
+            let path = match <M as MessageControlSpec>::CONTROL {
+                Some(desc) => desc.path(),
+                None => panic!("control message missing descriptor"),
+            };
             match path {
                 crate::control::cap::mint::ControlPath::Local if !is_self_send => {
                     panic!("local control messages require self-send")
@@ -826,7 +943,7 @@ where
             }
         }
     }
-    Program::build()
+    Program::new()
 }
 
 /// Sequentially compose two protocol fragments.
@@ -847,8 +964,11 @@ pub const fn route<LeftSteps, RightSteps>(
     right: Program<RightSteps>,
 ) -> Program<RouteSteps<LeftSteps, RightSteps>>
 where
-    LeftSteps: RouteArmHead + SameRouteController<RightSteps> + DistinctRouteLabels<RightSteps>,
+    LeftSteps: RouteArmHead,
     RightSteps: RouteArmHead + TailLoopControl,
+    <LeftSteps as RouteArmHead>::Controller:
+        SameRouteControllerRole<<RightSteps as RouteArmHead>::Controller>,
+    <LeftSteps as RouteArmHead>::Label: DistinctRouteLabel<<RightSteps as RouteArmHead>::Label>,
 {
     program::route_binary(left, right)
 }
@@ -864,4 +984,23 @@ where
     RightSteps: NonEmptyParallelArm + TailLoopControl,
 {
     program::par_binary(left, right)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ControlDesc, Program, role_program::RoleProgram};
+    use core::mem::size_of;
+
+    #[test]
+    fn descriptor_first_size_gates_hold() {
+        assert_eq!(size_of::<Program<()>>(), 0, "Program<Steps> must stay zero-sized");
+        assert!(
+            size_of::<RoleProgram<0>>() <= 24,
+            "RoleProgram<ROLE> must stay compact"
+        );
+        assert!(
+            size_of::<ControlDesc>() <= 16,
+            "ControlDesc must stay within the packed descriptor budget"
+        );
+    }
 }

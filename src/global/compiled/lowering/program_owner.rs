@@ -10,7 +10,6 @@ use super::program_lowering::{
 use crate::control::cluster::effects::{EffectEnvelope, EffectEnvelopeRef, ResourceDescriptor};
 use crate::control::lease::planner::LeaseGraphBudget;
 use crate::eff::{EffIndex, EffKind};
-use crate::global::StaticControlDesc;
 use crate::global::const_dsl::{PolicyMode, ScopeId};
 use core::ptr;
 
@@ -79,8 +78,8 @@ impl CompiledProgram {
                     None => PolicyMode::Static,
                 };
                 let atom = node.atom_data();
-                let control_spec = view.control_spec_at(offset);
-                lease_budget = lease_budget.include_atom(control_spec, policy);
+                let control_desc = view.control_desc_at(offset);
+                lease_budget = lease_budget.include_atom(control_desc, policy);
                 let resource_policy_site = if policy.is_dynamic() {
                     compiled_program_push_dynamic_policy_site(
                         dynamic_policy_sites,
@@ -89,7 +88,7 @@ impl CompiledProgram {
                             EffIndex::from_usize(offset),
                             atom.label,
                             atom.resource,
-                            control_spec.map(StaticControlDesc::op),
+                            control_desc.map(crate::global::ControlDesc::op),
                             policy,
                         ),
                     )
@@ -102,7 +101,7 @@ impl CompiledProgram {
                     offset,
                     policy,
                     resource_policy_site,
-                    control_spec,
+                    control_desc,
                 );
             }
             offset += 1;

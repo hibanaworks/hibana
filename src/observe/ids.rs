@@ -114,7 +114,7 @@ pub const LOCAL_ACTION_FAIL: u16 = 0x0226;
 ///
 /// Emitted when a new capability token is created via:
 /// - `Rendezvous::mint_cap`
-/// - endpoint canonical control send paths such as `flow().send()`
+/// - endpoint local control send paths such as `flow().send()`
 ///
 /// # Event Encoding
 /// - `arg0`: Session ID (u32) or packed lane/role/kind/shot

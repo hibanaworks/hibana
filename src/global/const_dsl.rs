@@ -5,7 +5,6 @@
 //! be populated entirely within const contexts and exposed as an `EffStruct`
 //! slice via standard slice traits.
 
-use crate::control::cap::mint::CapShot;
 use crate::eff::{self, EffStruct};
 use crate::global::{
     MessageControlSpec, MessageSpec, RoleMarker, SendableLabel, StaticControlDesc,
@@ -372,8 +371,8 @@ impl PolicyMode {
     /// Route decisions are evaluated with fixed priority:
     /// `EPF(Route) -> resolver -> PolicyAbort`.
     ///
-    /// The actual control operation (route, splice, reroute) is determined by
-    /// the baked control descriptor metadata, not by the proof term itself.
+    /// The actual control operation (route or loop) is determined by the baked
+    /// control descriptor metadata, not by the proof term itself.
     ///
     /// # Example
     ///
@@ -521,28 +520,22 @@ impl ControlMarker {
 #[derive(Clone, Copy)]
 pub(crate) struct ControlSpecMarker {
     pub(crate) offset: usize,
-    pub(crate) spec: StaticControlDesc,
+    pub(crate) spec: Option<StaticControlDesc>,
 }
 
 impl ControlSpecMarker {
     const fn empty() -> Self {
         Self {
             offset: 0,
-            spec: StaticControlDesc::new(
-                0,
-                0,
-                ControlScopeKind::None,
-                crate::control::cap::mint::ControlPath::Local,
-                0,
-                CapShot::One,
-                crate::control::cap::mint::ControlOp::Fence,
-                0,
-            ),
+            spec: None,
         }
     }
 
     const fn new(offset: usize, spec: StaticControlDesc) -> Self {
-        Self { offset, spec }
+        Self {
+            offset,
+            spec: Some(spec),
+        }
     }
 }
 
@@ -705,7 +698,9 @@ impl EffList {
         let mut spec_idx = 0;
         while spec_idx < other.control_spec_len {
             let spec = other.control_specs[spec_idx];
-            self = self.push_control_spec(base + spec.offset, spec.spec);
+            if let Some(control_spec) = spec.spec {
+                self = self.push_control_spec(base + spec.offset, control_spec);
+            }
             spec_idx += 1;
         }
         self
@@ -1032,7 +1027,7 @@ impl EffList {
         while idx < self.control_spec_len {
             let marker = self.control_specs[idx];
             if marker.offset == offset {
-                return Some(marker.spec);
+                return marker.spec;
             }
             idx += 1;
         }
@@ -1071,10 +1066,10 @@ impl AsRef<[EffStruct]> for EffList {
 pub enum ControlScopeKind {
     None = 0,
     Loop = 1,
-    Checkpoint = 2,
-    Cancel = 3,
-    Splice = 4,
-    Reroute = 5,
+    State = 2,
+    Abort = 3,
+    Topology = 4,
+    Delegate = 5,
     Policy = 6,
     Route = 7,
 }
@@ -1085,10 +1080,10 @@ impl ControlScopeKind {
         match value {
             0 => Some(Self::None),
             1 => Some(Self::Loop),
-            2 => Some(Self::Checkpoint),
-            3 => Some(Self::Cancel),
-            4 => Some(Self::Splice),
-            5 => Some(Self::Reroute),
+            2 => Some(Self::State),
+            3 => Some(Self::Abort),
+            4 => Some(Self::Topology),
+            5 => Some(Self::Delegate),
             6 => Some(Self::Policy),
             7 => Some(Self::Route),
             _ => None,
@@ -1115,11 +1110,7 @@ where
 {
     crate::global::validate_sendable_message::<M>();
     let label = <M as MessageSpec>::LABEL;
-    let spec = if <M as MessageControlSpec>::IS_CONTROL {
-        Some(<M as MessageControlSpec>::CONTROL_SPEC)
-    } else {
-        None
-    };
+    let spec = <M as MessageControlSpec>::CONTROL;
     let atom = eff::EffAtom {
         from: From::INDEX,
         to: To::INDEX,
