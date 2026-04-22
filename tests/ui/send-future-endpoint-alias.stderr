@@ -31,5 +31,5 @@ note: this call may capture more lifetimes than intended, because Rust 2024 has 
 help: if you can modify this crate, add a precise capturing bound to avoid overcapturing: `+ use<'a, A, O, ROLE, M>`
   --> src/endpoint/flow.rs
    |
-   |     ) -> impl Future<Output = SendResult<O>> + 'a
-   |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |     pub fn send<'a, A, O>(self, arg: A) -> impl Future<Output = SendResult<O>> + 'a
+   |                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

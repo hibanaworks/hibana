@@ -144,8 +144,7 @@ fn transport_snapshot_surface_stays_getter_only() {
         "TransportMetrics must expose packed PolicyAttrs"
     );
     assert!(
-        readme_src.contains("`PolicyAttrs`")
-            && readme_src.contains("TransportMetrics::attrs()"),
+        readme_src.contains("`PolicyAttrs`") && readme_src.contains("TransportMetrics::attrs()"),
         "README must describe PolicyAttrs-based transport observation"
     );
     for required in [

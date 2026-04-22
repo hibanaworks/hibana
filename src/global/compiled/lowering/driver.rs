@@ -464,8 +464,10 @@ impl LoweringSummary {
                 lane1 = ProgramStamp::mix_policy(lane1, policy);
             }
             if let Some(spec) = eff_list.control_spec_at(idx) {
-                let desc = ControlDesc::from_static(spec)
-                    .with_sites(crate::eff::EffIndex::from_usize(idx), ControlDesc::STATIC_POLICY_SITE);
+                let desc = ControlDesc::from_static(spec).with_sites(
+                    crate::eff::EffIndex::from_usize(idx),
+                    ControlDesc::STATIC_POLICY_SITE,
+                );
                 summary.validation.control_descs[idx] = Some(desc);
                 lane0 = ProgramStamp::mix_u64(lane0, idx as u64);
                 lane1 = ProgramStamp::mix_control_desc(lane1, desc);
@@ -487,7 +489,8 @@ impl LoweringSummary {
                 if to + 1 > role_count {
                     role_count = to + 1;
                 }
-                lease_budget = lease_budget.include_atom(summary.validation.control_desc_at(idx), policy);
+                lease_budget =
+                    lease_budget.include_atom(summary.validation.control_desc_at(idx), policy);
                 summary.program.compiled_program_counts.tap_events += 1;
                 if atom.is_control {
                     if policy.is_dynamic()

@@ -1922,6 +1922,19 @@ mod tests {
     }
 
     #[test]
+    fn loop_table_supports_distinct_live_lanes_when_budgeted() {
+        let table = tiny_loop_table(2);
+        let lane0 = Lane::new(0);
+        let lane1 = Lane::new(1);
+
+        assert_eq!(table.record(lane0, 0, 0, LoopDisposition::Continue), 1);
+        assert_eq!(table.record(lane1, 0, 0, LoopDisposition::Break), 1);
+
+        assert!(table.has_decision(lane0, 0));
+        assert!(table.has_decision(lane1, 0));
+    }
+
+    #[test]
     fn loop_table_empty_layout_has_no_resident_bytes() {
         assert_eq!(LoopTable::storage_bytes(0, 4), 0);
     }

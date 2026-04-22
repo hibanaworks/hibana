@@ -1029,28 +1029,40 @@ impl<K: ResourceKind> GenericCapToken<K> {
         self.as_view().ok().and_then(|view| view.scope())
     }
 
+    /// Read the raw resource tag byte from the embedded header.
+    ///
+    /// This accessor does not validate the control-header enum fields. Call
+    /// [`GenericCapToken::control_header`] when the caller needs a fully
+    /// validated descriptor.
     pub fn resource_tag(&self) -> u8 {
-        self.control_header()
-            .map(|header| header.tag())
-            .unwrap_or_default()
+        self.header_slice()[7]
     }
 
+    /// Read the raw session id encoded in the embedded header.
+    ///
+    /// This accessor preserves the original wire bytes even when
+    /// [`GenericCapToken::control_header`] rejects the token.
     pub fn sid(&self) -> SessionId {
-        self.control_header()
-            .map(|header| header.sid())
-            .unwrap_or_else(|_| SessionId::new(0))
+        let header = self.header_slice();
+        SessionId::new(u32::from_be_bytes([
+            header[1], header[2], header[3], header[4],
+        ]))
     }
 
+    /// Read the raw lane byte encoded in the embedded header.
+    ///
+    /// This accessor preserves the original wire bytes even when
+    /// [`GenericCapToken::control_header`] rejects the token.
     pub fn lane(&self) -> Lane {
-        self.control_header()
-            .map(|header| header.lane())
-            .unwrap_or_else(|_| Lane::new(0))
+        Lane::new(u32::from(self.header_slice()[5]))
     }
 
+    /// Read the raw role byte encoded in the embedded header.
+    ///
+    /// This accessor preserves the original wire bytes even when
+    /// [`GenericCapToken::control_header`] rejects the token.
     pub fn role(&self) -> u8 {
-        self.control_header()
-            .map(|header| header.role())
-            .unwrap_or(0)
+        self.header_slice()[6]
     }
 
     pub fn handle_bytes(&self) -> [u8; CAP_HANDLE_LEN] {
@@ -1069,7 +1081,8 @@ impl<K: ResourceKind> GenericCapToken<K> {
     }
 
     pub fn decode_handle(&self) -> Result<K::Handle, CapError> {
-        if self.resource_tag() != K::TAG {
+        let header = self.control_header()?;
+        if header.tag() != K::TAG {
             return Err(CapError::Mismatch);
         }
         K::decode_handle(self.handle_bytes())
@@ -1219,8 +1232,11 @@ impl<K: ResourceKind> Drop for VerifiedCap<K> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CapHeader, ControlOp, ControlResourceKind, ControlScopeKind};
-    use super::{CapShot, E0, EndpointHandle, EndpointResource, HandleView, Owner, ResourceKind};
+    use super::{
+        CapError, CapHeader, CapShot, ControlOp, ControlPath, ControlResourceKind,
+        ControlScopeKind, E0, EndpointHandle, EndpointResource, GenericCapToken, HandleView, Owner,
+        ResourceKind,
+    };
     use crate::{
         control::{
             brand::with_brand,
@@ -1371,6 +1387,77 @@ mod tests {
                 "unknown control header field at byte {index} must fail closed",
             );
         }
+    }
+
+    #[test]
+    fn malformed_generic_cap_token_preserves_raw_header_fields() {
+        let handle = LoopDecisionHandle {
+            sid: 7,
+            lane: 3,
+            scope: ScopeId::loop_scope(1),
+        };
+        let mut header = [0u8; super::CAP_HEADER_LEN];
+        CapHeader::new(
+            SessionId::new(handle.sid),
+            Lane::new(handle.lane as u32),
+            5,
+            LoopContinueKind::TAG,
+            LoopContinueKind::LABEL,
+            LoopContinueKind::OP,
+            LoopContinueKind::PATH,
+            CapShot::One,
+            LoopContinueKind::SCOPE,
+            0,
+            1,
+            2,
+            LoopContinueKind::encode_handle(&handle),
+        )
+        .encode(&mut header);
+        header[9] = 0xFF;
+
+        let token = GenericCapToken::<LoopContinueKind>::from_parts(
+            [0u8; super::CAP_NONCE_LEN],
+            header,
+            [0u8; super::CAP_TAG_LEN],
+        );
+
+        assert!(matches!(token.control_header(), Err(CapError::Mismatch)));
+        assert_eq!(token.resource_tag(), LoopContinueKind::TAG);
+        assert_eq!(token.sid(), SessionId::new(handle.sid));
+        assert_eq!(token.lane(), Lane::new(handle.lane as u32));
+        assert_eq!(token.role(), 5);
+    }
+
+    #[test]
+    fn malformed_generic_cap_token_decode_handle_fails_closed_for_unit_kind() {
+        let handle = EndpointHandle::new(SessionId::new(9), Lane::new(2), 4);
+        let mut header = [0u8; super::CAP_HEADER_LEN];
+        CapHeader::new(
+            handle.sid,
+            handle.lane,
+            handle.role,
+            EndpointResource::TAG,
+            0,
+            ControlOp::Fence,
+            ControlPath::Local,
+            CapShot::One,
+            ControlScopeKind::None,
+            0,
+            0,
+            0,
+            EndpointResource::encode_handle(&handle),
+        )
+        .encode(&mut header);
+        header[10] = 0xFF;
+
+        let token = GenericCapToken::<()>::from_parts(
+            [0u8; super::CAP_NONCE_LEN],
+            header,
+            [0u8; super::CAP_TAG_LEN],
+        );
+
+        assert!(matches!(token.control_header(), Err(CapError::Mismatch)));
+        assert!(matches!(token.decode_handle(), Err(CapError::Mismatch)));
     }
 
     #[cfg(feature = "std")]

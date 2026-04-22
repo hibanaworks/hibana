@@ -452,8 +452,18 @@ impl CompiledRoleImage {
     }
 
     #[inline(always)]
+    pub(crate) fn loop_table_lane_slots(&self) -> usize {
+        if self.max_loop_stack_depth() == 0 {
+            0
+        } else {
+            self.endpoint_lane_slot_count()
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn loop_table_slots(&self) -> usize {
-        self.max_loop_stack_depth()
+        self.loop_table_lane_slots()
+            .saturating_mul(self.max_loop_stack_depth())
     }
 
     #[inline(always)]
@@ -654,7 +664,7 @@ mod tests {
     use crate::{
         control::{
             cap::mint::{ControlResourceKind, GenericCapToken},
-            cap::resource_kinds::RouteDecisionKind,
+            cap::resource_kinds::{LoopBreakKind, LoopContinueKind, RouteDecisionKind},
         },
         g::{self, Msg, Role},
         global::compiled::lowering::LoweringSummary,
@@ -1197,6 +1207,81 @@ mod tests {
                 image.compiled_max_frontier_entries(),
                 "offer entry storage must stay tied to the compiled simultaneous frontier bound"
             );
+        });
+    }
+
+    #[test]
+    fn loop_table_budget_scales_with_endpoint_lane_span() {
+        let handshake = g::send::<Role<0>, Role<1>, Msg<10, ()>, 0>();
+        let inner_continue = g::seq(
+            g::send::<
+                Role<0>,
+                Role<0>,
+                Msg<
+                    { LoopContinueKind::LABEL },
+                    GenericCapToken<LoopContinueKind>,
+                    LoopContinueKind,
+                >,
+                1,
+            >()
+            .policy::<10>(),
+            g::send::<
+                Role<0>,
+                Role<0>,
+                Msg<
+                    { LoopContinueKind::LABEL },
+                    GenericCapToken<LoopContinueKind>,
+                    LoopContinueKind,
+                >,
+                1,
+            >(),
+        );
+        let inner_break = g::seq(
+            g::send::<
+                Role<0>,
+                Role<0>,
+                Msg<{ LoopBreakKind::LABEL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+                1,
+            >()
+            .policy::<10>(),
+            g::send::<
+                Role<0>,
+                Role<0>,
+                Msg<{ LoopBreakKind::LABEL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+                1,
+            >(),
+        );
+        let inner_route = g::route(inner_continue, inner_break);
+        let outer_continue = g::seq(
+            g::send::<
+                Role<0>,
+                Role<0>,
+                Msg<
+                    { LoopContinueKind::LABEL },
+                    GenericCapToken<LoopContinueKind>,
+                    LoopContinueKind,
+                >,
+                1,
+            >()
+            .policy::<11>(),
+            g::seq(g::send::<Role<0>, Role<1>, Msg<11, ()>, 1>(), inner_route),
+        );
+        let outer_break = g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<{ LoopBreakKind::LABEL }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            1,
+        >()
+        .policy::<11>();
+        let decision = g::route(outer_continue, outer_break);
+        let program = g::par(handshake, decision);
+        let controller: role_program::RoleProgram<0> = role_program::project(&program);
+
+        with_compiled_role_image(&controller, |image| {
+            assert_eq!(image.endpoint_lane_slot_count(), 2);
+            assert_eq!(image.max_loop_stack_depth(), 1);
+            assert_eq!(image.loop_table_lane_slots(), 2);
+            assert_eq!(image.loop_table_slots(), 2);
         });
     }
 

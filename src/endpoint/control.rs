@@ -8,12 +8,7 @@
 
 use core::ptr::NonNull;
 
-use crate::{
-    control::{
-        types::Lane,
-    },
-    transport::Transport,
-};
+use crate::{control::types::Lane, transport::Transport};
 
 /// Rendezvous-scoped control context stored inside endpoints.
 ///

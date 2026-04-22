@@ -162,12 +162,7 @@ impl RouteControlRecord {
                 scope: self.scope_id,
             }
         };
-        Some((
-            policy,
-            self.route_policy_eff,
-            self.route_policy_tag,
-            op,
-        ))
+        Some((policy, self.route_policy_eff, self.route_policy_tag, op))
     }
 }
 

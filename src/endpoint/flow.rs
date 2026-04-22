@@ -160,10 +160,7 @@ where
     <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
 {
     #[inline]
-    pub(crate) fn send<'a, A, O>(
-        self,
-        arg: A,
-    ) -> impl Future<Output = SendResult<O>> + 'a
+    pub(crate) fn send<'a, A, O>(self, arg: A) -> impl Future<Output = SendResult<O>> + 'a
     where
         A: FlowSendArg<'a, M>,
         M::ControlKind: SendOutcomeKind<'r, Output = O>,
@@ -201,10 +198,7 @@ where
     <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
 {
     #[inline]
-    pub fn send<'a, A, O>(
-        self,
-        arg: A,
-    ) -> impl Future<Output = SendResult<O>> + 'a
+    pub fn send<'a, A, O>(self, arg: A) -> impl Future<Output = SendResult<O>> + 'a
     where
         A: FlowSendArg<'a, M>,
         M::ControlKind: SendOutcomeKind<'r, Output = O>,
@@ -236,7 +230,9 @@ where
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(outcome)) => {
                 this.completed = true;
-                Poll::Ready(<M::ControlKind as SendOutcomeKind<'r>>::finish_send(outcome))
+                Poll::Ready(<M::ControlKind as SendOutcomeKind<'r>>::finish_send(
+                    outcome,
+                ))
             }
             Poll::Ready(Err(err)) => {
                 this.completed = true;

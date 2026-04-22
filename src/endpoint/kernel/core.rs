@@ -22,9 +22,9 @@ use super::offer::*;
 use super::route_state::RouteState;
 use crate::binding::{BindingSlot, IncomingClassification, NoBinding};
 use crate::eff::EffIndex;
+use crate::global::ControlDesc;
 #[cfg(test)]
 use crate::global::LoopControlMeaning;
-use crate::global::ControlDesc;
 use crate::global::compiled::images::{ControlSemanticKind, ControlSemanticsTable};
 use crate::global::const_dsl::{PolicyMode, ScopeId, ScopeKind};
 use crate::global::role_program::LaneSetView;
@@ -1643,8 +1643,7 @@ where
         let policy_attrs_hash = policy_attrs.hash32();
         let transport_snapshot_hash = policy_runtime::hash_transport_attrs(&policy_attrs);
         let replay_transport = policy_runtime::replay_transport_inputs(&policy_attrs);
-        let replay_transport_presence =
-            policy_runtime::replay_transport_presence(&policy_attrs);
+        let replay_transport_presence = policy_runtime::replay_transport_presence(&policy_attrs);
         let slot_id = policy_runtime::slot_tag(slot);
         let mode_id = policy_runtime::policy_mode_tag(port.policy_mode(slot));
         self.emit_policy_audit_event(
@@ -2234,8 +2233,7 @@ where
         let policy_attrs_hash = policy_attrs.hash32();
         let transport_snapshot_hash = policy_runtime::hash_transport_attrs(&policy_attrs);
         let replay_transport = policy_runtime::replay_transport_inputs(&policy_attrs);
-        let replay_transport_presence =
-            policy_runtime::replay_transport_presence(&policy_attrs);
+        let replay_transport_presence = policy_runtime::replay_transport_presence(&policy_attrs);
         let mode_id = policy_runtime::policy_mode_tag(port.policy_mode(PolicySlot::Route));
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT,
@@ -3337,9 +3335,7 @@ where
         let lane = self.port_for_lane(meta.lane as usize).lane();
         let shot = meta.shot.ok_or(SendError::PhaseInvariant)?;
         let minted = match control.op() {
-            ControlOp::LoopContinue => {
-                self.mint_local_loop_continue_control(&meta, shot, lane)?
-            }
+            ControlOp::LoopContinue => self.mint_local_loop_continue_control(&meta, shot, lane)?,
             ControlOp::LoopBreak => self.mint_local_loop_break_control(&meta, shot, lane)?,
             ControlOp::CapDelegate => {
                 let cp_lane = Lane::new(lane.raw());
@@ -3349,9 +3345,7 @@ where
             ControlOp::RouteDecision => {
                 let cp_lane = Lane::new(lane.raw());
                 let src_rv = RendezvousId::new(self.rendezvous_id().raw());
-                self.mint_local_route_decision_control(
-                    &meta, shot, lane, src_rv, cp_lane, control,
-                )?
+                self.mint_local_route_decision_control(&meta, shot, lane, src_rv, cp_lane, control)?
             }
             ControlOp::TopologyBegin => {
                 let cp_sid = SessionId::new(self.sid.raw());
@@ -3443,7 +3437,9 @@ where
         let stage_payload = match control {
             None => Self::stage_data_send_payload,
             Some(control) => match control.path() {
-                crate::control::cap::mint::ControlPath::Local => Self::stage_registered_send_payload,
+                crate::control::cap::mint::ControlPath::Local => {
+                    Self::stage_registered_send_payload
+                }
                 crate::control::cap::mint::ControlPath::Wire => Self::stage_emitted_send_payload,
             },
         };
@@ -3637,11 +3633,9 @@ where
             DispatchSendTokenResult::Registered(parts) => Ok(SendControlOutcome::Registered(
                 RawRegisteredCapToken::from_parts(parts),
             )),
-            DispatchSendTokenResult::RegisteredFallback => {
-                Ok(SendControlOutcome::Registered(
+            DispatchSendTokenResult::RegisteredFallback => Ok(SendControlOutcome::Registered(
                 RawRegisteredCapToken::from_parts(RegisteredTokenParts::from_bytes(token.bytes())),
-                ))
-            }
+            )),
             DispatchSendTokenResult::None => Err(SendError::PhaseInvariant),
         }
     }

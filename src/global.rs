@@ -594,7 +594,6 @@ impl StaticControlDesc {
     pub(crate) const fn auto_mint_wire(self) -> bool {
         (self.flags & 1) != 0
     }
-
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -851,20 +850,24 @@ where
     }
     match LABEL {
         crate::runtime::consts::LABEL_LOOP_CONTINUE => {
-            if !matches_builtin_control_kind::<K, crate::control::cap::resource_kinds::LoopContinueKind>()
-            {
+            if !matches_builtin_control_kind::<
+                K,
+                crate::control::cap::resource_kinds::LoopContinueKind,
+            >() {
                 panic!("core-owned control label is reserved");
             }
         }
         crate::runtime::consts::LABEL_LOOP_BREAK => {
-            if !matches_builtin_control_kind::<K, crate::control::cap::resource_kinds::LoopBreakKind>()
-            {
+            if !matches_builtin_control_kind::<K, crate::control::cap::resource_kinds::LoopBreakKind>(
+            ) {
                 panic!("core-owned control label is reserved");
             }
         }
         crate::runtime::consts::LABEL_ROUTE_DECISION => {
-            if !matches_builtin_control_kind::<K, crate::control::cap::resource_kinds::RouteDecisionKind>()
-            {
+            if !matches_builtin_control_kind::<
+                K,
+                crate::control::cap::resource_kinds::RouteDecisionKind,
+            >() {
                 panic!("core-owned control label is reserved");
             }
         }
@@ -993,7 +996,11 @@ mod tests {
 
     #[test]
     fn descriptor_first_size_gates_hold() {
-        assert_eq!(size_of::<Program<()>>(), 0, "Program<Steps> must stay zero-sized");
+        assert_eq!(
+            size_of::<Program<()>>(),
+            0,
+            "Program<Steps> must stay zero-sized"
+        );
         assert!(
             size_of::<RoleProgram<0>>() <= 24,
             "RoleProgram<ROLE> must stay compact"

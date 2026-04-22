@@ -683,9 +683,7 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
                                                         .expect("send route decision");
                                                     let handle = token
                                                         .decode_handle()
-                                                        .expect(
-                                                            "decode route decision handle",
-                                                        );
+                                                        .expect("decode route decision handle");
 
                                                     assert_eq!(
                                                         handle.arm, 0,

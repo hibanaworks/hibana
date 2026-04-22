@@ -5,6 +5,7 @@
 
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
+use core::mem::MaybeUninit;
 
 #[cfg(test)]
 use crate::control::automaton::delegation::DelegationLeaseSpec;
@@ -14,12 +15,12 @@ use crate::control::automaton::{
     distributed::{DistributedSplice, DistributedSpliceInv, SpliceAck, SpliceIntent},
     splice::{SpliceBeginAutomaton, SpliceCommitAutomaton, SpliceGraphContext},
 };
+use crate::control::cap::atomic_codecs::{
+    DelegationHandle, SessionLaneHandle, TopologyHandle, decode_session_lane_handle,
+};
 use crate::control::cap::mint::CapHeader;
 use crate::control::cap::mint::{
     CAP_TOKEN_LEN, ControlOp, EndpointResource, GenericCapToken, MintConfigMarker,
-};
-use crate::control::cap::atomic_codecs::{
-    DelegationHandle, SessionLaneHandle, TopologyHandle, decode_session_lane_handle,
 };
 use crate::control::cap::typed_tokens::RegisteredTokenParts;
 use crate::control::cluster::effects::EffectEnvelopeRef;
@@ -311,15 +312,9 @@ impl CpCommand {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DynamicResolution {
-    RouteArm {
-        arm: u8,
-    },
-    Loop {
-        decision: bool,
-    },
-    Defer {
-        retry_hint: u8,
-    },
+    RouteArm { arm: u8 },
+    Loop { decision: bool },
+    Defer { retry_hint: u8 },
 }
 
 /// Semantic fail-closed error returned by Rust-side dynamic resolvers.
@@ -397,11 +392,20 @@ impl ResolverContext {
     }
 }
 
+type StatelessResolverFn = fn(ResolverContext) -> ResolverResult;
+type ResolverStatePayload<S> = (*const S, fn(&S, ResolverContext) -> ResolverResult);
+type ErasedResolverStatePayload = ResolverStatePayload<()>;
+
+#[derive(Clone, Copy)]
+union ResolverStorage {
+    stateless: StatelessResolverFn,
+    _stateful: ErasedResolverStatePayload,
+}
+
 #[derive(Clone, Copy)]
 pub struct ResolverRef<'cfg> {
-    state: *const (),
-    callback: usize,
-    dispatch: unsafe fn(*const (), usize, ResolverContext) -> ResolverResult,
+    storage: ResolverStorage,
+    dispatch: unsafe fn(ResolverStorage, ResolverContext) -> ResolverResult,
     _marker: PhantomData<&'cfg ()>,
 }
 
@@ -411,9 +415,26 @@ impl<'cfg> ResolverRef<'cfg> {
         state: &'cfg S,
         resolver: fn(&S, ResolverContext) -> ResolverResult,
     ) -> Self {
+        const {
+            assert!(
+                core::mem::size_of::<ResolverStatePayload<S>>()
+                    == core::mem::size_of::<ErasedResolverStatePayload>()
+            );
+            assert!(
+                core::mem::align_of::<ResolverStatePayload<S>>()
+                    == core::mem::align_of::<ErasedResolverStatePayload>()
+            );
+        }
+        let payload = (core::ptr::from_ref(state), resolver);
+        let mut storage = MaybeUninit::<ResolverStorage>::uninit();
+        unsafe {
+            storage
+                .as_mut_ptr()
+                .cast::<ResolverStatePayload<S>>()
+                .write(payload);
+        }
         Self {
-            state: core::ptr::from_ref(state).cast(),
-            callback: resolver as usize,
+            storage: unsafe { storage.assume_init() },
             dispatch: dispatch_state::<S>,
             _marker: PhantomData,
         }
@@ -422,8 +443,9 @@ impl<'cfg> ResolverRef<'cfg> {
     #[inline]
     pub fn from_fn(resolver: fn(ResolverContext) -> ResolverResult) -> Self {
         Self {
-            state: core::ptr::null(),
-            callback: resolver as usize,
+            storage: ResolverStorage {
+                stateless: resolver,
+            },
             dispatch: dispatch_fn,
             _marker: PhantomData,
         }
@@ -431,25 +453,32 @@ impl<'cfg> ResolverRef<'cfg> {
 
     #[inline]
     pub(crate) fn resolve(self, ctx: ResolverContext) -> ResolverResult {
-        unsafe { (self.dispatch)(self.state, self.callback, ctx) }
+        unsafe { (self.dispatch)(self.storage, ctx) }
     }
 }
 
-unsafe fn dispatch_state<S>(
-    state: *const (),
-    callback: usize,
-    ctx: ResolverContext,
-) -> ResolverResult {
-    let state = unsafe { &*state.cast::<S>() };
-    let resolver = unsafe {
-        core::mem::transmute::<usize, fn(&S, ResolverContext) -> ResolverResult>(callback)
+unsafe fn dispatch_state<S>(storage: ResolverStorage, ctx: ResolverContext) -> ResolverResult {
+    const {
+        assert!(
+            core::mem::size_of::<ResolverStatePayload<S>>()
+                == core::mem::size_of::<ErasedResolverStatePayload>()
+        );
+        assert!(
+            core::mem::align_of::<ResolverStatePayload<S>>()
+                == core::mem::align_of::<ErasedResolverStatePayload>()
+        );
+    }
+    let (state, resolver) = unsafe {
+        (&storage as *const ResolverStorage)
+            .cast::<ResolverStatePayload<S>>()
+            .read()
     };
+    let state = unsafe { &*state };
     resolver(state, ctx)
 }
 
-unsafe fn dispatch_fn(_state: *const (), callback: usize, ctx: ResolverContext) -> ResolverResult {
-    let resolver =
-        unsafe { core::mem::transmute::<usize, fn(ResolverContext) -> ResolverResult>(callback) };
+unsafe fn dispatch_fn(storage: ResolverStorage, ctx: ResolverContext) -> ResolverResult {
+    let resolver = unsafe { storage.stateless };
     resolver(ctx)
 }
 
@@ -702,9 +731,7 @@ thread_local! {
 const fn is_dynamic_control_op(op: ControlOp) -> bool {
     matches!(
         op,
-        ControlOp::LoopContinue
-            | ControlOp::LoopBreak
-            | ControlOp::RouteDecision
+        ControlOp::LoopContinue | ControlOp::LoopBreak | ControlOp::RouteDecision
     )
 }
 
@@ -2875,9 +2902,13 @@ where
         attrs: &crate::transport::context::PolicyAttrs,
         operands: SpliceOperands,
     ) -> Result<(), CpError> {
-        let _ = (rv_id, sid, src_lane, eff_index, desc, input, attrs, operands);
+        let _ = (
+            rv_id, sid, src_lane, eff_index, desc, input, attrs, operands,
+        );
         match policy {
-            PolicyMode::Dynamic { .. } => Err(CpError::UnsupportedEffect(ControlOp::TopologyAck as u8)),
+            PolicyMode::Dynamic { .. } => {
+                Err(CpError::UnsupportedEffect(ControlOp::TopologyAck as u8))
+            }
             PolicyMode::Static => Ok(()),
         }
     }
@@ -3941,6 +3972,42 @@ mod tests {
     use core::{cell::UnsafeCell, mem::MaybeUninit};
     use std::{string::String, thread_local};
 
+    #[test]
+    fn resolver_ref_from_state_dispatches_borrowed_state() {
+        #[derive(Clone, Copy)]
+        struct RouteState {
+            preferred_arm: u8,
+        }
+
+        fn route_resolver(
+            state: &RouteState,
+            _ctx: ResolverContext,
+        ) -> Result<DynamicResolution, ResolverError> {
+            Ok(DynamicResolution::RouteArm {
+                arm: state.preferred_arm,
+            })
+        }
+
+        let state = RouteState { preferred_arm: 7 };
+        let resolver = ResolverRef::from_state(&state, route_resolver);
+        let ctx = ResolverContext::new(
+            RendezvousId::new(1),
+            Some(SessionId::new(9)),
+            Lane::new(3),
+            EffIndex::new(2),
+            0x40,
+            ScopeId::none(),
+            None,
+            [11, 22, 33, 44],
+            &crate::transport::context::PolicyAttrs::EMPTY,
+        );
+
+        assert_eq!(
+            resolver.resolve(ctx),
+            Ok(DynamicResolution::RouteArm { arm: 7 })
+        );
+    }
+
     type SharedBorrowSteps = StepCons<
         SendStep<
             Role<0>,
@@ -4126,17 +4193,11 @@ mod tests {
         const SCOPE: ControlScopeKind = ControlScopeKind::Route;
         const PATH: ControlPath = ControlPath::Local;
         const TAP_ID: u16 = 0x047C;
-        const SHOT: crate::control::cap::mint::CapShot =
-            crate::control::cap::mint::CapShot::One;
+        const SHOT: crate::control::cap::mint::CapShot = crate::control::cap::mint::CapShot::One;
         const OP: ControlOp = ControlOp::Fence;
         const AUTO_MINT_WIRE: bool = false;
 
-        fn mint_handle(
-            _session: SessionId,
-            _lane: Lane,
-            _scope: ScopeId,
-        ) -> Self::Handle {
-        }
+        fn mint_handle(_session: SessionId, _lane: Lane, _scope: ScopeId) -> Self::Handle {}
     }
 
     #[test]
@@ -4397,7 +4458,7 @@ mod tests {
                     ),
                     loop_bytes: crate::rendezvous::tables::LoopTable::storage_bytes(
                         compiled_role.loop_table_slots(),
-                        compiled_role.route_table_lane_slots(),
+                        compiled_role.loop_table_lane_slots(),
                     ),
                     cap_bytes: crate::rendezvous::capability::CapTable::storage_bytes(
                         compiled_role.resident_cap_entries(),
