@@ -170,7 +170,7 @@ pub mod binding {
 /// Canonical resolver/policy surface plus advanced metadata buckets.
 pub mod policy {
     pub use super::cluster::core::{
-        DynamicResolution, ResolverContext, ResolverError, ResolverRef,
+        LoopResolution, ResolverContext, ResolverError, ResolverRef, RouteResolution,
     };
     pub use crate::transport::context::{
         ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider,

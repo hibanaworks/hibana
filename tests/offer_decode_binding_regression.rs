@@ -23,7 +23,7 @@ use hibana::g::{self, Msg, Role};
 use hibana::substrate::{
     RendezvousId,
     cap::{GenericCapToken, advanced::RouteDecisionKind},
-    policy::{DynamicResolution, PolicySignalsProvider, ResolverContext, ResolverError},
+    policy::{PolicySignalsProvider, ResolverContext, ResolverError, RouteResolution},
 };
 use hibana::substrate::{
     SessionId, SessionKit, Transport,
@@ -419,14 +419,14 @@ fn register_route_resolvers_for_program<const ROLE: u8, T, const MAX_RV: usize>(
         .set_resolver::<ROUTE_POLICY_ID, ROLE>(
             rv_id,
             program,
-            hibana::substrate::policy::ResolverRef::from_fn(always_left_route_resolver),
+            hibana::substrate::policy::ResolverRef::route_fn(always_left_route_resolver),
         )
         .expect("register route resolver");
 }
 
-fn always_left_route_resolver(_ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
+fn always_left_route_resolver(_ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
     ROUTE_RESOLVER_CALLS.with(|count| count.set(count.get().wrapping_add(1)));
-    Ok(DynamicResolution::RouteArm { arm: 0 })
+    Ok(RouteResolution::Arm(0))
 }
 
 #[test]

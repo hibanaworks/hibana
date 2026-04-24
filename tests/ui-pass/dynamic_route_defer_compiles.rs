@@ -6,7 +6,7 @@ mod control_kinds;
 use hibana::g::advanced::{RoleProgram, project};
 use hibana::g::{self};
 use hibana::substrate::cap::GenericCapToken;
-use hibana::substrate::policy::DynamicResolution;
+use hibana::substrate::policy::RouteResolution;
 
 const ROUTE_ARM_LEFT_LABEL: u8 = 118;
 const ROUTE_ARM_RIGHT_LABEL: u8 = 119;
@@ -40,5 +40,5 @@ fn main() {
     let route = g::route(arm0, arm1);
     let passive_program: RoleProgram<1> = project(&route);
     let _ = passive_program;
-    let _ = DynamicResolution::Defer { retry_hint: 1 };
+    let _ = RouteResolution::Defer { retry_hint: 1 };
 }

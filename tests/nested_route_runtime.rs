@@ -23,7 +23,7 @@ use hibana::g::{self, Msg, Role};
 use hibana::substrate::{
     RendezvousId,
     cap::{GenericCapToken, ResourceKind, advanced::RouteDecisionKind},
-    policy::{DynamicResolution, ResolverContext, ResolverError, core},
+    policy::{ResolverContext, ResolverError, RouteResolution, core},
 };
 use hibana::substrate::{
     SessionId, SessionKit,
@@ -58,12 +58,12 @@ std::thread_local! {
     };
 }
 
-fn nested_route_resolver(ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
+fn nested_route_resolver(ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
     let tag = ctx.attr(core::TAG).map(|value| value.as_u8());
     if tag != Some(RouteDecisionKind::TAG) && tag != Some(RouteRightKind::TAG) {
         return Err(ResolverError::Reject);
     }
-    Ok(DynamicResolution::RouteArm { arm: 0 })
+    Ok(RouteResolution::Arm(0))
 }
 
 fn controller_program() -> RoleProgram<0> {
@@ -183,14 +183,14 @@ fn register_route_resolvers<const MAX_RV: usize>(
         .set_resolver::<OUTER_ROUTE_POLICY_ID, 0>(
             rv_id,
             &controller_program,
-            hibana::substrate::policy::ResolverRef::from_fn(nested_route_resolver),
+            hibana::substrate::policy::ResolverRef::route_fn(nested_route_resolver),
         )
         .expect("register outer route resolver");
     cluster
         .set_resolver::<INNER_ROUTE_POLICY_ID, 0>(
             rv_id,
             &controller_program,
-            hibana::substrate::policy::ResolverRef::from_fn(nested_route_resolver),
+            hibana::substrate::policy::ResolverRef::route_fn(nested_route_resolver),
         )
         .expect("register inner route resolver");
 }

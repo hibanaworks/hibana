@@ -49,7 +49,7 @@ use crate::{
             typed_tokens::{RawRegisteredCapToken, RegisteredTokenParts},
         },
         cluster::{
-            core::{DynamicResolution, TopologyDescriptor, TopologyOperands},
+            core::{DynamicPolicyResolution, TopologyDescriptor, TopologyOperands},
             error::CpError,
         },
     },
@@ -2430,8 +2430,10 @@ where
             .map_err(Self::map_cp_error)?;
 
         match resolution {
-            DynamicResolution::RouteArm { arm } if arm == arm_index => Ok(()),
-            DynamicResolution::RouteArm { .. } => Err(SendError::PolicyAbort { reason: policy_id }),
+            DynamicPolicyResolution::RouteArm { arm } if arm == arm_index => Ok(()),
+            DynamicPolicyResolution::RouteArm { .. } => {
+                Err(SendError::PolicyAbort { reason: policy_id })
+            }
             _ => Err(SendError::PolicyAbort { reason: policy_id }),
         }
     }
@@ -2477,7 +2479,7 @@ where
         }
 
         match resolution {
-            DynamicResolution::Loop { decision } => {
+            DynamicPolicyResolution::Loop { decision } => {
                 let disposition = if decision {
                     LoopDisposition::Continue
                 } else {
@@ -3098,9 +3100,9 @@ where
             Err(_) => return Err(RecvError::PhaseInvariant),
         };
         let arm = match resolution {
-            DynamicResolution::RouteArm { arm } => arm,
-            DynamicResolution::Loop { .. } => return Err(RecvError::PhaseInvariant),
-            DynamicResolution::Defer { retry_hint } => {
+            DynamicPolicyResolution::RouteArm { arm } => arm,
+            DynamicPolicyResolution::Loop { .. } => return Err(RecvError::PhaseInvariant),
+            DynamicPolicyResolution::Defer { retry_hint } => {
                 return Ok(RouteResolveStep::Deferred {
                     retry_hint,
                     source: DeferSource::Resolver,

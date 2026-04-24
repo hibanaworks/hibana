@@ -35,6 +35,11 @@ fn validate_wire_payload<P: WirePayload>(payload: Payload<'_>) -> Result<(), Cod
     P::decode_payload(payload).map(|_| ())
 }
 
+#[inline]
+fn synthetic_wire_payload<P: WirePayload>(scratch: &mut [u8]) -> Result<Payload<'_>, CodecError> {
+    P::synthetic_payload(scratch)
+}
+
 struct EndpointInner<'r, const ROLE: u8> {
     state: core::ptr::NonNull<()>,
     ops: *const (),
@@ -141,6 +146,7 @@ where
             <M as crate::global::MessageSpec>::LABEL,
             <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
             validate_wire_payload::<M::Payload>,
+            synthetic_wire_payload::<M::Payload>,
         );
         match endpoint.poll_decode(desc, cx) {
             Poll::Pending => Poll::Pending,

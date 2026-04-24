@@ -32,7 +32,7 @@ use std::{
 use crate::{
     observe::ids,
     runtime::consts::{RING_BUFFER_SIZE, RING_EVENTS},
-    transport::wire::{CodecError, Payload, WireEncode, WirePayload},
+    transport::wire::{CodecError, Payload, WireEncode, WirePayload, require_exact_len},
 };
 
 /// 20-byte tap record with causal key tracking for roll-π reversibility.
@@ -141,9 +141,7 @@ impl WirePayload for TapEvent {
 
     fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
         let bytes = input.as_bytes();
-        if bytes.len() < 20 {
-            return Err(CodecError::Truncated);
-        }
+        require_exact_len(bytes.len(), 20, "tap event payload length")?;
         Ok(Self {
             ts: u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
             id: u16::from_be_bytes([bytes[4], bytes[5]]),
@@ -474,6 +472,28 @@ mod tests {
             storage.fill(TapEvent::zero());
             f(storage)
         })
+    }
+
+    #[test]
+    fn tap_event_fixed_decoder_rejects_trailing_bytes() {
+        let event = TapEvent {
+            ts: 0x0102_0304,
+            id: 0x0506,
+            causal_key: 0x0708,
+            arg0: 0x1112_1314,
+            arg1: 0x2122_2324,
+            arg2: 0x3132_3334,
+        };
+        let mut encoded = [0u8; 21];
+        assert_eq!(event.encode_into(&mut encoded[..20]), Ok(20));
+        assert_eq!(
+            TapEvent::decode_payload(Payload::new(&encoded[..20])),
+            Ok(event)
+        );
+        assert_eq!(
+            TapEvent::decode_payload(Payload::new(&encoded)),
+            Err(CodecError::Invalid("tap event payload length"))
+        );
     }
 
     #[test]

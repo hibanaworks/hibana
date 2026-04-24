@@ -110,6 +110,41 @@ fn substrate_policy_surface_exports_policyslot_only() {
 }
 
 #[test]
+fn dynamic_policy_surface_is_split_by_control_semantics() {
+    let cluster_src = read("src/control/cluster/core.rs");
+    let substrate_src = read("src/substrate.rs");
+    let readme_src = read("README.md");
+    let collapsed_resolution = concat!("Dynamic", "Resolution");
+    let generic_stateless_ctor = concat!("ResolverRef::", "from_fn");
+    let generic_state_ctor = concat!("ResolverRef::", "from_state");
+
+    for src in [&cluster_src, &substrate_src, &readme_src] {
+        assert!(
+            !src.contains(collapsed_resolution),
+            "dynamic resolver surface must not collapse route and loop decisions"
+        );
+        assert!(
+            !src.contains(generic_stateless_ctor) && !src.contains(generic_state_ctor),
+            "resolver constructors must stay op-specific"
+        );
+    }
+
+    for required in [
+        "pub enum RouteResolution",
+        "pub enum LoopResolution",
+        "pub fn route_fn",
+        "pub fn route_state",
+        "pub fn loop_fn",
+        "pub fn loop_state",
+    ] {
+        assert!(
+            cluster_src.contains(required),
+            "dynamic resolver public SPI must keep {required}"
+        );
+    }
+}
+
+#[test]
 fn core_policy_runtime_has_no_in_crate_appliance_shim() {
     let policy_runtime = read("src/policy_runtime.rs");
     for forbidden in [

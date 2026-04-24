@@ -392,10 +392,8 @@ impl PolicyMode {
     /// fn resolve_route(
     ///     state: &RouteState,
     ///     _ctx: hibana::substrate::policy::ResolverContext,
-    /// ) -> Result<hibana::substrate::policy::DynamicResolution, hibana::substrate::policy::ResolverError> {
-    ///     Ok(hibana::substrate::policy::DynamicResolution::RouteArm {
-    ///         arm: state.preferred_arm,
-    ///     })
+    /// ) -> Result<hibana::substrate::policy::RouteResolution, hibana::substrate::policy::ResolverError> {
+    ///     Ok(hibana::substrate::policy::RouteResolution::Arm(state.preferred_arm))
     /// }
     ///
     /// let route_state = RouteState { preferred_arm: 0 };
@@ -403,7 +401,7 @@ impl PolicyMode {
     /// cluster.set_resolver::<MY_POLICY_ID, 0>(
     ///     rv_id,
     ///     &controller,
-    ///     hibana::substrate::policy::ResolverRef::from_state(&route_state, resolve_route),
+    ///     hibana::substrate::policy::ResolverRef::route_state(&route_state, resolve_route),
     /// )?;
     /// ```
     ///

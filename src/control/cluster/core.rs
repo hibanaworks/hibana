@@ -410,7 +410,20 @@ impl CpCommand {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DynamicResolution {
+pub enum RouteResolution {
+    Arm(u8),
+    Defer { retry_hint: u8 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoopResolution {
+    Continue,
+    Break,
+    Defer { retry_hint: u8 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DynamicPolicyResolution {
     RouteArm { arm: u8 },
     Loop { decision: bool },
     Defer { retry_hint: u8 },
@@ -422,7 +435,8 @@ pub enum ResolverError {
     Reject,
 }
 
-type ResolverResult = Result<DynamicResolution, ResolverError>;
+type RouteResolutionOutcome = Result<RouteResolution, ResolverError>;
+type LoopResolutionOutcome = Result<LoopResolution, ResolverError>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResolverContext {
@@ -491,92 +505,233 @@ impl ResolverContext {
     }
 }
 
-type StatelessResolverFn = fn(ResolverContext) -> ResolverResult;
-type ResolverStatePayload<S> = (*const S, fn(&S, ResolverContext) -> ResolverResult);
-type ErasedResolverStatePayload = ResolverStatePayload<()>;
+type StatelessRouteResolverFn = fn(ResolverContext) -> RouteResolutionOutcome;
+type RouteResolverStatePayload<S> = (*const S, fn(&S, ResolverContext) -> RouteResolutionOutcome);
+type ErasedRouteResolverStatePayload = RouteResolverStatePayload<()>;
+
+type StatelessLoopResolverFn = fn(ResolverContext) -> LoopResolutionOutcome;
+type LoopResolverStatePayload<S> = (*const S, fn(&S, ResolverContext) -> LoopResolutionOutcome);
+type ErasedLoopResolverStatePayload = LoopResolverStatePayload<()>;
 
 #[derive(Clone, Copy)]
-union ResolverStorage {
-    stateless: StatelessResolverFn,
-    _stateful: ErasedResolverStatePayload,
+union RouteResolverStorage {
+    stateless: StatelessRouteResolverFn,
+    _stateful: ErasedRouteResolverStatePayload,
+}
+
+#[derive(Clone, Copy)]
+union LoopResolverStorage {
+    stateless: StatelessLoopResolverFn,
+    _stateful: ErasedLoopResolverStatePayload,
+}
+
+#[derive(Clone, Copy)]
+struct RouteResolverRef<'cfg> {
+    storage: RouteResolverStorage,
+    dispatch: unsafe fn(RouteResolverStorage, ResolverContext) -> RouteResolutionOutcome,
+    _marker: PhantomData<&'cfg ()>,
+}
+
+#[derive(Clone, Copy)]
+struct LoopResolverRef<'cfg> {
+    storage: LoopResolverStorage,
+    dispatch: unsafe fn(LoopResolverStorage, ResolverContext) -> LoopResolutionOutcome,
+    _marker: PhantomData<&'cfg ()>,
+}
+
+#[derive(Clone, Copy)]
+enum ResolverRefInner<'cfg> {
+    Route(RouteResolverRef<'cfg>),
+    Loop(LoopResolverRef<'cfg>),
 }
 
 #[derive(Clone, Copy)]
 pub struct ResolverRef<'cfg> {
-    storage: ResolverStorage,
-    dispatch: unsafe fn(ResolverStorage, ResolverContext) -> ResolverResult,
-    _marker: PhantomData<&'cfg ()>,
+    inner: ResolverRefInner<'cfg>,
 }
 
 impl<'cfg> ResolverRef<'cfg> {
     #[inline]
-    pub fn from_state<S: 'cfg>(
+    pub fn route_state<S: 'cfg>(
         state: &'cfg S,
-        resolver: fn(&S, ResolverContext) -> ResolverResult,
+        resolver: fn(&S, ResolverContext) -> RouteResolutionOutcome,
     ) -> Self {
         const {
             assert!(
-                core::mem::size_of::<ResolverStatePayload<S>>()
-                    == core::mem::size_of::<ErasedResolverStatePayload>()
+                core::mem::size_of::<RouteResolverStatePayload<S>>()
+                    == core::mem::size_of::<ErasedRouteResolverStatePayload>()
             );
             assert!(
-                core::mem::align_of::<ResolverStatePayload<S>>()
-                    == core::mem::align_of::<ErasedResolverStatePayload>()
+                core::mem::align_of::<RouteResolverStatePayload<S>>()
+                    == core::mem::align_of::<ErasedRouteResolverStatePayload>()
             );
         }
         let payload = (core::ptr::from_ref(state), resolver);
-        let mut storage = MaybeUninit::<ResolverStorage>::uninit();
+        let mut storage = MaybeUninit::<RouteResolverStorage>::uninit();
         unsafe {
             storage
                 .as_mut_ptr()
-                .cast::<ResolverStatePayload<S>>()
+                .cast::<RouteResolverStatePayload<S>>()
                 .write(payload);
         }
         Self {
-            storage: unsafe { storage.assume_init() },
-            dispatch: dispatch_state::<S>,
-            _marker: PhantomData,
+            inner: ResolverRefInner::Route(RouteResolverRef {
+                storage: unsafe { storage.assume_init() },
+                dispatch: dispatch_route_state::<S>,
+                _marker: PhantomData,
+            }),
         }
     }
 
     #[inline]
-    pub fn from_fn(resolver: fn(ResolverContext) -> ResolverResult) -> Self {
+    pub fn route_fn(resolver: fn(ResolverContext) -> RouteResolutionOutcome) -> Self {
         Self {
-            storage: ResolverStorage {
-                stateless: resolver,
-            },
-            dispatch: dispatch_fn,
-            _marker: PhantomData,
+            inner: ResolverRefInner::Route(RouteResolverRef {
+                storage: RouteResolverStorage {
+                    stateless: resolver,
+                },
+                dispatch: dispatch_route_fn,
+                _marker: PhantomData,
+            }),
         }
     }
 
     #[inline]
-    pub(crate) fn resolve(self, ctx: ResolverContext) -> ResolverResult {
-        unsafe { (self.dispatch)(self.storage, ctx) }
+    pub fn loop_state<S: 'cfg>(
+        state: &'cfg S,
+        resolver: fn(&S, ResolverContext) -> LoopResolutionOutcome,
+    ) -> Self {
+        const {
+            assert!(
+                core::mem::size_of::<LoopResolverStatePayload<S>>()
+                    == core::mem::size_of::<ErasedLoopResolverStatePayload>()
+            );
+            assert!(
+                core::mem::align_of::<LoopResolverStatePayload<S>>()
+                    == core::mem::align_of::<ErasedLoopResolverStatePayload>()
+            );
+        }
+        let payload = (core::ptr::from_ref(state), resolver);
+        let mut storage = MaybeUninit::<LoopResolverStorage>::uninit();
+        unsafe {
+            storage
+                .as_mut_ptr()
+                .cast::<LoopResolverStatePayload<S>>()
+                .write(payload);
+        }
+        Self {
+            inner: ResolverRefInner::Loop(LoopResolverRef {
+                storage: unsafe { storage.assume_init() },
+                dispatch: dispatch_loop_state::<S>,
+                _marker: PhantomData,
+            }),
+        }
+    }
+
+    #[inline]
+    pub fn loop_fn(resolver: fn(ResolverContext) -> LoopResolutionOutcome) -> Self {
+        Self {
+            inner: ResolverRefInner::Loop(LoopResolverRef {
+                storage: LoopResolverStorage {
+                    stateless: resolver,
+                },
+                dispatch: dispatch_loop_fn,
+                _marker: PhantomData,
+            }),
+        }
+    }
+
+    #[inline]
+    const fn accepts_op(self, op: ControlOp) -> bool {
+        matches!(
+            (self.inner, op),
+            (ResolverRefInner::Route(_), ControlOp::RouteDecision)
+                | (
+                    ResolverRefInner::Loop(_),
+                    ControlOp::LoopContinue | ControlOp::LoopBreak
+                )
+        )
+    }
+
+    #[inline]
+    fn resolve_route(self, ctx: ResolverContext) -> RouteResolutionOutcome {
+        match self.inner {
+            ResolverRefInner::Route(resolver) => unsafe {
+                (resolver.dispatch)(resolver.storage, ctx)
+            },
+            ResolverRefInner::Loop(_) => Err(ResolverError::Reject),
+        }
+    }
+
+    #[inline]
+    fn resolve_loop(self, ctx: ResolverContext) -> LoopResolutionOutcome {
+        match self.inner {
+            ResolverRefInner::Loop(resolver) => unsafe {
+                (resolver.dispatch)(resolver.storage, ctx)
+            },
+            ResolverRefInner::Route(_) => Err(ResolverError::Reject),
+        }
     }
 }
 
-unsafe fn dispatch_state<S>(storage: ResolverStorage, ctx: ResolverContext) -> ResolverResult {
+unsafe fn dispatch_route_state<S>(
+    storage: RouteResolverStorage,
+    ctx: ResolverContext,
+) -> RouteResolutionOutcome {
     const {
         assert!(
-            core::mem::size_of::<ResolverStatePayload<S>>()
-                == core::mem::size_of::<ErasedResolverStatePayload>()
+            core::mem::size_of::<RouteResolverStatePayload<S>>()
+                == core::mem::size_of::<ErasedRouteResolverStatePayload>()
         );
         assert!(
-            core::mem::align_of::<ResolverStatePayload<S>>()
-                == core::mem::align_of::<ErasedResolverStatePayload>()
+            core::mem::align_of::<RouteResolverStatePayload<S>>()
+                == core::mem::align_of::<ErasedRouteResolverStatePayload>()
         );
     }
     let (state, resolver) = unsafe {
-        (&storage as *const ResolverStorage)
-            .cast::<ResolverStatePayload<S>>()
+        (&storage as *const RouteResolverStorage)
+            .cast::<RouteResolverStatePayload<S>>()
             .read()
     };
     let state = unsafe { &*state };
     resolver(state, ctx)
 }
 
-unsafe fn dispatch_fn(storage: ResolverStorage, ctx: ResolverContext) -> ResolverResult {
+unsafe fn dispatch_route_fn(
+    storage: RouteResolverStorage,
+    ctx: ResolverContext,
+) -> RouteResolutionOutcome {
+    let resolver = unsafe { storage.stateless };
+    resolver(ctx)
+}
+
+unsafe fn dispatch_loop_state<S>(
+    storage: LoopResolverStorage,
+    ctx: ResolverContext,
+) -> LoopResolutionOutcome {
+    const {
+        assert!(
+            core::mem::size_of::<LoopResolverStatePayload<S>>()
+                == core::mem::size_of::<ErasedLoopResolverStatePayload>()
+        );
+        assert!(
+            core::mem::align_of::<LoopResolverStatePayload<S>>()
+                == core::mem::align_of::<ErasedLoopResolverStatePayload>()
+        );
+    }
+    let (state, resolver) = unsafe {
+        (&storage as *const LoopResolverStorage)
+            .cast::<LoopResolverStatePayload<S>>()
+            .read()
+    };
+    let state = unsafe { &*state };
+    resolver(state, ctx)
+}
+
+unsafe fn dispatch_loop_fn(
+    storage: LoopResolverStorage,
+    ctx: ResolverContext,
+) -> LoopResolutionOutcome {
     let resolver = unsafe { storage.stateless };
     resolver(ctx)
 }
@@ -3133,6 +3288,9 @@ where
                 if !is_dynamic_control_op(op) {
                     return Err(CpError::UnsupportedEffect(op as u8));
                 }
+                if !resolver.accepts_op(op) {
+                    return Err(CpError::UnsupportedEffect(op as u8));
+                }
                 policy
             }
             _ => return Err(CpError::UnsupportedEffect(label)),
@@ -3156,7 +3314,7 @@ where
         op: ControlOp,
         input: [u32; 4],
         attrs: &crate::transport::context::PolicyAttrs,
-    ) -> Result<DynamicResolution, CpError> {
+    ) -> Result<DynamicPolicyResolution, CpError> {
         let key = DynamicResolverKey::new(rv_id, eff_index, op);
         let entry = self
             .dynamic_resolver(key)
@@ -3181,38 +3339,42 @@ where
             attrs,
         );
 
-        let resolution = entry
-            .resolver
-            .resolve(ctx)
-            .map_err(|_| CpError::PolicyAbort { reason: policy_id })?;
-
-        match (op, resolution) {
-            (ControlOp::RouteDecision, DynamicResolution::RouteArm { arm }) => {
+        match op {
+            ControlOp::RouteDecision => {
+                let resolution = entry
+                    .resolver
+                    .resolve_route(ctx)
+                    .map_err(|_| CpError::PolicyAbort { reason: policy_id })?;
                 if scope_hint.is_none() {
                     return Err(CpError::PolicyAbort { reason: policy_id });
                 }
-                if arm > 1 {
-                    return Err(CpError::PolicyAbort { reason: policy_id });
+                match resolution {
+                    RouteResolution::Arm(arm) if arm <= 1 => {
+                        Ok(DynamicPolicyResolution::RouteArm { arm })
+                    }
+                    RouteResolution::Arm(_) => Err(CpError::PolicyAbort { reason: policy_id }),
+                    RouteResolution::Defer { retry_hint } => {
+                        Ok(DynamicPolicyResolution::Defer { retry_hint })
+                    }
                 }
-                Ok(DynamicResolution::RouteArm { arm })
             }
-            (
-                ControlOp::LoopContinue | ControlOp::LoopBreak,
-                DynamicResolution::Loop { decision },
-            ) => {
+            ControlOp::LoopContinue | ControlOp::LoopBreak => {
+                let resolution = entry
+                    .resolver
+                    .resolve_loop(ctx)
+                    .map_err(|_| CpError::PolicyAbort { reason: policy_id })?;
                 if scope_hint.is_none() {
                     return Err(CpError::PolicyAbort { reason: policy_id });
                 }
-                Ok(DynamicResolution::Loop { decision })
-            }
-            (
-                ControlOp::LoopContinue | ControlOp::LoopBreak | ControlOp::RouteDecision,
-                DynamicResolution::Defer { retry_hint },
-            ) => {
-                if scope_hint.is_none() {
-                    return Err(CpError::PolicyAbort { reason: policy_id });
+                match resolution {
+                    LoopResolution::Continue => {
+                        Ok(DynamicPolicyResolution::Loop { decision: true })
+                    }
+                    LoopResolution::Break => Ok(DynamicPolicyResolution::Loop { decision: false }),
+                    LoopResolution::Defer { retry_hint } => {
+                        Ok(DynamicPolicyResolution::Defer { retry_hint })
+                    }
                 }
-                Ok(DynamicResolution::Defer { retry_hint })
             }
             _ => Err(CpError::PolicyAbort { reason: policy_id }),
         }
@@ -4813,7 +4975,7 @@ mod tests {
     use std::{string::String, thread_local};
 
     #[test]
-    fn resolver_ref_from_state_dispatches_borrowed_state() {
+    fn resolver_ref_route_state_dispatches_borrowed_state() {
         #[derive(Clone, Copy)]
         struct RouteState {
             preferred_arm: u8,
@@ -4822,14 +4984,12 @@ mod tests {
         fn route_resolver(
             state: &RouteState,
             _ctx: ResolverContext,
-        ) -> Result<DynamicResolution, ResolverError> {
-            Ok(DynamicResolution::RouteArm {
-                arm: state.preferred_arm,
-            })
+        ) -> Result<RouteResolution, ResolverError> {
+            Ok(RouteResolution::Arm(state.preferred_arm))
         }
 
         let state = RouteState { preferred_arm: 7 };
-        let resolver = ResolverRef::from_state(&state, route_resolver);
+        let resolver = ResolverRef::route_state(&state, route_resolver);
         let ctx = ResolverContext::new(
             RendezvousId::new(1),
             Some(SessionId::new(9)),
@@ -4842,10 +5002,7 @@ mod tests {
             &crate::transport::context::PolicyAttrs::EMPTY,
         );
 
-        assert_eq!(
-            resolver.resolve(ctx),
-            Ok(DynamicResolution::RouteArm { arm: 7 })
-        );
+        assert_eq!(resolver.resolve_route(ctx), Ok(RouteResolution::Arm(7)));
     }
 
     type SharedBorrowSteps = StepCons<
@@ -6720,8 +6877,8 @@ mod tests {
         test();
     }
 
-    fn route_resolver(_ctx: ResolverContext) -> ResolverResult {
-        Ok(DynamicResolution::RouteArm { arm: 0 })
+    fn route_resolver(_ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
+        Ok(RouteResolution::Arm(0))
     }
 
     #[test]
@@ -9827,8 +9984,8 @@ mod tests {
             || {
                 fn defer_resolution(
                     _ctx: ResolverContext,
-                ) -> Result<DynamicResolution, ResolverError> {
-                    Ok(DynamicResolution::Defer { retry_hint: 2 })
+                ) -> Result<RouteResolution, ResolverError> {
+                    Ok(RouteResolution::Defer { retry_hint: 2 })
                 }
 
                 with_cluster_fixture(|clock, config| {
@@ -9850,7 +10007,7 @@ mod tests {
                                 TAG_TOPOLOGY_BEGIN_CONTROL,
                                 ControlOp::TopologyBegin,
                                 None,
-                                ResolverRef::from_fn(defer_resolution),
+                                ResolverRef::route_fn(defer_resolution),
                             )
                             .expect_err("topology resolver must be rejected");
                         cluster
@@ -9862,7 +10019,7 @@ mod tests {
                                 TAG_CAP_DELEGATE_CONTROL,
                                 ControlOp::CapDelegate,
                                 None,
-                                ResolverRef::from_fn(defer_resolution),
+                                ResolverRef::route_fn(defer_resolution),
                             )
                             .expect_err("reroute resolver must be rejected");
                     });
@@ -9872,26 +10029,24 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_resolver_rejects_cross_semantic_results() {
+    fn dynamic_resolver_rejects_cross_semantic_registration() {
         run_on_transient_compiled_test_stack(
-            "dynamic_resolver_rejects_cross_semantic_results",
+            "dynamic_resolver_rejects_cross_semantic_registration",
             || {
-                fn loop_resolution(
-                    _ctx: ResolverContext,
-                ) -> Result<DynamicResolution, ResolverError> {
-                    Ok(DynamicResolution::Loop { decision: false })
+                fn loop_resolution(_ctx: ResolverContext) -> Result<LoopResolution, ResolverError> {
+                    Ok(LoopResolution::Break)
                 }
 
                 fn route_resolution(
                     _ctx: ResolverContext,
-                ) -> Result<DynamicResolution, ResolverError> {
-                    Ok(DynamicResolution::RouteArm { arm: 0 })
+                ) -> Result<RouteResolution, ResolverError> {
+                    Ok(RouteResolution::Arm(0))
                 }
 
                 fn non_binary_route_resolution(
                     _ctx: ResolverContext,
-                ) -> Result<DynamicResolution, ResolverError> {
-                    Ok(DynamicResolution::RouteArm { arm: 2 })
+                ) -> Result<RouteResolution, ResolverError> {
+                    Ok(RouteResolution::Arm(2))
                 }
 
                 with_cluster_fixture(|clock, config| {
@@ -9913,25 +10068,9 @@ mod tests {
                                 tag,
                                 ControlOp::RouteDecision,
                                 None,
-                                ResolverRef::from_fn(loop_resolution),
+                                ResolverRef::loop_fn(loop_resolution),
                             )
-                            .expect("register route resolver");
-                        assert!(
-                            matches!(
-                                cluster.resolve_dynamic_policy(
-                                    rv_id,
-                                    None,
-                                    Lane::new(1),
-                                    eff_index,
-                                    tag,
-                                    ControlOp::RouteDecision,
-                                    [0; 4],
-                                    &crate::transport::context::PolicyAttrs::EMPTY,
-                                ),
-                                Err(CpError::PolicyAbort { reason: 914 })
-                            ),
-                            "route decision must reject loop resolver vocabulary"
-                        );
+                            .expect_err("route decision must reject loop resolver type");
 
                         let loop_eff = EffIndex::new(9);
                         let loop_tag = crate::control::cap::resource_kinds::LoopContinueKind::TAG;
@@ -9944,25 +10083,9 @@ mod tests {
                                 loop_tag,
                                 ControlOp::LoopContinue,
                                 None,
-                                ResolverRef::from_fn(route_resolution),
+                                ResolverRef::route_fn(route_resolution),
                             )
-                            .expect("register loop resolver");
-                        assert!(
-                            matches!(
-                                cluster.resolve_dynamic_policy(
-                                    rv_id,
-                                    None,
-                                    Lane::new(1),
-                                    loop_eff,
-                                    loop_tag,
-                                    ControlOp::LoopContinue,
-                                    [0; 4],
-                                    &crate::transport::context::PolicyAttrs::EMPTY,
-                                ),
-                                Err(CpError::PolicyAbort { reason: 914 })
-                            ),
-                            "loop control must reject route-arm resolver vocabulary"
-                        );
+                            .expect_err("loop control must reject route resolver type");
 
                         let non_binary_eff = EffIndex::new(10);
                         cluster
@@ -9974,7 +10097,7 @@ mod tests {
                                 tag,
                                 ControlOp::RouteDecision,
                                 None,
-                                ResolverRef::from_fn(non_binary_route_resolution),
+                                ResolverRef::route_fn(non_binary_route_resolution),
                             )
                             .expect("register non-binary route resolver");
                         assert!(
@@ -10097,7 +10220,7 @@ mod tests {
                             .set_resolver::<ROUTE_POLICY_ONE, 0>(
                                 rv_id,
                                 &route_policy_projected_one,
-                                ResolverRef::from_fn(route_resolver),
+                                ResolverRef::route_fn(route_resolver),
                             )
                             .expect("register resolver");
 
@@ -10184,7 +10307,7 @@ mod tests {
                             .set_resolver::<ROUTE_POLICY_TWO, 0>(
                                 rv_id,
                                 &route_policy_projected_two,
-                                ResolverRef::from_fn(route_resolver),
+                                ResolverRef::route_fn(route_resolver),
                             )
                             .expect("register resolver without a free cache slot");
 

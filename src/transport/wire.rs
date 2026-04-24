@@ -16,6 +16,21 @@ pub enum CodecError {
     Invalid(&'static str),
 }
 
+#[inline]
+pub(crate) fn require_exact_len(
+    actual: usize,
+    expected: usize,
+    context: &'static str,
+) -> Result<(), CodecError> {
+    if actual < expected {
+        Err(CodecError::Truncated)
+    } else if actual == expected {
+        Ok(())
+    } else {
+        Err(CodecError::Invalid(context))
+    }
+}
+
 /// Trait for encoding structured payloads into transport-provided buffers.
 pub trait WireEncode {
     /// Optional hint describing the encoded length if it is statically known.
@@ -34,6 +49,13 @@ pub trait WirePayload: WireEncode {
     type Decoded<'a>;
 
     fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError>;
+
+    /// Provide the canonical zero payload used for non-wire local route
+    /// materialization. Types that cannot represent such a payload keep the
+    /// default fail-closed implementation.
+    fn synthetic_payload<'a>(_scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+        Err(CodecError::Invalid("synthetic payload unavailable"))
+    }
 }
 
 impl WireEncode for () {
@@ -49,8 +71,13 @@ impl WireEncode for () {
 impl WirePayload for () {
     type Decoded<'a> = Self;
 
-    fn decode_payload<'a>(_input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
+    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
+        require_exact_len(input.as_bytes().len(), 0, "unit payload must be empty")?;
         Ok(())
+    }
+
+    fn synthetic_payload<'a>(_scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+        Ok(Payload::new(&[]))
     }
 }
 
@@ -73,14 +100,20 @@ impl WirePayload for bool {
 
     fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
         let bytes = input.as_bytes();
-        if bytes.is_empty() {
-            return Err(CodecError::Truncated);
-        }
+        require_exact_len(bytes.len(), 1, "boolean payload length")?;
         match bytes[0] {
             0 => Ok(false),
             1 => Ok(true),
             _ => Err(CodecError::Invalid("boolean must be 0 or 1")),
         }
+    }
+
+    fn synthetic_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+        if scratch.is_empty() {
+            return Err(CodecError::Truncated);
+        }
+        scratch[0] = 0;
+        Ok(Payload::new(&scratch[..1]))
     }
 }
 
@@ -105,12 +138,18 @@ macro_rules! impl_wire_for_int {
 
             fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
                 let bytes = input.as_bytes();
-                if bytes.len() < $len {
-                    return Err(CodecError::Truncated);
-                }
+                require_exact_len(bytes.len(), $len, "integer payload length")?;
                 let mut buf = [0u8; $len];
                 buf.copy_from_slice(&bytes[..$len]);
                 Ok(<$ty>::from_be_bytes(buf))
+            }
+
+            fn synthetic_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+                if scratch.len() < $len {
+                    return Err(CodecError::Truncated);
+                }
+                scratch[..$len].fill(0);
+                Ok(Payload::new(&scratch[..$len]))
             }
         }
     };
@@ -147,6 +186,10 @@ impl WirePayload for &[u8] {
     fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
         Ok(input.as_bytes())
     }
+
+    fn synthetic_payload<'a>(_scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+        Ok(Payload::new(&[]))
+    }
 }
 
 impl<const N: usize> WireEncode for [u8; N] {
@@ -168,12 +211,101 @@ impl<const N: usize> WirePayload for [u8; N] {
 
     fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
         let bytes = input.as_bytes();
-        if bytes.len() < N {
-            return Err(CodecError::Truncated);
-        }
+        require_exact_len(bytes.len(), N, "byte array payload length")?;
         let mut buf = [0u8; N];
         buf.copy_from_slice(&bytes[..N]);
         Ok(buf)
+    }
+
+    fn synthetic_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+        if scratch.len() < N {
+            return Err(CodecError::Truncated);
+        }
+        scratch[..N].fill(0);
+        Ok(Payload::new(&scratch[..N]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixed_payload_decoders_reject_trailing_bytes() {
+        assert_eq!(
+            <() as WirePayload>::decode_payload(Payload::new(&[])),
+            Ok(())
+        );
+        assert_eq!(
+            <() as WirePayload>::decode_payload(Payload::new(&[1])),
+            Err(CodecError::Invalid("unit payload must be empty"))
+        );
+
+        assert_eq!(
+            <bool as WirePayload>::decode_payload(Payload::new(&[1])),
+            Ok(true)
+        );
+        assert_eq!(
+            <bool as WirePayload>::decode_payload(Payload::new(&[1, 0])),
+            Err(CodecError::Invalid("boolean payload length"))
+        );
+
+        assert_eq!(
+            <u16 as WirePayload>::decode_payload(Payload::new(&[0x12, 0x34])),
+            Ok(0x1234)
+        );
+        assert_eq!(
+            <u16 as WirePayload>::decode_payload(Payload::new(&[0x12, 0x34, 0x56])),
+            Err(CodecError::Invalid("integer payload length"))
+        );
+
+        assert_eq!(
+            <[u8; 2] as WirePayload>::decode_payload(Payload::new(&[7, 9])),
+            Ok([7, 9])
+        );
+        assert_eq!(
+            <[u8; 2] as WirePayload>::decode_payload(Payload::new(&[7, 9, 11])),
+            Err(CodecError::Invalid("byte array payload length"))
+        );
+    }
+
+    #[test]
+    fn borrowed_byte_slice_remains_variable_length() {
+        let bytes = [1, 2, 3];
+        assert_eq!(
+            <&[u8] as WirePayload>::decode_payload(Payload::new(&bytes)),
+            Ok(&bytes[..])
+        );
+    }
+
+    #[test]
+    fn synthetic_payloads_are_canonical_for_builtin_fixed_types() {
+        let mut scratch = [0xFF; 8];
+
+        assert_eq!(
+            <() as WirePayload>::synthetic_payload(&mut scratch)
+                .expect("unit synthetic payload")
+                .as_bytes(),
+            &[]
+        );
+        assert_eq!(
+            <u32 as WirePayload>::synthetic_payload(&mut scratch)
+                .expect("u32 synthetic payload")
+                .as_bytes(),
+            &[0, 0, 0, 0]
+        );
+        assert_eq!(
+            <[u8; 3] as WirePayload>::synthetic_payload(&mut scratch)
+                .expect("array synthetic payload")
+                .as_bytes(),
+            &[0, 0, 0]
+        );
+        assert_eq!(
+            <bool as WirePayload>::synthetic_payload(&mut scratch)
+                .expect("bool synthetic payload")
+                .as_bytes(),
+            &[0]
+        );
     }
 }
 

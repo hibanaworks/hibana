@@ -19,7 +19,7 @@ use core::task::{Context, Poll};
 
 use crate::{
     eff::EffIndex,
-    transport::wire::{CodecError, Payload, WireEncode, WirePayload},
+    transport::wire::{CodecError, Payload, WireEncode, WirePayload, require_exact_len},
 };
 
 /// Congestion control algorithm observed by a transport.
@@ -631,9 +631,7 @@ impl WirePayload for TransportEventKind {
 
     fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
         let bytes = input.as_bytes();
-        if bytes.is_empty() {
-            return Err(CodecError::Truncated);
-        }
+        require_exact_len(bytes.len(), 1, "transport event kind payload length")?;
         match bytes[0] {
             0 => Ok(TransportEventKind::Ack),
             1 => Ok(TransportEventKind::Loss),
@@ -696,9 +694,7 @@ impl WirePayload for TransportEvent {
     fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
         const LEN: usize = 19;
         let bytes = input.as_bytes();
-        if bytes.len() < LEN {
-            return Err(CodecError::Truncated);
-        }
+        require_exact_len(bytes.len(), LEN, "transport event payload length")?;
         let kind = match bytes[0] {
             0 => TransportEventKind::Ack,
             1 => TransportEventKind::Loss,
@@ -946,6 +942,37 @@ mod tests {
 
     struct WakerAwareTransport {
         state: SharedState,
+    }
+
+    #[test]
+    fn transport_event_fixed_decoders_reject_trailing_bytes() {
+        assert_eq!(
+            TransportEventKind::decode_payload(Payload::new(&[0])),
+            Ok(TransportEventKind::Ack)
+        );
+        assert_eq!(
+            TransportEventKind::decode_payload(Payload::new(&[0, 0])),
+            Err(CodecError::Invalid("transport event kind payload length"))
+        );
+
+        let event = TransportEvent {
+            kind: TransportEventKind::Loss,
+            packet_number: 0x0102_0304_0506_0708,
+            payload_len: 0x1122_3344,
+            retransmissions: 0x5566_7788,
+            pn_space: 3,
+            cid_tag: 4,
+        };
+        let mut encoded = [0u8; 20];
+        assert_eq!(event.encode_into(&mut encoded[..19]), Ok(19));
+        assert_eq!(
+            TransportEvent::decode_payload(Payload::new(&encoded[..19])),
+            Ok(event)
+        );
+        assert_eq!(
+            TransportEvent::decode_payload(Payload::new(&encoded)),
+            Err(CodecError::Invalid("transport event payload length"))
+        );
     }
 
     impl WakerAwareTransport {

@@ -29,7 +29,7 @@ use hibana::{
             GenericCapToken, ResourceKind,
             advanced::{LoopBreakKind, LoopContinueKind, RouteDecisionKind},
         },
-        policy::{DynamicResolution, ResolverContext, ResolverError},
+        policy::{ResolverContext, ResolverError, RouteResolution},
     },
 };
 use placement_support::write_value;
@@ -320,18 +320,18 @@ fn nested_loop_controller_program() -> RoleProgram<0> {
     project(&program)
 }
 
-fn route_resolver(ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
+fn route_resolver(ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
     if ctx.attr(core::TAG).map(|value| value.as_u8()) != Some(RouteDecisionKind::TAG) {
         return Err(ResolverError::Reject);
     }
     if route_allow() {
-        Ok(DynamicResolution::RouteArm { arm: 0 })
+        Ok(RouteResolution::Arm(0))
     } else {
         Err(ResolverError::Reject)
     }
 }
 
-fn route_policy_input_resolver(ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
+fn route_policy_input_resolver(ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
     if ctx.attr(core::TAG).map(|value| value.as_u8()) != Some(RouteDecisionKind::TAG) {
         return Err(ResolverError::Reject);
     }
@@ -339,7 +339,7 @@ fn route_policy_input_resolver(ctx: ResolverContext) -> Result<DynamicResolution
         .attr(POLICY_INPUT_ID)
         .map(|v| (v.as_u32() & 1) as u8)
         .unwrap_or(0);
-    Ok(DynamicResolution::RouteArm { arm })
+    Ok(RouteResolution::Arm(arm))
 }
 
 /// Test route dynamic resolver with flow().send(()) pattern.
@@ -365,7 +365,7 @@ fn route_dynamic_self_send_send_path_skips_revalidation() {
                     .set_resolver::<ROUTE_POLICY_ID, 0>(
                         rv_id,
                         &controller_program(),
-                        hibana::substrate::policy::ResolverRef::from_fn(route_resolver),
+                        hibana::substrate::policy::ResolverRef::route_fn(route_resolver),
                     )
                     .expect("register route resolver");
 
@@ -480,7 +480,7 @@ fn route_dynamic_self_send_offer_resolves_without_controller_arm_entry() {
                     .set_resolver::<ROUTE_POLICY_ID, 0>(
                         rv_id,
                         &controller_program(),
-                        hibana::substrate::policy::ResolverRef::from_fn(route_resolver),
+                        hibana::substrate::policy::ResolverRef::route_fn(route_resolver),
                     )
                     .expect("register route resolver");
 
@@ -549,7 +549,7 @@ fn route_head_policy_ignores_later_arm_dynamic_controls_on_enter() {
                     .set_resolver::<ROUTE_POLICY_ID, 0>(
                         rv_id,
                         &route_tail_controller_program(),
-                        hibana::substrate::policy::ResolverRef::from_fn(route_resolver),
+                        hibana::substrate::policy::ResolverRef::route_fn(route_resolver),
                     )
                     .expect("register route resolver");
                 set_route_allow(true);
@@ -631,7 +631,7 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
                                     .set_resolver::<ROUTE_POLICY_ID, 0>(
                                         rv_id,
                                         &controller_program(),
-                                        hibana::substrate::policy::ResolverRef::from_fn(
+                                        hibana::substrate::policy::ResolverRef::route_fn(
                                             route_policy_input_resolver,
                                         ),
                                     )

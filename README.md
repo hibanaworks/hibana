@@ -340,7 +340,7 @@ The everyday protocol-side owners are:
 - `hibana::substrate::{AttachError, CpError, EffIndex, Lane, RendezvousId, SessionId}`
 - `hibana::substrate::Transport`
 - `hibana::substrate::binding::{BindingSlot, NoBinding}`
-- `hibana::substrate::policy::{ContextId, ContextValue, DynamicResolution, PolicyAttrs, PolicySignals, PolicySignalsProvider, ResolverContext, ResolverError, ResolverRef, PolicySlot}`
+- `hibana::substrate::policy::{ContextId, ContextValue, LoopResolution, PolicyAttrs, PolicySignals, PolicySignalsProvider, ResolverContext, ResolverError, ResolverRef, RouteResolution, PolicySlot}`
 - `hibana::substrate::runtime::{Clock, Config, CounterClock, DefaultLabelUniverse, LabelUniverse}`
 - `hibana::substrate::tap::TapEvent`
 - `hibana::substrate::cap::{CapRegisteredToken, CapShot, ControlResourceKind, GenericCapToken, Many, One, ResourceKind}`
@@ -683,7 +683,8 @@ Dynamic policy stays explicit:
 - register a resolver with `set_resolver::<POLICY_ID, ROLE>(...)`
 - read inputs through `ResolverContext::input(index)` and attrs through
   `ResolverContext::attr(id)`
-- return `Result<DynamicResolution, ResolverError>`
+- return `Result<RouteResolution, ResolverError>` for route resolvers and
+  `Result<LoopResolution, ResolverError>` for loop resolvers
 
 Dynamic policy is supported for route/loop decision points only. Other control
 ops are rejected at projection time.
@@ -705,8 +706,9 @@ Useful policy owners and helpers:
 - `PolicyAttrs` for the attribute bag copied into resolver context
 - `PolicySignals` for slot-scoped inputs delivered by
   `PolicySignalsProvider`
-- `ResolverRef::from_state()` for borrowed-state resolvers
-- `ResolverRef::from_fn()` for stateless callbacks
+- `ResolverRef::route_state()` / `ResolverRef::loop_state()` for borrowed-state
+  resolvers
+- `ResolverRef::route_fn()` / `ResolverRef::loop_fn()` for stateless callbacks
 - `hibana::substrate::policy::core::*` for fixed metadata such as `RV_ID`,
   `SESSION_ID`, `LANE`, `QUEUE_DEPTH`, `SRTT_US`, `PTO_COUNT`,
   `IN_FLIGHT_BYTES`, and `TRANSPORT_ALGORITHM`
@@ -723,12 +725,10 @@ struct RoutePolicy {
 fn route_resolver(
     policy: &RoutePolicy,
     ctx: hibana::substrate::policy::ResolverContext,
-) -> Result<hibana::substrate::policy::DynamicResolution, hibana::substrate::policy::ResolverError>
+) -> Result<hibana::substrate::policy::RouteResolution, hibana::substrate::policy::ResolverError>
 {
     if ctx.input(0) != 0 {
-        return Ok(hibana::substrate::policy::DynamicResolution::RouteArm {
-            arm: policy.preferred_arm,
-        });
+        return Ok(hibana::substrate::policy::RouteResolution::Arm(policy.preferred_arm));
     }
 
     if ctx
@@ -738,7 +738,7 @@ fn route_resolver(
         return Err(hibana::substrate::policy::ResolverError::Reject);
     }
 
-    Ok(hibana::substrate::policy::DynamicResolution::Defer { retry_hint: 1 })
+    Ok(hibana::substrate::policy::RouteResolution::Defer { retry_hint: 1 })
 }
 
 let route_policy = RoutePolicy { preferred_arm: 1 };
@@ -746,7 +746,7 @@ let route_policy = RoutePolicy { preferred_arm: 1 };
 cluster.set_resolver::<POLICY_ID, 0>(
     rv_id,
     &CLIENT,
-    hibana::substrate::policy::ResolverRef::from_state(&route_policy, route_resolver),
+    hibana::substrate::policy::ResolverRef::route_state(&route_policy, route_resolver),
 )?;
 ```
 
@@ -761,7 +761,9 @@ TransportMetrics}` is the canonical transport event / metrics seam.
 If a payload type crosses the wire and is not already a codec type, implement
 `WireEncode` plus `WirePayload`. Borrowed payload views use
 `type Decoded<'a> = ...`; fixed-width by-value payloads stay on the same
-contract with `type Decoded<'a> = Self`.
+contract with `type Decoded<'a> = Self`. Fixed-size decoders are canonical:
+they reject trailing bytes, and non-wire local route materialization uses
+`WirePayload::synthetic_payload()` rather than accepting prefix-only payloads.
 
 Transport telemetry is surfaced two ways:
 

@@ -29,7 +29,7 @@ use hibana::{
             GenericCapToken,
             advanced::{LoopBreakKind, LoopContinueKind},
         },
-        policy::{DynamicResolution, ResolverContext, ResolverError},
+        policy::{LoopResolution, ResolverContext, ResolverError},
     },
     substrate::{
         SessionId, SessionKit,
@@ -69,10 +69,14 @@ fn set_loop_decision_index(value: usize) {
     LOOP_DECISION_INDEX.with(|cell| cell.set(value));
 }
 
-fn loop_lane_resolver(_ctx: ResolverContext) -> Result<DynamicResolution, ResolverError> {
+fn loop_lane_resolver(_ctx: ResolverContext) -> Result<LoopResolution, ResolverError> {
     let decision = loop_decision_index() == 0;
     set_loop_decision_index(loop_decision_index() + 1);
-    Ok(DynamicResolution::Loop { decision })
+    Ok(if decision {
+        LoopResolution::Continue
+    } else {
+        LoopResolution::Break
+    })
 }
 
 fn register_loop_lane_resolvers<const MAX_RV: usize>(
@@ -84,7 +88,7 @@ fn register_loop_lane_resolvers<const MAX_RV: usize>(
         .set_resolver::<LOOP_POLICY_ID, 0>(
             rv_id,
             &controller_program,
-            hibana::substrate::policy::ResolverRef::from_fn(loop_lane_resolver),
+            hibana::substrate::policy::ResolverRef::loop_fn(loop_lane_resolver),
         )
         .expect("register loop resolver");
 }

@@ -39,13 +39,22 @@ fn validate_decode_payload<P: WirePayload>(payload: Payload<'_>) -> Result<(), C
     P::decode_payload(payload).map(|_| ())
 }
 
+#[cfg(test)]
+#[inline]
+fn synthetic_decode_payload<P: WirePayload>(scratch: &mut [u8]) -> Result<Payload<'_>, CodecError> {
+    P::synthetic_payload(scratch)
+}
+
 pub(crate) type PayloadValidator = for<'a> fn(Payload<'a>) -> Result<(), CodecError>;
+pub(crate) type SyntheticPayloadProvider =
+    for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, CodecError>;
 
 #[derive(Clone, Copy)]
 pub(crate) struct DecodeDesc {
     label: u8,
     expects_control: bool,
     validate_payload: PayloadValidator,
+    synthetic_payload: SyntheticPayloadProvider,
 }
 
 impl DecodeDesc {
@@ -54,11 +63,13 @@ impl DecodeDesc {
         label: u8,
         expects_control: bool,
         validate_payload: PayloadValidator,
+        synthetic_payload: SyntheticPayloadProvider,
     ) -> Self {
         Self {
             label,
             expects_control,
             validate_payload,
+            synthetic_payload,
         }
     }
 }
@@ -167,6 +178,7 @@ where
             <M as MessageSpec>::LABEL,
             <M::ControlKind as ControlPayloadKind>::IS_CONTROL,
             validate_decode_payload::<M::Payload>,
+            synthetic_decode_payload::<M::Payload>,
         );
         match endpoint.poll_decode_state(desc, &mut this.state, cx) {
             Poll::Pending => Poll::Pending,
@@ -318,6 +330,22 @@ where
         Ok(Some(meta))
     }
 
+    fn synthetic_branch_payload(
+        &mut self,
+        lane_idx: u8,
+        desc: DecodeDesc,
+    ) -> RecvResult<Payload<'r>> {
+        let scratch_ptr = {
+            let port = self.port_for_lane(lane_idx as usize);
+            lane_port::scratch_ptr(port)
+        };
+        let payload = {
+            let scratch = unsafe { &mut *scratch_ptr };
+            (desc.synthetic_payload)(scratch).map_err(RecvError::Codec)?
+        };
+        Ok(lane_port::shrink_payload(payload))
+    }
+
     #[cfg(test)]
     pub(crate) fn decode_branch<'a, M>(
         &'a mut self,
@@ -350,7 +378,7 @@ where
 
         match branch_meta.kind {
             super::offer::BranchKind::LocalControl => {
-                let payload = Payload::new(&[0u8; 64]);
+                let payload = self.synthetic_branch_payload(branch_meta.lane_wire, desc)?;
                 (desc.validate_payload)(payload).map_err(RecvError::Codec)?;
                 let typed_branch: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B> =
                     (*branch).into();
@@ -409,7 +437,7 @@ where
             }
 
             super::offer::BranchKind::EmptyArmTerminal => {
-                let payload = Payload::new(&[0u8; 64]);
+                let payload = self.synthetic_branch_payload(branch_meta.lane_wire, desc)?;
                 (desc.validate_payload)(payload).map_err(RecvError::Codec)?;
                 let typed_branch: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B> =
                     (*branch).into();
@@ -443,7 +471,7 @@ where
             }
 
             super::offer::BranchKind::ArmSendHint => {
-                let payload = Payload::new(&[0u8; 64]);
+                let payload = self.synthetic_branch_payload(branch_meta.lane_wire, desc)?;
                 (desc.validate_payload)(payload).map_err(RecvError::Codec)?;
                 let typed_branch: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B> =
                     (*branch).into();
