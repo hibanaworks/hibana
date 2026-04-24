@@ -554,7 +554,7 @@ impl<'cfg> ResolverRef<'cfg> {
     #[inline]
     pub fn route_state<S: 'cfg>(
         state: &'cfg S,
-        resolver: fn(&S, ResolverContext) -> RouteResolutionOutcome,
+        resolver: fn(&S, ResolverContext) -> Result<RouteResolution, ResolverError>,
     ) -> Self {
         const {
             assert!(
@@ -584,7 +584,9 @@ impl<'cfg> ResolverRef<'cfg> {
     }
 
     #[inline]
-    pub fn route_fn(resolver: fn(ResolverContext) -> RouteResolutionOutcome) -> Self {
+    pub fn route_fn(
+        resolver: fn(ResolverContext) -> Result<RouteResolution, ResolverError>,
+    ) -> Self {
         Self {
             inner: ResolverRefInner::Route(RouteResolverRef {
                 storage: RouteResolverStorage {
@@ -599,7 +601,7 @@ impl<'cfg> ResolverRef<'cfg> {
     #[inline]
     pub fn loop_state<S: 'cfg>(
         state: &'cfg S,
-        resolver: fn(&S, ResolverContext) -> LoopResolutionOutcome,
+        resolver: fn(&S, ResolverContext) -> Result<LoopResolution, ResolverError>,
     ) -> Self {
         const {
             assert!(
@@ -629,7 +631,7 @@ impl<'cfg> ResolverRef<'cfg> {
     }
 
     #[inline]
-    pub fn loop_fn(resolver: fn(ResolverContext) -> LoopResolutionOutcome) -> Self {
+    pub fn loop_fn(resolver: fn(ResolverContext) -> Result<LoopResolution, ResolverError>) -> Self {
         Self {
             inner: ResolverRefInner::Loop(LoopResolverRef {
                 storage: LoopResolverStorage {

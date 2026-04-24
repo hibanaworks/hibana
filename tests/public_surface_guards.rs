@@ -142,6 +142,18 @@ fn dynamic_policy_surface_is_split_by_control_semantics() {
             "dynamic resolver public SPI must keep {required}"
         );
     }
+
+    for forbidden in [
+        "pub fn route_fn(resolver: fn(ResolverContext) -> RouteResolutionOutcome)",
+        "pub fn loop_fn(resolver: fn(ResolverContext) -> LoopResolutionOutcome)",
+        "resolver: fn(&S, ResolverContext) -> RouteResolutionOutcome,",
+        "resolver: fn(&S, ResolverContext) -> LoopResolutionOutcome,",
+    ] {
+        assert!(
+            !cluster_src.contains(forbidden),
+            "dynamic resolver public SPI must expose concrete op-specific Result types, not private alias residue: {forbidden}"
+        );
+    }
 }
 
 #[test]

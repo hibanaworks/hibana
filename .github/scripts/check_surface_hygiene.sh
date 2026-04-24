@@ -545,7 +545,7 @@ check_absent "HIBANA_[A-Z0-9_]+" \
 check_absent "(^|[^A-Za-z0-9_])([Qq][Uu][Ii][Cc]|[Hh]3|[Hh][Qq])([^A-Za-z0-9_]|$)" \
   "protocol-specific vocabulary in hibana core" \
   src
-check_absent "\\bfallback\\b" \
+check_absent "fallback_|\\bfallback\\b" \
   "fallback residue vocabulary in production source" \
   src
 check_absent "std::env::var_os\\(" \

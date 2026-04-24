@@ -3032,10 +3032,10 @@ where
         &mut self,
         scope_id: ScopeId,
         arm: u8,
-        fallback_lane: u8,
+        decision_lane: u8,
     ) {
         if scope_id.is_none() || scope_id.kind() != ScopeKind::Route {
-            self.record_route_decision_for_lane(fallback_lane as usize, scope_id, arm);
+            self.record_route_decision_for_lane(decision_lane as usize, scope_id, arm);
             return;
         }
 
@@ -3054,8 +3054,8 @@ where
             lane_idx += 1;
         }
 
-        if !recorded && (fallback_lane as usize) < logical_lane_count {
-            self.record_route_decision_for_lane(fallback_lane as usize, scope_id, arm);
+        if !recorded && (decision_lane as usize) < logical_lane_count {
+            self.record_route_decision_for_lane(decision_lane as usize, scope_id, arm);
         }
     }
 
