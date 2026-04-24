@@ -97,6 +97,34 @@ impl ScopeEvidenceTable {
         }
         changed
     }
+
+    #[inline]
+    pub(super) fn ack_conflicted(&self, slot: usize) -> bool {
+        self.get(slot)
+            .map(|evidence| (evidence.flags & ScopeEvidence::FLAG_ACK_CONFLICT) != 0)
+            .unwrap_or(false)
+    }
+
+    #[inline]
+    pub(super) fn hint_conflicted(&self, slot: usize) -> bool {
+        self.get(slot)
+            .map(|evidence| (evidence.flags & ScopeEvidence::FLAG_HINT_CONFLICT) != 0)
+            .unwrap_or(false)
+    }
+
+    #[inline]
+    pub(super) fn clear_hint_conflict(&mut self, slot: usize) -> bool {
+        let Some(evidence) = self.get_mut(slot) else {
+            return false;
+        };
+        let changed = evidence.hint_label != ScopeEvidence::NONE
+            || (evidence.flags & ScopeEvidence::FLAG_HINT_CONFLICT) != 0;
+        if changed {
+            evidence.hint_label = ScopeEvidence::NONE;
+            evidence.flags &= !ScopeEvidence::FLAG_HINT_CONFLICT;
+        }
+        changed
+    }
 }
 
 static EMPTY_SCOPE_EVIDENCE: ScopeEvidence = ScopeEvidence::EMPTY;

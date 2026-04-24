@@ -268,6 +268,31 @@ where
     }
 
     #[inline]
+    pub(in crate::endpoint::kernel) fn scope_ack_conflicted(&self, scope_id: ScopeId) -> bool {
+        let Some(slot) = self.scope_slot_for_route(scope_id) else {
+            return false;
+        };
+        self.route_state.scope_evidence.ack_conflicted(slot)
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn scope_hint_conflicted(&self, scope_id: ScopeId) -> bool {
+        let Some(slot) = self.scope_slot_for_route(scope_id) else {
+            return false;
+        };
+        self.route_state.scope_evidence.hint_conflicted(slot)
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn clear_scope_hint_conflict(&mut self, scope_id: ScopeId) {
+        if let Some(slot) = self.scope_slot_for_route(scope_id)
+            && self.route_state.scope_evidence.clear_hint_conflict(slot)
+        {
+            self.bump_scope_evidence_generation_for_scope(scope_id, slot);
+        }
+    }
+
+    #[inline]
     pub(in crate::endpoint::kernel) fn can_advance_route_scope(
         &self,
         scope_id: ScopeId,

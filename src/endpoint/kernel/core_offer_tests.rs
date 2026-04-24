@@ -7909,6 +7909,126 @@ fn route_ack_does_not_imply_ready_arm_evidence() {
 }
 
 #[test]
+fn route_ack_conflict_is_fatal_and_not_cleared_by_recovery() {
+    run_offer_regression_test(
+        "route_ack_conflict_is_fatal_and_not_cleared_by_recovery",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
+                with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
+                    let transport = HintOnlyTransport::new(HINT_NONE);
+                    let rv_id = cluster_ref
+                        .add_rendezvous_from_config(config, transport)
+                        .expect("register rendezvous");
+                    let sid = SessionId::new(1010);
+                    unsafe {
+                        cluster_ref
+                            .attach_endpoint_into::<1, _, _, _>(
+                                worker_slot.ptr(),
+                                rv_id,
+                                sid,
+                                &HINT_WORKER_PROGRAM(),
+                                NoBinding,
+                            )
+                            .expect("attach worker endpoint");
+                    }
+                    let worker = worker_slot.borrow_mut();
+                    let scope = worker.cursor.node_scope_id();
+                    assert!(!scope.is_none(), "worker must start at route scope");
+
+                    worker.record_scope_ack(
+                        scope,
+                        RouteDecisionToken::from_ack(Arm::new(0).expect("arm")),
+                    );
+                    worker.record_scope_ack(
+                        scope,
+                        RouteDecisionToken::from_ack(Arm::new(1).expect("arm")),
+                    );
+
+                    assert!(
+                        worker.scope_evidence_conflicted(scope),
+                        "conflicting ACK authorities must poison the scope"
+                    );
+                    assert!(
+                        worker.peek_scope_ack(scope).is_none(),
+                        "conflicting ACK authorities must not leave a selectable authority"
+                    );
+                    assert!(
+                        !worker.recover_scope_evidence_conflict(scope, true, false),
+                        "dynamic recovery may not erase an ACK authority conflict"
+                    );
+                    assert!(
+                        worker.scope_evidence_conflicted(scope),
+                        "ACK conflict must remain observable after rejected recovery"
+                    );
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn route_hint_conflict_recovery_clears_only_hint_conflict() {
+    run_offer_regression_test(
+        "route_hint_conflict_recovery_clears_only_hint_conflict",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
+                with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
+                    let transport = HintOnlyTransport::new(HINT_NONE);
+                    let rv_id = cluster_ref
+                        .add_rendezvous_from_config(config, transport)
+                        .expect("register rendezvous");
+                    let sid = SessionId::new(1011);
+                    unsafe {
+                        cluster_ref
+                            .attach_endpoint_into::<1, _, _, _>(
+                                worker_slot.ptr(),
+                                rv_id,
+                                sid,
+                                &HINT_WORKER_PROGRAM(),
+                                NoBinding,
+                            )
+                            .expect("attach worker endpoint");
+                    }
+                    let worker = worker_slot.borrow_mut();
+                    let scope = worker.cursor.node_scope_id();
+                    assert!(!scope.is_none(), "worker must start at route scope");
+                    let ack = RouteDecisionToken::from_ack(Arm::new(0).expect("arm"));
+
+                    worker.record_scope_ack(scope, ack);
+                    worker.record_scope_hint(scope, HINT_LEFT_DATA_LABEL);
+                    worker.record_scope_hint(scope, HINT_RIGHT_DATA_LABEL);
+
+                    assert!(
+                        worker.scope_evidence_conflicted(scope),
+                        "conflicting hints must be observable before recovery"
+                    );
+                    assert_eq!(
+                        worker.peek_scope_ack(scope),
+                        Some(ack),
+                        "hint conflict must not erase ACK authority"
+                    );
+                    assert!(
+                        worker.recover_scope_evidence_conflict(scope, true, false),
+                        "dynamic recovery may clear hint-only conflict"
+                    );
+                    assert!(
+                        !worker.scope_evidence_conflicted(scope),
+                        "hint-only conflict must be cleared"
+                    );
+                    assert_eq!(
+                        worker.peek_scope_ack(scope),
+                        Some(ack),
+                        "hint-only recovery must preserve ACK authority"
+                    );
+                });
+            });
+        },
+    );
+}
+
+#[test]
 fn ready_arm_mask_is_one_shot_and_cleared_on_scope_exit() {
     run_offer_regression_test(
         "ready_arm_mask_is_one_shot_and_cleared_on_scope_exit",

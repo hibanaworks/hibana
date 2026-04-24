@@ -55,7 +55,7 @@ use crate::{
     transport::{Transport, TransportEventKind, TransportMetrics},
 };
 
-use super::topology::{LocalTopologyInvariant, TopologySessionState};
+use super::topology::{LocalTopologyInvariant, TopologyLeaseState, TopologySessionState};
 use crate::control::automaton::distributed::{TopologyAck, TopologyIntent};
 use crate::control::cluster::effects::control_op_tap_event_id;
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
@@ -3946,10 +3946,38 @@ where
     fn commit_prepared_destination_generation(
         &self,
         lane: Lane,
+        previous_generation: Option<Generation>,
         target: Generation,
     ) -> Result<(), TopologyError> {
-        if self.r#gen.last(lane).is_none() {
-            let _ = self.r#gen.check_and_update(lane, Generation::ZERO);
+        let current = self.r#gen.last(lane);
+        if current != previous_generation {
+            return Err(match current {
+                Some(last) => TopologyError::StaleGeneration {
+                    lane,
+                    last,
+                    new: target,
+                },
+                None => TopologyError::StaleGeneration {
+                    lane,
+                    last: Generation::ZERO,
+                    new: target,
+                },
+            });
+        }
+        if current.is_none() {
+            self.r#gen
+                .check_and_update(lane, Generation::ZERO)
+                .map_err(|err| match err {
+                    GenError::StaleOrDuplicate(GenerationRecord { lane, last, new }) => {
+                        TopologyError::StaleGeneration { lane, last, new }
+                    }
+                    GenError::Overflow { lane, last } => {
+                        TopologyError::GenerationOverflow { lane, last }
+                    }
+                    GenError::InvalidInitial { lane, new } => {
+                        TopologyError::InvalidInitial { lane, new }
+                    }
+                })?;
         }
         self.r#gen
             .check_and_update(lane, target)
@@ -3972,9 +4000,11 @@ where
         };
         let (_, lane, previous_generation, target, lease_state, state_txn, fences, expected_ack) =
             pending.into_parts();
-        let _ = (target, lease_state, state_txn, fences, expected_ack);
+        let _ = (target, state_txn, fences, expected_ack);
         self.topology.reset_lane(lane);
-        self.restore_topology_generation(lane, previous_generation)?;
+        if !matches!(lease_state, TopologyLeaseState::DestinationPrepared) {
+            self.restore_topology_generation(lane, previous_generation)?;
+        }
         Ok(true)
     }
 
@@ -4269,7 +4299,7 @@ where
         self.preflight_destination_topology_commit(sid, lane)?;
         let (previous_generation, target) =
             self.topology.prepared_destination_generation(lane, sid)?;
-        self.commit_prepared_destination_generation(lane, target)?;
+        self.commit_prepared_destination_generation(lane, previous_generation, target)?;
         if let Err(err) = self.topology.finalize_destination(lane, sid) {
             self.restore_topology_generation(lane, previous_generation)?;
             return Err(err);
@@ -6460,6 +6490,121 @@ mod epf_tests {
                 rendezvous.r#gen.last(lane),
                 None,
                 "explicit abort must keep a fresh destination lane at its pre-ack generation state",
+            );
+        });
+    }
+
+    #[test]
+    fn destination_topology_commit_rejects_stale_prepared_generation_base() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(37);
+            let lane = Lane::new(1);
+
+            rendezvous
+                .prepare_topology_control_scope(lane)
+                .expect("topology tests must bind topology storage");
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::ZERO)
+                .expect("lane zero generation must initialize");
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::new(1))
+                .expect("generation must advance before destination prepare");
+
+            let intent = TopologyIntent::new(
+                RendezvousId::new(7),
+                rendezvous.id,
+                sid.raw(),
+                Generation::new(1),
+                Generation::new(3),
+                3,
+                7,
+                Lane::new(0),
+                lane,
+            );
+            rendezvous
+                .process_topology_intent(&intent)
+                .expect("destination prepare must record its generation base");
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::new(2))
+                .expect("test interleaving must advance generation outside the prepared lease");
+
+            assert!(matches!(
+                rendezvous.finalize_destination_topology_commit(sid, lane),
+                Err(TopologyError::StaleGeneration {
+                    lane: err_lane,
+                    last,
+                    new
+                }) if err_lane == lane
+                    && last == Generation::new(2)
+                    && new == Generation::new(3)
+            ));
+            assert_eq!(
+                rendezvous.preflight_destination_topology_commit(sid, lane),
+                Ok(()),
+                "failed commit must leave the prepared lease available for explicit abort/recovery"
+            );
+            assert_eq!(
+                rendezvous.r#gen.last(lane),
+                Some(Generation::new(2)),
+                "stale destination commit must not rewind the current generation"
+            );
+        });
+    }
+
+    #[test]
+    fn abort_destination_prepare_does_not_rewind_unowned_generation_change() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(38);
+            let lane = Lane::new(1);
+
+            rendezvous
+                .prepare_topology_control_scope(lane)
+                .expect("topology tests must bind topology storage");
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::ZERO)
+                .expect("lane zero generation must initialize");
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::new(1))
+                .expect("generation must advance before destination prepare");
+
+            let intent = TopologyIntent::new(
+                RendezvousId::new(7),
+                rendezvous.id,
+                sid.raw(),
+                Generation::new(1),
+                Generation::new(3),
+                3,
+                7,
+                Lane::new(0),
+                lane,
+            );
+            rendezvous
+                .process_topology_intent(&intent)
+                .expect("destination prepare must record its generation base");
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::new(2))
+                .expect("test interleaving must advance generation outside the prepared lease");
+
+            assert_eq!(
+                rendezvous.abort_topology_state(sid),
+                Ok(true),
+                "explicit abort must clear destination-only prepared topology"
+            );
+            assert_eq!(
+                rendezvous.preflight_destination_topology_commit(sid, lane),
+                Err(TopologyError::NoPending { lane }),
+                "abort must remove destination pending topology state"
+            );
+            assert_eq!(
+                rendezvous.r#gen.last(lane),
+                Some(Generation::new(2)),
+                "destination prepare abort must not rewind a generation it never committed"
             );
         });
     }

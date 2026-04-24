@@ -2499,15 +2499,17 @@ where
         is_dynamic_scope: bool,
         is_route_controller: bool,
     ) -> bool {
-        if is_dynamic_scope {
-            self.endpoint.clear_scope_evidence(scope_id);
-            return true;
-        }
-        if is_route_controller {
+        if self.endpoint.scope_ack_conflicted(scope_id) {
             return false;
         }
-        self.endpoint.clear_scope_evidence(scope_id);
-        true
+        if !(is_dynamic_scope || !is_route_controller) {
+            return false;
+        }
+        if self.endpoint.scope_hint_conflicted(scope_id) {
+            self.endpoint.clear_scope_hint_conflict(scope_id);
+            return true;
+        }
+        false
     }
 
     pub(in crate::endpoint::kernel) fn cache_binding_classification_for_offer(
