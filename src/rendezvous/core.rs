@@ -2,7 +2,7 @@
 //!
 //! The rendezvous component owns the association tables that map session
 //! identifiers to transport lanes. A fully-fledged implementation would manage
-//! splice/delegate bookkeeping and generation counters; the current version
+//! topology/delegate bookkeeping and generation counters; the current version
 //! keeps just enough structure to support endpoint scaffolding while leaving
 //! clear extension points.
 
@@ -10,26 +10,28 @@ use core::{cell::Cell, marker::PhantomData, ops::Range};
 
 use super::{
     association::AssocTable,
-    capability::{CapEntry, CapTable},
+    capability::{CapEntry, CapReleaseCtx, CapTable},
     error::{
-        CancelError, CapError, CheckpointError, CommitError, GenError, GenerationRecord,
-        RendezvousError, RollbackError, SpliceError,
+        CapError, GenError, GenerationRecord, RendezvousError, StateRestoreError, TopologyError,
+        TxAbortError, TxCommitError,
     },
     port::Port,
     slots::SlotArena,
-    splice::{DistributedSpliceTable, PendingSplice, SpliceStateTable},
-    tables::{CheckpointTable, GenTable, LoopTable, PolicyTable, RouteTable},
+    tables::{
+        GenTable, LoopTable, PolicyTable, RouteTable, SnapshotFinalization, StateSnapshotTable,
+    },
+    topology::{PendingTopology, TopologyStateTable},
 };
 use crate::{
     control::{
         automaton::txn::{NoopTap, Txn},
         brand::{self, Guard},
         cap::mint::{
-            CapShot, ControlOp, EndpointHandle, EndpointResource, GenericCapToken, NonceSeed,
-            ResourceKind, VerifiedCap,
+            CapShot, ControlOp, EndpointResource, GenericCapToken, NonceSeed, ResourceKind,
+            VerifiedCap,
         },
         cluster::{
-            core::{CpCommand, EffectRunner},
+            core::{CpCommand, EffectRunner, TopologyOperands},
             error::CpError,
         },
         types::{IncreasingGen, One},
@@ -44,18 +46,17 @@ use crate::{
     global::const_dsl::{ControlScopeKind, PolicyMode},
     observe::core::{TapEvent, TapRing, emit},
     observe::{
-        events::{DelegBegin, LaneRelease, RawEvent, RollbackOk},
-        ids, policy_abort, policy_trap,
+        events::{DelegBegin, LaneRelease, RawEvent, StateRestoreOk},
+        ids,
     },
-    policy_runtime::{self, AbortInfo, Action, HostSlots, PolicyCtx, PolicySlot},
+    policy_runtime::{self, PolicySlot},
     runtime::config::{Clock, Config, ConfigParts, CounterClock},
     runtime::consts::{DefaultLabelUniverse, LabelUniverse},
     transport::{Transport, TransportEventKind, TransportMetrics},
 };
 
-const ENDPOINT_TAG: u8 = 0;
-use super::splice::LocalSpliceInvariant;
-use crate::control::automaton::distributed::{SpliceAck, SpliceIntent};
+use super::topology::{LocalTopologyInvariant, TopologySessionState};
+use crate::control::automaton::distributed::{TopologyAck, TopologyIntent};
 use crate::control::cluster::effects::control_op_tap_event_id;
 use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
 
@@ -65,7 +66,6 @@ pub(crate) struct EndpointLeaseId(u16);
 
 impl EndpointLeaseId {
     pub(crate) const ZERO: Self = Self(0);
-    pub(crate) const MAX: Self = Self(u16::MAX);
 }
 
 impl From<u8> for EndpointLeaseId {
@@ -207,7 +207,7 @@ impl EndpointResidentBudget {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct EndpointLeaseSlot {
     pub(crate) generation: u32,
     pub(crate) offset: u32,
@@ -215,6 +215,7 @@ pub(crate) struct EndpointLeaseSlot {
     pub(crate) resident_budget: EndpointResidentBudget,
     pub(crate) program_image_slot: u8,
     pub(crate) role_image_slot: u8,
+    pub(crate) public_endpoint: bool,
     pub(crate) occupied: bool,
 }
 
@@ -226,6 +227,7 @@ impl EndpointLeaseSlot {
         resident_budget: EndpointResidentBudget::ZERO,
         program_image_slot: u8::MAX,
         role_image_slot: u8::MAX,
+        public_endpoint: false,
         occupied: false,
     };
 }
@@ -276,16 +278,15 @@ pub(crate) struct Rendezvous<
     transport: T,
     r#gen: GenTable,
     assoc: AssocTable,
-    checkpoints: CheckpointTable,
-    splice: SpliceStateTable,
-    distributed_splice: DistributedSpliceTable,
-    cap_nonce: Cell<u32>,
+    state_snapshots: StateSnapshotTable,
+    topology: TopologyStateTable,
+    cap_nonce: Cell<u64>,
+    cap_revision: Cell<u64>,
     caps: CapTable,
     loops: LoopTable,
     routes: RouteTable,
     policies: PolicyTable,
     slot_arena: SlotArena,
-    host_slots: HostSlots<'cfg>,
     clock: C,
     liveness_policy: crate::runtime::config::LivenessPolicy,
     _epoch_marker: PhantomData<E>,
@@ -317,6 +318,7 @@ struct EffectContext {
     lane: Lane,
     generation: Option<Generation>,
     fences: Option<(u32, u32)>,
+    expected_topology_ack: Option<TopologyAck>,
     delegate: Option<DelegateContext>,
 }
 
@@ -327,6 +329,7 @@ impl EffectContext {
             lane,
             generation: None,
             fences: None,
+            expected_topology_ack: None,
             delegate: None,
         }
     }
@@ -338,6 +341,11 @@ impl EffectContext {
 
     fn with_fences(mut self, fences: Option<(u32, u32)>) -> Self {
         self.fences = fences;
+        self
+    }
+
+    fn with_expected_topology_ack(mut self, expected_topology_ack: Option<TopologyAck>) -> Self {
+        self.expected_topology_ack = expected_topology_ack;
         self
     }
 
@@ -354,11 +362,12 @@ enum EffectResult {
 
 #[derive(Debug)]
 enum EffectError {
-    Rollback(RollbackError),
-    Commit(super::error::CommitError),
+    StateRestore(StateRestoreError),
+    TxAbort(TxAbortError),
+    TxCommit(super::error::TxCommitError),
     MissingGeneration,
     Unsupported,
-    Splice(SpliceError),
+    Topology(TopologyError),
     Delegation(super::error::CapError),
 }
 
@@ -857,7 +866,6 @@ where
         }
     }
 
-    #[cfg(test)]
     #[inline]
     pub(crate) const fn endpoint_lease_capacity(&self) -> EndpointLeaseId {
         self.endpoint_lease_capacity
@@ -877,6 +885,21 @@ where
     ) -> Option<(usize, usize)> {
         let slot = self.endpoint_lease(lease_slot, generation)?;
         Some((slot.offset as usize, slot.len as usize))
+    }
+
+    #[inline]
+    pub(crate) fn public_endpoint_lease_by_index(
+        &self,
+        idx: usize,
+    ) -> Option<(EndpointLeaseId, u32)> {
+        if idx >= usize::from(self.endpoint_lease_capacity) {
+            return None;
+        }
+        let slot = unsafe { &*self.endpoint_leases.add(idx) };
+        if !slot.occupied || !slot.public_endpoint {
+            return None;
+        }
+        Some((EndpointLeaseId::try_from(idx).ok()?, slot.generation))
     }
 
     #[inline]
@@ -1109,18 +1132,18 @@ where
     }
 
     fn ensure_checkpoint_table_storage(&mut self) -> Option<()> {
-        if self.checkpoints.is_bound() || self.lane_slot_count() == 0 {
+        if self.state_snapshots.is_bound() || self.lane_slot_count() == 0 {
             return Some(());
         }
         let lane_slots = self.lane_slot_count();
         let (storage, _) = unsafe {
             self.allocate_persistent_sidecar_bytes(
-                CheckpointTable::storage_bytes(lane_slots),
-                CheckpointTable::storage_align(),
+                StateSnapshotTable::storage_bytes(lane_slots),
+                StateSnapshotTable::storage_align(),
             )
         }?;
         unsafe {
-            self.checkpoints
+            self.state_snapshots
                 .bind_from_storage(storage, self.lane_base(), lane_slots);
         }
         Some(())
@@ -1166,48 +1189,30 @@ where
         Some(())
     }
 
-    fn ensure_splice_table_storage(&mut self) -> Option<()> {
-        if self.splice.is_bound() {
+    fn ensure_topology_table_storage(&mut self) -> Option<()> {
+        if self.topology.is_bound() {
             return Some(());
         }
         let lane_slots = self.lane_slot_count();
         let (storage, _) = unsafe {
             self.allocate_persistent_sidecar_bytes(
-                SpliceStateTable::storage_bytes(lane_slots),
-                SpliceStateTable::storage_align(),
+                TopologyStateTable::storage_bytes(lane_slots),
+                TopologyStateTable::storage_align(),
             )
         }?;
         unsafe {
-            self.splice
+            self.topology
                 .bind_from_storage(storage, self.lane_base(), lane_slots);
         }
         Some(())
     }
 
-    fn ensure_distributed_splice_storage(&mut self) -> Option<()> {
-        if self.distributed_splice.is_bound() {
-            return Some(());
-        }
-        let (storage, _) = unsafe {
-            self.allocate_persistent_sidecar_bytes(
-                DistributedSpliceTable::storage_bytes(),
-                DistributedSpliceTable::storage_align(),
-            )
-        }?;
-        unsafe {
-            self.distributed_splice.bind_from_storage(storage);
-        }
-        Some(())
+    pub(crate) fn ensure_topology_control_storage(&mut self) -> Option<()> {
+        self.ensure_topology_table_storage()
     }
 
-    pub(crate) fn ensure_splice_control_storage(&mut self) -> Option<()> {
-        self.ensure_splice_table_storage()?;
-        self.ensure_distributed_splice_storage()?;
-        Some(())
-    }
-
-    pub(crate) fn prepare_splice_control_scope(&mut self, lane: Lane) -> Option<()> {
-        self.ensure_splice_control_storage()?;
+    pub(crate) fn prepare_topology_control_scope(&mut self, lane: Lane) -> Option<()> {
+        self.ensure_topology_control_storage()?;
         self.initialise_control_scope(lane, ControlScopeKind::Topology);
         Some(())
     }
@@ -1247,13 +1252,13 @@ where
             );
             self.policies = PolicyTable::empty();
         }
-        if self.checkpoints.is_bound() {
+        if self.state_snapshots.is_bound() {
             self.free_external_persistent_sidecar_bytes(
-                self.checkpoints.storage_ptr(),
-                self.checkpoints.storage_bytes_current(),
+                self.state_snapshots.storage_ptr(),
+                self.state_snapshots.storage_bytes_current(),
                 0,
             );
-            self.checkpoints = CheckpointTable::empty();
+            self.state_snapshots = StateSnapshotTable::empty();
         }
         if self.assoc.is_bound() {
             self.free_external_persistent_sidecar_bytes(
@@ -1467,6 +1472,19 @@ where
         if let Some(slot) = self.endpoint_lease_mut(lease_slot, generation) {
             slot.program_image_slot = program_image_slot;
             slot.role_image_slot = role_image_slot;
+            return true;
+        }
+        false
+    }
+
+    #[inline]
+    pub(crate) fn mark_public_endpoint_lease(
+        &mut self,
+        lease_slot: EndpointLeaseId,
+        generation: u32,
+    ) -> bool {
+        if let Some(slot) = self.endpoint_lease_mut(lease_slot, generation) {
+            slot.public_endpoint = true;
             return true;
         }
         false
@@ -1909,6 +1927,7 @@ where
                                 resident_budget,
                                 program_image_slot: u8::MAX,
                                 role_image_slot: u8::MAX,
+                                public_endpoint: false,
                                 occupied: true,
                             };
                             let _ = slab_ptr;
@@ -1993,75 +2012,42 @@ where
 
     #[inline]
     fn policy_digest(&self, slot: PolicySlot) -> u32 {
-        self.host_slots.active_digest(slot)
+        let _ = slot;
+        policy_runtime::POLICY_DIGEST_NONE
     }
 
-    #[inline]
-    fn policy_mode(&self, slot: PolicySlot) -> policy_runtime::PolicyMode {
-        self.host_slots.policy_mode(slot)
-    }
-
-    #[inline]
-    fn last_policy_fuel_used(&self, slot: PolicySlot) -> u16 {
-        self.host_slots.last_fuel_used(slot)
-    }
-
-    #[inline]
-    fn run_policy<F>(
-        &self,
-        slot: PolicySlot,
-        event: &crate::observe::core::TapEvent,
-        session: Option<SessionId>,
-        lane: Option<Lane>,
-        configure: F,
-    ) -> Action
-    where
-        F: FnOnce(&mut PolicyCtx<'_>),
-    {
-        let mut ctx = PolicyCtx::new(slot, event);
-        if let Some(session) = session {
-            ctx.set_session(session);
-        }
-        if let Some(lane) = lane {
-            ctx.set_lane(lane);
-        }
-        configure(&mut ctx);
-        Action::Proceed
-    }
-
-    fn emit_effect(&self, effect: ControlOp, sid: SessionId, arg: u32) {
-        let event_id = match effect {
-            ControlOp::TopologyBegin => ids::SPLICE_BEGIN,
-            ControlOp::TopologyCommit => ids::SPLICE_COMMIT,
-            _ => control_op_tap_event_id(effect),
-        };
+    fn emit_effect(&self, effect: ControlOp, sid: SessionId, lane: Lane, arg: u32) {
+        let event_id = control_op_tap_event_id(effect);
+        let raw = lane.raw();
+        debug_assert!(
+            raw <= u32::from(u8::MAX),
+            "lane id must fit within causal key encoding"
+        );
+        let causal = TapEvent::make_causal_key(raw as u8 + 1, 0);
         emit(
             self.tap(),
             RawEvent::new(self.clock.now32(), event_id)
+                .with_causal_key(causal)
                 .with_arg0(sid.raw())
                 .with_arg1(arg),
         );
     }
 
-    fn emit_policy_event(&self, id: u16, lane: Option<Lane>, arg0: u32, arg1: u32) {
-        let causal = lane
-            .map(|lane| {
-                let raw = lane.raw();
-                debug_assert!(
-                    raw <= u32::from(u8::MAX),
-                    "lane id must fit within causal key encoding"
-                );
-                let marker = raw as u8 + 1;
-                TapEvent::make_causal_key(marker, 0)
-            })
-            .unwrap_or(0);
-
+    fn emit_topology_ack(
+        &self,
+        sid: SessionId,
+        from_lane: Lane,
+        to_lane: Lane,
+        generation: Generation,
+    ) {
+        let packed = ((from_lane.as_wire() as u32) & 0xFF)
+            | (((to_lane.as_wire() as u32) & 0xFF) << 8)
+            | ((generation.0 as u32) << 16);
         emit(
             self.tap(),
-            RawEvent::new(self.clock.now32(), id)
-                .with_causal_key(causal)
-                .with_arg0(arg0)
-                .with_arg1(arg1),
+            RawEvent::new(self.clock.now32(), crate::observe::ids::TOPOLOGY_ACK)
+                .with_arg0(packed)
+                .with_arg1(sid.raw()),
         );
     }
 
@@ -2095,142 +2081,60 @@ where
         );
     }
 
-    fn policy_cancel(&self, sid: SessionId, lane: Lane) {
-        self.cancel_begin_at_lane(sid, lane);
-        let generation = self.r#gen.last(lane).unwrap_or(Generation(0));
-        let _ = self.eval_effect(
-            ControlOp::AbortAck,
-            EffectContext::new(sid, lane).with_generation(generation),
-        );
-    }
-
-    fn apply_policy_action(
-        &self,
-        action: Action,
-        sid: Option<SessionId>,
-        lane: Option<Lane>,
-    ) -> Result<(), CpError> {
-        if let Some(info) = action.abort_info() {
-            self.handle_policy_abort(info, sid, lane);
-            return Err(CpError::PolicyAbort {
-                reason: info.reason,
-            });
-        }
-        if let Some((id, arg0, arg1)) = action.tap_payload() {
-            self.emit_policy_event(id, lane, arg0, arg1);
-        }
-        Ok(())
-    }
-
-    fn handle_policy_abort(&self, info: AbortInfo, sid: Option<SessionId>, lane: Option<Lane>) {
-        if let Some(sid_val) = sid {
-            if let Some(lane_val) = lane {
-                self.policy_cancel(sid_val, lane_val);
-            }
-            if info.trap.is_some() {
-                self.emit_policy_event(policy_trap(), lane, info.reason as u32, sid_val.raw());
-            }
-            self.emit_policy_event(policy_abort(), lane, info.reason as u32, sid_val.raw());
-        } else {
-            if info.trap.is_some() {
-                self.emit_policy_event(policy_trap(), lane, info.reason as u32, 0);
-            }
-            self.emit_policy_event(policy_abort(), lane, info.reason as u32, 0);
-        }
-    }
-
-    fn perform_effect(&self, envelope: CpCommand) -> Result<(), CpError> {
+    fn perform_effect(&mut self, envelope: CpCommand) -> Result<(), CpError> {
         match envelope.effect {
             ControlOp::TopologyBegin => {
-                let sid = envelope.sid.ok_or(CpError::Splice(
-                    crate::control::cluster::error::SpliceError::InvalidSession,
+                let sid = envelope.sid.ok_or(CpError::Topology(
+                    crate::control::cluster::error::TopologyError::InvalidSession,
                 ))?;
-                let lane = envelope.lane.ok_or(CpError::Splice(
-                    crate::control::cluster::error::SpliceError::InvalidLane,
-                ))?;
-                let (generation_input, fences) = if let Some(operands) = envelope.splice {
-                    (operands.new_gen, Some((operands.seq_tx, operands.seq_rx)))
-                } else {
-                    (
-                        envelope.generation.ok_or(CpError::Splice(
-                            crate::control::cluster::error::SpliceError::GenerationMismatch,
-                        ))?,
-                        None,
-                    )
-                };
                 let sid = SessionId::new(sid.raw());
-                let lane = Lane::new(lane.raw());
-                let generation = Generation(generation_input.raw());
-                self.begin_splice(sid, lane, fences, generation)
-                    .map_err(map_splice_error)
+                let operands = envelope.topology.ok_or(CpError::Topology(
+                    crate::control::cluster::error::TopologyError::InvalidState,
+                ))?;
+                self.topology_begin_from_intent(operands.intent(sid))
+                    .map_err(map_topology_error)
             }
             ControlOp::TopologyAck => {
-                let sid = envelope.sid.ok_or(CpError::Splice(
-                    crate::control::cluster::error::SpliceError::InvalidSession,
+                let sid = envelope.sid.ok_or(CpError::Topology(
+                    crate::control::cluster::error::TopologyError::InvalidSession,
                 ))?;
-                let Some(operands) = envelope.splice else {
-                    let lane = envelope.lane.ok_or(CpError::Splice(
-                        crate::control::cluster::error::SpliceError::InvalidLane,
-                    ))?;
-                    let sid = SessionId::new(sid.raw());
-                    let lane = Lane::new(lane.raw());
-                    return match self
-                        .eval_effect(ControlOp::TopologyAck, EffectContext::new(sid, lane))
-                    {
-                        Ok(_) => Ok(()),
-                        Err(EffectError::Splice(err)) => Err(map_splice_error(err)),
-                        Err(EffectError::MissingGeneration) | Err(EffectError::Rollback(_)) => {
-                            Err(CpError::Splice(
-                                crate::control::cluster::error::SpliceError::InvalidState,
-                            ))
-                        }
-                        Err(EffectError::Unsupported) | Err(EffectError::Delegation(_)) => {
-                            Err(CpError::UnsupportedEffect(ControlOp::TopologyAck as u8))
-                        }
-                        Err(EffectError::Commit(_)) => {
-                            Err(CpError::UnsupportedEffect(ControlOp::TopologyAck as u8))
-                        }
-                    };
-                };
+                let operands = envelope.topology.ok_or(CpError::Topology(
+                    crate::control::cluster::error::TopologyError::InvalidState,
+                ))?;
                 let intent = operands.intent(sid);
                 let ack_expected = operands.ack(sid);
 
                 let ack_result = self
-                    .process_splice_intent(&intent)
-                    .map_err(map_splice_error)?;
+                    .process_topology_intent(&intent)
+                    .map_err(map_topology_error)?;
 
                 if ack_result != ack_expected {
-                    return Err(CpError::Splice(
-                        crate::control::cluster::error::SpliceError::GenerationMismatch,
+                    return Err(CpError::Topology(
+                        crate::control::cluster::error::TopologyError::GenerationMismatch,
                     ));
                 }
 
-                let dst_lane = Lane::new(intent.dst_lane.raw());
-                let sid = SessionId::new(intent.sid);
-                self.assoc.register(dst_lane, sid);
-                self.splice
-                    .commit(dst_lane, sid)
-                    .map_err(map_splice_error)?;
+                self.emit_topology_ack(
+                    SessionId::new(intent.sid),
+                    intent.src_lane,
+                    Lane::new(intent.dst_lane.raw()),
+                    ack_result.new_gen,
+                );
                 Ok(())
             }
             ControlOp::TopologyCommit => {
-                let sid = envelope.sid.ok_or(CpError::Splice(
-                    crate::control::cluster::error::SpliceError::InvalidSession,
-                ))?;
-                let lane = envelope.lane.ok_or(CpError::Splice(
-                    crate::control::cluster::error::SpliceError::InvalidLane,
+                let sid = envelope.sid.ok_or(CpError::Topology(
+                    crate::control::cluster::error::TopologyError::InvalidSession,
                 ))?;
                 let sid = SessionId::new(sid.raw());
-                let lane = Lane::new(lane.raw());
-                let Some(operands) = envelope.splice else {
-                    self.commit_splice(sid, lane).map_err(map_splice_error)?;
-                    return Ok(());
-                };
-                self.commit_splice(sid, lane).map_err(map_splice_error)?;
-                let released_lane = Lane::new(operands.src_lane.raw());
-                if let Some(released_sid) = self.release_lane(released_lane) {
-                    self.emit_lane_release(released_sid, released_lane);
-                }
+                let operands = envelope.topology.ok_or(CpError::Topology(
+                    crate::control::cluster::error::TopologyError::InvalidState,
+                ))?;
+                let lane = self
+                    .validate_topology_commit_operands(sid, operands)
+                    .map_err(map_topology_error)?;
+                self.topology_commit(sid, lane)
+                    .map_err(map_topology_error)?;
                 Ok(())
             }
             ControlOp::CapDelegate => {
@@ -2238,9 +2142,13 @@ where
                     crate::control::cluster::error::DelegationError::InvalidToken,
                 ))?;
 
-                let header = delegate.token.header();
-                let sid_raw = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
-                let lane_raw = header[4] as u32;
+                let handle = delegate.token.endpoint_identity().map_err(|_| {
+                    CpError::Delegation(
+                        crate::control::cluster::error::DelegationError::InvalidToken,
+                    )
+                })?;
+                let sid_raw = handle.sid.raw();
+                let lane_raw = handle.lane.raw();
 
                 if let Some(sid) = envelope.sid
                     && sid.raw() != sid_raw
@@ -2271,74 +2179,133 @@ where
                     Err(EffectError::Unsupported) => {
                         Err(CpError::UnsupportedEffect(ControlOp::CapDelegate as u8))
                     }
-                    Err(EffectError::Splice(_))
+                    Err(EffectError::Topology(_))
                     | Err(EffectError::MissingGeneration)
-                    | Err(EffectError::Rollback(_))
-                    | Err(EffectError::Commit(_)) => Err(CpError::Delegation(
+                    | Err(EffectError::StateRestore(_))
+                    | Err(EffectError::TxAbort(_))
+                    | Err(EffectError::TxCommit(_)) => Err(CpError::Delegation(
                         crate::control::cluster::error::DelegationError::InvalidToken,
                     )),
                 }
             }
             ControlOp::TxCommit => {
-                let sid = envelope.sid.ok_or(CpError::Commit(
-                    crate::control::cluster::error::CommitError::SessionNotFound,
+                let sid = envelope.sid.ok_or(CpError::TxCommit(
+                    crate::control::cluster::error::TxCommitError::SessionNotFound,
                 ))?;
-                let lane = envelope.lane.ok_or(CpError::Commit(
-                    crate::control::cluster::error::CommitError::SessionNotFound,
+                let lane = envelope.lane.ok_or(CpError::TxCommit(
+                    crate::control::cluster::error::TxCommitError::SessionNotFound,
                 ))?;
-                let generation_input = envelope.generation.ok_or(CpError::Commit(
-                    crate::control::cluster::error::CommitError::GenerationMismatch,
+                let generation_input = envelope.generation.ok_or(CpError::TxCommit(
+                    crate::control::cluster::error::TxCommitError::GenerationMismatch,
                 ))?;
                 let sid = SessionId::new(sid.raw());
                 let lane = Lane::new(lane.raw());
                 if self.assoc.get_sid(lane) != Some(sid) {
-                    return Err(CpError::Commit(
-                        crate::control::cluster::error::CommitError::SessionNotFound,
+                    return Err(CpError::TxCommit(
+                        crate::control::cluster::error::TxCommitError::SessionNotFound,
                     ));
                 }
-                self.commit_at_lane(sid, lane, Generation(generation_input.raw()))
-                    .map_err(map_commit_error)
+                self.tx_commit_at_lane(sid, lane, Generation(generation_input.raw()))
+                    .map_err(map_tx_commit_error)
+            }
+            ControlOp::TxAbort => {
+                let sid = envelope.sid.ok_or(CpError::TxAbort(
+                    crate::control::cluster::error::TxAbortError::SessionNotFound,
+                ))?;
+                let lane = envelope.lane.ok_or(CpError::TxAbort(
+                    crate::control::cluster::error::TxAbortError::SessionNotFound,
+                ))?;
+                let generation_input = envelope.generation.ok_or(CpError::TxAbort(
+                    crate::control::cluster::error::TxAbortError::GenerationMismatch,
+                ))?;
+                let sid = SessionId::new(sid.raw());
+                let lane = Lane::new(lane.raw());
+                if self.assoc.get_sid(lane) != Some(sid) {
+                    return Err(CpError::TxAbort(
+                        crate::control::cluster::error::TxAbortError::SessionNotFound,
+                    ));
+                }
+                self.tx_abort_at_lane(sid, lane, Generation(generation_input.raw()))
+                    .map_err(map_tx_abort_error)
             }
             ControlOp::AbortBegin => {
-                let sid = envelope.sid.ok_or(CpError::Cancel(
-                    crate::control::cluster::error::CancelError::SessionNotFound,
+                let sid = envelope.sid.ok_or(CpError::Abort(
+                    crate::control::cluster::error::AbortError::SessionNotFound,
                 ))?;
-                self.cancel_begin(SessionId::new(sid.raw()))
-                    .map_err(map_cancel_error)
+                let lane = envelope.lane.ok_or(CpError::Abort(
+                    crate::control::cluster::error::AbortError::SessionNotFound,
+                ))?;
+                let sid = SessionId::new(sid.raw());
+                let lane = Lane::new(lane.raw());
+                if self.assoc.get_sid(lane) != Some(sid) {
+                    return Err(CpError::Abort(
+                        crate::control::cluster::error::AbortError::SessionNotFound,
+                    ));
+                }
+                self.abort_begin_at_lane(sid, lane);
+                Ok(())
             }
             ControlOp::AbortAck => {
-                let sid = envelope.sid.ok_or(CpError::Cancel(
-                    crate::control::cluster::error::CancelError::SessionNotFound,
+                let sid = envelope.sid.ok_or(CpError::Abort(
+                    crate::control::cluster::error::AbortError::SessionNotFound,
                 ))?;
-                let generation_input = envelope.generation.ok_or(CpError::Cancel(
-                    crate::control::cluster::error::CancelError::GenerationMismatch,
+                let lane = envelope.lane.ok_or(CpError::Abort(
+                    crate::control::cluster::error::AbortError::SessionNotFound,
                 ))?;
-                self.cancel_ack(
-                    SessionId::new(sid.raw()),
-                    Generation(generation_input.raw()),
+                let generation_input = envelope.generation.ok_or(CpError::Abort(
+                    crate::control::cluster::error::AbortError::GenerationMismatch,
+                ))?;
+                let sid = SessionId::new(sid.raw());
+                let lane = Lane::new(lane.raw());
+                if self.assoc.get_sid(lane) != Some(sid) {
+                    return Err(CpError::Abort(
+                        crate::control::cluster::error::AbortError::SessionNotFound,
+                    ));
+                }
+                self.eval_effect(
+                    ControlOp::AbortAck,
+                    EffectContext::new(sid, lane)
+                        .with_generation(Generation(generation_input.raw())),
                 )
-                .map_err(map_cancel_error)
+                .expect("abort ack evaluation must not fail");
+                Ok(())
             }
             ControlOp::StateSnapshot => {
-                let sid = envelope.sid.ok_or(CpError::Checkpoint(
-                    crate::control::cluster::error::CheckpointError::SessionNotFound,
+                let sid = envelope.sid.ok_or(CpError::StateSnapshot(
+                    crate::control::cluster::error::StateSnapshotError::SessionNotFound,
                 ))?;
-                self.checkpoint(SessionId::new(sid.raw()))
-                    .map(|_| ())
-                    .map_err(map_checkpoint_error)
+                let lane = envelope.lane.ok_or(CpError::StateSnapshot(
+                    crate::control::cluster::error::StateSnapshotError::SessionNotFound,
+                ))?;
+                let sid = SessionId::new(sid.raw());
+                let lane = Lane::new(lane.raw());
+                if self.assoc.get_sid(lane) != Some(sid) {
+                    return Err(CpError::StateSnapshot(
+                        crate::control::cluster::error::StateSnapshotError::SessionNotFound,
+                    ));
+                }
+                let _ = self.state_snapshot_at_lane(sid, lane);
+                Ok(())
             }
             ControlOp::StateRestore => {
-                let sid = envelope.sid.ok_or(CpError::Rollback(
-                    crate::control::cluster::error::RollbackError::SessionNotFound,
+                let sid = envelope.sid.ok_or(CpError::StateRestore(
+                    crate::control::cluster::error::StateRestoreError::SessionNotFound,
                 ))?;
-                let generation_input = envelope.generation.ok_or(CpError::Rollback(
-                    crate::control::cluster::error::RollbackError::EpochMismatch,
+                let lane = envelope.lane.ok_or(CpError::StateRestore(
+                    crate::control::cluster::error::StateRestoreError::SessionNotFound,
                 ))?;
-                self.rollback(
-                    SessionId::new(sid.raw()),
-                    Generation(generation_input.raw()),
-                )
-                .map_err(map_rollback_error)
+                let generation_input = envelope.generation.ok_or(CpError::StateRestore(
+                    crate::control::cluster::error::StateRestoreError::EpochMismatch,
+                ))?;
+                let sid = SessionId::new(sid.raw());
+                let lane = Lane::new(lane.raw());
+                if self.assoc.get_sid(lane) != Some(sid) {
+                    return Err(CpError::StateRestore(
+                        crate::control::cluster::error::StateRestoreError::SessionNotFound,
+                    ));
+                }
+                self.state_restore_at_lane(sid, lane, Generation(generation_input.raw()))
+                    .map_err(map_state_restore_error)
             }
             _ => Err(CpError::UnsupportedEffect(envelope.effect as u8)),
         }
@@ -2351,6 +2318,8 @@ where
     ) -> Result<EffectResult, EffectError> {
         match effect {
             ControlOp::TopologyBegin => {
+                self.ensure_authenticated_session_lane(ctx.sid, ctx.lane)
+                    .map_err(EffectError::Topology)?;
                 let target = ctx.generation.ok_or(EffectError::MissingGeneration)?;
                 let mut prev = self.r#gen.last(ctx.lane);
                 if prev.is_none() {
@@ -2359,69 +2328,112 @@ where
                 }
                 let prev = prev.unwrap_or(Generation(0));
 
-                self.validate_splice_generation(ctx.lane, target)
-                    .map_err(EffectError::Splice)?;
+                self.validate_topology_generation(ctx.lane, target)
+                    .map_err(EffectError::Topology)?;
 
-                let txn: Txn<LocalSpliceInvariant, IncreasingGen, One> =
+                let txn: Txn<LocalTopologyInvariant, IncreasingGen, One> =
                     unsafe { Txn::new(ctx.lane, prev) };
                 let mut tap = NoopTap;
                 let in_begin = txn.begin(&mut tap);
                 let in_acked = in_begin.ack(&mut tap);
 
-                let pending = PendingSplice::new(ctx.sid, target, in_acked, ctx.fences);
+                let expected_ack = ctx.expected_topology_ack.ok_or(EffectError::Topology(
+                    TopologyError::NoPending { lane: ctx.lane },
+                ))?;
+                let pending = PendingTopology::source_prepare(
+                    ctx.sid,
+                    ctx.lane,
+                    Some(prev),
+                    target,
+                    in_acked,
+                    ctx.fences,
+                    expected_ack,
+                );
 
-                self.splice
+                self.topology
                     .begin(ctx.lane, pending)
-                    .map_err(EffectError::Splice)?;
+                    .map_err(EffectError::Topology)?;
 
                 let packed = ((ctx.lane.as_wire() as u32) & 0xFF) | ((target.0 as u32) << 16);
-                self.emit_effect(effect, ctx.sid, packed);
+                self.emit_effect(effect, ctx.sid, ctx.lane, packed);
                 Ok(EffectResult::Generation(target))
             }
             ControlOp::TopologyAck => Ok(EffectResult::None),
             ControlOp::TopologyCommit => {
-                let pending = self.splice.take(ctx.lane).ok_or(EffectError::Splice(
-                    SpliceError::NoPending { lane: ctx.lane },
+                let pending = self.topology.take(ctx.lane).ok_or(EffectError::Topology(
+                    TopologyError::NoPending { lane: ctx.lane },
                 ))?;
 
-                let (sid, target, state, fences) = pending.into_parts();
+                let (
+                    sid,
+                    lane,
+                    previous_generation,
+                    target,
+                    lease_state,
+                    state,
+                    fences,
+                    expected_ack,
+                ) = pending.into_parts();
 
                 if sid != ctx.sid {
                     // Reinsert to preserve state before returning error.
-                    let _ = self
-                        .splice
-                        .begin(ctx.lane, PendingSplice::new(sid, target, state, fences));
-                    return Err(EffectError::Splice(SpliceError::UnknownSession {
+                    let _ = self.topology.begin(
+                        lane,
+                        PendingTopology::source_prepare(
+                            sid,
+                            lane,
+                            previous_generation,
+                            target,
+                            state.expect("topology commit reinsert requires a pending transaction"),
+                            fences,
+                            expected_ack
+                                .expect("source topology reinsert requires an expected ack"),
+                        ),
+                    );
+                    return Err(EffectError::Topology(TopologyError::UnknownSession {
                         sid: ctx.sid,
                     }));
                 }
 
-                self.validate_splice_generation(ctx.lane, target)
-                    .map_err(EffectError::Splice)?;
+                self.validate_topology_generation(ctx.lane, target)
+                    .map_err(EffectError::Topology)?;
 
                 if let Err(err) = self.r#gen.check_and_update(ctx.lane, target) {
-                    let _ = self
-                        .splice
-                        .begin(ctx.lane, PendingSplice::new(sid, target, state, fences));
-                    let splice_err = match err {
+                    let _ = self.topology.begin(
+                        lane,
+                        PendingTopology::source_prepare(
+                            sid,
+                            lane,
+                            previous_generation,
+                            target,
+                            state.expect("topology commit reinsert requires a pending transaction"),
+                            fences,
+                            expected_ack
+                                .expect("source topology reinsert requires an expected ack"),
+                        ),
+                    );
+                    let topology_err = match err {
                         GenError::StaleOrDuplicate(GenerationRecord { lane, last, new }) => {
-                            SpliceError::StaleGeneration { lane, last, new }
+                            TopologyError::StaleGeneration { lane, last, new }
                         }
                         GenError::Overflow { lane, last } => {
-                            SpliceError::GenerationOverflow { lane, last }
+                            TopologyError::GenerationOverflow { lane, last }
                         }
                         GenError::InvalidInitial { lane, new } => {
-                            SpliceError::InvalidInitial { lane, new }
+                            TopologyError::InvalidInitial { lane, new }
                         }
                     };
-                    return Err(EffectError::Splice(splice_err));
+                    return Err(EffectError::Topology(topology_err));
                 }
+                let _ = (lease_state, fences, expected_ack);
 
                 let mut tap = NoopTap;
-                let _closed = state.commit(&mut tap);
+                let _closed = state
+                    .expect("topology commit requires a pending transaction")
+                    .commit(&mut tap);
 
                 let packed = ((ctx.lane.as_wire() as u32) & 0xFF) | ((target.0 as u32) << 16);
-                self.emit_effect(effect, ctx.sid, packed);
+                self.emit_effect(effect, ctx.sid, ctx.lane, packed);
                 Ok(EffectResult::Generation(target))
             }
             ControlOp::CapDelegate => {
@@ -2430,30 +2442,27 @@ where
                 };
 
                 let token = delegate.token;
-                let header = token.header();
+                let handle = token
+                    .endpoint_identity()
+                    .map_err(|_| EffectError::Delegation(super::error::CapError::Mismatch))?;
                 let nonce = token.nonce();
-
-                let sid_raw = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
-                let lane_raw = header[4] as u32;
-                let role = header[5];
-                let kind_raw = header[6];
-                let shot_raw = header[7];
+                let sid_raw = handle.sid.raw();
+                let lane_raw = handle.lane.raw();
 
                 if sid_raw != ctx.sid.raw() || lane_raw != ctx.lane.raw() {
                     return Err(EffectError::Delegation(super::error::CapError::Mismatch));
                 }
 
-                let cp_shot = crate::control::cap::mint::CapShot::from_u8(shot_raw)
-                    .ok_or(EffectError::Delegation(super::error::CapError::Mismatch))?;
-                if kind_raw != ENDPOINT_TAG {
-                    return Err(EffectError::Delegation(super::error::CapError::Mismatch));
-                }
-                let shot = match cp_shot {
-                    crate::control::cap::mint::CapShot::One => CapShot::One,
-                    crate::control::cap::mint::CapShot::Many => CapShot::Many,
-                };
-
                 if !delegate.claim {
+                    self.mint_cap::<EndpointResource>(
+                        ctx.sid,
+                        ctx.lane,
+                        CapShot::One,
+                        handle.role,
+                        nonce,
+                        handle,
+                    )
+                    .map_err(EffectError::Delegation)?;
                     emit(
                         self.tap(),
                         DelegBegin::new(
@@ -2462,16 +2471,6 @@ where
                             ctx.lane.as_wire() as u32,
                         ),
                     );
-                }
-
-                if !delegate.claim {
-                    let mut handle = EndpointHandle::new(
-                        crate::control::types::SessionId::new(ctx.sid.raw()),
-                        ctx.lane,
-                        role,
-                    );
-                    self.mint_cap::<EndpointResource>(ctx.sid, ctx.lane, shot, role, nonce, handle);
-                    EndpointResource::zeroize(&mut handle);
                     Ok(EffectResult::None)
                 } else {
                     self.claim_cap(&token)
@@ -2481,79 +2480,159 @@ where
             }
             ControlOp::TxCommit => {
                 let generation = ctx.generation.ok_or(EffectError::MissingGeneration)?;
-                let checkpoint = self.checkpoints.last(ctx.lane).ok_or(EffectError::Commit(
-                    CommitError::NoCheckpoint { sid: ctx.sid },
-                ))?;
+                let snapshot =
+                    self.state_snapshots
+                        .last_snapshot(ctx.lane)
+                        .ok_or(EffectError::TxCommit(TxCommitError::NoStateSnapshot {
+                            sid: ctx.sid,
+                        }))?;
 
-                if self.checkpoints.is_consumed(ctx.lane) {
-                    return Err(EffectError::Commit(CommitError::AlreadyCommitted {
+                if !matches!(
+                    self.state_snapshots.finalization(ctx.lane),
+                    None | Some(SnapshotFinalization::Available)
+                ) {
+                    return Err(EffectError::TxCommit(TxCommitError::AlreadyFinalized {
                         sid: ctx.sid,
                     }));
                 }
 
-                if checkpoint != generation {
-                    return Err(EffectError::Commit(CommitError::GenerationMismatch {
+                if snapshot != generation {
+                    return Err(EffectError::TxCommit(TxCommitError::GenerationMismatch {
                         sid: ctx.sid,
-                        expected: checkpoint,
+                        expected: snapshot,
                         got: generation,
                     }));
                 }
 
-                self.checkpoints.mark_consumed(ctx.lane);
-                self.emit_effect(effect, ctx.sid, generation.0 as u32);
+                self.state_snapshots.mark_committed(ctx.lane);
+                self.caps.discard_released_lane_entries(ctx.lane);
+                self.emit_effect(effect, ctx.sid, ctx.lane, generation.0 as u32);
                 Ok(EffectResult::Generation(generation))
             }
             ControlOp::AbortBegin => {
-                self.emit_effect(effect, ctx.sid, ctx.lane.as_wire() as u32);
+                self.emit_effect(effect, ctx.sid, ctx.lane, ctx.lane.as_wire() as u32);
                 Ok(EffectResult::None)
             }
             ControlOp::AbortAck => {
                 let generation = ctx.generation.ok_or(EffectError::MissingGeneration)?;
-                self.emit_effect(effect, ctx.sid, generation.0 as u32);
+                self.emit_effect(effect, ctx.sid, ctx.lane, generation.0 as u32);
                 Ok(EffectResult::None)
             }
             ControlOp::StateSnapshot => {
                 let epoch = self.r#gen.last(ctx.lane).unwrap_or(Generation(0));
-                self.checkpoints.record(ctx.lane, epoch);
-                self.emit_effect(effect, ctx.sid, epoch.0 as u32);
+                self.caps.discard_released_lane_entries(ctx.lane);
+                self.state_snapshots
+                    .record_snapshot(ctx.lane, epoch, self.cap_revision.get());
+                self.emit_effect(effect, ctx.sid, ctx.lane, epoch.0 as u32);
                 Ok(EffectResult::Generation(epoch))
             }
             ControlOp::StateRestore => {
                 let requested = ctx.generation.ok_or(EffectError::MissingGeneration)?;
                 let current = self.r#gen.last(ctx.lane).unwrap_or(Generation(0));
-                let checkpoint = self.checkpoints.last(ctx.lane).ok_or({
-                    EffectError::Rollback(RollbackError::NoCheckpoint { sid: ctx.sid })
+                let snapshot = self.state_snapshots.last_snapshot(ctx.lane).ok_or({
+                    EffectError::StateRestore(StateRestoreError::NoStateSnapshot { sid: ctx.sid })
                 })?;
 
-                if self.checkpoints.is_consumed(ctx.lane) {
-                    return Err(EffectError::Rollback(RollbackError::AlreadyConsumed {
+                if !matches!(
+                    self.state_snapshots.finalization(ctx.lane),
+                    None | Some(SnapshotFinalization::Available)
+                ) {
+                    return Err(EffectError::StateRestore(
+                        StateRestoreError::AlreadyFinalized { sid: ctx.sid },
+                    ));
+                }
+
+                if requested != snapshot {
+                    return Err(EffectError::StateRestore(
+                        StateRestoreError::StaleStateSnapshot {
+                            sid: ctx.sid,
+                            requested,
+                            current: snapshot,
+                        },
+                    ));
+                }
+
+                if current.raw() < requested.raw() {
+                    return Err(EffectError::StateRestore(
+                        StateRestoreError::EpochMismatch {
+                            expected: current,
+                            got: requested,
+                        },
+                    ));
+                }
+
+                let snapshot_cap_revision =
+                    self.state_snapshots.last_cap_revision(ctx.lane).ok_or({
+                        EffectError::StateRestore(StateRestoreError::NoStateSnapshot {
+                            sid: ctx.sid,
+                        })
+                    })?;
+
+                self.r#gen.restore_to(ctx.lane, requested).map_err(|_| {
+                    EffectError::StateRestore(StateRestoreError::EpochMismatch {
+                        expected: current,
+                        got: requested,
+                    })
+                })?;
+                self.restore_lane_runtime_state(ctx.lane, snapshot_cap_revision);
+                self.state_snapshots.mark_restored(ctx.lane);
+
+                self.emit_effect(effect, ctx.sid, ctx.lane, requested.0 as u32);
+                emit(
+                    self.tap(),
+                    StateRestoreOk::new(self.clock.now32(), ctx.sid.raw(), requested.0 as u32),
+                );
+
+                Ok(EffectResult::Generation(requested))
+            }
+            ControlOp::TxAbort => {
+                let requested = ctx.generation.ok_or(EffectError::MissingGeneration)?;
+                let current = self.r#gen.last(ctx.lane).unwrap_or(Generation(0));
+                let snapshot = self.state_snapshots.last_snapshot(ctx.lane).ok_or({
+                    EffectError::TxAbort(TxAbortError::NoStateSnapshot { sid: ctx.sid })
+                })?;
+
+                if !matches!(
+                    self.state_snapshots.finalization(ctx.lane),
+                    None | Some(SnapshotFinalization::Available)
+                ) {
+                    return Err(EffectError::TxAbort(TxAbortError::AlreadyFinalized {
                         sid: ctx.sid,
                     }));
                 }
 
-                if requested != checkpoint {
-                    return Err(EffectError::Rollback(RollbackError::StaleCheckpoint {
+                if requested != snapshot {
+                    return Err(EffectError::TxAbort(TxAbortError::StaleStateSnapshot {
                         sid: ctx.sid,
                         requested,
-                        current: checkpoint,
+                        current: snapshot,
                     }));
                 }
 
-                if current != requested {
-                    return Err(EffectError::Rollback(RollbackError::EpochMismatch {
+                if current.raw() < requested.raw() {
+                    return Err(EffectError::TxAbort(TxAbortError::GenerationMismatch {
+                        sid: ctx.sid,
                         expected: current,
                         got: requested,
                     }));
                 }
 
-                self.checkpoints.mark_consumed(ctx.lane);
+                let snapshot_cap_revision =
+                    self.state_snapshots.last_cap_revision(ctx.lane).ok_or({
+                        EffectError::TxAbort(TxAbortError::NoStateSnapshot { sid: ctx.sid })
+                    })?;
 
-                self.emit_effect(effect, ctx.sid, requested.0 as u32);
-                emit(
-                    self.tap(),
-                    RollbackOk::new(self.clock.now32(), ctx.sid.raw(), requested.0 as u32),
-                );
+                self.r#gen.restore_to(ctx.lane, requested).map_err(|_| {
+                    EffectError::TxAbort(TxAbortError::GenerationMismatch {
+                        sid: ctx.sid,
+                        expected: current,
+                        got: requested,
+                    })
+                })?;
+                self.restore_lane_runtime_state(ctx.lane, snapshot_cap_revision);
+                self.state_snapshots.mark_restored(ctx.lane);
 
+                self.emit_effect(effect, ctx.sid, ctx.lane, requested.0 as u32);
                 Ok(EffectResult::Generation(requested))
             }
             _ => Err(EffectError::Unsupported),
@@ -2566,32 +2645,6 @@ impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock>
 where
     'cfg: 'rv,
 {
-    const IMAGE_BANK_EXPANSION_TAIL_FLOOR: usize = 4 * 1024;
-    const PUBLIC_ATTACH_TAIL_FLOOR_LANES: usize = u32::BITS as usize;
-    const PUBLIC_ENDPOINT_ATTACH_TAIL_FLOOR: usize = {
-        let arena_layout = crate::endpoint::kernel::EndpointArenaLayout::from_footprint(
-            crate::global::role_program::RoleFootprint::for_endpoint_layout(
-                Self::PUBLIC_ATTACH_TAIL_FLOOR_LANES,
-                Self::PUBLIC_ATTACH_TAIL_FLOOR_LANES,
-                Self::PUBLIC_ATTACH_TAIL_FLOOR_LANES,
-                crate::endpoint::kernel::MAX_ROUTE_ARM_STACK,
-                crate::eff::meta::MAX_EFF_NODES,
-                Self::PUBLIC_ATTACH_TAIL_FLOOR_LANES,
-            ),
-        );
-        crate::endpoint::kernel::cursor_endpoint_storage_layout::<
-            0,
-            T,
-            U,
-            C,
-            crate::control::cap::mint::EpochTbl,
-            1,
-            crate::control::cap::mint::MintConfig,
-            crate::binding::BindingHandle<'cfg>,
-        >(&arena_layout, Self::PUBLIC_ATTACH_TAIL_FLOOR_LANES)
-        .total_bytes()
-    };
-
     #[inline]
     const fn recommended_image_slot_capacity(endpoint_slots: usize) -> usize {
         if endpoint_slots == 0 {
@@ -2720,9 +2773,6 @@ where
     ) -> Option<(usize, usize, usize, u32, usize, EndpointLeaseId)> {
         let baseline =
             Self::runtime_metadata_layout_with_image_slots(slab, endpoint_slots, endpoint_slots)?;
-        if slab.len().saturating_sub(baseline.3 as usize) < Self::IMAGE_BANK_EXPANSION_TAIL_FLOOR {
-            return Some(baseline);
-        }
 
         let desired = Self::recommended_image_slot_capacity(endpoint_slots);
         let mut image_slots = desired;
@@ -2730,11 +2780,7 @@ where
             if let Some(layout) =
                 Self::runtime_metadata_layout_with_image_slots(slab, endpoint_slots, image_slots)
             {
-                if slab.len().saturating_sub(layout.3 as usize)
-                    >= Self::IMAGE_BANK_EXPANSION_TAIL_FLOOR
-                {
-                    return Some(layout);
-                }
+                return Some(layout);
             }
             if image_slots == endpoint_slots {
                 return Some(baseline);
@@ -2771,6 +2817,7 @@ where
 
     unsafe fn init_runtime_metadata_for_public_path_auto(
         slab: &mut [u8],
+        endpoint_slots: usize,
     ) -> Option<(
         *mut CompiledProgramSlot,
         *mut RoleImageSlot,
@@ -2779,37 +2826,15 @@ where
         u8,
         EndpointLeaseId,
     )> {
-        let required_tail = Self::IMAGE_BANK_EXPANSION_TAIL_FLOOR
-            .saturating_add(Self::PUBLIC_ENDPOINT_ATTACH_TAIL_FLOOR);
-        let baseline = Self::runtime_metadata_layout_for_public_path(slab, 0)?;
-        let mut best = baseline;
-        let per_endpoint_bytes = core::mem::size_of::<CompiledProgramSlot>()
-            .saturating_add(core::mem::size_of::<RoleImageSlot>())
-            .saturating_add(core::mem::size_of::<EndpointLeaseSlot>());
-        let per_endpoint_bytes = core::cmp::max(per_endpoint_bytes, 1);
-        let mut low = 1usize;
-        let mut high = core::cmp::min(
-            usize::from(EndpointLeaseId::MAX),
-            slab.len() / per_endpoint_bytes,
-        );
-        while low <= high {
-            let mid = low + (high - low) / 2;
-            if let Some(layout) = Self::runtime_metadata_layout_for_public_path(slab, mid) {
-                if slab.len().saturating_sub(layout.3 as usize) >= required_tail {
-                    best = layout;
-                    low = mid.saturating_add(1);
-                } else if mid == 0 {
-                    break;
-                } else {
-                    high = mid - 1;
-                }
-            } else if mid == 0 {
-                break;
-            } else {
-                high = mid - 1;
-            }
+        let (_, _, _, _, image_slots, endpoint_lease_capacity) =
+            Self::runtime_metadata_layout_for_public_path(slab, endpoint_slots)?;
+        unsafe {
+            Self::init_runtime_metadata_with_image_slots(
+                slab,
+                usize::from(endpoint_lease_capacity),
+                image_slots,
+            )
         }
-        unsafe { Self::init_runtime_metadata_with_image_slots(slab, usize::from(best.5), best.4) }
     }
 
     unsafe fn carve_resident_storage(slab: &mut [u8]) -> Option<(*mut Self, &mut [u8])> {
@@ -2879,16 +2904,15 @@ where
             core::ptr::addr_of_mut!((*dst).transport).write(transport);
             GenTable::init_empty(core::ptr::addr_of_mut!((*dst).r#gen));
             AssocTable::init_empty(core::ptr::addr_of_mut!((*dst).assoc));
-            CheckpointTable::init_empty(core::ptr::addr_of_mut!((*dst).checkpoints));
-            SpliceStateTable::init_empty(core::ptr::addr_of_mut!((*dst).splice));
-            DistributedSpliceTable::init_empty(core::ptr::addr_of_mut!((*dst).distributed_splice));
+            StateSnapshotTable::init_empty(core::ptr::addr_of_mut!((*dst).state_snapshots));
+            TopologyStateTable::init_empty(core::ptr::addr_of_mut!((*dst).topology));
             core::ptr::addr_of_mut!((*dst).cap_nonce).write(Cell::new(0));
+            core::ptr::addr_of_mut!((*dst).cap_revision).write(Cell::new(0));
             CapTable::init_empty(core::ptr::addr_of_mut!((*dst).caps));
             LoopTable::init_empty(core::ptr::addr_of_mut!((*dst).loops));
             RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
             PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
             SlotArena::init_empty(core::ptr::addr_of_mut!((*dst).slot_arena));
-            HostSlots::init_empty(core::ptr::addr_of_mut!((*dst).host_slots));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
             core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
             core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
@@ -2953,16 +2977,15 @@ where
             core::ptr::addr_of_mut!((*dst).transport).write(transport);
             GenTable::init_empty(core::ptr::addr_of_mut!((*dst).r#gen));
             AssocTable::init_empty(core::ptr::addr_of_mut!((*dst).assoc));
-            CheckpointTable::init_empty(core::ptr::addr_of_mut!((*dst).checkpoints));
-            SpliceStateTable::init_empty(core::ptr::addr_of_mut!((*dst).splice));
-            DistributedSpliceTable::init_empty(core::ptr::addr_of_mut!((*dst).distributed_splice));
+            StateSnapshotTable::init_empty(core::ptr::addr_of_mut!((*dst).state_snapshots));
+            TopologyStateTable::init_empty(core::ptr::addr_of_mut!((*dst).topology));
             core::ptr::addr_of_mut!((*dst).cap_nonce).write(Cell::new(0));
+            core::ptr::addr_of_mut!((*dst).cap_revision).write(Cell::new(0));
             CapTable::init_empty(core::ptr::addr_of_mut!((*dst).caps));
             LoopTable::init_empty(core::ptr::addr_of_mut!((*dst).loops));
             RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
             PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
             SlotArena::init_empty(core::ptr::addr_of_mut!((*dst).slot_arena));
-            HostSlots::init_empty(core::ptr::addr_of_mut!((*dst).host_slots));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
             core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
             core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
@@ -2985,6 +3008,7 @@ where
         rv_id: RendezvousId,
         config: Config<'cfg, U, C>,
         transport: T,
+        endpoint_slots: usize,
     ) -> Option<*mut Self> {
         let ConfigParts {
             tap_buf,
@@ -3002,14 +3026,15 @@ where
             image_slot_capacity,
             endpoint_lease_capacity,
         ) = unsafe {
-            Self::init_runtime_metadata_for_public_path_auto(runtime_slab).unwrap_or((
-                core::ptr::null_mut(),
-                core::ptr::null_mut(),
-                core::ptr::null_mut(),
-                runtime_slab.len() as u32,
-                0,
-                EndpointLeaseId::ZERO,
-            ))
+            Self::init_runtime_metadata_for_public_path_auto(runtime_slab, endpoint_slots)
+                .unwrap_or((
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                    runtime_slab.len() as u32,
+                    0,
+                    EndpointLeaseId::ZERO,
+                ))
         };
         unsafe {
             core::ptr::addr_of_mut!((*dst).brand_marker).write(PhantomData);
@@ -3033,16 +3058,15 @@ where
             core::ptr::addr_of_mut!((*dst).transport).write(transport);
             GenTable::init_empty(core::ptr::addr_of_mut!((*dst).r#gen));
             AssocTable::init_empty(core::ptr::addr_of_mut!((*dst).assoc));
-            CheckpointTable::init_empty(core::ptr::addr_of_mut!((*dst).checkpoints));
-            SpliceStateTable::init_empty(core::ptr::addr_of_mut!((*dst).splice));
-            DistributedSpliceTable::init_empty(core::ptr::addr_of_mut!((*dst).distributed_splice));
+            StateSnapshotTable::init_empty(core::ptr::addr_of_mut!((*dst).state_snapshots));
+            TopologyStateTable::init_empty(core::ptr::addr_of_mut!((*dst).topology));
             core::ptr::addr_of_mut!((*dst).cap_nonce).write(Cell::new(0));
+            core::ptr::addr_of_mut!((*dst).cap_revision).write(Cell::new(0));
             CapTable::init_empty(core::ptr::addr_of_mut!((*dst).caps));
             LoopTable::init_empty(core::ptr::addr_of_mut!((*dst).loops));
             RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
             PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
             SlotArena::init_empty(core::ptr::addr_of_mut!((*dst).slot_arena));
-            HostSlots::init_empty(core::ptr::addr_of_mut!((*dst).host_slots));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
             core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
             core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
@@ -3106,11 +3130,11 @@ where
                 self.loops.reset_lane(lane);
             }
             ControlScopeKind::State => {
-                self.checkpoints.reset_lane(lane);
+                self.state_snapshots.reset_lane(lane);
             }
             ControlScopeKind::Abort => {}
             ControlScopeKind::Topology => {
-                self.splice.reset_lane(lane);
+                self.topology.reset_lane(lane);
             }
             ControlScopeKind::Delegate
             | ControlScopeKind::Policy
@@ -3120,45 +3144,120 @@ where
     }
 
     #[inline]
-    pub(crate) fn checkpoint_at_lane(&self, sid: SessionId, lane: Lane) -> Generation {
+    pub(crate) fn state_snapshot_at_lane(&self, sid: SessionId, lane: Lane) -> Generation {
         match self.eval_effect(ControlOp::StateSnapshot, EffectContext::new(sid, lane)) {
             Ok(EffectResult::Generation(epoch)) => epoch,
-            Ok(EffectResult::None) => unreachable!("checkpoint effect must yield generation"),
-            Err(_) => unreachable!("checkpoint effect cannot fail"),
+            Ok(EffectResult::None) => unreachable!("state snapshot effect must yield generation"),
+            Err(_) => unreachable!("state snapshot effect cannot fail"),
         }
     }
 
     #[inline]
-    pub(crate) fn commit_at_lane(
+    pub(crate) fn tx_commit_at_lane(
         &self,
         sid: SessionId,
         lane: Lane,
         generation: Generation,
-    ) -> Result<(), CommitError> {
+    ) -> Result<(), TxCommitError> {
         match self.eval_effect(
             ControlOp::TxCommit,
             EffectContext::new(sid, lane).with_generation(generation),
         ) {
             Ok(_) => Ok(()),
-            Err(EffectError::Commit(err)) => Err(err),
+            Err(EffectError::TxCommit(err)) => Err(err),
             Err(EffectError::MissingGeneration)
             | Err(EffectError::Unsupported)
-            | Err(EffectError::Splice(_))
+            | Err(EffectError::Topology(_))
             | Err(EffectError::Delegation(_))
-            | Err(EffectError::Rollback(_)) => {
-                unreachable!("commit effect failure is fully covered")
+            | Err(EffectError::TxAbort(_))
+            | Err(EffectError::StateRestore(_)) => {
+                unreachable!("tx commit effect failure is fully covered")
             }
         }
     }
 
     #[inline]
-    pub(crate) fn cancel_begin_at_lane(&self, sid: SessionId, lane: Lane) {
-        self.eval_effect(ControlOp::AbortBegin, EffectContext::new(sid, lane))
-            .expect("cancel begin evaluation must not fail");
+    pub(crate) fn tx_abort_at_lane(
+        &self,
+        sid: SessionId,
+        lane: Lane,
+        generation: Generation,
+    ) -> Result<(), TxAbortError> {
+        match self.eval_effect(
+            ControlOp::TxAbort,
+            EffectContext::new(sid, lane).with_generation(generation),
+        ) {
+            Ok(_) => Ok(()),
+            Err(EffectError::TxAbort(err)) => Err(err),
+            Err(EffectError::MissingGeneration)
+            | Err(EffectError::Unsupported)
+            | Err(EffectError::Topology(_))
+            | Err(EffectError::Delegation(_))
+            | Err(EffectError::TxCommit(_))
+            | Err(EffectError::StateRestore(_)) => {
+                unreachable!("tx abort effect failure is fully covered")
+            }
+        }
     }
 
+    #[inline]
+    pub(crate) fn abort_begin_at_lane(&self, sid: SessionId, lane: Lane) {
+        self.eval_effect(ControlOp::AbortBegin, EffectContext::new(sid, lane))
+            .expect("abort begin evaluation must not fail");
+    }
+
+    #[cfg(test)]
     pub(crate) fn is_session_registered(&self, sid: SessionId) -> bool {
         self.assoc.find_lane(sid).is_some()
+    }
+
+    #[inline]
+    fn ensure_authenticated_session_lane(
+        &self,
+        sid: SessionId,
+        lane: Lane,
+    ) -> Result<(), TopologyError> {
+        if self.assoc.get_sid(lane) == Some(sid) {
+            Ok(())
+        } else {
+            Err(TopologyError::UnknownSession { sid })
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn session_lane(&self, sid: SessionId) -> Option<Lane> {
+        self.assoc.find_lane(sid)
+    }
+
+    pub(crate) fn lane_generation(&self, lane: Lane) -> Generation {
+        self.r#gen.last(lane).unwrap_or(Generation::ZERO)
+    }
+
+    pub(crate) fn snapshot_generation(&self, lane: Lane) -> Option<Generation> {
+        self.state_snapshots.last_snapshot(lane)
+    }
+
+    pub(crate) fn expected_topology_ack(
+        &self,
+        sid: SessionId,
+    ) -> Result<TopologyAck, TopologyError> {
+        self.topology.expected_ack_for_session(sid)
+    }
+
+    pub(crate) fn topology_session_state(&self, sid: SessionId) -> Option<TopologySessionState> {
+        self.topology.session_state(sid)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn advance_lane_generation_for_test(&self, lane: Lane, target: Generation) {
+        if self.r#gen.last(lane).is_none() {
+            let _ = self.r#gen.check_and_update(lane, Generation::ZERO);
+        }
+        if target != Generation::ZERO {
+            self.r#gen
+                .check_and_update(lane, target)
+                .expect("test fixture lane generation must advance monotonically");
+        }
     }
 
     pub(crate) fn release_lane(&self, lane: Lane) -> Option<SessionId> {
@@ -3173,11 +3272,24 @@ where
 
     fn reset_lane_state(&self, lane: Lane) {
         self.r#gen.reset_lane(lane);
-        self.checkpoints.reset_lane(lane);
-        self.splice.reset_lane(lane);
+        self.state_snapshots.reset_lane(lane);
+        self.reset_lane_recycled_state(lane);
+    }
+
+    fn restore_lane_runtime_state(&self, lane: Lane, snapshot_cap_revision: u64) {
+        self.topology.reset_lane(lane);
+        self.caps
+            .restore_lane_to_revision(lane, snapshot_cap_revision);
+        self.loops.reset_lane(lane);
+        self.routes.reset_lane(lane);
+    }
+
+    fn reset_lane_recycled_state(&self, lane: Lane) {
+        self.topology.reset_lane(lane);
         self.caps.purge_lane(lane);
         self.loops.reset_lane(lane);
         self.routes.reset_lane(lane);
+        self.policies.reset_lane(lane);
     }
 
     #[inline]
@@ -3275,15 +3387,25 @@ where
 /// - LANE_ACQUIRE tap event on lease creation (via `SessionKit::lease_port`)
 /// - LANE_RELEASE tap event on Drop
 /// - Streaming checker verifies acquire/release pairs match (similar to cancel begin/ack)
-pub(crate) struct LaneLease<'cfg, T, U, C, const MAX_RV: usize>
+pub(crate) struct LaneLease<'lease, 'cfg, T, U, C, const MAX_RV: usize>
 where
     T: Transport,
     U: LabelUniverse + 'cfg,
     C: Clock + 'cfg,
+    'cfg: 'lease,
 {
-    /// Lease-backed guard over the parent rendezvous.
-    /// Uses the default EpochTbl because LaneLease is only used to create new endpoints.
-    guard: Option<LaneGuard<'cfg, T, U, C>>,
+    /// Borrow-bound lease over the parent rendezvous.
+    lease: Option<
+        crate::control::lease::core::RendezvousLease<
+            'lease,
+            'cfg,
+            T,
+            U,
+            C,
+            crate::control::cap::mint::EpochTbl,
+            crate::control::lease::core::FullSpec,
+        >,
+    >,
     /// Session identifier.
     sid: SessionId,
     /// Lane identifier.
@@ -3292,32 +3414,45 @@ where
     role: u8,
     /// Number of global roles participating in the attached program.
     role_count: u8,
+    /// Active lease counter borrowed from the parent cluster.
+    active_leases: Option<&'lease core::cell::Cell<u32>>,
     /// Rendezvous brand for typed owner construction.
     brand: crate::control::brand::Guard<'cfg>,
 }
 
-impl<'cfg, T, U, C, const MAX_RV: usize> LaneLease<'cfg, T, U, C, MAX_RV>
+impl<'lease, 'cfg, T, U, C, const MAX_RV: usize> LaneLease<'lease, 'cfg, T, U, C, MAX_RV>
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
+    'cfg: 'lease,
 {
     /// Internal constructor (called by `SessionKit::lease_port`).
     /// The caller must ensure no duplicate leases for the same `(rv_id, lane)` pair.
     pub(crate) fn new(
-        guard: LaneGuard<'cfg, T, U, C>,
+        lease: crate::control::lease::core::RendezvousLease<
+            'lease,
+            'cfg,
+            T,
+            U,
+            C,
+            crate::control::cap::mint::EpochTbl,
+            crate::control::lease::core::FullSpec,
+        >,
         sid: SessionId,
         lane: Lane,
         role: u8,
         role_count: u8,
+        active_leases: &'lease core::cell::Cell<u32>,
         brand: crate::control::brand::Guard<'cfg>,
     ) -> Self {
         Self {
-            guard: Some(guard),
+            lease: Some(lease),
             sid,
             lane,
             role,
             role_count,
+            active_leases: Some(active_leases),
             brand,
         }
     }
@@ -3327,37 +3462,70 @@ where
         mut self,
     ) -> Result<
         (
-            Port<'cfg, T, crate::control::cap::mint::EpochTbl>,
-            LaneGuard<'cfg, T, U, C>,
+            Port<'lease, T, crate::control::cap::mint::EpochTbl>,
+            LaneGuard<'lease, T, U, C>,
             crate::control::brand::Guard<'cfg>,
         ),
         RendezvousError,
     > {
-        let mut guard = self.guard.take().expect("lane lease retains guard");
-        let port = {
-            let lease_ref = guard.lease.as_mut().expect("guard retains lease");
+        let (port, guard) = {
+            let lease = self
+                .lease
+                .as_mut()
+                .expect("lane lease retains rendezvous lease");
+            // SAFETY: `RendezvousLease<'lease, 'cfg, ...>` holds the unique mutable
+            // entry borrow for `'lease`, so reborrowing the rendezvous as shared for
+            // the same `'lease` lifetime is sound as long as we do not use the lease
+            // mutably while the shared reference is live.
             let rv_ptr: *mut Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl> =
-                lease_ref.with_rendezvous(core::ptr::from_mut);
-            // SAFETY: `LaneLease` holds the unique rendezvous lease while the guard
-            // is alive, so the rendezvous cannot move or be aliased here.
-            let rv: &'cfg Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl> =
+                lease.with_rendezvous(core::ptr::from_mut);
+            let rv: &'lease Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl> =
                 unsafe { &*rv_ptr };
-            rv.acquire_port(self.sid, self.lane, self.role, self.role_count)?
+            let active_leases = *self
+                .active_leases
+                .as_ref()
+                .expect("lane lease retains active lease counter");
+            rv.materialize_port_guard(
+                self.sid,
+                self.lane,
+                self.role,
+                self.role_count,
+                active_leases,
+            )?
         };
-        guard.detach_lease();
+        drop(self.lease.take());
+        let _ = self.active_leases.take();
         Ok((port, guard, self.brand))
+    }
+
+    #[inline]
+    pub(crate) fn with_rendezvous_mut<R>(
+        &mut self,
+        f: impl FnOnce(&mut Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>) -> R,
+    ) -> R {
+        let lease = self
+            .lease
+            .as_mut()
+            .expect("lane lease retains rendezvous lease");
+        lease.with_rendezvous(f)
     }
 }
 
-impl<'cfg, T, U, C, const MAX_RV: usize> Drop for LaneLease<'cfg, T, U, C, MAX_RV>
+impl<'lease, 'cfg, T, U, C, const MAX_RV: usize> Drop for LaneLease<'lease, 'cfg, T, U, C, MAX_RV>
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
+    'cfg: 'lease,
 {
     fn drop(&mut self) {
-        if let Some(guard) = self.guard.take() {
-            drop(guard);
+        if let Some(mut lease) = self.lease.take() {
+            lease.release_lane_with_tap(self.lane);
+        }
+        if let Some(active_leases) = self.active_leases.take() {
+            let current = active_leases.get();
+            debug_assert!(current > 0, "lane_release underflow");
+            active_leases.set(current.saturating_sub(1));
         }
     }
 }
@@ -3393,25 +3561,29 @@ where
         &self.caps
     }
 
-    pub(crate) fn acquire_port<'a>(
-        &'a self,
+    pub(crate) fn activate_lane_attachment(
+        &self,
         sid: SessionId,
         lane: Lane,
-        role: u8,
-        role_count: u8,
-    ) -> Result<Port<'a, T, crate::control::cap::mint::EpochTbl>, RendezvousError>
-    where
-        'rv: 'a,
-    {
+    ) -> Result<(), RendezvousError> {
         if !self.lane_range.contains(&lane.0) {
             return Err(RendezvousError::LaneOutOfRange { lane });
         }
+        let attach_ready_sid = self.topology.attach_ready_sid(lane);
         let first_attach = match self.assoc.get_sid(lane) {
             None => {
+                if let Some(reserved_sid) = attach_ready_sid
+                    && reserved_sid != sid
+                {
+                    return Err(RendezvousError::LaneBusy { lane });
+                }
                 self.assoc.register(lane, sid);
                 true
             }
             Some(existing) if existing == sid => {
+                if attach_ready_sid.is_some() {
+                    return Err(RendezvousError::LaneBusy { lane });
+                }
                 self.assoc
                     .increment(lane, sid)
                     .expect("lane attachment count overflow");
@@ -3434,19 +3606,44 @@ where
                 .with_arg1(lane.0),
             );
 
-            self.r#gen.reset_lane(lane);
-            self.checkpoints.reset_lane(lane);
-            self.loops.reset_lane(lane);
-            self.routes.reset_lane(lane);
+            if attach_ready_sid == Some(sid) {
+                self.topology.reset_lane(lane);
+                self.state_snapshots.reset_lane(lane);
+                self.reset_lane_recycled_state(lane);
+            } else {
+                self.r#gen.reset_lane(lane);
+                self.state_snapshots.reset_lane(lane);
+                self.reset_lane_recycled_state(lane);
+            }
         }
+        Ok(())
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn materialize_port_guard<'a>(
+        &'a self,
+        sid: SessionId,
+        lane: Lane,
+        role: u8,
+        role_count: u8,
+        active_leases: &'a Cell<u32>,
+    ) -> Result<
+        (
+            Port<'a, T, crate::control::cap::mint::EpochTbl>,
+            LaneGuard<'a, T, U, C>,
+        ),
+        RendezvousError,
+    >
+    where
+        'rv: 'a,
+    {
         let (tx, rx) = self.transport.open(role, sid.raw());
-        Ok(Port::new(
+        let port = Port::new(
             &self.transport,
             self.tap(),
             &self.clock,
             &self.loops,
             &self.routes,
-            &self.host_slots,
             self.slab,
             core::ptr::addr_of!(self.image_frontier),
             core::ptr::addr_of!(self.scratch_reserved_bytes),
@@ -3458,7 +3655,19 @@ where
             self.id,
             tx,
             rx,
-        ))
+        );
+        let guard =
+            LaneGuard::new_detached((self as *const Self).cast::<()>(), lane, active_leases);
+        Ok((port, guard))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn activate_lane_for_test(
+        &self,
+        sid: SessionId,
+        lane: Lane,
+    ) -> Result<(), RendezvousError> {
+        self.activate_lane_attachment(sid, lane)
     }
 
     // ============================================================================
@@ -3468,8 +3677,27 @@ where
     #[inline]
     pub(crate) fn next_nonce_seed(&self) -> NonceSeed {
         let ordinal = self.cap_nonce.get();
-        self.cap_nonce.set(ordinal.wrapping_add(1));
-        NonceSeed::counter(ordinal as u64)
+        let next = ordinal
+            .checked_add(1)
+            .expect("capability nonce counter exhausted");
+        self.cap_nonce.set(next);
+        NonceSeed::counter(ordinal)
+    }
+
+    #[inline]
+    pub(crate) fn next_cap_revision(&self) -> u64 {
+        let next = self
+            .cap_revision
+            .get()
+            .checked_add(1)
+            .expect("capability revision counter exhausted");
+        self.cap_revision.set(next);
+        next
+    }
+
+    #[inline]
+    pub(crate) fn cap_release_ctx(&self, lane: Lane) -> CapReleaseCtx {
+        CapReleaseCtx::new(&self.caps, &self.state_snapshots, &self.cap_revision, lane)
     }
 
     pub(crate) fn mint_cap<K: ResourceKind>(
@@ -3480,20 +3708,15 @@ where
         dest_role: u8,
         nonce: [u8; 16],
         mut handle: K::Handle,
-    ) {
+    ) -> Result<(), CapError> {
         let kind_tag = K::TAG;
         let registered_sid = self
             .assoc
             .get_sid(lane)
-            .expect("session must be registered before minting capabilities");
-        debug_assert_eq!(
-            registered_sid, sid,
-            "capabilities must be minted on a lane registered to the session"
-        );
-        debug_assert!(
-            self.assoc.is_active(lane),
-            "lane must be active before minting capabilities"
-        );
+            .ok_or(CapError::WrongSessionOrLane)?;
+        if registered_sid != sid {
+            return Err(CapError::WrongSessionOrLane);
+        }
 
         let handle_bytes = K::encode_handle(&handle);
         K::zeroize(&mut handle);
@@ -3504,12 +3727,15 @@ where
             kind_tag,
             shot_state: shot.as_u8(),
             role: dest_role,
+            mint_revision: self.next_cap_revision(),
+            consumed_revision: 0,
+            released_revision: 0,
             nonce,
             handle: handle_bytes,
         };
         self.caps
             .insert_entry(entry)
-            .expect("capability table is full");
+            .map_err(|_| CapError::TableFull)?;
 
         let tap = self.tap();
         emit(
@@ -3518,32 +3744,38 @@ where
                 .with_arg0(sid.raw())
                 .with_arg1(((lane.as_wire() as u32) << 16) | (dest_role as u32)),
         );
+        Ok(())
     }
 
     pub(crate) fn claim_cap<K: crate::control::cap::mint::ResourceKind>(
         &self,
         token: &GenericCapToken<K>,
     ) -> Result<VerifiedCap<K>, CapError> {
-        // Extract fields from 40B token
-        let header = token.header();
         let nonce = token.nonce();
 
-        let sid = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
-        let lane = header[4];
-        let role = header[5];
-        let kind_tag = header[6];
-        let shot_u8 = header[7];
-
-        let sid = SessionId(sid);
-        let lane = Lane(lane as u32);
-        let shot = CapShot::from_u8(shot_u8).ok_or(CapError::UnknownToken)?;
-
         // Check if AUTO (all zeros)
-        if nonce == [0u8; crate::control::cap::mint::CAP_NONCE_LEN]
-            && header == [0u8; crate::control::cap::mint::CAP_HEADER_LEN]
-        {
+        if nonce == [0u8; crate::control::cap::mint::CAP_NONCE_LEN] && token.is_auto() {
             return Err(CapError::UnknownToken);
         }
+
+        let header = token.control_header().map_err(|_| CapError::Mismatch)?;
+        if header.tag() == crate::control::cap::mint::EndpointResource::TAG {
+            let endpoint_token = crate::control::cap::mint::GenericCapToken::<
+                crate::control::cap::mint::EndpointResource,
+            >::from_bytes(token.bytes);
+            endpoint_token
+                .endpoint_identity()
+                .map_err(|_| CapError::Mismatch)?;
+        }
+
+        let sid = header.sid();
+        let lane = header.lane();
+        let role = header.role();
+        let kind_tag = header.tag();
+        let shot = match header.shot() {
+            crate::control::cap::mint::CapShot::One => CapShot::One,
+            crate::control::cap::mint::CapShot::Many => CapShot::Many,
+        };
 
         if self.assoc.get_sid(lane) != Some(sid) {
             return Err(CapError::WrongSessionOrLane);
@@ -3554,13 +3786,15 @@ where
         }
 
         // Use nonce-based claim path (trusted domain - no MAC verification)
+        let claim_revision = self.next_cap_revision();
         let (exhausted, handle_bytes) = self
             .caps
-            .claim_by_nonce(&nonce, sid, lane, kind_tag, role, shot)
+            .claim_by_nonce(&nonce, sid, lane, kind_tag, role, shot, claim_revision)
             .map_err(|e| match e {
                 CapError::UnknownToken => CapError::UnknownToken,
                 CapError::WrongSessionOrLane => CapError::WrongSessionOrLane,
                 CapError::Exhausted => CapError::Exhausted,
+                CapError::TableFull => CapError::TableFull,
                 CapError::Mismatch => CapError::Mismatch,
             })?;
 
@@ -3589,32 +3823,17 @@ where
         Ok(VerifiedCap::new(handle))
     }
 
-    // ============================================================================
-    // Distributed splice methods
-    // ============================================================================
-
-    pub(crate) fn take_cached_distributed_intent(
+    pub(crate) fn process_topology_intent(
         &self,
-        sid: SessionId,
-        dst_rv: RendezvousId,
-    ) -> Option<SpliceIntent> {
-        self.distributed_splice
-            .take(sid, self.id, dst_rv)
-            .map(|entry| entry.intent)
-    }
-
-    pub(crate) fn process_splice_intent(
-        &self,
-        intent: &SpliceIntent,
-    ) -> Result<SpliceAck, SpliceError> {
+        intent: &TopologyIntent,
+    ) -> Result<TopologyAck, TopologyError> {
         let dst_rv: RendezvousId = intent.dst_rv;
         let dst_lane: Lane = intent.dst_lane;
-        let old_gen: Generation = intent.old_gen;
         let new_gen: Generation = intent.new_gen;
 
         // Validate this RV is the intended destination
         if dst_rv != self.id {
-            return Err(SpliceError::RendezvousIdMismatch {
+            return Err(TopologyError::RendezvousIdMismatch {
                 expected: dst_rv,
                 got: self.id,
             });
@@ -3622,83 +3841,82 @@ where
 
         // Validate lane is in range
         if !self.lane_range.contains(&dst_lane.raw()) {
-            return Err(SpliceError::LaneOutOfRange { lane: dst_lane });
+            return Err(TopologyError::LaneOutOfRange { lane: dst_lane });
         }
 
         // Check lane is available
         if self.assoc.is_active(dst_lane) {
-            return Err(SpliceError::LaneMismatch {
+            return Err(TopologyError::LaneMismatch {
                 expected: dst_lane,
-                provided: Lane(0), // Dummy value
+                provided: dst_lane,
             });
         }
 
-        // Validate generation monotonicity
+        // Validate destination-lane generation monotonicity.
         let last_gen = self.r#gen.last(dst_lane).unwrap_or(Generation(0));
+        self.validate_topology_generation(dst_lane, new_gen)?;
 
-        // Allow old_gen to be 0 (new session) or match the last generation
-        if old_gen.0 != 0 && old_gen.0 != last_gen.0 {
-            return Err(SpliceError::StaleGeneration {
-                lane: dst_lane,
-                last: last_gen,
-                new: new_gen,
-            });
-        }
-
-        // Begin local splice using typestate transaction (ack immediately for local state).
-        let txn: Txn<LocalSpliceInvariant, IncreasingGen, One> =
+        // Begin local topology transition using typestate transaction (ack immediately for local state).
+        let txn: Txn<LocalTopologyInvariant, IncreasingGen, One> =
             unsafe { Txn::new(dst_lane, last_gen) };
         let mut tap = NoopTap;
         let in_begin = txn.begin(&mut tap);
         let in_acked = in_begin.ack(&mut tap);
 
-        let pending = PendingSplice::new(
+        let pending = PendingTopology::destination_prepare(
             SessionId(intent.sid),
+            dst_lane,
+            self.r#gen.last(dst_lane),
             new_gen,
             in_acked,
             Some((intent.seq_tx, intent.seq_rx)),
         );
-        let begin_result = self.splice.begin(dst_lane, pending);
+        let begin_result = self.topology.begin(dst_lane, pending);
         begin_result?;
 
         // Update generation table
-        if last_gen.0 == 0 {
+        let update_result = if last_gen.0 == 0 {
             let _ = self.r#gen.check_and_update(dst_lane, Generation(0));
             self.r#gen
                 .check_and_update(dst_lane, new_gen)
                 .map_err(|err| match err {
                     GenError::StaleOrDuplicate(GenerationRecord { lane, last, new }) => {
-                        SpliceError::StaleGeneration { lane, last, new }
+                        TopologyError::StaleGeneration { lane, last, new }
                     }
                     GenError::Overflow { lane, last } => {
-                        SpliceError::GenerationOverflow { lane, last }
+                        TopologyError::GenerationOverflow { lane, last }
                     }
                     GenError::InvalidInitial { lane, new } => {
-                        SpliceError::InvalidInitial { lane, new }
+                        TopologyError::InvalidInitial { lane, new }
                     }
-                })?;
+                })
         } else {
             self.r#gen
                 .check_and_update(dst_lane, new_gen)
                 .map_err(|err| match err {
                     GenError::StaleOrDuplicate(GenerationRecord { lane, last, new }) => {
-                        SpliceError::StaleGeneration { lane, last, new }
+                        TopologyError::StaleGeneration { lane, last, new }
                     }
                     GenError::Overflow { lane, last } => {
-                        SpliceError::GenerationOverflow { lane, last }
+                        TopologyError::GenerationOverflow { lane, last }
                     }
                     GenError::InvalidInitial { lane, new } => {
-                        SpliceError::InvalidInitial { lane, new }
+                        TopologyError::InvalidInitial { lane, new }
                     }
-                })?;
+                })
+        };
+        if let Err(err) = update_result {
+            self.topology.reset_lane(dst_lane);
+            return Err(err);
         }
 
-        // Create ack using control::automaton::distributed::SpliceAck::new
-        let ack = SpliceAck::new(
+        // Create ack using control::automaton::distributed::TopologyAck::new
+        let ack = TopologyAck::new(
             intent.src_rv,
             self.id,
             intent.sid,
             new_gen,
+            intent.src_lane,
             dst_lane,
             intent.seq_tx,
             intent.seq_rx,
@@ -3707,88 +3925,153 @@ where
         Ok(ack)
     }
 
-    // ============================================================================
-    // Checkpoint / Cancel / Rollback methods
-    // ============================================================================
+    pub(crate) fn acknowledge_topology_intent(
+        &self,
+        intent: &TopologyIntent,
+    ) -> Result<TopologyAck, TopologyError> {
+        let ack = self.process_topology_intent(intent)?;
+        self.emit_topology_ack(
+            SessionId::new(intent.sid),
+            intent.src_lane,
+            Lane::new(intent.dst_lane.raw()),
+            ack.new_gen,
+        );
+        Ok(ack)
+    }
 
-    pub(crate) fn cancel_begin(&self, sid: SessionId) -> Result<(), CancelError> {
-        let lane = self
-            .assoc
-            .find_lane(sid)
-            .ok_or(CancelError::UnknownSession { sid })?;
-        self.cancel_begin_at_lane(sid, lane);
+    fn restore_topology_generation(
+        &self,
+        lane: Lane,
+        previous_generation: Option<Generation>,
+    ) -> Result<(), TopologyError> {
+        self.r#gen.reset_lane(lane);
+        let Some(previous) = previous_generation else {
+            return Ok(());
+        };
+        self.r#gen
+            .check_and_update(lane, Generation::ZERO)
+            .map_err(|err| match err {
+                GenError::StaleOrDuplicate(GenerationRecord { lane, last, new }) => {
+                    TopologyError::StaleGeneration { lane, last, new }
+                }
+                GenError::Overflow { lane, last } => {
+                    TopologyError::GenerationOverflow { lane, last }
+                }
+                GenError::InvalidInitial { lane, new } => {
+                    TopologyError::InvalidInitial { lane, new }
+                }
+            })?;
+        if previous != Generation::ZERO {
+            self.r#gen
+                .restore_to(lane, previous)
+                .map_err(|err| match err {
+                    GenError::StaleOrDuplicate(GenerationRecord { lane, last, new }) => {
+                        TopologyError::StaleGeneration { lane, last, new }
+                    }
+                    GenError::Overflow { lane, last } => {
+                        TopologyError::GenerationOverflow { lane, last }
+                    }
+                    GenError::InvalidInitial { lane, new } => {
+                        TopologyError::InvalidInitial { lane, new }
+                    }
+                })?;
+        }
         Ok(())
     }
 
-    pub(crate) fn cancel_ack(&self, sid: SessionId, r#gen: Generation) -> Result<(), CancelError> {
-        let lane = self
-            .assoc
-            .find_lane(sid)
-            .ok_or(CancelError::UnknownSession { sid })?;
-        self.eval_effect(
-            ControlOp::AbortAck,
-            EffectContext::new(sid, lane).with_generation(r#gen),
-        )
-        .expect("cancel ack evaluation must not fail");
-        Ok(())
+    pub(crate) fn rollback_destination_topology_prepare(
+        &self,
+        sid: SessionId,
+    ) -> Result<bool, TopologyError> {
+        let state = self.topology.session_state(sid);
+        let Some(pending) = self.topology.take_pending_for_sid(sid) else {
+            return Ok(false);
+        };
+        let (
+            pending_sid,
+            lane,
+            previous_generation,
+            target,
+            lease_state,
+            state_txn,
+            fences,
+            expected_ack,
+        ) = pending.into_parts();
+        if matches!(state, Some(TopologySessionState::SourcePending { .. })) {
+            self.topology.begin(
+                lane,
+                PendingTopology::source_prepare(
+                    pending_sid,
+                    lane,
+                    previous_generation,
+                    target,
+                    state_txn
+                        .expect("source pending topology rollback must preserve the transaction"),
+                    fences,
+                    expected_ack.expect("source topology rollback must preserve the expected ack"),
+                ),
+            )?;
+            return Ok(false);
+        }
+        let _ = (lease_state, state_txn, fences, expected_ack);
+        self.topology.reset_lane(lane);
+        self.restore_topology_generation(lane, previous_generation)?;
+        Ok(true)
     }
 
-    pub(crate) fn checkpoint(&self, sid: SessionId) -> Result<Generation, CheckpointError> {
-        let lane = self
-            .assoc
-            .find_lane(sid)
-            .ok_or(CheckpointError::UnknownSession { sid })?;
-        Ok(self.checkpoint_at_lane(sid, lane))
+    pub(crate) fn abort_topology_state(&self, sid: SessionId) -> Result<bool, TopologyError> {
+        let Some(pending) = self.topology.take_pending_for_sid(sid) else {
+            return Ok(false);
+        };
+        let (_, lane, previous_generation, target, lease_state, state_txn, fences, expected_ack) =
+            pending.into_parts();
+        let _ = (target, lease_state, state_txn, fences, expected_ack);
+        self.topology.reset_lane(lane);
+        self.restore_topology_generation(lane, previous_generation)?;
+        Ok(true)
     }
 
-    pub(crate) fn rollback(&self, sid: SessionId, epoch: Generation) -> Result<(), RollbackError> {
-        let lane = self
-            .assoc
-            .find_lane(sid)
-            .ok_or(RollbackError::UnknownSession { sid })?;
-        self.rollback_at_lane(sid, lane, epoch)
-    }
-
-    pub(crate) fn rollback_at_lane(
+    pub(crate) fn state_restore_at_lane(
         &self,
         sid: SessionId,
         lane: Lane,
         epoch: Generation,
-    ) -> Result<(), RollbackError> {
+    ) -> Result<(), StateRestoreError> {
         match self.eval_effect(
             ControlOp::StateRestore,
             EffectContext::new(sid, lane).with_generation(epoch),
         ) {
             Ok(_) => Ok(()),
-            Err(EffectError::Rollback(err)) => Err(err),
+            Err(EffectError::StateRestore(err)) => Err(err),
             Err(EffectError::MissingGeneration)
             | Err(EffectError::Unsupported)
-            | Err(EffectError::Splice(_))
+            | Err(EffectError::Topology(_))
             | Err(EffectError::Delegation(_))
-            | Err(EffectError::Commit(_)) => {
-                unreachable!("rollback effect failure is fully covered")
+            | Err(EffectError::TxAbort(_))
+            | Err(EffectError::TxCommit(_)) => {
+                unreachable!("state restore effect failure is fully covered")
             }
         }
     }
 
-    pub(crate) fn validate_splice_generation(
+    pub(crate) fn validate_topology_generation(
         &self,
         lane: Lane,
         new_gen: Generation,
-    ) -> Result<(), SpliceError> {
+    ) -> Result<(), TopologyError> {
         match self.r#gen.last(lane) {
             None => {
                 if new_gen.0 >= 1 {
                     Ok(())
                 } else {
-                    Err(SpliceError::InvalidInitial { lane, new: new_gen })
+                    Err(TopologyError::InvalidInitial { lane, new: new_gen })
                 }
             }
             Some(prev) if prev.0 == u16::MAX => {
-                Err(SpliceError::GenerationOverflow { lane, last: prev })
+                Err(TopologyError::GenerationOverflow { lane, last: prev })
             }
             Some(prev) if new_gen.0 > prev.0 => Ok(()),
-            Some(prev) => Err(SpliceError::StaleGeneration {
+            Some(prev) => Err(TopologyError::StaleGeneration {
                 lane,
                 last: prev,
                 new: new_gen,
@@ -3798,35 +4081,79 @@ where
 }
 
 // ============================================================================
-// SpliceDelegate trait has been DELETED.
-// All splice operations now go through control::CpCommand and EffectRunner.
+// Legacy topology helpers have been deleted.
+// All topology operations now go through control::CpCommand and EffectRunner.
 // The control-plane mini-kernel architecture is responsible for rendezvous access control.
 
-fn map_splice_error(err: SpliceError) -> CpError {
+fn map_topology_error(err: TopologyError) -> CpError {
     match err {
-        SpliceError::LaneOutOfRange { .. } => {
-            CpError::Splice(crate::control::cluster::error::SpliceError::InvalidLane)
+        TopologyError::LaneOutOfRange { .. } => {
+            CpError::Topology(crate::control::cluster::error::TopologyError::InvalidLane)
         }
-        SpliceError::LaneMismatch { .. }
-        | SpliceError::InProgress { .. }
-        | SpliceError::NoPending { .. }
-        | SpliceError::SeqnoMismatch { .. } => {
-            CpError::Splice(crate::control::cluster::error::SpliceError::InvalidState)
+        TopologyError::LaneMismatch { .. }
+        | TopologyError::InProgress { .. }
+        | TopologyError::NoPending { .. }
+        | TopologyError::SeqnoMismatch { .. } => {
+            CpError::Topology(crate::control::cluster::error::TopologyError::InvalidState)
         }
-        SpliceError::UnknownSession { .. } => {
-            CpError::Splice(crate::control::cluster::error::SpliceError::InvalidSession)
+        TopologyError::UnknownSession { .. } => {
+            CpError::Topology(crate::control::cluster::error::TopologyError::InvalidSession)
         }
-        SpliceError::StaleGeneration { .. }
-        | SpliceError::GenerationOverflow { .. }
-        | SpliceError::InvalidInitial { .. } => {
-            CpError::Splice(crate::control::cluster::error::SpliceError::GenerationMismatch)
+        TopologyError::StaleGeneration { .. }
+        | TopologyError::GenerationOverflow { .. }
+        | TopologyError::InvalidInitial { .. } => {
+            CpError::Topology(crate::control::cluster::error::TopologyError::GenerationMismatch)
         }
-        SpliceError::RemoteRendezvousMismatch { expected, got }
-        | SpliceError::RendezvousIdMismatch { expected, got } => CpError::RendezvousMismatch {
+        TopologyError::RemoteRendezvousMismatch { expected, got }
+        | TopologyError::RendezvousIdMismatch { expected, got } => CpError::RendezvousMismatch {
             expected: expected.raw(),
             actual: got.raw(),
         },
-        SpliceError::PendingTableFull => CpError::ResourceExhausted,
+        TopologyError::PendingTableFull => CpError::ResourceExhausted,
+    }
+}
+
+#[inline]
+fn classify_topology_ack_mismatch(expected: TopologyAck, got: TopologyAck) -> TopologyError {
+    if got.sid != expected.sid {
+        TopologyError::UnknownSession {
+            sid: SessionId::new(got.sid),
+        }
+    } else if got.src_rv != expected.src_rv {
+        TopologyError::RendezvousIdMismatch {
+            expected: expected.src_rv,
+            got: got.src_rv,
+        }
+    } else if got.dst_rv != expected.dst_rv {
+        TopologyError::RendezvousIdMismatch {
+            expected: expected.dst_rv,
+            got: got.dst_rv,
+        }
+    } else if got.src_lane != expected.src_lane {
+        TopologyError::LaneMismatch {
+            expected: expected.src_lane,
+            provided: got.src_lane,
+        }
+    } else if got.new_lane != expected.new_lane {
+        TopologyError::LaneMismatch {
+            expected: expected.new_lane,
+            provided: got.new_lane,
+        }
+    } else if got.new_gen != expected.new_gen {
+        TopologyError::StaleGeneration {
+            lane: expected.new_lane,
+            last: expected.new_gen,
+            new: got.new_gen,
+        }
+    } else if got.seq_tx != expected.seq_tx || got.seq_rx != expected.seq_rx {
+        TopologyError::SeqnoMismatch {
+            seq_tx: got.seq_tx,
+            seq_rx: got.seq_rx,
+        }
+    } else {
+        TopologyError::NoPending {
+            lane: expected.src_lane,
+        }
     }
 }
 
@@ -3841,60 +4168,57 @@ fn map_delegate_error(err: super::error::CapError) -> CpError {
         super::error::CapError::Mismatch => {
             crate::control::cluster::error::DelegationError::ShotMismatch
         }
+        super::error::CapError::TableFull => return CpError::ResourceExhausted,
     };
     CpError::Delegation(deleg_err)
 }
 
-fn map_cancel_error(err: super::error::CancelError) -> CpError {
+fn map_tx_commit_error(err: super::error::TxCommitError) -> CpError {
     match err {
-        super::error::CancelError::UnknownSession { .. } => {
-            CpError::Cancel(crate::control::cluster::error::CancelError::SessionNotFound)
+        super::error::TxCommitError::NoStateSnapshot { .. } => {
+            CpError::TxCommit(crate::control::cluster::error::TxCommitError::NoStateSnapshot)
+        }
+        super::error::TxCommitError::AlreadyFinalized { .. } => {
+            CpError::TxCommit(crate::control::cluster::error::TxCommitError::AlreadyFinalized)
+        }
+        super::error::TxCommitError::GenerationMismatch { .. } => {
+            CpError::TxCommit(crate::control::cluster::error::TxCommitError::GenerationMismatch)
         }
     }
 }
 
-fn map_checkpoint_error(err: super::error::CheckpointError) -> CpError {
+fn map_tx_abort_error(err: super::error::TxAbortError) -> CpError {
     match err {
-        super::error::CheckpointError::UnknownSession { .. } => {
-            CpError::Checkpoint(crate::control::cluster::error::CheckpointError::SessionNotFound)
+        super::error::TxAbortError::NoStateSnapshot { .. } => {
+            CpError::TxAbort(crate::control::cluster::error::TxAbortError::NoStateSnapshot)
+        }
+        super::error::TxAbortError::StaleStateSnapshot { .. }
+        | super::error::TxAbortError::GenerationMismatch { .. } => {
+            CpError::TxAbort(crate::control::cluster::error::TxAbortError::GenerationMismatch)
+        }
+        super::error::TxAbortError::AlreadyFinalized { .. } => {
+            CpError::TxAbort(crate::control::cluster::error::TxAbortError::AlreadyFinalized)
         }
     }
 }
 
-fn map_commit_error(err: super::error::CommitError) -> CpError {
+fn map_state_restore_error(err: super::error::StateRestoreError) -> CpError {
     match err {
-        super::error::CommitError::NoCheckpoint { .. } => {
-            CpError::Commit(crate::control::cluster::error::CommitError::NoCheckpoint)
+        super::error::StateRestoreError::NoStateSnapshot { .. } => {
+            CpError::StateRestore(crate::control::cluster::error::StateRestoreError::EpochNotFound)
         }
-        super::error::CommitError::AlreadyCommitted { .. } => {
-            CpError::Commit(crate::control::cluster::error::CommitError::AlreadyCommitted)
+        super::error::StateRestoreError::StaleStateSnapshot { .. }
+        | super::error::StateRestoreError::EpochMismatch { .. } => {
+            CpError::StateRestore(crate::control::cluster::error::StateRestoreError::EpochMismatch)
         }
-        super::error::CommitError::GenerationMismatch { .. } => {
-            CpError::Commit(crate::control::cluster::error::CommitError::GenerationMismatch)
-        }
-    }
-}
-
-fn map_rollback_error(err: super::error::RollbackError) -> CpError {
-    match err {
-        super::error::RollbackError::UnknownSession { .. } => {
-            CpError::Rollback(crate::control::cluster::error::RollbackError::SessionNotFound)
-        }
-        super::error::RollbackError::NoCheckpoint { .. } => {
-            CpError::Rollback(crate::control::cluster::error::RollbackError::EpochNotFound)
-        }
-        super::error::RollbackError::StaleCheckpoint { .. }
-        | super::error::RollbackError::EpochMismatch { .. } => {
-            CpError::Rollback(crate::control::cluster::error::RollbackError::EpochMismatch)
-        }
-        super::error::RollbackError::AlreadyConsumed { .. } => {
-            CpError::Rollback(crate::control::cluster::error::RollbackError::AfterCommit)
-        }
+        super::error::StateRestoreError::AlreadyFinalized { .. } => CpError::StateRestore(
+            crate::control::cluster::error::StateRestoreError::AlreadyFinalized,
+        ),
     }
 }
 
 // ============================================================================
-// Local splice operations (used by EffectRunner)
+// Local topology operations (used by EffectRunner)
 // ============================================================================
 
 impl<'rv, 'cfg, T, U, C, E> Rendezvous<'rv, 'cfg, T, U, C, E>
@@ -3905,47 +4229,192 @@ where
     C: Clock,
     E: crate::control::cap::mint::EpochTable,
 {
-    /// Begin a local splice operation.
+    /// Begin a local topology operation.
     ///
     /// This is called by EffectRunner::run_effect() for ControlOp::TopologyBegin.
-    fn begin_splice(
+    fn topology_begin(
         &self,
         sid: SessionId,
         lane: Lane,
         fences: Option<(u32, u32)>,
         generation: Generation,
-    ) -> Result<(), SpliceError> {
+        expected_ack: Option<TopologyAck>,
+    ) -> Result<(), TopologyError> {
         let ctx = EffectContext::new(sid, lane)
             .with_generation(generation)
-            .with_fences(fences);
+            .with_fences(fences)
+            .with_expected_topology_ack(expected_ack);
 
         match self.eval_effect(ControlOp::TopologyBegin, ctx) {
             Ok(_) => Ok(()),
-            Err(EffectError::Splice(err)) => Err(err),
+            Err(EffectError::Topology(err)) => Err(err),
             Err(EffectError::MissingGeneration)
             | Err(EffectError::Unsupported)
-            | Err(EffectError::Commit(_))
+            | Err(EffectError::TxCommit(_))
+            | Err(EffectError::TxAbort(_))
             | Err(EffectError::Delegation(_))
-            | Err(EffectError::Rollback(_)) => {
-                unreachable!("splice begin effect failure is fully covered")
+            | Err(EffectError::StateRestore(_)) => {
+                unreachable!("topology begin effect failure is fully covered")
             }
         }
     }
 
-    /// Commit a local splice operation.
+    fn topology_begin_from_intent(&self, intent: TopologyIntent) -> Result<(), TopologyError> {
+        if self.id != intent.src_rv {
+            return Err(TopologyError::RendezvousIdMismatch {
+                expected: intent.src_rv,
+                got: self.id,
+            });
+        }
+
+        let sid = SessionId(intent.sid);
+        let lane = intent.src_lane;
+        self.ensure_authenticated_session_lane(sid, lane)?;
+        let current = self.r#gen.last(lane).unwrap_or(Generation::ZERO);
+        if current != intent.old_gen {
+            return Err(TopologyError::StaleGeneration {
+                lane,
+                last: current,
+                new: intent.new_gen,
+            });
+        }
+
+        let fences =
+            (intent.seq_tx != 0 || intent.seq_rx != 0).then_some((intent.seq_tx, intent.seq_rx));
+        self.topology_begin(
+            sid,
+            lane,
+            fences,
+            intent.new_gen,
+            Some(TopologyAck::from_intent(&intent)),
+        )
+    }
+
+    pub(crate) fn validate_topology_commit_operands(
+        &self,
+        sid: SessionId,
+        operands: TopologyOperands,
+    ) -> Result<Lane, TopologyError> {
+        let expected = self.expected_topology_ack(sid)?;
+        let got = operands.ack(sid);
+        if got != expected {
+            return Err(classify_topology_ack_mismatch(expected, got));
+        }
+        Ok(expected.src_lane)
+    }
+
+    pub(crate) fn preflight_destination_topology_commit(
+        &self,
+        sid: SessionId,
+        lane: Lane,
+    ) -> Result<(), TopologyError> {
+        if self.assoc.is_active(lane) {
+            return Err(TopologyError::InProgress { lane });
+        }
+        self.topology.preflight_commit(lane, sid)
+    }
+
+    pub(crate) fn finalize_destination_topology_commit(
+        &mut self,
+        sid: SessionId,
+        lane: Lane,
+    ) -> Result<(), TopologyError> {
+        self.preflight_destination_topology_commit(sid, lane)?;
+        self.topology.finalize_destination(lane, sid)?;
+        Ok(())
+    }
+
+    fn revoke_public_endpoints_for_session(&mut self, sid: SessionId) {
+        let this = self as *mut Self;
+        let mut released_lanes = [Lane::new(0); u8::MAX as usize + 1];
+        let lease_capacity = unsafe { usize::from((*this).endpoint_lease_capacity()) };
+        let mut idx = 0usize;
+        while idx < lease_capacity {
+            let Some((slot, generation)) = (unsafe { (*this).public_endpoint_lease_by_index(idx) })
+            else {
+                idx += 1;
+                continue;
+            };
+            let Some((offset, len)) = (unsafe { (*this).endpoint_lease_storage(slot, generation) })
+            else {
+                idx += 1;
+                continue;
+            };
+            let (slab_ptr, slab_len) = unsafe { (*this).slab_ptr_and_len() };
+            idx += 1;
+            if len == 0 || offset + len > slab_len {
+                continue;
+            }
+
+            let endpoint = unsafe {
+                slab_ptr
+                    .add(offset)
+                    .cast::<crate::endpoint::kernel::PublicEndpointRevoke>()
+            };
+            let released = unsafe {
+                (*endpoint).revoke_for_session(
+                    endpoint.cast::<()>(),
+                    sid,
+                    released_lanes.as_mut_ptr(),
+                    released_lanes.len(),
+                )
+            };
+            if released != 0 {
+                unsafe {
+                    (*this).release_endpoint_lease(slot, generation);
+                }
+                let mut released_idx = 0usize;
+                while released_idx < released {
+                    let owned_lane = released_lanes[released_idx];
+                    if let Some(released_sid) = unsafe { (*this).release_lane(owned_lane) } {
+                        unsafe {
+                            (*this).emit_lane_release(released_sid, owned_lane);
+                        }
+                    }
+                    released_idx += 1;
+                }
+            }
+        }
+    }
+
+    fn retire_session_lane(&self, sid: SessionId, lane: Lane) {
+        while self.assoc.get_sid(lane) == Some(sid) {
+            if let Some(released_sid) = self.release_lane(lane) {
+                self.emit_lane_release(released_sid, lane);
+                break;
+            }
+        }
+    }
+
+    fn retire_session_lanes(&self, sid: SessionId) {
+        while let Some(lane) = self.assoc.find_lane(sid) {
+            self.retire_session_lane(sid, lane);
+        }
+    }
+
+    /// Commit a local topology operation.
     ///
     /// This is called by EffectRunner::run_effect() for ControlOp::TopologyCommit.
-    fn commit_splice(&self, sid: SessionId, lane: Lane) -> Result<(), SpliceError> {
+    pub(crate) fn topology_commit(
+        &mut self,
+        sid: SessionId,
+        lane: Lane,
+    ) -> Result<(), TopologyError> {
         let ctx = EffectContext::new(sid, lane);
         match self.eval_effect(ControlOp::TopologyCommit, ctx) {
-            Ok(_) => Ok(()),
-            Err(EffectError::Splice(err)) => Err(err),
+            Ok(_) => {
+                self.revoke_public_endpoints_for_session(sid);
+                self.retire_session_lanes(sid);
+                Ok(())
+            }
+            Err(EffectError::Topology(err)) => Err(err),
             Err(EffectError::MissingGeneration)
             | Err(EffectError::Unsupported)
             | Err(EffectError::Delegation(_))
-            | Err(EffectError::Rollback(_))
-            | Err(EffectError::Commit(_)) => {
-                unreachable!("splice commit failure is fully covered")
+            | Err(EffectError::StateRestore(_))
+            | Err(EffectError::TxAbort(_))
+            | Err(EffectError::TxCommit(_)) => {
+                unreachable!("topology commit failure is fully covered")
             }
         }
     }
@@ -3993,11 +4462,22 @@ where
     C: Clock,
     E: crate::control::cap::mint::EpochTable,
 {
-    fn run_effect(&self, envelope: CpCommand) -> Result<(), CpError> {
+    fn run_effect(&mut self, envelope: CpCommand) -> Result<(), CpError> {
         let envelope = match envelope.effect {
             ControlOp::CapDelegate => envelope.canonicalize_delegate()?,
+            ControlOp::TopologyBegin | ControlOp::TopologyAck | ControlOp::TopologyCommit => {
+                envelope.canonicalize_topology()?
+            }
             _ => envelope,
         };
+        if matches!(
+            envelope.effect,
+            ControlOp::TopologyBegin | ControlOp::TopologyAck | ControlOp::TopologyCommit
+        ) {
+            return Err(CpError::Topology(
+                crate::control::cluster::error::TopologyError::InvalidState,
+            ));
+        }
         let lane_opt = envelope.lane.map(|lane| Lane::new(lane.raw()));
         let sid_opt = envelope.sid.map(|sid| SessionId::new(sid.raw()));
 
@@ -4005,11 +4485,6 @@ where
             RawEvent::new(self.clock.now32(), control_op_tap_event_id(envelope.effect))
                 .with_arg0(sid_opt.map_or(0, |sid| sid.raw()))
                 .with_arg1(lane_opt.map_or(0, |lane| lane.raw()));
-
-        let handle_data = envelope
-            .delegate
-            .as_ref()
-            .map(|delegate| (delegate.token.resource_tag(), delegate.token.handle_bytes()));
 
         let _ = self.flush_transport_events();
         let policy_attrs = self.transport.metrics().attrs();
@@ -4024,9 +4499,7 @@ where
         let replay_transport = crate::policy_runtime::replay_transport_inputs(&policy_attrs);
         let replay_transport_presence =
             crate::policy_runtime::replay_transport_presence(&policy_attrs);
-        let mode_id = crate::policy_runtime::policy_mode_tag(
-            self.policy_mode(crate::policy_runtime::PolicySlot::Rendezvous),
-        );
+        let mode_id = crate::policy_runtime::POLICY_MODE_AUDIT_ONLY_TAG;
         self.emit_policy_event_with_arg2(
             ids::POLICY_AUDIT,
             lane_opt,
@@ -4086,18 +4559,7 @@ where
             replay_transport_presence as u32,
             0,
         );
-        let action = self.run_policy(
-            crate::policy_runtime::PolicySlot::Rendezvous,
-            &policy_event,
-            sid_opt,
-            lane_opt,
-            move |ctx| {
-                let _ = handle_data;
-                ctx.set_policy_attrs(policy_attrs);
-                ctx.set_policy_input(policy_input);
-            },
-        );
-        let verdict = action.verdict();
+        let verdict = crate::policy_runtime::PolicyVerdict::NoEngine;
         let verdict_meta = ((crate::policy_runtime::verdict_tag(verdict) as u32) << 24)
             | ((crate::policy_runtime::verdict_arm(verdict) as u32) << 16);
         self.emit_policy_event_with_arg2(
@@ -4105,10 +4567,8 @@ where
             lane_opt,
             verdict_meta,
             crate::policy_runtime::verdict_reason(verdict) as u32,
-            self.last_policy_fuel_used(crate::policy_runtime::PolicySlot::Rendezvous) as u32,
+            crate::policy_runtime::POLICY_FUEL_NONE as u32,
         );
-
-        self.apply_policy_action(action, sid_opt, lane_opt)?;
 
         self.perform_effect(envelope)
     }
@@ -4120,7 +4580,7 @@ where
 mod epf_tests {
     use super::*;
     use crate::{
-        control::cluster::core::{CpCommand, EffectRunner},
+        control::cluster::core::{CpCommand, EffectRunner, TopologyOperands},
         control::types::{Lane, SessionId},
         g::{self, Msg, Role},
         global::compiled::lowering::LoweringSummary,
@@ -4436,6 +4896,7 @@ mod epf_tests {
                     RendezvousId::new(92),
                     config,
                     DropTransport,
+                    1,
                 );
                 assert!(
                     rv.is_none(),
@@ -4466,11 +4927,1574 @@ mod epf_tests {
             let sid = SessionId::new(2);
             let lane = Lane::new(1);
 
-            let envelope = CpCommand::checkpoint(SessionId::new(sid.raw()), Lane::new(lane.raw()));
+            let envelope =
+                CpCommand::state_snapshot(SessionId::new(sid.raw()), Lane::new(lane.raw()));
 
             let result = EffectRunner::run_effect(rendezvous, envelope);
 
-            assert!(matches!(result, Err(CpError::Checkpoint(_))));
+            assert!(matches!(result, Err(CpError::StateSnapshot(_))));
+        });
+    }
+
+    #[test]
+    fn abort_begin_run_effect_respects_authenticated_lane() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(41);
+            let lane_a = Lane::new(0);
+            let lane_b = Lane::new(1);
+
+            rendezvous.assoc.register(lane_a, sid);
+            rendezvous.assoc.register(lane_b, sid);
+
+            EffectRunner::run_effect(rendezvous, CpCommand::abort_begin(sid, lane_b))
+                .expect("abort begin must use the authenticated lane from the control token");
+
+            let mut cursor = 0usize;
+            let events = rendezvous
+                .tap()
+                .events_since(&mut cursor, |event| {
+                    (event.id == crate::observe::ids::ABORT_BEGIN).then_some(event)
+                })
+                .collect::<std::vec::Vec<_>>();
+
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].arg0, sid.raw());
+            assert_eq!(events[0].arg1, lane_b.as_wire() as u32);
+        });
+    }
+
+    #[test]
+    fn effect_taps_for_commit_and_tx_abort_carry_lane_causal_keys() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(71);
+            let commit_lane = Lane::new(0);
+            let abort_lane = Lane::new(1);
+
+            rendezvous.assoc.register(commit_lane, sid);
+            rendezvous.assoc.register(abort_lane, sid);
+            rendezvous
+                .r#gen
+                .check_and_update(commit_lane, Generation::ZERO)
+                .expect("commit lane zero generation must initialize");
+            rendezvous
+                .r#gen
+                .check_and_update(commit_lane, Generation::new(1))
+                .expect("commit lane generation must advance before snapshot");
+            let commit_generation = rendezvous.state_snapshot_at_lane(sid, commit_lane);
+            rendezvous
+                .tx_commit_at_lane(sid, commit_lane, commit_generation)
+                .expect("commit lane should finalize the snapshot");
+
+            rendezvous
+                .r#gen
+                .check_and_update(abort_lane, Generation::ZERO)
+                .expect("abort lane zero generation must initialize");
+            rendezvous
+                .r#gen
+                .check_and_update(abort_lane, Generation::new(2))
+                .expect("abort lane generation must advance before snapshot");
+            let abort_generation = rendezvous.state_snapshot_at_lane(sid, abort_lane);
+            rendezvous
+                .r#gen
+                .check_and_update(abort_lane, Generation::new(4))
+                .expect("abort lane generation must advance beyond the snapshot");
+            rendezvous
+                .tx_abort_at_lane(sid, abort_lane, abort_generation)
+                .expect("abort lane should restore the snapshot generation");
+
+            let mut cursor = 0usize;
+            let events = rendezvous
+                .tap()
+                .events_since(&mut cursor, |event| match event.id {
+                    crate::observe::ids::POLICY_COMMIT | crate::observe::ids::POLICY_TX_ABORT => {
+                        Some(event)
+                    }
+                    _ => None,
+                })
+                .collect::<std::vec::Vec<_>>();
+
+            assert_eq!(
+                events.len(),
+                2,
+                "expected one commit tap and one tx-abort tap"
+            );
+
+            let commit = events
+                .iter()
+                .find(|event| event.id == crate::observe::ids::POLICY_COMMIT)
+                .copied()
+                .expect("commit tap");
+            assert_eq!(commit.arg0, sid.raw());
+            assert_eq!(commit.arg1, commit_generation.0 as u32);
+            assert_eq!(
+                commit.causal_key,
+                TapEvent::make_causal_key(commit_lane.as_wire() + 1, 0),
+                "commit tap must encode the originating lane in its causal key"
+            );
+
+            let tx_abort = events
+                .iter()
+                .find(|event| event.id == crate::observe::ids::POLICY_TX_ABORT)
+                .copied()
+                .expect("tx abort tap");
+            assert_eq!(tx_abort.arg0, sid.raw());
+            assert_eq!(tx_abort.arg1, abort_generation.0 as u32);
+            assert_eq!(
+                tx_abort.causal_key,
+                TapEvent::make_causal_key(abort_lane.as_wire() + 1, 0),
+                "tx-abort tap must encode the originating lane in its causal key"
+            );
+        });
+    }
+
+    #[test]
+    fn topology_begin_run_effect_rejects_direct_begin_before_mutation() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(42);
+            let src_lane = Lane::new(0);
+            let dst_lane = Lane::new(1);
+
+            rendezvous
+                .prepare_topology_control_scope(src_lane)
+                .expect("topology tests must bind topology storage");
+            rendezvous.assoc.register(src_lane, sid);
+
+            let operands = TopologyOperands::new(
+                rendezvous.id,
+                RendezvousId::new(9),
+                src_lane,
+                dst_lane,
+                Generation::ZERO,
+                Generation::new(1),
+                11,
+                13,
+            );
+            assert!(matches!(
+                EffectRunner::run_effect(rendezvous, CpCommand::topology_begin(sid, operands)),
+                Err(CpError::Topology(
+                    crate::control::cluster::error::TopologyError::InvalidState
+                ))
+            ));
+
+            rendezvous.topology_begin_from_intent(operands.intent(sid)).expect(
+                "direct topology begin rejection must not wedge the cluster-owned topology path",
+            );
+        });
+    }
+
+    #[test]
+    fn topology_begin_run_effect_rejects_internal_lane_split_before_mutation() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(420);
+            let authenticated_lane = Lane::new(0);
+            let wrong_lane = Lane::new(1);
+            let dst_lane = Lane::new(2);
+
+            rendezvous
+                .prepare_topology_control_scope(authenticated_lane)
+                .expect("topology tests must bind topology storage");
+            rendezvous
+                .prepare_topology_control_scope(wrong_lane)
+                .expect("topology tests must bind topology storage");
+            rendezvous.assoc.register(authenticated_lane, sid);
+
+            let operands = TopologyOperands::new(
+                rendezvous.id,
+                RendezvousId::new(9),
+                authenticated_lane,
+                dst_lane,
+                Generation::ZERO,
+                Generation::new(1),
+                5,
+                7,
+            );
+            let malformed = CpCommand::new(ControlOp::TopologyBegin)
+                .with_sid(sid)
+                .with_lane(wrong_lane)
+                .with_topology(operands);
+
+            assert!(matches!(
+                EffectRunner::run_effect(rendezvous, malformed),
+                Err(CpError::Topology(
+                    crate::control::cluster::error::TopologyError::LaneMismatch
+                ))
+            ));
+
+            assert!(matches!(
+                EffectRunner::run_effect(rendezvous, CpCommand::topology_begin(sid, operands)),
+                Err(CpError::Topology(
+                    crate::control::cluster::error::TopologyError::InvalidState
+                ))
+            ));
+
+            rendezvous
+                .topology_begin_from_intent(operands.intent(sid))
+                .expect("rejected direct begin must not wedge the cluster-owned topology path");
+        });
+    }
+
+    #[test]
+    fn topology_begin_from_intent_rejects_foreign_source_rendezvous_before_mutation() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(421);
+            let src_lane = Lane::new(0);
+            let dst_lane = Lane::new(1);
+            let foreign_src = RendezvousId::new(rendezvous.id.raw().saturating_add(1));
+
+            rendezvous
+                .prepare_topology_control_scope(src_lane)
+                .expect("topology tests must bind topology storage");
+            rendezvous.assoc.register(src_lane, sid);
+
+            let invalid = TopologyOperands::new(
+                foreign_src,
+                RendezvousId::new(9),
+                src_lane,
+                dst_lane,
+                Generation::ZERO,
+                Generation::new(1),
+                23,
+                29,
+            );
+            assert!(matches!(
+                rendezvous.topology_begin_from_intent(invalid.intent(sid)),
+                Err(TopologyError::RendezvousIdMismatch { expected, got })
+                    if expected == foreign_src && got == rendezvous.id
+            ));
+
+            let valid = TopologyOperands::new(
+                rendezvous.id,
+                RendezvousId::new(9),
+                src_lane,
+                dst_lane,
+                Generation::ZERO,
+                Generation::new(1),
+                23,
+                29,
+            );
+            rendezvous
+                .topology_begin_from_intent(valid.intent(sid))
+                .expect("failed begin preflight must not wedge the topology intent path");
+        });
+    }
+
+    #[test]
+    fn topology_begin_from_intent_rejects_stale_old_generation_before_mutation() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(422);
+            let src_lane = Lane::new(0);
+            let dst_lane = Lane::new(1);
+
+            rendezvous
+                .prepare_topology_control_scope(src_lane)
+                .expect("topology tests must bind topology storage");
+            rendezvous.assoc.register(src_lane, sid);
+            rendezvous.advance_lane_generation_for_test(src_lane, Generation::new(1));
+
+            let stale = TopologyOperands::new(
+                rendezvous.id,
+                RendezvousId::new(10),
+                src_lane,
+                dst_lane,
+                Generation::ZERO,
+                Generation::new(2),
+                31,
+                37,
+            );
+            assert!(matches!(
+                rendezvous.topology_begin_from_intent(stale.intent(sid)),
+                Err(TopologyError::StaleGeneration { lane, last, new })
+                    if lane == src_lane
+                        && last == Generation::new(1)
+                        && new == Generation::new(2)
+            ));
+
+            let valid = TopologyOperands::new(
+                rendezvous.id,
+                RendezvousId::new(10),
+                src_lane,
+                dst_lane,
+                Generation::new(1),
+                Generation::new(2),
+                31,
+                37,
+            );
+            rendezvous
+                .topology_begin_from_intent(valid.intent(sid))
+                .expect("stale rejection must leave the topology intent path reusable");
+        });
+    }
+
+    #[test]
+    fn topology_begin_run_effect_rejects_operandless_command() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(423);
+            let lane = Lane::new(0);
+
+            assert_eq!(
+                EffectRunner::run_effect(
+                    rendezvous,
+                    CpCommand::new(ControlOp::TopologyBegin)
+                        .with_sid(sid)
+                        .with_lane(lane)
+                        .with_generation(Generation::new(1)),
+                ),
+                Err(CpError::Topology(
+                    crate::control::cluster::error::TopologyError::InvalidState,
+                ))
+            );
+        });
+    }
+
+    #[test]
+    fn topology_begin_from_intent_rejects_unauthenticated_source_lane() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(43);
+            let authenticated_lane = Lane::new(0);
+            let wrong_lane = Lane::new(1);
+            let dst_lane = Lane::new(2);
+
+            rendezvous
+                .prepare_topology_control_scope(authenticated_lane)
+                .expect("topology tests must bind topology storage");
+            rendezvous
+                .prepare_topology_control_scope(wrong_lane)
+                .expect("topology tests must bind topology storage");
+            rendezvous.assoc.register(authenticated_lane, sid);
+
+            let invalid = TopologyIntent::new(
+                rendezvous.id,
+                RendezvousId::new(7),
+                sid.raw(),
+                Generation::ZERO,
+                Generation::new(1),
+                17,
+                19,
+                wrong_lane,
+                dst_lane,
+            );
+            assert!(matches!(
+                rendezvous.topology_begin_from_intent(invalid),
+                Err(TopologyError::UnknownSession { sid: err_sid }) if err_sid == sid
+            ));
+
+            let valid = TopologyIntent::new(
+                rendezvous.id,
+                RendezvousId::new(7),
+                sid.raw(),
+                Generation::ZERO,
+                Generation::new(1),
+                17,
+                19,
+                authenticated_lane,
+                dst_lane,
+            );
+            rendezvous
+                .topology_begin_from_intent(valid)
+                .expect("authenticated lane must remain usable after rejected begin intent");
+        });
+    }
+
+    #[test]
+    fn topology_begin_rejects_duplicate_pending_session_across_lanes() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(45);
+            let lane_a = Lane::new(0);
+            let lane_b = Lane::new(1);
+            let dst_a = Lane::new(2);
+            let dst_b = Lane::new(3);
+            let first = TopologyOperands::new(
+                rendezvous.id,
+                RendezvousId::new(9),
+                lane_a,
+                dst_a,
+                Generation::ZERO,
+                Generation::new(1),
+                11,
+                13,
+            );
+            let second = TopologyOperands::new(
+                rendezvous.id,
+                RendezvousId::new(10),
+                lane_b,
+                dst_b,
+                Generation::ZERO,
+                Generation::new(1),
+                17,
+                19,
+            );
+
+            rendezvous
+                .prepare_topology_control_scope(lane_a)
+                .expect("topology tests must bind topology storage");
+            rendezvous
+                .prepare_topology_control_scope(lane_b)
+                .expect("topology tests must bind topology storage");
+            rendezvous.assoc.register(lane_a, sid);
+            rendezvous.assoc.register(lane_b, sid);
+
+            rendezvous
+                .topology_begin(
+                    sid,
+                    lane_a,
+                    Some((first.seq_tx, first.seq_rx)),
+                    first.new_gen,
+                    Some(first.ack(sid)),
+                )
+                .expect("first begin must succeed");
+
+            assert_eq!(
+                rendezvous.topology_begin(
+                    sid,
+                    lane_b,
+                    Some((second.seq_tx, second.seq_rx)),
+                    second.new_gen,
+                    Some(second.ack(sid)),
+                ),
+                Err(TopologyError::InProgress { lane: lane_a })
+            );
+            assert_eq!(
+                rendezvous.expected_topology_ack(sid),
+                Ok(first.ack(sid)),
+                "duplicate begin rejection must keep the canonical expected ACK bound to the first lane"
+            );
+            assert_eq!(
+                rendezvous.topology.topology_commit(lane_b, sid),
+                Err(TopologyError::NoPending { lane: lane_b }),
+                "duplicate begin rejection must leave the second lane untouched"
+            );
+        });
+    }
+
+    #[test]
+    fn topology_commit_run_effect_is_cluster_owned_and_preserves_pending_state() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(46);
+            let src_lane = Lane::new(0);
+            let dst_lane = Lane::new(1);
+            let expected = TopologyOperands::new(
+                rendezvous.id,
+                RendezvousId::new(11),
+                src_lane,
+                dst_lane,
+                Generation::ZERO,
+                Generation::new(1),
+                41,
+                43,
+            );
+
+            rendezvous
+                .prepare_topology_control_scope(src_lane)
+                .expect("topology tests must bind topology storage");
+            rendezvous.assoc.register(src_lane, sid);
+            rendezvous
+                .topology_begin_from_intent(expected.intent(sid))
+                .expect("begin effect");
+
+            assert!(matches!(
+                EffectRunner::run_effect(rendezvous, CpCommand::topology_commit(sid, expected)),
+                Err(CpError::Topology(
+                    crate::control::cluster::error::TopologyError::InvalidState
+                ))
+            ));
+            assert_eq!(
+                rendezvous.expected_topology_ack(sid),
+                Ok(expected.ack(sid)),
+                "direct commit rejection must preserve the source-side expected ACK"
+            );
+            assert_eq!(
+                rendezvous.session_lane(sid),
+                Some(src_lane),
+                "direct commit rejection must not retire the authenticated source lane"
+            );
+        });
+    }
+
+    #[test]
+    fn topology_commit_run_effect_rejects_operandless_command_before_mutation() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(47);
+            let src_lane = Lane::new(0);
+            let dst_lane = Lane::new(1);
+            let expected = TopologyOperands::new(
+                rendezvous.id,
+                RendezvousId::new(12),
+                src_lane,
+                dst_lane,
+                Generation::ZERO,
+                Generation::new(1),
+                47,
+                53,
+            );
+
+            rendezvous
+                .prepare_topology_control_scope(src_lane)
+                .expect("topology tests must bind topology storage");
+            rendezvous.assoc.register(src_lane, sid);
+            rendezvous
+                .topology_begin_from_intent(expected.intent(sid))
+                .expect("begin effect");
+
+            assert_eq!(
+                EffectRunner::run_effect(
+                    rendezvous,
+                    CpCommand::new(ControlOp::TopologyCommit)
+                        .with_sid(sid)
+                        .with_lane(src_lane),
+                ),
+                Err(CpError::Topology(
+                    crate::control::cluster::error::TopologyError::InvalidState,
+                ))
+            );
+            assert_eq!(
+                rendezvous.expected_topology_ack(sid),
+                Ok(expected.ack(sid)),
+                "operand-less direct commit rejection must preserve the canonical expected ACK",
+            );
+            assert_eq!(
+                rendezvous.session_lane(sid),
+                Some(src_lane),
+                "operand-less direct commit rejection must not retire the authenticated source lane",
+            );
+        });
+    }
+
+    #[test]
+    fn state_snapshot_run_effect_respects_authenticated_lane() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(44);
+            let lane_a = Lane::new(0);
+            let lane_b = Lane::new(1);
+
+            rendezvous.assoc.register(lane_a, sid);
+            rendezvous.assoc.register(lane_b, sid);
+            rendezvous
+                .r#gen
+                .check_and_update(lane_a, Generation::ZERO)
+                .expect("lane A zero generation must initialize");
+            rendezvous
+                .r#gen
+                .check_and_update(lane_a, Generation::new(1))
+                .expect("lane A generation must advance");
+            rendezvous
+                .r#gen
+                .check_and_update(lane_b, Generation::ZERO)
+                .expect("lane B zero generation must initialize");
+            rendezvous
+                .r#gen
+                .check_and_update(lane_b, Generation::new(3))
+                .expect("lane B generation must advance");
+
+            EffectRunner::run_effect(rendezvous, CpCommand::state_snapshot(sid, lane_b))
+                .expect("state snapshot must target the lane authenticated by the token");
+
+            assert_eq!(rendezvous.state_snapshots.last_snapshot(lane_a), None);
+            assert_eq!(
+                rendezvous.state_snapshots.last_snapshot(lane_b),
+                Some(Generation::new(3))
+            );
+        });
+    }
+
+    #[test]
+    fn claim_cap_rejects_malformed_endpoint_control_header() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(7);
+            let lane = Lane::new(1);
+            let role = 5;
+            let nonce = [0xCD; crate::control::cap::mint::CAP_NONCE_LEN];
+            let handle = crate::control::cap::mint::EndpointHandle::new(sid, lane, role);
+
+            let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
+            crate::control::cap::mint::CapHeader::new(
+                sid,
+                lane,
+                role,
+                crate::control::cap::mint::EndpointResource::TAG,
+                0,
+                ControlOp::Fence,
+                crate::control::cap::mint::ControlPath::Local,
+                crate::control::cap::mint::CapShot::One,
+                crate::global::const_dsl::ControlScopeKind::None,
+                0,
+                0,
+                0,
+                crate::control::cap::mint::EndpointResource::encode_handle(&handle),
+            )
+            .encode(&mut header);
+            header[13] = 0x80;
+
+            let token = crate::control::cap::mint::GenericCapToken::<
+                crate::control::cap::mint::EndpointResource,
+            >::from_parts(
+                nonce, header, [0; crate::control::cap::mint::CAP_TAG_LEN]
+            );
+
+            assert!(matches!(
+                rendezvous.claim_cap(&token),
+                Err(CapError::Mismatch)
+            ));
+        });
+    }
+
+    #[test]
+    fn claim_cap_rejects_malformed_endpoint_handle_payload() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(7);
+            let lane = Lane::new(1);
+            let role = 5;
+            let nonce = [0xCE; crate::control::cap::mint::CAP_NONCE_LEN];
+            let handle = crate::control::cap::mint::EndpointHandle::new(sid, lane, role);
+
+            rendezvous.assoc.register(lane, sid);
+            rendezvous
+                .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
+                    0, 0, 0, 1,
+                ))
+                .expect("claim test must bind cap storage");
+            rendezvous
+                .mint_cap::<crate::control::cap::mint::EndpointResource>(
+                    sid,
+                    lane,
+                    crate::control::cap::mint::CapShot::One,
+                    role,
+                    nonce,
+                    handle,
+                )
+                .expect("valid capability mint must succeed");
+
+            let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
+            crate::control::cap::mint::CapHeader::new(
+                sid,
+                lane,
+                role,
+                crate::control::cap::mint::EndpointResource::TAG,
+                0,
+                ControlOp::Fence,
+                crate::control::cap::mint::ControlPath::Local,
+                crate::control::cap::mint::CapShot::One,
+                crate::global::const_dsl::ControlScopeKind::None,
+                0,
+                0,
+                0,
+                crate::control::cap::mint::EndpointResource::encode_handle(&handle),
+            )
+            .encode(&mut header);
+            header[crate::control::cap::mint::CAP_CONTROL_HEADER_FIXED_LEN + 6] = 0x7F;
+
+            let token = crate::control::cap::mint::GenericCapToken::<
+                crate::control::cap::mint::EndpointResource,
+            >::from_parts(
+                nonce, header, [0; crate::control::cap::mint::CAP_TAG_LEN]
+            );
+
+            assert!(matches!(
+                rendezvous.claim_cap(&token),
+                Err(CapError::Mismatch)
+            ));
+        });
+    }
+
+    #[test]
+    fn delegate_and_claim_reject_noncanonical_decodable_endpoint_headers() {
+        fn endpoint_token_with_mutated_header(
+            mutate: fn(&mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]),
+        ) -> crate::control::cap::mint::GenericCapToken<crate::control::cap::mint::EndpointResource>
+        {
+            let sid = SessionId::new(7);
+            let lane = Lane::new(1);
+            let role = 5;
+            let handle = crate::control::cap::mint::EndpointHandle::new(sid, lane, role);
+            let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
+            crate::control::cap::mint::CapHeader::new(
+                sid,
+                lane,
+                role,
+                crate::control::cap::mint::EndpointResource::TAG,
+                0,
+                ControlOp::Fence,
+                crate::control::cap::mint::ControlPath::Local,
+                crate::control::cap::mint::CapShot::One,
+                crate::global::const_dsl::ControlScopeKind::None,
+                0,
+                0,
+                0,
+                crate::control::cap::mint::EndpointResource::encode_handle(&handle),
+            )
+            .encode(&mut header);
+            mutate(&mut header);
+
+            crate::control::cap::mint::GenericCapToken::<
+                crate::control::cap::mint::EndpointResource,
+            >::from_parts(
+                [0xCD; crate::control::cap::mint::CAP_NONCE_LEN],
+                header,
+                [0; crate::control::cap::mint::CAP_TAG_LEN],
+            )
+        }
+
+        fn mutate_tag(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
+            header[7] = crate::control::cap::resource_kinds::LoopContinueKind::TAG;
+        }
+
+        fn mutate_label(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
+            header[8] = 1;
+        }
+
+        fn mutate_op(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
+            header[9] = ControlOp::TopologyBegin.as_u8();
+        }
+
+        fn mutate_path(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
+            header[10] = crate::control::cap::mint::ControlPath::Wire.as_u8();
+        }
+
+        fn mutate_shot(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
+            header[11] = crate::control::cap::mint::CapShot::Many.as_u8();
+        }
+
+        fn mutate_scope_kind(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
+            header[12] = crate::global::const_dsl::ControlScopeKind::Route as u8;
+        }
+
+        fn mutate_flags(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
+            header[13] = 0x01;
+        }
+
+        fn mutate_scope_id(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
+            header[14..16].copy_from_slice(&1u16.to_be_bytes());
+        }
+
+        fn mutate_epoch(header: &mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]) {
+            header[16..18].copy_from_slice(&1u16.to_be_bytes());
+        }
+
+        let cases: &[(
+            &str,
+            fn(&mut [u8; crate::control::cap::mint::CAP_HEADER_LEN]),
+        )] = &[
+            ("tag", mutate_tag),
+            ("label", mutate_label),
+            ("op", mutate_op),
+            ("path", mutate_path),
+            ("shot", mutate_shot),
+            ("scope_kind", mutate_scope_kind),
+            ("flags", mutate_flags),
+            ("scope_id", mutate_scope_id),
+            ("epoch", mutate_epoch),
+        ];
+
+        with_epf_test_rendezvous(|rendezvous| {
+            rendezvous.assoc.register(Lane::new(1), SessionId::new(7));
+            for (name, mutate) in cases {
+                let token = endpoint_token_with_mutated_header(*mutate);
+                assert!(
+                    token.control_header().is_ok(),
+                    "{name} mutation must remain decodable to exercise canonical validation",
+                );
+
+                let envelope = CpCommand::new(ControlOp::CapDelegate).with_delegate(
+                    crate::control::cluster::core::DelegateOperands {
+                        claim: false,
+                        token,
+                    },
+                );
+                assert!(
+                    matches!(
+                        EffectRunner::run_effect(rendezvous, envelope),
+                        Err(CpError::Delegation(_))
+                    ),
+                    "{name} mutation must be rejected by delegate execution",
+                );
+                assert!(
+                    matches!(rendezvous.claim_cap(&token), Err(CapError::Mismatch)),
+                    "{name} mutation must be rejected by claim_cap",
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn cap_delegate_rejects_unregistered_lane_without_panicking() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(7);
+            let lane = Lane::new(1);
+            let role = 5;
+            let nonce = [0xD1; crate::control::cap::mint::CAP_NONCE_LEN];
+            let handle = crate::control::cap::mint::EndpointHandle::new(sid, lane, role);
+
+            let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
+            crate::control::cap::mint::CapHeader::new(
+                sid,
+                lane,
+                role,
+                crate::control::cap::mint::EndpointResource::TAG,
+                0,
+                ControlOp::Fence,
+                crate::control::cap::mint::ControlPath::Local,
+                crate::control::cap::mint::CapShot::One,
+                crate::global::const_dsl::ControlScopeKind::None,
+                0,
+                0,
+                0,
+                crate::control::cap::mint::EndpointResource::encode_handle(&handle),
+            )
+            .encode(&mut header);
+            let token = crate::control::cap::mint::GenericCapToken::<
+                crate::control::cap::mint::EndpointResource,
+            >::from_parts(
+                nonce, header, [0; crate::control::cap::mint::CAP_TAG_LEN]
+            );
+
+            let envelope = CpCommand::new(ControlOp::CapDelegate).with_delegate(
+                crate::control::cluster::core::DelegateOperands {
+                    claim: false,
+                    token,
+                },
+            );
+
+            assert!(matches!(
+                EffectRunner::run_effect(rendezvous, envelope),
+                Err(CpError::Delegation(
+                    crate::control::cluster::error::DelegationError::InvalidToken
+                ))
+            ));
+        });
+    }
+
+    #[test]
+    fn cap_delegate_reports_resource_exhaustion_when_cap_table_is_full() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(7);
+            let lane = Lane::new(1);
+            let role = 5;
+
+            rendezvous.assoc.register(lane, sid);
+            rendezvous
+                .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
+                    0, 0, 0, 1,
+                ))
+                .expect("delegate test must bind one cap entry");
+
+            let make_token = |nonce| {
+                let handle = crate::control::cap::mint::EndpointHandle::new(sid, lane, role);
+                let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
+                crate::control::cap::mint::CapHeader::new(
+                    sid,
+                    lane,
+                    role,
+                    crate::control::cap::mint::EndpointResource::TAG,
+                    0,
+                    ControlOp::Fence,
+                    crate::control::cap::mint::ControlPath::Local,
+                    crate::control::cap::mint::CapShot::One,
+                    crate::global::const_dsl::ControlScopeKind::None,
+                    0,
+                    0,
+                    0,
+                    crate::control::cap::mint::EndpointResource::encode_handle(&handle),
+                )
+                .encode(&mut header);
+                crate::control::cap::mint::GenericCapToken::<
+                    crate::control::cap::mint::EndpointResource,
+                >::from_parts(
+                    nonce, header, [0; crate::control::cap::mint::CAP_TAG_LEN]
+                )
+            };
+
+            let first = CpCommand::new(ControlOp::CapDelegate).with_delegate(
+                crate::control::cluster::core::DelegateOperands {
+                    claim: false,
+                    token: make_token([0xD2; crate::control::cap::mint::CAP_NONCE_LEN]),
+                },
+            );
+            EffectRunner::run_effect(rendezvous, first)
+                .expect("first delegate mint must consume the only cap slot");
+
+            let second = CpCommand::new(ControlOp::CapDelegate).with_delegate(
+                crate::control::cluster::core::DelegateOperands {
+                    claim: false,
+                    token: make_token([0xD3; crate::control::cap::mint::CAP_NONCE_LEN]),
+                },
+            );
+            assert!(matches!(
+                EffectRunner::run_effect(rendezvous, second),
+                Err(CpError::ResourceExhausted)
+            ));
+        });
+    }
+
+    #[test]
+    fn state_restore_rewinds_generation_to_recorded_snapshot() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(7);
+            let lane = Lane::new(1);
+
+            rendezvous.assoc.register(lane, sid);
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::ZERO)
+                .expect("lane zero generation must initialize");
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::new(1))
+                .expect("generation must advance before snapshot");
+            let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
+            assert_eq!(snapshot, Generation::new(1));
+
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::new(3))
+                .expect("generation must advance beyond snapshot");
+            assert_eq!(rendezvous.r#gen.last(lane), Some(Generation::new(3)));
+
+            rendezvous
+                .state_restore_at_lane(sid, lane, snapshot)
+                .expect("recorded snapshot must restore lane generation");
+
+            assert_eq!(rendezvous.r#gen.last(lane), Some(snapshot));
+            assert_eq!(
+                rendezvous.state_snapshots.finalization(lane),
+                Some(SnapshotFinalization::Restored)
+            );
+        });
+    }
+
+    #[test]
+    fn state_restore_run_effect_respects_authenticated_lane() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(43);
+            let lane_a = Lane::new(0);
+            let lane_b = Lane::new(1);
+
+            rendezvous.assoc.register(lane_a, sid);
+            rendezvous.assoc.register(lane_b, sid);
+
+            rendezvous
+                .r#gen
+                .check_and_update(lane_a, Generation::ZERO)
+                .expect("lane A zero generation must initialize");
+            rendezvous
+                .r#gen
+                .check_and_update(lane_a, Generation::new(1))
+                .expect("lane A generation must advance");
+            let snapshot_a = rendezvous.state_snapshot_at_lane(sid, lane_a);
+
+            rendezvous
+                .r#gen
+                .check_and_update(lane_b, Generation::ZERO)
+                .expect("lane B zero generation must initialize");
+            rendezvous
+                .r#gen
+                .check_and_update(lane_b, Generation::new(3))
+                .expect("lane B generation must advance before snapshot");
+            let snapshot_b = rendezvous.state_snapshot_at_lane(sid, lane_b);
+            rendezvous
+                .r#gen
+                .check_and_update(lane_b, Generation::new(5))
+                .expect("lane B generation must advance beyond the snapshot");
+
+            EffectRunner::run_effect(
+                rendezvous,
+                CpCommand::state_restore(sid, lane_b, snapshot_b),
+            )
+            .expect("state restore must target the lane authenticated by the token");
+
+            assert_eq!(rendezvous.r#gen.last(lane_a), Some(snapshot_a));
+            assert_eq!(rendezvous.r#gen.last(lane_b), Some(snapshot_b));
+            assert_eq!(
+                rendezvous.state_snapshots.finalization(lane_b),
+                Some(SnapshotFinalization::Restored)
+            );
+        });
+    }
+
+    #[test]
+    fn state_restore_clears_pending_topology_from_newer_epoch() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(13);
+            let lane = Lane::new(1);
+            let fences = Some((17, 23));
+            let pending_generation = Generation::new(2);
+
+            rendezvous
+                .prepare_topology_control_scope(lane)
+                .expect("topology tests must bind topology storage");
+            rendezvous.assoc.register(lane, sid);
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::ZERO)
+                .expect("lane zero generation must initialize");
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::new(1))
+                .expect("generation must advance before snapshot");
+
+            let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
+            let expected_ack = TopologyAck::new(
+                rendezvous.id,
+                RendezvousId::new(99),
+                sid.raw(),
+                pending_generation,
+                lane,
+                Lane::new(2),
+                17,
+                23,
+            );
+            rendezvous
+                .topology_begin(sid, lane, fences, pending_generation, Some(expected_ack))
+                .expect("topology begin must stage pending topology state");
+
+            rendezvous
+                .state_restore_at_lane(sid, lane, snapshot)
+                .expect("restore must clear transient topology state recorded after snapshot");
+
+            rendezvous
+                .topology_begin(sid, lane, fences, pending_generation, Some(expected_ack))
+                .expect("restored lane must accept a fresh topology begin");
+        });
+    }
+
+    #[test]
+    fn process_topology_intent_rolls_back_pending_state_on_generation_failure() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(32);
+            let lane = Lane::new(1);
+
+            rendezvous
+                .prepare_topology_control_scope(lane)
+                .expect("topology tests must bind topology storage");
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::ZERO)
+                .expect("lane zero generation must initialize");
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::new(1))
+                .expect("generation must advance before validating stale intent");
+
+            let stale = TopologyIntent::new(
+                RendezvousId::new(7),
+                rendezvous.id,
+                sid.raw(),
+                Generation::new(1),
+                Generation::new(1),
+                11,
+                13,
+                Lane::new(0),
+                lane,
+            );
+            assert!(matches!(
+                rendezvous.process_topology_intent(&stale),
+                Err(TopologyError::StaleGeneration { lane: err_lane, .. }) if err_lane == lane
+            ));
+
+            let valid = TopologyIntent::new(
+                RendezvousId::new(7),
+                rendezvous.id,
+                sid.raw(),
+                Generation::new(1),
+                Generation::new(2),
+                11,
+                13,
+                Lane::new(0),
+                lane,
+            );
+            rendezvous
+                .process_topology_intent(&valid)
+                .expect("stale intent must not leave pending topology wedged on the lane");
+        });
+    }
+
+    #[test]
+    fn process_topology_intent_accepts_established_source_generation_on_fresh_destination_lane() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(33);
+            let dst_lane = Lane::new(1);
+
+            rendezvous
+                .prepare_topology_control_scope(dst_lane)
+                .expect("topology tests must bind topology storage");
+
+            let intent = TopologyIntent::new(
+                RendezvousId::new(7),
+                rendezvous.id,
+                sid.raw(),
+                Generation::new(5),
+                Generation::new(6),
+                3,
+                7,
+                Lane::new(0),
+                dst_lane,
+            );
+            let ack = rendezvous
+                .process_topology_intent(&intent)
+                .expect("fresh destination lane must not reject an established source generation");
+
+            assert_eq!(ack, TopologyAck::from_intent(&intent));
+            assert_eq!(rendezvous.lane_generation(dst_lane), Generation::new(6));
+        });
+    }
+
+    #[test]
+    fn process_topology_intent_reports_occupied_destination_lane() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(35);
+            let occupying_sid = SessionId::new(36);
+            let dst_lane = Lane::new(1);
+
+            rendezvous
+                .prepare_topology_control_scope(dst_lane)
+                .expect("topology tests must bind topology storage");
+            rendezvous.assoc.register(dst_lane, occupying_sid);
+
+            let intent = TopologyIntent::new(
+                RendezvousId::new(7),
+                rendezvous.id,
+                sid.raw(),
+                Generation::new(5),
+                Generation::new(6),
+                3,
+                7,
+                Lane::new(0),
+                dst_lane,
+            );
+
+            assert!(matches!(
+                rendezvous.process_topology_intent(&intent),
+                Err(TopologyError::LaneMismatch { expected, provided })
+                    if expected == dst_lane && provided == dst_lane
+            ));
+        });
+    }
+
+    #[test]
+    fn topology_ack_mismatch_reports_destination_fields_when_destination_mismatches() {
+        let expected = TopologyAck::new(
+            RendezvousId::new(1),
+            RendezvousId::new(2),
+            7,
+            Generation::new(3),
+            Lane::new(4),
+            Lane::new(5),
+            11,
+            13,
+        );
+
+        let mut got = expected;
+        got.dst_rv = RendezvousId::new(9);
+        assert!(matches!(
+            classify_topology_ack_mismatch(expected, got),
+            TopologyError::RendezvousIdMismatch {
+                expected,
+                got
+            } if expected == RendezvousId::new(2) && got == RendezvousId::new(9)
+        ));
+
+        let mut got = expected;
+        got.new_lane = Lane::new(8);
+        assert!(matches!(
+            classify_topology_ack_mismatch(expected, got),
+            TopologyError::LaneMismatch {
+                expected,
+                provided
+            } if expected == Lane::new(5) && provided == Lane::new(8)
+        ));
+
+        let mut got = expected;
+        got.new_gen = Generation::new(4);
+        assert!(matches!(
+            classify_topology_ack_mismatch(expected, got),
+            TopologyError::StaleGeneration {
+                lane,
+                last,
+                new
+            } if lane == Lane::new(5)
+                && last == Generation::new(3)
+                && new == Generation::new(4)
+        ));
+    }
+
+    #[test]
+    fn state_restore_invalidates_post_snapshot_capability_authority() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(23);
+            let lane = Lane::new(1);
+            let role = 5;
+            let nonce = [0xA5; crate::control::cap::mint::CAP_NONCE_LEN];
+            let handle = crate::control::cap::mint::EndpointHandle::new(sid, lane, role);
+            let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
+
+            rendezvous.assoc.register(lane, sid);
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::ZERO)
+                .expect("lane zero generation must initialize");
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::new(1))
+                .expect("generation must advance before snapshot");
+            rendezvous
+                .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
+                    0, 0, 0, 1,
+                ))
+                .expect("capability restore test must bind cap storage");
+
+            let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
+            rendezvous
+                .mint_cap::<crate::control::cap::mint::EndpointResource>(
+                    sid,
+                    lane,
+                    crate::control::cap::mint::CapShot::One,
+                    role,
+                    nonce,
+                    handle,
+                )
+                .expect("capability mint before snapshot must succeed");
+
+            crate::control::cap::mint::CapHeader::new(
+                sid,
+                lane,
+                role,
+                crate::control::cap::mint::EndpointResource::TAG,
+                0,
+                ControlOp::Fence,
+                crate::control::cap::mint::ControlPath::Local,
+                crate::control::cap::mint::CapShot::One,
+                crate::global::const_dsl::ControlScopeKind::None,
+                0,
+                0,
+                0,
+                crate::control::cap::mint::EndpointResource::encode_handle(&handle),
+            )
+            .encode(&mut header);
+            let token = crate::control::cap::mint::GenericCapToken::<
+                crate::control::cap::mint::EndpointResource,
+            >::from_parts(
+                nonce, header, [0; crate::control::cap::mint::CAP_TAG_LEN]
+            );
+
+            rendezvous
+                .state_restore_at_lane(sid, lane, snapshot)
+                .expect("restore must invalidate post-snapshot capability authority");
+
+            assert!(
+                matches!(rendezvous.claim_cap(&token), Err(CapError::UnknownToken)),
+                "restore must not leave post-snapshot capability authority claimable",
+            );
+        });
+    }
+
+    #[test]
+    fn state_restore_preserves_pre_snapshot_capability_authority() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(24);
+            let lane = Lane::new(1);
+            let role = 6;
+            let nonce = [0xB6; crate::control::cap::mint::CAP_NONCE_LEN];
+            let handle = crate::control::cap::mint::EndpointHandle::new(sid, lane, role);
+            let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
+
+            rendezvous.assoc.register(lane, sid);
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::ZERO)
+                .expect("lane zero generation must initialize");
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::new(1))
+                .expect("generation must advance before capability mint");
+            rendezvous
+                .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
+                    0, 0, 0, 1,
+                ))
+                .expect("capability restore test must bind cap storage");
+
+            rendezvous
+                .mint_cap::<crate::control::cap::mint::EndpointResource>(
+                    sid,
+                    lane,
+                    crate::control::cap::mint::CapShot::One,
+                    role,
+                    nonce,
+                    handle,
+                )
+                .expect("capability mint before snapshot must succeed");
+            let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
+
+            crate::control::cap::mint::CapHeader::new(
+                sid,
+                lane,
+                role,
+                crate::control::cap::mint::EndpointResource::TAG,
+                0,
+                ControlOp::Fence,
+                crate::control::cap::mint::ControlPath::Local,
+                crate::control::cap::mint::CapShot::One,
+                crate::global::const_dsl::ControlScopeKind::None,
+                0,
+                0,
+                0,
+                crate::control::cap::mint::EndpointResource::encode_handle(&handle),
+            )
+            .encode(&mut header);
+            let token = crate::control::cap::mint::GenericCapToken::<
+                crate::control::cap::mint::EndpointResource,
+            >::from_parts(
+                nonce, header, [0; crate::control::cap::mint::CAP_TAG_LEN]
+            );
+
+            rendezvous
+                .claim_cap(&token)
+                .expect("pre-snapshot one-shot token must be claimable before restore");
+
+            rendezvous
+                .state_restore_at_lane(sid, lane, snapshot)
+                .expect("restore must preserve snapshot-era capability authority");
+
+            rendezvous
+                .claim_cap(&token)
+                .expect("restore must revive the snapshot-era one-shot capability state");
+        });
+    }
+
+    #[test]
+    fn state_restore_revives_pre_snapshot_release_authority() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(31);
+            let lane = Lane::new(1);
+            let role = 7;
+            let nonce = [0xC7; crate::control::cap::mint::CAP_NONCE_LEN];
+            let handle = crate::control::cap::mint::EndpointHandle::new(sid, lane, role);
+            let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
+
+            rendezvous.assoc.register(lane, sid);
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::ZERO)
+                .expect("lane zero generation must initialize");
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::new(1))
+                .expect("generation must advance before capability mint");
+            rendezvous
+                .ensure_endpoint_resident_budget(EndpointResidentBudget::with_route_storage(
+                    0, 0, 0, 1,
+                ))
+                .expect("release restore test must bind cap storage");
+
+            rendezvous
+                .mint_cap::<crate::control::cap::mint::EndpointResource>(
+                    sid,
+                    lane,
+                    crate::control::cap::mint::CapShot::One,
+                    role,
+                    nonce,
+                    handle,
+                )
+                .expect("capability mint before snapshot must succeed");
+            let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
+
+            crate::control::cap::mint::CapHeader::new(
+                sid,
+                lane,
+                role,
+                crate::control::cap::mint::EndpointResource::TAG,
+                0,
+                ControlOp::Fence,
+                crate::control::cap::mint::ControlPath::Local,
+                crate::control::cap::mint::CapShot::One,
+                crate::global::const_dsl::ControlScopeKind::None,
+                0,
+                0,
+                0,
+                crate::control::cap::mint::EndpointResource::encode_handle(&handle),
+            )
+            .encode(&mut header);
+            let token = crate::control::cap::mint::GenericCapToken::<
+                crate::control::cap::mint::EndpointResource,
+            >::from_parts(
+                nonce, header, [0; crate::control::cap::mint::CAP_TAG_LEN]
+            );
+
+            assert_eq!(
+                rendezvous.state_snapshots.available_cap_revision(lane),
+                Some(1)
+            );
+            rendezvous.cap_release_ctx(lane).release(&nonce);
+
+            assert!(
+                matches!(
+                    rendezvous.caps.claim_by_nonce(
+                        &nonce,
+                        sid,
+                        lane,
+                        crate::control::cap::mint::EndpointResource::TAG,
+                        role,
+                        crate::control::cap::mint::CapShot::One,
+                        0,
+                    ),
+                    Err(CapError::UnknownToken)
+                ),
+                "release must hide authority in the capability table before restore",
+            );
+            assert!(
+                matches!(rendezvous.claim_cap(&token), Err(CapError::UnknownToken)),
+                "snapshot-aware release after snapshot must hide authority until restore",
+            );
+
+            rendezvous
+                .state_restore_at_lane(sid, lane, snapshot)
+                .expect("restore must revive pre-snapshot released authority");
+
+            rendezvous
+                .claim_cap(&token)
+                .expect("restore must recreate pre-snapshot authority removed after snapshot");
+        });
+    }
+
+    #[test]
+    fn state_snapshot_finalization_rejects_restore_and_commit_replay() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(11);
+            let lane = Lane::new(1);
+
+            rendezvous.assoc.register(lane, sid);
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::ZERO)
+                .expect("lane zero generation must initialize");
+
+            let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
+            rendezvous
+                .state_restore_at_lane(sid, lane, snapshot)
+                .expect("first restore must finalize the snapshot");
+
+            assert!(matches!(
+                rendezvous.state_restore_at_lane(sid, lane, snapshot),
+                Err(StateRestoreError::AlreadyFinalized { sid: err_sid }) if err_sid == sid
+            ));
+            assert!(matches!(
+                rendezvous.tx_commit_at_lane(sid, lane, snapshot),
+                Err(TxCommitError::AlreadyFinalized { sid: err_sid }) if err_sid == sid
+            ));
+        });
+    }
+
+    #[test]
+    fn topology_ack_emits_registered_tap_event() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(19);
+            let lane = Lane::new(1);
+            rendezvous
+                .prepare_topology_control_scope(lane)
+                .expect("topology ack test must bind topology storage");
+            let operands = TopologyOperands::new(
+                RendezvousId::new(9),
+                rendezvous.id,
+                lane,
+                lane,
+                Generation::ZERO,
+                Generation::new(2),
+                31,
+                37,
+            );
+            let envelope = CpCommand::topology_ack(sid, operands);
+
+            assert_eq!(
+                EffectRunner::run_effect(rendezvous, envelope),
+                Err(CpError::Topology(
+                    crate::control::cluster::error::TopologyError::InvalidState,
+                )),
+                "direct topology ack must fail closed because distributed topology ack is cluster-owned",
+            );
+            assert_eq!(
+                rendezvous.preflight_destination_topology_commit(sid, lane),
+                Err(TopologyError::NoPending { lane }),
+                "rejected direct topology ack must not stage destination pending state",
+            );
+
+            rendezvous
+                .acknowledge_topology_intent(&operands.intent(sid))
+                .expect("cluster-owned topology ack helper must stage destination prepare");
+            assert!(
+                !rendezvous.is_session_registered(sid),
+                "destination ack must stage the topology change without making the destination session live",
+            );
+            assert_eq!(
+                rendezvous.preflight_destination_topology_commit(sid, lane),
+                Ok(()),
+                "ack must leave destination topology pending until the source commit finalizes it",
+            );
+
+            let mut cursor = 0usize;
+            let events = rendezvous
+                .tap()
+                .events_since(&mut cursor, |event| {
+                    (event.id == crate::observe::ids::TOPOLOGY_ACK).then_some(event)
+                })
+                .collect::<std::vec::Vec<_>>();
+
+            assert_eq!(
+                events.len(),
+                1,
+                "ack path must emit exactly one topology ack tap"
+            );
+            let event = events[0];
+            let expected = ((operands.src_lane.as_wire() as u32) & 0xFF)
+                | (((operands.dst_lane.as_wire() as u32) & 0xFF) << 8)
+                | ((operands.new_gen.0 as u32) << 16);
+            assert_eq!(event.arg0, expected);
+            assert_eq!(event.arg1, sid.raw());
+        });
+    }
+
+    #[test]
+    fn rollback_destination_topology_prepare_rewinds_generation_and_clears_pending_state() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let sid = SessionId::new(34);
+            let lane = Lane::new(1);
+
+            rendezvous
+                .prepare_topology_control_scope(lane)
+                .expect("topology tests must bind topology storage");
+
+            let intent = TopologyIntent::new(
+                RendezvousId::new(7),
+                rendezvous.id,
+                sid.raw(),
+                Generation::new(5),
+                Generation::new(6),
+                3,
+                7,
+                Lane::new(0),
+                lane,
+            );
+            rendezvous
+                .process_topology_intent(&intent)
+                .expect("destination prepare must succeed before rollback");
+            assert_eq!(rendezvous.lane_generation(lane), Generation::new(6));
+            assert_eq!(
+                rendezvous.preflight_destination_topology_commit(sid, lane),
+                Ok(()),
+                "destination prepare must be pending before rollback",
+            );
+
+            assert_eq!(
+                rendezvous.rollback_destination_topology_prepare(sid),
+                Ok(true),
+                "rollback must clear destination-only prepared topology",
+            );
+            assert_eq!(
+                rendezvous.preflight_destination_topology_commit(sid, lane),
+                Err(TopologyError::NoPending { lane }),
+                "rollback must remove destination pending topology state",
+            );
+            assert_eq!(
+                rendezvous.r#gen.last(lane),
+                None,
+                "rollback must restore a fresh destination lane to its pre-ack generation state",
+            );
         });
     }
 
@@ -4589,22 +6613,99 @@ mod epf_tests {
     }
 
     #[test]
-    fn splice_tables_bind_only_for_splice_control_scope() {
+    fn topology_table_binds_only_for_topology_control_scope() {
         with_image_test_rendezvous(|rendezvous| {
-            assert!(!rendezvous.splice.is_bound());
-            assert!(!rendezvous.distributed_splice.is_bound());
+            assert!(!rendezvous.topology.is_bound());
 
             rendezvous.initialise_control_scope(Lane::new(0), ControlScopeKind::Loop);
             assert!(
-                !rendezvous.splice.is_bound() && !rendezvous.distributed_splice.is_bound(),
-                "non-splice control scopes must not bind splice storage"
+                !rendezvous.topology.is_bound(),
+                "non-topology control scopes must not bind topology storage"
             );
 
             rendezvous
-                .prepare_splice_control_scope(Lane::new(0))
-                .expect("splice control scope should bind splice storage");
-            assert!(rendezvous.splice.is_bound());
-            assert!(rendezvous.distributed_splice.is_bound());
+                .prepare_topology_control_scope(Lane::new(0))
+                .expect("topology control scope should bind topology storage");
+            assert!(rendezvous.topology.is_bound());
+        });
+    }
+
+    #[test]
+    fn lane_lifecycle_clears_dynamic_policy_state() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let lane = Lane::new(1);
+            let sid = SessionId::new(29);
+            let eff_index = EffIndex::new(11);
+            let tag = 7;
+            let policy = PolicyMode::dynamic(3);
+
+            rendezvous
+                .register_policy(lane, eff_index, tag, policy)
+                .expect("dynamic policy registration must bind policy storage");
+            assert_eq!(rendezvous.policy(lane, eff_index, tag), Some(policy));
+
+            rendezvous
+                .activate_lane_for_test(sid, lane)
+                .expect("first attach must clear stale policy state before opening the lane");
+            assert_eq!(
+                rendezvous.policy(lane, eff_index, tag),
+                None,
+                "first attach must clear stale lane policy state",
+            );
+
+            rendezvous
+                .register_policy(lane, eff_index, tag, policy)
+                .expect("policy state should remain writable after attach");
+            assert_eq!(rendezvous.release_lane(lane), Some(sid));
+            assert_eq!(
+                rendezvous.policy(lane, eff_index, tag),
+                None,
+                "lane release must own dynamic policy cleanup",
+            );
+        });
+    }
+
+    #[test]
+    fn state_restore_preserves_live_session_policy_image() {
+        with_epf_test_rendezvous(|rendezvous| {
+            let lane = Lane::new(1);
+            let sid = SessionId::new(30);
+            let eff_index = EffIndex::new(12);
+            let tag = 9;
+            let policy = PolicyMode::dynamic(7);
+
+            rendezvous.assoc.register(lane, sid);
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::ZERO)
+                .expect("lane zero generation must initialize");
+            rendezvous
+                .r#gen
+                .check_and_update(lane, Generation::new(1))
+                .expect("generation must advance before snapshot");
+            rendezvous
+                .register_policy(lane, eff_index, tag, policy)
+                .expect("policy image should be writable before snapshot");
+
+            let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
+            rendezvous
+                .state_restore_at_lane(sid, lane, snapshot)
+                .expect("restore should not clear the live session policy image");
+
+            assert_eq!(
+                rendezvous.policy(lane, eff_index, tag),
+                Some(policy),
+                "restore must preserve the session policy image for the live lane",
+            );
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "capability nonce counter exhausted")]
+    fn next_nonce_seed_panics_on_overflow() {
+        with_epf_test_rendezvous(|rendezvous| {
+            rendezvous.cap_nonce.set(u64::MAX);
+            let _ = rendezvous.next_nonce_seed();
         });
     }
 
@@ -4835,9 +6936,9 @@ where
     C: Clock,
     E: crate::control::cap::mint::EpochTable,
 {
-    /// Borrow splice coordination state as a constrained facet.
-    pub(crate) fn splice_facet(&mut self) -> SpliceFacet<T, U, C, E> {
-        SpliceFacet::new()
+    /// Borrow topology coordination state as a constrained facet.
+    pub(crate) fn topology_facet(&mut self) -> TopologyFacet<T, U, C, E> {
+        TopologyFacet::new()
     }
 
     /// Borrow observation ring as a constrained facet.
@@ -4846,16 +6947,16 @@ where
     }
 }
 
-/// Splice-focused facet that exposes only splice coordination operations.
+/// Topology-focused facet that exposes only topology coordination operations.
 #[derive(Default)]
-pub(crate) struct SpliceFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)
+pub(crate) struct TopologyFacet<T, U, C, E>(PhantomData<(T, U, C, E)>)
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
     E: crate::control::cap::mint::EpochTable;
 
-impl<T, U, C, E> Copy for SpliceFacet<T, U, C, E>
+impl<T, U, C, E> Copy for TopologyFacet<T, U, C, E>
 where
     T: Transport,
     U: LabelUniverse,
@@ -4864,7 +6965,7 @@ where
 {
 }
 
-impl<T, U, C, E> Clone for SpliceFacet<T, U, C, E>
+impl<T, U, C, E> Clone for TopologyFacet<T, U, C, E>
 where
     T: Transport,
     U: LabelUniverse,
@@ -4876,7 +6977,7 @@ where
     }
 }
 
-impl<T, U, C, E> SpliceFacet<T, U, C, E>
+impl<T, U, C, E> TopologyFacet<T, U, C, E>
 where
     T: Transport,
     U: LabelUniverse,
@@ -4888,30 +6989,12 @@ where
         Self(PhantomData)
     }
 
-    pub(crate) fn begin(
+    pub(crate) fn begin_from_intent(
         self,
         rendezvous: &mut Rendezvous<'_, '_, T, U, C, E>,
-        sid: SessionId,
-        lane: Lane,
-        fences: Option<(u32, u32)>,
-        generation: Generation,
-    ) -> Result<(), super::error::SpliceError> {
-        rendezvous.begin_splice(sid, lane, fences, generation)
-    }
-
-    pub(crate) fn commit(
-        self,
-        rendezvous: &mut Rendezvous<'_, '_, T, U, C, E>,
-        sid: SessionId,
-        lane: Lane,
-    ) -> Result<(), super::error::SpliceError> {
-        rendezvous.commit_splice(sid, lane)
-    }
-
-    pub(crate) fn release_lane(self, rendezvous: &Rendezvous<'_, '_, T, U, C, E>, lane: Lane) {
-        if let Some(sid) = rendezvous.release_lane(lane) {
-            rendezvous.emit_lane_release(sid, lane);
-        }
+        intent: TopologyIntent,
+    ) -> Result<(), super::error::TopologyError> {
+        rendezvous.topology_begin_from_intent(intent)
     }
 }
 

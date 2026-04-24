@@ -2361,11 +2361,9 @@ where
                 .consume_scope_ready_arm(scope_id, selected_arm);
         }
         self.endpoint.clear_scope_evidence(scope_id);
-        if lane_wire == 5 {
-            self.endpoint
-                .port_for_lane(lane_wire as usize)
-                .clear_route_hints();
-        }
+        self.endpoint
+            .port_for_lane(lane_wire as usize)
+            .clear_route_hints();
 
         Ok(meta)
     }

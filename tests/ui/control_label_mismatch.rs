@@ -31,7 +31,7 @@ impl ControlResourceKind for WrongLabelKind {
     const TAP_ID: u16 = 0x0351;
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::Fence;
-    const AUTO_MINT_WIRE: bool = false;
+    const AUTO_MINT_WIRE: bool = true;
 
     fn mint_handle(
         _session: hibana::substrate::SessionId,

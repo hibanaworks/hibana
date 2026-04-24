@@ -9,8 +9,8 @@ use check_support::policy_check_summary;
 use core::cell::UnsafeCell;
 use hibana::substrate::tap::TapEvent;
 use observe_support::{
-    LANE_ACQUIRE_ID, LANE_RELEASE_ID, POLICY_ABORT_ID, POLICY_COMMIT_ID, PolicyEventDomain,
-    PolicyEventKind, policy_lane_trace,
+    LANE_ACQUIRE_ID, LANE_RELEASE_ID, POLICY_ABORT_ID, POLICY_COMMIT_ID, POLICY_TX_ABORT_ID,
+    PolicyEventDomain, PolicyEventKind, policy_lane_trace,
 };
 
 const RING_EVENTS: usize = 128;
@@ -51,17 +51,25 @@ fn policy_lane_trace_matches_lane_assignments() {
             .with_causal_key(causal)
             .with_arg0(0xAA)
             .with_arg1(sid);
-        storage[2] = raw_event(3, POLICY_COMMIT_ID)
+        storage[2] = raw_event(3, POLICY_TX_ABORT_ID)
             .with_causal_key(causal)
-            .with_arg0(0)
+            .with_arg0(sid)
+            .with_arg1(9);
+        storage[3] = raw_event(4, POLICY_COMMIT_ID)
+            .with_causal_key(causal)
+            .with_arg0(sid)
             .with_arg1(42);
-        storage[3] = raw_event(4, LANE_RELEASE_ID)
+        storage[4] = raw_event(5, LANE_RELEASE_ID)
             .with_arg0(rv)
             .with_arg1(((sid as u32) << 16) | lane as u32);
 
-        let (records, local_action_failures) = policy_lane_trace(storage, 0, 4);
+        let (records, local_action_failures) = policy_lane_trace(storage, 0, 5);
         assert_eq!(local_action_failures, 0, "unexpected local action failures");
-        assert_eq!(records.len(), 2, "expected abort and commit entries");
+        assert_eq!(
+            records.len(),
+            3,
+            "expected abort, tx-abort, and commit entries"
+        );
 
         let abort = records.get(0).expect("abort record");
         assert_eq!(
@@ -91,7 +99,35 @@ fn policy_lane_trace_matches_lane_assignments() {
         );
         assert_eq!(abort.policy_id, POLICY_ABORT_ID);
 
-        let commit = records.get(1).expect("commit record");
+        let tx_abort = records.get(1).expect("tx abort record");
+        assert_eq!(
+            tx_abort.lane,
+            Some(lane),
+            "tx-abort lane should match acquisition"
+        );
+        assert!(
+            tx_abort.lane.is_none() || tx_abort.has_association,
+            "tx-abort should have active lane association"
+        );
+        assert_eq!(tx_abort.sid_hint, Some(sid), "tx-abort carries sid hint");
+        assert_eq!(
+            tx_abort.sid_match,
+            Some(true),
+            "tx-abort sid should align with lane association"
+        );
+        assert_eq!(
+            tx_abort.kind,
+            PolicyEventKind::TxAbort,
+            "tx-abort record should surface policy event kind"
+        );
+        assert_eq!(
+            tx_abort.domain,
+            PolicyEventDomain::Policy,
+            "tx-abort event must be marked as policy domain"
+        );
+        assert_eq!(tx_abort.policy_id, POLICY_TX_ABORT_ID);
+
+        let commit = records.get(2).expect("commit record");
         assert_eq!(
             commit.lane,
             Some(lane),
@@ -101,10 +137,11 @@ fn policy_lane_trace_matches_lane_assignments() {
             commit.lane.is_none() || commit.has_association,
             "commit should have active lane association"
         );
-        assert!(commit.sid_hint.is_none(), "commit has no sid hint");
-        assert!(
-            commit.sid_match.is_none(),
-            "commit sid match is not evaluated"
+        assert_eq!(commit.sid_hint, Some(sid), "commit carries sid hint");
+        assert_eq!(
+            commit.sid_match,
+            Some(true),
+            "commit sid should align with lane association"
         );
         assert_eq!(
             commit.kind,
@@ -118,11 +155,12 @@ fn policy_lane_trace_matches_lane_assignments() {
         );
         assert_eq!(commit.policy_id, POLICY_COMMIT_ID);
 
-        let summary = policy_check_summary(storage, 0, 4);
-        assert_eq!(summary.policy_lane_total, 2);
-        assert_eq!(summary.policy_lane_matched, 2);
+        let summary = policy_check_summary(storage, 0, 5);
+        assert_eq!(summary.policy_tx_abort, 1);
+        assert_eq!(summary.policy_lane_total, 3);
+        assert_eq!(summary.policy_lane_matched, 3);
         assert_eq!(summary.policy_lane_mismatched, 0);
-        assert_eq!(summary.policy_sid_matched, 1);
+        assert_eq!(summary.policy_sid_matched, 3);
         assert_eq!(summary.policy_sid_mismatched, 0);
     });
 }

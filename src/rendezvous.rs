@@ -10,5 +10,7 @@ pub(crate) mod core;
 pub(crate) mod error;
 pub(crate) mod port;
 pub(crate) mod slots;
-mod splice;
 pub(crate) mod tables;
+mod topology;
+
+pub(crate) use topology::TopologySessionState;

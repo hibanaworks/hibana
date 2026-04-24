@@ -24,17 +24,17 @@ pub(crate) const fn control_op_tap_event_id(op: ControlOp) -> u16 {
     match op {
         ControlOp::RouteDecision => ids::ROUTE_DECISION,
         ControlOp::LoopContinue | ControlOp::LoopBreak => ids::LOOP_DECISION,
-        ControlOp::StateSnapshot => ids::CHECKPOINT_REQ,
-        ControlOp::StateRestore => ids::ROLLBACK_REQ,
-        ControlOp::TopologyBegin => ids::SPLICE_BEGIN,
-        ControlOp::TopologyAck => ids::DELEG_SPLICE,
-        ControlOp::TopologyCommit => ids::SPLICE_COMMIT,
+        ControlOp::StateSnapshot => ids::STATE_SNAPSHOT_REQ,
+        ControlOp::StateRestore => ids::STATE_RESTORE_REQ,
+        ControlOp::TopologyBegin => ids::TOPOLOGY_BEGIN,
+        ControlOp::TopologyAck => ids::TOPOLOGY_ACK,
+        ControlOp::TopologyCommit => ids::TOPOLOGY_COMMIT,
         ControlOp::CapDelegate => ids::DELEG_BEGIN,
-        ControlOp::AbortBegin => ids::CANCEL_BEGIN,
-        ControlOp::AbortAck => ids::CANCEL_ACK,
+        ControlOp::AbortBegin => ids::ABORT_BEGIN,
+        ControlOp::AbortAck => ids::ABORT_ACK,
         ControlOp::Fence => ids::POLICY_RA_OK,
-        ControlOp::TxCommit => 0x0405,
-        ControlOp::TxAbort => 0x0406,
+        ControlOp::TxCommit => ids::POLICY_COMMIT,
+        ControlOp::TxAbort => ids::POLICY_TX_ABORT,
     }
 }
 
@@ -43,11 +43,7 @@ pub(crate) const fn control_op_tap_event_id(op: ControlOp) -> u16 {
 pub(crate) const fn control_op_is_idempotent(op: ControlOp) -> bool {
     matches!(
         op,
-        ControlOp::TopologyAck
-            | ControlOp::StateSnapshot
-            | ControlOp::StateRestore
-            | ControlOp::Fence
-            | ControlOp::AbortAck
+        ControlOp::TopologyAck | ControlOp::StateSnapshot | ControlOp::Fence | ControlOp::AbortAck
     )
 }
 
@@ -66,7 +62,10 @@ pub(crate) const fn control_op_is_terminal(op: ControlOp) -> bool {
 #[cfg(test)]
 #[inline(always)]
 pub(crate) const fn control_op_modifies_history(op: ControlOp) -> bool {
-    matches!(op, ControlOp::StateSnapshot | ControlOp::StateRestore)
+    matches!(
+        op,
+        ControlOp::StateSnapshot | ControlOp::StateRestore | ControlOp::TxAbort
+    )
 }
 
 /// Projected effects from global protocol ready for runtime execution (no_alloc).
@@ -359,6 +358,7 @@ mod tests {
     use super::*;
     use crate::control::cap::mint::{GenericCapToken, ResourceKind};
     use crate::global::role_program::lowering_input;
+    use crate::observe::ids;
     use snapshot_control_kind::{LABEL_SNAPSHOT_CONTROL, SnapshotControl};
 
     #[test]
@@ -372,9 +372,22 @@ mod tests {
 
     #[test]
     fn test_effect_properties() {
+        assert_eq!(
+            control_op_tap_event_id(ControlOp::TopologyAck),
+            ids::TOPOLOGY_ACK
+        );
+        assert_eq!(
+            control_op_tap_event_id(ControlOp::CapDelegate),
+            ids::DELEG_BEGIN
+        );
+        assert_eq!(
+            control_op_tap_event_id(ControlOp::TxAbort),
+            ids::POLICY_TX_ABORT
+        );
         assert!(control_op_is_idempotent(ControlOp::TopologyAck));
         assert!(!control_op_is_idempotent(ControlOp::TopologyBegin));
         assert!(control_op_is_idempotent(ControlOp::StateSnapshot));
+        assert!(!control_op_is_idempotent(ControlOp::StateRestore));
 
         assert!(control_op_requires_gen_bump(ControlOp::TopologyCommit));
         assert!(!control_op_requires_gen_bump(ControlOp::TopologyBegin));
@@ -385,6 +398,7 @@ mod tests {
 
         assert!(control_op_modifies_history(ControlOp::StateSnapshot));
         assert!(control_op_modifies_history(ControlOp::StateRestore));
+        assert!(control_op_modifies_history(ControlOp::TxAbort));
         assert!(!control_op_modifies_history(ControlOp::TxCommit));
     }
 

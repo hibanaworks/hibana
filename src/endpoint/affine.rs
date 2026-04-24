@@ -1,88 +1,68 @@
 //! Affine lane guard used by cursor endpoints.
 //!
-//! The lane guard owns the rendezvous lease outright and ensures lane release
-//! happens through the typed lease pipeline.
+//! The guard is the detached RAII witness for a leased lane. `LaneLease`
+//! creates it only after converting the borrow-bound rendezvous lease into a
+//! `Port`, so the endpoint keeps only the shorter borrow lifetime.
 
 use core::cell::Cell;
+use core::marker::PhantomData;
 
 use crate::runtime::{config::Clock, consts::LabelUniverse};
 use crate::{
-    control::lease::core::{FullSpec, RendezvousLease},
-    control::types::Lane,
-    rendezvous::core::Rendezvous,
+    control::cap::mint::EpochTbl, control::types::Lane, rendezvous::core::Rendezvous,
     transport::Transport,
 };
 
 /// Lease-backed lane guard.
 ///
-/// Dropping the guard releases the lane via the underlying rendezvous lease.
-/// Always uses the default EpochTbl since LaneGuard is only used for creating new endpoints.
-pub(crate) struct LaneGuard<'cfg, T: Transport, U: LabelUniverse, C: Clock> {
-    pub(crate) lease:
-        Option<RendezvousLease<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl, FullSpec>>,
-    rendezvous: *const Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>,
+/// Dropping the guard releases the lane via the underlying rendezvous.
+/// The raw pointer erases the longer rendezvous lifetime; the shorter endpoint
+/// borrow is carried by `active_leases`.
+pub(crate) struct LaneGuard<'lease, T: Transport, U: LabelUniverse, C: Clock> {
+    rendezvous: *const (),
     lane: Lane,
-    active_leases: &'cfg Cell<u32>,
-    release_on_drop: bool,
+    active_leases: &'lease Cell<u32>,
+    _marker: PhantomData<fn() -> (T, U, C)>,
 }
 
-impl<'cfg, T, U, C> LaneGuard<'cfg, T, U, C>
+impl<'lease, T, U, C> LaneGuard<'lease, T, U, C>
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
 {
-    pub(crate) fn new(
-        lease: RendezvousLease<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl, FullSpec>,
+    pub(crate) fn new_detached(
+        rendezvous: *const (),
         lane: Lane,
-        active_leases: &'cfg Cell<u32>,
-        release_on_drop: bool,
+        active_leases: &'lease Cell<u32>,
     ) -> Self {
         Self {
-            lease: Some(lease),
-            rendezvous: core::ptr::null(),
+            rendezvous,
             lane,
             active_leases,
-            release_on_drop,
+            _marker: PhantomData,
         }
     }
 
-    pub(crate) fn detach_lease(&mut self) {
-        if let Some(mut lease) = self.lease.take() {
-            let mut ptr: *const Rendezvous<
-                'cfg,
-                'cfg,
-                T,
-                U,
-                C,
-                crate::control::cap::mint::EpochTbl,
-            > = core::ptr::null();
-            lease.with_rendezvous(|rv| {
-                ptr = core::ptr::from_mut(rv).cast_const();
-            });
-            self.rendezvous = ptr;
-            drop(lease);
-        }
+    #[inline]
+    pub(crate) fn detach_rendezvous(&mut self) {
+        self.rendezvous = core::ptr::null();
     }
 }
 
-impl<'cfg, T, U, C> Drop for LaneGuard<'cfg, T, U, C>
+impl<'lease, T, U, C> Drop for LaneGuard<'lease, T, U, C>
 where
     T: Transport,
     U: LabelUniverse,
     C: Clock,
 {
     fn drop(&mut self) {
-        if !self.release_on_drop {
-            return;
-        }
-
         let lane = self.lane;
-        if let Some(mut lease) = self.lease.take() {
-            lease.release_lane_with_tap(lane);
-        } else if !self.rendezvous.is_null() {
+        if !self.rendezvous.is_null() {
             unsafe {
-                let rv = &*self.rendezvous;
+                let rv = &*self
+                    .rendezvous
+                    .cast::<Rendezvous<'static, 'static, T, U, C, EpochTbl>>();
                 if let Some(sid) = rv.release_lane(lane) {
                     rv.emit_lane_release(sid, lane);
                 }

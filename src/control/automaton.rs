@@ -2,9 +2,9 @@
 
 /// Delegation automata.
 pub(crate) mod delegation;
-/// Distributed splice automata.
+/// Distributed topology automata.
 pub(crate) mod distributed;
-/// Splice automata.
-pub(crate) mod splice;
+/// Topology automata.
+pub(crate) mod topology;
 /// Transaction automata.
 pub(crate) mod txn;

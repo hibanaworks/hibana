@@ -1,11 +1,11 @@
-//! LeaseGraph facet bundle combining caps/splice contexts plus tap hooks.
+//! LeaseGraph facet bundle combining caps/topology contexts plus tap hooks.
 
 use core::{marker::PhantomData, ptr::NonNull};
 
 use crate::{
     control::types::RendezvousId,
     control::{
-        automaton::splice::SpliceGraphContext,
+        automaton::topology::TopologyGraphContext,
         lease::{
             core::{ControlCore, LeaseObserve},
             graph::{LeaseFacet, LeaseGraph, LeaseGraphError, LeaseSpec},
@@ -254,7 +254,7 @@ where
     E: crate::control::cap::mint::EpochTable,
 {
     observe: Option<LeaseObserve<'ctx, 'cfg>>,
-    splice: Option<SpliceGraphContext>,
+    topology: Option<TopologyGraphContext>,
     caps: Option<CapsBundleHandle<'ctx, 'cfg, T, U, C, E>>,
     #[cfg(test)]
     slots: Option<SlotBundleHandle<'ctx, 'cfg>>,
@@ -286,7 +286,7 @@ where
     pub(crate) const fn new() -> Self {
         Self {
             observe: None,
-            splice: None,
+            topology: None,
             caps: None,
             #[cfg(test)]
             slots: None,
@@ -308,8 +308,8 @@ where
     }
 
     #[inline]
-    pub(crate) fn set_splice(&mut self, ctx: SpliceGraphContext) {
-        self.splice = Some(ctx);
+    pub(crate) fn set_topology(&mut self, ctx: TopologyGraphContext) {
+        self.topology = Some(ctx);
     }
 
     #[inline]
@@ -336,8 +336,8 @@ where
     }
 
     #[inline]
-    pub(crate) fn splice(&mut self) -> Option<&mut SpliceGraphContext> {
-        self.splice.as_mut()
+    pub(crate) fn topology(&mut self) -> Option<&mut TopologyGraphContext> {
+        self.topology.as_mut()
     }
 
     #[inline]
@@ -357,7 +357,7 @@ where
         let observe = rendezvous.observe_facet();
         self.set_observe(LeaseObserve::new(core::ptr::from_ref(observe.tap())));
 
-        if needs.requires_caps() || needs.requires_delegation() || needs.requires_splice() {
+        if needs.requires_caps() || needs.requires_delegation() || needs.requires_topology() {
             let caps_ptr = NonNull::from(rendezvous.caps());
             self.set_caps(CapsBundleHandle::new(caps_ptr));
         }
@@ -388,7 +388,7 @@ where
         if let Some(handle) = self.slots.as_mut() {
             handle.on_commit();
         }
-        if let Some(ctx) = self.splice.as_mut() {
+        if let Some(ctx) = self.topology.as_mut() {
             ctx.clear();
         }
         if let (Some(observe), Some(event)) = (self.observe, self.commit_event.take()) {
@@ -405,7 +405,7 @@ where
         if let Some(handle) = self.slots.as_mut() {
             handle.on_rollback();
         }
-        if let Some(ctx) = self.splice.as_mut() {
+        if let Some(ctx) = self.topology.as_mut() {
             ctx.clear();
         }
         if let (Some(observe), Some(event)) = (self.observe, self.rollback_event.take()) {
@@ -848,7 +848,7 @@ mod tests {
                 crate::control::cap::mint::EpochTbl,
             > = LeaseBundleContext::new();
             ctx.set_observe(LeaseObserve::new(core::ptr::from_ref(static_ring)));
-            let event = observe::events::DelegSplice::new(7, 1, 2);
+            let event = observe::events::TopologyAck::new(7, 1, 2);
             ctx.register_commit_tap(event);
 
             let facet = LeaseBundleFacet::<
@@ -904,6 +904,9 @@ mod tests {
                     kind_tag: EndpointResource::TAG,
                     shot_state: CapShot::Many.as_u8(),
                     role: 7,
+                    mint_revision: 1,
+                    consumed_revision: 0,
+                    released_revision: 0,
                     nonce,
                     handle: [0u8; CAP_HANDLE_LEN],
                 };
@@ -923,6 +926,7 @@ mod tests {
                     EndpointResource::TAG,
                     7,
                     CapShot::Many,
+                    2,
                 );
                 assert!(matches!(claim, Err(CapError::UnknownToken)));
             })

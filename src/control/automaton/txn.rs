@@ -37,6 +37,7 @@ impl Tap for NoopTap {
 /// - `GenOrd`: Generation ordering marker (e.g., `IncreasingGen`)
 /// - `Shot`: Shot discipline (e.g., `One` or `Many`)
 pub(crate) struct Txn<Inv, GenOrd, Shot> {
+    #[cfg(test)]
     lane: Lane,
     #[cfg(test)]
     generation: Generation,
@@ -50,9 +51,10 @@ impl<Inv, GenOrd, Shot> Txn<Inv, GenOrd, Shot> {
     ///
     /// The caller must ensure that the invariants encoded in the type parameters
     /// are actually satisfied. This is typically enforced by the rendezvous layer.
-    pub(crate) unsafe fn new(lane: Lane, _generation: Generation) -> Self {
+    pub(crate) unsafe fn new(_lane: Lane, _generation: Generation) -> Self {
         Self {
-            lane,
+            #[cfg(test)]
+            lane: _lane,
             #[cfg(test)]
             generation: _generation,
             _p: PhantomData,
@@ -61,12 +63,13 @@ impl<Inv, GenOrd, Shot> Txn<Inv, GenOrd, Shot> {
 }
 
 impl<Inv: AtMostOnceCommit + NoCrossLaneAliasing, S> Txn<Inv, IncreasingGen, S> {
-    /// Begin a splice operation.
+    /// Begin a topology operation.
     ///
     /// Emits `ControlOp::TopologyBegin` and transitions to `InBegin` state.
     pub(crate) fn begin(self, tap: &mut impl Tap) -> InBegin<Inv, S> {
         tap.emit(ControlOp::TopologyBegin);
         InBegin {
+            #[cfg(test)]
             lane: self.lane,
             #[cfg(test)]
             generation: self.generation,
@@ -77,6 +80,7 @@ impl<Inv: AtMostOnceCommit + NoCrossLaneAliasing, S> Txn<Inv, IncreasingGen, S> 
 
 /// Transaction in "begin" state (after `begin()`, before `ack()`).
 pub(crate) struct InBegin<Inv, Shot> {
+    #[cfg(test)]
     lane: Lane,
     #[cfg(test)]
     generation: Generation,
@@ -84,12 +88,13 @@ pub(crate) struct InBegin<Inv, Shot> {
 }
 
 impl<Inv, S> InBegin<Inv, S> {
-    /// Acknowledge the splice operation.
+    /// Acknowledge the topology operation.
     ///
     /// Emits `ControlOp::TopologyAck` and transitions to `InAcked` state.
     pub(crate) fn ack(self, tap: &mut impl Tap) -> InAcked<Inv, S> {
         tap.emit(ControlOp::TopologyAck);
         InAcked {
+            #[cfg(test)]
             lane: self.lane,
             #[cfg(test)]
             generation: self.generation,
@@ -100,6 +105,7 @@ impl<Inv, S> InBegin<Inv, S> {
 
 /// Transaction in "acked" state (after `ack()`, before `commit()` or `abort()`).
 pub(crate) struct InAcked<Inv, Shot> {
+    #[cfg(test)]
     lane: Lane,
     #[cfg(test)]
     generation: Generation,
@@ -107,11 +113,6 @@ pub(crate) struct InAcked<Inv, Shot> {
 }
 
 impl<Inv: AtMostOnceCommit> InAcked<Inv, One> {
-    /// Lane identifier associated with this transaction.
-    pub(crate) fn lane(&self) -> Lane {
-        self.lane
-    }
-
     /// Commit the transaction.
     ///
     /// Emits `ControlOp::TopologyCommit` and transitions to `Closed` state.
@@ -123,22 +124,6 @@ impl<Inv: AtMostOnceCommit> InAcked<Inv, One> {
             lane: self.lane,
             #[cfg(test)]
             generation: self.generation.bump(),
-            _p: PhantomData,
-        }
-    }
-
-    #[cfg(test)]
-    /// Abort the transaction.
-    ///
-    /// Emits `ControlOp::TxAbort` and transitions to `Closed` state.
-    /// The generation number is NOT bumped.
-    pub(crate) fn abort(self, tap: &mut impl Tap) -> Closed<Inv> {
-        tap.emit(ControlOp::TxAbort);
-        Closed {
-            #[cfg(test)]
-            lane: self.lane,
-            #[cfg(test)]
-            generation: self.generation,
             _p: PhantomData,
         }
     }
@@ -192,22 +177,5 @@ mod tests {
         // Check final state
         assert_eq!(closed.lane(), Lane::new(42));
         assert_eq!(closed.generation(), Generation::new(11)); // Generation bumped
-    }
-
-    #[test]
-    fn test_txn_abort_path() {
-        let mut tap = NoopTap;
-
-        let txn: Txn<TestInv, IncreasingGen, crate::control::types::One> =
-            unsafe { Txn::new(Lane::new(42), Generation::new(10)) };
-
-        // Begin -> Ack -> Abort
-        let in_begin = txn.begin(&mut tap);
-        let in_acked = in_begin.ack(&mut tap);
-        let closed = in_acked.abort(&mut tap);
-
-        // Check final state
-        assert_eq!(closed.lane(), Lane::new(42));
-        assert_eq!(closed.generation(), Generation::new(10)); // Generation NOT bumped
     }
 }

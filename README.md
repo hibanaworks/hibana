@@ -343,7 +343,7 @@ The everyday protocol-side owners are:
 - `hibana::substrate::policy::{ContextId, ContextValue, DynamicResolution, PolicyAttrs, PolicySignals, PolicySignalsProvider, ResolverContext, ResolverError, ResolverRef, PolicySlot}`
 - `hibana::substrate::runtime::{Clock, Config, CounterClock, DefaultLabelUniverse, LabelUniverse}`
 - `hibana::substrate::tap::TapEvent`
-- `hibana::substrate::cap::{CapShot, ControlResourceKind, GenericCapToken, Many, One, ResourceKind}`
+- `hibana::substrate::cap::{CapRegisteredToken, CapShot, ControlResourceKind, GenericCapToken, Many, One, ResourceKind}`
 - `hibana::substrate::cap::advanced::{CAP_HANDLE_LEN, CapError, CapHeader, ControlOp, ControlPath, ControlScopeKind, LoopBreakKind, LoopContinueKind, RouteDecisionKind, ScopeId}`
 - `hibana::substrate::wire::{Payload, WireEncode, WirePayload}`
 - `hibana::substrate::transport::{Outgoing, TransportError, TransportEvent, TransportEventKind, TransportMetrics}`
@@ -361,11 +361,13 @@ specific, keep it outside `hibana`'s public surface.
 
 ### Control Messages
 
-There is no public `g::splice`, `g::delegate`, or `g::reroute`.
+Control messages do not have a second public shortcut DSL.
 
-`delegate`, `splice`, `reroute`, `route`, `loop`, and management-policy
-operations are all expressed as ordinary `g::send()` steps whose message type
-carries a capability token and its control kind directly.
+Supported route/loop, topology, abort/state/tx, and management-policy
+operations are expressed as ordinary `g::send()` steps whose message type
+carries a capability token and its control kind directly. Capability
+delegation stays on the lower-layer endpoint-token path; it is not a public
+descriptor control message.
 
 The key owners are:
 
@@ -378,7 +380,18 @@ Control-path rules are fixed:
 
 - `K::PATH == ControlPath::Local` is compile-time restricted to self-send
 - `K::PATH == ControlPath::Wire` is compile-time restricted to cross-role send
+- route/loop control ops are local-only and compile-time rejected on wire paths
+- `AUTO_MINT_WIRE` only enables endpoint-side auto-mint; explicit wire tokens may keep it `false`
 - the runtime executes exactly one `ControlOp` baked by projection
+
+Wire auto-mint for `TopologyBegin` reads its extra operands from the
+`PolicySlot::Route` input boundary:
+
+- `TopologyBegin`: `input[0] = (dst_rv << 16) | dst_lane`,
+  `input[1] = (old_gen << 16) | new_gen`, `input[2] = seq_tx`,
+  `input[3] = seq_rx`
+`src_rv` and the source lane always come from the attached endpoint. Dynamic
+resolver-backed policy for this control op remains rejected.
 
 Core keeps only the generic control-capability mechanism plus the built-in
 route / loop kinds under `hibana::substrate::cap::advanced`:
@@ -426,11 +439,11 @@ impl hibana::substrate::cap::ResourceKind for CustomWireKind {
 }
 
 impl hibana::substrate::cap::ControlResourceKind for CustomWireKind {
-    const LABEL: u8 = 90;
+    const LABEL: u8 = 124;
     const SCOPE: ControlScopeKind = ControlScopeKind::None;
     const PATH: ControlPath = ControlPath::Wire;
-    const SHOT: hibana::substrate::cap::CapShot = hibana::substrate::cap::CapShot::One;
-    const TAP_ID: u16 = 0x0300 + 90;
+    const SHOT: hibana::substrate::cap::CapShot = hibana::substrate::cap::CapShot::Many;
+    const TAP_ID: u16 = 0x0300 + 124;
     const OP: ControlOp = ControlOp::Fence;
     const AUTO_MINT_WIRE: bool = false;
 
@@ -449,10 +462,15 @@ let custom_wire = g::send::<
 >();
 ```
 
+Use `AUTO_MINT_WIRE = true` only for kinds whose wire token can be minted from
+the endpoint's route-policy inputs and executed through the descriptor control
+path. Otherwise, keep it `false` and send an explicit `GenericCapToken<K>`
+payload.
+
 Capability-building owners live in two layers:
 
 - `hibana::substrate::cap::{One, Many}` for affine shot discipline
-- `hibana::substrate::cap::{CapShot, ResourceKind, ControlResourceKind}` for
+- `hibana::substrate::cap::{CapRegisteredToken, CapShot, ResourceKind, ControlResourceKind}` for
   runtime capability representation
 - `hibana::substrate::cap::advanced::{CAP_HANDLE_LEN, CapError, CapHeader,
   ControlOp, ControlPath, ControlScopeKind, LoopBreakKind, LoopContinueKind,
@@ -840,6 +858,7 @@ bash ./.github/scripts/check_resolver_context_surface.sh
 bash ./.github/scripts/check_warning_free.sh
 bash ./.github/scripts/check_direct_projection_binary.sh
 bash ./.github/scripts/check_no_std_build.sh
+bash ./.github/scripts/check_stable_1_95.sh
 
 cargo check --all-targets -p hibana
 cargo check --no-default-features --lib -p hibana
@@ -854,12 +873,6 @@ cargo test -p hibana --test docs_surface --features std
 
 These checks keep the public surface small, keep `no_std` healthy, and guard
 the compile-time guarantees described above.
-
-Rust 1.95 remains a compatibility lane:
-
-```bash
-bash ./.github/scripts/check_stable_1_95.sh
-```
 
 Before pushing, also verify these invariants:
 

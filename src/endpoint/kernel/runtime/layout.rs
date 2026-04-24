@@ -112,6 +112,7 @@ pub(crate) struct EndpointArenaLayout {
 }
 
 impl EndpointArenaLayout {
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn from_footprint(footprint: RoleFootprint) -> Self {
         Self::from_footprint_with_binding(footprint, true)

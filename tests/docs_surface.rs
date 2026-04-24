@@ -1,11 +1,30 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn read(path: &str) -> String {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let full = root.join(path);
     fs::read_to_string(&full)
         .unwrap_or_else(|err| panic!("read {} failed: {}", full.display(), err))
+}
+
+fn assert_absent(readme: &str, forbidden: &str, why: &str) {
+    assert!(!readme.contains(forbidden), "{why}: {forbidden}");
+}
+
+fn collect_source_files(root: &Path, out: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(root)
+        .unwrap_or_else(|err| panic!("read_dir {} failed: {}", root.display(), err))
+    {
+        let entry =
+            entry.unwrap_or_else(|err| panic!("read_dir entry {} failed: {}", root.display(), err));
+        let path = entry.path();
+        if path.is_dir() {
+            collect_source_files(&path, out);
+        } else if path.extension().and_then(|ext| ext.to_str()) != Some("stderr") {
+            out.push(path);
+        }
+    }
 }
 
 #[test]
@@ -33,6 +52,9 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "the canonical path is local `let` inference rather than a named item",
         "let program = g::seq(mgmt_prefix, app);",
         "let client: RoleProgram<0> = project(&program);",
+        "`AUTO_MINT_WIRE` only enables endpoint-side auto-mint",
+        "send an explicit `GenericCapToken<K>`",
+        "delegation stays on the lower-layer endpoint-token path; it is not a public",
         "bash ./.github/scripts/check_stable_1_95.sh",
         "cargo check --all-targets -p hibana",
         "cargo test -p hibana --test ui --features std",
@@ -55,7 +77,6 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "hibana_epf",
         "hibana-epf",
         "hibana-cross-repo",
-        "run_workspace_smoke.sh",
         "`hibana::substrate::mgmt`",
         "`hibana::substrate::policy::epf`",
         "`hibana::substrate::mgmt::request_reply::PREFIX`",
@@ -65,24 +86,109 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "`hibana::substrate::mgmt::Request::Load(LoadRequest)`",
         "`hibana::substrate::mgmt::Request::LoadAndActivate(LoadRequest)`",
         "`hibana::substrate::mgmt::Request::Activate(SlotRequest)`",
-        "`hibana::substrate::mgmt::Request::Revert(SlotRequest)`",
+        "`hibana::substrate::mgmt::Request::Restore(SlotRequest)`",
         "`hibana::substrate::mgmt::Request::Stats(SlotRequest)`",
         "`integration/cross-repo/`",
         "staging location for cross-repo smoke",
         "App code writes `APP: g::Program<_>`",
         "project(&PROGRAM)",
-        "project::<",
         "const APP: g::Program<_>",
         "static APP: g::Program<_>",
         "const PROGRAM: g::Program<_>",
         "static PROGRAM: g::Program<_>",
-        "cargo +1.95.0 check --all-targets -p hibana",
-        "cargo +1.95.0 test -p hibana --test ui --features std",
         "`hibana::g::advanced::steps`",
+        "public wire control kinds must set `AUTO_MINT_WIRE = true`",
+        "`CapDelegate`: `input[0] = (dst_rv << 16) | dst_lane`",
+    ] {
+        assert_absent(
+            &readme,
+            forbidden,
+            "README must not leak other-crate or internal-only wording",
+        );
+    }
+
+    assert_absent(
+        &readme,
+        &["project::", "<"].concat(),
+        "README must not leak other-crate or internal-only wording",
+    );
+
+    for forbidden in ["cargo +", "workspace_smoke"] {
+        assert_absent(
+            &readme,
+            forbidden,
+            "README must not pin removed toolchain or smoke-helper lanes",
+        );
+    }
+}
+
+#[test]
+fn projection_constructor_stays_on_canonical_call_shape() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let forbidden = ["project::", "<"].concat();
+    let mut files = vec![root.join("README.md")];
+
+    for dir in ["src", "tests"] {
+        collect_source_files(&root.join(dir), &mut files);
+    }
+
+    let mut offenders = Vec::new();
+    for file in files {
+        let src = fs::read_to_string(&file)
+            .unwrap_or_else(|err| panic!("read {} failed: {}", file.display(), err));
+        for (line_idx, line) in src.lines().enumerate() {
+            if line.contains(&forbidden) {
+                let rel = file.strip_prefix(&root).unwrap_or(file.as_path()).display();
+                offenders.push(format!("{}:{}:{}", rel, line_idx + 1, line.trim()));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "projection must use the canonical `project(&program)` call shape:\n{}",
+        offenders.join("\n")
+    );
+}
+
+#[test]
+fn quality_gates_keep_older_stable_compatibility_lane() {
+    let workflow = read(".github/workflows/quality-gates.yml");
+    assert!(
+        workflow.contains("check_stable_1_95.sh"),
+        "quality gates must keep the older-stable compatibility lane"
+    );
+
+    let script =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".github/scripts/check_stable_1_95.sh");
+    assert!(
+        script.exists(),
+        "older-stable compatibility script must exist: {}",
+        script.display()
+    );
+}
+
+#[test]
+fn quality_gates_do_not_directly_execute_non_executable_scripts() {
+    let workflow = read(".github/workflows/quality-gates.yml");
+
+    for required in [
+        "bash ./.github/scripts/check_plane_boundaries.sh",
+        "bash ./.github/scripts/check_pico_smoke.sh",
     ] {
         assert!(
-            !readme.contains(forbidden),
-            "README must not leak other-crate or internal-only wording: {forbidden}"
+            workflow.contains(required),
+            "quality gates must invoke non-executable scripts through bash: {required}"
+        );
+    }
+
+    for forbidden in [
+        "run: ./.github/scripts/check_plane_boundaries.sh",
+        "run: ./.github/scripts/check_pico_smoke.sh",
+    ] {
+        assert!(
+            !workflow.contains(forbidden),
+            "quality gates must not rely on executable bits for 100644 scripts: {forbidden}"
         );
     }
 }
@@ -98,10 +204,90 @@ fn spec_docs_exist() {
         "docs/spec/completion_report.md",
         "docs/spec/compiled_image_layout.md",
         "docs/spec/policy_boundary.md",
+        "docs/spec/policy-semantics.md",
         "docs/spec/downstream_readiness.md",
     ] {
         let full = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(required);
         assert!(full.exists(), "spec doc must exist: {}", full.display());
+    }
+}
+
+#[test]
+fn readme_wire_control_example_uses_reserved_control_label_band() {
+    let readme = read("README.md");
+
+    for required in [
+        "const LABEL: u8 = 124;",
+        "const TAP_ID: u16 = 0x0300 + 124;",
+        "CapShot::Many",
+    ] {
+        assert!(
+            readme.contains(required),
+            "README explicit wire-control example must stay in the descriptor label contract: {required}"
+        );
+    }
+
+    for forbidden in ["const LABEL: u8 = 90;", "0x0300 + 90"] {
+        assert!(
+            !readme.contains(forbidden),
+            "README explicit wire-control example must not use rejected labels: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn policy_semantics_doc_stays_on_current_core_boundary() {
+    let policy = read("docs/spec/policy-semantics.md");
+
+    for required in [
+        "`hibana` core owns the policy input boundary and fail-closed reduction only",
+        "Bytecode verification, VM execution, and management load semantics are outside",
+        "`src/transport/context.rs`",
+        "`src/policy_runtime.rs`",
+        "`src/endpoint/kernel/core.rs`",
+    ] {
+        assert!(
+            policy.contains(required),
+            "policy semantics doc must describe the current core boundary: {required}"
+        );
+    }
+
+    for forbidden in [
+        "src/epf.rs",
+        "src/epf/",
+        "src/runtime/mgmt.rs",
+        "load_commit",
+        "transport/forward.rs",
+    ] {
+        assert!(
+            !policy.contains(forbidden),
+            "policy semantics doc must not point at removed core owners: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn downstream_readiness_tracks_rev_lane_contract() {
+    let readiness = read("docs/spec/downstream_readiness.md");
+
+    for required in [
+        "immutable `git` + `rev` dependencies",
+        "local worktree overlays stay smoke-only",
+    ] {
+        assert!(
+            readiness.contains(required),
+            "downstream readiness must freeze the immutable revision lane: {required}"
+        );
+    }
+
+    for forbidden in [
+        "explicit local path dependencies",
+        "floating branches, git overlays",
+    ] {
+        assert!(
+            !readiness.contains(forbidden),
+            "downstream readiness must not revive the old local-path contract: {forbidden}"
+        );
     }
 }
 
@@ -120,7 +306,7 @@ fn completion_policy_spells_banned_regressions() {
     let policy = read("docs/spec/completion_policy.md");
 
     for required in [
-        "no compatibility layer",
+        "no second public surface",
         "no dual public receive/decode trait story",
         "no raw-pointer frozen image owners",
         "no wrapper-future regressions in localside hot paths",

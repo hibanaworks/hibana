@@ -4,15 +4,11 @@
 //! Crate-private lowering facts stay behind this module and the compiled layer.
 
 use super::compiled::lowering::{ProgramStamp, RoleLoweringCounts};
-use super::{
-    program::{BuildProgramSource, Program},
-    steps::ProjectRole,
-};
+use super::program::{BuildProgramSource, Program};
 use crate::control::cap::mint::CapShot;
 use crate::{
     eff::EffIndex,
     global::const_dsl::{CompactScopeId, ScopeId},
-    global::{KnownRole, Role},
 };
 
 pub(crate) use core::primitive::usize as LaneWord;
@@ -662,9 +658,9 @@ pub(crate) const fn lowering_input<const ROLE: u8>(
 #[allow(private_bounds)]
 pub const fn project<const ROLE: u8, Steps>(program: &Program<Steps>) -> RoleProgram<ROLE>
 where
-    Role<ROLE>: KnownRole,
-    Steps: BuildProgramSource + ProjectRole<Role<ROLE>>,
+    Steps: BuildProgramSource,
 {
+    crate::global::validate_role_index(ROLE);
     RoleProgram::new(program.summary(), program.stamp())
 }
 

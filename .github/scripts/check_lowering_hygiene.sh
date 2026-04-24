@@ -57,6 +57,11 @@ check_absent \
   src
 
 check_absent \
+  "\\bEffList\\b" \
+  "runtime/control layer mentions raw EffList instead of compiled facts" \
+  src/control src/endpoint src/rendezvous src/binding.rs src/transport.rs
+
+check_absent \
   "pub[[:space:]]+const[[:space:]]+fn[[:space:]]+eff_list\\(" \
   "RoleProgram public eff_list accessor reintroduced" \
   src/global/role_program.rs

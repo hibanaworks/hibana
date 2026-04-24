@@ -9,12 +9,12 @@ use core::marker::PhantomData;
 use crate::global::compiled::lowering::{LoweringSummary, ProgramStamp, validate_all_roles};
 use crate::global::const_dsl::{EffList, PolicyMode, ScopeId};
 use crate::global::steps::{
-    LocalAction, LocalRecv, LocalSend, ParSteps, PolicyEligible, PolicySteps, RoleEq, RouteSteps,
-    SendStep, SeqSteps, StepCons, StepNil,
+    LocalAction, LocalRecv, LocalSend, ParSteps, PolicyEligible, PolicySteps, RouteSteps, SendStep,
+    SeqSteps, StepCons, StepNil,
 };
 use crate::global::{
-    DistinctRouteLabel, LoopControlMeaning, NonEmptyParallelArm, RouteArmHead, RouteArmLoopHead,
-    SameRouteControllerRole, TailLoopControl,
+    LoopControlMeaning, NonEmptyParallelArm, RouteArmHead, RouteArmLoopHead,
+    SameRouteControllerRole, TailLoopControl, assert_distinct_route_labels,
 };
 
 #[derive(Clone, Copy)]
@@ -176,7 +176,7 @@ impl BuildProgramSource for StepNil {
 impl<From, To, Msg, const LANE: u8, Tail> BuildProgramSource
     for StepCons<SendStep<From, To, Msg, LANE>, Tail>
 where
-    From: crate::global::KnownRole + crate::global::RoleMarker + RoleEq<To>,
+    From: crate::global::KnownRole + crate::global::RoleMarker,
     To: crate::global::KnownRole + crate::global::RoleMarker,
     Msg: crate::global::MessageSpec
         + crate::global::SendableLabel
@@ -228,16 +228,19 @@ where
     Right: BuildProgramSource + RouteArmHead + RouteArmLoopHead + TailLoopControl,
     <Left as RouteArmHead>::Controller:
         SameRouteControllerRole<<Right as RouteArmHead>::Controller>,
-    <Left as RouteArmHead>::Label: DistinctRouteLabel<<Right as RouteArmHead>::Label>,
 {
-    const SOURCE: ProgramSourceData = <Left as BuildProgramSource>::SOURCE.route_with_controller(
-        <Right as BuildProgramSource>::SOURCE,
-        <<Left as RouteArmHead>::Controller as crate::global::RoleMarker>::INDEX,
-        is_binary_loop_route(
-            <Left as RouteArmLoopHead>::LOOP_MEANING,
-            <Right as RouteArmLoopHead>::LOOP_MEANING,
-        ),
-    );
+    const SOURCE: ProgramSourceData = {
+        assert_distinct_route_labels::<<Left as RouteArmHead>::Label, <Right as RouteArmHead>::Label>(
+        );
+        <Left as BuildProgramSource>::SOURCE.route_with_controller(
+            <Right as BuildProgramSource>::SOURCE,
+            <<Left as RouteArmHead>::Controller as crate::global::RoleMarker>::INDEX,
+            is_binary_loop_route(
+                <Left as RouteArmLoopHead>::LOOP_MEANING,
+                <Right as RouteArmLoopHead>::LOOP_MEANING,
+            ),
+        )
+    };
 }
 
 impl<Left, Right> BuildProgramSource for ParSteps<Left, Right>
@@ -347,8 +350,11 @@ where
     RightSteps: RouteArmHead + TailLoopControl,
     <LeftSteps as RouteArmHead>::Controller:
         SameRouteControllerRole<<RightSteps as RouteArmHead>::Controller>,
-    <LeftSteps as RouteArmHead>::Label: DistinctRouteLabel<<RightSteps as RouteArmHead>::Label>,
 {
+    assert_distinct_route_labels::<
+        <LeftSteps as RouteArmHead>::Label,
+        <RightSteps as RouteArmHead>::Label,
+    >();
     let _ = (left, right);
     Program::new()
 }

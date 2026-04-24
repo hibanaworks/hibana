@@ -37,6 +37,24 @@ check_absent \
   src
 
 check_absent \
+  "PUBLIC_ATTACH_TAIL_FLOOR|IMAGE_BANK_EXPANSION_TAIL_FLOOR|PUBLIC_ENDPOINT_ATTACH_TAIL_FLOOR" \
+  "public endpoint storage must be sized from compiled role footprints, not runtime tail-floor heuristics" \
+  src/rendezvous/core.rs
+
+check_absent \
+  "MAX_EFF_NODES" \
+  "rendezvous public-path layout must not reserve endpoint storage from global effect-node ceilings" \
+  src/rendezvous/core.rs
+
+check_absent \
+  "LabelEq|DistinctRouteLabel|mod label_eq|label_eq\\.rs" \
+  "route duplicate-label checking must not regress to the checked-in label-equality impl matrix" \
+  src/global.rs \
+  src/global \
+  tests \
+  --glob '!tests/ui/g-typed-route-duplicate-label.stderr'
+
+check_absent \
   "phases: \\*const Phase" \
   "legacy compiled role phase-array image reintroduced" \
   src/global/compiled/images/role.rs

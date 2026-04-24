@@ -32,7 +32,7 @@ impl ResourceKind for AbortControl {
 impl ControlResourceKind for AbortControl {
     const LABEL: u8 = LABEL_ABORT_CONTROL;
     const SCOPE: ControlScopeKind = ControlScopeKind::Abort;
-    const TAP_ID: u16 = crate::observe::ids::CANCEL_BEGIN;
+    const TAP_ID: u16 = crate::observe::ids::ABORT_BEGIN;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::AbortBegin;

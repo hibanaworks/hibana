@@ -24,7 +24,7 @@ fi
 
 # Core must not remain the public owner for management/policy lifecycle kinds.
 if rg -n \
-  "pub struct (PolicyLoadKind|PolicyActivateKind|PolicyRevertKind|PolicyAnnotateKind|LoadBeginKind|LoadCommitKind)" \
+  "pub struct (PolicyLoadKind|PolicyActivateKind|PolicyRevertKind|PolicyRestoreKind|PolicyAnnotateKind|LoadBeginKind|LoadCommitKind)" \
   src/control/cap/resource_kinds.rs; then
   echo "mgmt boundary violation: lifecycle control kinds must stay internal-only in core" >&2
   exit 1

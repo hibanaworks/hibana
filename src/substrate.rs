@@ -204,6 +204,7 @@ pub mod cap {
     pub use crate::control::cap::mint::{
         CapShot, ControlResourceKind, GenericCapToken, ResourceKind,
     };
+    pub use crate::control::cap::typed_tokens::CapRegisteredToken;
     pub use crate::control::types::{Many, One};
 }
 

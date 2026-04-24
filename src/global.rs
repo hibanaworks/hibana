@@ -57,11 +57,15 @@ pub(crate) trait FragmentShape {
 )]
 pub(crate) trait SameRouteControllerRole<Other> {}
 
-#[diagnostic::on_unimplemented(
-    message = "`g::route(left, right)` arms must use distinct labels",
-    label = "route arms reuse the same label"
-)]
-pub(crate) trait DistinctRouteLabel<Other> {}
+pub(crate) const fn assert_distinct_route_labels<Left, Right>()
+where
+    Left: LabelTag,
+    Right: LabelTag,
+{
+    if Left::VALUE == Right::VALUE {
+        panic!("route arms reuse the same label");
+    }
+}
 
 #[diagnostic::on_unimplemented(
     message = "`g::par(left, right)` arms must be non-empty protocol fragments",
@@ -74,6 +78,8 @@ pub(crate) trait NonEmptyParallelArm {
 // -----------------------------------------------------------------------------
 // Roles
 // -----------------------------------------------------------------------------
+
+pub(crate) const ROLE_DOMAIN_SIZE: usize = 16;
 
 /// Compile-time role marker (0 ≤ IDX < 16).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -208,6 +214,12 @@ pub trait SendableLabel {
     fn assert_sendable();
 }
 
+pub(crate) const fn validate_role_index(role: u8) {
+    if role >= ROLE_DOMAIN_SIZE as u8 {
+        panic!("role index must be < 16");
+    }
+}
+
 pub(crate) const fn validate_sendable_message<M>()
 where
     M: MessageSpec + MessageControlSpec,
@@ -234,20 +246,6 @@ where
         crate::global::validate_sendable_message::<Self>();
     }
 }
-
-trait LabelEq<Other> {
-    type Output: steps::Bool;
-}
-
-#[diagnostic::on_unimplemented(
-    message = "`g::route(left, right)` arms must use distinct labels",
-    label = "route arms reuse the same label"
-)]
-trait RequireFalse {}
-
-impl RequireFalse for steps::False {}
-
-mod label_eq;
 
 #[diagnostic::do_not_recommend]
 impl<RouteController, const LABEL: u8, Payload, Control, const LANE: u8, Tail> RouteArmHead
@@ -358,15 +356,6 @@ where
 
 #[diagnostic::do_not_recommend]
 impl<Controller> SameRouteControllerRole<Controller> for Controller where Controller: RoleMarker {}
-
-#[diagnostic::do_not_recommend]
-impl<Left, Right> DistinctRouteLabel<Right> for Left
-where
-    Left: LabelTag + LabelEq<Right>,
-    Right: LabelTag,
-    <Left as LabelEq<Right>>::Output: RequireFalse,
-{
-}
 
 #[diagnostic::do_not_recommend]
 impl<Head, Tail> NonEmptyParallelArm for StepCons<Head, Tail>
@@ -878,6 +867,32 @@ where
     }
 }
 
+const fn validate_control_descriptor_contract(spec: StaticControlDesc) {
+    match spec.op() {
+        crate::control::cap::mint::ControlOp::CapDelegate => {
+            panic!("cap-delegate control messages require the lower-layer endpoint token path");
+        }
+        crate::control::cap::mint::ControlOp::RouteDecision => {
+            if !matches!(spec.scope_kind(), const_dsl::ControlScopeKind::Route) {
+                panic!("route-decision control messages require route scope");
+            }
+            if !matches!(spec.path(), crate::control::cap::mint::ControlPath::Local) {
+                panic!("route-decision control messages require local path");
+            }
+        }
+        crate::control::cap::mint::ControlOp::LoopContinue
+        | crate::control::cap::mint::ControlOp::LoopBreak => {
+            if !matches!(spec.scope_kind(), const_dsl::ControlScopeKind::Loop) {
+                panic!("loop control messages require loop scope");
+            }
+            if !matches!(spec.path(), crate::control::cap::mint::ControlPath::Local) {
+                panic!("loop control messages require local path");
+            }
+        }
+        _ => {}
+    }
+}
+
 impl<L, P> MessageControlSpec for Message<L, P, ()>
 where
     L: LabelTag,
@@ -895,7 +910,9 @@ where
     const IS_CONTROL: bool = true;
     const CONTROL: Option<StaticControlDesc> = {
         validate_control_label_contract::<LABEL, K>();
-        Some(StaticControlDesc::of::<K>())
+        let spec = StaticControlDesc::of::<K>();
+        validate_control_descriptor_contract(spec);
+        Some(spec)
     };
 }
 
@@ -923,14 +940,21 @@ where
 pub const fn send<From, To, M, const LANE: u8>()
 -> Program<StepCons<SendStep<From, To, M, LANE>, StepNil>>
 where
-    From: KnownRole + RoleMarker + steps::RoleEq<To>,
+    From: KnownRole + RoleMarker,
     To: KnownRole + RoleMarker,
     M: MessageSpec + SendableLabel + MessageControlSpec,
 {
     const {
+        let from = <From as KnownRole>::INDEX;
+        let to = <To as KnownRole>::INDEX;
+        crate::global::validate_role_index(from);
+        crate::global::validate_role_index(to);
+
         crate::global::validate_sendable_message::<M>();
-        if <M as MessageControlSpec>::IS_CONTROL {
-            let is_self_send = <<From as steps::RoleEq<To>>::Output as steps::Bool>::VALUE;
+        let is_control = <M as MessageControlSpec>::IS_CONTROL;
+
+        if is_control {
+            let is_self_send = from == to;
             let path = match <M as MessageControlSpec>::CONTROL {
                 Some(desc) => desc.path(),
                 None => panic!("control message missing descriptor"),
@@ -971,7 +995,6 @@ where
     RightSteps: RouteArmHead + TailLoopControl,
     <LeftSteps as RouteArmHead>::Controller:
         SameRouteControllerRole<<RightSteps as RouteArmHead>::Controller>,
-    <LeftSteps as RouteArmHead>::Label: DistinctRouteLabel<<RightSteps as RouteArmHead>::Label>,
 {
     program::route_binary(left, right)
 }

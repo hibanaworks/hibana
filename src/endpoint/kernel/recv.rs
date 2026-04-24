@@ -278,7 +278,7 @@ where
         erased: RecvDesc,
     ) -> RecvResult<Payload<'r>> {
         let meta = desc.meta;
-        let policy_action = self.eval_endpoint_policy(
+        self.emit_endpoint_policy_audit(
             PolicySlot::EndpointRx,
             ids::ENDPOINT_RECV,
             desc.sid_raw,
@@ -289,11 +289,6 @@ where
             ),
             crate::control::types::Lane::new(meta.lane as u32),
         );
-        self.apply_recv_policy(
-            policy_action,
-            meta.scope,
-            crate::control::types::Lane::new(meta.lane as u32),
-        )?;
 
         let logical_meta = TapFrameMeta::new(
             desc.sid_raw,

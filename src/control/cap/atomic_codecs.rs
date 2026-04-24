@@ -1,6 +1,4 @@
-use crate::control::cap::ControlHandle;
 use crate::control::cap::mint::{CAP_HANDLE_LEN, CapError};
-use crate::control::types::RendezvousId;
 #[cfg(test)]
 use crate::control::types::{Lane, SessionId};
 
@@ -104,34 +102,6 @@ impl DelegationHandle {
         buf[16..20].copy_from_slice(&self.shard.to_be_bytes());
         buf[20..22].copy_from_slice(&self.flags.to_be_bytes());
         buf
-    }
-
-    #[cfg(test)]
-    pub(crate) fn decode(data: [u8; CAP_HANDLE_LEN]) -> Result<Self, CapError> {
-        Ok(Self {
-            src_rv: u16::from_be_bytes([data[0], data[1]]),
-            dst_rv: u16::from_be_bytes([data[2], data[3]]),
-            src_lane: u16::from_be_bytes([data[4], data[5]]),
-            dst_lane: u16::from_be_bytes([data[6], data[7]]),
-            seq_tx: u32::from_be_bytes([data[8], data[9], data[10], data[11]]),
-            seq_rx: u32::from_be_bytes([data[12], data[13], data[14], data[15]]),
-            shard: u32::from_be_bytes([data[16], data[17], data[18], data[19]]),
-            flags: u16::from_be_bytes([data[20], data[21]]),
-        })
-    }
-}
-
-impl ControlHandle for TopologyHandle {
-    fn visit_delegation_links(&self, f: &mut dyn FnMut(RendezvousId)) {
-        f(RendezvousId::new(self.src_rv));
-        f(RendezvousId::new(self.dst_rv));
-    }
-}
-
-impl ControlHandle for DelegationHandle {
-    fn visit_delegation_links(&self, f: &mut dyn FnMut(RendezvousId)) {
-        f(RendezvousId::new(self.src_rv));
-        f(RendezvousId::new(self.dst_rv));
     }
 }
 

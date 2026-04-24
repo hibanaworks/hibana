@@ -308,8 +308,6 @@ pub const CAP_TAG_LEN: usize = 16;
 /// - scope_id: 2
 /// - epoch: 2
 pub const CAP_CONTROL_HEADER_FIXED_LEN: usize = 18;
-/// Compatibility alias for the fixed header prefix size.
-pub const CAP_FIXED_HEADER_LEN: usize = CAP_CONTROL_HEADER_FIXED_LEN;
 /// Number of bytes available for resource-specific handle encoding.
 pub const CAP_HANDLE_LEN: usize = CAP_HEADER_LEN - CAP_CONTROL_HEADER_FIXED_LEN;
 /// Total length of a capability token on the wire.
@@ -331,7 +329,7 @@ use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 /// bytes are entirely owned by the resource kind for encoding operands.
 pub trait ResourceKind {
     /// Handle associated with this capability.
-    type Handle: super::ControlHandle;
+    type Handle;
 
     /// Capability tag (0-255). `0` is reserved for endpoint capabilities.
     const TAG: u8;
@@ -399,10 +397,6 @@ impl EndpointHandle {
             role: 0,
         }
     }
-}
-
-impl super::ControlHandle for EndpointHandle {
-    fn visit_delegation_links(&self, _f: &mut dyn FnMut(crate::control::types::RendezvousId)) {}
 }
 
 /// Marker for endpoint capabilities (kept internal to hibana).
@@ -691,6 +685,8 @@ pub struct CapHeader {
 }
 
 impl CapHeader {
+    const KNOWN_FLAGS_MASK: u8 = 0b0000_0001;
+
     #[inline]
     pub const fn new(
         sid: SessionId,
@@ -752,6 +748,9 @@ impl CapHeader {
         let path = ControlPath::from_u8(raw[10]).ok_or(CapError::Mismatch)?;
         let shot = CapShot::from_u8(raw[11]).ok_or(CapError::Mismatch)?;
         let scope_kind = ControlScopeKind::from_u8(raw[12]).ok_or(CapError::Mismatch)?;
+        if raw[13] & !Self::KNOWN_FLAGS_MASK != 0 {
+            return Err(CapError::Mismatch);
+        }
         let mut handle = [0u8; CAP_HEADER_LEN - CAP_CONTROL_HEADER_FIXED_LEN];
         handle.copy_from_slice(&raw[18..]);
         Ok(Self {
@@ -836,6 +835,41 @@ impl CapHeader {
     pub const fn handle(&self) -> &[u8; CAP_HEADER_LEN - CAP_CONTROL_HEADER_FIXED_LEN] {
         &self.handle
     }
+}
+
+#[inline]
+pub(crate) const fn is_canonical_endpoint_header(header: CapHeader) -> bool {
+    header.tag() == EndpointResource::TAG
+        && header.label() == 0
+        && matches!(header.op(), ControlOp::Fence)
+        && matches!(header.path(), ControlPath::Local)
+        && matches!(header.shot(), CapShot::One)
+        && matches!(header.scope_kind(), ControlScopeKind::None)
+        && header.flags() == 0
+        && header.scope_id() == 0
+        && header.epoch() == 0
+}
+
+#[inline]
+fn decode_canonical_endpoint_identity(
+    token: &GenericCapToken<EndpointResource>,
+) -> Result<(CapHeader, EndpointHandle), CapError> {
+    let header = token.control_header()?;
+    if !is_canonical_endpoint_header(header) {
+        return Err(CapError::Mismatch);
+    }
+
+    let mut handle =
+        EndpointResource::decode_handle(token.handle_bytes()).map_err(|_| CapError::Mismatch)?;
+    let matches_header =
+        handle.sid == header.sid() && handle.lane == header.lane() && handle.role == header.role();
+    let matches_encoding = EndpointResource::encode_handle(&handle) == token.handle_bytes();
+    if !matches_header || !matches_encoding {
+        EndpointResource::zeroize(&mut handle);
+        return Err(CapError::Mismatch);
+    }
+
+    Ok((header, handle))
 }
 
 #[inline]
@@ -1000,7 +1034,7 @@ impl<K: ResourceKind> GenericCapToken<K> {
         nonce
     }
 
-    pub fn header(&self) -> [u8; CAP_HEADER_LEN] {
+    fn raw_header(&self) -> [u8; CAP_HEADER_LEN] {
         let mut header = [0u8; CAP_HEADER_LEN];
         header.copy_from_slice(self.header_slice());
         header
@@ -1017,7 +1051,7 @@ impl<K: ResourceKind> GenericCapToken<K> {
 
     #[inline]
     pub fn control_header(&self) -> Result<CapHeader, CapError> {
-        CapHeader::decode(self.header())
+        CapHeader::decode(self.raw_header())
     }
 
     pub fn shot(&self) -> Result<CapShot, CapError> {
@@ -1029,44 +1063,13 @@ impl<K: ResourceKind> GenericCapToken<K> {
         self.as_view().ok().and_then(|view| view.scope())
     }
 
-    /// Read the raw resource tag byte from the embedded header.
-    ///
-    /// This accessor does not validate the control-header enum fields. Call
-    /// [`GenericCapToken::control_header`] when the caller needs a fully
-    /// validated descriptor.
-    pub fn resource_tag(&self) -> u8 {
-        self.header_slice()[7]
-    }
-
-    /// Read the raw session id encoded in the embedded header.
-    ///
-    /// This accessor preserves the original wire bytes even when
-    /// [`GenericCapToken::control_header`] rejects the token.
-    pub fn sid(&self) -> SessionId {
-        let header = self.header_slice();
-        SessionId::new(u32::from_be_bytes([
-            header[1], header[2], header[3], header[4],
-        ]))
-    }
-
-    /// Read the raw lane byte encoded in the embedded header.
-    ///
-    /// This accessor preserves the original wire bytes even when
-    /// [`GenericCapToken::control_header`] rejects the token.
-    pub fn lane(&self) -> Lane {
-        Lane::new(u32::from(self.header_slice()[5]))
-    }
-
-    /// Read the raw role byte encoded in the embedded header.
-    ///
-    /// This accessor preserves the original wire bytes even when
-    /// [`GenericCapToken::control_header`] rejects the token.
-    pub fn role(&self) -> u8 {
-        self.header_slice()[6]
-    }
-
     pub fn handle_bytes(&self) -> [u8; CAP_HANDLE_LEN] {
         *self.handle_bytes_ref()
+    }
+
+    #[inline]
+    pub(crate) fn is_auto(&self) -> bool {
+        self.bytes == [0u8; CAP_TOKEN_LEN]
     }
 
     /// Get a reference to the handle bytes within the token.
@@ -1075,7 +1078,8 @@ impl<K: ResourceKind> GenericCapToken<K> {
     /// to the handle payload embedded in the token header.
     #[inline(always)]
     pub fn handle_bytes_ref(&self) -> &[u8; CAP_HANDLE_LEN] {
-        self.header_slice()[CAP_FIXED_HEADER_LEN..CAP_FIXED_HEADER_LEN + CAP_HANDLE_LEN]
+        self.header_slice()
+            [CAP_CONTROL_HEADER_FIXED_LEN..CAP_CONTROL_HEADER_FIXED_LEN + CAP_HANDLE_LEN]
             .try_into()
             .expect("CAP_HANDLE_LEN is compile-time constant")
     }
@@ -1109,6 +1113,21 @@ impl<K: ResourceKind> GenericCapToken<K> {
     pub fn as_view(&self) -> Result<HandleView<'_, K>, CapError> {
         let header = self.control_header()?;
         HandleView::decode(self.handle_bytes_ref(), scope_hint_from_header(header))
+    }
+}
+
+impl GenericCapToken<EndpointResource> {
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn endpoint_header(&self) -> Result<CapHeader, CapError> {
+        let (header, mut handle) = decode_canonical_endpoint_identity(self)?;
+        EndpointResource::zeroize(&mut handle);
+        Ok(header)
+    }
+
+    #[inline]
+    pub(crate) fn endpoint_identity(&self) -> Result<EndpointHandle, CapError> {
+        decode_canonical_endpoint_identity(self).map(|(_, handle)| handle)
     }
 }
 
@@ -1245,6 +1264,40 @@ mod tests {
         },
         global::const_dsl::ScopeId,
     };
+
+    fn endpoint_header_fixture() -> [u8; super::CAP_HEADER_LEN] {
+        let handle = EndpointHandle::new(SessionId::new(7), Lane::new(3), 1);
+        let mut header = [0u8; super::CAP_HEADER_LEN];
+        CapHeader::new(
+            handle.sid,
+            handle.lane,
+            handle.role,
+            EndpointResource::TAG,
+            0,
+            ControlOp::Fence,
+            ControlPath::Local,
+            CapShot::One,
+            ControlScopeKind::None,
+            0,
+            0,
+            0,
+            EndpointResource::encode_handle(&handle),
+        )
+        .encode(&mut header);
+        header
+    }
+
+    fn endpoint_token_with_mutated_header(
+        mutate: fn(&mut [u8; super::CAP_HEADER_LEN]),
+    ) -> GenericCapToken<EndpointResource> {
+        let mut header = endpoint_header_fixture();
+        mutate(&mut header);
+        GenericCapToken::<EndpointResource>::from_parts(
+            [0u8; super::CAP_NONCE_LEN],
+            header,
+            [0u8; super::CAP_TAG_LEN],
+        )
+    }
 
     #[test]
     fn owner_binds_rendezvous_brand() {
@@ -1390,7 +1443,38 @@ mod tests {
     }
 
     #[test]
-    fn malformed_generic_cap_token_preserves_raw_header_fields() {
+    fn cap_header_decode_rejects_reserved_flags() {
+        let mut raw = [0u8; super::CAP_HEADER_LEN];
+        CapHeader::new(
+            SessionId::new(7),
+            Lane::new(3),
+            1,
+            LoopContinueKind::TAG,
+            LoopContinueKind::LABEL,
+            LoopContinueKind::OP,
+            LoopContinueKind::PATH,
+            CapShot::One,
+            LoopContinueKind::SCOPE,
+            0,
+            1,
+            2,
+            LoopContinueKind::encode_handle(&LoopDecisionHandle {
+                sid: 7,
+                lane: 3,
+                scope: ScopeId::loop_scope(1),
+            }),
+        )
+        .encode(&mut raw);
+        raw[13] = 0x80;
+
+        assert!(
+            matches!(CapHeader::decode(raw), Err(super::CapError::Mismatch)),
+            "reserved control header flags must fail closed",
+        );
+    }
+
+    #[test]
+    fn malformed_generic_cap_token_preserves_raw_header_bytes() {
         let handle = LoopDecisionHandle {
             sid: 7,
             lane: 3,
@@ -1422,10 +1506,7 @@ mod tests {
         );
 
         assert!(matches!(token.control_header(), Err(CapError::Mismatch)));
-        assert_eq!(token.resource_tag(), LoopContinueKind::TAG);
-        assert_eq!(token.sid(), SessionId::new(handle.sid));
-        assert_eq!(token.lane(), Lane::new(handle.lane as u32));
-        assert_eq!(token.role(), 5);
+        assert_eq!(token.raw_header(), header);
     }
 
     #[test]
@@ -1458,6 +1539,131 @@ mod tests {
 
         assert!(matches!(token.control_header(), Err(CapError::Mismatch)));
         assert!(matches!(token.decode_handle(), Err(CapError::Mismatch)));
+    }
+
+    #[test]
+    fn endpoint_header_rejects_noncanonical_decodable_fields() {
+        fn mutate_tag(header: &mut [u8; super::CAP_HEADER_LEN]) {
+            header[7] = LoopContinueKind::TAG;
+        }
+
+        fn mutate_label(header: &mut [u8; super::CAP_HEADER_LEN]) {
+            header[8] = 1;
+        }
+
+        fn mutate_op(header: &mut [u8; super::CAP_HEADER_LEN]) {
+            header[9] = ControlOp::TopologyBegin.as_u8();
+        }
+
+        fn mutate_path(header: &mut [u8; super::CAP_HEADER_LEN]) {
+            header[10] = ControlPath::Wire.as_u8();
+        }
+
+        fn mutate_shot(header: &mut [u8; super::CAP_HEADER_LEN]) {
+            header[11] = CapShot::Many.as_u8();
+        }
+
+        fn mutate_scope_kind(header: &mut [u8; super::CAP_HEADER_LEN]) {
+            header[12] = ControlScopeKind::Route as u8;
+        }
+
+        fn mutate_flags(header: &mut [u8; super::CAP_HEADER_LEN]) {
+            header[13] = 0x01;
+        }
+
+        fn mutate_scope_id(header: &mut [u8; super::CAP_HEADER_LEN]) {
+            header[14..16].copy_from_slice(&1u16.to_be_bytes());
+        }
+
+        fn mutate_epoch(header: &mut [u8; super::CAP_HEADER_LEN]) {
+            header[16..18].copy_from_slice(&1u16.to_be_bytes());
+        }
+
+        let cases: &[(&str, fn(&mut [u8; super::CAP_HEADER_LEN]))] = &[
+            ("tag", mutate_tag),
+            ("label", mutate_label),
+            ("op", mutate_op),
+            ("path", mutate_path),
+            ("shot", mutate_shot),
+            ("scope_kind", mutate_scope_kind),
+            ("flags", mutate_flags),
+            ("scope_id", mutate_scope_id),
+            ("epoch", mutate_epoch),
+        ];
+
+        for (name, mutate) in cases {
+            let token = endpoint_token_with_mutated_header(*mutate);
+            assert!(
+                token.control_header().is_ok(),
+                "{name} mutation must stay within decodable header space",
+            );
+            assert!(
+                matches!(token.endpoint_header(), Err(CapError::Mismatch)),
+                "{name} mutation must be rejected by endpoint canonical validation",
+            );
+        }
+    }
+
+    #[test]
+    fn endpoint_identity_rejects_decodable_handle_payload_mismatches() {
+        fn endpoint_token_with_mutated_handle(
+            mutate: fn(&mut [u8; super::CAP_HANDLE_LEN]),
+        ) -> GenericCapToken<EndpointResource> {
+            let mut header = endpoint_header_fixture();
+            let handle = &mut header[super::CAP_CONTROL_HEADER_FIXED_LEN
+                ..super::CAP_CONTROL_HEADER_FIXED_LEN + super::CAP_HANDLE_LEN];
+            let handle: &mut [u8; super::CAP_HANDLE_LEN] =
+                handle.try_into().expect("endpoint handle payload must fit");
+            mutate(handle);
+            GenericCapToken::<EndpointResource>::from_parts(
+                [0u8; super::CAP_NONCE_LEN],
+                header,
+                [0u8; super::CAP_TAG_LEN],
+            )
+        }
+
+        fn mutate_sid(handle: &mut [u8; super::CAP_HANDLE_LEN]) {
+            handle[0] ^= 0x01;
+        }
+
+        fn mutate_lane(handle: &mut [u8; super::CAP_HANDLE_LEN]) {
+            handle[4] ^= 0x01;
+        }
+
+        fn mutate_role(handle: &mut [u8; super::CAP_HANDLE_LEN]) {
+            handle[5] ^= 0x01;
+        }
+
+        fn mutate_trailing_padding(handle: &mut [u8; super::CAP_HANDLE_LEN]) {
+            handle[6] = 0x7F;
+        }
+
+        let cases: &[(&str, fn(&mut [u8; super::CAP_HANDLE_LEN]))] = &[
+            ("sid", mutate_sid),
+            ("lane", mutate_lane),
+            ("role", mutate_role),
+            ("trailing_padding", mutate_trailing_padding),
+        ];
+
+        for (name, mutate) in cases {
+            let token = endpoint_token_with_mutated_handle(*mutate);
+            assert!(
+                token.control_header().is_ok(),
+                "{name} mutation must preserve fixed header decoding",
+            );
+            assert!(
+                token.decode_handle().is_ok(),
+                "{name} mutation must stay in decodable handle space",
+            );
+            assert!(
+                matches!(token.endpoint_header(), Err(CapError::Mismatch)),
+                "{name} mutation must be rejected by endpoint header canonical validation",
+            );
+            assert!(
+                matches!(token.endpoint_identity(), Err(CapError::Mismatch)),
+                "{name} mutation must be rejected by endpoint identity validation",
+            );
+        }
     }
 
     #[cfg(feature = "std")]

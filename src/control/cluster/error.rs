@@ -24,24 +24,28 @@ impl From<crate::rendezvous::error::RendezvousError> for AttachError {
 
 /// Unified control-plane error type.
 ///
-/// All control-plane operations (splice, delegation, cancellation, checkpoint, etc.)
-/// return errors of this type, enabling uniform error handling and tap integration.
+/// All control-plane operations (topology, delegation, abort, state snapshot,
+/// state restore, and transaction commit) return errors of this type, enabling
+/// uniform error handling and tap integration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CpError {
-    /// Splice-related errors
-    Splice(SpliceError),
+    /// Topology-related errors.
+    Topology(TopologyError),
 
-    /// Cancellation-related errors
-    Cancel(CancelError),
+    /// Abort-related errors.
+    Abort(AbortError),
 
-    /// Checkpoint-related errors
-    Checkpoint(CheckpointError),
+    /// State snapshot-related errors.
+    StateSnapshot(StateSnapshotError),
 
-    /// Rollback-related errors
-    Rollback(RollbackError),
+    /// State restore-related errors.
+    StateRestore(StateRestoreError),
 
-    /// Commit-related errors
-    Commit(CommitError),
+    /// Transaction commit-related errors.
+    TxCommit(TxCommitError),
+
+    /// Transaction abort-related errors.
+    TxAbort(TxAbortError),
 
     /// Delegation-related errors
     Delegation(DelegationError),
@@ -71,25 +75,25 @@ pub enum CpError {
     ResourceMismatch { expected: u8, actual: u8 },
 }
 
-/// Splice operation errors.
+/// Topology operation errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SpliceError {
+pub enum TopologyError {
     /// Invalid session ID
     InvalidSession,
 
     /// Invalid lane ID
     InvalidLane,
 
-    /// Session not in spliceable state
+    /// Session not in topology-transitionable state
     InvalidState,
 
     /// Generation mismatch
     GenerationMismatch,
 
-    /// Distributed splice: ACK timeout
+    /// Distributed topology transition: ACK timeout
     AckTimeout,
 
-    /// Distributed splice: commit failed
+    /// Distributed topology transition: commit failed
     CommitFailed,
 
     /// Lane out of range
@@ -98,10 +102,10 @@ pub enum SpliceError {
     /// Lane mismatch
     LaneMismatch,
 
-    /// Splice already in progress
+    /// Topology transition already in progress
     InProgress,
 
-    /// No pending splice
+    /// No pending topology transition
     NoPending,
 
     /// Stale generation
@@ -119,100 +123,109 @@ pub enum SpliceError {
     /// Sequence number mismatch
     SeqnoMismatch,
 
-    /// Pending splice table full
+    /// Pending topology table full
     PendingTableFull,
 }
 
-impl From<crate::rendezvous::error::SpliceError> for SpliceError {
-    fn from(err: crate::rendezvous::error::SpliceError) -> Self {
+impl From<crate::rendezvous::error::TopologyError> for TopologyError {
+    fn from(err: crate::rendezvous::error::TopologyError) -> Self {
         match err {
-            crate::rendezvous::error::SpliceError::LaneOutOfRange { .. } => {
-                SpliceError::LaneOutOfRange
+            crate::rendezvous::error::TopologyError::LaneOutOfRange { .. } => {
+                TopologyError::LaneOutOfRange
             }
-            crate::rendezvous::error::SpliceError::UnknownSession { .. } => {
-                SpliceError::InvalidSession
+            crate::rendezvous::error::TopologyError::UnknownSession { .. } => {
+                TopologyError::InvalidSession
             }
-            crate::rendezvous::error::SpliceError::LaneMismatch { .. } => SpliceError::LaneMismatch,
-            crate::rendezvous::error::SpliceError::InProgress { .. } => SpliceError::InProgress,
-            crate::rendezvous::error::SpliceError::NoPending { .. } => SpliceError::NoPending,
-            crate::rendezvous::error::SpliceError::StaleGeneration { .. } => {
-                SpliceError::StaleGeneration
+            crate::rendezvous::error::TopologyError::LaneMismatch { .. } => {
+                TopologyError::LaneMismatch
             }
-            crate::rendezvous::error::SpliceError::GenerationOverflow { .. } => {
-                SpliceError::GenerationOverflow
+            crate::rendezvous::error::TopologyError::InProgress { .. } => TopologyError::InProgress,
+            crate::rendezvous::error::TopologyError::NoPending { .. } => TopologyError::NoPending,
+            crate::rendezvous::error::TopologyError::StaleGeneration { .. } => {
+                TopologyError::StaleGeneration
             }
-            crate::rendezvous::error::SpliceError::InvalidInitial { .. } => {
-                SpliceError::InvalidInitial
+            crate::rendezvous::error::TopologyError::GenerationOverflow { .. } => {
+                TopologyError::GenerationOverflow
             }
-            crate::rendezvous::error::SpliceError::RemoteRendezvousMismatch { .. }
-            | crate::rendezvous::error::SpliceError::RendezvousIdMismatch { .. } => {
-                SpliceError::RendezvousIdMismatch
+            crate::rendezvous::error::TopologyError::InvalidInitial { .. } => {
+                TopologyError::InvalidInitial
             }
-            crate::rendezvous::error::SpliceError::SeqnoMismatch { .. } => {
-                SpliceError::SeqnoMismatch
+            crate::rendezvous::error::TopologyError::RemoteRendezvousMismatch { .. }
+            | crate::rendezvous::error::TopologyError::RendezvousIdMismatch { .. } => {
+                TopologyError::RendezvousIdMismatch
             }
-            crate::rendezvous::error::SpliceError::PendingTableFull => {
-                SpliceError::PendingTableFull
+            crate::rendezvous::error::TopologyError::SeqnoMismatch { .. } => {
+                TopologyError::SeqnoMismatch
+            }
+            crate::rendezvous::error::TopologyError::PendingTableFull => {
+                TopologyError::PendingTableFull
             }
         }
     }
 }
 
-/// Cancellation errors.
+/// Abort errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CancelError {
+pub enum AbortError {
     /// Session not found
     SessionNotFound,
 
     /// Generation mismatch in ACK
     GenerationMismatch,
-
-    /// Already cancelled
-    AlreadyCancelled,
 }
 
-/// Checkpoint errors.
+/// State snapshot errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CheckpointError {
+pub enum StateSnapshotError {
+    /// Session not found
+    SessionNotFound,
+}
+
+/// State restore errors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StateRestoreError {
     /// Session not found
     SessionNotFound,
 
-    /// Checkpoint table full
-    TableFull,
-
-    /// Invalid session state for checkpoint
-    InvalidState,
-}
-
-/// Rollback errors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RollbackError {
-    /// Session not found
-    SessionNotFound,
-
-    /// Epoch (generation) not found
+    /// State snapshot epoch not found
     EpochNotFound,
 
     /// Epoch mismatch (not aligned)
     EpochMismatch,
 
-    /// Cannot rollback after commit
-    AfterCommit,
+    /// State snapshot already finalized by a prior restore or commit
+    AlreadyFinalized,
 }
 
-/// Commit errors.
+/// Transaction commit errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CommitError {
+pub enum TxCommitError {
     /// Session not found
     SessionNotFound,
 
-    /// No checkpoint available to commit
-    NoCheckpoint,
+    /// No state snapshot available to commit
+    NoStateSnapshot,
 
-    /// Checkpoint already committed
-    AlreadyCommitted,
+    /// State snapshot already finalized by a prior restore or commit
+    AlreadyFinalized,
 
-    /// Provided generation does not match recorded checkpoint
+    /// Provided generation does not match the recorded state snapshot
+    GenerationMismatch,
+}
+
+/// Transaction abort errors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TxAbortError {
+    /// Session not found
+    SessionNotFound,
+
+    /// No state snapshot available to abort back to
+    NoStateSnapshot,
+
+    /// State snapshot already finalized by a prior restore, abort, or commit
+    AlreadyFinalized,
+
+    /// Provided generation does not match the recorded state snapshot
     GenerationMismatch,
 }
 
@@ -221,9 +234,6 @@ pub enum CommitError {
 pub enum DelegationError {
     /// Invalid capability token
     InvalidToken,
-
-    /// Capability already claimed
-    AlreadyClaimed,
 
     /// Capability exhausted (one-shot)
     Exhausted,
@@ -235,11 +245,12 @@ pub enum DelegationError {
 impl core::fmt::Display for CpError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Splice(e) => write!(f, "Splice error: {:?}", e),
-            Self::Cancel(e) => write!(f, "Cancel error: {:?}", e),
-            Self::Checkpoint(e) => write!(f, "Checkpoint error: {:?}", e),
-            Self::Rollback(e) => write!(f, "Rollback error: {:?}", e),
-            Self::Commit(e) => write!(f, "Commit error: {:?}", e),
+            Self::Topology(e) => write!(f, "Topology error: {:?}", e),
+            Self::Abort(e) => write!(f, "Abort error: {:?}", e),
+            Self::StateSnapshot(e) => write!(f, "StateSnapshot error: {:?}", e),
+            Self::StateRestore(e) => write!(f, "StateRestore error: {:?}", e),
+            Self::TxCommit(e) => write!(f, "TxCommit error: {:?}", e),
+            Self::TxAbort(e) => write!(f, "TxAbort error: {:?}", e),
             Self::Delegation(e) => write!(f, "Delegation error: {:?}", e),
             Self::RendezvousMismatch { expected, actual } => {
                 write!(
@@ -283,27 +294,39 @@ impl core::fmt::Display for CpError {
 impl std::error::Error for CpError {}
 
 // Conversions for ergonomic error propagation
-impl From<SpliceError> for CpError {
-    fn from(e: SpliceError) -> Self {
-        Self::Splice(e)
+impl From<TopologyError> for CpError {
+    fn from(e: TopologyError) -> Self {
+        Self::Topology(e)
     }
 }
 
-impl From<CancelError> for CpError {
-    fn from(e: CancelError) -> Self {
-        Self::Cancel(e)
+impl From<AbortError> for CpError {
+    fn from(e: AbortError) -> Self {
+        Self::Abort(e)
     }
 }
 
-impl From<CheckpointError> for CpError {
-    fn from(e: CheckpointError) -> Self {
-        Self::Checkpoint(e)
+impl From<StateSnapshotError> for CpError {
+    fn from(e: StateSnapshotError) -> Self {
+        Self::StateSnapshot(e)
     }
 }
 
-impl From<RollbackError> for CpError {
-    fn from(e: RollbackError) -> Self {
-        Self::Rollback(e)
+impl From<StateRestoreError> for CpError {
+    fn from(e: StateRestoreError) -> Self {
+        Self::StateRestore(e)
+    }
+}
+
+impl From<TxCommitError> for CpError {
+    fn from(e: TxCommitError) -> Self {
+        Self::TxCommit(e)
+    }
+}
+
+impl From<TxAbortError> for CpError {
+    fn from(e: TxAbortError) -> Self {
+        Self::TxAbort(e)
     }
 }
 
@@ -322,11 +345,11 @@ mod tests {
 
     #[test]
     fn test_error_conversions() {
-        let splice_err: CpError = SpliceError::InvalidSession.into();
-        assert!(matches!(splice_err, CpError::Splice(_)));
+        let topology_err: CpError = TopologyError::InvalidSession.into();
+        assert!(matches!(topology_err, CpError::Topology(_)));
 
-        let cancel_err: CpError = CancelError::SessionNotFound.into();
-        assert!(matches!(cancel_err, CpError::Cancel(_)));
+        let abort_err: CpError = AbortError::SessionNotFound.into();
+        assert!(matches!(abort_err, CpError::Abort(_)));
     }
 
     #[test]

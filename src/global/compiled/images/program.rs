@@ -488,10 +488,10 @@ mod tests {
             "/tests/support/abort_control.rs"
         ));
     }
-    mod delegate_control_kind {
+    mod fence_control_kind {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/support/delegate_control.rs"
+            "/tests/support/fence_control.rs"
         ));
     }
 
@@ -507,7 +507,7 @@ mod tests {
         runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE, LABEL_ROUTE_DECISION},
     };
     use abort_control_kind::{AbortControl, LABEL_ABORT_CONTROL};
-    use delegate_control_kind::{DelegateControl, LABEL_DELEGATE_CONTROL};
+    use fence_control_kind::{FenceControl, LABEL_FENCE_CONTROL};
 
     const ROUTE_POLICY_ID: u16 = 4401;
 
@@ -560,7 +560,7 @@ mod tests {
         let budget = compiled.lease_budget;
         assert!(!budget.requires_caps());
         assert!(!budget.requires_slots());
-        assert!(!budget.requires_splice());
+        assert!(!budget.requires_topology());
         assert!(!budget.requires_delegation());
 
         assert_eq!(
@@ -749,10 +749,10 @@ mod tests {
             Msg<{ LABEL_ABORT_CONTROL }, GenericCapToken<AbortControl>, AbortControl>,
             0,
         >();
-        let reroute = g::send::<
+        let fence = g::send::<
             Role<0>,
             Role<0>,
-            Msg<{ LABEL_DELEGATE_CONTROL }, GenericCapToken<DelegateControl>, DelegateControl>,
+            Msg<{ LABEL_FENCE_CONTROL }, GenericCapToken<FenceControl>, FenceControl>,
             0,
         >();
         let route = g::send::<
@@ -761,7 +761,7 @@ mod tests {
             Msg<{ LABEL_ROUTE_DECISION }, GenericCapToken<RouteDecisionKind>, RouteDecisionKind>,
             0,
         >();
-        let program = g::seq(cancel, g::seq(reroute, route));
+        let program = g::seq(cancel, g::seq(fence, route));
 
         let summary = program.summary();
         let compiled = crate::global::compiled::lowering::CompiledProgram::from_summary(&summary);

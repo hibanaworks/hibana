@@ -22,6 +22,48 @@ const MAX_SCOPE_SCRATCH: usize = crate::eff::meta::MAX_EFF_NODES;
 const LINGER_ARM_NO_NODE: u16 = u16::MAX;
 const ROUTE_PASSIVE_ARM_UNSET: u16 = u16::MAX;
 const MAX_JUMP_BACKPATCH: usize = MAX_STATES;
+const MAX_STATE_BITSET_WORDS: usize = (MAX_STATES + 63) / 64;
+const MAX_SCOPE_BITSET_WORDS: usize = (MAX_SCOPE_SCRATCH + 63) / 64;
+
+#[derive(Clone, Copy)]
+pub(super) struct FixedBitSet<const WORDS: usize> {
+    words: [u64; WORDS],
+}
+
+impl<const WORDS: usize> FixedBitSet<WORDS> {
+    const EMPTY: Self = Self { words: [0; WORDS] };
+
+    #[inline(always)]
+    fn clear_all(&mut self) {
+        let mut idx = 0usize;
+        while idx < WORDS {
+            self.words[idx] = 0;
+            idx += 1;
+        }
+    }
+
+    #[inline(always)]
+    fn get(&self, index: usize) -> bool {
+        let word = index / 64;
+        let bit = index % 64;
+        word < WORDS && (self.words[word] & (1u64 << bit)) != 0
+    }
+
+    #[inline(always)]
+    fn set(&mut self, index: usize, value: bool) {
+        let word = index / 64;
+        let bit = index % 64;
+        if word >= WORDS {
+            return;
+        }
+        let mask = 1u64 << bit;
+        if value {
+            self.words[word] |= mask;
+        } else {
+            self.words[word] &= !mask;
+        }
+    }
+}
 
 pub(crate) struct RoleTypestateBuildScratch {
     pub(super) loop_entry_ids: [ScopeId; MAX_LOOP_TRACKED],
@@ -30,7 +72,6 @@ pub(crate) struct RoleTypestateBuildScratch {
     pub(super) linger_arm_scope_ids: [ScopeId; MAX_SCOPE_SCRATCH],
     pub(super) linger_arm_current: [u8; MAX_SCOPE_SCRATCH],
     pub(super) linger_passive_arm_start: [[u16; 2]; MAX_SCOPE_SCRATCH],
-    pub(super) linger_is_passive: [bool; MAX_SCOPE_SCRATCH],
     pub(super) jump_backpatch_indices: [u16; MAX_JUMP_BACKPATCH],
     pub(super) jump_backpatch_scopes: [ScopeId; MAX_JUMP_BACKPATCH],
     pub(super) jump_backpatch_kinds: [u8; MAX_JUMP_BACKPATCH],
@@ -42,18 +83,17 @@ pub(crate) struct RoleTypestateBuildScratch {
     pub(super) scope_route_policy_tags: [u8; MAX_SCOPE_SCRATCH],
     pub(super) scope_route_policy_ids: [u16; MAX_SCOPE_SCRATCH],
     pub(super) scope_route_policy_effs: [EffIndex; MAX_SCOPE_SCRATCH],
-    pub(super) last_step_was_scope: [bool; MAX_SCOPE_SCRATCH],
+    pub(super) last_step_was_scope: FixedBitSet<MAX_SCOPE_BITSET_WORDS>,
     pub(super) route_arm_last_node: [[StateIndex; 2]; MAX_SCOPE_SCRATCH],
     pub(super) route_enter_count: [u8; MAX_SCOPE_SCRATCH],
     pub(super) route_passive_arm_start: [[u16; 2]; MAX_SCOPE_SCRATCH],
-    pub(super) route_is_passive: [bool; MAX_SCOPE_SCRATCH],
     pub(super) route_scope_entries: [RouteScopeScratchRecord; MAX_SCOPE_SCRATCH],
     pub(super) dispatch_table: [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     pub(super) prefix_actions: [[PrefixAction; MAX_PREFIX_ACTIONS]; 2],
     pub(super) prefix_lens: [usize; 2],
-    pub(super) arm_seen_recv: [bool; 2],
+    pub(super) arm_seen_recv: u8,
     pub(super) scan_stack: [StateIndex; MAX_SCOPE_SCRATCH],
-    pub(super) visited: [bool; MAX_STATES],
+    pub(super) visited: FixedBitSet<MAX_STATE_BITSET_WORDS>,
 }
 
 impl RoleTypestateBuildScratch {
@@ -75,7 +115,6 @@ impl RoleTypestateBuildScratch {
                 core::ptr::addr_of_mut!((*dst).linger_arm_current[idx]).write(0);
                 core::ptr::addr_of_mut!((*dst).linger_passive_arm_start[idx])
                     .write([LINGER_ARM_NO_NODE; 2]);
-                core::ptr::addr_of_mut!((*dst).linger_is_passive[idx]).write(false);
                 core::ptr::addr_of_mut!((*dst).scope_stack[idx]).write(ScopeId::none());
                 core::ptr::addr_of_mut!((*dst).scope_stack_kinds[idx]).write(ScopeKind::Generic);
                 core::ptr::addr_of_mut!((*dst).scope_stack_entries[idx]).write(0);
@@ -85,15 +124,14 @@ impl RoleTypestateBuildScratch {
                 core::ptr::addr_of_mut!((*dst).scope_route_policy_tags[idx]).write(0);
                 core::ptr::addr_of_mut!((*dst).scope_route_policy_ids[idx]).write(u16::MAX);
                 core::ptr::addr_of_mut!((*dst).scope_route_policy_effs[idx]).write(EffIndex::MAX);
-                core::ptr::addr_of_mut!((*dst).last_step_was_scope[idx]).write(false);
                 core::ptr::addr_of_mut!((*dst).route_arm_last_node[idx])
                     .write([StateIndex::MAX; 2]);
                 core::ptr::addr_of_mut!((*dst).route_enter_count[idx]).write(0);
                 core::ptr::addr_of_mut!((*dst).route_passive_arm_start[idx])
                     .write([ROUTE_PASSIVE_ARM_UNSET; 2]);
-                core::ptr::addr_of_mut!((*dst).route_is_passive[idx]).write(false);
                 idx += 1;
             }
+            core::ptr::addr_of_mut!((*dst).last_step_was_scope).write(FixedBitSet::EMPTY);
 
             let mut recv_idx = 0usize;
             while recv_idx < MAX_SCOPE_SCRATCH {
@@ -108,9 +146,9 @@ impl RoleTypestateBuildScratch {
                 core::ptr::addr_of_mut!((*dst).jump_backpatch_scopes[state_idx])
                     .write(ScopeId::generic(0));
                 core::ptr::addr_of_mut!((*dst).jump_backpatch_kinds[state_idx]).write(0);
-                core::ptr::addr_of_mut!((*dst).visited[state_idx]).write(false);
                 state_idx += 1;
             }
+            core::ptr::addr_of_mut!((*dst).visited).write(FixedBitSet::EMPTY);
 
             let mut dispatch_idx = 0usize;
             while dispatch_idx < MAX_FIRST_RECV_DISPATCH {
@@ -132,7 +170,7 @@ impl RoleTypestateBuildScratch {
             }
 
             core::ptr::addr_of_mut!((*dst).prefix_lens).write([0; 2]);
-            core::ptr::addr_of_mut!((*dst).arm_seen_recv).write([false; 2]);
+            core::ptr::addr_of_mut!((*dst).arm_seen_recv).write(0);
 
             let mut scan_idx = 0usize;
             while scan_idx < MAX_SCOPE_SCRATCH {
@@ -330,13 +368,19 @@ fn clear_scan_stack(scan_stack: &mut [StateIndex; eff::meta::MAX_EFF_NODES]) {
     }
 }
 
+#[inline(always)]
+fn arm_seen(mask: u8, arm_idx: usize) -> bool {
+    (mask & (1u8 << arm_idx)) != 0
+}
+
+#[inline(always)]
+fn mark_arm_seen(mask: &mut u8, arm_idx: usize) {
+    *mask |= 1u8 << arm_idx;
+}
+
 #[inline(never)]
-fn clear_visited(visited: &mut [bool; MAX_STATES]) {
-    let mut idx = 0usize;
-    while idx < MAX_STATES {
-        visited[idx] = false;
-        idx += 1;
-    }
+fn clear_visited(visited: &mut FixedBitSet<MAX_STATE_BITSET_WORDS>) {
+    visited.clear_all();
 }
 
 #[inline(always)]
@@ -442,9 +486,9 @@ struct RouteFinalizeCtx<'a> {
     dispatch_table: &'a mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     prefix_actions: &'a mut [[PrefixAction; MAX_PREFIX_ACTIONS]; 2],
     prefix_lens: &'a mut [usize; 2],
-    arm_seen_recv: &'a mut [bool; 2],
+    arm_seen_recv: &'a mut u8,
     scan_stack: &'a mut [StateIndex; eff::meta::MAX_EFF_NODES],
-    visited: &'a mut [bool; MAX_STATES],
+    visited: &'a mut FixedBitSet<MAX_STATE_BITSET_WORDS>,
 }
 
 struct RoleWalkCtx<'a> {
@@ -472,14 +516,14 @@ struct RoleWalkCtx<'a> {
     route_current_arm: &'a mut [u8; MAX_SCOPE_SCRATCH],
     scope_controller_roles: &'a mut [u8; MAX_SCOPE_SCRATCH],
     scope_route_policy_effs: &'a mut [EffIndex; MAX_SCOPE_SCRATCH],
-    last_step_was_scope: &'a mut [bool; MAX_SCOPE_SCRATCH],
+    last_step_was_scope: &'a mut FixedBitSet<MAX_SCOPE_BITSET_WORDS>,
     route_arm_last_node: &'a mut [[StateIndex; 2]; MAX_SCOPE_SCRATCH],
     dispatch_table: &'a mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     prefix_actions: &'a mut [[PrefixAction; MAX_PREFIX_ACTIONS]; 2],
     prefix_lens: &'a mut [usize; 2],
-    arm_seen_recv: &'a mut [bool; 2],
+    arm_seen_recv: &'a mut u8,
     scan_stack: &'a mut [StateIndex; eff::meta::MAX_EFF_NODES],
-    visited: &'a mut [bool; MAX_STATES],
+    visited: &'a mut FixedBitSet<MAX_STATE_BITSET_WORDS>,
 }
 
 #[derive(Clone, Copy)]
@@ -502,7 +546,7 @@ fn collect_route_dispatch_for_exit(
     clear_dispatch_table(ctx.dispatch_table);
     clear_prefix_actions(ctx.prefix_actions);
     *ctx.prefix_lens = [0; 2];
-    *ctx.arm_seen_recv = [false; 2];
+    *ctx.arm_seen_recv = 0;
 
     let mut arm = 0u8;
     while arm < 2 {
@@ -521,10 +565,10 @@ fn collect_route_dispatch_for_exit(
                     arm += 1;
                     continue;
                 }
-                if ctx.visited[scan_idx] {
+                if ctx.visited.get(scan_idx) {
                     continue;
                 }
-                ctx.visited[scan_idx] = true;
+                ctx.visited.set(scan_idx, true);
                 let node = ctx.nodes[scan_idx];
                 let scan_scope = node.scope();
                 if matches!(scan_scope.kind(), ScopeKind::Route)
@@ -549,7 +593,7 @@ fn collect_route_dispatch_for_exit(
                 match node.action() {
                     LocalAction::Recv { label, .. } => {
                         let target_idx = as_state_index(scan_idx);
-                        ctx.arm_seen_recv[arm_idx] = true;
+                        mark_arm_seen(ctx.arm_seen_recv, arm_idx);
                         merge_dispatch_entry(
                             ctx.nodes,
                             scope_end,
@@ -584,7 +628,7 @@ fn collect_route_dispatch_for_exit(
                     LocalAction::Send {
                         peer, label, lane, ..
                     } => {
-                        if !ctx.arm_seen_recv[arm_idx] {
+                        if !arm_seen(*ctx.arm_seen_recv, arm_idx) {
                             if ctx.prefix_lens[arm_idx] >= MAX_PREFIX_ACTIONS {
                                 panic!("route prefix action overflow");
                             }
@@ -631,7 +675,7 @@ fn collect_route_dispatch_for_exit(
                         }
                     }
                     LocalAction::Local { label, lane, .. } => {
-                        if !ctx.arm_seen_recv[arm_idx] {
+                        if !arm_seen(*ctx.arm_seen_recv, arm_idx) {
                             if ctx.prefix_lens[arm_idx] >= MAX_PREFIX_ACTIONS {
                                 panic!("route prefix action overflow");
                             }
@@ -1183,7 +1227,7 @@ fn handle_scope_exit_for_role(
         && !is_immediate_reenter
     {
         let arm1_last = ctx.route_arm_last_node[*scope_stack_len][1];
-        let last_was_scope = ctx.last_step_was_scope[*scope_stack_len];
+        let last_was_scope = ctx.last_step_was_scope.get(*scope_stack_len);
         if !arm1_last.is_max() {
             if *node_len >= MAX_STATES {
                 panic!("node capacity exceeded inserting RouteArmEnd Jump for arm 1");
@@ -1246,7 +1290,7 @@ fn handle_scope_exit_for_role(
     }
 
     if *scope_stack_len > 0 {
-        ctx.last_step_was_scope[*scope_stack_len - 1] = true;
+        ctx.last_step_was_scope.set(*scope_stack_len - 1, true);
     }
 
     if matches!(ctx.scope_entries[entry_idx].kind, ScopeKind::Route) && !is_immediate_reenter {
@@ -1464,7 +1508,7 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             let stack_idx = scope_stack_len - 1;
             let entry_idx = ctx.scope_stack_entries[stack_idx] as usize;
             if !ctx.scope_entries[entry_idx].linger {
-                ctx.last_step_was_scope[stack_idx] = false;
+                ctx.last_step_was_scope.set(stack_idx, false);
                 if let Some(arm) = route_arm
                     && (arm as usize) < 2
                 {
@@ -1591,7 +1635,7 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             let stack_idx = scope_stack_len - 1;
             let entry_idx = ctx.scope_stack_entries[stack_idx] as usize;
             if !ctx.scope_entries[entry_idx].linger {
-                ctx.last_step_was_scope[stack_idx] = false;
+                ctx.last_step_was_scope.set(stack_idx, false);
                 if let Some(arm) = route_arm
                     && (arm as usize) < 2
                 {
@@ -1743,7 +1787,7 @@ fn handle_atom_for_role<P: TypestateProgramView>(
             let stack_idx = scope_stack_len - 1;
             let entry_idx = ctx.scope_stack_entries[stack_idx] as usize;
             if !ctx.scope_entries[entry_idx].linger {
-                ctx.last_step_was_scope[stack_idx] = false;
+                ctx.last_step_was_scope.set(stack_idx, false);
                 if let Some(arm) = route_arm
                     && (arm as usize) < 2
                 {
@@ -1854,9 +1898,6 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
     // Use u16::MAX as sentinel for "not set" to distinguish from node_len == 0.
     const PASSIVE_ARM_UNSET: u16 = u16::MAX;
     let linger_passive_arm_start = &mut scratch.linger_passive_arm_start;
-    // Flag indicating this scope has passive arm tracking (ROLE != controller).
-    let linger_is_passive = &mut scratch.linger_is_passive;
-
     // Non-linger Route arm tracking for RouteArmEnd Jump generation.
     // Uses "Scope-as-Block" strategy: treat nested scopes as opaque blocks.
     // - last_step_was_scope[stack_idx]: true if last step was a scope exit
@@ -1903,8 +1944,6 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
     // Use u16::MAX as sentinel for "not set".
     const ROUTE_PASSIVE_ARM_UNSET: u16 = u16::MAX;
     let route_passive_arm_start = &mut scratch.route_passive_arm_start;
-    // Flag indicating this non-linger Route scope has passive tracking (ROLE != controller).
-    let route_is_passive = &mut scratch.route_is_passive;
     let mut scope_stack_len = 0usize;
     let scope_entries = &mut *storage.scope_records;
     let route_scope_entries = &mut scratch.route_scope_entries;
@@ -1950,9 +1989,8 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                         route_enter_count[scope_stack_len] = 0;
                         route_passive_arm_start[scope_stack_len] =
                             [ROUTE_PASSIVE_ARM_UNSET, ROUTE_PASSIVE_ARM_UNSET];
-                        route_is_passive[scope_stack_len] = false;
                         route_arm_last_node[scope_stack_len] = [StateIndex::MAX, StateIndex::MAX];
-                        last_step_was_scope[scope_stack_len] = false;
+                        last_step_was_scope.set(scope_stack_len, false);
                         if matches!(marker.scope_kind, ScopeKind::Route) {
                             let lane_word_end = route_scope_lane_word_cursor
                                 .checked_add(route_lane_word_len)
@@ -2062,7 +2100,6 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                         linger_arm_current[linger_arm_len] = 0;
                         linger_passive_arm_start[linger_arm_len] =
                             [PASSIVE_ARM_UNSET, PASSIVE_ARM_UNSET];
-                        linger_is_passive[linger_arm_len] = false;
                         linger_arm_len += 1;
                     }
 
@@ -2099,7 +2136,7 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                         route_current_arm[stack_idx] = route_enter_count[stack_idx] - 1;
                         let arm = route_current_arm[stack_idx] as usize;
                         route_arm_last_node[stack_idx][arm] = StateIndex::MAX;
-                        last_step_was_scope[stack_idx] = false;
+                        last_step_was_scope.set(stack_idx, false);
 
                         // At first Enter (enter_count == 1), read route policy from the lowering view.
                         // This keeps route policy metadata independent of role projection.

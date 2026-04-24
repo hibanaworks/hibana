@@ -18,6 +18,8 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/role_program_lifetime_free.rs");
     t.pass("tests/ui-pass/endpoint_transport_erased.rs");
     t.pass("tests/ui-pass/one_message_one_control_op.rs");
+    t.pass("tests/ui-pass/g-generic-role-wrappers.rs");
+    t.pass("tests/ui-pass/g-wire-control-without-auto-mint.rs");
 
     t.compile_fail("tests/ui/const_program_placeholder.rs");
     t.compile_fail("tests/ui/static_program_placeholder.rs");
@@ -37,7 +39,6 @@ fn g_compile_fails() {
     t.compile_fail("tests/ui/caps_mask_from_tag_reintroduction.rs");
     t.compile_fail("tests/ui/composite_control_grants.rs");
     t.compile_fail("tests/ui/public_caps_mask_reintroduction.rs");
-
     t.compile_fail("tests/ui/decode-borrow-endpoint-alias.rs");
     t.compile_fail("tests/ui/recv-borrow-endpoint-alias.rs");
     t.compile_fail("tests/ui/route-branch-double-decode.rs");

@@ -6,7 +6,8 @@ use crate::observe_support::{PolicyEventKind, policy_lane_trace};
 pub(crate) struct PolicyCheckSummary {
     pub(crate) policy_abort: u32,
     pub(crate) policy_commit: u32,
-    pub(crate) policy_rollback: u32,
+    pub(crate) policy_tx_abort: u32,
+    pub(crate) policy_state_restore: u32,
     pub(crate) policy_lane_total: u32,
     pub(crate) policy_lane_matched: u32,
     pub(crate) policy_lane_mismatched: u32,
@@ -26,7 +27,8 @@ pub(crate) fn policy_check_summary(
         match record.kind {
             PolicyEventKind::Abort => summary.policy_abort += 1,
             PolicyEventKind::Commit => summary.policy_commit += 1,
-            PolicyEventKind::Rollback => summary.policy_rollback += 1,
+            PolicyEventKind::TxAbort => summary.policy_tx_abort += 1,
+            PolicyEventKind::StateRestore => summary.policy_state_restore += 1,
             _ => {}
         }
         if record.lane.is_some() {

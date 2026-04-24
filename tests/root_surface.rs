@@ -115,7 +115,7 @@ fn root_visible_surface_stays_minimal() {
     ] {
         assert!(
             !lib_rs.contains(forbidden),
-            "hibana root must not re-export legacy/internal substrate names: {forbidden}"
+            "hibana root must not re-export non-canonical/internal substrate names: {forbidden}"
         );
     }
 

@@ -11,6 +11,8 @@ pub(crate) enum CapError {
     WrongSessionOrLane,
     /// One-shot token already exhausted.
     Exhausted,
+    /// Capability table is full.
+    TableFull,
     /// Token found but field mismatch (kind/shot/sid/lane).
     Mismatch,
 }
@@ -47,18 +49,18 @@ pub enum RendezvousError {
     ClusterError(crate::control::cluster::error::CpError),
 }
 
-/// Splice operation errors.
+/// Topology operation errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SpliceError {
+pub enum TopologyError {
     /// Lane out of range.
     LaneOutOfRange { lane: Lane },
     /// Unknown session ID.
     UnknownSession { sid: SessionId },
     /// Lane mismatch.
     LaneMismatch { expected: Lane, provided: Lane },
-    /// Splice already in progress.
+    /// Topology transition already in progress.
     InProgress { lane: Lane },
-    /// No pending splice.
+    /// No pending topology transition.
     NoPending { lane: Lane },
     /// Stale generation.
     StaleGeneration {
@@ -75,46 +77,30 @@ pub enum SpliceError {
         expected: RendezvousId,
         got: RendezvousId,
     },
-    /// Rendezvous ID mismatch (distributed splice).
+    /// Rendezvous ID mismatch (distributed topology transition).
     RendezvousIdMismatch {
         expected: RendezvousId,
         got: RendezvousId,
     },
     /// Sequence number mismatch.
     SeqnoMismatch { seq_tx: u32, seq_rx: u32 },
-    /// Pending splice table full.
+    /// Pending topology table full.
     PendingTableFull,
 }
 
-/// Cancel operation errors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CancelError {
-    /// Unknown session ID.
-    UnknownSession { sid: SessionId },
-}
-
-/// Checkpoint operation errors.
+/// State restore operation errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CheckpointError {
-    /// Unknown session ID.
-    UnknownSession { sid: SessionId },
-}
-
-/// Rollback operation errors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RollbackError {
-    /// Unknown session ID.
-    UnknownSession { sid: SessionId },
-    /// No checkpoint found (cannot rollback without a checkpoint).
-    NoCheckpoint { sid: SessionId },
-    /// Stale checkpoint (requested epoch doesn't match current checkpoint).
-    StaleCheckpoint {
+pub(crate) enum StateRestoreError {
+    /// No state snapshot found (cannot restore without a prior snapshot).
+    NoStateSnapshot { sid: SessionId },
+    /// Stale state snapshot (requested epoch doesn't match current snapshot).
+    StaleStateSnapshot {
         sid: SessionId,
         requested: Generation,
         current: Generation,
     },
-    /// Checkpoint already consumed (idempotent rollback rejected).
-    AlreadyConsumed { sid: SessionId },
+    /// State snapshot already finalized by a prior restore or commit.
+    AlreadyFinalized { sid: SessionId },
     /// Epoch mismatch (requested epoch doesn't match current generation).
     EpochMismatch {
         expected: Generation,
@@ -122,14 +108,35 @@ pub(crate) enum RollbackError {
     },
 }
 
-/// Commit operation errors.
+/// Transaction commit operation errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CommitError {
-    /// No checkpoint recorded for the session.
-    NoCheckpoint { sid: SessionId },
-    /// Checkpoint already committed.
-    AlreadyCommitted { sid: SessionId },
-    /// Provided generation mismatched the recorded checkpoint.
+pub(crate) enum TxCommitError {
+    /// No state snapshot recorded for the session.
+    NoStateSnapshot { sid: SessionId },
+    /// State snapshot already finalized by a prior restore or commit.
+    AlreadyFinalized { sid: SessionId },
+    /// Provided generation mismatched the recorded state snapshot.
+    GenerationMismatch {
+        sid: SessionId,
+        expected: Generation,
+        got: Generation,
+    },
+}
+
+/// Transaction abort operation errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TxAbortError {
+    /// No state snapshot recorded for the session.
+    NoStateSnapshot { sid: SessionId },
+    /// Requested snapshot generation mismatched the recorded state snapshot.
+    StaleStateSnapshot {
+        sid: SessionId,
+        requested: Generation,
+        current: Generation,
+    },
+    /// State snapshot already finalized by a prior restore, abort, or commit.
+    AlreadyFinalized { sid: SessionId },
+    /// Requested generation is newer than the current lane generation.
     GenerationMismatch {
         sid: SessionId,
         expected: Generation,

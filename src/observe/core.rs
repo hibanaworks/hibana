@@ -182,13 +182,15 @@ pub(crate) enum PolicyEventKind {
     Effect,
     EffectOk,
     Commit,
-    Rollback,
+    TxAbort,
+    StateRestore,
 }
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PolicySidHint {
     None,
+    Arg0SessionNonZero,
     Arg1SessionNonZero,
 }
 
@@ -215,17 +217,18 @@ impl PolicyEventSpec {
     #[inline]
     #[cfg(test)]
     pub(super) fn sid_hint_from_tap(self, event: TapEvent) -> Option<u32> {
-        self.sid_hint_from_arg(event.arg1)
-    }
-
-    #[inline]
-    #[cfg(test)]
-    fn sid_hint_from_arg(self, arg1: u32) -> Option<u32> {
         match self.sid_hint {
             PolicySidHint::None => None,
+            PolicySidHint::Arg0SessionNonZero => {
+                if event.arg0 != 0 {
+                    Some(event.arg0)
+                } else {
+                    None
+                }
+            }
             PolicySidHint::Arg1SessionNonZero => {
-                if arg1 != 0 {
-                    Some(arg1)
+                if event.arg1 != 0 {
+                    Some(event.arg1)
                 } else {
                     None
                 }
@@ -235,7 +238,7 @@ impl PolicyEventSpec {
 }
 
 #[cfg(test)]
-const POLICY_EVENT_SPECS: [PolicyEventSpec; 8] = [
+const POLICY_EVENT_SPECS: [PolicyEventSpec; 9] = [
     PolicyEventSpec::new(
         ids::POLICY_ABORT,
         PolicyEventKind::Abort,
@@ -264,12 +267,17 @@ const POLICY_EVENT_SPECS: [PolicyEventSpec; 8] = [
     PolicyEventSpec::new(
         ids::POLICY_COMMIT,
         PolicyEventKind::Commit,
-        PolicySidHint::None,
+        PolicySidHint::Arg0SessionNonZero,
     ),
     PolicyEventSpec::new(
-        ids::POLICY_ROLLBACK,
-        PolicyEventKind::Rollback,
-        PolicySidHint::None,
+        ids::POLICY_TX_ABORT,
+        PolicyEventKind::TxAbort,
+        PolicySidHint::Arg0SessionNonZero,
+    ),
+    PolicyEventSpec::new(
+        ids::POLICY_STATE_RESTORE,
+        PolicyEventKind::StateRestore,
+        PolicySidHint::Arg0SessionNonZero,
     ),
     PolicyEventSpec::new(
         ids::POLICY_AUDIT_DEFER,
@@ -543,6 +551,65 @@ mod tests {
             install_ts_checker(previous);
         });
     }
+
+    #[test]
+    fn policy_tx_abort_id_stays_distinct_from_audit_stream_ids() {
+        let policy_and_audit_ids = [
+            ids::POLICY_TX_ABORT,
+            ids::POLICY_AUDIT,
+            ids::POLICY_AUDIT_EXT,
+            ids::POLICY_AUDIT_RESULT,
+            ids::POLICY_REPLAY_EVENT,
+            ids::POLICY_REPLAY_INPUT0,
+            ids::POLICY_REPLAY_INPUT1,
+            ids::POLICY_REPLAY_TRANSPORT0,
+            ids::POLICY_REPLAY_TRANSPORT1,
+            ids::POLICY_REPLAY_EVENT_EXT,
+            ids::POLICY_AUDIT_DEFER,
+        ];
+
+        let mut outer = 0usize;
+        while outer < policy_and_audit_ids.len() {
+            let mut inner = outer + 1;
+            while inner < policy_and_audit_ids.len() {
+                assert_ne!(
+                    policy_and_audit_ids[outer], policy_and_audit_ids[inner],
+                    "policy/audit tap ids must stay unique"
+                );
+                inner += 1;
+            }
+            outer += 1;
+        }
+
+        let tx_abort = policy_event_spec(ids::POLICY_TX_ABORT).expect("tx abort policy event");
+        assert_eq!(tx_abort.kind, PolicyEventKind::TxAbort);
+        assert_eq!(
+            tx_abort.sid_hint_from_tap(TapEvent::zero().with_arg0(0x1234_5678).with_arg1(7)),
+            Some(0x1234_5678)
+        );
+        assert!(
+            policy_event_spec(ids::POLICY_AUDIT).is_none(),
+            "audit digest tuples must not collide with policy execution events"
+        );
+    }
+
+    #[test]
+    fn commit_and_state_restore_policy_events_carry_sid_hints_in_arg0() {
+        let commit = policy_event_spec(ids::POLICY_COMMIT).expect("commit policy event");
+        assert_eq!(commit.kind, PolicyEventKind::Commit);
+        assert_eq!(
+            commit.sid_hint_from_tap(TapEvent::zero().with_arg0(0x0102_0304)),
+            Some(0x0102_0304)
+        );
+
+        let restore =
+            policy_event_spec(ids::POLICY_STATE_RESTORE).expect("state restore policy event");
+        assert_eq!(restore.kind, PolicyEventKind::StateRestore);
+        assert_eq!(
+            restore.sid_hint_from_tap(TapEvent::zero().with_arg0(0x5566_7788)),
+            Some(0x5566_7788)
+        );
+    }
 }
 
 impl<'a> RingBuffer<'a> {
@@ -695,12 +762,12 @@ impl<'a> TapRing<'a> {
 // # Event ID Ranges (Dual-Ring Routing)
 //
 // - `0x0000..0x00FF`: **User Ring** — Application/EPF events (TAP_OUT, custom)
-// - `0x0100..0x013F`: Checkpoint / Rollback coordination
-// - `0x0200..0x020F`: Splice / Cancel / Relay / Endpoint core events
+// - `0x0100..0x013F`: State coordination
+// - `0x0200..0x020F`: Abort / Endpoint / Topology core events
 // - `0x0210..0x021F`: Lane lifecycle + Transport telemetry
 // - `0x0220..0x022F`: Loop / Route control (LOOP_DECISION, ROUTE_DECISION)
-// - `0x0230..0x023F`: Delegation (DELEG_BEGIN, ROUTE_PICK, DELEG_SPLICE)
+// - `0x0230..0x023F`: Delegation staging (DELEG_BEGIN, ROUTE_PICK)
 // - `0x0240..0x024F`: Capability lifecycle (CAP_MINT_BASE, CAP_CLAIM_BASE)
-// - `0x0400..0x040F`: Policy VM events (ABORT, ANNOT, TRAP, EFFECT, COMMIT)
+// - `0x0400..0x041F`: Policy VM events (ABORT, ANNOT, TRAP, EFFECT, COMMIT)
 // - `0x0500`: Effect initialization (EFFECT_INIT)
 // - `0x02FF`: Misuse detection (MISUSE_RECVGUARD_DROP)

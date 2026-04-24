@@ -1,0 +1,46 @@
+error[E0080]: evaluation panicked: loop control messages require local path
+ --> src/global.rs
+  |
+  |         validate_control_descriptor_contract(spec);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::global::Message<hibana::global::LabelMarker<125>, hibana::substrate::cap::GenericCapToken<WireLoopControlKind>, WireLoopControlKind> as hibana::global::MessageControlSpec>::CONTROL` failed inside this call
+  |
+note: inside `hibana::global::validate_control_descriptor_contract`
+ --> $RUST/core/src/panic.rs
+  |
+  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: src/global.rs
+  |
+  |                 panic!("loop control messages require local path");
+  |                 -------------------------------------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/global.rs
+  |
+  |             let path = match <M as MessageControlSpec>::CONTROL {
+  |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global.rs
+  |
+  | /     const {
+  | |         let from = <From as KnownRole>::INDEX;
+  | |         let to = <To as KnownRole>::INDEX;
+  | |         crate::global::validate_role_index(from);
+... |
+  | |     }
+  | |_____^
+
+note: the above error was encountered while instantiating `fn send::<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<125>, GenericCapToken<WireLoopControlKind>, WireLoopControlKind>, 0>`
+  --> tests/ui/g-loop-control-wire-path.rs:47:13
+   |
+47 |       let _ = g::send::<
+   |  _____________^
+48 | |         g::Role<0>,
+49 | |         g::Role<1>,
+50 | |         g::Msg<
+...  |
+55 | |         0,
+56 | |     >();
+   | |_______^

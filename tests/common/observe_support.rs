@@ -9,7 +9,8 @@ pub(crate) const POLICY_TRAP_ID: u16 = 0x0402;
 pub(crate) const POLICY_EFFECT_ID: u16 = 0x0403;
 pub(crate) const POLICY_RA_OK_ID: u16 = 0x0404;
 pub(crate) const POLICY_COMMIT_ID: u16 = 0x0405;
-pub(crate) const POLICY_ROLLBACK_ID: u16 = 0x0406;
+pub(crate) const POLICY_STATE_RESTORE_ID: u16 = 0x0406;
+pub(crate) const POLICY_TX_ABORT_ID: u16 = 0x0411;
 const POLICY_TRACE_CAPACITY: usize = 2048;
 const POLICY_LANE_TABLE_CAPACITY: usize = 256;
 
@@ -21,7 +22,8 @@ pub(crate) enum PolicyEventKind {
     Effect,
     EffectOk,
     Commit,
-    Rollback,
+    TxAbort,
+    StateRestore,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,23 +107,26 @@ fn policy_event_lane(event: TapEvent) -> Option<u16> {
 fn policy_event_meta(
     event: TapEvent,
 ) -> Option<(u16, PolicyEventKind, PolicyEventDomain, Option<u32>)> {
-    let sid_hint = if event.arg1 != 0 {
-        Some(event.arg1)
-    } else {
-        None
-    };
     match event.id {
         id if id == POLICY_ABORT_ID => Some((
             id,
             PolicyEventKind::Abort,
             PolicyEventDomain::Policy,
-            sid_hint,
+            if event.arg1 != 0 {
+                Some(event.arg1)
+            } else {
+                None
+            },
         )),
         id if id == POLICY_TRAP_ID => Some((
             id,
             PolicyEventKind::Trap,
             PolicyEventDomain::Policy,
-            sid_hint,
+            if event.arg1 != 0 {
+                Some(event.arg1)
+            } else {
+                None
+            },
         )),
         id if id == POLICY_ANNOT_ID => {
             Some((id, PolicyEventKind::Annotate, PolicyEventDomain::Epf, None))
@@ -133,16 +138,41 @@ fn policy_event_meta(
             id,
             PolicyEventKind::EffectOk,
             PolicyEventDomain::Epf,
-            sid_hint,
+            if event.arg1 != 0 {
+                Some(event.arg1)
+            } else {
+                None
+            },
         )),
-        id if id == POLICY_COMMIT_ID => {
-            Some((id, PolicyEventKind::Commit, PolicyEventDomain::Policy, None))
-        }
-        id if id == POLICY_ROLLBACK_ID => Some((
+        id if id == POLICY_COMMIT_ID => Some((
             id,
-            PolicyEventKind::Rollback,
+            PolicyEventKind::Commit,
             PolicyEventDomain::Policy,
-            None,
+            if event.arg0 != 0 {
+                Some(event.arg0)
+            } else {
+                None
+            },
+        )),
+        id if id == POLICY_TX_ABORT_ID => Some((
+            id,
+            PolicyEventKind::TxAbort,
+            PolicyEventDomain::Policy,
+            if event.arg0 != 0 {
+                Some(event.arg0)
+            } else {
+                None
+            },
+        )),
+        id if id == POLICY_STATE_RESTORE_ID => Some((
+            id,
+            PolicyEventKind::StateRestore,
+            PolicyEventDomain::Policy,
+            if event.arg0 != 0 {
+                Some(event.arg0)
+            } else {
+                None
+            },
         )),
         _ => None,
     }

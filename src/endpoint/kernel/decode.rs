@@ -672,7 +672,7 @@ where
         branch: &RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     ) -> RecvResult<()> {
         let lane = crate::control::types::Lane::new(branch.branch_meta.lane_wire as u32);
-        let action = self.eval_endpoint_policy(
+        self.emit_endpoint_policy_audit(
             crate::policy_runtime::PolicySlot::EndpointRx,
             crate::observe::ids::ENDPOINT_RECV,
             self.sid.raw(),
@@ -683,7 +683,7 @@ where
             ),
             lane,
         );
-        self.apply_recv_policy(action, branch.branch_meta.scope_id, lane)
+        Ok(())
     }
 }
 

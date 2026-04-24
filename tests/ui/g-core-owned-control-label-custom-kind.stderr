@@ -25,9 +25,9 @@ note: erroneous constant encountered
  --> src/global.rs
   |
   | /     const {
-  | |         crate::global::validate_sendable_message::<M>();
-  | |         if <M as MessageControlSpec>::IS_CONTROL {
-  | |             let is_self_send = <<From as steps::RoleEq<To>>::Output as steps::Bool>::VALUE;
+  | |         let from = <From as KnownRole>::INDEX;
+  | |         let to = <To as KnownRole>::INDEX;
+  | |         crate::global::validate_role_index(from);
 ... |
   | |     }
   | |_____^

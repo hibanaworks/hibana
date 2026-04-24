@@ -21,9 +21,11 @@ jobs:
       - name: Management boundary gate
         run: ./.github/scripts/check_mgmt_boundary.sh
       - name: Plane boundary gate
-        run: ./.github/scripts/check_plane_boundaries.sh
+        run: bash ./.github/scripts/check_plane_boundaries.sh
       - name: Resolver context surface gate
         run: ./.github/scripts/check_resolver_context_surface.sh
+      - name: Topology hygiene gate
+        run: ./.github/scripts/check_topology_hygiene.sh
       - name: Lowering hygiene gate
         run: ./.github/scripts/check_lowering_hygiene.sh
       - name: Summary authority hygiene gate
@@ -34,6 +36,8 @@ jobs:
         run: bash ./.github/scripts/check_route_frontier_owner.sh
       - name: Surface hygiene gate
         run: ./.github/scripts/check_surface_hygiene.sh
+      - name: Boundary contracts gate
+        run: ./.github/scripts/check_boundary_contracts.sh
       - name: Warning-free gate
         run: ./.github/scripts/check_warning_free.sh
       - name: Direct projection binary gate
@@ -47,17 +51,25 @@ jobs:
       - name: Pico size matrix gate
         run: ./.github/scripts/check_pico_size_matrix.sh
       - name: Pico smoke gate
-        run: ./.github/scripts/check_pico_smoke.sh
-      - name: Rust 1.95 compatibility gate
-        run: ./.github/scripts/check_stable_1_95.sh
+        run: bash ./.github/scripts/check_pico_smoke.sh
       - name: Cargo check
         run: cargo check --all-targets -p hibana
+      - name: Cargo check no_std lib
+        run: cargo check --no-default-features --lib -p hibana
+      - name: Rust 1.95 compatibility gate
+        run: bash ./.github/scripts/check_stable_1_95.sh
       - name: Cargo test std
         run: cargo test -p hibana --features std
       - name: UI gate
         run: cargo test -p hibana --test ui --features std
       - name: Policy replay gate
         run: cargo test -p hibana --test policy_replay --features std
+      - name: Public surface guards gate
+        run: cargo test -p hibana --test public_surface_guards --features std
+      - name: Substrate surface gate
+        run: cargo test -p hibana --test substrate_surface --features std
+      - name: Docs surface gate
+        run: cargo test -p hibana --test docs_surface --features std
 
   semantic-surface:
     runs-on: ubuntu-latest

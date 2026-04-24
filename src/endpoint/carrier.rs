@@ -161,7 +161,7 @@ where
         state: NonNull<()>,
         handle: PackedEndpointHandle,
         generation: u32,
-    ) -> *mut PublicKernelEndpoint<'r, ROLE, T, U, C, MAX_RV>
+    ) -> Option<*mut PublicKernelEndpoint<'r, ROLE, T, U, C, MAX_RV>>
     where
         'cfg: 'r,
     {
@@ -171,7 +171,6 @@ where
                 handle, generation,
             )
         }
-        .expect("public endpoint must stay addressable while the facade is alive")
     }
 
     unsafe fn drop_public_endpoint_raw<const ROLE: u8>(
@@ -180,12 +179,13 @@ where
         generation: u32,
     ) {
         let kit = unsafe { state.cast::<Self>().as_ref() };
-        let endpoint = unsafe {
+        let Some(endpoint) = (unsafe {
             kit.public_endpoint_kernel_ptr::<ROLE, crate::control::cap::mint::MintConfig>(
                 handle, generation,
             )
-        }
-        .expect("public endpoint must stay addressable while the facade is alive");
+        }) else {
+            return;
+        };
         unsafe {
             core::ptr::drop_in_place(endpoint);
         }
@@ -197,12 +197,13 @@ where
         generation: u32,
     ) {
         let kit = unsafe { state.cast::<Self>().as_ref() };
-        let endpoint = unsafe {
+        let Some(endpoint) = (unsafe {
             kit.public_endpoint_kernel_ptr::<ROLE, crate::control::cap::mint::MintConfig>(
                 handle, generation,
             )
-        }
-        .expect("public endpoint must stay addressable while the facade is alive");
+        }) else {
+            return;
+        };
         unsafe {
             (&mut *endpoint).reset_public_offer_state();
         }
@@ -214,12 +215,13 @@ where
         generation: u32,
     ) {
         let kit = unsafe { state.cast::<Self>().as_ref() };
-        let endpoint = unsafe {
+        let Some(endpoint) = (unsafe {
             kit.public_endpoint_kernel_ptr::<ROLE, crate::control::cap::mint::MintConfig>(
                 handle, generation,
             )
-        }
-        .expect("public endpoint must stay addressable while the facade is alive");
+        }) else {
+            return;
+        };
         unsafe {
             (&mut *endpoint).restore_public_route_branch();
         }
@@ -231,8 +233,13 @@ where
         generation: u32,
         desc: crate::endpoint::kernel::SendDesc,
     ) -> crate::endpoint::SendResult<crate::endpoint::kernel::SendPreview> {
-        let kernel =
-            unsafe { Self::public_endpoint_ptr_from_parts::<'_, ROLE>(state, handle, generation) };
+        let Some(kernel) = (unsafe {
+            Self::public_endpoint_ptr_from_parts::<'_, ROLE>(state, handle, generation)
+        }) else {
+            return Err(crate::endpoint::SendError::Transport(
+                crate::transport::TransportError::Failed,
+            ));
+        };
         unsafe { (&mut *kernel).preview_flow_meta(desc.label()) }
     }
 
@@ -243,8 +250,10 @@ where
         preview: crate::endpoint::kernel::SendPreview,
         payload: Option<crate::endpoint::kernel::RawSendPayload>,
     ) {
-        let kernel = unsafe {
+        let Some(kernel) = (unsafe {
             Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
+        }) else {
+            return;
         };
         unsafe {
             (&mut *kernel).init_public_send_state(preview, payload);
@@ -256,8 +265,10 @@ where
         handle: PackedEndpointHandle,
         generation: u32,
     ) {
-        let kernel = unsafe {
+        let Some(kernel) = (unsafe {
             Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
+        }) else {
+            return;
         };
         unsafe {
             (&mut *kernel).reset_public_send_state();
@@ -269,8 +280,10 @@ where
         handle: PackedEndpointHandle,
         generation: u32,
     ) {
-        let kernel = unsafe {
+        let Some(kernel) = (unsafe {
             Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
+        }) else {
+            return;
         };
         unsafe {
             (&mut *kernel).init_public_recv_state();
@@ -282,8 +295,10 @@ where
         handle: PackedEndpointHandle,
         generation: u32,
     ) {
-        let kernel = unsafe {
+        let Some(kernel) = (unsafe {
             Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
+        }) else {
+            return;
         };
         unsafe {
             (&mut *kernel).reset_public_recv_state();
@@ -295,8 +310,10 @@ where
         handle: PackedEndpointHandle,
         generation: u32,
     ) {
-        let kernel = unsafe {
+        let Some(kernel) = (unsafe {
             Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
+        }) else {
+            return;
         };
         unsafe {
             (&mut *kernel).begin_public_decode_state();
@@ -308,8 +325,10 @@ where
         handle: PackedEndpointHandle,
         generation: u32,
     ) {
-        let kernel = unsafe {
+        let Some(kernel) = (unsafe {
             Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
+        }) else {
+            return;
         };
         unsafe {
             (&mut *kernel).reset_public_decode_state();
@@ -323,8 +342,12 @@ where
         desc: crate::endpoint::kernel::RecvDesc,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>> {
-        let kernel = unsafe {
+        let Some(kernel) = (unsafe {
             Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
+        }) else {
+            return Poll::Ready(Err(crate::endpoint::RecvError::Transport(
+                crate::transport::TransportError::Failed,
+            )));
         };
         match unsafe { (&mut *kernel).poll_public_recv(desc, cx) } {
             Poll::Pending => Poll::Pending,
@@ -339,8 +362,12 @@ where
         generation: u32,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<u8>> {
-        let kernel = unsafe {
+        let Some(kernel) = (unsafe {
             Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
+        }) else {
+            return Poll::Ready(Err(crate::endpoint::RecvError::Transport(
+                crate::transport::TransportError::Failed,
+            )));
         };
         unsafe { (&mut *kernel).poll_public_offer(cx) }
     }
@@ -352,8 +379,12 @@ where
         desc: crate::endpoint::kernel::DecodeDesc,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>> {
-        let kernel = unsafe {
+        let Some(kernel) = (unsafe {
             Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
+        }) else {
+            return Poll::Ready(Err(crate::endpoint::RecvError::Transport(
+                crate::transport::TransportError::Failed,
+            )));
         };
         match unsafe { (&mut *kernel).poll_public_decode(desc, cx) } {
             Poll::Pending => Poll::Pending,
@@ -369,8 +400,12 @@ where
         desc: crate::endpoint::kernel::SendDesc,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::SendResult<crate::endpoint::kernel::SendControlOutcome<'cfg>>> {
-        let kernel = unsafe {
+        let Some(kernel) = (unsafe {
             Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
+        }) else {
+            return Poll::Ready(Err(crate::endpoint::SendError::Transport(
+                crate::transport::TransportError::Failed,
+            )));
         };
         unsafe { (&mut *kernel).poll_public_send(desc, cx) }
     }

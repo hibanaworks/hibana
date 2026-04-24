@@ -15,7 +15,7 @@ use crate::transport::TransportAlgorithm;
 #[cfg(test)]
 use core::{mem::MaybeUninit, ops::Index, slice};
 
-/// Boundary events emitted by `Endpoint::reroute`.
+/// Boundary events emitted while delegation/topology control progresses.
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DelegationEvent {
@@ -29,7 +29,7 @@ enum DelegationEvent {
         policy: u32,
         shard: u32,
     },
-    Splice {
+    TopologyAck {
         sid: u32,
         from: u8,
         to: u8,
@@ -416,7 +416,7 @@ impl EndpointEvent {
     }
 }
 
-/// Normalises the tap range `[start, end)` into delegation boundary events.
+/// Normalises the tap range `[start, end)` into delegation/topology boundary events.
 #[cfg(test)]
 fn delegation_trace(
     storage: &[TapEvent],
@@ -469,14 +469,14 @@ fn delegation_trace(
                     nest,
                 });
             }
-            ids::DELEG_SPLICE => {
+            ids::TOPOLOGY_ACK => {
                 let sid = raw.arg1;
                 current_sid = Some(sid);
                 let encoded = raw.arg0;
                 let from = (encoded & 0xFF) as u8;
                 let to = ((encoded >> 8) & 0xFF) as u8;
                 let generation = ((encoded >> 16) & 0xFFFF) as u16;
-                events.push(DelegationEvent::Splice {
+                events.push(DelegationEvent::TopologyAck {
                     sid,
                     from,
                     to,
@@ -743,6 +743,25 @@ mod tests {
                 }
                 other => panic!("unexpected event: {other:?}"),
             }
+        });
+    }
+
+    #[test]
+    fn topology_ack_event_decodes() {
+        with_normalise_storage(|storage| {
+            storage[0] = events::TopologyAck::new(0, 0x0034_1205, 900);
+
+            let events = delegation_trace(storage, 0, 1);
+            assert_eq!(events.len(), 1);
+            assert_eq!(
+                events[0],
+                DelegationEvent::TopologyAck {
+                    sid: 900,
+                    from: 5,
+                    to: 0x12,
+                    generation: 0x34,
+                }
+            );
         });
     }
 

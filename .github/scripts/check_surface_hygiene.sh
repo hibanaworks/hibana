@@ -476,12 +476,12 @@ if [[ -n "${WIRE_ENCODE_DEFAULT_HINT}" ]]; then
   FAILED=1
 fi
 
-TRANSPORT_SPLICE_FALLBACK_SEAM="$(
+TRANSPORT_TOPOLOGY_FALLBACK_SEAM="$(
   rg -n "quiesce_and_fence|resume_after" src/transport.rs || true
 )"
-if [[ -n "${TRANSPORT_SPLICE_FALLBACK_SEAM}" ]]; then
-  echo "${TRANSPORT_SPLICE_FALLBACK_SEAM}" >&2
-  echo "boundary deny pattern detected: transport splice fallback seam" >&2
+if [[ -n "${TRANSPORT_TOPOLOGY_FALLBACK_SEAM}" ]]; then
+  echo "${TRANSPORT_TOPOLOGY_FALLBACK_SEAM}" >&2
+  echo "boundary deny pattern detected: transport topology fallback seam" >&2
   FAILED=1
 fi
 

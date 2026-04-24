@@ -50,28 +50,28 @@ Policy may only decide routing/abort outcomes.
 - `Route`, `EndpointTx`, `EndpointRx`: `GET_INPUT` allowed.
 - `Forward`, `Rendezvous`: `GET_INPUT` forbidden and verifier-rejected.
 
-Verifier enforcement is compile-time for bytecode load (`load_commit` path),
-runtime remains fail-closed.
+Verifier enforcement belongs to the policy image owner outside `hibana` core;
+runtime remains fail-closed at the signal boundary.
 
 ## Implementation Mapping
 
-- Boundary types and verdict reduction:
-  - `src/epf.rs`
+`hibana` core owns the policy input boundary and fail-closed reduction only.
+Bytecode verification, VM execution, and management load semantics are outside
+this crate boundary.
+
+- Boundary types and signal collection:
   - `src/transport/context.rs`
-- Slot contract:
-  - `src/epf/slot_contract.rs`
-- Verifier enforcement:
-  - `src/epf/verifier.rs`
-  - `src/epf/loader.rs`
-  - `src/runtime/mgmt.rs` (`load_commit`)
-- Fail-closed application:
+  - `src/policy_runtime.rs`
+- Endpoint-side verdict reduction:
   - `src/endpoint/kernel/core.rs`
-  - `src/transport/forward.rs`
+- Observation and replay normalization:
+  - `src/observe/check.rs`
+  - `src/observe/normalise.rs`
 
 ## Test Mapping
 
-- Slot contract / verifier:
-  - `src/epf/verifier.rs` tests
-  - `src/epf/loader.rs` tests
-- Replay determinism (same input => same verdict):
+- Boundary and public surface guards:
+  - `tests/public_surface_guards.rs`
+  - `tests/docs_surface.rs`
+- Replay determinism and audit digest behavior:
   - `tests/policy_replay.rs`

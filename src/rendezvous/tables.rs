@@ -1,6 +1,6 @@
 //! Internal state tables for ra module.
 //!
-//! These tables manage generation counters, checkpoints, and routing policies.
+//! These tables manage generation counters, state snapshots, and routing policies.
 //! All tables are !Send/!Sync (single-threaded, no_std compatible).
 
 use core::{
@@ -223,6 +223,21 @@ impl GenTable {
             (*self.present_ptr().add(idx) != 0)
                 .then_some(Generation::new(*self.lanes_ptr().add(idx)))
         }
+    }
+
+    /// Restore a lane generation to a previously recorded value.
+    #[inline]
+    pub(crate) fn restore_to(&self, lane: Lane, new: Generation) -> Result<(), GenError> {
+        let Some(idx) = self.lane_slot(lane) else {
+            return Err(GenError::InvalidInitial { lane, new });
+        };
+        unsafe {
+            if *self.present_ptr().add(idx) == 0 {
+                return Err(GenError::InvalidInitial { lane, new });
+            }
+            self.lanes_ptr().add(idx).write(new.raw());
+        }
+        Ok(())
     }
 
     /// Reset lane (for release).
@@ -1710,7 +1725,7 @@ impl RouteTable {
 
 #[cfg(test)]
 mod tests {
-    use super::{GenTable, LoopDisposition, LoopFrame, LoopTable, RouteTable};
+    use super::{GenTable, LoopDisposition, LoopFrame, LoopTable, RouteTable, StateSnapshotTable};
     use crate::{
         control::types::{Generation, Lane},
         global::const_dsl::ScopeId,
@@ -1794,6 +1809,27 @@ mod tests {
             Err(super::GenError::Overflow { lane: err_lane, last })
                 if err_lane == lane && last == Generation::new(u16::MAX)
         ));
+    }
+
+    #[test]
+    fn gen_table_restore_to_rewinds_generation_without_clearing_presence() {
+        let table = gen_table();
+        let lane = Lane::new(1);
+
+        assert_eq!(table.check_and_update(lane, Generation::ZERO), Ok(()));
+        assert_eq!(table.check_and_update(lane, Generation::new(5)), Ok(()));
+        assert_eq!(table.restore_to(lane, Generation::new(2)), Ok(()));
+        assert_eq!(table.last(lane), Some(Generation::new(2)));
+        assert_eq!(table.check_and_update(lane, Generation::new(3)), Ok(()));
+        assert_eq!(table.last(lane), Some(Generation::new(3)));
+    }
+
+    #[test]
+    fn state_snapshot_table_storage_align_covers_cap_revision() {
+        assert!(
+            StateSnapshotTable::storage_align() >= core::mem::align_of::<u64>(),
+            "snapshot storage must align the cap revision array",
+        );
     }
 
     #[test]
@@ -2130,32 +2166,54 @@ impl PolicyTable {
     }
 }
 
-/// Checkpoint table (per-lane).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum SnapshotFinalization {
+    Available = 0,
+    Restored = 1,
+    Committed = 2,
+}
+
+impl SnapshotFinalization {
+    #[inline]
+    const fn from_u8(raw: u8) -> Self {
+        match raw {
+            1 => Self::Restored,
+            2 => Self::Committed,
+            _ => Self::Available,
+        }
+    }
+}
+
+/// State snapshot table (per-lane).
 ///
-/// Tracks last checkpoint epoch and consumption status for rollback operations.
-pub(crate) struct CheckpointTable {
+/// Tracks the last snapshot epoch and finalization status for state-restore
+/// and commit operations.
+pub(crate) struct StateSnapshotTable {
     lane_base: u32,
     lane_slots: u16,
-    last_checkpoint: UnsafeCell<*mut u16>,
+    last_snapshot: UnsafeCell<*mut u16>,
+    cap_revision: UnsafeCell<*mut u64>,
     present: UnsafeCell<*mut u8>,
-    consumed: UnsafeCell<*mut u8>,
+    finalization: UnsafeCell<*mut u8>,
     _no_send_sync: PhantomData<*mut ()>,
 }
 
-impl Default for CheckpointTable {
+impl Default for StateSnapshotTable {
     fn default() -> Self {
         Self::empty()
     }
 }
 
-impl CheckpointTable {
+impl StateSnapshotTable {
     pub(crate) const fn empty() -> Self {
         Self {
             lane_base: 0,
             lane_slots: 0,
-            last_checkpoint: UnsafeCell::new(core::ptr::null_mut()),
+            last_snapshot: UnsafeCell::new(core::ptr::null_mut()),
+            cap_revision: UnsafeCell::new(core::ptr::null_mut()),
             present: UnsafeCell::new(core::ptr::null_mut()),
-            consumed: UnsafeCell::new(core::ptr::null_mut()),
+            finalization: UnsafeCell::new(core::ptr::null_mut()),
             _no_send_sync: PhantomData,
         }
     }
@@ -2164,28 +2222,42 @@ impl CheckpointTable {
         unsafe {
             core::ptr::addr_of_mut!((*dst).lane_base).write(0);
             core::ptr::addr_of_mut!((*dst).lane_slots).write(0);
-            core::ptr::addr_of_mut!((*dst).last_checkpoint)
+            core::ptr::addr_of_mut!((*dst).last_snapshot)
+                .write(UnsafeCell::new(core::ptr::null_mut()));
+            core::ptr::addr_of_mut!((*dst).cap_revision)
                 .write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst).present).write(UnsafeCell::new(core::ptr::null_mut()));
-            core::ptr::addr_of_mut!((*dst).consumed).write(UnsafeCell::new(core::ptr::null_mut()));
+            core::ptr::addr_of_mut!((*dst).finalization)
+                .write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
         }
     }
 
     #[inline]
     pub(crate) const fn storage_align() -> usize {
-        lane_storage_align()
+        let lane_align = lane_storage_align();
+        let cap_revision_align = core::mem::align_of::<u64>();
+        if cap_revision_align > lane_align {
+            cap_revision_align
+        } else {
+            lane_align
+        }
     }
 
     #[inline]
     pub(crate) const fn storage_bytes(lane_slots: usize) -> usize {
-        let checkpoints_bytes = lane_slots.saturating_mul(core::mem::size_of::<u16>());
-        let present_offset = align_up(checkpoints_bytes, core::mem::align_of::<u8>());
-        let consumed_offset = align_up(
+        let snapshots_bytes = lane_slots.saturating_mul(core::mem::size_of::<u16>());
+        let cap_revision_offset = align_up(snapshots_bytes, core::mem::align_of::<u64>());
+        let cap_revision_bytes = lane_slots.saturating_mul(core::mem::size_of::<u64>());
+        let present_offset = align_up(
+            cap_revision_offset.saturating_add(cap_revision_bytes),
+            core::mem::align_of::<u8>(),
+        );
+        let finalization_offset = align_up(
             present_offset.saturating_add(lane_slots.saturating_mul(core::mem::size_of::<u8>())),
             core::mem::align_of::<u8>(),
         );
-        consumed_offset.saturating_add(lane_slots.saturating_mul(core::mem::size_of::<u8>()))
+        finalization_offset.saturating_add(lane_slots.saturating_mul(core::mem::size_of::<u8>()))
     }
 
     pub(crate) unsafe fn bind_from_storage(
@@ -2194,38 +2266,49 @@ impl CheckpointTable {
         lane_base: u32,
         lane_slots: usize,
     ) {
-        let checkpoints = storage.cast::<u16>();
-        let present_offset = align_up(
+        let snapshots = storage.cast::<u16>();
+        let cap_revision_offset = align_up(
             storage as usize + lane_slots.saturating_mul(core::mem::size_of::<u16>()),
+            core::mem::align_of::<u64>(),
+        ) - storage as usize;
+        let cap_revision = unsafe { storage.add(cap_revision_offset) }.cast::<u64>();
+        let present_offset = align_up(
+            storage as usize
+                + cap_revision_offset
+                + lane_slots.saturating_mul(core::mem::size_of::<u64>()),
             core::mem::align_of::<u8>(),
         ) - storage as usize;
         let present = unsafe { storage.add(present_offset) }.cast::<u8>();
-        let consumed_offset = align_up(
+        let finalization_offset = align_up(
             storage as usize
                 + present_offset
                 + lane_slots.saturating_mul(core::mem::size_of::<u8>()),
             core::mem::align_of::<u8>(),
         ) - storage as usize;
-        let consumed = unsafe { storage.add(consumed_offset) }.cast::<u8>();
+        let finalization = unsafe { storage.add(finalization_offset) }.cast::<u8>();
         let mut idx = 0usize;
         while idx < lane_slots {
             unsafe {
-                checkpoints.add(idx).write(0);
+                snapshots.add(idx).write(0);
+                cap_revision.add(idx).write(0);
                 present.add(idx).write(0);
-                consumed.add(idx).write(0);
+                finalization
+                    .add(idx)
+                    .write(SnapshotFinalization::Available as u8);
             }
             idx += 1;
         }
         self.lane_base = lane_base;
         self.lane_slots = lane_slots as u16;
-        *self.last_checkpoint.get_mut() = checkpoints;
+        *self.last_snapshot.get_mut() = snapshots;
+        *self.cap_revision.get_mut() = cap_revision;
         *self.present.get_mut() = present;
-        *self.consumed.get_mut() = consumed;
+        *self.finalization.get_mut() = finalization;
     }
 
     #[inline]
-    fn last_checkpoint_ptr(&self) -> *mut u16 {
-        unsafe { *self.last_checkpoint.get() }
+    fn last_snapshot_ptr(&self) -> *mut u16 {
+        unsafe { *self.last_snapshot.get() }
     }
 
     #[inline]
@@ -2234,18 +2317,23 @@ impl CheckpointTable {
     }
 
     #[inline]
-    fn consumed_ptr(&self) -> *mut u8 {
-        unsafe { *self.consumed.get() }
+    fn cap_revision_ptr(&self) -> *mut u64 {
+        unsafe { *self.cap_revision.get() }
+    }
+
+    #[inline]
+    fn finalization_ptr(&self) -> *mut u8 {
+        unsafe { *self.finalization.get() }
     }
 
     #[inline]
     pub(crate) fn is_bound(&self) -> bool {
-        !self.last_checkpoint_ptr().is_null()
+        !self.last_snapshot_ptr().is_null()
     }
 
     #[inline]
     pub(crate) fn storage_ptr(&self) -> *mut u8 {
-        self.last_checkpoint_ptr().cast::<u8>()
+        self.last_snapshot_ptr().cast::<u8>()
     }
 
     #[inline]
@@ -2263,45 +2351,92 @@ impl CheckpointTable {
         (slot < self.lane_slots as usize).then_some(slot)
     }
 
-    /// Record a checkpoint.
+    /// Record a state snapshot.
     #[inline]
-    pub(crate) fn record(&self, lane: Lane, checkpoint: Generation) {
+    pub(crate) fn record_snapshot(&self, lane: Lane, snapshot: Generation, cap_revision: u64) {
         let Some(slot) = self.lane_slot(lane) else {
             return;
         };
         unsafe {
-            self.last_checkpoint_ptr().add(slot).write(checkpoint.raw());
+            self.last_snapshot_ptr().add(slot).write(snapshot.raw());
+            self.cap_revision_ptr().add(slot).write(cap_revision);
             self.present_ptr().add(slot).write(1);
-            self.consumed_ptr().add(slot).write(0);
+            self.finalization_ptr()
+                .add(slot)
+                .write(SnapshotFinalization::Available as u8);
         }
     }
 
-    /// Get last checkpoint for a lane.
+    /// Get the last state snapshot for a lane.
     #[inline]
-    pub(crate) fn last(&self, lane: Lane) -> Option<Generation> {
+    pub(crate) fn last_snapshot(&self, lane: Lane) -> Option<Generation> {
         let slot = self.lane_slot(lane)?;
         unsafe {
             (*self.present_ptr().add(slot) != 0)
-                .then_some(Generation::new(*self.last_checkpoint_ptr().add(slot)))
+                .then_some(Generation::new(*self.last_snapshot_ptr().add(slot)))
         }
     }
 
-    /// Mark checkpoint as consumed.
+    /// Get the capability revision recorded with the last state snapshot.
     #[inline]
-    pub(crate) fn mark_consumed(&self, lane: Lane) {
+    pub(crate) fn last_cap_revision(&self, lane: Lane) -> Option<u64> {
+        let slot = self.lane_slot(lane)?;
+        unsafe {
+            (*self.present_ptr().add(slot) != 0).then_some(*self.cap_revision_ptr().add(slot))
+        }
+    }
+
+    /// Return the recorded capability revision only while the snapshot remains restorable.
+    #[inline]
+    pub(crate) fn available_cap_revision(&self, lane: Lane) -> Option<u64> {
+        let slot = self.lane_slot(lane)?;
+        unsafe {
+            if *self.present_ptr().add(slot) == 0 {
+                return None;
+            }
+            matches!(
+                SnapshotFinalization::from_u8(*self.finalization_ptr().add(slot)),
+                SnapshotFinalization::Available
+            )
+            .then_some(*self.cap_revision_ptr().add(slot))
+        }
+    }
+
+    /// Mark a recorded state snapshot as finalized by restore.
+    #[inline]
+    pub(crate) fn mark_restored(&self, lane: Lane) {
         let Some(slot) = self.lane_slot(lane) else {
             return;
         };
-        unsafe { self.consumed_ptr().add(slot).write(1) }
+        unsafe {
+            self.finalization_ptr()
+                .add(slot)
+                .write(SnapshotFinalization::Restored as u8)
+        }
     }
 
-    /// Check if checkpoint is consumed.
+    /// Mark a recorded state snapshot as finalized by commit.
     #[inline]
-    pub(crate) fn is_consumed(&self, lane: Lane) -> bool {
+    pub(crate) fn mark_committed(&self, lane: Lane) {
         let Some(slot) = self.lane_slot(lane) else {
-            return false;
+            return;
         };
-        unsafe { *self.consumed_ptr().add(slot) != 0 }
+        unsafe {
+            self.finalization_ptr()
+                .add(slot)
+                .write(SnapshotFinalization::Committed as u8)
+        }
+    }
+
+    /// Return the current finalization state for a recorded snapshot.
+    #[inline]
+    pub(crate) fn finalization(&self, lane: Lane) -> Option<SnapshotFinalization> {
+        let slot = self.lane_slot(lane)?;
+        unsafe {
+            (*self.present_ptr().add(slot) != 0).then_some(SnapshotFinalization::from_u8(
+                *self.finalization_ptr().add(slot),
+            ))
+        }
     }
 
     /// Reset lane.
@@ -2311,9 +2446,12 @@ impl CheckpointTable {
             return;
         };
         unsafe {
-            self.last_checkpoint_ptr().add(slot).write(0);
+            self.last_snapshot_ptr().add(slot).write(0);
+            self.cap_revision_ptr().add(slot).write(0);
             self.present_ptr().add(slot).write(0);
-            self.consumed_ptr().add(slot).write(0);
+            self.finalization_ptr()
+                .add(slot)
+                .write(SnapshotFinalization::Available as u8);
         }
     }
 }

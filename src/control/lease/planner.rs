@@ -2,7 +2,7 @@
 //!
 //! This module performs a const-time analysis over projected policy markers to
 //! determine how many LeaseGraph children are required for delegation and
-//! splice automatons. The resulting budget is validated against the capacities
+//! topology automatons. The resulting budget is validated against the capacities
 //! advertised by each `LeaseSpec`, triggering a compile-time panic when a
 //! program requests more links than the runtime can provision.
 
@@ -16,7 +16,7 @@ use crate::{
 
 pub(crate) const FACET_CAPS: u8 = 1 << 0;
 pub(crate) const FACET_SLOTS: u8 = 1 << 1;
-pub(crate) const FACET_SPLICE: u8 = 1 << 2;
+pub(crate) const FACET_TOPOLOGY: u8 = 1 << 2;
 pub(crate) const FACET_DELEGATION: u8 = 1 << 3;
 
 /// Maximum number of delegation links tracked in [`DelegationChildSet`].
@@ -36,7 +36,7 @@ impl LeaseFacetNeeds {
     #[inline(always)]
     pub(crate) const fn all() -> Self {
         Self {
-            bits: FACET_CAPS | FACET_SLOTS | FACET_SPLICE | FACET_DELEGATION,
+            bits: FACET_CAPS | FACET_SLOTS | FACET_TOPOLOGY | FACET_DELEGATION,
         }
     }
 
@@ -62,8 +62,8 @@ impl LeaseFacetNeeds {
     }
 
     #[inline(always)]
-    pub(crate) const fn requires_splice(&self) -> bool {
-        (self.bits & FACET_SPLICE) != 0
+    pub(crate) const fn requires_topology(&self) -> bool {
+        (self.bits & FACET_TOPOLOGY) != 0
     }
 
     #[inline(always)]
@@ -86,11 +86,11 @@ impl core::fmt::Display for LeaseFacetNeeds {
             f.write_str("slots")?;
             wrote = true;
         }
-        if self.requires_splice() {
+        if self.requires_topology() {
             if wrote {
                 f.write_str("|")?;
             }
-            f.write_str("splice")?;
+            f.write_str("topology")?;
             wrote = true;
         }
         if self.requires_delegation() {
@@ -111,7 +111,7 @@ impl core::fmt::Display for LeaseFacetNeeds {
 pub(crate) const fn facets(
     caps: bool,
     slots: bool,
-    splice: bool,
+    topology: bool,
     delegation: bool,
 ) -> LeaseFacetNeeds {
     let mut bits = 0;
@@ -121,8 +121,8 @@ pub(crate) const fn facets(
     if slots {
         bits |= FACET_SLOTS;
     }
-    if splice {
-        bits |= FACET_SPLICE;
+    if topology {
+        bits |= FACET_TOPOLOGY;
     }
     if delegation {
         bits |= FACET_DELEGATION;
@@ -141,7 +141,7 @@ pub(crate) const fn facets_slots() -> LeaseFacetNeeds {
 }
 
 #[inline(always)]
-pub(crate) const fn facets_caps_splice() -> LeaseFacetNeeds {
+pub(crate) const fn facets_caps_topology() -> LeaseFacetNeeds {
     facets(true, false, true, false)
 }
 
@@ -153,7 +153,7 @@ pub(crate) const fn facets_caps_delegation() -> LeaseFacetNeeds {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PolicyRequirements {
     pub(crate) delegation_children: usize,
-    pub(crate) splice_children: usize,
+    pub(crate) topology_children: usize,
     pub(crate) facets: LeaseFacetNeeds,
 }
 
@@ -161,7 +161,7 @@ impl PolicyRequirements {
     const fn new() -> Self {
         Self {
             delegation_children: 0,
-            splice_children: 0,
+            topology_children: 0,
             facets: LeaseFacetNeeds::new(),
         }
     }
@@ -178,7 +178,7 @@ impl PolicyRequirements {
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct LeaseGraphBudget {
     pub(crate) delegation_children: usize,
-    pub(crate) splice_children: usize,
+    pub(crate) topology_children: usize,
     facets: LeaseFacetNeeds,
 }
 
@@ -187,7 +187,7 @@ impl LeaseGraphBudget {
     pub(crate) const fn new() -> Self {
         Self {
             delegation_children: 0,
-            splice_children: 0,
+            topology_children: 0,
             facets: LeaseFacetNeeds::new(),
         }
     }
@@ -202,8 +202,8 @@ impl LeaseGraphBudget {
         if req.delegation_children > self.delegation_children {
             self.delegation_children = req.delegation_children;
         }
-        if req.splice_children > self.splice_children {
-            self.splice_children = req.splice_children;
+        if req.topology_children > self.topology_children {
+            self.topology_children = req.topology_children;
         }
         self.facets = self.facets.union(req.facets);
         self
@@ -228,13 +228,16 @@ impl LeaseGraphBudget {
             }
         }
 
-        if self.splice_children > 0 {
-            if self.splice_children > crate::control::automaton::splice::SPLICE_LEASE_MAX_CHILDREN {
-                panic!("splice lease child capacity exceeded");
-            }
-            if self.splice_children + 1 > crate::control::automaton::splice::SPLICE_LEASE_MAX_NODES
+        if self.topology_children > 0 {
+            if self.topology_children
+                > crate::control::automaton::topology::TOPOLOGY_LEASE_MAX_CHILDREN
             {
-                panic!("splice lease node capacity exceeded");
+                panic!("topology lease child capacity exceeded");
+            }
+            if self.topology_children + 1
+                > crate::control::automaton::topology::TOPOLOGY_LEASE_MAX_NODES
+            {
+                panic!("topology lease node capacity exceeded");
             }
         }
     }
@@ -253,8 +256,8 @@ impl LeaseGraphBudget {
 
     #[inline(always)]
     #[cfg(test)]
-    pub(crate) const fn requires_splice(&self) -> bool {
-        self.facets.requires_splice()
+    pub(crate) const fn requires_topology(&self) -> bool {
+        self.facets.requires_topology()
     }
 
     #[inline(always)]
@@ -278,12 +281,12 @@ pub(crate) const fn policy_requirements(
         return req;
     };
 
-    // Dynamic policies on splice/reroute control ops require additional resources.
+    // Dynamic policies on topology/reroute control ops require additional resources.
     if policy.is_dynamic() {
         match desc.op() {
             ControlOp::TopologyBegin | ControlOp::TopologyAck => {
                 req.delegation_children = 2;
-                req.splice_children = 1;
+                req.topology_children = 1;
             }
             ControlOp::CapDelegate => {
                 req.delegation_children = 2;
@@ -298,15 +301,15 @@ pub(crate) const fn policy_requirements(
 const fn base_facets_for_control(desc: ControlDesc) -> LeaseFacetNeeds {
     let mut facets = match desc.op() {
         ControlOp::TopologyBegin | ControlOp::TopologyAck | ControlOp::TopologyCommit => {
-            facets_caps_splice()
+            facets_caps_topology()
         }
         ControlOp::CapDelegate => facets_caps_delegation(),
         ControlOp::AbortBegin
         | ControlOp::AbortAck
         | ControlOp::StateSnapshot
         | ControlOp::TxCommit
-        | ControlOp::StateRestore
-        | ControlOp::TxAbort => facets_caps(),
+        | ControlOp::TxAbort
+        | ControlOp::StateRestore => facets_caps(),
         ControlOp::Fence
         | ControlOp::RouteDecision
         | ControlOp::LoopContinue

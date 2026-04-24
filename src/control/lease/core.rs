@@ -80,16 +80,9 @@ where
     }
 
     /// Returns true if the rendezvous identifier is present, regardless of activity.
+    #[cfg(test)]
     pub(crate) fn is_registered(&self, id: &RendezvousId) -> bool {
         self.entries.contains_key(id)
-    }
-
-    /// Returns true if the rendezvous is currently leased.
-    pub(crate) fn is_active(&self, id: &RendezvousId) -> bool {
-        self.entries
-            .get(id)
-            .map(|entry| entry.is_active())
-            .unwrap_or(false)
     }
 
     /// Borrow a rendezvous by shared reference when no lease is active.
@@ -204,6 +197,7 @@ where
                 id,
                 config,
                 transport,
+                crate::global::ROLE_DOMAIN_SIZE,
             )
         })?;
         Ok(id)
@@ -312,9 +306,10 @@ where
         rv_id: RendezvousId,
         config: crate::runtime::config::Config<'cfg, U, C>,
         transport: T,
+        endpoint_slots: usize,
     ) -> Result<(), RegisterRendezvousError> {
         let rendezvous = unsafe {
-            Rendezvous::init_in_slab_auto(rv_id, config, transport)
+            Rendezvous::init_in_slab_auto(rv_id, config, transport, endpoint_slots)
                 .ok_or(RegisterRendezvousError::StorageExhausted)?
         };
         unsafe {
@@ -476,10 +471,10 @@ where
 /// Default spec exposing full mutable access to the rendezvous.
 pub(crate) struct FullSpec;
 
-/// Spec that exposes only splice operations.
-pub(crate) struct SpliceSpec;
+/// Spec that exposes only topology operations.
+pub(crate) struct TopologySpec;
 
-impl<T, U, C, E> RendezvousSpec<T, U, C, E> for SpliceSpec
+impl<T, U, C, E> RendezvousSpec<T, U, C, E> for TopologySpec
 where
     T: Transport,
     U: LabelUniverse,

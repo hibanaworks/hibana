@@ -11,11 +11,11 @@ use core::{
 
 use super::tables::{LoopDisposition, LoopTable, RouteTable};
 use crate::{
-    control::types::{Lane, RendezvousId, SessionId},
+    control::types::{Lane, RendezvousId},
     endpoint::kernel::FrontierScratchLayout,
     global::const_dsl::ScopeId,
-    observe::core::{TapEvent, TapRing, emit},
-    policy_runtime::{Action, HostSlots, PolicyCtx, PolicyMode, PolicySlot},
+    observe::core::{TapRing, emit},
+    policy_runtime::{self, PolicySlot},
     runtime::config::Clock,
     transport::{Transport, TransportEvent, TransportEventKind, TransportMetrics},
 };
@@ -131,10 +131,6 @@ pub(crate) struct Port<
     endpoint_leases: *const super::core::EndpointLeaseSlot,
     endpoint_lease_capacity: super::core::EndpointLeaseId,
     scratch_marker: PhantomData<&'r mut [u8]>,
-    #[cfg(test)]
-    host_slots: *const HostSlots<'static>,
-    #[cfg(test)]
-    host_slots_marker: PhantomData<&'r HostSlots<'r>>,
     pub lane: Lane,
     role: u8,
     role_count: u8,
@@ -182,7 +178,6 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         clock: &'tap dyn Clock,
         loops: &'tap LoopTable,
         routes: &'tap RouteTable,
-        host_slots: &'tap HostSlots<'tap>,
         slab: *mut [u8],
         image_frontier: *const u32,
         scratch_reserved_bytes: *const u32,
@@ -198,8 +193,6 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     where
         'tap: 'r,
     {
-        #[cfg(not(test))]
-        let _ = host_slots;
         #[cfg(all(not(test), not(feature = "std")))]
         {
             let _ = tap;
@@ -215,10 +208,6 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
             endpoint_leases,
             endpoint_lease_capacity,
             scratch_marker: PhantomData,
-            #[cfg(test)]
-            host_slots: (host_slots as *const HostSlots<'tap>).cast::<HostSlots<'static>>(),
-            #[cfg(test)]
-            host_slots_marker: PhantomData,
             lane,
             role,
             role_count,
@@ -444,71 +433,9 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     }
 
     #[inline]
-    #[cfg(test)]
-    pub(crate) fn host_slots(&self) -> &HostSlots<'r> {
-        unsafe { &*self.host_slots.cast::<HostSlots<'r>>() }
-    }
-
-    #[inline]
     pub(crate) fn policy_digest(&self, slot: PolicySlot) -> u32 {
-        #[cfg(test)]
-        {
-            self.host_slots().active_digest(slot)
-        }
-        #[cfg(not(test))]
-        {
-            let _ = slot;
-            0
-        }
-    }
-
-    #[inline]
-    pub(crate) fn policy_mode(&self, slot: PolicySlot) -> PolicyMode {
-        #[cfg(test)]
-        {
-            self.host_slots().policy_mode(slot)
-        }
-        #[cfg(not(test))]
-        {
-            let _ = slot;
-            PolicyMode::Enforce
-        }
-    }
-
-    #[inline]
-    pub(crate) fn last_policy_fuel_used(&self, slot: PolicySlot) -> u16 {
-        #[cfg(test)]
-        {
-            self.host_slots().last_fuel_used(slot)
-        }
-        #[cfg(not(test))]
-        {
-            let _ = slot;
-            0
-        }
-    }
-
-    #[inline]
-    pub(crate) fn run_policy<F>(
-        &self,
-        slot: PolicySlot,
-        event: &TapEvent,
-        session: Option<SessionId>,
-        lane: Option<Lane>,
-        configure: F,
-    ) -> Action
-    where
-        F: FnOnce(&mut PolicyCtx<'_>),
-    {
-        let mut ctx = PolicyCtx::new(slot, event);
-        if let Some(session) = session {
-            ctx.set_session(session);
-        }
-        if let Some(lane) = lane {
-            ctx.set_lane(lane);
-        }
-        configure(&mut ctx);
-        Action::Proceed
+        let _ = slot;
+        policy_runtime::POLICY_DIGEST_NONE
     }
 
     #[inline]

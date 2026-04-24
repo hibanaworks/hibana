@@ -8,16 +8,16 @@ use super::{core::TapEvent, ids};
 
 // ────────────── Cancel / Endpoint (0x0200-0x020F) ──────────────
 
-/// AMPST cancellation initiated.
+/// Control abort initiated.
 #[cfg(test)]
-pub(crate) struct CancelBegin;
+pub(crate) struct AbortBegin;
 #[cfg(test)]
-impl CancelBegin {
+impl AbortBegin {
     #[inline(always)]
     pub(crate) const fn new(ts: u32, sid: u32, lane: u32) -> TapEvent {
         TapEvent {
             ts,
-            id: ids::CANCEL_BEGIN,
+            id: ids::ABORT_BEGIN,
             causal_key: 0,
             arg0: sid,
             arg1: lane,
@@ -26,16 +26,16 @@ impl CancelBegin {
     }
 }
 
-/// AMPST cancellation acknowledged.
+/// Control abort acknowledged.
 #[cfg(test)]
-pub(crate) struct CancelAck;
+pub(crate) struct AbortAck;
 #[cfg(test)]
-impl CancelAck {
+impl AbortAck {
     #[inline(always)]
     pub(crate) const fn new(ts: u32, sid: u32, lane: u32) -> TapEvent {
         TapEvent {
             ts,
-            id: ids::CANCEL_ACK,
+            id: ids::ABORT_ACK,
             causal_key: 0,
             arg0: sid,
             arg1: lane,
@@ -220,18 +220,18 @@ impl EffectInit {
     }
 }
 
-// ────────────── Checkpoint / Rollback (0x0130-0x013F) ──────────────
+// ────────────── State Snapshot / State Restore (0x0130-0x013F) ──────────────
 
-/// Rollback requested.
+/// State restore requested.
 #[cfg(test)]
-pub(crate) struct RollbackReq;
+pub(crate) struct StateRestoreReq;
 #[cfg(test)]
-impl RollbackReq {
+impl StateRestoreReq {
     #[inline(always)]
     pub(crate) const fn new(ts: u32, sid: u32, target_gen: u32) -> TapEvent {
         TapEvent {
             ts,
-            id: ids::ROLLBACK_REQ,
+            id: ids::STATE_RESTORE_REQ,
             causal_key: 0,
             arg0: sid,
             arg1: target_gen,
@@ -240,14 +240,14 @@ impl RollbackReq {
     }
 }
 
-/// Rollback completed.
-pub(crate) struct RollbackOk;
-impl RollbackOk {
+/// State restore completed.
+pub(crate) struct StateRestoreOk;
+impl StateRestoreOk {
     #[inline(always)]
     pub(crate) const fn new(ts: u32, sid: u32, restored_gen: u32) -> TapEvent {
         TapEvent {
             ts,
-            id: ids::ROLLBACK_OK,
+            id: ids::STATE_RESTORE_OK,
             causal_key: 0,
             arg0: sid,
             arg1: restored_gen,
@@ -326,17 +326,17 @@ impl DelegBegin {
     }
 }
 
-/// Delegation splice completed.
+/// Topology handshake acknowledged.
 #[cfg(test)]
-pub(crate) struct DelegSplice;
+pub(crate) struct TopologyAck;
 #[cfg(test)]
-impl DelegSplice {
+impl TopologyAck {
     /// Create with pre-packed arg0 and sid.
     #[inline(always)]
     pub(crate) const fn new(ts: u32, arg0: u32, sid: u32) -> TapEvent {
         TapEvent {
             ts,
-            id: ids::DELEG_SPLICE,
+            id: ids::TOPOLOGY_ACK,
             causal_key: 0,
             arg0,
             arg1: sid,
@@ -345,7 +345,7 @@ impl DelegSplice {
     }
 }
 
-// ────────────── Policy VM (0x0400-0x040F) ──────────────
+// ────────────── Policy VM (0x0400-0x041F) ──────────────
 
 // ────────────── Raw builder (for testing / zero-init) ──────────────
 

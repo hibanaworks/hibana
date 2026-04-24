@@ -31,7 +31,7 @@ impl ControlResourceKind for LoadBeginKind {
     const TAP_ID: u16 = 0x036E;
     const SHOT: CapShot = CapShot::One;
     const OP: ControlOp = ControlOp::Fence;
-    const AUTO_MINT_WIRE: bool = false;
+    const AUTO_MINT_WIRE: bool = true;
 
     fn mint_handle(
         _session: hibana::substrate::SessionId,

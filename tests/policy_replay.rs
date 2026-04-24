@@ -13,7 +13,8 @@ use hibana::substrate::{
 };
 
 const POLICY_COMMIT_ID: u16 = 0x0405;
-const POLICY_ROLLBACK_ID: u16 = 0x0406;
+const POLICY_STATE_RESTORE_ID: u16 = 0x0406;
+const POLICY_TX_ABORT_ID: u16 = 0x0411;
 const POLICY_AUDIT_ID: u16 = 0x0407;
 const POLICY_AUDIT_EXT_ID: u16 = 0x0408;
 const POLICY_AUDIT_RESULT_ID: u16 = 0x0409;
@@ -194,22 +195,31 @@ fn replay_digests(log: &ReplayLog, slot: PolicySlot, cursor: &mut usize) -> Dige
         standby_digest: None,
         last_good_digest: None,
     };
-    for event in log.events_since(cursor) {
-        if event.arg0 != slot_tag(slot) as u32 {
+    let rows = replay_audit_rows(log, cursor).expect("digest replay requires complete audit rows");
+    let mut idx = 0usize;
+    while idx < rows.len() {
+        let row = rows.get(idx).expect("audit row");
+        idx += 1;
+        if row.slot != slot {
             continue;
         }
-        match event.id {
+        match row.event.id {
             POLICY_COMMIT_ID => {
                 if let Some(current) = replay.active_digest {
                     replay.last_good_digest = Some(current);
                 }
-                replay.active_digest = Some(event.arg2);
+                replay.active_digest = Some(row.digest);
                 replay.standby_digest = None;
             }
-            POLICY_ROLLBACK_ID => {
+            POLICY_STATE_RESTORE_ID => {
                 replay.standby_digest = replay.active_digest;
-                replay.active_digest = Some(event.arg2);
-                replay.last_good_digest = Some(event.arg2);
+                replay.active_digest = Some(row.digest);
+                replay.last_good_digest = Some(row.digest);
+            }
+            POLICY_TX_ABORT_ID => {
+                replay.standby_digest = replay.active_digest;
+                replay.active_digest = Some(row.digest);
+                replay.last_good_digest = Some(row.digest);
             }
             _ => {}
         }
@@ -605,24 +615,52 @@ fn replay_from_audit_log_tracks_digest_transitions() {
     let mut cursor = log.head();
     let digest_v1 = 0x1020_3040;
     let digest_v2 = 0x5060_7080;
+    let attrs = transport_attrs(None, None, None, None);
 
-    log.push(
+    push_policy_audit_tuple(
+        &mut log,
+        1,
+        digest_v1,
+        PolicySlot::Route,
+        0,
         raw_event(1, POLICY_COMMIT_ID)
-            .with_arg0(slot_tag(PolicySlot::Route) as u32)
-            .with_arg1(1)
-            .with_arg2(digest_v1),
+            .with_arg0(0x1111)
+            .with_arg1(1),
+        [0; 4],
+        attrs,
+        0,
+        0,
+        0,
     );
-    log.push(
+    push_policy_audit_tuple(
+        &mut log,
+        2,
+        digest_v2,
+        PolicySlot::Route,
+        0,
         raw_event(2, POLICY_COMMIT_ID)
-            .with_arg0(slot_tag(PolicySlot::Route) as u32)
-            .with_arg1(2)
-            .with_arg2(digest_v2),
+            .with_arg0(0x1111)
+            .with_arg1(2),
+        [0; 4],
+        attrs,
+        0,
+        0,
+        0,
     );
-    log.push(
-        raw_event(3, POLICY_ROLLBACK_ID)
-            .with_arg0(slot_tag(PolicySlot::Route) as u32)
-            .with_arg1(1)
-            .with_arg2(digest_v1),
+    push_policy_audit_tuple(
+        &mut log,
+        3,
+        digest_v1,
+        PolicySlot::Route,
+        0,
+        raw_event(3, POLICY_STATE_RESTORE_ID)
+            .with_arg0(0x1111)
+            .with_arg1(1),
+        [0; 4],
+        attrs,
+        0,
+        0,
+        0,
     );
 
     let replay = replay_digests(&log, PolicySlot::Route, &mut cursor);
@@ -632,6 +670,100 @@ fn replay_from_audit_log_tracks_digest_transitions() {
             active_digest: Some(digest_v1),
             standby_digest: Some(digest_v2),
             last_good_digest: Some(digest_v1),
+        }
+    );
+}
+
+#[test]
+fn replay_from_audit_log_tracks_tx_abort_reverts() {
+    let mut log = ReplayLog::default();
+    let mut cursor = log.head();
+    let digest_v1 = 0x0A0B_0C0D;
+    let digest_v2 = 0x0102_0304;
+    let attrs = transport_attrs(None, None, None, None);
+
+    push_policy_audit_tuple(
+        &mut log,
+        1,
+        digest_v1,
+        PolicySlot::Route,
+        0,
+        raw_event(1, POLICY_COMMIT_ID)
+            .with_arg0(0x2222)
+            .with_arg1(1),
+        [0; 4],
+        attrs,
+        0,
+        0,
+        0,
+    );
+    push_policy_audit_tuple(
+        &mut log,
+        2,
+        digest_v2,
+        PolicySlot::Route,
+        0,
+        raw_event(2, POLICY_COMMIT_ID)
+            .with_arg0(0x2222)
+            .with_arg1(2),
+        [0; 4],
+        attrs,
+        0,
+        0,
+        0,
+    );
+    push_policy_audit_tuple(
+        &mut log,
+        3,
+        digest_v1,
+        PolicySlot::Route,
+        0,
+        raw_event(3, POLICY_TX_ABORT_ID)
+            .with_arg0(0x2222)
+            .with_arg1(1),
+        [0; 4],
+        attrs,
+        0,
+        0,
+        0,
+    );
+
+    let replay = replay_digests(&log, PolicySlot::Route, &mut cursor);
+    assert_eq!(
+        replay,
+        DigestState {
+            active_digest: Some(digest_v1),
+            standby_digest: Some(digest_v2),
+            last_good_digest: Some(digest_v1),
+        }
+    );
+}
+
+#[test]
+fn replay_digest_ignores_live_effect_taps_without_audit_tuple() {
+    let mut log = ReplayLog::default();
+    let mut cursor = log.head();
+
+    log.push(
+        raw_event(1, POLICY_COMMIT_ID)
+            .with_arg0(slot_tag(PolicySlot::Route) as u32)
+            .with_arg1(2)
+            .with_arg2(0xDEAD_BEEF),
+    );
+    log.push(
+        raw_event(2, POLICY_TX_ABORT_ID)
+            .with_arg0(slot_tag(PolicySlot::Route) as u32)
+            .with_arg1(1)
+            .with_arg2(0x0102_0304),
+    );
+
+    let replay = replay_digests(&log, PolicySlot::Route, &mut cursor);
+    assert_eq!(
+        replay,
+        DigestState {
+            active_digest: None,
+            standby_digest: None,
+            last_good_digest: None,
         }
     );
 }

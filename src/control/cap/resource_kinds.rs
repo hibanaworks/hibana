@@ -10,7 +10,6 @@
 //!
 //! Private atomic control codecs live in `control::cap::atomic_codecs`.
 
-use crate::control::cap::ControlHandle;
 use crate::control::cap::mint::{
     CAP_HANDLE_LEN, CapError, CapShot, ControlOp, ControlPath, ControlResourceKind, ResourceKind,
 };
@@ -74,14 +73,6 @@ impl LoopDecisionHandle {
             scope: ScopeId::from_raw(u64::from_le_bytes(scope_bytes)),
         })
     }
-}
-
-impl ControlHandle for LoopDecisionHandle {
-    fn visit_delegation_links(&self, _f: &mut dyn FnMut(crate::control::types::RendezvousId)) {}
-}
-
-impl ControlHandle for RouteArmHandle {
-    fn visit_delegation_links(&self, _f: &mut dyn FnMut(crate::control::types::RendezvousId)) {}
 }
 
 /// Built-in local loop-continue token.

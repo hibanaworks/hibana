@@ -1,11 +1,8 @@
 //! Authority-path helpers for resolver/ack/poll decisions.
 
-#[cfg(test)]
-use crate::control::cap::resource_kinds::RouteArmHandle;
 use crate::{
     endpoint::{SendError, SendResult},
     global::const_dsl::ScopeId,
-    policy_runtime::{AbortInfo, Action},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,16 +120,7 @@ pub(super) enum RouteResolveStep {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RoutePolicyDecision {
-    RouteArm(u8),
-    DelegateResolver,
-    Abort(u16),
-    Defer { retry_hint: u8, source: DeferSource },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DeferSource {
-    Epf,
     Resolver,
 }
 
@@ -148,30 +136,6 @@ pub(super) fn route_policy_input_arg0(input: &[u32; 4]) -> u32 {
 }
 
 #[inline]
-pub(super) fn route_policy_decision_from_action(
-    action: Action,
-    policy_id: u16,
-) -> RoutePolicyDecision {
-    if let Some(arm) = action.route_arm() {
-        return if arm <= 1 {
-            RoutePolicyDecision::RouteArm(arm)
-        } else {
-            RoutePolicyDecision::Abort(policy_id)
-        };
-    }
-    if let Some(AbortInfo { reason, .. }) = action.abort_info() {
-        return RoutePolicyDecision::Abort(reason);
-    }
-    if let Some(retry_hint) = action.defer_hint() {
-        return RoutePolicyDecision::Defer {
-            retry_hint,
-            source: DeferSource::Epf,
-        };
-    }
-    RoutePolicyDecision::DelegateResolver
-}
-
-#[inline]
 pub(super) fn validate_route_decision_scope(
     scope: ScopeId,
     policy_scope: ScopeId,
@@ -183,26 +147,6 @@ pub(super) fn validate_route_decision_scope(
         return Err(SendError::PhaseInvariant);
     }
     Ok(())
-}
-
-#[inline]
-#[cfg(test)]
-pub(super) fn resolve_route_decision_handle_with_policy<F>(
-    scope: ScopeId,
-    policy_scope: ScopeId,
-    policy_decision: RoutePolicyDecision,
-    delegate_resolver: F,
-) -> SendResult<RouteArmHandle>
-where
-    F: FnOnce() -> SendResult<RouteArmHandle>,
-{
-    validate_route_decision_scope(scope, policy_scope)?;
-    match policy_decision {
-        RoutePolicyDecision::RouteArm(arm) => Ok(RouteArmHandle { scope, arm }),
-        RoutePolicyDecision::Abort(reason) => Err(SendError::PolicyAbort { reason }),
-        RoutePolicyDecision::Defer { .. } => delegate_resolver(),
-        RoutePolicyDecision::DelegateResolver => delegate_resolver(),
-    }
 }
 
 #[cfg(test)]

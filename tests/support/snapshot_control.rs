@@ -32,7 +32,7 @@ impl ResourceKind for SnapshotControl {
 impl ControlResourceKind for SnapshotControl {
     const LABEL: u8 = LABEL_SNAPSHOT_CONTROL;
     const SCOPE: ControlScopeKind = ControlScopeKind::State;
-    const TAP_ID: u16 = crate::observe::ids::CHECKPOINT_REQ;
+    const TAP_ID: u16 = crate::observe::ids::STATE_SNAPSHOT_REQ;
     const SHOT: CapShot = CapShot::One;
     const PATH: ControlPath = ControlPath::Local;
     const OP: ControlOp = ControlOp::StateSnapshot;

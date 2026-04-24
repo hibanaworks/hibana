@@ -1,15 +1,29 @@
-error[E0277]: `g::route(left, right)` arms must use distinct labels
- --> tests/ui/g-typed-route-duplicate-label.rs:6:22
+error[E0080]: evaluation panicked: route arms reuse the same label
+ --> tests/ui/g-typed-route-duplicate-label.rs:6:13
   |
 6 |     let _ = g::route(arm_one, arm_two);
-  |                      ^^^^^^^ route arms reuse the same label
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `_` failed inside this call
   |
-  = help: the trait `hibana::global::DistinctRouteLabel<hibana::global::LabelMarker<5>>` is not implemented for `hibana::global::LabelMarker<5>`
-note: required by a bound in `route`
+note: inside `route::<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>>`
  --> src/global.rs
   |
-  | pub const fn route<LeftSteps, RightSteps>(
-  |              ----- required by a bound in this function
-...
-  |     <LeftSteps as RouteArmHead>::Label: DistinctRouteLabel<<RightSteps as RouteArmHead>::Label>,
-  |                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `route`
+  |     program::route_binary(left, right)
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::program::route_binary::<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>>`
+ --> src/global/program.rs
+  |
+  | /     assert_distinct_route_labels::<
+  | |         <LeftSteps as RouteArmHead>::Label,
+  | |         <RightSteps as RouteArmHead>::Label,
+  | |     >();
+  | |_______^
+note: inside `hibana::global::assert_distinct_route_labels::<hibana::global::LabelMarker<5>, hibana::global::LabelMarker<5>>`
+ --> $RUST/core/src/panic.rs
+  |
+  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: src/global.rs
+  |
+  |         panic!("route arms reuse the same label");
+  |         ----------------------------------------- in this macro invocation

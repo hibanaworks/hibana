@@ -13,18 +13,18 @@ const LOOP_INDEX_LIMIT: usize = 64;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct CheckReport {
-    pub cancel_begin: u32,
-    pub cancel_ack: u32,
-    pub cancel_inflight: i32,
-    pub cancel_balanced: bool,
+    pub abort_begin: u32,
+    pub abort_ack: u32,
+    pub abort_inflight: i32,
+    pub abort_balanced: bool,
     pub lane_acquire: u32,
     pub lane_release: u32,
     pub lane_inflight: i32,
     pub lane_balanced: bool,
-    pub rollback_req: u32,
-    pub rollback_ok: u32,
-    pub rollback_inflight: i32,
-    pub rollback_balanced: bool,
+    pub state_restore_req: u32,
+    pub state_restore_ok: u32,
+    pub state_restore_inflight: i32,
+    pub state_restore_balanced: bool,
     pub loop_continue: u32,
     pub loop_break: u32,
     pub loop_inflight_continue: i32,
@@ -36,7 +36,8 @@ struct CheckReport {
     pub policy_effect: u32,
     pub policy_effect_ok: u32,
     pub policy_commit: u32,
-    pub policy_rollback: u32,
+    pub policy_tx_abort: u32,
+    pub policy_state_restore: u32,
     pub policy_lane_total: u32,
     pub policy_lane_matched: u32,
     pub policy_lane_mismatched: u32,
@@ -107,7 +108,10 @@ impl CheckSummary {
             PolicyEventKind::Effect => Self::add_u32(&mut self.report.policy_effect, 1),
             PolicyEventKind::EffectOk => Self::add_u32(&mut self.report.policy_effect_ok, 1),
             PolicyEventKind::Commit => Self::add_u32(&mut self.report.policy_commit, 1),
-            PolicyEventKind::Rollback => Self::add_u32(&mut self.report.policy_rollback, 1),
+            PolicyEventKind::TxAbort => Self::add_u32(&mut self.report.policy_tx_abort, 1),
+            PolicyEventKind::StateRestore => {
+                Self::add_u32(&mut self.report.policy_state_restore, 1)
+            }
         }
         self.record_policy_lane(spec, event, lane_sid);
     }
@@ -125,13 +129,13 @@ impl CheckSummary {
         }
 
         match event.id {
-            id if id == ids::CANCEL_BEGIN => {
-                Self::add_u32(&mut self.report.cancel_begin, 1);
-                Self::add_i32(&mut self.report.cancel_inflight, 1);
+            id if id == ids::ABORT_BEGIN => {
+                Self::add_u32(&mut self.report.abort_begin, 1);
+                Self::add_i32(&mut self.report.abort_inflight, 1);
             }
-            id if id == ids::CANCEL_ACK => {
-                Self::add_u32(&mut self.report.cancel_ack, 1);
-                Self::add_i32(&mut self.report.cancel_inflight, -1);
+            id if id == ids::ABORT_ACK => {
+                Self::add_u32(&mut self.report.abort_ack, 1);
+                Self::add_i32(&mut self.report.abort_inflight, -1);
             }
             id if id == ids::LANE_ACQUIRE => {
                 Self::add_u32(&mut self.report.lane_acquire, 1);
@@ -146,13 +150,13 @@ impl CheckSummary {
                 let lane_idx = (event.arg1 & 0xFFFF) as usize;
                 lane_sid.remove(&lane_idx);
             }
-            id if id == ids::ROLLBACK_REQ => {
-                Self::add_u32(&mut self.report.rollback_req, 1);
-                Self::add_i32(&mut self.report.rollback_inflight, 1);
+            id if id == ids::STATE_RESTORE_REQ => {
+                Self::add_u32(&mut self.report.state_restore_req, 1);
+                Self::add_i32(&mut self.report.state_restore_inflight, 1);
             }
-            id if id == ids::ROLLBACK_OK => {
-                Self::add_u32(&mut self.report.rollback_ok, 1);
-                Self::add_i32(&mut self.report.rollback_inflight, -1);
+            id if id == ids::STATE_RESTORE_OK => {
+                Self::add_u32(&mut self.report.state_restore_ok, 1);
+                Self::add_i32(&mut self.report.state_restore_inflight, -1);
             }
             id if id == ids::LOOP_DECISION => {
                 let lane = ((event.arg1 >> 16) & 0xFFFF) as usize;
@@ -194,9 +198,9 @@ impl CheckSummary {
     }
 
     fn finish(mut self) -> CheckReport {
-        self.report.cancel_balanced = self.report.cancel_inflight == 0;
+        self.report.abort_balanced = self.report.abort_inflight == 0;
         self.report.lane_balanced = self.report.lane_inflight == 0;
-        self.report.rollback_balanced = self.report.rollback_inflight == 0;
+        self.report.state_restore_balanced = self.report.state_restore_inflight == 0;
         self.report.loop_balanced =
             self.report.loop_inflight_continue == 0 && self.report.loop_inflight_break == 0;
         self.report
@@ -248,42 +252,42 @@ mod tests {
     }
 
     #[test]
-    fn effect_init_does_not_break_cancel_balance() {
+    fn effect_init_does_not_break_abort_balance() {
         let report = report_for(|ring| {
             ring.push(events::EffectInit::new(1, 7, 3));
-            ring.push(events::CancelBegin::new(2, 7, 11));
-            ring.push(events::CancelAck::new(3, 7, 11));
+            ring.push(events::AbortBegin::new(2, 7, 11));
+            ring.push(events::AbortAck::new(3, 7, 11));
         });
 
-        assert_eq!(report.cancel_begin, 1);
-        assert_eq!(report.cancel_ack, 1);
-        assert!(report.cancel_balanced);
+        assert_eq!(report.abort_begin, 1);
+        assert_eq!(report.abort_ack, 1);
+        assert!(report.abort_balanced);
     }
 
     #[test]
-    fn cancel_begin_ack_balance_survives_initialisation() {
+    fn abort_begin_ack_balance_survives_initialisation() {
         let report = report_for(|ring| {
             ring.push(events::EffectInit::new(10, 42, 1));
-            ring.push(events::CancelBegin::new(11, 42, 0));
-            ring.push(events::CancelAck::new(12, 42, 0));
+            ring.push(events::AbortBegin::new(11, 42, 0));
+            ring.push(events::AbortAck::new(12, 42, 0));
         });
 
-        assert_eq!(report.cancel_begin, 1);
-        assert_eq!(report.cancel_ack, 1);
-        assert!(report.cancel_balanced);
+        assert_eq!(report.abort_begin, 1);
+        assert_eq!(report.abort_ack, 1);
+        assert!(report.abort_balanced);
     }
 
     #[test]
-    fn rollback_balance_with_acknowledgement() {
+    fn state_restore_balance_with_acknowledgement() {
         let report = report_for(|ring| {
             ring.push(events::EffectInit::new(20, 9, 2));
-            ring.push(events::RollbackReq::new(21, 9, 0));
-            ring.push(events::RollbackOk::new(22, 9, 0));
+            ring.push(events::StateRestoreReq::new(21, 9, 0));
+            ring.push(events::StateRestoreOk::new(22, 9, 0));
         });
 
-        assert_eq!(report.rollback_req, 1);
-        assert_eq!(report.rollback_ok, 1);
-        assert!(report.rollback_balanced);
+        assert_eq!(report.state_restore_req, 1);
+        assert_eq!(report.state_restore_ok, 1);
+        assert!(report.state_restore_balanced);
     }
 
     #[test]
@@ -296,5 +300,61 @@ mod tests {
         assert_eq!(report.lane_acquire, 1);
         assert_eq!(report.lane_release, 1);
         assert!(report.lane_balanced);
+    }
+
+    #[test]
+    fn tx_abort_events_participate_in_policy_lane_accounting() {
+        let sid = 0x1234;
+        let lane = 2u16;
+        let causal = TapEvent::make_causal_key((lane as u8) + 1, 0);
+
+        let report = report_for(|ring| {
+            ring.push(events::LaneAcquire::new(40, 7, sid, lane));
+            ring.push(
+                TapEvent {
+                    ts: 41,
+                    id: ids::POLICY_TX_ABORT,
+                    ..TapEvent::zero()
+                }
+                .with_causal_key(causal)
+                .with_arg0(sid)
+                .with_arg1(9),
+            );
+            ring.push(events::LaneRelease::new(42, 7, sid, lane));
+        });
+
+        assert_eq!(report.policy_tx_abort, 1);
+        assert_eq!(report.policy_lane_total, 1);
+        assert_eq!(report.policy_lane_matched, 1);
+        assert_eq!(report.policy_sid_matched, 1);
+        assert_eq!(report.policy_sid_mismatched, 0);
+    }
+
+    #[test]
+    fn commit_events_participate_in_policy_lane_and_sid_accounting() {
+        let sid = 0xBABE;
+        let lane = 1u16;
+        let causal = TapEvent::make_causal_key((lane as u8) + 1, 0);
+
+        let report = report_for(|ring| {
+            ring.push(events::LaneAcquire::new(50, 9, sid, lane));
+            ring.push(
+                TapEvent {
+                    ts: 51,
+                    id: ids::POLICY_COMMIT,
+                    ..TapEvent::zero()
+                }
+                .with_causal_key(causal)
+                .with_arg0(sid)
+                .with_arg1(3),
+            );
+            ring.push(events::LaneRelease::new(52, 9, sid, lane));
+        });
+
+        assert_eq!(report.policy_commit, 1);
+        assert_eq!(report.policy_lane_total, 1);
+        assert_eq!(report.policy_lane_matched, 1);
+        assert_eq!(report.policy_sid_matched, 1);
+        assert_eq!(report.policy_sid_mismatched, 0);
     }
 }

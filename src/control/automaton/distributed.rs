@@ -1,31 +1,31 @@
-//! Distributed splice coordination using control::Txn.
+//! Distributed topology coordination using control::Txn.
 //!
-//! This module implements the distributed splice lifecycle:
-//! 1. intent (SpliceBegin) - Source RV generates intent
-//! 2. ack (SpliceAck) - Destination RV acknowledges
-//! 3. commit (SpliceCommit) - Source RV commits the splice
+//! This module implements the distributed topology lifecycle:
+//! 1. intent (TopologyBegin) - Source RV generates intent
+//! 2. ack (TopologyAck) - Destination RV acknowledges
+//! 3. commit (TopologyCommit) - Source RV commits the topology transition
 //!
 //! The lifecycle maps directly to control::Txn's typestate transitions.
 
 use crate::control::automaton::txn::{Closed, InAcked, InBegin, Tap, Txn};
 #[cfg(test)]
-use crate::control::cluster::error::SpliceError;
+use crate::control::cluster::error::TopologyError;
 use crate::control::types::{
     AtMostOnceCommit, Generation, IncreasingGen, Lane, NoCrossLaneAliasing, One,
 };
 
-/// Invariant marker for distributed splice transactions.
-pub(crate) struct DistributedSpliceInv;
+/// Invariant marker for distributed topology transactions.
+pub(crate) struct DistributedTopologyInv;
 
-impl NoCrossLaneAliasing for DistributedSpliceInv {}
-impl AtMostOnceCommit for DistributedSpliceInv {}
+impl NoCrossLaneAliasing for DistributedTopologyInv {}
+impl AtMostOnceCommit for DistributedTopologyInv {}
 
-/// Distributed splice intent message.
+/// Distributed topology intent message.
 ///
-/// This message is sent from source RV to destination RV to initiate a splice.
+/// This message is sent from source RV to destination RV to initiate a topology transition.
 /// This is the canonical type used by both control::automaton::distributed and ra.rs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SpliceIntent {
+pub(crate) struct TopologyIntent {
     /// Source Rendezvous ID
     pub(crate) src_rv: crate::control::types::RendezvousId,
 
@@ -35,10 +35,10 @@ pub(crate) struct SpliceIntent {
     /// Session ID (for tracking)
     pub(crate) sid: u32,
 
-    /// Old generation (before splice)
+    /// Old generation (before topology transition)
     pub(crate) old_gen: Generation,
 
-    /// New generation (after splice)
+    /// New generation (after topology transition)
     pub(crate) new_gen: Generation,
 
     /// Sequence number for TX fence (optional, 0 if not used)
@@ -54,8 +54,8 @@ pub(crate) struct SpliceIntent {
     pub(crate) dst_lane: Lane,
 }
 
-impl SpliceIntent {
-    /// Create a new splice intent.
+impl TopologyIntent {
+    /// Create a new topology intent.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         src_rv: crate::control::types::RendezvousId,
@@ -82,12 +82,12 @@ impl SpliceIntent {
     }
 }
 
-/// Distributed splice acknowledgment message.
+/// Distributed topology acknowledgment message.
 ///
 /// This message is sent from destination RV back to source RV after validation.
-/// Compatible with ra.rs SpliceAck.
+/// Compatible with ra.rs TopologyAck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SpliceAck {
+pub(crate) struct TopologyAck {
     /// Source Rendezvous ID
     pub(crate) src_rv: crate::control::types::RendezvousId,
 
@@ -100,6 +100,9 @@ pub(crate) struct SpliceAck {
     /// New generation
     pub(crate) new_gen: Generation,
 
+    /// Source lane to commit on the origin rendezvous.
+    pub(crate) src_lane: Lane,
+
     /// New lane
     pub(crate) new_lane: Lane,
 
@@ -110,7 +113,7 @@ pub(crate) struct SpliceAck {
     pub(crate) seq_rx: u32,
 }
 
-impl SpliceAck {
+impl TopologyAck {
     /// Create a new acknowledgment.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -118,6 +121,7 @@ impl SpliceAck {
         dst_rv: crate::control::types::RendezvousId,
         sid: u32,
         new_gen: Generation,
+        src_lane: Lane,
         new_lane: Lane,
         seq_tx: u32,
         seq_rx: u32,
@@ -127,6 +131,7 @@ impl SpliceAck {
             dst_rv,
             sid,
             new_gen,
+            src_lane,
             new_lane,
             seq_tx,
             seq_rx,
@@ -134,13 +139,13 @@ impl SpliceAck {
     }
 
     /// Create acknowledgment from intent.
-    #[cfg(test)]
-    pub(crate) fn from_intent(intent: &SpliceIntent) -> Self {
+    pub(crate) fn from_intent(intent: &TopologyIntent) -> Self {
         Self {
             src_rv: intent.src_rv,
             dst_rv: intent.dst_rv,
             sid: intent.sid,
             new_gen: intent.new_gen,
+            src_lane: intent.src_lane,
             new_lane: intent.dst_lane,
             seq_tx: intent.seq_tx,
             seq_rx: intent.seq_rx,
@@ -148,15 +153,15 @@ impl SpliceAck {
     }
 }
 
-/// Distributed splice coordinator.
+/// Distributed topology coordinator.
 ///
-/// This coordinates the distributed splice lifecycle using control::Txn.
-pub(crate) struct DistributedSplice;
+/// This coordinates the distributed topology lifecycle using control::Txn.
+pub(crate) struct DistributedTopology;
 
-impl DistributedSplice {
-    /// Begin a distributed splice intent.
+impl DistributedTopology {
+    /// Begin a distributed topology intent.
     ///
-    /// Returns a transaction in InBegin state and the SpliceIntent message
+    /// Returns a transaction in InBegin state and the TopologyIntent message
     /// to send to the destination RV.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn begin(
@@ -170,16 +175,16 @@ impl DistributedSplice {
         src_lane: Lane,
         dst_lane: Lane,
         tap: &mut impl Tap,
-    ) -> (InBegin<DistributedSpliceInv, One>, SpliceIntent) {
+    ) -> (InBegin<DistributedTopologyInv, One>, TopologyIntent) {
         // Create transaction
-        let txn: Txn<DistributedSpliceInv, IncreasingGen, One> =
+        let txn: Txn<DistributedTopologyInv, IncreasingGen, One> =
             unsafe { Txn::new(src_lane, old_gen) };
 
-        // Begin the splice (emits SpliceBegin effect)
+        // Begin the topology transition (emits TopologyBegin effect)
         let in_begin = txn.begin(tap);
 
         // Create intent message
-        let intent = SpliceIntent::new(
+        let intent = TopologyIntent::new(
             src_rv, dst_rv, sid, old_gen, new_gen, seq_tx, seq_rx, src_lane, dst_lane,
         );
 
@@ -188,44 +193,36 @@ impl DistributedSplice {
 
     #[cfg(test)]
     pub(crate) fn process_intent(
-        intent: &SpliceIntent,
+        intent: &TopologyIntent,
         _tap: &mut impl Tap,
-    ) -> Result<SpliceAck, SpliceError> {
+    ) -> Result<TopologyAck, TopologyError> {
         if intent.new_gen.raw() <= intent.old_gen.raw() {
-            return Err(SpliceError::GenerationMismatch);
+            return Err(TopologyError::GenerationMismatch);
         }
 
-        Ok(SpliceAck::from_intent(intent))
+        Ok(TopologyAck::from_intent(intent))
     }
 
-    /// Acknowledge a splice intent.
+    /// Acknowledge a topology intent.
     ///
     /// Transitions the transaction from InBegin to InAcked state.
     pub(crate) fn acknowledge(
-        in_begin: InBegin<DistributedSpliceInv, One>,
+        in_begin: InBegin<DistributedTopologyInv, One>,
         tap: &mut impl Tap,
-    ) -> InAcked<DistributedSpliceInv, One> {
-        // Transition to acked state (emits SpliceAck effect)
+    ) -> InAcked<DistributedTopologyInv, One> {
+        // Transition to acked state (emits TopologyAck effect)
         in_begin.ack(tap)
     }
 
-    /// Commit the splice.
+    /// Commit the topology transition.
     ///
     /// Transitions the transaction to Closed state and bumps generation.
-    pub(crate) fn commit(
-        in_acked: InAcked<DistributedSpliceInv, One>,
+    pub(crate) fn topology_commit(
+        in_acked: InAcked<DistributedTopologyInv, One>,
         tap: &mut impl Tap,
-    ) -> Closed<DistributedSpliceInv> {
-        // Commit (emits SpliceCommit effect and bumps generation)
+    ) -> Closed<DistributedTopologyInv> {
+        // Commit (emits TopologyCommit effect and bumps generation)
         in_acked.commit(tap)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn abort(
-        in_acked: InAcked<DistributedSpliceInv, One>,
-        tap: &mut impl Tap,
-    ) -> Closed<DistributedSpliceInv> {
-        in_acked.abort(tap)
     }
 }
 
@@ -236,10 +233,10 @@ mod tests {
     use crate::control::types::RendezvousId;
 
     #[test]
-    fn test_distributed_splice_happy_path() {
+    fn test_distributed_topology_happy_path() {
         let mut tap = NoopTap;
 
-        let (in_begin, intent) = DistributedSplice::begin(
+        let (in_begin, intent) = DistributedTopology::begin(
             RendezvousId::new(1), // src_rv
             RendezvousId::new(2), // dst_rv
             42,                   // sid
@@ -258,23 +255,23 @@ mod tests {
         assert_eq!(intent.old_gen, Generation::new(10));
         assert_eq!(intent.new_gen, Generation::new(11));
 
-        let ack = DistributedSplice::process_intent(&intent, &mut tap).unwrap();
+        let ack = DistributedTopology::process_intent(&intent, &mut tap).unwrap();
         assert_eq!(ack.new_gen, Generation::new(11));
 
-        let in_acked = DistributedSplice::acknowledge(in_begin, &mut tap);
+        let in_acked = DistributedTopology::acknowledge(in_begin, &mut tap);
 
-        let closed = DistributedSplice::commit(in_acked, &mut tap);
+        let closed = DistributedTopology::topology_commit(in_acked, &mut tap);
 
         // Verify generation was bumped
         assert_eq!(closed.generation(), Generation::new(11));
     }
 
     #[test]
-    fn test_distributed_splice_failure() {
+    fn test_distributed_topology_failure() {
         let mut tap = NoopTap;
 
         // Begin with invalid generation (new_gen <= old_gen)
-        let (_in_begin, intent) = DistributedSplice::begin(
+        let (_in_begin, intent) = DistributedTopology::begin(
             RendezvousId::new(1),
             RendezvousId::new(2),
             42,                  // sid
@@ -288,35 +285,7 @@ mod tests {
         );
 
         // Process should fail due to invalid generation
-        let result = DistributedSplice::process_intent(&intent, &mut tap);
+        let result = DistributedTopology::process_intent(&intent, &mut tap);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_distributed_splice_abort() {
-        let mut tap = NoopTap;
-
-        // Begin
-        let (in_begin, _intent) = DistributedSplice::begin(
-            RendezvousId::new(1),
-            RendezvousId::new(2),
-            42,                  // sid
-            Generation::new(10), // old_gen
-            Generation::new(11), // new_gen
-            0,                   // seq_tx
-            0,                   // seq_rx
-            Lane::new(1),
-            Lane::new(2),
-            &mut tap,
-        );
-
-        // Acknowledge
-        let in_acked = DistributedSplice::acknowledge(in_begin, &mut tap);
-
-        // Abort instead of commit
-        let closed = DistributedSplice::abort(in_acked, &mut tap);
-
-        // Verify generation was NOT bumped (stays at old_gen)
-        assert_eq!(closed.generation(), Generation::new(10));
     }
 }

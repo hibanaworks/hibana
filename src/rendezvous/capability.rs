@@ -3,9 +3,14 @@
 //! Implements CapTable for managing nonce-authenticated capability tokens
 //! minted by the rendezvous.
 
-use core::{cell::UnsafeCell, marker::PhantomData};
+use core::{
+    cell::{Cell, UnsafeCell},
+    marker::PhantomData,
+    ptr::NonNull,
+};
 
 use super::error::CapError;
+use super::tables::StateSnapshotTable;
 use crate::control::cap::mint::{
     CAP_HANDLE_LEN, CAP_NONCE_LEN, CapShot, EndpointResource, ResourceKind,
 };
@@ -23,8 +28,60 @@ pub(crate) struct CapEntry {
     pub(crate) kind_tag: u8,
     pub(crate) shot_state: u8,
     pub(crate) role: u8,
+    pub(crate) mint_revision: u64,
+    pub(crate) consumed_revision: u64,
+    pub(crate) released_revision: u64,
     pub(crate) nonce: [u8; CAP_NONCE_LEN],
     pub(crate) handle: [u8; CAP_HANDLE_LEN],
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct CapReleaseCtx {
+    cap_table: NonNull<CapTable>,
+    snapshots: NonNull<StateSnapshotTable>,
+    revisions: NonNull<Cell<u64>>,
+    lane: Lane,
+}
+
+impl CapReleaseCtx {
+    #[inline]
+    pub(crate) fn new(
+        cap_table: &CapTable,
+        snapshots: &StateSnapshotTable,
+        revisions: &Cell<u64>,
+        lane: Lane,
+    ) -> Self {
+        Self {
+            cap_table: NonNull::from(cap_table),
+            snapshots: NonNull::from(snapshots),
+            revisions: NonNull::from(revisions),
+            lane,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn release(self, nonce: &[u8; CAP_NONCE_LEN]) {
+        unsafe {
+            let revisions = self.revisions.as_ref();
+            let release_revision = revisions
+                .get()
+                .checked_add(1)
+                .expect("capability revision counter exhausted");
+            revisions.set(release_revision);
+            let snapshots = self.snapshots.as_ref();
+            let cap_table = self.cap_table.as_ref();
+            if let Some(snapshot_revision) = snapshots.available_cap_revision(self.lane) {
+                cap_table.release_by_nonce_at_revision(
+                    nonce,
+                    self.lane,
+                    release_revision,
+                    snapshot_revision,
+                );
+            } else {
+                cap_table.release_by_nonce(nonce);
+            }
+        }
+    }
 }
 
 /// Capability table (per-Rendezvous).
@@ -280,6 +337,63 @@ impl CapTable {
         }
     }
 
+    /// Restore lane capabilities to a previously recorded snapshot revision.
+    #[inline]
+    pub(crate) fn restore_lane_to_revision(&self, lane: Lane, snapshot_revision: u64) {
+        if self.capacity == 0 {
+            return;
+        }
+        unsafe {
+            let slots = self.slots_ptr();
+            let mut idx = 0usize;
+            while idx < self.capacity {
+                let slot = &mut *slots.add(idx);
+                let Some(entry) = slot.as_mut() else {
+                    idx += 1;
+                    continue;
+                };
+                if entry.lane_raw != lane.as_wire() {
+                    idx += 1;
+                    continue;
+                }
+                if entry.mint_revision > snapshot_revision {
+                    *slot = None;
+                    idx += 1;
+                    continue;
+                }
+                if entry.released_revision > snapshot_revision {
+                    entry.released_revision = 0;
+                }
+                if entry.shot_state == 2 && entry.consumed_revision > snapshot_revision {
+                    entry.shot_state = CapShot::One.as_u8();
+                    entry.consumed_revision = 0;
+                }
+                idx += 1;
+            }
+        }
+    }
+
+    /// Drop snapshot-only release tombstones once the snapshot baseline changes.
+    #[inline]
+    pub(crate) fn discard_released_lane_entries(&self, lane: Lane) {
+        if self.capacity == 0 {
+            return;
+        }
+        unsafe {
+            let slots = self.slots_ptr();
+            let mut idx = 0usize;
+            while idx < self.capacity {
+                let slot = &mut *slots.add(idx);
+                if slot.is_some_and(|entry| {
+                    entry.lane_raw == lane.as_wire() && entry.released_revision != 0
+                }) {
+                    *slot = None;
+                }
+                idx += 1;
+            }
+        }
+    }
+
     /// Release a capability entry by nonce (used by CapRegisteredToken Drop).
     ///
     /// This is called automatically when a CapRegisteredToken is dropped,
@@ -303,6 +417,40 @@ impl CapTable {
         }
     }
 
+    #[inline]
+    pub(crate) fn release_by_nonce_at_revision(
+        &self,
+        nonce: &[u8; CAP_NONCE_LEN],
+        lane: Lane,
+        release_revision: u64,
+        snapshot_revision: u64,
+    ) {
+        if self.capacity == 0 {
+            return;
+        }
+        unsafe {
+            let slots = self.slots_ptr();
+            let mut idx = 0usize;
+            while idx < self.capacity {
+                let slot = &mut *slots.add(idx);
+                let Some(entry) = slot.as_mut() else {
+                    idx += 1;
+                    continue;
+                };
+                if !Self::ct_eq_nonce(&entry.nonce, nonce) {
+                    idx += 1;
+                    continue;
+                }
+                if entry.lane_raw == lane.as_wire() && entry.mint_revision <= snapshot_revision {
+                    entry.released_revision = release_revision;
+                } else {
+                    *slot = None;
+                }
+                break;
+            }
+        }
+    }
+
     pub(crate) fn claim_by_nonce(
         &self,
         nonce: &[u8; CAP_NONCE_LEN],
@@ -311,6 +459,7 @@ impl CapTable {
         expected_tag: u8,
         expected_role: u8,
         expected_shot: CapShot,
+        claim_revision: u64,
     ) -> Result<(bool, [u8; CAP_HANDLE_LEN]), CapError> {
         if self.capacity == 0 {
             return Err(CapError::UnknownToken);
@@ -336,6 +485,9 @@ impl CapTable {
                 }
                 if entry.role != expected_role {
                     return Err(CapError::Mismatch);
+                }
+                if entry.released_revision != 0 {
+                    return Err(CapError::UnknownToken);
                 }
                 let exhausted = entry.shot_state == 2;
                 let stored_shot = match entry.shot_state {
@@ -365,6 +517,7 @@ impl CapTable {
                 return match stored_shot {
                     CapShot::One => {
                         entry.shot_state = 2;
+                        entry.consumed_revision = claim_revision;
                         Ok((true, handle_bytes))
                     }
                     CapShot::Many => Ok((false, handle_bytes)),
@@ -391,6 +544,9 @@ mod tests {
             kind_tag: EndpointResource::TAG,
             shot_state: CapShot::Many.as_u8(),
             role: endpoint.role,
+            mint_revision: 1,
+            consumed_revision: 0,
+            released_revision: 0,
             nonce,
             handle: EndpointResource::encode_handle(&endpoint),
         };
@@ -404,6 +560,7 @@ mod tests {
                 EndpointResource::TAG,
                 endpoint.role,
                 CapShot::Many,
+                2,
             )
             .expect("claim succeeds");
 
@@ -422,6 +579,9 @@ mod tests {
             kind_tag: EndpointResource::TAG,
             shot_state: CapShot::One.as_u8(),
             role: endpoint.role,
+            mint_revision: 1,
+            consumed_revision: 0,
+            released_revision: 0,
             nonce,
             handle: EndpointResource::encode_handle(&endpoint),
         };
@@ -436,6 +596,7 @@ mod tests {
                 EndpointResource::TAG,
                 endpoint.role,
                 CapShot::One,
+                2,
             )
             .expect("first claim succeeds");
         assert!(exhausted, "One shot should be exhausted after first claim");
@@ -448,10 +609,144 @@ mod tests {
             EndpointResource::TAG,
             endpoint.role,
             CapShot::One,
+            3,
         );
         assert!(
             matches!(result, Err(CapError::Exhausted)),
             "second claim should fail with Exhausted for consumed One entry"
         );
+    }
+
+    #[test]
+    fn restore_lane_to_revision_preserves_pre_snapshot_authority() {
+        let table = CapTable::new();
+        let sid = SessionId::new(12);
+        let lane = Lane::new(4);
+        let endpoint = EndpointHandle::new(sid, lane, 3);
+        let nonce_pre = [0x11; 16];
+        let nonce_post = [0x22; 16];
+
+        table
+            .insert_entry(CapEntry {
+                sid,
+                lane_raw: lane.as_wire(),
+                kind_tag: EndpointResource::TAG,
+                shot_state: CapShot::One.as_u8(),
+                role: endpoint.role,
+                mint_revision: 1,
+                consumed_revision: 0,
+                released_revision: 0,
+                nonce: nonce_pre,
+                handle: EndpointResource::encode_handle(&endpoint),
+            })
+            .expect("insert succeeds");
+        table
+            .insert_entry(CapEntry {
+                sid,
+                lane_raw: lane.as_wire(),
+                kind_tag: EndpointResource::TAG,
+                shot_state: CapShot::Many.as_u8(),
+                role: endpoint.role,
+                mint_revision: 3,
+                consumed_revision: 0,
+                released_revision: 0,
+                nonce: nonce_post,
+                handle: EndpointResource::encode_handle(&endpoint),
+            })
+            .expect("insert succeeds");
+
+        let _ = table
+            .claim_by_nonce(
+                &nonce_pre,
+                sid,
+                lane,
+                EndpointResource::TAG,
+                endpoint.role,
+                CapShot::One,
+                4,
+            )
+            .expect("pre-snapshot token claim succeeds");
+
+        table.restore_lane_to_revision(lane, 2);
+
+        let (exhausted, _) = table
+            .claim_by_nonce(
+                &nonce_pre,
+                sid,
+                lane,
+                EndpointResource::TAG,
+                endpoint.role,
+                CapShot::One,
+                5,
+            )
+            .expect("restore must revive a pre-snapshot one-shot consumed later");
+        assert!(exhausted);
+
+        assert!(matches!(
+            table.claim_by_nonce(
+                &nonce_post,
+                sid,
+                lane,
+                EndpointResource::TAG,
+                endpoint.role,
+                CapShot::Many,
+                6,
+            ),
+            Err(CapError::UnknownToken)
+        ));
+    }
+
+    #[test]
+    fn restore_lane_to_revision_revives_pre_snapshot_release_tombstone() {
+        let table = CapTable::new();
+        let sid = SessionId::new(15);
+        let lane = Lane::new(2);
+        let endpoint = EndpointHandle::new(sid, lane, 4);
+        let nonce = [0x33; 16];
+
+        table
+            .insert_entry(CapEntry {
+                sid,
+                lane_raw: lane.as_wire(),
+                kind_tag: EndpointResource::TAG,
+                shot_state: CapShot::Many.as_u8(),
+                role: endpoint.role,
+                mint_revision: 1,
+                consumed_revision: 0,
+                released_revision: 0,
+                nonce,
+                handle: EndpointResource::encode_handle(&endpoint),
+            })
+            .expect("insert succeeds");
+
+        table.release_by_nonce_at_revision(&nonce, lane, 4, 2);
+
+        assert!(matches!(
+            table.claim_by_nonce(
+                &nonce,
+                sid,
+                lane,
+                EndpointResource::TAG,
+                endpoint.role,
+                CapShot::Many,
+                5,
+            ),
+            Err(CapError::UnknownToken)
+        ));
+
+        table.restore_lane_to_revision(lane, 2);
+
+        let (exhausted, _) = table
+            .claim_by_nonce(
+                &nonce,
+                sid,
+                lane,
+                EndpointResource::TAG,
+                endpoint.role,
+                CapShot::Many,
+                6,
+            )
+            .expect("restore must revive pre-snapshot released capability");
+        assert!(!exhausted);
     }
 }

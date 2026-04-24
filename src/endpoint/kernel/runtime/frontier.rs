@@ -1592,8 +1592,6 @@ impl OfferEntryObservedState {
     }
 }
 
-pub(crate) const MAX_ROUTE_ARM_STACK: usize = 8;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct FrontierCandidate {
     pub(super) scope_id: ScopeId,

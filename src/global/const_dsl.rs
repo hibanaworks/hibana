@@ -1108,13 +1108,14 @@ where
     To: RoleMarker,
     M: MessageSpec + SendableLabel + crate::global::MessageControlSpec,
 {
+    crate::global::validate_role_index(From::INDEX);
+    crate::global::validate_role_index(To::INDEX);
     crate::global::validate_sendable_message::<M>();
-    let label = <M as MessageSpec>::LABEL;
     let spec = <M as MessageControlSpec>::CONTROL;
     let atom = eff::EffAtom {
         from: From::INDEX,
         to: To::INDEX,
-        label,
+        label: <M as MessageSpec>::LABEL,
         is_control: spec.is_some(),
         resource: match spec {
             Some(rule) => Some(rule.resource_tag()),

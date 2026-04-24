@@ -16,7 +16,7 @@ use super::program_lowering::control_scope_mask_bit;
 
 const MAX_LOWERING_NODES: usize = crate::eff::meta::MAX_EFF_NODES;
 const ROUTE_SCOPE_ORDINAL_WORDS: usize = (MAX_LOWERING_NODES + 63) / 64;
-const MAX_TRACKED_ROLE_FACTS: usize = u8::MAX as usize + 1;
+const MAX_TRACKED_ROLE_FACTS: usize = u16::BITS as usize;
 #[inline(always)]
 const fn checked_role_index(role: u8) -> usize {
     let role = role as usize;

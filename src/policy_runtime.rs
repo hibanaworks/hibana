@@ -1,11 +1,10 @@
 //! Generic policy runtime helpers retained by hibana core.
 //!
 //! Phase 6 removes the EPF appliance and management prefixes from core. The
-//! runtime keeps only the generic slot boundary, policy-action normalisation,
-//! and deterministic replay helpers needed by the localside kernel.
+//! runtime keeps only the generic slot boundary and deterministic replay
+//! helpers needed by the localside kernel.
 
 use crate::{
-    control::types::{Lane, SessionId},
     observe::core::TapEvent,
     transport::context::{self, PolicyAttrs},
 };
@@ -20,97 +19,41 @@ pub enum PolicySlot {
     Route,
 }
 
-/// Trap reasons surfaced in audit trails when a downstream appliance fails
-/// closed. Core itself does not execute a policy VM.
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Trap {
-    FuelExhausted,
-    IllegalOpcode(u8),
-    OutOfBounds,
-    IllegalSyscall,
-    VerifyFailed,
-}
-
-/// Trap reasons surfaced in audit trails when a downstream appliance fails
-/// closed. Core itself does not execute a policy VM.
-#[cfg(not(test))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Trap {}
-
-/// Abort outcome emitted by a downstream policy appliance.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct AbortInfo {
-    pub(crate) reason: u16,
-    pub(crate) trap: Option<Trap>,
-}
-
-/// Engine-level fail-closed reason used when policy execution cannot produce
-/// a safe decision.
-pub(crate) const ENGINE_FAIL_CLOSED: u16 = 0xFFFF;
 /// Engine-level liveness exhaustion reason for dynamic route decision loops.
 pub(crate) const ENGINE_LIVENESS_EXHAUSTED: u16 = 0xFFFE;
+/// Audit digest used when hibana core has no installed policy appliance.
+pub(crate) const POLICY_DIGEST_NONE: u32 = 0;
+/// Audit fuel reading used when hibana core has no installed policy appliance.
+pub(crate) const POLICY_FUEL_NONE: u16 = 0;
+/// Audit mode tag emitted when hibana core records replay inputs without a local
+/// policy appliance.
+pub(crate) const POLICY_MODE_AUDIT_ONLY_TAG: u8 = 0;
+/// Audit result reason emitted when hibana core has no local policy appliance.
+pub(crate) const POLICY_REASON_NO_ENGINE: u16 = 1;
 
-/// Runtime policy mode retained for audit metadata.
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PolicyMode {
-    Shadow,
-    Enforce,
-}
-
-/// Runtime policy mode retained for audit metadata.
-#[cfg(not(test))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PolicyMode {
-    Enforce,
-}
-
-/// Reduced emergency-plane verdict domain.
+/// Reduced audit verdict domain used by hibana core.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PolicyVerdict {
-    Proceed,
-    RouteArm(u8),
-    Reject(u16),
-}
-
-#[inline]
-#[cfg(test)]
-pub(crate) const fn policy_mode_tag(mode: PolicyMode) -> u8 {
-    match mode {
-        PolicyMode::Shadow => 0,
-        PolicyMode::Enforce => 1,
-    }
-}
-
-#[inline]
-#[cfg(not(test))]
-pub(crate) const fn policy_mode_tag(_mode: PolicyMode) -> u8 {
-    1
+    NoEngine,
 }
 
 #[inline]
 pub(crate) const fn verdict_tag(verdict: PolicyVerdict) -> u8 {
     match verdict {
-        PolicyVerdict::Proceed => 0,
-        PolicyVerdict::RouteArm(_) => 1,
-        PolicyVerdict::Reject(_) => 2,
+        PolicyVerdict::NoEngine => 0xFF,
     }
 }
 
 #[inline]
 pub(crate) const fn verdict_arm(verdict: PolicyVerdict) -> u8 {
-    match verdict {
-        PolicyVerdict::RouteArm(arm) => arm,
-        _ => 0,
-    }
+    let _ = verdict;
+    0
 }
 
 #[inline]
 pub(crate) const fn verdict_reason(verdict: PolicyVerdict) -> u16 {
     match verdict {
-        PolicyVerdict::Reject(reason) => reason,
-        _ => 0,
+        PolicyVerdict::NoEngine => POLICY_REASON_NO_ENGINE,
     }
 }
 
@@ -293,124 +236,6 @@ pub(crate) const fn replay_transport_presence(attrs: &PolicyAttrs) -> u8 {
     mask
 }
 
-/// Unified action surface consumed by slot owners.
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Action {
-    Proceed,
-    Abort(AbortInfo),
-    Tap { id: u16, arg0: u32, arg1: u32 },
-    Route { arm: u8 },
-    Defer { retry_hint: u8 },
-}
-
-/// Unified action surface consumed by slot owners.
-#[cfg(not(test))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Action {
-    Proceed,
-}
-
-impl Action {
-    #[inline]
-    #[cfg(test)]
-    pub(crate) const fn verdict(self) -> PolicyVerdict {
-        match self {
-            Action::Proceed => PolicyVerdict::Proceed,
-            Action::Route { arm } if arm <= 1 => PolicyVerdict::RouteArm(arm),
-            Action::Route { .. } => PolicyVerdict::Reject(ENGINE_FAIL_CLOSED),
-            Action::Abort(info) => PolicyVerdict::Reject(info.reason),
-            Action::Tap { .. } => PolicyVerdict::Proceed,
-            Action::Defer { .. } => PolicyVerdict::Proceed,
-        }
-    }
-
-    #[inline]
-    #[cfg(not(test))]
-    pub(crate) const fn verdict(self) -> PolicyVerdict {
-        let _ = self;
-        let _ = PolicyVerdict::RouteArm(0);
-        let _ = PolicyVerdict::Reject(ENGINE_FAIL_CLOSED);
-        PolicyVerdict::Proceed
-    }
-
-    #[inline]
-    #[cfg(test)]
-    pub(crate) const fn with_mode(self, mode: PolicyMode) -> Self {
-        match mode {
-            PolicyMode::Enforce => self,
-            PolicyMode::Shadow => match self {
-                Action::Tap { .. } => self,
-                _ => Action::Proceed,
-            },
-        }
-    }
-
-    #[inline]
-    #[cfg(not(test))]
-    pub(crate) const fn abort_info(self) -> Option<AbortInfo> {
-        let _ = self;
-        None
-    }
-
-    #[inline]
-    #[cfg(test)]
-    pub(crate) const fn abort_info(self) -> Option<AbortInfo> {
-        match self {
-            Action::Abort(info) => Some(info),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    #[cfg(not(test))]
-    pub(crate) const fn tap_payload(self) -> Option<(u16, u32, u32)> {
-        let _ = self;
-        None
-    }
-
-    #[inline]
-    #[cfg(test)]
-    pub(crate) const fn tap_payload(self) -> Option<(u16, u32, u32)> {
-        match self {
-            Action::Tap { id, arg0, arg1 } => Some((id, arg0, arg1)),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    #[cfg(not(test))]
-    pub(crate) const fn route_arm(self) -> Option<u8> {
-        let _ = self;
-        None
-    }
-
-    #[inline]
-    #[cfg(test)]
-    pub(crate) const fn route_arm(self) -> Option<u8> {
-        match self {
-            Action::Route { arm } => Some(arm),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    #[cfg(not(test))]
-    pub(crate) const fn defer_hint(self) -> Option<u8> {
-        let _ = self;
-        None
-    }
-
-    #[inline]
-    #[cfg(test)]
-    pub(crate) const fn defer_hint(self) -> Option<u8> {
-        match self {
-            Action::Defer { retry_hint } => Some(retry_hint),
-            _ => None,
-        }
-    }
-}
-
 /// Static contract associated with each policy slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SlotPolicyContract {
@@ -468,158 +293,19 @@ pub(crate) const fn slot_default_input(slot: PolicySlot) -> [u32; 4] {
     }
 }
 
-/// Minimal policy context retained by core so call sites can continue to seed
-/// deterministic audit metadata even when no appliance is installed.
-#[derive(Debug, Default)]
-pub(crate) struct PolicyCtx<'a> {
-    _event: core::marker::PhantomData<&'a TapEvent>,
-    _slot: Option<PolicySlot>,
-    _session: Option<SessionId>,
-    _lane: Option<Lane>,
-    _attrs: PolicyAttrs,
-    _input: [u32; 4],
-}
-
-impl<'a> PolicyCtx<'a> {
-    #[inline]
-    pub(crate) fn new(slot: PolicySlot, _event: &'a TapEvent) -> Self {
-        Self {
-            _event: core::marker::PhantomData,
-            _slot: Some(slot),
-            _session: None,
-            _lane: None,
-            _attrs: PolicyAttrs::EMPTY,
-            _input: [0; 4],
-        }
-    }
-
-    #[inline]
-    pub(crate) fn set_session(&mut self, session: SessionId) {
-        self._session = Some(session);
-    }
-
-    #[inline]
-    pub(crate) fn set_lane(&mut self, lane: Lane) {
-        self._lane = Some(lane);
-    }
-
-    #[inline]
-    pub(crate) fn set_policy_attrs(&mut self, attrs: PolicyAttrs) {
-        self._attrs = attrs;
-    }
-
-    #[inline]
-    pub(crate) fn set_policy_input(&mut self, input: [u32; 4]) {
-        self._input = input;
-    }
-}
-
-/// Placeholder slot registry kept by hibana core after the EPF appliance moved
-/// to the sibling crate.
-pub(crate) struct HostSlots<'arena> {
-    _arena: core::marker::PhantomData<&'arena ()>,
-}
-
-impl<'arena> HostSlots<'arena> {
-    #[inline]
-    pub(crate) fn new() -> Self {
-        Self {
-            _arena: core::marker::PhantomData,
-        }
-    }
-
-    pub(crate) unsafe fn init_empty(dst: *mut Self) {
-        unsafe {
-            core::ptr::addr_of_mut!((*dst)._arena).write(core::marker::PhantomData);
-        }
-    }
-
-    #[inline]
-    pub(crate) fn active_digest(&self, _slot: PolicySlot) -> u32 {
-        0
-    }
-
-    #[inline]
-    pub(crate) fn policy_mode(&self, _slot: PolicySlot) -> PolicyMode {
-        PolicyMode::Enforce
-    }
-
-    #[inline]
-    pub(crate) fn last_fuel_used(&self, _slot: PolicySlot) -> u16 {
-        0
-    }
-}
-
-impl Default for HostSlots<'_> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn action_helpers_cover_non_proceed_variants() {
-        let abort = Action::Abort(AbortInfo {
-            reason: 7,
-            trap: Some(Trap::VerifyFailed),
-        });
-        assert_eq!(abort.abort_info().unwrap().reason, 7);
-
-        let tap = Action::Tap {
-            id: 3,
-            arg0: 4,
-            arg1: 5,
-        };
-        assert_eq!(tap.tap_payload(), Some((3, 4, 5)));
-
-        let route = Action::Route { arm: 1 };
-        assert_eq!(route.route_arm(), Some(1));
-
-        let defer = Action::Defer { retry_hint: 9 };
-        assert_eq!(defer.defer_hint(), Some(9));
-    }
-
-    #[test]
-    fn shadow_mode_suppresses_non_tap_actions() {
+    fn no_core_policy_appliance_constants_are_explicit() {
+        assert_eq!(POLICY_DIGEST_NONE, 0);
+        assert_eq!(POLICY_FUEL_NONE, 0);
+        assert_eq!(POLICY_MODE_AUDIT_ONLY_TAG, 0);
+        assert_eq!(verdict_tag(PolicyVerdict::NoEngine), 0xFF);
         assert_eq!(
-            Action::Proceed.with_mode(PolicyMode::Shadow),
-            Action::Proceed
+            verdict_reason(PolicyVerdict::NoEngine),
+            POLICY_REASON_NO_ENGINE
         );
-        assert_eq!(
-            Action::Abort(AbortInfo {
-                reason: 11,
-                trap: Some(Trap::FuelExhausted),
-            })
-            .with_mode(PolicyMode::Shadow),
-            Action::Proceed
-        );
-        assert_eq!(
-            Action::Tap {
-                id: 1,
-                arg0: 2,
-                arg1: 3,
-            }
-            .with_mode(PolicyMode::Shadow),
-            Action::Tap {
-                id: 1,
-                arg0: 2,
-                arg1: 3,
-            }
-        );
-    }
-
-    #[test]
-    fn trap_variants_stay_addressable_for_audit_paths() {
-        let traps = [
-            Trap::FuelExhausted,
-            Trap::IllegalOpcode(0xAA),
-            Trap::OutOfBounds,
-            Trap::IllegalSyscall,
-            Trap::VerifyFailed,
-        ];
-        assert_eq!(traps.len(), 5);
     }
 }

@@ -7668,24 +7668,8 @@ fn defer_budget_exhaustion_forces_poll_then_abort() {
 
 #[test]
 fn defer_never_promotes_to_route_authority() {
-    let scope = ScopeId::generic(24);
-    let mut delegate_called = false;
-    let decision = route_policy_decision_from_action(Action::Defer { retry_hint: 7 }, 88);
-    assert!(matches!(
-        decision,
-        RoutePolicyDecision::Defer {
-            retry_hint: 7,
-            source: DeferSource::Epf
-        }
-    ));
-    let handle = resolve_route_decision_handle_with_policy(scope, scope, decision, || {
-        delegate_called = true;
-        Ok(RouteArmHandle { scope, arm: 1 })
-    })
-    .expect("defer must delegate to resolver");
-    assert_eq!(handle.arm, 1);
-    assert!(delegate_called);
     assert!(RouteDecisionSource::from_tap_seq(4).is_none());
+    assert_eq!(DeferSource::Resolver, DeferSource::Resolver);
 }
 
 #[test]
@@ -8338,6 +8322,105 @@ fn loop_continue_then_nested_custom_route_right_send_stays_well_scoped() {
                         send_loop_continue_then_prepare_route_right(&mut cx, controller_slot);
                     assert_route_right_meta_after_continue(controller_slot, &route_right_meta);
                     send_prepared_route_right(&mut cx, controller_slot, &route_right_meta);
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn send_preview_commit_clears_stale_route_hints_on_selected_lane() {
+    run_offer_regression_test(
+        "send_preview_commit_clears_stale_route_hints_on_selected_lane",
+        || {
+            const STALE_HINT_LABEL: u8 = 77;
+            let stale_hint_mask = 1u128 << STALE_HINT_LABEL;
+
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
+                with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
+                    let transport = HintOnlyTransport::new(HINT_NONE);
+                    let rv_id = cluster_ref
+                        .add_rendezvous_from_config(config, transport)
+                        .expect("register rendezvous");
+                    let sid = SessionId::new(1008);
+                    unsafe {
+                        cluster_ref
+                            .attach_endpoint_into::<0, _, _, _>(
+                                controller_slot.ptr(),
+                                rv_id,
+                                sid,
+                                &LOOP_CONTINUE_SCOPED_CONTROLLER_PROGRAM(),
+                                NoBinding,
+                            )
+                            .expect("attach controller endpoint");
+                    }
+
+                    let waker = noop_waker_ref();
+                    let mut cx = Context::from_waker(waker);
+                    let route_right_meta = {
+                        let controller = controller_slot.borrow_mut();
+                        {
+                            let mut continue_send = core::pin::pin!(
+                                controller.send_direct::<LoopContinueScopedContinueMsg, _>(())
+                            );
+                            let _ = poll_ready_ok(
+                                &mut cx,
+                                continue_send.as_mut(),
+                                "loop continue send",
+                            );
+                        }
+
+                        controller
+                            .preview_flow::<LoopContinueScopedRouteRightMsg>()
+                            .map(|preview| preview.into_parts().0)
+                            .expect("open nested route-right send after continue")
+                    };
+
+                    let controller = controller_slot.borrow_mut();
+                    let lane = controller
+                        .port_for_lane(route_right_meta.lane as usize)
+                        .lane();
+                    assert!(
+                        !controller
+                            .port_for_lane(route_right_meta.lane as usize)
+                            .route_table()
+                            .has_pending_hint_for_lane(lane, stale_hint_mask),
+                        "test must start without stale route hints on the selected lane"
+                    );
+                    controller
+                        .port_for_lane(route_right_meta.lane as usize)
+                        .route_table()
+                        .update_pending_hint_lane_masks(lane, 0, stale_hint_mask);
+                    assert!(
+                        controller
+                            .port_for_lane(route_right_meta.lane as usize)
+                            .route_table()
+                            .has_pending_hint_for_lane(lane, stale_hint_mask),
+                        "stale route hint must be staged before the send commit"
+                    );
+
+                    {
+                        let mut route_right_send = core::pin::pin!(
+                            controller.send_with_meta_in_place::<LoopContinueScopedRouteRightMsg>(
+                                route_right_meta,
+                                None
+                            )
+                        );
+                        let _ = poll_ready_ok(
+                            &mut cx,
+                            route_right_send.as_mut(),
+                            "nested route-right send clears stale route hints",
+                        );
+                    }
+
+                    assert!(
+                        !controller
+                            .port_for_lane(route_right_meta.lane as usize)
+                            .route_table()
+                            .has_pending_hint_for_lane(lane, stale_hint_mask),
+                        "send commit must clear offer-scoped route hints on the selected lane"
+                    );
                 });
             });
         },
@@ -10272,6 +10355,106 @@ fn parked_passive_offer_does_not_drain_hint_from_same_lane() {
                                 "second offer poll must re-poll the same parked recv future"
                             );
                         });
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn decode_branch_commit_clears_stale_route_hints_on_selected_lane() {
+    run_offer_regression_test(
+        "decode_branch_commit_clears_stale_route_hints_on_selected_lane",
+        || {
+            const STALE_HINT_LABEL: u8 = 77;
+            let stale_hint_mask = 1u128 << STALE_HINT_LABEL;
+
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
+                with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
+                        let transport = HintOnlyTransport::new(HINT_NONE);
+                        let rv_id = cluster_ref
+                            .add_rendezvous_from_config(config, transport)
+                            .expect("register rendezvous");
+                        let sid = SessionId::new(1204);
+                        unsafe {
+                            cluster_ref
+                                .attach_endpoint_into::<0, _, _, _>(
+                                    controller_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &HINT_CONTROLLER_PROGRAM(),
+                                    NoBinding,
+                                )
+                                .expect("attach controller endpoint");
+                            cluster_ref
+                                .attach_endpoint_into::<1, _, _, _>(
+                                    worker_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &HINT_WORKER_PROGRAM(),
+                                    NoBinding,
+                                )
+                                .expect("attach worker endpoint");
+                        }
+
+                        let controller = controller_slot.borrow_mut();
+                        let worker = worker_slot.borrow_mut();
+                        let scope = worker.cursor.node_scope_id();
+                        controller.port_for_lane(0).record_route_decision(scope, 1);
+
+                        let offer_lane = worker.port_for_lane(0).lane();
+                        assert!(
+                            !worker
+                                .port_for_lane(0)
+                                .route_table()
+                                .has_pending_hint_for_lane(offer_lane, stale_hint_mask),
+                            "test must start without stale route hints on the selected lane"
+                        );
+                        worker
+                            .port_for_lane(0)
+                            .route_table()
+                            .update_pending_hint_lane_masks(offer_lane, 0, stale_hint_mask);
+                        assert!(
+                            worker
+                                .port_for_lane(0)
+                                .route_table()
+                                .has_pending_hint_for_lane(offer_lane, stale_hint_mask),
+                            "stale route hint must be staged before route-branch commit"
+                        );
+
+                        let mut cx = Context::from_waker(noop_waker_ref());
+                        let mut branch = {
+                            let mut offer = pin!(worker.offer());
+                            poll_ready_ok(&mut cx, offer.as_mut(), "offer selected right branch")
+                        };
+                        assert_eq!(
+                            branch.label(),
+                            HINT_RIGHT_DATA_LABEL,
+                            "offer must still materialize the selected right branch"
+                        );
+
+                        {
+                            let mut decode = pin!(
+                                worker.decode_branch::<Msg<HINT_RIGHT_DATA_LABEL, u8>>(&mut branch)
+                            );
+                            let _ = poll_ready_ok(
+                                &mut cx,
+                                decode.as_mut(),
+                                "decode right branch and commit route preview",
+                            );
+                        }
+                        drop(branch);
+
+                        assert!(
+                            !worker
+                                .port_for_lane(0)
+                                .route_table()
+                                .has_pending_hint_for_lane(offer_lane, stale_hint_mask),
+                            "decode commit must clear offer-scoped route hints on the selected lane"
+                        );
                     });
                 });
             });

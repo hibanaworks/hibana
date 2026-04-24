@@ -1,11 +1,11 @@
 # Completion Policy
 
-This branch closes `hibana` by deletion, not by compatibility scaffolding.
+This branch closes `hibana` by deletion, not by scaffolding.
 
 Hard rules:
 
-- no compatibility layer
-- no deprecated alias surface
+- no second public surface
+- no alias surface
 - no dual public receive/decode trait story
 - no raw-pointer frozen image owners
 - no wrapper-future regressions in localside hot paths

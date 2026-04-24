@@ -21,17 +21,17 @@ pub const USER_EVENT_RANGE_END: u16 = 0x0100;
 
 // ────────────── Endpoint boundary (0x0200-0x020F) ──────────────
 
-/// AMPST cancellation initiated (begin message emitted).
+/// Control abort initiated.
 ///
 /// - `arg0`: Session identifier (u32)
 /// - `arg1`: Lane / reason payload (u32)
-pub const CANCEL_BEGIN: u16 = 0x0200;
+pub const ABORT_BEGIN: u16 = 0x0200;
 
-/// AMPST cancellation acknowledged.
+/// Control abort acknowledged.
 ///
 /// - `arg0`: Session identifier (u32)
 /// - `arg1`: Lane that observed the acknowledgement (u32)
-pub const CANCEL_ACK: u16 = 0x0201;
+pub const ABORT_ACK: u16 = 0x0201;
 
 /// Endpoint send operation observed at the tap boundary.
 ///
@@ -45,23 +45,29 @@ pub const ENDPOINT_SEND: u16 = 0x0202;
 /// - `arg1`: Session identifier (u32)
 pub const ENDPOINT_RECV: u16 = 0x0203;
 
-/// Endpoint control-plane event (checkpoint, rollback, cancel, ...).
+/// Endpoint control-plane event (state snapshot, state restore, abort, ...).
 ///
 /// - `arg0`: Packed role/lane/label/flags (u32)
 ///
 pub const ENDPOINT_CONTROL: u16 = 0x0204;
 
-/// Splice handshake initiated.
+/// Topology handshake initiated.
 ///
 /// - `arg0`: Session identifier (u32)
 /// - `arg1`: Generation / causal context (u32)
-pub const SPLICE_BEGIN: u16 = 0x0208;
+pub const TOPOLOGY_BEGIN: u16 = 0x0208;
 
-/// Splice handshake committed.
+/// Topology handshake acknowledged.
+///
+/// - `arg0`: from_lane (u8) | to_lane (u8) << 8 | generation (u16) << 16
+/// - `arg1`: Session identifier (u32)
+pub const TOPOLOGY_ACK: u16 = 0x0209;
+
+/// Topology handshake committed.
 ///
 /// - `arg0`: Session identifier (u32)
 /// - `arg1`: Generation acknowledged (u32)
-pub const SPLICE_COMMIT: u16 = 0x0209;
+pub const TOPOLOGY_COMMIT: u16 = 0x020A;
 
 // ───────────── Lane lifecycle (0x0210-0x021F) ─────────────
 
@@ -153,23 +159,29 @@ pub const CAP_EXHAUST_BASE: u16 = 0x0242;
 /// - `arg1`: Number of control effects/materialised resources (u32)
 pub const EFFECT_INIT: u16 = 0x0500;
 
-/// Checkpoint request issued by the rollback subsystem.
+/// State snapshot request issued by the state-restore subsystem.
 ///
 /// - `arg0`: Session identifier (u32)
 /// - `arg1`: Generation marker (u32)
-pub const CHECKPOINT_REQ: u16 = 0x0130;
+pub const STATE_SNAPSHOT_REQ: u16 = 0x0130;
 
-/// Rollback requested (transition to previous checkpoint).
+/// State restore requested.
 ///
 /// - `arg0`: Session identifier (u32)
 /// - `arg1`: Target generation (u32)
-pub const ROLLBACK_REQ: u16 = 0x0131;
+pub const STATE_RESTORE_REQ: u16 = 0x0131;
 
-/// Rollback completed successfully.
+/// State restore completed successfully.
 ///
 /// - `arg0`: Session identifier (u32)
 /// - `arg1`: Generation restored (u32)
-pub const ROLLBACK_OK: u16 = 0x0132;
+pub const STATE_RESTORE_OK: u16 = 0x0132;
+
+/// Policy transaction abort requested.
+///
+/// - `arg0`: Session identifier (u32)
+/// - `arg1`: Snapshot generation restored (u32)
+pub const POLICY_TX_ABORT: u16 = 0x0411;
 
 /// Transport-level telemetry event (ACK / Loss notification).
 ///
@@ -193,10 +205,6 @@ pub const TRANSPORT_METRICS_EXT: u16 = 0x0214;
 ///
 /// - `arg0`: Service identifier (high 32 bits of 64-bit id)
 /// - `arg1`: Low 32 bits | shot flag << 31 | in-flight count
-///
-/// # Observable Properties
-/// - Every `DELEG_BEGIN` must be followed by `DELEG_SPLICE`
-/// - Shot discipline: Only `Many` delegations can be re-routed
 pub const DELEG_BEGIN: u16 = 0x0230;
 
 /// Routing policy selected a target shard/node.
@@ -205,24 +213,15 @@ pub const DELEG_BEGIN: u16 = 0x0230;
 /// - `arg1`: Shard or node identifier (u32)
 ///
 /// # Observable Properties
-/// - Occurs between `DELEG_BEGIN` and `DELEG_SPLICE`
+/// - Occurs after `DELEG_BEGIN` and before topology acknowledgement
 /// - Enables auditing of routing decisions
 pub const ROUTE_PICK: u16 = 0x0231;
 
-/// Delegation splice completed (session handed over to new lane).
-///
-/// - `arg0`: from_lane (u8) | to_lane (u8) << 8 | generation (u16) << 16
-/// - `arg1`: Session identifier (u32)
-///
-/// # Observable Properties
-/// - Marks successful completion of delegation
-/// - Generation increments monotonically
-pub const DELEG_SPLICE: u16 = 0x0232;
-
-/// Policy VM requested a session abort (mapped to cancel_begin/ack).
+/// Policy VM requested a session abort (mapped to abort_begin/ack).
 ///
 /// - `arg0`: Abort reason (u16 promoted to u32)
 /// - `arg1`: Session identifier when known, otherwise 0
+#[cfg(test)]
 pub const POLICY_ABORT: u16 = 0x0400;
 
 /// Policy VM emitted an annotation via ACT_ANNOT.
@@ -236,6 +235,7 @@ pub const POLICY_ANNOT: u16 = 0x0401;
 ///
 /// - `arg0`: Trap kind discriminant
 /// - `arg1`: Session identifier when known, otherwise 0
+#[cfg(test)]
 pub const POLICY_TRAP: u16 = 0x0402;
 
 /// Policy VM dispatched a control-plane effect.
@@ -255,15 +255,14 @@ pub const POLICY_RA_OK: u16 = 0x0404;
 ///
 /// - `arg0`: Slot identifier (0=Forward,1=EndpointRx,2=EndpointTx,3=Rendezvous)
 /// - `arg1`: Activated version identifier
-#[cfg(test)]
 pub const POLICY_COMMIT: u16 = 0x0405;
 
-/// Policy VM slot rolled back to a previous version.
+#[cfg(test)]
+/// Policy VM slot restored to a previous version.
 ///
 /// - `arg0`: Slot identifier (0=Forward,1=EndpointRx,2=EndpointTx,3=Rendezvous)
 /// - `arg1`: Version identifier restored
-#[cfg(test)]
-pub const POLICY_ROLLBACK: u16 = 0x0406;
+pub const POLICY_STATE_RESTORE: u16 = 0x0406;
 
 /// Policy audit core digest tuple.
 ///

@@ -7,7 +7,7 @@
 
 use core::marker::PhantomData;
 
-use crate::global::{KnownRole, MessageSpec, Role, RoleMarker, SendableLabel};
+use crate::global::{KnownRole, MessageSpec, RoleMarker, SendableLabel};
 
 // =============================================================================
 // RoleLaneSet — Lane-aware role set for g::par disjoint checking
@@ -22,7 +22,7 @@ use crate::global::{KnownRole, MessageSpec, Role, RoleMarker, SendableLabel};
 ///
 /// # Capacity
 /// - Maximum 8 Lanes (sufficient for layered control/data parallelism)
-/// - Maximum 32 Roles per Lane (same as the original `StepRoleSet::MASK`)
+/// - Maximum 16 Roles per Lane (matches the public `Role<IDX>` contract)
 /// - Copy: 32 bytes (compile-time checking only, zero runtime cost)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RoleLaneSet {
@@ -40,10 +40,10 @@ impl RoleLaneSet {
     /// Add a role to a specific lane.
     ///
     /// # Panics
-    /// Panics if `lane >= 8` or `role_index >= 32`.
+    /// Panics if `lane >= 8` or `role_index >= 16`.
     pub(crate) const fn with_role(mut self, role_index: u8, lane: u8) -> Self {
         assert!(lane < 8, "lane must be < 8");
-        assert!(role_index < 32, "role_index must be < 32");
+        assert!(role_index < 16, "role_index must be < 16");
         self.lanes[lane as usize] |= 1u32 << role_index;
         self
     }
@@ -241,41 +241,6 @@ impl<From, Msg> LocalRecv<From, Msg> {
     }
 }
 
-/// Concatenate typelists.
-pub trait StepConcat<Other> {
-    type Output;
-}
-
-impl<Other> StepConcat<Other> for StepNil {
-    type Output = Other;
-}
-
-impl<Head, Tail, Other> StepConcat<Other> for StepCons<Head, Tail>
-where
-    Tail: StepConcat<Other>,
-{
-    type Output = StepCons<Head, <Tail as StepConcat<Other>>::Output>;
-}
-
-impl<Left, Right, Other> StepConcat<Other> for SeqSteps<Left, Right>
-where
-    Right: StepConcat<Other>,
-{
-    type Output = SeqSteps<Left, <Right as StepConcat<Other>>::Output>;
-}
-
-impl<Left, Right, Other> StepConcat<Other> for RouteSteps<Left, Right> {
-    type Output = SeqSteps<RouteSteps<Left, Right>, Other>;
-}
-
-impl<Left, Right, Other> StepConcat<Other> for ParSteps<Left, Right> {
-    type Output = SeqSteps<ParSteps<Left, Right>, Other>;
-}
-
-impl<Inner, const POLICY_ID: u16, Other> StepConcat<Other> for PolicySteps<Inner, POLICY_ID> {
-    type Output = SeqSteps<PolicySteps<Inner, POLICY_ID>, Other>;
-}
-
 impl StepRoleSet for StepNil {
     const ROLE_LANE_SET: RoleLaneSet = RoleLaneSet::empty();
 }
@@ -335,224 +300,4 @@ where
 impl<Inner, const POLICY_ID: u16> PolicyEligible for PolicySteps<Inner, POLICY_ID> where
     Inner: PolicyEligible
 {
-}
-
-/// Type-level booleans used during projection.
-pub trait Bool {
-    const VALUE: bool;
-}
-pub struct True;
-pub struct False;
-impl Bool for True {
-    const VALUE: bool = true;
-}
-impl Bool for False {
-    const VALUE: bool = false;
-}
-
-/// Role equality at the type level.
-pub trait RoleEq<Other> {
-    type Output: Bool;
-}
-
-macro_rules! impl_role_eq {
-    () => {};
-    ($head:literal $(,$tail:literal)*) => {
-        impl RoleEq<Role<$head>> for Role<$head> {
-            type Output = True;
-        }
-        $(
-            impl RoleEq<Role<$tail>> for Role<$head> {
-                type Output = False;
-            }
-            impl RoleEq<Role<$head>> for Role<$tail> {
-                type Output = False;
-            }
-        )*
-        impl_role_eq!($($tail),*);
-    };
-}
-
-impl_role_eq!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-
-/// Selection logic for a single send step.
-pub trait SelectLocal<SendFlag: Bool, RecvFlag: Bool, Local, From, To, Msg> {
-    type Output;
-}
-
-impl<Local, From, To, Msg> SelectLocal<True, False, Local, From, To, Msg> for ()
-where
-    To: KnownRole,
-    Msg: MessageSpec,
-{
-    type Output = StepCons<LocalSend<To, Msg>, StepNil>;
-}
-
-impl<Local, From, To, Msg> SelectLocal<False, True, Local, From, To, Msg> for ()
-where
-    From: KnownRole,
-    Msg: MessageSpec,
-{
-    type Output = StepCons<LocalRecv<From, Msg>, StepNil>;
-}
-
-impl<Local, From, To, Msg> SelectLocal<False, False, Local, From, To, Msg> for ()
-where
-    Msg: MessageSpec,
-{
-    type Output = StepNil;
-}
-
-impl<Local, From, To, Msg> SelectLocal<True, True, Local, From, To, Msg> for ()
-where
-    Msg: MessageSpec,
-{
-    type Output = StepCons<LocalAction<Msg>, StepNil>;
-}
-
-/// Project a global typelist to the local steps for `Local`.
-pub trait ProjectRole<Local> {
-    type Output: StepCount;
-}
-
-pub trait StepCount {
-    const LEN: usize;
-}
-
-impl<Local> ProjectRole<Local> for StepNil {
-    type Output = StepNil;
-}
-
-impl StepCount for StepNil {
-    const LEN: usize = 0;
-}
-
-impl<Local, From, To, Msg, const LANE: u8, Tail> ProjectRole<Local>
-    for StepCons<SendStep<From, To, Msg, LANE>, Tail>
-where
-    Local: KnownRole,
-    From: KnownRole + RoleEq<Local>,
-    To: KnownRole + RoleEq<Local>,
-    Msg: MessageSpec,
-    Tail: ProjectRole<Local>,
-    (): SelectLocal<
-            <From as RoleEq<Local>>::Output,
-            <To as RoleEq<Local>>::Output,
-            Local,
-            From,
-            To,
-            Msg,
-        >,
-    <() as SelectLocal<
-        <From as RoleEq<Local>>::Output,
-        <To as RoleEq<Local>>::Output,
-        Local,
-        From,
-        To,
-        Msg,
-    >>::Output: StepConcat<<Tail as ProjectRole<Local>>::Output>,
-    <<() as SelectLocal<
-        <From as RoleEq<Local>>::Output,
-        <To as RoleEq<Local>>::Output,
-        Local,
-        From,
-        To,
-        Msg,
-    >>::Output as StepConcat<<Tail as ProjectRole<Local>>::Output>>::Output: StepCount,
-{
-    type Output = <<() as SelectLocal<
-        <From as RoleEq<Local>>::Output,
-        <To as RoleEq<Local>>::Output,
-        Local,
-        From,
-        To,
-        Msg,
-    >>::Output as StepConcat<<Tail as ProjectRole<Local>>::Output>>::Output;
-}
-
-impl<Head, Tail> StepCount for StepCons<Head, Tail>
-where
-    Tail: StepCount,
-{
-    const LEN: usize = 1 + Tail::LEN;
-}
-
-impl<Local, Left, Right> ProjectRole<Local> for SeqSteps<Left, Right>
-where
-    Left: ProjectRole<Local>,
-    Right: ProjectRole<Local>,
-    <Left as ProjectRole<Local>>::Output: StepConcat<<Right as ProjectRole<Local>>::Output>,
-    <<Left as ProjectRole<Local>>::Output as StepConcat<
-        <Right as ProjectRole<Local>>::Output,
-    >>::Output: StepCount,
-{
-    type Output = <<Left as ProjectRole<Local>>::Output as StepConcat<
-        <Right as ProjectRole<Local>>::Output,
-    >>::Output;
-}
-
-impl<Local, Left, Right> ProjectRole<Local> for RouteSteps<Left, Right>
-where
-    Left: ProjectRole<Local>,
-    Right: ProjectRole<Local>,
-    <Left as ProjectRole<Local>>::Output: StepConcat<<Right as ProjectRole<Local>>::Output>,
-    <<Left as ProjectRole<Local>>::Output as StepConcat<
-        <Right as ProjectRole<Local>>::Output,
-    >>::Output: StepCount,
-{
-    type Output = <<Left as ProjectRole<Local>>::Output as StepConcat<
-        <Right as ProjectRole<Local>>::Output,
-    >>::Output;
-}
-
-impl<Local, Left, Right> ProjectRole<Local> for ParSteps<Left, Right>
-where
-    Left: ProjectRole<Local>,
-    Right: ProjectRole<Local>,
-    <Left as ProjectRole<Local>>::Output: StepConcat<<Right as ProjectRole<Local>>::Output>,
-    <<Left as ProjectRole<Local>>::Output as StepConcat<
-        <Right as ProjectRole<Local>>::Output,
-    >>::Output: StepCount,
-{
-    type Output = <<Left as ProjectRole<Local>>::Output as StepConcat<
-        <Right as ProjectRole<Local>>::Output,
-    >>::Output;
-}
-
-impl<Local, Inner, const POLICY_ID: u16> ProjectRole<Local> for PolicySteps<Inner, POLICY_ID>
-where
-    Inner: ProjectRole<Local>,
-{
-    type Output = <Inner as ProjectRole<Local>>::Output;
-}
-
-impl<Left, Right> StepCount for SeqSteps<Left, Right>
-where
-    Left: StepCount,
-    Right: StepCount,
-{
-    const LEN: usize = Left::LEN + Right::LEN;
-}
-
-impl<Left, Right> StepCount for RouteSteps<Left, Right>
-where
-    Left: StepCount,
-    Right: StepCount,
-{
-    const LEN: usize = Left::LEN + Right::LEN;
-}
-
-impl<Left, Right> StepCount for ParSteps<Left, Right>
-where
-    Left: StepCount,
-    Right: StepCount,
-{
-    const LEN: usize = Left::LEN + Right::LEN;
-}
-
-impl<Inner, const POLICY_ID: u16> StepCount for PolicySteps<Inner, POLICY_ID>
-where
-    Inner: StepCount,
-{
-    const LEN: usize = Inner::LEN;
 }

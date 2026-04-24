@@ -26,6 +26,7 @@ pub use super::super::control::cap::mint::{ CAP_HANDLE_LEN, CapError, CapHeader,
 pub use crate::control::cap::resource_kinds::{ LoopBreakKind, LoopContinueKind, RouteDecisionKind, };
 pub use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 pub use crate::control::cap::mint::{ CapShot, ControlResourceKind, GenericCapToken, ResourceKind, };
+pub use crate::control::cap::typed_tokens::CapRegisteredToken;
 pub use {One, Many};
 pub mod wire {
 pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};

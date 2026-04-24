@@ -1,0 +1,53 @@
+error[E0080]: evaluation panicked: route arms reuse the same label
+ --> src/global/program.rs
+  |
+  | /         assert_distinct_route_labels::<<Left as RouteArmHead>::Label, <Right as RouteArmHead>::Label>(
+  | |         );
+  | |_________^ evaluation of `<hibana::global::steps::RouteSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>> as hibana::global::program::BuildProgramSource>::SOURCE` failed inside this call
+  |
+note: inside `hibana::global::assert_distinct_route_labels::<hibana::global::LabelMarker<5>, hibana::global::LabelMarker<5>>`
+ --> $RUST/core/src/panic.rs
+  |
+  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: src/global.rs
+  |
+  |         panic!("route arms reuse the same label");
+  |         ----------------------------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/global/program.rs
+  |
+  |         let summary = LoweringSummary::scan_const(<Steps as BuildProgramSource>::SOURCE.eff_list());
+  |                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/program.rs
+  |
+  |     &ValidatedProgram::<Steps>::SUMMARY
+  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/program.rs
+  |
+  |     &ValidatedProgram::<Steps>::SUMMARY
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn hibana::global::program::validated_program_summary::<hibana::global::steps::RouteSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>>>`
+ --> src/global/program.rs
+  |
+  |         validated_program_summary::<Steps>()
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/program.rs
+  |
+  |     const STAMP: ProgramStamp = Self::SUMMARY.stamp();
+  |                                 ^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/program.rs
+  |
+  |     ValidatedProgram::<Steps>::STAMP
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

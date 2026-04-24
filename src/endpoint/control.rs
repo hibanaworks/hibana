@@ -2,7 +2,7 @@
 //!
 //! The typestate rewrite stores rendezvous-scoped control context directly
 //! inside [`Endpoint`](super::Endpoint) so that operations like reroute,
-//! checkpoint, rollback, and cancel no longer require the caller to thread
+//! state snapshot, state restore, and abort no longer require the caller to thread
 //! additional parameters.  This module provides the control context that
 //! carries both policy configuration and a reference to the control plane.
 

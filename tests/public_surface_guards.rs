@@ -110,6 +110,49 @@ fn substrate_policy_surface_exports_policyslot_only() {
 }
 
 #[test]
+fn core_policy_runtime_has_no_in_crate_appliance_shim() {
+    let policy_runtime = read("src/policy_runtime.rs");
+    for forbidden in [
+        "pub(crate) struct PolicyCtx",
+        "pub(crate) struct HostSlots",
+        "pub(crate) enum Action",
+        "pub(crate) struct AbortInfo",
+        "pub(crate) enum Trap",
+    ] {
+        assert!(
+            !policy_runtime.contains(forbidden),
+            "hibana core must not keep a policy appliance compatibility shim: {forbidden}"
+        );
+    }
+
+    for path in [
+        "src/rendezvous/port.rs",
+        "src/rendezvous/core.rs",
+        "src/endpoint/kernel/core.rs",
+    ] {
+        let src = read(path);
+        for forbidden in ["run_policy(", "policy_mode_tag("] {
+            assert!(
+                !src.contains(forbidden),
+                "hibana core must audit policy inputs without a no-op policy executor: {path}: {forbidden}"
+            );
+        }
+    }
+
+    let authority = read("src/endpoint/kernel/route_frontier/authority.rs");
+    for forbidden in [
+        "RoutePolicyDecision",
+        "route_policy_decision_from_action",
+        "DeferSource::Epf",
+    ] {
+        assert!(
+            !authority.contains(forbidden),
+            "route authority must stay Ack | Resolver | Poll only: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn transport_snapshot_surface_stays_getter_only() {
     let transport_src = read("src/transport.rs");
     let substrate_src = read("src/substrate.rs");

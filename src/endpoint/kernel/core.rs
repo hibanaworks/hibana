@@ -7,8 +7,7 @@ use core::{convert::TryFrom, ops::ControlFlow, task::Poll};
 
 use super::authority::{
     Arm, DeferReason, DeferSource, LoopDecision, RouteDecisionSource, RouteDecisionToken,
-    RoutePolicyDecision, RouteResolveStep, route_policy_decision_from_action,
-    route_policy_input_arg0, validate_route_decision_scope,
+    RouteResolveStep, route_policy_input_arg0, validate_route_decision_scope,
 };
 use super::evidence::{ScopeEvidence, ScopeLabelMeta, ScopeLoopMeta};
 use super::frontier::*;
@@ -50,7 +49,7 @@ use crate::{
             typed_tokens::{RawRegisteredCapToken, RegisteredTokenParts},
         },
         cluster::{
-            core::{DynamicResolution, SpliceOperands},
+            core::{DynamicResolution, TopologyDescriptor, TopologyOperands},
             error::CpError,
         },
     },
@@ -59,10 +58,13 @@ use crate::{
     },
     observe::core::{TapEvent, emit},
     observe::scope::ScopeTrace,
-    observe::{events, ids, policy_abort, policy_trap},
-    policy_runtime::{self, AbortInfo, Action, PolicySlot},
+    observe::{events, ids},
+    policy_runtime::{self, PolicySlot},
     rendezvous::{
-        capability::CapEntry, core::EndpointLeaseId, port::Port, tables::LoopDisposition,
+        capability::{CapEntry, CapReleaseCtx},
+        core::EndpointLeaseId,
+        port::Port,
+        tables::LoopDisposition,
     },
     runtime::consts::LabelUniverse,
     transport::{
@@ -81,14 +83,53 @@ type StoredMint<Mint> = crate::control::cap::mint::MintConfig<
 >;
 
 #[derive(Clone, Copy)]
+pub(crate) struct PublicEndpointRevoke {
+    revoke_for_session: unsafe fn(*mut (), SessionId, *mut Lane, usize) -> usize,
+}
+
+impl PublicEndpointRevoke {
+    #[cfg(test)]
+    pub(crate) const UNARMED: Self = Self {
+        revoke_for_session: Self::unarmed,
+    };
+
+    #[inline]
+    pub(crate) const fn new(
+        revoke_for_session: unsafe fn(*mut (), SessionId, *mut Lane, usize) -> usize,
+    ) -> Self {
+        Self { revoke_for_session }
+    }
+
+    #[inline]
+    pub(crate) unsafe fn revoke_for_session(
+        self,
+        endpoint: *mut (),
+        sid: SessionId,
+        lanes: *mut Lane,
+        lane_capacity: usize,
+    ) -> usize {
+        unsafe { (self.revoke_for_session)(endpoint, sid, lanes, lane_capacity) }
+    }
+
+    #[inline]
+    #[cfg(test)]
+    unsafe fn unarmed(
+        _endpoint: *mut (),
+        _sid: SessionId,
+        _lanes: *mut Lane,
+        _lane_capacity: usize,
+    ) -> usize {
+        0
+    }
+}
+
+#[derive(Clone, Copy)]
 enum BindingLanePreference {
     Any,
     Arm(u8),
     LabelMask(u128),
 }
 
-#[cfg(test)]
-use super::authority::resolve_route_decision_handle_with_policy;
 #[cfg(test)]
 use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
 
@@ -206,153 +247,219 @@ mod route_policy_tests {
     }
 
     #[test]
-    fn route_policy_action_mapping_is_explicit() {
-        assert_eq!(
-            route_policy_decision_from_action(Action::Route { arm: 1 }, 44),
-            RoutePolicyDecision::RouteArm(1)
-        );
-        assert_eq!(
-            route_policy_decision_from_action(Action::Route { arm: 2 }, 44),
-            RoutePolicyDecision::Abort(44)
-        );
-        assert_eq!(
-            route_policy_decision_from_action(
-                Action::Abort(AbortInfo {
-                    reason: 77,
-                    trap: None,
-                }),
-                44
-            ),
-            RoutePolicyDecision::Abort(77)
-        );
-        assert_eq!(
-            route_policy_decision_from_action(Action::Proceed, 44),
-            RoutePolicyDecision::DelegateResolver
-        );
-        assert_eq!(
-            route_policy_decision_from_action(
-                Action::Tap {
-                    id: 1,
-                    arg0: 2,
-                    arg1: 3
-                },
-                44
-            ),
-            RoutePolicyDecision::DelegateResolver
-        );
-        assert_eq!(
-            route_policy_decision_from_action(Action::Defer { retry_hint: 9 }, 44),
-            RoutePolicyDecision::Defer {
-                retry_hint: 9,
-                source: DeferSource::Epf
-            }
-        );
-    }
-
-    #[test]
-    fn route_policy_delegates_to_resolver_result() {
-        let scope = ScopeId::generic(10);
-        let handle = resolve_route_decision_handle_with_policy(
-            scope,
-            scope,
-            RoutePolicyDecision::DelegateResolver,
-            || Ok(RouteArmHandle { scope, arm: 1 }),
-        )
-        .expect("delegation should use resolver");
-        assert_eq!(handle.arm, 1);
-    }
-
-    #[test]
-    fn route_policy_route_arm_skips_resolver_delegation() {
-        let scope = ScopeId::generic(14);
-        let mut delegate_called = false;
-        let handle = resolve_route_decision_handle_with_policy(
-            scope,
-            scope,
-            RoutePolicyDecision::RouteArm(1),
-            || {
-                delegate_called = true;
-                Ok(RouteArmHandle { scope, arm: 0 })
-            },
-        )
-        .expect("route arm should be accepted directly");
-        assert_eq!(handle.arm, 1);
-        assert!(!delegate_called);
-    }
-
-    #[test]
-    fn route_policy_abort_skips_resolver_delegation() {
-        let scope = ScopeId::generic(15);
-        let mut delegate_called = false;
-        let err = resolve_route_decision_handle_with_policy(
-            scope,
-            scope,
-            RoutePolicyDecision::Abort(77),
-            || {
-                delegate_called = true;
-                Ok(RouteArmHandle { scope, arm: 0 })
-            },
-        )
-        .expect_err("abort should short-circuit");
-        assert!(matches!(err, SendError::PolicyAbort { reason: 77 }));
-        assert!(!delegate_called);
-    }
-
-    #[test]
-    fn route_policy_delegation_propagates_resolver_abort() {
-        let scope = ScopeId::generic(11);
-        let err = resolve_route_decision_handle_with_policy(
-            scope,
-            scope,
-            RoutePolicyDecision::DelegateResolver,
-            || Err(SendError::PolicyAbort { reason: 99 }),
-        )
-        .expect_err("resolver abort should propagate");
-        assert!(matches!(err, SendError::PolicyAbort { reason: 99 }));
-    }
-
-    #[test]
     fn route_policy_enforces_scope_match_before_route_handle() {
         let scope = ScopeId::generic(12);
-        let err = resolve_route_decision_handle_with_policy(
-            scope,
-            ScopeId::generic(13),
-            RoutePolicyDecision::RouteArm(0),
-            || Ok(RouteArmHandle { scope, arm: 0 }),
-        )
-        .expect_err("scope mismatch must fail");
+        let err = validate_route_decision_scope(scope, ScopeId::generic(13))
+            .expect_err("scope mismatch must fail");
         assert!(matches!(err, SendError::PhaseInvariant));
     }
 
     #[test]
-    fn route_policy_scope_mismatch_blocks_resolver_delegation() {
-        let scope = ScopeId::generic(16);
-        let mut delegate_called = false;
-        let err = resolve_route_decision_handle_with_policy(
-            scope,
-            ScopeId::generic(17),
-            RoutePolicyDecision::DelegateResolver,
-            || {
-                delegate_called = true;
-                Ok(RouteArmHandle { scope, arm: 1 })
-            },
-        )
-        .expect_err("scope mismatch must fail before resolver delegation");
+    fn route_policy_rejects_empty_scope() {
+        let err = validate_route_decision_scope(ScopeId::none(), ScopeId::none())
+            .expect_err("route scope is required");
         assert!(matches!(err, SendError::PhaseInvariant));
-        assert!(!delegate_called);
     }
 
     #[test]
     fn route_policy_allows_static_route_scope_without_policy_scope() {
         let scope = ScopeId::generic(18);
-        let handle = resolve_route_decision_handle_with_policy(
-            scope,
-            ScopeId::none(),
-            RoutePolicyDecision::RouteArm(1),
-            || Ok(RouteArmHandle { scope, arm: 0 }),
-        )
-        .expect("static route scope should remain valid without policy scope");
-        assert_eq!(handle, RouteArmHandle { scope, arm: 1 });
+        validate_route_decision_scope(scope, ScopeId::none())
+            .expect("static route scope should remain valid without policy scope");
+        validate_route_decision_scope(scope, scope)
+            .expect("dynamic route scope should match policy scope");
+    }
+}
+
+#[cfg(test)]
+mod send_rollback_tests {
+    use super::{PendingCapRelease, RawCapFlowToken, StagedDispatchToken};
+    use crate::{
+        control::cap::{
+            mint::{CAP_NONCE_LEN, CAP_TOKEN_LEN, CapShot, ResourceKind},
+            resource_kinds::{LoopContinueKind, LoopDecisionHandle},
+        },
+        global::const_dsl::ScopeId,
+        rendezvous::{
+            capability::{CapEntry, CapReleaseCtx, CapTable},
+            tables::StateSnapshotTable,
+        },
+        substrate::{Lane, SessionId},
+    };
+    use core::cell::Cell;
+    use std::vec;
+
+    fn provisional_release_ctx(
+        lane: Lane,
+    ) -> (CapTable, StateSnapshotTable, Cell<u64>, std::vec::Vec<u8>) {
+        let table = CapTable::new();
+        let mut snapshot_storage = vec![0u8; StateSnapshotTable::storage_bytes(1)];
+        let mut snapshots = StateSnapshotTable::empty();
+        unsafe {
+            snapshots.bind_from_storage(snapshot_storage.as_mut_ptr(), lane.raw(), 1);
+        }
+        (table, snapshots, Cell::new(0), snapshot_storage)
+    }
+
+    #[test]
+    fn dropping_staged_dispatch_token_releases_provisional_capability() {
+        let sid = SessionId::new(42);
+        let lane = Lane::new(3);
+        let role = 0u8;
+        let nonce = [0xAB; CAP_NONCE_LEN];
+        let handle = LoopDecisionHandle {
+            sid: sid.raw(),
+            lane: lane.raw() as u16,
+            scope: ScopeId::loop_scope(2),
+        };
+        let handle_bytes = LoopContinueKind::encode_handle(&handle);
+        let (table, snapshots, revisions, _snapshot_storage) = provisional_release_ctx(lane);
+
+        table
+            .insert_entry(CapEntry {
+                sid,
+                lane_raw: lane.as_wire(),
+                kind_tag: LoopContinueKind::TAG,
+                shot_state: CapShot::Many.as_u8(),
+                role,
+                mint_revision: 1,
+                consumed_revision: 0,
+                released_revision: 0,
+                nonce,
+                handle: handle_bytes,
+            })
+            .expect("insert succeeds");
+
+        drop(StagedDispatchToken {
+            token: RawCapFlowToken::from_bytes([0u8; CAP_TOKEN_LEN]),
+            rollback: PendingCapRelease::new(
+                nonce,
+                CapReleaseCtx::new(&table, &snapshots, &revisions, lane),
+            ),
+        });
+
+        assert!(
+            table
+                .claim_by_nonce(
+                    &nonce,
+                    sid,
+                    lane,
+                    LoopContinueKind::TAG,
+                    role,
+                    CapShot::Many,
+                    2,
+                )
+                .is_err(),
+            "dropping the staged token must release provisional authority"
+        );
+    }
+
+    #[test]
+    fn disarming_staged_dispatch_token_preserves_provisional_capability() {
+        let sid = SessionId::new(43);
+        let lane = Lane::new(4);
+        let role = 1u8;
+        let nonce = [0xCD; CAP_NONCE_LEN];
+        let handle = LoopDecisionHandle {
+            sid: sid.raw(),
+            lane: lane.raw() as u16,
+            scope: ScopeId::loop_scope(3),
+        };
+        let handle_bytes = LoopContinueKind::encode_handle(&handle);
+        let (table, snapshots, revisions, _snapshot_storage) = provisional_release_ctx(lane);
+
+        table
+            .insert_entry(CapEntry {
+                sid,
+                lane_raw: lane.as_wire(),
+                kind_tag: LoopContinueKind::TAG,
+                shot_state: CapShot::Many.as_u8(),
+                role,
+                mint_revision: 1,
+                consumed_revision: 0,
+                released_revision: 0,
+                nonce,
+                handle: handle_bytes,
+            })
+            .expect("insert succeeds");
+
+        let mut token = StagedDispatchToken {
+            token: RawCapFlowToken::from_bytes([0u8; CAP_TOKEN_LEN]),
+            rollback: PendingCapRelease::new(
+                nonce,
+                CapReleaseCtx::new(&table, &snapshots, &revisions, lane),
+            ),
+        };
+        token.rollback.disarm();
+        drop(token);
+
+        assert!(
+            table
+                .claim_by_nonce(
+                    &nonce,
+                    sid,
+                    lane,
+                    LoopContinueKind::TAG,
+                    role,
+                    CapShot::Many,
+                    2,
+                )
+                .is_ok(),
+            "disarming rollback must keep authority live for the registered owner"
+        );
+    }
+
+    #[test]
+    fn inert_explicit_dispatch_token_does_not_release_live_capability() {
+        let sid = SessionId::new(44);
+        let lane = Lane::new(5);
+        let role = 0u8;
+        let nonce = [0xEF; CAP_NONCE_LEN];
+        let handle = LoopDecisionHandle {
+            sid: sid.raw(),
+            lane: lane.raw() as u16,
+            scope: ScopeId::loop_scope(4),
+        };
+        let handle_bytes = LoopContinueKind::encode_handle(&handle);
+        let (table, _snapshots, _revisions, _snapshot_storage) = provisional_release_ctx(lane);
+
+        table
+            .insert_entry(CapEntry {
+                sid,
+                lane_raw: lane.as_wire(),
+                kind_tag: LoopContinueKind::TAG,
+                shot_state: CapShot::Many.as_u8(),
+                role,
+                mint_revision: 1,
+                consumed_revision: 0,
+                released_revision: 0,
+                nonce,
+                handle: handle_bytes,
+            })
+            .expect("insert succeeds");
+
+        let mut rollback = PendingCapRelease::inert();
+        let parts = rollback.take_registered_parts([0u8; CAP_TOKEN_LEN]);
+        assert!(
+            parts.is_none(),
+            "explicit payload tokens must not fabricate registered capability ownership"
+        );
+        drop(rollback);
+
+        assert!(
+            table
+                .claim_by_nonce(
+                    &nonce,
+                    sid,
+                    lane,
+                    LoopContinueKind::TAG,
+                    role,
+                    CapShot::Many,
+                    2,
+                )
+                .is_ok(),
+            "inert explicit payload rollback must not release unrelated live authority"
+        );
     }
 }
 
@@ -371,6 +478,7 @@ mod scope_evidence_logic;
 /// Internal endpoint kernel. Owns the rendezvous port as well as the lane
 /// release handle. Dropping the endpoint releases the lane back to the
 /// `SessionCluster` via the handle.
+#[repr(C)]
 pub struct CursorEndpoint<
     'r,
     const ROLE: u8,
@@ -389,6 +497,7 @@ pub struct CursorEndpoint<
     Mint: MintConfigMarker,
     B: BindingSlot + 'r,
 {
+    pub(super) public_revoke: PublicEndpointRevoke,
     /// Multi-lane port array. Each active lane has its own port.
     /// For single-lane programs, only `ports[0]` is used.
     pub(super) ports: PortStorage<'r, T, E>,
@@ -580,19 +689,21 @@ pub struct RawCapFlowToken {
 }
 
 impl RawCapFlowToken {
+    #[cfg(test)]
     #[inline(always)]
-    pub(crate) fn bytes(self) -> [u8; CAP_TOKEN_LEN] {
-        self.bytes
+    pub(crate) const fn from_bytes(bytes: [u8; CAP_TOKEN_LEN]) -> Self {
+        Self { bytes }
     }
 
     #[inline(always)]
-    pub(crate) fn into_generic<K: ResourceKind>(self) -> GenericCapToken<K> {
-        GenericCapToken::from_bytes(self.bytes)
+    pub(crate) fn bytes(self) -> [u8; CAP_TOKEN_LEN] {
+        self.bytes
     }
 }
 
 struct PreparedSendControl {
     minted_control: Option<MintedControlToken>,
+    dispatch: Option<DescriptorDispatch>,
     stage_payload: StageSendPayloadFn,
 }
 
@@ -614,30 +725,112 @@ impl DescriptorDispatch {
     }
 }
 
-#[derive(Clone, Copy)]
 struct MintedControlToken {
     token: RawCapFlowToken,
     dispatch: DescriptorDispatch,
+    rollback: PendingCapRelease,
 }
 
-#[derive(Clone, Copy)]
+struct PendingCapRelease {
+    nonce: [u8; crate::control::cap::mint::CAP_NONCE_LEN],
+    release_ctx: Option<CapReleaseCtx>,
+}
+
+impl PendingCapRelease {
+    #[inline(always)]
+    fn new(
+        nonce: [u8; crate::control::cap::mint::CAP_NONCE_LEN],
+        release_ctx: CapReleaseCtx,
+    ) -> Self {
+        Self {
+            nonce,
+            release_ctx: Some(release_ctx),
+        }
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    fn disarm(&mut self) {
+        self.release_ctx = None;
+        self.nonce.fill(0);
+    }
+
+    #[inline(always)]
+    fn inert() -> Self {
+        Self {
+            nonce: [0u8; crate::control::cap::mint::CAP_NONCE_LEN],
+            release_ctx: None,
+        }
+    }
+
+    #[inline(always)]
+    fn take_registered_parts(
+        &mut self,
+        bytes: [u8; CAP_TOKEN_LEN],
+    ) -> Option<RegisteredTokenParts> {
+        let release_ctx = self.release_ctx.take()?;
+        let nonce = self.nonce;
+        self.nonce.fill(0);
+        Some(RegisteredTokenParts::from_registered_bytes(
+            bytes,
+            nonce,
+            release_ctx,
+        ))
+    }
+}
+
+impl Drop for PendingCapRelease {
+    fn drop(&mut self) {
+        if let Some(release_ctx) = self.release_ctx.take() {
+            release_ctx.release(&self.nonce);
+        }
+        self.nonce.fill(0);
+    }
+}
+
+struct StagedDispatchToken {
+    token: RawCapFlowToken,
+    rollback: PendingCapRelease,
+}
+
+impl StagedDispatchToken {
+    #[inline(always)]
+    fn bytes(&self) -> [u8; CAP_TOKEN_LEN] {
+        self.token.bytes()
+    }
+}
+
 enum StagedControlEmission {
     None,
-    Registered(RawCapFlowToken),
+    Registered(StagedDispatchToken),
     Emitted {
-        dispatch_token: Option<RawCapFlowToken>,
-        emitted_token: Option<RawCapFlowToken>,
+        dispatch_token: StagedDispatchToken,
+        return_emitted: bool,
     },
+}
+
+impl StagedControlEmission {
+    #[inline(always)]
+    fn dispatch_token_bytes(&self) -> Option<[u8; CAP_TOKEN_LEN]> {
+        match self {
+            Self::None => None,
+            Self::Registered(token)
+            | Self::Emitted {
+                dispatch_token: token,
+                ..
+            } => Some(token.bytes()),
+        }
+    }
 }
 
 enum DispatchSendTokenResult {
     None,
+    Emitted,
     Registered(RegisteredTokenParts),
-    RegisteredFallback,
 }
 
 type StageSendPayloadFn = for<'payload, 'scratch> fn(
-    Option<RawCapFlowToken>,
+    Option<MintedControlToken>,
     Option<lane_port::RawSendPayload>,
     &'scratch mut [u8],
 ) -> SendResult<StagedSendPayload>;
@@ -649,10 +842,19 @@ struct StagedSendPayload {
     control: StagedControlEmission,
 }
 
-#[derive(Clone, Copy)]
 pub(crate) struct SendTransportEmission {
     control: StagedControlEmission,
     dispatch: Option<DescriptorDispatch>,
+}
+
+impl SendTransportEmission {
+    #[inline(always)]
+    const fn empty() -> Self {
+        Self {
+            control: StagedControlEmission::None,
+            dispatch: None,
+        }
+    }
 }
 
 pub(crate) struct PendingSendIo<'r> {
@@ -1509,33 +1711,6 @@ where
             | flags.bits() as u32
     }
 
-    /// Emit a policy-layer tap event associated with this endpoint.
-    ///
-    /// The event is tagged with the current lane and session so downstream
-    /// tap inspection can attribute `POLICY_*` events to the correct
-    /// rendezvous lane. Use this for recording resolver / EPF decisions such
-    /// as `policy_effect`, `policy_trap`, or `policy_abort`.
-    #[inline]
-    fn emit_policy_event(&self, id: u16, arg0: u32, arg1: u32, scope: ScopeId, lane: Lane) {
-        let port = self.port_for_lane(lane.raw() as usize);
-        let causal = {
-            let raw = lane.raw();
-            debug_assert!(
-                raw <= u32::from(u8::MAX),
-                "lane id must fit within causal key encoding"
-            );
-            TapEvent::make_causal_key(raw as u8 + 1, 0)
-        };
-        let mut event = events::RawEvent::new(port.now32(), id)
-            .with_causal_key(causal)
-            .with_arg0(arg0)
-            .with_arg1(arg1);
-        if let Some(trace) = self.scope_trace(scope) {
-            event = event.with_arg2(trace.pack());
-        }
-        emit(port.tap(), event);
-    }
-
     #[inline]
     fn emit_policy_audit_event(&self, id: u16, arg0: u32, arg1: u32, arg2: u32, lane: Lane) {
         let port = self.port_for_lane(lane.raw() as usize);
@@ -1572,7 +1747,6 @@ where
         lane: u8,
     ) {
         let source_tag = match source {
-            DeferSource::Epf => 1u32,
             DeferSource::Resolver => 2u32,
         };
         let scope_slot = self
@@ -1619,14 +1793,14 @@ where
         emit(port.tap(), event);
     }
 
-    pub(super) fn eval_endpoint_policy(
+    pub(super) fn emit_endpoint_policy_audit(
         &self,
         slot: PolicySlot,
         event_id: u16,
         arg0: u32,
         arg1: u32,
         lane: Lane,
-    ) -> Action {
+    ) {
         let port = self.port_for_lane(lane.raw() as usize);
         let event = events::RawEvent::new(port.now32(), event_id)
             .with_arg0(arg0)
@@ -1645,7 +1819,7 @@ where
         let replay_transport = policy_runtime::replay_transport_inputs(&policy_attrs);
         let replay_transport_presence = policy_runtime::replay_transport_presence(&policy_attrs);
         let slot_id = policy_runtime::slot_tag(slot);
-        let mode_id = policy_runtime::policy_mode_tag(port.policy_mode(slot));
+        let mode_id = policy_runtime::POLICY_MODE_AUDIT_ONLY_TAG;
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT,
             policy_digest,
@@ -1696,110 +1870,16 @@ where
             0,
             lane,
         );
-        let action = port.run_policy(slot, &event, Some(self.sid), Some(lane), move |ctx| {
-            ctx.set_policy_attrs(policy_attrs);
-            ctx.set_policy_input(policy_input);
-        });
-        let verdict = action.verdict();
+        let verdict = policy_runtime::PolicyVerdict::NoEngine;
         let verdict_meta = ((policy_runtime::verdict_tag(verdict) as u32) << 24)
             | ((policy_runtime::verdict_arm(verdict) as u32) << 16);
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT_RESULT,
             verdict_meta,
             policy_runtime::verdict_reason(verdict) as u32,
-            port.last_policy_fuel_used(slot) as u32,
+            policy_runtime::POLICY_FUEL_NONE as u32,
             lane,
         );
-        action
-    }
-
-    fn apply_send_policy(&self, action: Action, scope: ScopeId, lane: Lane) -> SendResult<()> {
-        if let Some((id, arg0, arg1)) = action.tap_payload() {
-            self.emit_policy_event(id, arg0, arg1, scope, lane);
-        }
-
-        match action.verdict() {
-            policy_runtime::PolicyVerdict::Proceed | policy_runtime::PolicyVerdict::RouteArm(_) => {
-                Ok(())
-            }
-            policy_runtime::PolicyVerdict::Reject(reason) => {
-                if let Some(info) = action.abort_info() {
-                    return Err(self.policy_abort_send(info, scope, lane));
-                }
-                self.emit_policy_event(policy_trap(), reason as u32, self.sid.raw(), scope, lane);
-                self.emit_policy_event(policy_abort(), reason as u32, self.sid.raw(), scope, lane);
-                Err(SendError::PolicyAbort { reason })
-            }
-        }
-    }
-
-    fn policy_abort_send(&self, info: AbortInfo, scope: ScopeId, lane: Lane) -> SendError {
-        if info.trap.is_some() {
-            self.emit_policy_event(
-                policy_trap(),
-                info.reason as u32,
-                self.sid.raw(),
-                scope,
-                lane,
-            );
-        }
-        self.emit_policy_event(
-            policy_abort(),
-            info.reason as u32,
-            self.sid.raw(),
-            scope,
-            lane,
-        );
-        SendError::PolicyAbort {
-            reason: info.reason,
-        }
-    }
-
-    pub(super) fn apply_recv_policy(
-        &self,
-        action: Action,
-        scope: ScopeId,
-        lane: Lane,
-    ) -> RecvResult<()> {
-        if let Some((id, arg0, arg1)) = action.tap_payload() {
-            self.emit_policy_event(id, arg0, arg1, scope, lane);
-        }
-
-        match action.verdict() {
-            policy_runtime::PolicyVerdict::Proceed | policy_runtime::PolicyVerdict::RouteArm(_) => {
-                Ok(())
-            }
-            policy_runtime::PolicyVerdict::Reject(reason) => {
-                if let Some(info) = action.abort_info() {
-                    return Err(self.policy_abort_recv(info, scope, lane));
-                }
-                self.emit_policy_event(policy_trap(), reason as u32, self.sid.raw(), scope, lane);
-                self.emit_policy_event(policy_abort(), reason as u32, self.sid.raw(), scope, lane);
-                Err(RecvError::PolicyAbort { reason })
-            }
-        }
-    }
-
-    fn policy_abort_recv(&self, info: AbortInfo, scope: ScopeId, lane: Lane) -> RecvError {
-        if info.trap.is_some() {
-            self.emit_policy_event(
-                policy_trap(),
-                info.reason as u32,
-                self.sid.raw(),
-                scope,
-                lane,
-            );
-        }
-        self.emit_policy_event(
-            policy_abort(),
-            info.reason as u32,
-            self.sid.raw(),
-            scope,
-            lane,
-        );
-        RecvError::PolicyAbort {
-            reason: info.reason,
-        }
     }
 
     #[inline]
@@ -2204,16 +2284,13 @@ where
         }
     }
 
-    fn evaluate_route_arm_from_epf(
+    fn emit_route_policy_audit(
         &self,
         scope_id: ScopeId,
         lane: u8,
         policy_id: u16,
         signals: &crate::transport::context::PolicySignals<'_>,
-    ) -> RoutePolicyDecision {
-        if scope_id.is_none() {
-            return RoutePolicyDecision::Abort(policy_id);
-        }
+    ) {
         let port = self.port_for_lane(lane as usize);
         let _ = port.flush_transport_events();
         let transport_attrs = port.transport().metrics().attrs();
@@ -2234,7 +2311,7 @@ where
         let transport_snapshot_hash = policy_runtime::hash_transport_attrs(&policy_attrs);
         let replay_transport = policy_runtime::replay_transport_inputs(&policy_attrs);
         let replay_transport_presence = policy_runtime::replay_transport_presence(&policy_attrs);
-        let mode_id = policy_runtime::policy_mode_tag(port.policy_mode(PolicySlot::Route));
+        let mode_id = policy_runtime::POLICY_MODE_AUDIT_ONLY_TAG;
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT,
             policy_digest,
@@ -2291,27 +2368,16 @@ where
             0,
             port.lane(),
         );
-        let action = port.run_policy(
-            PolicySlot::Route,
-            &event,
-            Some(self.sid),
-            Some(port.lane()),
-            move |ctx| {
-                ctx.set_policy_attrs(policy_attrs);
-                ctx.set_policy_input(policy_input);
-            },
-        );
-        let verdict = action.verdict();
+        let verdict = policy_runtime::PolicyVerdict::NoEngine;
         let verdict_meta = ((policy_runtime::verdict_tag(verdict) as u32) << 24)
             | ((policy_runtime::verdict_arm(verdict) as u32) << 16);
         self.emit_policy_audit_event(
             ids::POLICY_AUDIT_RESULT,
             verdict_meta,
             policy_runtime::verdict_reason(verdict) as u32,
-            port.last_policy_fuel_used(PolicySlot::Route) as u32,
+            policy_runtime::POLICY_FUEL_NONE as u32,
             port.lane(),
         );
-        route_policy_decision_from_action(action, policy_id)
     }
 
     fn evaluate_route_policy(
@@ -2342,19 +2408,7 @@ where
             return Err(SendError::PhaseInvariant);
         }
 
-        match self.evaluate_route_arm_from_epf(scope_id, meta.lane, policy_id, signals) {
-            RoutePolicyDecision::RouteArm(arm) => {
-                return if arm == arm_index {
-                    Ok(())
-                } else {
-                    Err(SendError::PolicyAbort { reason: policy_id })
-                };
-            }
-            RoutePolicyDecision::Abort(reason) => {
-                return Err(SendError::PolicyAbort { reason });
-            }
-            RoutePolicyDecision::DelegateResolver | RoutePolicyDecision::Defer { .. } => {}
-        }
+        self.emit_route_policy_audit(scope_id, meta.lane, policy_id, signals);
 
         let tag = meta.resource.ok_or(SendError::PhaseInvariant)?;
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
@@ -3022,25 +3076,7 @@ where
             return Err(RecvError::PhaseInvariant);
         }
         let offer_lane = self.offer_lane_for_scope(scope_id);
-        match self.evaluate_route_arm_from_epf(scope_id, offer_lane, policy_id, signals) {
-            RoutePolicyDecision::RouteArm(arm) => {
-                let arm = Arm::new(arm).ok_or(RecvError::PhaseInvariant)?;
-                self.record_route_decision_for_scope_lanes(scope_id, arm.as_u8(), offer_lane);
-                self.record_scope_ack(scope_id, RouteDecisionToken::from_resolver(arm));
-                self.emit_route_decision(
-                    scope_id,
-                    arm.as_u8(),
-                    RouteDecisionSource::Resolver,
-                    offer_lane,
-                );
-                return Ok(RouteResolveStep::Resolved(arm));
-            }
-            RoutePolicyDecision::Abort(reason) => return Ok(RouteResolveStep::Abort(reason)),
-            RoutePolicyDecision::Defer { retry_hint, source } => {
-                return Ok(RouteResolveStep::Deferred { retry_hint, source });
-            }
-            RoutePolicyDecision::DelegateResolver => {}
-        }
+        self.emit_route_policy_audit(scope_id, offer_lane, policy_id, signals);
         let cluster = self.control.cluster().ok_or(RecvError::PhaseInvariant)?;
         let rv_id = RendezvousId::new(self.rendezvous_id().raw());
         let port = self.port_for_lane(offer_lane as usize);
@@ -3152,9 +3188,7 @@ where
             self.consume_scope_ready_arm(scope_id, selected_arm);
         }
         self.clear_scope_evidence(scope_id);
-        if lane_wire == 5 {
-            self.port_for_lane(lane_wire as usize).clear_route_hints();
-        }
+        self.port_for_lane(lane_wire as usize).clear_route_hints();
         Ok(())
     }
 
@@ -3195,7 +3229,7 @@ where
     }
 
     fn stage_data_send_payload(
-        minted_token: Option<RawCapFlowToken>,
+        minted_token: Option<MintedControlToken>,
         payload: Option<lane_port::RawSendPayload>,
         scratch: &mut [u8],
     ) -> SendResult<StagedSendPayload> {
@@ -3210,8 +3244,46 @@ where
     }
 
     #[inline(always)]
+    fn stage_explicit_wire_control_payload(
+        minted_token: Option<MintedControlToken>,
+        payload: Option<lane_port::RawSendPayload>,
+        scratch: &mut [u8],
+    ) -> SendResult<StagedSendPayload> {
+        if minted_token.is_some() {
+            return Err(SendError::PhaseInvariant);
+        }
+        let data = payload.ok_or(SendError::PhaseInvariant)?;
+        let encoded_len = data.encode_into(scratch)?;
+        if encoded_len != CAP_TOKEN_LEN {
+            return Err(SendError::PhaseInvariant);
+        }
+        let mut bytes = [0u8; CAP_TOKEN_LEN];
+        bytes.copy_from_slice(&scratch[..CAP_TOKEN_LEN]);
+        let token = GenericCapToken::<()>::from_bytes(bytes);
+        if matches!(
+            token
+                .control_header()
+                .map_err(|_| SendError::PhaseInvariant)?
+                .shot(),
+            CapShot::One
+        ) {
+            return Err(SendError::PhaseInvariant);
+        }
+        Ok(StagedSendPayload {
+            encoded_len,
+            control: StagedControlEmission::Emitted {
+                dispatch_token: StagedDispatchToken {
+                    token: RawCapFlowToken { bytes },
+                    rollback: PendingCapRelease::inert(),
+                },
+                return_emitted: true,
+            },
+        })
+    }
+
+    #[inline(always)]
     fn stage_registered_send_payload(
-        minted_token: Option<RawCapFlowToken>,
+        minted_token: Option<MintedControlToken>,
         payload: Option<lane_port::RawSendPayload>,
         scratch: &mut [u8],
     ) -> SendResult<StagedSendPayload> {
@@ -3219,38 +3291,37 @@ where
             return Err(SendError::PhaseInvariant);
         }
         let token = minted_token.ok_or(SendError::PhaseInvariant)?;
-        let bytes = token.bytes();
+        let bytes = token.token.bytes();
         scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
         Ok(StagedSendPayload {
             encoded_len: CAP_TOKEN_LEN,
-            control: StagedControlEmission::Registered(token),
+            control: StagedControlEmission::Registered(StagedDispatchToken {
+                token: token.token,
+                rollback: token.rollback,
+            }),
         })
     }
 
     #[inline(always)]
     fn stage_emitted_send_payload(
-        minted_token: Option<RawCapFlowToken>,
+        minted_token: Option<MintedControlToken>,
         payload: Option<lane_port::RawSendPayload>,
         scratch: &mut [u8],
     ) -> SendResult<StagedSendPayload> {
-        if let Some(token) = minted_token {
-            let bytes = token.bytes();
-            scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
-            return Ok(StagedSendPayload {
-                encoded_len: CAP_TOKEN_LEN,
-                control: StagedControlEmission::Emitted {
-                    dispatch_token: Some(token),
-                    emitted_token: Some(token),
-                },
-            });
+        if payload.is_some() {
+            return Err(SendError::PhaseInvariant);
         }
-
-        let data = payload.ok_or(SendError::PhaseInvariant)?;
+        let token = minted_token.ok_or(SendError::PhaseInvariant)?;
+        let bytes = token.token.bytes();
+        scratch[..CAP_TOKEN_LEN].copy_from_slice(&bytes);
         Ok(StagedSendPayload {
-            encoded_len: data.encode_into(scratch)?,
+            encoded_len: CAP_TOKEN_LEN,
             control: StagedControlEmission::Emitted {
-                dispatch_token: None,
-                emitted_token: None,
+                dispatch_token: StagedDispatchToken {
+                    token: token.token,
+                    rollback: token.rollback,
+                },
+                return_emitted: false,
             },
         })
     }
@@ -3275,6 +3346,7 @@ where
             .ok_or(SendError::PhaseInvariant)?;
         let strategy = self.mint.as_config().strategy();
         let nonce = strategy.derive_nonce(rendezvous.next_nonce_seed());
+        let rollback = PendingCapRelease::new(nonce, rendezvous.cap_release_ctx(lane));
         rendezvous
             .caps()
             .insert_entry(CapEntry {
@@ -3283,6 +3355,9 @@ where
                 kind_tag: control.resource_tag(),
                 shot_state: shot.as_u8(),
                 role: peer,
+                mint_revision: rendezvous.next_cap_revision(),
+                consumed_revision: 0,
+                released_revision: 0,
                 nonce,
                 handle: handle_bytes,
             })
@@ -3311,6 +3386,7 @@ where
                 bytes: GenericCapToken::<()>::from_parts(nonce, header, tag).bytes,
             },
             dispatch: DescriptorDispatch::new(control, scope, epoch),
+            rollback,
         })
     }
 
@@ -3329,7 +3405,7 @@ where
         if matches!(control.path(), crate::control::cap::mint::ControlPath::Wire)
             && !control.auto_mint_wire()
         {
-            return Ok(None);
+            return Err(SendError::PhaseInvariant);
         }
 
         let lane = self.port_for_lane(meta.lane as usize).lane();
@@ -3351,24 +3427,44 @@ where
                 let cp_sid = SessionId::new(self.sid.raw());
                 let cp_lane = Lane::new(lane.raw());
                 let src_rv = RendezvousId::new(self.rendezvous_id().raw());
-                self.mint_local_splice_intent_control(
-                    &meta, shot, lane, src_rv, cp_sid, cp_lane, control,
+                let encode_control_handle = descriptor
+                    .encode_control_handle()
+                    .ok_or(SendError::PhaseInvariant)?;
+                self.mint_local_topology_begin_control(
+                    &meta,
+                    shot,
+                    lane,
+                    src_rv,
+                    cp_lane,
+                    control,
+                    encode_control_handle(cp_sid, cp_lane, meta.scope),
                 )?
             }
             ControlOp::TopologyAck => {
                 let cp_sid = SessionId::new(self.sid.raw());
-                self.mint_local_splice_ack_control(&meta, shot, lane, cp_sid, control)?
+                let encode_control_handle = descriptor
+                    .encode_control_handle()
+                    .ok_or(SendError::PhaseInvariant)?;
+                self.mint_local_topology_ack_control(
+                    &meta,
+                    shot,
+                    lane,
+                    cp_sid,
+                    control,
+                    encode_control_handle(cp_sid, lane, meta.scope),
+                )?
             }
             _ => {
                 let encode_control_handle = descriptor
                     .encode_control_handle()
                     .ok_or(SendError::PhaseInvariant)?;
+                let epoch = self.descriptor_send_epoch(control, lane)?;
                 self.mint_descriptor_token_bytes(
                     meta.peer,
                     shot,
                     lane,
                     meta.scope,
-                    0,
+                    epoch,
                     control,
                     encode_control_handle(self.sid, lane, meta.scope),
                 )?
@@ -3377,34 +3473,81 @@ where
         Ok(Some(minted))
     }
 
+    #[inline]
+    fn descriptor_send_epoch(&self, control: ControlDesc, lane: Lane) -> SendResult<u16> {
+        match control.op() {
+            ControlOp::AbortAck | ControlOp::StateSnapshot => {
+                let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
+                let rendezvous = cluster
+                    .get_local(&self.rendezvous_id())
+                    .ok_or(SendError::PhaseInvariant)?;
+                Ok(rendezvous.lane_generation(lane).raw())
+            }
+            ControlOp::StateRestore | ControlOp::TxCommit | ControlOp::TxAbort => {
+                let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
+                let rendezvous = cluster
+                    .get_local(&self.rendezvous_id())
+                    .ok_or(SendError::PhaseInvariant)?;
+                rendezvous
+                    .snapshot_generation(lane)
+                    .map(|generation| generation.raw())
+                    .ok_or(SendError::PhaseInvariant)
+            }
+            _ => Ok(0),
+        }
+    }
+
     #[inline(never)]
     fn dispatch_send_token(
         &self,
         dispatch: Option<DescriptorDispatch>,
-        token: RawCapFlowToken,
-        allow_registered_fallback: bool,
+        mut token: StagedDispatchToken,
     ) -> SendResult<DispatchSendTokenResult> {
         let Some(dispatch) = dispatch else {
             return Ok(DispatchSendTokenResult::None);
         };
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-        match cluster.dispatch_descriptor_control_frame(
-            self.rendezvous_id(),
-            token.bytes(),
-            dispatch.desc,
-            dispatch.scope_id,
-            dispatch.epoch,
-            None,
-        ) {
-            Ok(parts) => Ok(DispatchSendTokenResult::Registered(parts)),
-            Err(CpError::Authorisation { operation }) if allow_registered_fallback => {
-                if operation != ControlOp::TopologyAck as u8 {
-                    return Err(SendError::PhaseInvariant);
-                }
-                Ok(DispatchSendTokenResult::RegisteredFallback)
-            }
-            Err(_) => Err(SendError::PhaseInvariant),
+        cluster
+            .dispatch_descriptor_control_frame(
+                self.rendezvous_id(),
+                token.bytes(),
+                dispatch.desc,
+                dispatch.scope_id,
+                dispatch.epoch,
+                None,
+            )
+            .map_err(|_| SendError::PhaseInvariant)?;
+
+        match token.rollback.take_registered_parts(token.bytes()) {
+            Some(parts) => Ok(DispatchSendTokenResult::Registered(parts)),
+            None => Ok(DispatchSendTokenResult::Emitted),
         }
+    }
+
+    #[inline(never)]
+    fn preflight_send_control_dispatch(
+        &self,
+        meta: SendMeta,
+        emission: &SendTransportEmission,
+    ) -> SendResult<()> {
+        let (Some(dispatch), Some(bytes)) =
+            (emission.dispatch, emission.control.dispatch_token_bytes())
+        else {
+            return Ok(());
+        };
+        let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
+        cluster
+            .validate_send_bound_descriptor_control_frame(
+                self.rendezvous_id(),
+                bytes,
+                dispatch.desc,
+                self.sid,
+                Lane::new(meta.lane as u32),
+                meta.peer,
+                dispatch.scope_id,
+                dispatch.epoch,
+            )
+            .map_err(|_| SendError::PhaseInvariant)
     }
 
     #[inline(never)]
@@ -3412,6 +3555,7 @@ where
         &mut self,
         meta: SendMeta,
         descriptor: SendDesc,
+        has_payload: bool,
     ) -> SendResult<PreparedSendControl>
     where
         <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
@@ -3424,27 +3568,58 @@ where
         self.evaluate_dynamic_policy(&meta, descriptor.label, control)?;
 
         let lane = Lane::new(meta.lane as u32);
-        let policy_action = self.eval_endpoint_policy(
+        self.emit_endpoint_policy_audit(
             PolicySlot::EndpointTx,
             ids::ENDPOINT_SEND,
             self.sid.raw(),
             Self::endpoint_policy_args(lane, meta.label, FrameFlags::empty()),
             lane,
         );
-        self.apply_send_policy(policy_action, meta.scope, lane)?;
 
-        let minted_control = self.mint_send_control(meta, descriptor)?;
+        let explicit_dispatch = match control {
+            Some(control)
+                if has_payload
+                    && matches!(control.path(), crate::control::cap::mint::ControlPath::Wire) =>
+            {
+                Some(DescriptorDispatch::new(
+                    control,
+                    meta.scope,
+                    self.descriptor_send_epoch(control, lane)?,
+                ))
+            }
+            _ => None,
+        };
+        let minted_control = match control {
+            Some(control)
+                if has_payload
+                    && matches!(control.path(), crate::control::cap::mint::ControlPath::Wire) =>
+            {
+                None
+            }
+            _ => self.mint_send_control(meta, descriptor)?,
+        };
         let stage_payload = match control {
             None => Self::stage_data_send_payload,
             Some(control) => match control.path() {
                 crate::control::cap::mint::ControlPath::Local => {
+                    if has_payload {
+                        return Err(SendError::PhaseInvariant);
+                    }
                     Self::stage_registered_send_payload
                 }
-                crate::control::cap::mint::ControlPath::Wire => Self::stage_emitted_send_payload,
+                crate::control::cap::mint::ControlPath::Wire => {
+                    if has_payload {
+                        Self::stage_explicit_wire_control_payload
+                    } else {
+                        Self::stage_emitted_send_payload
+                    }
+                }
             },
         };
 
         Ok(PreparedSendControl {
+            dispatch: explicit_dispatch
+                .or_else(|| minted_control.as_ref().map(|token| token.dispatch)),
             minted_control,
             stage_payload,
         })
@@ -3457,18 +3632,32 @@ where
         payload: Option<lane_port::RawSendPayload>,
         prepared: PreparedSendControl,
     ) -> SendResult<SendTransportStep<'r>> {
+        let dispatch = prepared.dispatch;
         let scratch_ptr = {
             let port = self.port_for_lane(meta.lane as usize);
             lane_port::scratch_ptr(port)
         };
         let staged_send = {
             let scratch = unsafe { &mut *scratch_ptr };
-            (prepared.stage_payload)(
-                prepared.minted_control.map(|control| control.token),
-                payload,
-                scratch,
-            )?
+            (prepared.stage_payload)(prepared.minted_control, payload, scratch)?
         };
+        if let (Some(dispatch), Some(bytes)) =
+            (dispatch, staged_send.control.dispatch_token_bytes())
+        {
+            let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
+            cluster
+                .validate_send_bound_descriptor_control_frame(
+                    self.rendezvous_id(),
+                    bytes,
+                    dispatch.desc,
+                    self.sid,
+                    Lane::new(meta.lane as u32),
+                    meta.peer,
+                    dispatch.scope_id,
+                    dispatch.epoch,
+                )
+                .map_err(|_| SendError::PhaseInvariant)?;
+        }
         let encoded_len = staged_send.encoded_len;
 
         let mut pending_transport = None;
@@ -3509,12 +3698,12 @@ where
                 transport: pending_transport.ok_or(SendError::PhaseInvariant)?,
                 lane_idx: meta.lane as usize,
                 control: Some(staged_send.control),
-                dispatch: prepared.minted_control.map(|control| control.dispatch),
+                dispatch,
             }))
         } else {
             Ok(SendTransportStep::Immediate(SendTransportEmission {
                 control: staged_send.control,
-                dispatch: prepared.minted_control.map(|control| control.dispatch),
+                dispatch,
             }))
         }
     }
@@ -3530,7 +3719,7 @@ where
     where
         <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
-        let prepared = match self.prepare_send_control(meta, descriptor) {
+        let prepared = match self.prepare_send_control(meta, descriptor, payload.is_some()) {
             Ok(prepared) => prepared,
             Err(err) => return SendInitOutcome::Ready(Err(err)),
         };
@@ -3570,6 +3759,7 @@ where
         preview_cursor_index: Option<StateIndex>,
         emission: SendTransportEmission,
     ) -> SendResult<SendControlOutcome<'r>> {
+        self.preflight_send_control_dispatch(meta, &emission)?;
         self.commit_send_after_emit(preview_cursor_index, meta)?;
         self.emit_send_after_transport_event(meta);
         self.resolve_send_control_outcome(emission)
@@ -3606,11 +3796,11 @@ where
             }
             StagedControlEmission::Emitted {
                 dispatch_token,
-                emitted_token,
+                return_emitted,
             } => self.resolve_emitted_send_control_outcome(
                 emission.dispatch,
                 dispatch_token,
-                emitted_token,
+                return_emitted,
             ),
         }
     }
@@ -3619,24 +3809,15 @@ where
     fn resolve_registered_send_control_outcome(
         &self,
         dispatch: Option<DescriptorDispatch>,
-        token: RawCapFlowToken,
+        token: StagedDispatchToken,
     ) -> SendResult<SendControlOutcome<'r>> {
-        match self.dispatch_send_token(
-            dispatch,
-            token,
-            matches!(
-                dispatch,
-                Some(dispatch)
-                    if matches!(dispatch.desc.path(), crate::control::cap::mint::ControlPath::Local)
-            ),
-        )? {
+        match self.dispatch_send_token(dispatch, token)? {
             DispatchSendTokenResult::Registered(parts) => Ok(SendControlOutcome::Registered(
                 RawRegisteredCapToken::from_parts(parts),
             )),
-            DispatchSendTokenResult::RegisteredFallback => Ok(SendControlOutcome::Registered(
-                RawRegisteredCapToken::from_parts(RegisteredTokenParts::from_bytes(token.bytes())),
-            )),
-            DispatchSendTokenResult::None => Err(SendError::PhaseInvariant),
+            DispatchSendTokenResult::None | DispatchSendTokenResult::Emitted => {
+                Err(SendError::PhaseInvariant)
+            }
         }
     }
 
@@ -3644,33 +3825,30 @@ where
     fn resolve_emitted_send_control_outcome(
         &self,
         dispatch: Option<DescriptorDispatch>,
-        dispatch_token: Option<RawCapFlowToken>,
-        emitted_token: Option<RawCapFlowToken>,
+        dispatch_token: StagedDispatchToken,
+        return_emitted: bool,
     ) -> SendResult<SendControlOutcome<'r>> {
-        if let Some(token) = dispatch_token {
-            match self.dispatch_send_token(
-                dispatch,
-                token,
-                matches!(
-                    dispatch,
-                    Some(dispatch)
-                        if matches!(
-                            dispatch.desc.path(),
-                            crate::control::cap::mint::ControlPath::Local
-                        )
-                ),
-            )? {
-                DispatchSendTokenResult::None | DispatchSendTokenResult::Registered(_) => {}
-                DispatchSendTokenResult::RegisteredFallback => {
-                    return Err(SendError::PhaseInvariant);
+        let emitted = dispatch_token.token;
+        match self.dispatch_send_token(dispatch, dispatch_token)? {
+            DispatchSendTokenResult::Registered(parts) => {
+                if return_emitted {
+                    drop(parts);
+                    Ok(SendControlOutcome::Emitted(emitted))
+                } else {
+                    Ok(SendControlOutcome::Registered(
+                        RawRegisteredCapToken::from_parts(parts),
+                    ))
                 }
             }
+            DispatchSendTokenResult::Emitted => {
+                if return_emitted {
+                    Ok(SendControlOutcome::Emitted(emitted))
+                } else {
+                    Err(SendError::PhaseInvariant)
+                }
+            }
+            DispatchSendTokenResult::None => Err(SendError::PhaseInvariant),
         }
-
-        Ok(match emitted_token {
-            Some(token) => SendControlOutcome::Emitted(token),
-            None => SendControlOutcome::None,
-        })
     }
 
     #[inline(never)]
@@ -3767,10 +3945,11 @@ where
                     preview_cursor_index,
                     emission,
                 } => {
+                    let emission = core::mem::replace(emission, SendTransportEmission::empty());
                     let result = self.finish_send_after_transport_runtime(
                         *meta,
                         *preview_cursor_index,
-                        *emission,
+                        emission,
                     );
                     *state = SendState::Done;
                     return Poll::Ready(result);
@@ -4012,45 +4191,24 @@ where
     }
 
     #[inline(never)]
-    fn mint_local_splice_intent_control(
+    fn mint_local_topology_begin_control(
         &mut self,
         meta: &SendMeta,
         shot: CapShot,
         lane: Lane,
         src_rv: RendezvousId,
-        cp_sid: SessionId,
         cp_lane: Lane,
         control: ControlDesc,
+        descriptor_handle: [u8; CAP_HANDLE_LEN],
     ) -> SendResult<MintedControlToken>
     where
         <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
-        let port = self.port_for_lane(meta.lane as usize);
-        port.flush_transport_events();
-        let signals = self.policy_signals_for_slot(PolicySlot::Route);
-        let mut attrs = *signals.attrs();
-        attrs.copy_from(&port.transport().metrics().attrs());
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-        let policy = cluster
-            .policy_mode_for(
-                src_rv,
-                cp_lane,
-                meta.eff_index,
-                control.resource_tag(),
-                control.op(),
-            )
-            .map_err(Self::map_cp_error)?;
+        let descriptor =
+            TopologyDescriptor::decode(descriptor_handle).map_err(Self::map_cp_error)?;
         let operands = cluster
-            .prepare_splice_operands_from_policy(
-                src_rv,
-                cp_sid,
-                cp_lane,
-                meta.eff_index,
-                control,
-                policy,
-                signals.input,
-                &attrs,
-            )
+            .prepare_topology_operands_from_descriptor(src_rv, cp_lane, control, descriptor)
             .map_err(Self::map_cp_error)?;
         self.mint_descriptor_token_bytes(
             meta.peer,
@@ -4059,59 +4217,44 @@ where
             meta.scope,
             0,
             control,
-            Self::splice_handle_from_operands(operands).encode(),
+            Self::topology_handle_from_operands(operands).encode(),
         )
     }
 
     #[inline(never)]
-    fn mint_local_splice_ack_control(
+    fn mint_local_topology_ack_control(
         &mut self,
         meta: &SendMeta,
         shot: CapShot,
         lane: Lane,
         cp_sid: SessionId,
         control: ControlDesc,
+        descriptor_handle: [u8; CAP_HANDLE_LEN],
     ) -> SendResult<MintedControlToken>
     where
         <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
-        let port = self.port_for_lane(meta.lane as usize);
-        port.flush_transport_events();
-        let signals = self.policy_signals_for_slot(PolicySlot::Route);
-        let mut attrs = *signals.attrs();
-        attrs.copy_from(&port.transport().metrics().attrs());
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-        let src_rv = RendezvousId::new(self.rendezvous_id().raw());
+        let rv_id = RendezvousId::new(self.rendezvous_id().raw());
         let cp_lane = Lane::new(lane.raw());
-        let policy = cluster
-            .policy_mode_for(
-                src_rv,
-                cp_lane,
-                meta.eff_index,
-                control.resource_tag(),
-                control.op(),
-            )
-            .map_err(Self::map_cp_error)?;
+        let descriptor =
+            TopologyDescriptor::decode(descriptor_handle).map_err(Self::map_cp_error)?;
         let preview_operands = cluster
-            .cached_splice_operands(cp_sid)
-            .or_else(|| cluster.distributed_operands(cp_sid))
+            .cached_topology_operands(cp_sid)
+            .or_else(|| cluster.distributed_topology_operands(cp_sid))
             .ok_or(SendError::PhaseInvariant)?;
         cluster
-            .validate_splice_operands_from_policy(
-                src_rv,
-                cp_sid,
+            .validate_topology_operands_from_descriptor(
+                rv_id,
                 cp_lane,
-                meta.eff_index,
                 control,
-                policy,
-                signals.input,
-                &attrs,
+                descriptor,
                 preview_operands,
             )
             .map_err(Self::map_cp_error)?;
         let operands = cluster
-            .take_cached_splice_operands(cp_sid)
-            .or_else(|| cluster.distributed_operands(cp_sid))
+            .take_cached_topology_operands(cp_sid)
+            .or_else(|| cluster.distributed_topology_operands(cp_sid))
             .ok_or(SendError::PhaseInvariant)?;
         self.mint_descriptor_token_bytes(
             meta.peer,
@@ -4120,7 +4263,7 @@ where
             meta.scope,
             0,
             control,
-            Self::splice_handle_from_operands(operands).encode(),
+            Self::topology_handle_from_operands(operands).encode(),
         )
     }
 
@@ -5464,6 +5607,35 @@ where
         }
         false
     }
+
+    pub(crate) fn matches_session(&self, sid: SessionId) -> bool {
+        self.sid == sid
+    }
+
+    pub(crate) fn for_each_physical_lane(&self, mut f: impl FnMut(Lane)) {
+        let logical_lane_count = self.cursor.logical_lane_count();
+        let mut lane_idx = 0usize;
+        while lane_idx < logical_lane_count {
+            if let Some(port) = self.ports.get(lane_idx).and_then(|slot| slot.as_ref()) {
+                f(port.lane);
+            }
+            lane_idx += 1;
+        }
+    }
+
+    pub(crate) fn invalidate_public_owner(&mut self) {
+        self.public_generation = 0;
+        self.public_slot_owned = false;
+    }
+
+    pub(crate) fn revoke_public_owner(&mut self) {
+        for guard in self.guards.iter_mut() {
+            if let Some(guard) = guard.as_mut() {
+                guard.detach_rendezvous();
+            }
+        }
+        self.invalidate_public_owner();
+    }
 }
 
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B> Drop
@@ -5513,7 +5685,7 @@ where
     Mint: MintConfigMarker,
     B: BindingSlot,
 {
-    fn splice_handle_from_operands(operands: SpliceOperands) -> TopologyHandle {
+    fn topology_handle_from_operands(operands: TopologyOperands) -> TopologyHandle {
         let mut flags = 0u16;
         if operands.seq_tx != 0 || operands.seq_rx != 0 {
             flags |= topology_flags::FENCES_PRESENT;

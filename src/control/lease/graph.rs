@@ -1,6 +1,6 @@
 //! LeaseGraph — type-driven ownership tracking.
 //!
-//! When multiple leases form a parent/child hierarchy (delegation, splice, etc.)
+//! When multiple leases form a parent/child hierarchy (delegation, topology, etc.)
 //! this data structure guarantees that:
 //! - ownership flows from the root to its children in a single direction;
 //! - every lease reaches exactly one commit or rollback; and
@@ -15,7 +15,7 @@
 //!
 //! A `LeaseGraph` can carry arbitrary facet markers, making it a natural fit for
 //! rendezvous lease management. Delegation stores child rendezvous capability
-//! leases, while splice stores child splice leases.
+//! leases, while topology stores child topology leases.
 //!
 //! ```rust,ignore
 //! use hibana::substrate::RendezvousId;

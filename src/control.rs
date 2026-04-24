@@ -6,10 +6,10 @@
 //!
 //! ## Architecture
 //!
-//! - **effects**: Primitive control-plane operations (Open, SpliceBegin, Commit, Checkpoint, etc.)
-//!   - 13 primitive effects covering all control operations
+//! - **effects**: Primitive control-plane operations (Open, TopologyBegin, TxCommit, StateSnapshot, etc.)
+//!   - 14 primitive effects covering all control operations
 //!   - Idempotency, generation bump, and history modification properties
-//! - **error**: Unified error handling (`CpError`, `SpliceError`, `CancelError`, etc.)
+//! - **error**: Unified error handling (`CpError`, `TopologyError`, `AbortError`, etc.)
 //!   - Consolidates all control-plane errors for uniform handling
 //!   - Includes replay detection and RID mismatch errors
 //! - **types**: Type-level invariants (NoCrossLaneAliasing, AtMostOnceCommit, etc.)
@@ -34,10 +34,10 @@
 //!
 //! ## Architecture Notes
 //!
-//! - Effect decomposition: All 13 control operations mapped to `ControlOp`
+//! - Effect decomposition: All 14 control operations mapped to `ControlOp`
 //! - Type-level invariants: NoCrossLaneAliasing, AtMostOnceCommit, Shot discipline
 //! - Unified errors: `CpError` consolidates all control-plane errors
-//! - Tap integration for distributed splice/cap/deleg events
+//! - Tap integration for distributed topology/cap/deleg events
 //!
 //! ## Usage
 //!

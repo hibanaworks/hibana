@@ -54,15 +54,5 @@ pub(crate) const fn cap_exhaust<K: crate::control::cap::mint::ResourceKind>() ->
     cap_exhaust_id(K::TAG)
 }
 
-#[inline]
-pub(crate) const fn policy_abort() -> u16 {
-    ids::POLICY_ABORT
-}
-
-#[inline]
-pub(crate) const fn policy_trap() -> u16 {
-    ids::POLICY_TRAP
-}
-
 #[cfg(test)]
 mod normalise;
