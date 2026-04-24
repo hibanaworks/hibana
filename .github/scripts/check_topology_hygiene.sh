@@ -36,6 +36,11 @@ check_absent \
   src tests
 
 check_absent \
+  "topology_flags|FENCES_PRESENT" \
+  "topology handle flags reintroduced instead of reserved-zero descriptors" \
+  src tests
+
+check_absent \
   "POLICY_MODE_ENFORCE_TAG|PolicyVerdict::Proceed" \
   "core audit conflates no-engine with enforce/proceed" \
   src tests

@@ -36,7 +36,7 @@ use crate::global::{MessageSpec, SendableLabel};
 use crate::{
     control::types::{Lane, RendezvousId, SessionId},
     control::{
-        cap::atomic_codecs::{TopologyHandle, topology_flags},
+        cap::atomic_codecs::TopologyHandle,
         cap::resource_kinds::{
             LoopBreakKind, LoopContinueKind, LoopDecisionHandle, RouteArmHandle,
         },
@@ -5680,10 +5680,6 @@ where
     B: BindingSlot,
 {
     fn topology_handle_from_operands(operands: TopologyOperands) -> TopologyHandle {
-        let mut flags = 0u16;
-        if operands.seq_tx != 0 || operands.seq_rx != 0 {
-            flags |= topology_flags::FENCES_PRESENT;
-        }
         TopologyHandle {
             src_rv: operands.src_rv.raw(),
             dst_rv: operands.dst_rv.raw(),
@@ -5693,7 +5689,6 @@ where
             new_gen: operands.new_gen.raw(),
             seq_tx: operands.seq_tx,
             seq_rx: operands.seq_rx,
-            flags,
         }
     }
 }

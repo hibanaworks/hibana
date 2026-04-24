@@ -2,12 +2,6 @@ use crate::control::cap::mint::{CAP_HANDLE_LEN, CapError};
 #[cfg(test)]
 use crate::control::types::{Lane, SessionId};
 
-/// Flags stored inside [`TopologyHandle::flags`].
-pub(crate) mod topology_flags {
-    /// Indicates that `seq_tx` / `seq_rx` contain fence counters.
-    pub(crate) const FENCES_PRESENT: u16 = 0x0001;
-}
-
 /// Handle payload for topology-control operations.
 ///
 /// Encoding layout (big-endian):
@@ -20,7 +14,7 @@ pub(crate) mod topology_flags {
 /// [10..12)  new_gen
 /// [12..16)  seq_tx
 /// [16..20)  seq_rx
-/// [20..22)  flags (see [`topology_flags`])
+/// [20..22)  reserved, must be zero
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub(crate) struct TopologyHandle {
@@ -32,7 +26,6 @@ pub(crate) struct TopologyHandle {
     pub new_gen: u16,
     pub seq_tx: u32,
     pub seq_rx: u32,
-    pub flags: u16,
 }
 
 impl TopologyHandle {
@@ -46,11 +39,14 @@ impl TopologyHandle {
         buf[10..12].copy_from_slice(&self.new_gen.to_be_bytes());
         buf[12..16].copy_from_slice(&self.seq_tx.to_be_bytes());
         buf[16..20].copy_from_slice(&self.seq_rx.to_be_bytes());
-        buf[20..22].copy_from_slice(&self.flags.to_be_bytes());
         buf
     }
 
     pub(crate) fn decode(data: [u8; CAP_HANDLE_LEN]) -> Result<Self, CapError> {
+        let flags = u16::from_be_bytes([data[20], data[21]]);
+        if flags != 0 {
+            return Err(CapError::Mismatch);
+        }
         Ok(Self {
             src_rv: u16::from_be_bytes([data[0], data[1]]),
             dst_rv: u16::from_be_bytes([data[2], data[3]]),
@@ -60,7 +56,6 @@ impl TopologyHandle {
             new_gen: u16::from_be_bytes([data[10], data[11]]),
             seq_tx: u32::from_be_bytes([data[12], data[13], data[14], data[15]]),
             seq_rx: u32::from_be_bytes([data[16], data[17], data[18], data[19]]),
-            flags: u16::from_be_bytes([data[20], data[21]]),
         })
     }
 }
@@ -138,4 +133,40 @@ pub(crate) fn decode_session_lane_handle(
 #[inline(always)]
 pub(crate) const fn mint_session_lane_handle(sid: SessionId, lane: Lane) -> SessionLaneHandle {
     (sid.raw(), lane.raw() as u16)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn topology_handle_rejects_reserved_flags() {
+        let handle = TopologyHandle {
+            src_rv: 1,
+            dst_rv: 2,
+            src_lane: 3,
+            dst_lane: 4,
+            old_gen: 5,
+            new_gen: 6,
+            seq_tx: 7,
+            seq_rx: 8,
+        };
+        let encoded = handle.encode();
+        assert_eq!(TopologyHandle::decode(encoded), Ok(handle));
+
+        let mut flagged = encoded;
+        flagged[21] = 1;
+        assert_eq!(TopologyHandle::decode(flagged), Err(CapError::Mismatch));
+    }
+
+    #[test]
+    fn topology_handle_has_no_flags_field() {
+        let source = include_str!("atomic_codecs.rs");
+        let start = source.find("struct TopologyHandle").unwrap();
+        let end = source.find("impl TopologyHandle").unwrap();
+        assert!(
+            !source[start..end].contains("flags:"),
+            "topology handle must keep [20..22) as reserved wire bytes, not a runtime field"
+        );
+    }
 }

@@ -5295,7 +5295,6 @@ mod tests {
             new_gen: operands.new_gen.raw(),
             seq_tx: operands.seq_tx,
             seq_rx: operands.seq_rx,
-            flags: 0,
         }
     }
 
@@ -6786,7 +6785,6 @@ mod tests {
                             new_gen: operands.new_gen.raw(),
                             seq_tx: operands.seq_tx,
                             seq_rx: operands.seq_rx,
-                            flags: 0,
                         };
                         let decoded = TopologyHandle::decode(handle.encode())
                             .expect("decode topology handle");
@@ -6927,7 +6925,6 @@ mod tests {
                             new_gen: 1,
                             seq_tx: 0,
                             seq_rx: 0,
-                            flags: 0,
                         };
 
                         assert_eq!(
@@ -7101,7 +7098,6 @@ mod tests {
                             new_gen: Generation::new(2).raw(),
                             seq_tx: operands.seq_tx,
                             seq_rx: operands.seq_rx,
-                            flags: 0,
                         };
 
                         let err = cluster
@@ -7128,7 +7124,6 @@ mod tests {
                             new_gen: operands.new_gen.raw(),
                             seq_tx: operands.seq_tx,
                             seq_rx: operands.seq_rx,
-                            flags: 0,
                         };
 
                         cluster
@@ -7194,7 +7189,6 @@ mod tests {
                             new_gen: operands.new_gen.raw(),
                             seq_tx: operands.seq_tx,
                             seq_rx: operands.seq_rx,
-                            flags: 0,
                         };
                         cluster
                             .dispatch_topology_ack_with_handle(
@@ -7320,7 +7314,6 @@ mod tests {
                             new_gen: operands.new_gen.raw(),
                             seq_tx: operands.seq_tx,
                             seq_rx: operands.seq_rx,
-                            flags: 0,
                         };
                         cluster
                             .dispatch_topology_ack_with_handle(
@@ -7700,7 +7693,6 @@ mod tests {
                             new_gen: operands.new_gen.raw(),
                             seq_tx: operands.seq_tx,
                             seq_rx: operands.seq_rx,
-                            flags: 0,
                         };
                         let decoded = TopologyHandle::decode(handle.encode())
                             .expect("decode topology handle");
@@ -8036,7 +8028,6 @@ mod tests {
                                     new_gen: operands.new_gen.raw(),
                                     seq_tx: operands.seq_tx,
                                     seq_rx: operands.seq_rx,
-                                    flags: 0,
                                 },
                                 None,
                             )
@@ -8126,7 +8117,6 @@ mod tests {
                             new_gen: operands.new_gen.raw(),
                             seq_tx: operands.seq_tx,
                             seq_rx: operands.seq_rx,
-                            flags: 0,
                         };
                         cluster
                             .dispatch_topology_ack_with_handle(
@@ -8292,7 +8282,6 @@ mod tests {
                             new_gen: operands.new_gen.raw(),
                             seq_tx: operands.seq_tx,
                             seq_rx: operands.seq_rx,
-                            flags: 0,
                         };
                         cluster
                             .dispatch_topology_ack_with_handle(
@@ -8398,7 +8387,6 @@ mod tests {
                                     new_gen: operands.new_gen.raw(),
                                     seq_tx: operands.seq_tx,
                                     seq_rx: operands.seq_rx,
-                                    flags: 0,
                                 },
                                 None,
                             )
@@ -8533,7 +8521,6 @@ mod tests {
                                     new_gen: operands.new_gen.raw(),
                                     seq_tx: operands.seq_tx,
                                     seq_rx: operands.seq_rx,
-                                    flags: 0,
                                 },
                                 None,
                             )
@@ -8647,7 +8634,6 @@ mod tests {
                                     new_gen: operands.new_gen.raw(),
                                     seq_tx: operands.seq_tx,
                                     seq_rx: operands.seq_rx,
-                                    flags: 0,
                                 },
                                 None,
                             )
@@ -8764,7 +8750,6 @@ mod tests {
                                     new_gen: operands.new_gen.raw(),
                                     seq_tx: operands.seq_tx,
                                     seq_rx: operands.seq_rx,
-                                    flags: 0,
                                 },
                                 None,
                             )
@@ -8912,7 +8897,6 @@ mod tests {
                                     new_gen: operands.new_gen.raw(),
                                     seq_tx: operands.seq_tx,
                                     seq_rx: operands.seq_rx,
-                                    flags: 0,
                                 },
                                 None,
                             )
@@ -8943,7 +8927,6 @@ mod tests {
                                 new_gen: operands.new_gen.raw(),
                                 seq_tx: operands.seq_tx,
                                 seq_rx: operands.seq_rx,
-                                flags: 0,
                             },
                         );
 
