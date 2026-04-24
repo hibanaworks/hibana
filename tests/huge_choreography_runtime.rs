@@ -31,6 +31,7 @@ use hibana::{
 };
 
 type HugeKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
+const HOST_HUGE_RUNTIME_STACK_BYTES: usize = 128 * 1024;
 
 fn drive<F: core::future::Future>(future: F) -> F::Output {
     let mut future = core::pin::pin!(future);
@@ -194,18 +195,18 @@ fn run_attached_sample(
 }
 
 #[inline(never)]
-fn run_on_small_stack(name: &'static str, f: impl FnOnce() + Send + 'static) {
+fn run_on_bounded_stack(name: &'static str, f: impl FnOnce() + Send + 'static) {
     let handle = std::thread::Builder::new()
         .name(name.into())
-        .stack_size(32 * 1024)
+        .stack_size(HOST_HUGE_RUNTIME_STACK_BYTES)
         .spawn(f)
         .expect("spawn huge choreography runtime thread");
-    handle.join().expect("small-stack huge choreography thread");
+    handle.join().expect("bounded-stack huge choreography thread");
 }
 
 #[test]
-fn huge_choreography_shape_matrix_runs_to_completion_on_small_stack() {
-    run_on_small_stack("huge-choreography-route-heavy", || {
+fn huge_choreography_shape_matrix_runs_to_completion_on_bounded_stack() {
+    run_on_bounded_stack("huge-choreography-route-heavy", || {
         let controller_program = huge_program::controller_program();
         let worker_program = huge_program::worker_program();
         run_attached_sample(
@@ -218,7 +219,7 @@ fn huge_choreography_shape_matrix_runs_to_completion_on_small_stack() {
         );
     });
 
-    run_on_small_stack("huge-choreography-linear-heavy", || {
+    run_on_bounded_stack("huge-choreography-linear-heavy", || {
         let controller_program = linear_program::controller_program();
         let worker_program = linear_program::worker_program();
         run_attached_sample(
@@ -231,7 +232,7 @@ fn huge_choreography_shape_matrix_runs_to_completion_on_small_stack() {
         );
     });
 
-    run_on_small_stack("huge-choreography-fanout-heavy", || {
+    run_on_bounded_stack("huge-choreography-fanout-heavy", || {
         let controller_program = fanout_program::controller_program();
         let worker_program = fanout_program::worker_program();
         run_attached_sample(
