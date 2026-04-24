@@ -616,29 +616,6 @@ impl FrontierState {
         global_frontier_observed_key.observed_entries(self.global_frontier_observed)
     }
 
-    #[cfg(test)]
-    #[inline]
-    pub(super) fn global_frontier_observed_entry_bit(
-        &self,
-        global_frontier_observed_key: FrontierObservationKey,
-        entry_idx: usize,
-    ) -> u8 {
-        self.global_frontier_observed_entries(global_frontier_observed_key)
-            .entry_bit(entry_idx)
-    }
-
-    #[cfg(test)]
-    #[inline]
-    #[cfg(test)]
-    pub(super) fn overwrite_global_frontier_observed(
-        &mut self,
-        global_frontier_observed_key: &mut FrontierObservationKey,
-        src: ObservedEntrySet,
-    ) {
-        global_frontier_observed_key.copy_slots_from_observed_entries(src);
-        self.global_frontier_observed = src.summary();
-    }
-
     #[inline]
     #[cfg(test)]
     pub(super) fn cached_frontier_observed_entries(

@@ -52,8 +52,8 @@ impl<const KIND_LABEL: u8, const ARM: u8> ControlResourceKind for RouteControl<K
     const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(
-        _sid: hibana::substrate::SessionId,
-        _lane: hibana::substrate::Lane,
+        _sid: hibana::substrate::ids::SessionId,
+        _lane: hibana::substrate::ids::Lane,
         scope: ScopeId,
     ) -> <Self as ResourceKind>::Handle {
         (ARM, scope.raw())
@@ -121,8 +121,8 @@ impl<
     const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(
-        _sid: hibana::substrate::SessionId,
-        _lane: hibana::substrate::Lane,
+        _sid: hibana::substrate::ids::SessionId,
+        _lane: hibana::substrate::ids::Lane,
         scope: ScopeId,
     ) -> <Self as ResourceKind>::Handle {
         (0, scope.raw())

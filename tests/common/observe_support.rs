@@ -2,7 +2,6 @@ use hibana::substrate::tap::TapEvent;
 
 pub(crate) const LANE_ACQUIRE_ID: u16 = 0x0210;
 pub(crate) const LANE_RELEASE_ID: u16 = 0x0211;
-pub(crate) const LOCAL_ACTION_FAIL_ID: u16 = 0x0226;
 pub(crate) const POLICY_ABORT_ID: u16 = 0x0400;
 pub(crate) const POLICY_ANNOT_ID: u16 = 0x0401;
 pub(crate) const POLICY_TRAP_ID: u16 = 0x0402;
@@ -178,13 +177,8 @@ fn policy_event_meta(
     }
 }
 
-pub(crate) fn policy_lane_trace(
-    storage: &[TapEvent],
-    start: usize,
-    end: usize,
-) -> (PolicyLaneTrace, usize) {
+pub(crate) fn policy_lane_trace(storage: &[TapEvent], start: usize, end: usize) -> PolicyLaneTrace {
     let mut records = PolicyLaneTrace::new();
-    let mut local_action_failures = 0usize;
     let mut lane_table = [None; POLICY_LANE_TABLE_CAPACITY];
     let capacity = storage.len();
     let mut cursor = start;
@@ -201,10 +195,6 @@ pub(crate) fn policy_lane_trace(
                 POLICY_LANE_TABLE_CAPACITY
             );
             lane_table[lane_idx] = assoc;
-        }
-
-        if raw.id == LOCAL_ACTION_FAIL_ID {
-            local_action_failures += 1;
         }
 
         if let Some((policy_id, kind, domain, sid_hint)) = policy_event_meta(raw) {
@@ -226,5 +216,5 @@ pub(crate) fn policy_lane_trace(
         cursor += 1;
     }
 
-    (records, local_action_failures)
+    records
 }

@@ -1,7 +1,7 @@
 //! Internal state tables for ra module.
 //!
 //! These tables manage generation counters, state snapshots, and routing policies.
-//! All tables are !Send/!Sync (single-threaded, no_std compatible).
+//! All tables are !Send/!Sync and single-threaded under no_std.
 
 use core::{
     cell::UnsafeCell,
@@ -162,18 +162,6 @@ impl GenTable {
         }
         let slot = (lane_raw - self.lane_base) as usize;
         (slot < self.lane_slots as usize).then_some(slot)
-    }
-
-    #[cfg(test)]
-    fn new_for_test(lane_slots: usize) -> Self {
-        let mut table = Self::empty();
-        let bytes = Self::storage_bytes(lane_slots);
-        let mut storage = std::vec![0u8; bytes].into_boxed_slice();
-        unsafe {
-            table.bind_from_storage(storage.as_mut_ptr(), 0, lane_slots);
-        }
-        let _ = std::boxed::Box::leak(storage);
-        table
     }
 
     /// Check and update generation for a lane.
@@ -1761,7 +1749,14 @@ mod tests {
     }
 
     fn gen_table() -> GenTable {
-        GenTable::new_for_test(4)
+        let mut table = GenTable::empty();
+        let bytes = GenTable::storage_bytes(4);
+        let mut storage = std::vec![0u8; bytes].into_boxed_slice();
+        unsafe {
+            table.bind_from_storage(storage.as_mut_ptr(), 0, 4);
+        }
+        let _ = std::boxed::Box::leak(storage);
+        table
     }
 
     #[test]

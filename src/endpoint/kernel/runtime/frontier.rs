@@ -2348,38 +2348,6 @@ impl FrontierSnapshot {
     }
 
     #[inline]
-    #[cfg(test)]
-    pub(super) fn candidate(self, idx: usize) -> Option<FrontierCandidate> {
-        if idx < self.candidate_len {
-            Some(self.candidate_at(idx))
-        } else {
-            None
-        }
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(super) fn test_from_slice(
-        current_scope: ScopeId,
-        current_entry_idx: usize,
-        current_parallel_root: ScopeId,
-        current_frontier: FrontierKind,
-        candidates: &mut [FrontierCandidate],
-        candidate_len: usize,
-    ) -> Self {
-        let len = core::cmp::min(candidate_len, candidates.len());
-        Self {
-            current_scope,
-            current_entry_idx,
-            current_parallel_root,
-            current_frontier,
-            candidates: candidates.as_mut_ptr(),
-            candidate_capacity: candidates.len(),
-            candidate_len: len,
-        }
-    }
-
-    #[inline]
     pub(super) fn matches_parallel_root(self, candidate: FrontierCandidate) -> bool {
         self.current_parallel_root.is_none()
             || candidate.parallel_root == self.current_parallel_root
@@ -2469,16 +2437,6 @@ pub(super) struct FrontierVisitSet {
 
 impl FrontierVisitSet {
     #[inline]
-    #[cfg(test)]
-    pub(super) const fn empty() -> Self {
-        Self {
-            slots: core::ptr::null_mut(),
-            capacity: 0,
-            len: 0,
-        }
-    }
-
-    #[inline]
     pub(super) unsafe fn from_parts(slots: *mut ScopeId, capacity: usize) -> Self {
         let mut idx = 0usize;
         while idx < capacity {
@@ -2492,12 +2450,6 @@ impl FrontierVisitSet {
             capacity,
             len: 0,
         }
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(super) fn test_from_slice(slots: &mut [ScopeId]) -> Self {
-        unsafe { Self::from_parts(slots.as_mut_ptr(), slots.len()) }
     }
 
     #[inline]

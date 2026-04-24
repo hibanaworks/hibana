@@ -1,8 +1,8 @@
 //! Observability surface exposing canonical observe modules.
 //!
-//! The no_std tap ring lives in [`observe::core`]. Higher-level trace tooling
-//! stays internal to tests. Tap event identifiers are generated at build time
-//! and consumed internally by the canonical observe owners.
+//! The no_std tap ring lives in [`observe::core`]. Tap event identifiers are
+//! generated at build time and consumed internally by the canonical observe
+//! owners.
 
 /// Core tap ring and trace storage.
 pub(crate) mod core;
@@ -12,14 +12,6 @@ pub(crate) mod ids;
 
 /// Tap event builders.
 pub(crate) mod events;
-
-/// Trace validation helpers.
-#[cfg(test)]
-pub(crate) mod check;
-
-/// Local action utilities for observe.
-#[cfg(test)]
-pub(crate) mod local;
 
 /// Scope trace helpers.
 pub(crate) mod scope;

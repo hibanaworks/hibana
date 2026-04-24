@@ -18,17 +18,18 @@ use ::core::{
 };
 
 use common::TestTransport;
-use hibana::g::advanced::{RoleProgram, project};
 use hibana::g::{self, Msg, Role};
+use hibana::substrate::program::{RoleProgram, project};
 use hibana::substrate::{
-    RendezvousId,
-    cap::{GenericCapToken, ResourceKind, advanced::RouteDecisionKind},
-    policy::{ResolverContext, ResolverError, RouteResolution, core},
+    SessionKit,
+    binding::NoBinding,
+    ids::SessionId,
+    runtime::{Config, CounterClock, DefaultLabelUniverse},
 };
 use hibana::substrate::{
-    SessionId, SessionKit,
-    binding::NoBinding,
-    runtime::{Config, CounterClock, DefaultLabelUniverse},
+    cap::{GenericCapToken, ResourceKind, advanced::RouteDecisionKind},
+    ids::RendezvousId,
+    policy::{ResolverContext, ResolverError, RouteResolution, core},
 };
 use placement_support::write_value;
 use runtime_support::with_fixture;

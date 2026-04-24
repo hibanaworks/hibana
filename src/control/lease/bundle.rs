@@ -17,12 +17,8 @@ use crate::{
     runtime::{config::Clock, consts::LabelUniverse},
     transport::Transport,
 };
-#[cfg(test)]
-use crate::{policy_runtime::PolicySlot, rendezvous::slots::SlotArena};
 
 const CAP_LOG_CAPACITY: usize = 4;
-#[cfg(test)]
-const SLOT_LOG_CAPACITY: usize = 4;
 
 /// Error returned when a lease bundle handle runs out of tracking capacity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,87 +117,6 @@ where
     }
 }
 
-#[cfg(test)]
-#[derive(Clone, Copy)]
-struct SlotStageRecord {
-    slot: PolicySlot,
-}
-
-#[cfg(test)]
-impl SlotStageRecord {
-    const EMPTY: Self = Self {
-        slot: PolicySlot::Forward,
-    };
-}
-
-/// Handle that records slot staging so rollback can scrub temporary buffers.
-#[cfg(test)]
-pub(crate) struct SlotBundleHandle<'ctx, 'cfg> {
-    arena: NonNull<SlotArena>,
-    stages: [SlotStageRecord; SLOT_LOG_CAPACITY],
-    stages_mask: u8,
-    _marker: PhantomData<&'ctx crate::observe::core::TapRing<'cfg>>,
-}
-
-#[cfg(test)]
-impl<'ctx, 'cfg> SlotBundleHandle<'ctx, 'cfg> {
-    pub(crate) const fn new(arena: NonNull<SlotArena>) -> Self {
-        Self {
-            arena,
-            stages: [SlotStageRecord::EMPTY; SLOT_LOG_CAPACITY],
-            stages_mask: 0,
-            _marker: PhantomData,
-        }
-    }
-
-    #[inline]
-    pub(crate) fn track_stage(&mut self, slot: PolicySlot) -> Result<(), LeaseBundleError> {
-        let mut idx = 0usize;
-        while idx < SLOT_LOG_CAPACITY {
-            let bit = 1u8 << idx;
-            if self.stages_mask & bit != 0 && self.stages[idx].slot == slot {
-                return Ok(());
-            }
-            idx += 1;
-        }
-
-        idx = 0;
-        while idx < SLOT_LOG_CAPACITY {
-            let bit = 1u8 << idx;
-            if self.stages_mask & bit == 0 {
-                self.stages[idx] = SlotStageRecord { slot };
-                self.stages_mask |= bit;
-                return Ok(());
-            }
-            idx += 1;
-        }
-
-        Err(LeaseBundleError::Capacity)
-    }
-
-    #[inline]
-    fn on_commit(&mut self) {
-        self.stages_mask = 0;
-    }
-
-    fn on_rollback(&mut self) {
-        let mut idx = 0usize;
-        while idx < SLOT_LOG_CAPACITY {
-            let bit = 1u8 << idx;
-            if self.stages_mask & bit != 0 {
-                let record = self.stages[idx];
-                unsafe {
-                    let arena = self.arena.as_mut();
-                    let storage = arena.storage_mut(record.slot);
-                    storage.staging_mut().fill(0);
-                }
-            }
-            idx += 1;
-        }
-        self.stages_mask = 0;
-    }
-}
-
 /// Facet marker used by LeaseGraph nodes that require bundling.
 #[allow(clippy::type_complexity)]
 pub(crate) struct LeaseBundleFacet<T, U, C, E>(PhantomData<fn() -> (T, U, C, E)>)
@@ -256,8 +171,6 @@ where
     observe: Option<LeaseObserve<'ctx, 'cfg>>,
     topology: Option<TopologyGraphContext>,
     caps: Option<CapsBundleHandle<'ctx, 'cfg, T, U, C, E>>,
-    #[cfg(test)]
-    slots: Option<SlotBundleHandle<'ctx, 'cfg>>,
     commit_event: Option<TapEvent>,
     rollback_event: Option<TapEvent>,
     _marker: PhantomData<fn() -> (T, U, C, E)>,
@@ -288,8 +201,6 @@ where
             observe: None,
             topology: None,
             caps: None,
-            #[cfg(test)]
-            slots: None,
             commit_event: None,
             rollback_event: None,
             _marker: PhantomData,
@@ -319,20 +230,8 @@ where
 
     #[inline]
     #[cfg(test)]
-    pub(crate) fn set_slot_bundle(&mut self, handle: SlotBundleHandle<'ctx, 'cfg>) {
-        self.slots = Some(handle);
-    }
-
-    #[inline]
-    #[cfg(test)]
     pub(crate) fn caps_mut(&mut self) -> Option<&mut CapsBundleHandle<'ctx, 'cfg, T, U, C, E>> {
         self.caps.as_mut()
-    }
-
-    #[inline]
-    #[cfg(test)]
-    pub(crate) fn slots_mut(&mut self) -> Option<&mut SlotBundleHandle<'ctx, 'cfg>> {
-        self.slots.as_mut()
     }
 
     #[inline]
@@ -361,13 +260,6 @@ where
             let caps_ptr = NonNull::from(rendezvous.caps());
             self.set_caps(CapsBundleHandle::new(caps_ptr));
         }
-
-        #[cfg(test)]
-        if needs.requires_slots() {
-            let mut bundle = rendezvous.slot_bundle();
-            let arena_ptr = NonNull::from(bundle.arena());
-            self.set_slot_bundle(SlotBundleHandle::new(arena_ptr));
-        }
     }
 
     #[inline]
@@ -384,10 +276,6 @@ where
         if let Some(handle) = self.caps.as_mut() {
             handle.on_commit();
         }
-        #[cfg(test)]
-        if let Some(handle) = self.slots.as_mut() {
-            handle.on_commit();
-        }
         if let Some(ctx) = self.topology.as_mut() {
             ctx.clear();
         }
@@ -399,10 +287,6 @@ where
     #[inline]
     pub(crate) fn on_rollback(&mut self) {
         if let Some(handle) = self.caps.as_mut() {
-            handle.on_rollback();
-        }
-        #[cfg(test)]
-        if let Some(handle) = self.slots.as_mut() {
             handle.on_rollback();
         }
         if let Some(ctx) = self.topology.as_mut() {
@@ -768,7 +652,6 @@ mod tests {
 
                 assert!(ctx.observe().is_some(), "observe facet seeded");
                 assert!(ctx.caps_mut().is_some(), "caps bundle seeded");
-                assert!(ctx.slots_mut().is_some(), "slot bundle seeded");
             })
         });
     }
@@ -789,7 +672,6 @@ mod tests {
 
                 assert!(ctx.observe().is_some());
                 assert!(ctx.caps_mut().is_some());
-                assert!(ctx.slots_mut().is_some());
             })
         });
     }
@@ -811,16 +693,21 @@ mod tests {
 
                 let root_ctx = LeaseBundleContext::from_control_core::<MAX_RV>(core, root_id)
                     .expect("root context available");
-                let mut graph = LeaseGraph::<TestSpec>::new(
-                    root_id,
-                    LeaseBundleFacet::<
-                        DummyTransport,
-                        DefaultLabelUniverse,
-                        CounterClock,
-                        crate::control::cap::mint::EpochTbl,
-                    >::default(),
-                    root_ctx,
-                );
+                let mut graph_storage = MaybeUninit::<LeaseGraph<'_, TestSpec>>::uninit();
+                let mut graph = unsafe {
+                    LeaseGraph::<TestSpec>::init_new(
+                        graph_storage.as_mut_ptr(),
+                        root_id,
+                        LeaseBundleFacet::<
+                            DummyTransport,
+                            DefaultLabelUniverse,
+                            CounterClock,
+                            crate::control::cap::mint::EpochTbl,
+                        >::default(),
+                        root_ctx,
+                    );
+                    graph_storage.assume_init()
+                };
                 graph
                     .add_child_with_bundle(core, root_id, child_id)
                     .expect("child added");
@@ -828,7 +715,6 @@ mod tests {
                 let mut child_handle = graph.handle_mut(child_id).expect("child handle");
                 let ctx = child_handle.context();
                 assert!(ctx.caps_mut().is_some(), "caps bundle seeded in child");
-                assert!(ctx.slots_mut().is_some(), "slot bundle seeded in child");
             })
         });
     }
@@ -848,7 +734,14 @@ mod tests {
                 crate::control::cap::mint::EpochTbl,
             > = LeaseBundleContext::new();
             ctx.set_observe(LeaseObserve::new(core::ptr::from_ref(static_ring)));
-            let event = observe::events::TopologyAck::new(7, 1, 2);
+            let event = TapEvent {
+                ts: 7,
+                id: observe::ids::TOPOLOGY_ACK,
+                causal_key: 0,
+                arg0: 1,
+                arg1: 2,
+                arg2: 0,
+            };
             ctx.register_commit_tap(event);
 
             let facet = LeaseBundleFacet::<
@@ -931,86 +824,5 @@ mod tests {
                 assert!(matches!(claim, Err(CapError::UnknownToken)));
             })
         });
-    }
-
-    #[test]
-    fn slot_staging_cleared_on_rollback() {
-        use crate::rendezvous::slots::SlotArena;
-
-        let mut arena = SlotArena::new();
-        let arena_ptr = NonNull::from(&mut arena);
-        let slot = PolicySlot::Forward;
-        {
-            let storage = arena.storage_mut(slot);
-            storage.staging_mut()[0] = 0xAA;
-        }
-
-        let mut ctx: LeaseBundleContext<
-            'static,
-            'static,
-            DummyTransport,
-            DefaultLabelUniverse,
-            CounterClock,
-            crate::control::cap::mint::EpochTbl,
-        > = LeaseBundleContext::new();
-        ctx.set_slot_bundle(SlotBundleHandle::new(arena_ptr));
-
-        {
-            let slots = ctx.slots_mut().expect("slot handle present");
-            slots.track_stage(slot).expect("log stage");
-        }
-
-        ctx.on_commit();
-        assert_eq!(arena.storage(slot).staging()[0], 0xAA);
-
-        {
-            let storage = arena.storage_mut(slot);
-            storage.staging_mut()[0] = 0xBB;
-        }
-
-        {
-            let slots = ctx.slots_mut().expect("slot handle present");
-            slots.track_stage(slot).expect("log stage");
-        }
-
-        ctx.on_rollback();
-
-        assert!(arena.storage(slot).staging().iter().all(|byte| *byte == 0));
-    }
-
-    #[test]
-    fn duplicate_slot_stage_does_not_consume_capacity() {
-        use crate::rendezvous::slots::SlotArena;
-
-        let mut arena = SlotArena::new();
-        let arena_ptr = NonNull::from(&mut arena);
-        let mut ctx: LeaseBundleContext<
-            'static,
-            'static,
-            DummyTransport,
-            DefaultLabelUniverse,
-            CounterClock,
-            crate::control::cap::mint::EpochTbl,
-        > = LeaseBundleContext::new();
-        ctx.set_slot_bundle(SlotBundleHandle::new(arena_ptr));
-
-        let slots = ctx.slots_mut().expect("slot handle present");
-        slots.track_stage(PolicySlot::Forward).expect("log stage");
-        slots
-            .track_stage(PolicySlot::Forward)
-            .expect("duplicate stage stays idempotent");
-        slots
-            .track_stage(PolicySlot::EndpointRx)
-            .expect("log second stage");
-        slots
-            .track_stage(PolicySlot::EndpointTx)
-            .expect("log third stage");
-        slots
-            .track_stage(PolicySlot::Rendezvous)
-            .expect("log fourth stage");
-        assert!(matches!(
-            slots.track_stage(PolicySlot::Route),
-            Err(LeaseBundleError::Capacity)
-        ));
     }
 }

@@ -44,9 +44,7 @@ impl Default for LivenessPolicy {
 /// tap timestamps remain non-decreasing in `no_std` environments.
 ///
 /// Host environments may inject wrap-aware monotonic clocks via the Clock trait
-/// for environments that handle wrap-around appropriately. The observe module
-/// provides timestamp checkers for development/testing (see `observe::install_ts_checker`
-/// when `cfg(test)` or future `cfg(feature="trace")`).
+/// for environments that handle wrap-around appropriately.
 pub struct CounterClock {
     counter: Cell<u32>,
 }
@@ -93,12 +91,12 @@ impl fmt::Debug for CounterClock {
 
 /// Borrowed resources required by the runtime.
 pub struct Config<'a, U: LabelUniverse = DefaultLabelUniverse, C: Clock = CounterClock> {
-    tap_buf: &'a mut [TapEvent; RING_EVENTS],
-    slab: &'a mut [u8],
-    lane_range: Range<u8>,
+    pub(crate) tap_buf: &'a mut [TapEvent; RING_EVENTS],
+    pub(crate) slab: &'a mut [u8],
+    pub(crate) lane_range: Range<u8>,
     universe: U,
-    clock: C,
-    liveness_policy: LivenessPolicy,
+    pub(crate) clock: C,
+    pub(crate) liveness_policy: LivenessPolicy,
 }
 
 impl<'a, U: LabelUniverse, C: Clock> fmt::Debug for Config<'a, U, C> {
@@ -194,32 +192,6 @@ impl<'a, U: LabelUniverse, C: Clock> Config<'a, U, C> {
     pub fn clock(&self) -> &C {
         &self.clock
     }
-
-    pub(crate) fn into_parts(self) -> ConfigParts<'a, C> {
-        let Self {
-            tap_buf,
-            slab,
-            lane_range,
-            clock,
-            liveness_policy,
-            ..
-        } = self;
-        ConfigParts {
-            tap_buf,
-            slab,
-            lane_range,
-            clock,
-            liveness_policy,
-        }
-    }
-}
-
-pub(crate) struct ConfigParts<'a, C: Clock> {
-    pub(crate) tap_buf: &'a mut [TapEvent; RING_EVENTS],
-    pub(crate) slab: &'a mut [u8],
-    pub(crate) lane_range: Range<u8>,
-    pub(crate) clock: C,
-    pub(crate) liveness_policy: LivenessPolicy,
 }
 
 #[cfg(test)]

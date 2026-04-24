@@ -1,4 +1,7 @@
-use hibana::g::{self, Msg, Role, advanced::RoleProgram, advanced::project};
+use hibana::{
+    g::{self, Msg, Role},
+    substrate::program::{RoleProgram, project},
+};
 
 fn main() {
     let program = g::send::<Role<0>, Role<1>, Msg<7, u16>, 0>();

@@ -1,4 +1,4 @@
-use hibana::g::advanced::RoleProgram;
+use hibana::substrate::program::RoleProgram;
 
 fn main() {
     let _ = RoleProgram::<'static, 0, ()> {

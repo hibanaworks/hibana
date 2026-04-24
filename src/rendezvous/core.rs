@@ -16,7 +16,6 @@ use super::{
         TxAbortError, TxCommitError,
     },
     port::Port,
-    slots::SlotArena,
     tables::{
         GenTable, LoopTable, PolicyTable, RouteTable, SnapshotFinalization, StateSnapshotTable,
     },
@@ -50,7 +49,7 @@ use crate::{
         ids,
     },
     policy_runtime::{self, PolicySlot},
-    runtime::config::{Clock, Config, ConfigParts, CounterClock},
+    runtime::config::{Clock, Config, CounterClock},
     runtime::consts::{DefaultLabelUniverse, LabelUniverse},
     transport::{Transport, TransportEventKind, TransportMetrics},
 };
@@ -286,30 +285,9 @@ pub(crate) struct Rendezvous<
     loops: LoopTable,
     routes: RouteTable,
     policies: PolicyTable,
-    slot_arena: SlotArena,
     clock: C,
     liveness_policy: crate::runtime::config::LivenessPolicy,
     _epoch_marker: PhantomData<E>,
-}
-
-/// Affine bundle exposing slot storage access.
-#[cfg(test)]
-pub(crate) struct SlotBundle<'rv> {
-    arena: &'rv mut SlotArena,
-}
-
-#[cfg(test)]
-impl<'rv> SlotBundle<'rv> {
-    #[inline]
-    fn new(arena: &'rv mut SlotArena) -> Self {
-        Self { arena }
-    }
-
-    /// Borrow the underlying slot arena.
-    #[inline]
-    pub(crate) fn arena(&mut self) -> &mut SlotArena {
-        self.arena
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1287,23 +1265,6 @@ where
         }
     }
 
-    #[cfg(test)]
-    fn ensure_slot_arena_storage(&mut self) -> Option<()> {
-        if !self.slot_arena.slots_ptr().is_null() {
-            return Some(());
-        }
-        let (storage, _) = unsafe {
-            self.allocate_persistent_sidecar_bytes(
-                SlotArena::storage_bytes(),
-                SlotArena::storage_align(),
-            )
-        }?;
-        unsafe {
-            self.slot_arena.bind_from_storage(storage);
-        }
-        Some(())
-    }
-
     pub(crate) fn ensure_endpoint_resident_budget(
         &mut self,
         budget: EndpointResidentBudget,
@@ -1692,7 +1653,9 @@ where
             active_lane_count: counts.active_lane_count,
             endpoint_lane_slot_count: counts.endpoint_lane_slot_count,
             logical_lane_count: counts.logical_lane_count,
-            logical_lane_word_count: counts.logical_lane_word_count,
+            logical_lane_word_count: crate::global::role_program::lane_word_count(
+                counts.logical_lane_count,
+            ),
             max_route_stack_depth: 0,
             scope_evidence_count: 0,
             frontier_entry_count: 0,
@@ -1975,16 +1938,6 @@ where
         };
         self.trim_resident_headers_to_live_budget();
         self.recompute_scratch_reserved_bytes();
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn slot_bundle<'short>(&'short mut self) -> SlotBundle<'short>
-    where
-        'cfg: 'short,
-    {
-        let _ = self.ensure_slot_arena_storage();
-        SlotBundle::new(&mut self.slot_arena)
     }
 
     pub(crate) fn register_policy(
@@ -2912,7 +2865,6 @@ where
             LoopTable::init_empty(core::ptr::addr_of_mut!((*dst).loops));
             RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
             PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
-            SlotArena::init_empty(core::ptr::addr_of_mut!((*dst).slot_arena));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
             core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
             core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
@@ -2930,13 +2882,14 @@ where
         transport: T,
         endpoint_slots: usize,
     ) -> Option<*mut Self> {
-        let ConfigParts {
+        let Config {
             tap_buf,
             slab,
             lane_range,
             clock,
             liveness_policy,
-        } = config.into_parts();
+            ..
+        } = config;
         let (dst, runtime_slab) = unsafe { Self::carve_resident_storage(slab) }?;
         let (
             program_images,
@@ -2985,7 +2938,6 @@ where
             LoopTable::init_empty(core::ptr::addr_of_mut!((*dst).loops));
             RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
             PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
-            SlotArena::init_empty(core::ptr::addr_of_mut!((*dst).slot_arena));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
             core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
             core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
@@ -3010,13 +2962,14 @@ where
         transport: T,
         endpoint_slots: usize,
     ) -> Option<*mut Self> {
-        let ConfigParts {
+        let Config {
             tap_buf,
             slab,
             lane_range,
             clock,
             liveness_policy,
-        } = config.into_parts();
+            ..
+        } = config;
         let (dst, runtime_slab) = unsafe { Self::carve_resident_storage(slab) }?;
         let (
             program_images,
@@ -3066,7 +3019,6 @@ where
             LoopTable::init_empty(core::ptr::addr_of_mut!((*dst).loops));
             RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
             PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
-            SlotArena::init_empty(core::ptr::addr_of_mut!((*dst).slot_arena));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
             core::ptr::addr_of_mut!((*dst).liveness_policy).write(liveness_policy);
             core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
@@ -3092,13 +3044,14 @@ where
         transport: T,
         endpoint_slots: usize,
     ) {
-        let ConfigParts {
+        let Config {
             tap_buf,
             slab,
             lane_range,
             clock,
             liveness_policy,
-        } = config.into_parts();
+            ..
+        } = config;
         unsafe {
             Self::init_from_parts(
                 dst,
@@ -3249,14 +3202,14 @@ where
     }
 
     #[cfg(test)]
-    pub(crate) fn advance_lane_generation_for_test(&self, lane: Lane, target: Generation) {
+    pub(crate) fn advance_lane_generation_to(&self, lane: Lane, target: Generation) {
         if self.r#gen.last(lane).is_none() {
             let _ = self.r#gen.check_and_update(lane, Generation::ZERO);
         }
         if target != Generation::ZERO {
             self.r#gen
                 .check_and_update(lane, target)
-                .expect("test fixture lane generation must advance monotonically");
+                .expect("lane generation must advance monotonically");
         }
     }
 
@@ -3661,15 +3614,6 @@ where
         Ok((port, guard))
     }
 
-    #[cfg(test)]
-    pub(crate) fn activate_lane_for_test(
-        &self,
-        sid: SessionId,
-        lane: Lane,
-    ) -> Result<(), RendezvousError> {
-        self.activate_lane_attachment(sid, lane)
-    }
-
     // ============================================================================
     // Capability methods
     // ============================================================================
@@ -3762,7 +3706,7 @@ where
         if header.tag() == crate::control::cap::mint::EndpointResource::TAG {
             let endpoint_token = crate::control::cap::mint::GenericCapToken::<
                 crate::control::cap::mint::EndpointResource,
-            >::from_bytes(token.bytes);
+            >::from_bytes(token.into_bytes());
             endpoint_token
                 .endpoint_identity()
                 .map_err(|_| CapError::Mismatch)?;
@@ -3874,17 +3818,16 @@ where
         let begin_result = self.topology.begin(dst_lane, pending);
         begin_result?;
 
-        // Create ack using control::automaton::distributed::TopologyAck::new
-        let ack = TopologyAck::new(
-            intent.src_rv,
-            self.id,
-            intent.sid,
+        let ack = TopologyAck {
+            src_rv: intent.src_rv,
+            dst_rv: self.id,
+            sid: intent.sid,
             new_gen,
-            intent.src_lane,
-            dst_lane,
-            intent.seq_tx,
-            intent.seq_rx,
-        );
+            src_lane: intent.src_lane,
+            new_lane: dst_lane,
+            seq_tx: intent.seq_tx,
+            seq_rx: intent.seq_rx,
+        };
 
         Ok(ack)
     }
@@ -4058,7 +4001,7 @@ where
 }
 
 // ============================================================================
-// Legacy topology helpers have been deleted.
+// Deleted topology helpers stay out of the descriptor evaluator.
 // All topology operations now go through control::CpCommand and EffectRunner.
 // The control-plane mini-kernel architecture is responsible for rendezvous access control.
 
@@ -4329,14 +4272,22 @@ where
                 continue;
             }
 
-            let endpoint = unsafe {
+            let Some(header) = core::ptr::NonNull::new(unsafe {
                 slab_ptr
                     .add(offset)
-                    .cast::<crate::endpoint::kernel::PublicEndpointRevoke>()
+                    .cast::<crate::endpoint::carrier::KernelEndpointHeader>()
+            }) else {
+                continue;
+            };
+            let ops = unsafe {
+                &*header
+                    .as_ref()
+                    .ops()
+                    .cast::<crate::endpoint::carrier::EndpointOps<'_>>()
             };
             let released = unsafe {
-                (*endpoint).revoke_for_session(
-                    endpoint.cast::<()>(),
+                (ops.revoke_for_session)(
+                    header,
                     sid,
                     released_lanes.as_mut_ptr(),
                     released_lanes.len(),
@@ -4409,7 +4360,7 @@ where
         let mut last_loss = None;
         let mut emit_event = |event: crate::transport::TransportEvent| {
             let (arg0, arg1) = event.encode_tap_args();
-            if matches!(event.kind, TransportEventKind::Loss) {
+            if matches!(event.kind(), TransportEventKind::Loss) {
                 last_loss = Some(event);
             }
             emit(
@@ -4421,12 +4372,12 @@ where
         let metrics_attrs = self.transport.metrics().attrs();
         let snapshot = crate::transport::TransportSnapshot::from_policy_attrs(&metrics_attrs);
         if let Some(payload) = snapshot.encode_tap_metrics() {
-            let (arg0, arg1) = payload.primary;
+            let (arg0, arg1) = payload.primary();
             emit(
                 tap,
                 crate::observe::events::TransportMetrics::new(clock.now32(), arg0, arg1),
             );
-            if let Some((ext0, ext1)) = payload.extension {
+            if let Some((ext0, ext1)) = payload.extension() {
                 emit(
                     tap,
                     crate::observe::events::TransportMetricsExt::new(clock.now32(), ext0, ext1),
@@ -4577,6 +4528,33 @@ mod epf_tests {
         ptr,
     };
     use std::thread_local;
+
+    fn cap_token_wire_image(
+        nonce: [u8; crate::control::cap::mint::CAP_NONCE_LEN],
+        header: [u8; crate::control::cap::mint::CAP_HEADER_LEN],
+        tag: [u8; crate::control::cap::mint::CAP_TAG_LEN],
+    ) -> [u8; crate::control::cap::mint::CAP_TOKEN_LEN] {
+        let mut bytes = [0u8; crate::control::cap::mint::CAP_TOKEN_LEN];
+        bytes[..crate::control::cap::mint::CAP_NONCE_LEN].copy_from_slice(&nonce);
+        bytes[crate::control::cap::mint::CAP_NONCE_LEN
+            ..crate::control::cap::mint::CAP_NONCE_LEN + crate::control::cap::mint::CAP_HEADER_LEN]
+            .copy_from_slice(&header);
+        bytes[crate::control::cap::mint::CAP_NONCE_LEN
+            + crate::control::cap::mint::CAP_HEADER_LEN..]
+            .copy_from_slice(&tag);
+        bytes
+    }
+
+    fn endpoint_cap_token_from_wire(
+        nonce: [u8; crate::control::cap::mint::CAP_NONCE_LEN],
+        header: [u8; crate::control::cap::mint::CAP_HEADER_LEN],
+        tag: [u8; crate::control::cap::mint::CAP_TAG_LEN],
+    ) -> crate::control::cap::mint::GenericCapToken<crate::control::cap::mint::EndpointResource>
+    {
+        crate::control::cap::mint::GenericCapToken::from_bytes(cap_token_wire_image(
+            nonce, header, tag,
+        ))
+    }
 
     struct DummyTransport;
 
@@ -5042,16 +5020,16 @@ mod epf_tests {
                 .expect("topology tests must bind topology storage");
             rendezvous.assoc.register(src_lane, sid);
 
-            let operands = TopologyOperands::new(
-                rendezvous.id,
-                RendezvousId::new(9),
-                src_lane,
-                dst_lane,
-                Generation::ZERO,
-                Generation::new(1),
-                11,
-                13,
-            );
+            let operands = TopologyOperands {
+                src_rv: rendezvous.id,
+                dst_rv: RendezvousId::new(9),
+                src_lane: src_lane,
+                dst_lane: dst_lane,
+                old_gen: Generation::ZERO,
+                new_gen: Generation::new(1),
+                seq_tx: 11,
+                seq_rx: 13,
+            };
             assert!(matches!(
                 EffectRunner::run_effect(rendezvous, CpCommand::topology_begin(sid, operands)),
                 Err(CpError::Topology(
@@ -5081,16 +5059,16 @@ mod epf_tests {
                 .expect("topology tests must bind topology storage");
             rendezvous.assoc.register(authenticated_lane, sid);
 
-            let operands = TopologyOperands::new(
-                rendezvous.id,
-                RendezvousId::new(9),
-                authenticated_lane,
-                dst_lane,
-                Generation::ZERO,
-                Generation::new(1),
-                5,
-                7,
-            );
+            let operands = TopologyOperands {
+                src_rv: rendezvous.id,
+                dst_rv: RendezvousId::new(9),
+                src_lane: authenticated_lane,
+                dst_lane: dst_lane,
+                old_gen: Generation::ZERO,
+                new_gen: Generation::new(1),
+                seq_tx: 5,
+                seq_rx: 7,
+            };
             let malformed = CpCommand::new(ControlOp::TopologyBegin)
                 .with_sid(sid)
                 .with_lane(wrong_lane)
@@ -5129,32 +5107,32 @@ mod epf_tests {
                 .expect("topology tests must bind topology storage");
             rendezvous.assoc.register(src_lane, sid);
 
-            let invalid = TopologyOperands::new(
-                foreign_src,
-                RendezvousId::new(9),
-                src_lane,
-                dst_lane,
-                Generation::ZERO,
-                Generation::new(1),
-                23,
-                29,
-            );
+            let invalid = TopologyOperands {
+                src_rv: foreign_src,
+                dst_rv: RendezvousId::new(9),
+                src_lane: src_lane,
+                dst_lane: dst_lane,
+                old_gen: Generation::ZERO,
+                new_gen: Generation::new(1),
+                seq_tx: 23,
+                seq_rx: 29,
+            };
             assert!(matches!(
                 rendezvous.topology_begin_from_intent(invalid.intent(sid)),
                 Err(TopologyError::RendezvousIdMismatch { expected, got })
                     if expected == foreign_src && got == rendezvous.id
             ));
 
-            let valid = TopologyOperands::new(
-                rendezvous.id,
-                RendezvousId::new(9),
-                src_lane,
-                dst_lane,
-                Generation::ZERO,
-                Generation::new(1),
-                23,
-                29,
-            );
+            let valid = TopologyOperands {
+                src_rv: rendezvous.id,
+                dst_rv: RendezvousId::new(9),
+                src_lane: src_lane,
+                dst_lane: dst_lane,
+                old_gen: Generation::ZERO,
+                new_gen: Generation::new(1),
+                seq_tx: 23,
+                seq_rx: 29,
+            };
             rendezvous
                 .topology_begin_from_intent(valid.intent(sid))
                 .expect("failed begin preflight must not wedge the topology intent path");
@@ -5172,18 +5150,18 @@ mod epf_tests {
                 .prepare_topology_control_scope(src_lane)
                 .expect("topology tests must bind topology storage");
             rendezvous.assoc.register(src_lane, sid);
-            rendezvous.advance_lane_generation_for_test(src_lane, Generation::new(1));
+            rendezvous.advance_lane_generation_to(src_lane, Generation::new(1));
 
-            let stale = TopologyOperands::new(
-                rendezvous.id,
-                RendezvousId::new(10),
-                src_lane,
-                dst_lane,
-                Generation::ZERO,
-                Generation::new(2),
-                31,
-                37,
-            );
+            let stale = TopologyOperands {
+                src_rv: rendezvous.id,
+                dst_rv: RendezvousId::new(10),
+                src_lane: src_lane,
+                dst_lane: dst_lane,
+                old_gen: Generation::ZERO,
+                new_gen: Generation::new(2),
+                seq_tx: 31,
+                seq_rx: 37,
+            };
             assert!(matches!(
                 rendezvous.topology_begin_from_intent(stale.intent(sid)),
                 Err(TopologyError::StaleGeneration { lane, last, new })
@@ -5192,16 +5170,16 @@ mod epf_tests {
                         && new == Generation::new(2)
             ));
 
-            let valid = TopologyOperands::new(
-                rendezvous.id,
-                RendezvousId::new(10),
-                src_lane,
-                dst_lane,
-                Generation::new(1),
-                Generation::new(2),
-                31,
-                37,
-            );
+            let valid = TopologyOperands {
+                src_rv: rendezvous.id,
+                dst_rv: RendezvousId::new(10),
+                src_lane: src_lane,
+                dst_lane: dst_lane,
+                old_gen: Generation::new(1),
+                new_gen: Generation::new(2),
+                seq_tx: 31,
+                seq_rx: 37,
+            };
             rendezvous
                 .topology_begin_from_intent(valid.intent(sid))
                 .expect("stale rejection must leave the topology intent path reusable");
@@ -5245,33 +5223,33 @@ mod epf_tests {
                 .expect("topology tests must bind topology storage");
             rendezvous.assoc.register(authenticated_lane, sid);
 
-            let invalid = TopologyIntent::new(
-                rendezvous.id,
-                RendezvousId::new(7),
-                sid.raw(),
-                Generation::ZERO,
-                Generation::new(1),
-                17,
-                19,
-                wrong_lane,
-                dst_lane,
-            );
+            let invalid = TopologyIntent {
+                src_rv: rendezvous.id,
+                dst_rv: RendezvousId::new(7),
+                sid: sid.raw(),
+                old_gen: Generation::ZERO,
+                new_gen: Generation::new(1),
+                seq_tx: 17,
+                seq_rx: 19,
+                src_lane: wrong_lane,
+                dst_lane: dst_lane,
+            };
             assert!(matches!(
                 rendezvous.topology_begin_from_intent(invalid),
                 Err(TopologyError::UnknownSession { sid: err_sid }) if err_sid == sid
             ));
 
-            let valid = TopologyIntent::new(
-                rendezvous.id,
-                RendezvousId::new(7),
-                sid.raw(),
-                Generation::ZERO,
-                Generation::new(1),
-                17,
-                19,
-                authenticated_lane,
-                dst_lane,
-            );
+            let valid = TopologyIntent {
+                src_rv: rendezvous.id,
+                dst_rv: RendezvousId::new(7),
+                sid: sid.raw(),
+                old_gen: Generation::ZERO,
+                new_gen: Generation::new(1),
+                seq_tx: 17,
+                seq_rx: 19,
+                src_lane: authenticated_lane,
+                dst_lane: dst_lane,
+            };
             rendezvous
                 .topology_begin_from_intent(valid)
                 .expect("authenticated lane must remain usable after rejected begin intent");
@@ -5286,26 +5264,26 @@ mod epf_tests {
             let lane_b = Lane::new(1);
             let dst_a = Lane::new(2);
             let dst_b = Lane::new(3);
-            let first = TopologyOperands::new(
-                rendezvous.id,
-                RendezvousId::new(9),
-                lane_a,
-                dst_a,
-                Generation::ZERO,
-                Generation::new(1),
-                11,
-                13,
-            );
-            let second = TopologyOperands::new(
-                rendezvous.id,
-                RendezvousId::new(10),
-                lane_b,
-                dst_b,
-                Generation::ZERO,
-                Generation::new(1),
-                17,
-                19,
-            );
+            let first = TopologyOperands {
+                src_rv: rendezvous.id,
+                dst_rv: RendezvousId::new(9),
+                src_lane: lane_a,
+                dst_lane: dst_a,
+                old_gen: Generation::ZERO,
+                new_gen: Generation::new(1),
+                seq_tx: 11,
+                seq_rx: 13,
+            };
+            let second = TopologyOperands {
+                src_rv: rendezvous.id,
+                dst_rv: RendezvousId::new(10),
+                src_lane: lane_b,
+                dst_lane: dst_b,
+                old_gen: Generation::ZERO,
+                new_gen: Generation::new(1),
+                seq_tx: 17,
+                seq_rx: 19,
+            };
 
             rendezvous
                 .prepare_topology_control_scope(lane_a)
@@ -5355,16 +5333,16 @@ mod epf_tests {
             let sid = SessionId::new(46);
             let src_lane = Lane::new(0);
             let dst_lane = Lane::new(1);
-            let expected = TopologyOperands::new(
-                rendezvous.id,
-                RendezvousId::new(11),
-                src_lane,
-                dst_lane,
-                Generation::ZERO,
-                Generation::new(1),
-                41,
-                43,
-            );
+            let expected = TopologyOperands {
+                src_rv: rendezvous.id,
+                dst_rv: RendezvousId::new(11),
+                src_lane: src_lane,
+                dst_lane: dst_lane,
+                old_gen: Generation::ZERO,
+                new_gen: Generation::new(1),
+                seq_tx: 41,
+                seq_rx: 43,
+            };
 
             rendezvous
                 .prepare_topology_control_scope(src_lane)
@@ -5399,16 +5377,16 @@ mod epf_tests {
             let sid = SessionId::new(47);
             let src_lane = Lane::new(0);
             let dst_lane = Lane::new(1);
-            let expected = TopologyOperands::new(
-                rendezvous.id,
-                RendezvousId::new(12),
-                src_lane,
-                dst_lane,
-                Generation::ZERO,
-                Generation::new(1),
-                47,
-                53,
-            );
+            let expected = TopologyOperands {
+                src_rv: rendezvous.id,
+                dst_rv: RendezvousId::new(12),
+                src_lane: src_lane,
+                dst_lane: dst_lane,
+                old_gen: Generation::ZERO,
+                new_gen: Generation::new(1),
+                seq_tx: 47,
+                seq_rx: 53,
+            };
 
             rendezvous
                 .prepare_topology_control_scope(src_lane)
@@ -5507,10 +5485,10 @@ mod epf_tests {
             .encode(&mut header);
             header[13] = 0x80;
 
-            let token = crate::control::cap::mint::GenericCapToken::<
-                crate::control::cap::mint::EndpointResource,
-            >::from_parts(
-                nonce, header, [0; crate::control::cap::mint::CAP_TAG_LEN]
+            let token = endpoint_cap_token_from_wire(
+                nonce,
+                header,
+                [0; crate::control::cap::mint::CAP_TAG_LEN],
             );
 
             assert!(matches!(
@@ -5565,10 +5543,10 @@ mod epf_tests {
             .encode(&mut header);
             header[crate::control::cap::mint::CAP_CONTROL_HEADER_FIXED_LEN + 6] = 0x7F;
 
-            let token = crate::control::cap::mint::GenericCapToken::<
-                crate::control::cap::mint::EndpointResource,
-            >::from_parts(
-                nonce, header, [0; crate::control::cap::mint::CAP_TAG_LEN]
+            let token = endpoint_cap_token_from_wire(
+                nonce,
+                header,
+                [0; crate::control::cap::mint::CAP_TAG_LEN],
             );
 
             assert!(matches!(
@@ -5607,9 +5585,7 @@ mod epf_tests {
             .encode(&mut header);
             mutate(&mut header);
 
-            crate::control::cap::mint::GenericCapToken::<
-                crate::control::cap::mint::EndpointResource,
-            >::from_parts(
+            endpoint_cap_token_from_wire(
                 [0xCD; crate::control::cap::mint::CAP_NONCE_LEN],
                 header,
                 [0; crate::control::cap::mint::CAP_TAG_LEN],
@@ -5723,10 +5699,10 @@ mod epf_tests {
                 crate::control::cap::mint::EndpointResource::encode_handle(&handle),
             )
             .encode(&mut header);
-            let token = crate::control::cap::mint::GenericCapToken::<
-                crate::control::cap::mint::EndpointResource,
-            >::from_parts(
-                nonce, header, [0; crate::control::cap::mint::CAP_TAG_LEN]
+            let token = endpoint_cap_token_from_wire(
+                nonce,
+                header,
+                [0; crate::control::cap::mint::CAP_TAG_LEN],
             );
 
             let envelope = CpCommand::new(ControlOp::CapDelegate).with_delegate(
@@ -5778,10 +5754,10 @@ mod epf_tests {
                     crate::control::cap::mint::EndpointResource::encode_handle(&handle),
                 )
                 .encode(&mut header);
-                crate::control::cap::mint::GenericCapToken::<
-                    crate::control::cap::mint::EndpointResource,
-                >::from_parts(
-                    nonce, header, [0; crate::control::cap::mint::CAP_TAG_LEN]
+                endpoint_cap_token_from_wire(
+                    nonce,
+                    header,
+                    [0; crate::control::cap::mint::CAP_TAG_LEN],
                 )
             };
 
@@ -5914,16 +5890,16 @@ mod epf_tests {
                 .expect("generation must advance before snapshot");
 
             let snapshot = rendezvous.state_snapshot_at_lane(sid, lane);
-            let expected_ack = TopologyAck::new(
-                rendezvous.id,
-                RendezvousId::new(99),
-                sid.raw(),
-                pending_generation,
-                lane,
-                Lane::new(2),
-                17,
-                23,
-            );
+            let expected_ack = TopologyAck {
+                src_rv: rendezvous.id,
+                dst_rv: RendezvousId::new(99),
+                sid: sid.raw(),
+                new_gen: pending_generation,
+                src_lane: lane,
+                new_lane: Lane::new(2),
+                seq_tx: 17,
+                seq_rx: 23,
+            };
             rendezvous
                 .topology_begin(sid, lane, fences, pending_generation, Some(expected_ack))
                 .expect("topology begin must stage pending topology state");
@@ -5956,33 +5932,33 @@ mod epf_tests {
                 .check_and_update(lane, Generation::new(1))
                 .expect("generation must advance before validating stale intent");
 
-            let stale = TopologyIntent::new(
-                RendezvousId::new(7),
-                rendezvous.id,
-                sid.raw(),
-                Generation::new(1),
-                Generation::new(1),
-                11,
-                13,
-                Lane::new(0),
-                lane,
-            );
+            let stale = TopologyIntent {
+                src_rv: RendezvousId::new(7),
+                dst_rv: rendezvous.id,
+                sid: sid.raw(),
+                old_gen: Generation::new(1),
+                new_gen: Generation::new(1),
+                seq_tx: 11,
+                seq_rx: 13,
+                src_lane: Lane::new(0),
+                dst_lane: lane,
+            };
             assert!(matches!(
                 rendezvous.process_topology_intent(&stale),
                 Err(TopologyError::StaleGeneration { lane: err_lane, .. }) if err_lane == lane
             ));
 
-            let valid = TopologyIntent::new(
-                RendezvousId::new(7),
-                rendezvous.id,
-                sid.raw(),
-                Generation::new(1),
-                Generation::new(2),
-                11,
-                13,
-                Lane::new(0),
-                lane,
-            );
+            let valid = TopologyIntent {
+                src_rv: RendezvousId::new(7),
+                dst_rv: rendezvous.id,
+                sid: sid.raw(),
+                old_gen: Generation::new(1),
+                new_gen: Generation::new(2),
+                seq_tx: 11,
+                seq_rx: 13,
+                src_lane: Lane::new(0),
+                dst_lane: lane,
+            };
             rendezvous
                 .process_topology_intent(&valid)
                 .expect("stale intent must not leave pending topology wedged on the lane");
@@ -5999,17 +5975,17 @@ mod epf_tests {
                 .prepare_topology_control_scope(dst_lane)
                 .expect("topology tests must bind topology storage");
 
-            let intent = TopologyIntent::new(
-                RendezvousId::new(7),
-                rendezvous.id,
-                sid.raw(),
-                Generation::new(5),
-                Generation::new(6),
-                3,
-                7,
-                Lane::new(0),
-                dst_lane,
-            );
+            let intent = TopologyIntent {
+                src_rv: RendezvousId::new(7),
+                dst_rv: rendezvous.id,
+                sid: sid.raw(),
+                old_gen: Generation::new(5),
+                new_gen: Generation::new(6),
+                seq_tx: 3,
+                seq_rx: 7,
+                src_lane: Lane::new(0),
+                dst_lane: dst_lane,
+            };
             let ack = rendezvous
                 .process_topology_intent(&intent)
                 .expect("fresh destination lane must not reject an established source generation");
@@ -6040,17 +6016,17 @@ mod epf_tests {
                 .expect("topology tests must bind topology storage");
             rendezvous.assoc.register(dst_lane, occupying_sid);
 
-            let intent = TopologyIntent::new(
-                RendezvousId::new(7),
-                rendezvous.id,
-                sid.raw(),
-                Generation::new(5),
-                Generation::new(6),
-                3,
-                7,
-                Lane::new(0),
-                dst_lane,
-            );
+            let intent = TopologyIntent {
+                src_rv: RendezvousId::new(7),
+                dst_rv: rendezvous.id,
+                sid: sid.raw(),
+                old_gen: Generation::new(5),
+                new_gen: Generation::new(6),
+                seq_tx: 3,
+                seq_rx: 7,
+                src_lane: Lane::new(0),
+                dst_lane: dst_lane,
+            };
 
             assert!(matches!(
                 rendezvous.process_topology_intent(&intent),
@@ -6062,16 +6038,16 @@ mod epf_tests {
 
     #[test]
     fn topology_ack_mismatch_reports_destination_fields_when_destination_mismatches() {
-        let expected = TopologyAck::new(
-            RendezvousId::new(1),
-            RendezvousId::new(2),
-            7,
-            Generation::new(3),
-            Lane::new(4),
-            Lane::new(5),
-            11,
-            13,
-        );
+        let expected = TopologyAck {
+            src_rv: RendezvousId::new(1),
+            dst_rv: RendezvousId::new(2),
+            sid: 7,
+            new_gen: Generation::new(3),
+            src_lane: Lane::new(4),
+            new_lane: Lane::new(5),
+            seq_tx: 11,
+            seq_rx: 13,
+        };
 
         let mut got = expected;
         got.dst_rv = RendezvousId::new(9);
@@ -6160,10 +6136,10 @@ mod epf_tests {
                 crate::control::cap::mint::EndpointResource::encode_handle(&handle),
             )
             .encode(&mut header);
-            let token = crate::control::cap::mint::GenericCapToken::<
-                crate::control::cap::mint::EndpointResource,
-            >::from_parts(
-                nonce, header, [0; crate::control::cap::mint::CAP_TAG_LEN]
+            let token = endpoint_cap_token_from_wire(
+                nonce,
+                header,
+                [0; crate::control::cap::mint::CAP_TAG_LEN],
             );
 
             rendezvous
@@ -6230,10 +6206,10 @@ mod epf_tests {
                 crate::control::cap::mint::EndpointResource::encode_handle(&handle),
             )
             .encode(&mut header);
-            let token = crate::control::cap::mint::GenericCapToken::<
-                crate::control::cap::mint::EndpointResource,
-            >::from_parts(
-                nonce, header, [0; crate::control::cap::mint::CAP_TAG_LEN]
+            let token = endpoint_cap_token_from_wire(
+                nonce,
+                header,
+                [0; crate::control::cap::mint::CAP_TAG_LEN],
             );
 
             rendezvous
@@ -6303,10 +6279,10 @@ mod epf_tests {
                 crate::control::cap::mint::EndpointResource::encode_handle(&handle),
             )
             .encode(&mut header);
-            let token = crate::control::cap::mint::GenericCapToken::<
-                crate::control::cap::mint::EndpointResource,
-            >::from_parts(
-                nonce, header, [0; crate::control::cap::mint::CAP_TAG_LEN]
+            let token = endpoint_cap_token_from_wire(
+                nonce,
+                header,
+                [0; crate::control::cap::mint::CAP_TAG_LEN],
             );
 
             assert_eq!(
@@ -6381,16 +6357,16 @@ mod epf_tests {
             rendezvous
                 .prepare_topology_control_scope(lane)
                 .expect("topology ack test must bind topology storage");
-            let operands = TopologyOperands::new(
-                RendezvousId::new(9),
-                rendezvous.id,
-                lane,
-                lane,
-                Generation::ZERO,
-                Generation::new(2),
-                31,
-                37,
-            );
+            let operands = TopologyOperands {
+                src_rv: RendezvousId::new(9),
+                dst_rv: rendezvous.id,
+                src_lane: lane,
+                dst_lane: lane,
+                old_gen: Generation::ZERO,
+                new_gen: Generation::new(2),
+                seq_tx: 31,
+                seq_rx: 37,
+            };
             let envelope = CpCommand::topology_ack(sid, operands);
 
             assert_eq!(
@@ -6451,17 +6427,17 @@ mod epf_tests {
                 .prepare_topology_control_scope(lane)
                 .expect("topology tests must bind topology storage");
 
-            let intent = TopologyIntent::new(
-                RendezvousId::new(7),
-                rendezvous.id,
-                sid.raw(),
-                Generation::new(5),
-                Generation::new(6),
-                3,
-                7,
-                Lane::new(0),
-                lane,
-            );
+            let intent = TopologyIntent {
+                src_rv: RendezvousId::new(7),
+                dst_rv: rendezvous.id,
+                sid: sid.raw(),
+                old_gen: Generation::new(5),
+                new_gen: Generation::new(6),
+                seq_tx: 3,
+                seq_rx: 7,
+                src_lane: Lane::new(0),
+                dst_lane: lane,
+            };
             rendezvous
                 .process_topology_intent(&intent)
                 .expect("destination prepare must succeed before explicit abort");
@@ -6512,17 +6488,17 @@ mod epf_tests {
                 .check_and_update(lane, Generation::new(1))
                 .expect("generation must advance before destination prepare");
 
-            let intent = TopologyIntent::new(
-                RendezvousId::new(7),
-                rendezvous.id,
-                sid.raw(),
-                Generation::new(1),
-                Generation::new(3),
-                3,
-                7,
-                Lane::new(0),
-                lane,
-            );
+            let intent = TopologyIntent {
+                src_rv: RendezvousId::new(7),
+                dst_rv: rendezvous.id,
+                sid: sid.raw(),
+                old_gen: Generation::new(1),
+                new_gen: Generation::new(3),
+                seq_tx: 3,
+                seq_rx: 7,
+                src_lane: Lane::new(0),
+                dst_lane: lane,
+            };
             rendezvous
                 .process_topology_intent(&intent)
                 .expect("destination prepare must record its generation base");
@@ -6572,17 +6548,17 @@ mod epf_tests {
                 .check_and_update(lane, Generation::new(1))
                 .expect("generation must advance before destination prepare");
 
-            let intent = TopologyIntent::new(
-                RendezvousId::new(7),
-                rendezvous.id,
-                sid.raw(),
-                Generation::new(1),
-                Generation::new(3),
-                3,
-                7,
-                Lane::new(0),
-                lane,
-            );
+            let intent = TopologyIntent {
+                src_rv: RendezvousId::new(7),
+                dst_rv: rendezvous.id,
+                sid: sid.raw(),
+                old_gen: Generation::new(1),
+                new_gen: Generation::new(3),
+                seq_tx: 3,
+                seq_rx: 7,
+                src_lane: Lane::new(0),
+                dst_lane: lane,
+            };
             rendezvous
                 .process_topology_intent(&intent)
                 .expect("destination prepare must record its generation base");
@@ -6756,7 +6732,7 @@ mod epf_tests {
             assert_eq!(rendezvous.policy(lane, eff_index, tag), Some(policy));
 
             rendezvous
-                .activate_lane_for_test(sid, lane)
+                .activate_lane_attachment(sid, lane)
                 .expect("first attach must clear stale policy state before opening the lane");
             assert_eq!(
                 rendezvous.policy(lane, eff_index, tag),

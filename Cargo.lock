@@ -152,7 +152,6 @@ dependencies = [
  "futures",
  "libc",
  "proptest",
- "serde_json",
  "static_assertions",
  "tokio",
  "trybuild",

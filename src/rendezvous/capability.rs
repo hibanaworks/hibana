@@ -16,10 +16,6 @@ use crate::control::cap::mint::{
 };
 use crate::control::types::{Lane, SessionId};
 
-/// Maximum number of capability entries used by test-only constructors.
-#[cfg(test)]
-const CAPS_MAX: usize = 64;
-
 /// Internal capability entry.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CapEntry {
@@ -118,17 +114,6 @@ impl CapTable {
             core::ptr::addr_of_mut!((*dst).capacity).write(0);
             core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn new() -> Self {
-        let mut table = Self::empty();
-        let storage = std::vec![None; CAPS_MAX].into_boxed_slice();
-        let ptr = std::boxed::Box::leak(storage).as_mut_ptr();
-        unsafe {
-            table.bind_storage(ptr, CAPS_MAX, 0);
-        }
-        table
     }
 
     #[inline]
@@ -394,10 +379,10 @@ impl CapTable {
         }
     }
 
-    /// Release a capability entry by nonce (used by CapRegisteredToken Drop).
+    /// Release a capability entry by nonce for registered-token drop cleanup.
     ///
-    /// This is called automatically when a CapRegisteredToken is dropped,
-    /// ensuring RAII-based cleanup of registered capabilities.
+    /// This is called automatically by registered-token wrappers, ensuring
+    /// RAII-based cleanup of registered capabilities.
     #[inline]
     pub(crate) fn release_by_nonce(&self, nonce: &[u8; CAP_NONCE_LEN]) {
         if self.capacity == 0 {
@@ -533,9 +518,20 @@ mod tests {
     use super::*;
     use crate::control::cap::mint::{EndpointHandle, EndpointResource};
 
+    fn cap_table() -> CapTable {
+        const CAP_TABLE_SLOTS: usize = 64;
+        let mut table = CapTable::empty();
+        let storage = std::vec![Option::<CapEntry>::None; CAP_TABLE_SLOTS].into_boxed_slice();
+        let ptr = std::boxed::Box::leak(storage).as_mut_ptr().cast::<u8>();
+        unsafe {
+            table.bind_from_storage(ptr, CAP_TABLE_SLOTS, 0);
+        }
+        table
+    }
+
     #[test]
     fn claim_by_nonce_returns_verified_handle() {
-        let table = CapTable::new();
+        let table = cap_table();
         let nonce = [0xAB; 16];
         let endpoint = EndpointHandle::new(SessionId::new(7), Lane::new(3), 9);
         let entry = CapEntry {
@@ -570,7 +566,7 @@ mod tests {
 
     #[test]
     fn one_shot_exhausts_on_second_claim() {
-        let table = CapTable::new();
+        let table = cap_table();
         let nonce = [0xCD; 16];
         let endpoint = EndpointHandle::new(SessionId::new(8), Lane::new(2), 5);
         let entry = CapEntry {
@@ -619,7 +615,7 @@ mod tests {
 
     #[test]
     fn restore_lane_to_revision_preserves_pre_snapshot_authority() {
-        let table = CapTable::new();
+        let table = cap_table();
         let sid = SessionId::new(12);
         let lane = Lane::new(4);
         let endpoint = EndpointHandle::new(sid, lane, 3);
@@ -698,7 +694,7 @@ mod tests {
 
     #[test]
     fn restore_lane_to_revision_revives_pre_snapshot_release_tombstone() {
-        let table = CapTable::new();
+        let table = cap_table();
         let sid = SessionId::new(15);
         let lane = Lane::new(2);
         let endpoint = EndpointHandle::new(sid, lane, 4);

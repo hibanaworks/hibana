@@ -63,8 +63,7 @@ fn policy_lane_trace_matches_lane_assignments() {
             .with_arg0(rv)
             .with_arg1(((sid as u32) << 16) | lane as u32);
 
-        let (records, local_action_failures) = policy_lane_trace(storage, 0, 5);
-        assert_eq!(local_action_failures, 0, "unexpected local action failures");
+        let records = policy_lane_trace(storage, 0, 5);
         assert_eq!(
             records.len(),
             3,

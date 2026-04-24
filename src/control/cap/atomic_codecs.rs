@@ -100,7 +100,28 @@ impl DelegationHandle {
     }
 }
 
-pub(crate) type SessionLaneHandle = (u32, u16);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SessionLaneHandle {
+    sid: u32,
+    lane: u16,
+}
+
+impl SessionLaneHandle {
+    #[inline(always)]
+    pub(crate) const fn new(sid: u32, lane: u16) -> Self {
+        Self { sid, lane }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn sid(self) -> u32 {
+        self.sid
+    }
+
+    #[inline(always)]
+    pub(crate) const fn lane(self) -> u16 {
+        self.lane
+    }
+}
 
 #[cfg(test)]
 pub(crate) const TAG_STATE_SNAPSHOT_CONTROL: u8 = 0x42;
@@ -115,8 +136,8 @@ pub(crate) const TAG_TOPOLOGY_BEGIN_CONTROL: u8 = 0x57;
 #[inline]
 pub(crate) fn encode_session_lane_handle(handle: SessionLaneHandle) -> [u8; CAP_HANDLE_LEN] {
     let mut buf = [0u8; CAP_HANDLE_LEN];
-    buf[0..4].copy_from_slice(&handle.0.to_le_bytes());
-    buf[4..6].copy_from_slice(&handle.1.to_le_bytes());
+    buf[0..4].copy_from_slice(&handle.sid().to_le_bytes());
+    buf[4..6].copy_from_slice(&handle.lane().to_le_bytes());
     buf
 }
 
@@ -129,13 +150,13 @@ pub(crate) fn decode_session_lane_handle(
     }
     let sid = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
     let lane = u16::from_le_bytes([data[4], data[5]]);
-    Ok((sid, lane))
+    Ok(SessionLaneHandle::new(sid, lane))
 }
 
 #[cfg(test)]
 #[inline(always)]
 pub(crate) const fn mint_session_lane_handle(sid: SessionId, lane: Lane) -> SessionLaneHandle {
-    (sid.raw(), lane.raw() as u16)
+    SessionLaneHandle::new(sid.raw(), lane.raw() as u16)
 }
 
 #[cfg(test)]

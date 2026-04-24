@@ -15,7 +15,6 @@ use crate::transport::Transport;
 
 use super::CursorEndpoint;
 use super::CursorEndpointStorageLayout;
-use super::PublicEndpointRevoke;
 use super::evidence_store::ScopeEvidenceSlot;
 use super::layout::EndpointArenaSection;
 use super::layout::LeasedState;
@@ -38,8 +37,8 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
     public_rv: RendezvousId,
     public_slot: EndpointLeaseId,
     public_generation: u32,
+    public_ops: *const (),
     public_slot_owned: bool,
-    public_revoke: PublicEndpointRevoke,
     liveness_policy: crate::runtime::config::LivenessPolicy,
     control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
     mint: Mint,
@@ -67,7 +66,13 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usi
                 .cast::<Option<LaneGuard<'r, T, U, C>>>(),
             logical_lane_count,
         );
-        ::core::ptr::addr_of_mut!((*dst).public_revoke).write(public_revoke);
+        ::core::ptr::addr_of_mut!((*dst).public_header).write(
+            crate::endpoint::carrier::KernelEndpointHeader::new(
+                public_ops,
+                public_generation,
+                ROLE,
+            ),
+        );
         ::core::ptr::addr_of_mut!((*dst).primary_lane).write(primary_lane);
         ::core::ptr::addr_of_mut!((*dst).sid).write(sid);
         ::core::ptr::addr_of_mut!((*dst)._owner).write(owner);
@@ -326,8 +331,8 @@ pub(crate) unsafe fn init_empty_from_compiled<
     public_rv: RendezvousId,
     public_slot: EndpointLeaseId,
     public_generation: u32,
+    public_ops: *const (),
     public_slot_owned: bool,
-    public_revoke: PublicEndpointRevoke,
     liveness_policy: crate::runtime::config::LivenessPolicy,
     control: SessionControlCtx<'r, T, U, C, E, MAX_RV>,
     mint: Mint,
@@ -362,8 +367,8 @@ pub(crate) unsafe fn init_empty_from_compiled<
             public_rv,
             public_slot,
             public_generation,
+            public_ops,
             public_slot_owned,
-            public_revoke,
             liveness_policy,
             control,
             mint,

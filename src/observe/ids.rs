@@ -106,13 +106,6 @@ pub const LOOP_DECISION: u16 = 0x0220;
 /// - `causal`: lane marker with decision encoded in the sequence field (0 = skip, 1 = send)
 pub const ROUTE_DECISION: u16 = 0x0221;
 
-/// Local action handler reported a failure.
-///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: eff_index<<16 | reason (u32)
-#[cfg(test)]
-pub const LOCAL_ACTION_FAIL: u16 = 0x0226;
-
 // ───────────── Capability lifecycle (0x0240-0x024F) ─────────────
 ///
 /// Base identifier for capability mint events. Actual tap IDs are computed as

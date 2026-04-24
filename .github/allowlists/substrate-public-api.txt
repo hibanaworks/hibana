@@ -1,34 +1,41 @@
 pub use crate::control::cluster::error::{AttachError, CpError};
-pub use crate::control::types::{Lane, RendezvousId, SessionId};
-pub use crate::eff::EffIndex;
 pub use crate::transport::Transport;
 pub struct SessionKit<'cfg, T, U, C, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, U: crate::runtime::consts::LabelUniverse + 'cfg, C: crate::runtime::config::Clock + 'cfg, {
 pub fn new(clock: &'cfg C) -> Self {
-pub fn add_rendezvous_from_config( &self, config: crate::substrate::runtime::Config<'cfg, U, C>, transport: T, ) -> Result<RendezvousId, CpError> {
-pub fn enter<'r, const ROLE: u8, B>( &'r self, rv: RendezvousId, sid: SessionId, program: &crate::g::advanced::RoleProgram<ROLE>, binding: B, ) -> Result<crate::Endpoint<'r, ROLE>, AttachError> where B: crate::binding::BindingArg<'r>, 'cfg: 'r, {
-pub fn set_resolver<const POLICY: u16, const ROLE: u8>( &self, rv: RendezvousId, program: &crate::g::advanced::RoleProgram<ROLE>, resolver: crate::substrate::policy::ResolverRef<'cfg>, ) -> Result<(), CpError> {
+pub fn add_rendezvous_from_config( &self, config: crate::substrate::runtime::Config<'cfg, U, C>, transport: T, ) -> Result<crate::substrate::ids::RendezvousId, CpError> {
+pub fn enter<'r, const ROLE: u8, B>( &'r self, rv: crate::substrate::ids::RendezvousId, sid: crate::substrate::ids::SessionId, program: &crate::substrate::program::RoleProgram<ROLE>, binding: B, ) -> Result<crate::Endpoint<'r, ROLE>, AttachError> where B: crate::binding::BindingArg<'r>, 'cfg: 'r, {
+pub fn set_resolver<const POLICY: u16, const ROLE: u8>( &self, rv: crate::substrate::ids::RendezvousId, program: &crate::substrate::program::RoleProgram<ROLE>, resolver: crate::substrate::policy::ResolverRef<'cfg>, ) -> Result<(), CpError> {
+pub mod program {
+pub use crate::global::role_program::{RoleProgram, project};
+pub use crate::global::{MessageSpec, StaticControlDesc};
+pub mod ids {
+pub use crate::control::types::{Lane, RendezvousId, SessionId};
+pub use crate::eff::EffIndex;
 pub mod runtime {
 pub use crate::runtime::config::{Clock, Config, CounterClock};
 pub use crate::runtime::consts::{DefaultLabelUniverse, LabelUniverse};
 pub mod tap {
 pub use crate::observe::core::TapEvent;
 pub mod binding {
-pub use crate::binding::{ BindingSlot, Channel, ChannelDirection, ChannelKey, ChannelStore, IncomingClassification, NoBinding, TransportOpsError, };
+pub use crate::binding::{BindingSlot, NoBinding};
+pub mod advanced {
+pub use crate::binding::{ Channel, ChannelDirection, ChannelKey, ChannelStore, IncomingClassification, TransportOpsError, };
 pub mod policy {
 pub use super::cluster::core::{ LoopResolution, ResolverContext, ResolverError, ResolverRef, RouteResolution, };
+pub use crate::policy_runtime::PolicySlot;
 pub use crate::transport::context::{ ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider, };
 pub mod core {
 pub use crate::transport::context::core::{ CONGESTION_MARKS, CONGESTION_WINDOW, IN_FLIGHT_BYTES, LANE, LATENCY_US, LATEST_ACK_PN, PACING_INTERVAL_US, PTO_COUNT, QUEUE_DEPTH, RETRANSMISSIONS, RV_ID, SESSION_ID, SRTT_US, TAG, TRANSPORT_ALGORITHM, };
-pub use crate::policy_runtime::PolicySlot;
 pub mod cap {
 pub mod advanced {
 pub use super::super::control::cap::mint::{ CAP_HANDLE_LEN, CapError, CapHeader, ControlOp, ControlPath, };
 pub use crate::control::cap::resource_kinds::{ LoopBreakKind, LoopContinueKind, RouteDecisionKind, };
 pub use crate::global::const_dsl::{ControlScopeKind, ScopeId};
 pub use crate::control::cap::mint::{ CapShot, ControlResourceKind, GenericCapToken, ResourceKind, };
-pub use crate::control::cap::typed_tokens::CapRegisteredToken;
 pub use {One, Many};
 pub mod wire {
 pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 pub mod transport {
-pub use crate::transport::{ LocalDirection, Outgoing, SendMeta, TransportAlgorithm, TransportError, TransportEvent, TransportEventKind, TransportMetrics, };
+pub use crate::transport::{ Outgoing, TransportError, };
+pub mod advanced {
+pub use crate::transport::{ TransportEvent, TransportEventKind, TransportMetrics, };

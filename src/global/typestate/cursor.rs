@@ -860,7 +860,7 @@ impl PhaseCursor {
     /// Find the route arm containing a Recv node with the specified label.
     ///
     /// Uses FIRST-recv dispatch for O(1) lookup. The dispatch table now includes
-    /// the arm directly as `(label, arm, target_idx)`, eliminating positional inference.
+    /// the arm directly as `(label, arm, target_idx)`, eliminating positional lookup.
     ///
     /// Returns `None` if label not found in dispatch table.
     ///
@@ -871,7 +871,7 @@ impl PhaseCursor {
         let scope_region = self.scope_region()?;
         let scope_id = scope_region.scope_id;
         // FIRST-recv dispatch: O(1) lookup returns (arm, target_idx) directly.
-        // The arm is stored in the compiled dispatch table, eliminating positional inference.
+        // The arm is stored in the compiled dispatch table, eliminating positional lookup.
         if let Some((arm, _target_idx)) = self
             .typestate()
             .first_recv_dispatch_target_for_label(scope_id, target_label)
@@ -1002,7 +1002,7 @@ impl PhaseCursor {
     /// FIRST-recv dispatch lookup for passive observers.
     ///
     /// Given a recv label, returns the route arm and leaf recv StateIndex.
-    /// Returns `(arm, target_idx)` for O(1) dispatch without extra inference.
+    /// Returns `(arm, target_idx)` for O(1) dispatch without extra lookup.
     ///
     /// Returns `None` if label not found.
     #[inline]

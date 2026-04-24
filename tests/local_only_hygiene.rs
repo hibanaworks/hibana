@@ -28,7 +28,7 @@ fn local_cell_does_not_implement_sync() {
     let source = read(&root.join("tests/support/local_only.rs"));
     assert!(
         !source.contains("unsafe impl<T> Sync for LocalCell<T>"),
-        "test-only LocalCell must stay thread-local and must not implement Sync"
+        "cfg-test LocalCell must stay thread-local and must not implement Sync"
     );
 }
 

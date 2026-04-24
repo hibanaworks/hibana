@@ -46,16 +46,21 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "### Management Boundary",
         "## Validation",
         "`hibana::substrate::wire::{Payload, WireEncode, WirePayload}`",
+        "`hibana::substrate::ids::{EffIndex, Lane, RendezvousId, SessionId}`",
         "`hibana::substrate::policy::PolicySlot`",
         "`hibana::substrate::tap::TapEvent`",
         "App code builds a local choreography term with `hibana::g`",
-        "the canonical path is local `let` inference rather than a named item",
+        "the canonical path is a local `let` choreography term rather than a named item",
         "let program = g::seq(mgmt_prefix, app);",
         "let client: RoleProgram<0> = project(&program);",
         "`AUTO_MINT_WIRE` only enables endpoint-side auto-mint",
         "send an explicit `GenericCapToken<K>`",
         "delegation stays on the lower-layer endpoint-token path; it is not a public",
-        "bash ./.github/scripts/check_stable_1_95.sh",
+        "bash ./.github/scripts/check_lowering_hygiene.sh",
+        "bash ./.github/scripts/check_frozen_image_hygiene.sh",
+        "bash ./.github/scripts/check_exact_layout_hygiene.sh",
+        "bash ./.github/scripts/check_raw_future_hygiene.sh",
+        "bash ./.github/scripts/check_pico_size_matrix.sh",
         "cargo check --all-targets -p hibana",
         "cargo test -p hibana --test ui --features std",
     ] {
@@ -96,7 +101,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "static APP: g::Program<_>",
         "const PROGRAM: g::Program<_>",
         "static PROGRAM: g::Program<_>",
-        "`hibana::g::advanced::steps`",
+        "`hibana::substrate::program::steps`",
         "public wire control kinds must set `AUTO_MINT_WIRE = true`",
         "`CapDelegate`: `input[0] = (dst_rv << 16) | dst_lane`",
     ] {
@@ -148,23 +153,6 @@ fn projection_constructor_stays_on_canonical_call_shape() {
         offenders.is_empty(),
         "projection must use the canonical `project(&program)` call shape:\n{}",
         offenders.join("\n")
-    );
-}
-
-#[test]
-fn quality_gates_keep_older_stable_compatibility_lane() {
-    let workflow = read(".github/workflows/quality-gates.yml");
-    assert!(
-        workflow.contains("check_stable_1_95.sh"),
-        "quality gates must keep the older-stable compatibility lane"
-    );
-
-    let script =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".github/scripts/check_stable_1_95.sh");
-    assert!(
-        script.exists(),
-        "older-stable compatibility script must exist: {}",
-        script.display()
     );
 }
 
@@ -238,6 +226,7 @@ fn readme_wire_control_example_uses_reserved_control_label_band() {
 #[test]
 fn policy_semantics_doc_stays_on_current_core_boundary() {
     let policy = read("docs/spec/policy-semantics.md");
+    let boundary = read("docs/spec/policy_boundary.md");
 
     for required in [
         "`hibana` core owns the policy input boundary and fail-closed reduction only",
@@ -262,6 +251,17 @@ fn policy_semantics_doc_stays_on_current_core_boundary() {
         assert!(
             !policy.contains(forbidden),
             "policy semantics doc must not point at removed core owners: {forbidden}"
+        );
+    }
+
+    for required in [
+        "daily policy boundary to resolver inputs only",
+        "`hibana::substrate::policy::PolicySlot`",
+        "`hibana::substrate::policy::PolicySlot::Route`",
+    ] {
+        assert!(
+            boundary.contains(required),
+            "policy boundary doc must keep slot identity in the single policy bucket: {required}"
         );
     }
 }
@@ -317,6 +317,21 @@ fn completion_policy_spells_banned_regressions() {
             "completion policy must freeze the branch rules: {required}"
         );
     }
+}
+
+#[test]
+fn readme_keeps_advanced_buckets_out_of_everyday_substrate_list() {
+    let readme = read("README.md");
+    let everyday = readme
+        .split("The everyday protocol-side owners are:")
+        .nth(1)
+        .and_then(|tail| tail.split("Lower-level substrate buckets:").next())
+        .expect("README must keep everyday substrate owners and lower-level buckets separated");
+
+    assert!(
+        !everyday.contains("::advanced"),
+        "README everyday substrate list must not include advanced buckets"
+    );
 }
 
 #[test]

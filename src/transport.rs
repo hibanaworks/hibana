@@ -24,7 +24,7 @@ use crate::{
 
 /// Congestion control algorithm observed by a transport.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TransportAlgorithm {
+pub(crate) enum TransportAlgorithm {
     Cubic,
     Reno,
     Other(u8),
@@ -60,47 +60,6 @@ pub(crate) struct TransportSnapshot {
     algorithm: TransportAlgorithm,
 }
 
-/// Packed input used to construct a [`TransportSnapshot`] inside the crate.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct TransportSnapshotParts {
-    pub(crate) latency_us: Option<u64>,
-    pub(crate) queue_depth: Option<u32>,
-    pub(crate) pacing_interval_us: Option<u64>,
-    pub(crate) congestion_marks: Option<u32>,
-    pub(crate) retransmissions: Option<u32>,
-    pub(crate) pto_count: Option<u32>,
-    pub(crate) srtt_us: Option<u64>,
-    pub(crate) latest_ack_pn: Option<u64>,
-    pub(crate) congestion_window: Option<u64>,
-    pub(crate) in_flight_bytes: Option<u64>,
-    pub(crate) algorithm: Option<TransportAlgorithm>,
-}
-
-impl Default for TransportSnapshotParts {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl TransportSnapshotParts {
-    #[inline]
-    pub(crate) const fn new() -> Self {
-        Self {
-            latency_us: None,
-            queue_depth: None,
-            pacing_interval_us: None,
-            congestion_marks: None,
-            retransmissions: None,
-            pto_count: None,
-            srtt_us: None,
-            latest_ack_pn: None,
-            congestion_window: None,
-            in_flight_bytes: None,
-            algorithm: None,
-        }
-    }
-}
-
 impl Default for TransportSnapshot {
     fn default() -> Self {
         Self {
@@ -123,53 +82,6 @@ impl Default for TransportSnapshot {
 impl TransportSnapshot {
     /// Construct a transport snapshot from packed policy attributes.
     pub(crate) const fn from_policy_attrs(attrs: &context::PolicyAttrs) -> Self {
-        Self::from_parts(TransportSnapshotParts {
-            latency_us: match attrs.get(context::core::LATENCY_US) {
-                Some(value) => Some(value.as_u64()),
-                None => None,
-            },
-            queue_depth: match attrs.get(context::core::QUEUE_DEPTH) {
-                Some(value) => Some(value.as_u32()),
-                None => None,
-            },
-            pacing_interval_us: match attrs.get(context::core::PACING_INTERVAL_US) {
-                Some(value) => Some(value.as_u64()),
-                None => None,
-            },
-            congestion_marks: match attrs.get(context::core::CONGESTION_MARKS) {
-                Some(value) => Some(value.as_u32()),
-                None => None,
-            },
-            retransmissions: match attrs.get(context::core::RETRANSMISSIONS) {
-                Some(value) => Some(value.as_u32()),
-                None => None,
-            },
-            pto_count: match attrs.get(context::core::PTO_COUNT) {
-                Some(value) => Some(value.as_u32()),
-                None => None,
-            },
-            srtt_us: match attrs.get(context::core::SRTT_US) {
-                Some(value) => Some(value.as_u64()),
-                None => None,
-            },
-            latest_ack_pn: match attrs.get(context::core::LATEST_ACK_PN) {
-                Some(value) => Some(value.as_u64()),
-                None => None,
-            },
-            congestion_window: match attrs.get(context::core::CONGESTION_WINDOW) {
-                Some(value) => Some(value.as_u64()),
-                None => None,
-            },
-            in_flight_bytes: match attrs.get(context::core::IN_FLIGHT_BYTES) {
-                Some(value) => Some(value.as_u64()),
-                None => None,
-            },
-            algorithm: decode_transport_algorithm(attrs.get(context::core::TRANSPORT_ALGORITHM)),
-        })
-    }
-
-    /// Construct a packed snapshot in a single step.
-    pub(crate) const fn from_parts(parts: TransportSnapshotParts) -> Self {
         Self {
             present: 0,
             latency_us: 0,
@@ -184,17 +96,49 @@ impl TransportSnapshot {
             in_flight_bytes: 0,
             algorithm: TransportAlgorithm::Other(0),
         }
-        .set_latency_us(parts.latency_us)
-        .set_queue_depth(parts.queue_depth)
-        .set_pacing_interval(parts.pacing_interval_us)
-        .set_congestion_marks(parts.congestion_marks)
-        .set_retransmissions(parts.retransmissions)
-        .set_pto_count(parts.pto_count)
-        .set_srtt(parts.srtt_us)
-        .set_latest_ack(parts.latest_ack_pn)
-        .set_congestion_window(parts.congestion_window)
-        .set_in_flight(parts.in_flight_bytes)
-        .set_algorithm(parts.algorithm)
+        .set_latency_us(match attrs.get(context::core::LATENCY_US) {
+            Some(value) => Some(value.as_u64()),
+            None => None,
+        })
+        .set_queue_depth(match attrs.get(context::core::QUEUE_DEPTH) {
+            Some(value) => Some(value.as_u32()),
+            None => None,
+        })
+        .set_pacing_interval(match attrs.get(context::core::PACING_INTERVAL_US) {
+            Some(value) => Some(value.as_u64()),
+            None => None,
+        })
+        .set_congestion_marks(match attrs.get(context::core::CONGESTION_MARKS) {
+            Some(value) => Some(value.as_u32()),
+            None => None,
+        })
+        .set_retransmissions(match attrs.get(context::core::RETRANSMISSIONS) {
+            Some(value) => Some(value.as_u32()),
+            None => None,
+        })
+        .set_pto_count(match attrs.get(context::core::PTO_COUNT) {
+            Some(value) => Some(value.as_u32()),
+            None => None,
+        })
+        .set_srtt(match attrs.get(context::core::SRTT_US) {
+            Some(value) => Some(value.as_u64()),
+            None => None,
+        })
+        .set_latest_ack(match attrs.get(context::core::LATEST_ACK_PN) {
+            Some(value) => Some(value.as_u64()),
+            None => None,
+        })
+        .set_congestion_window(match attrs.get(context::core::CONGESTION_WINDOW) {
+            Some(value) => Some(value.as_u64()),
+            None => None,
+        })
+        .set_in_flight(match attrs.get(context::core::IN_FLIGHT_BYTES) {
+            Some(value) => Some(value.as_u64()),
+            None => None,
+        })
+        .set_algorithm(decode_transport_algorithm(
+            attrs.get(context::core::TRANSPORT_ALGORITHM),
+        ))
     }
 
     #[inline]
@@ -521,9 +465,21 @@ const fn decode_transport_algorithm(
 
 /// Packed tap payload emitted for transport metrics sampling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TransportMetricsTapPayload {
-    pub primary: (u32, u32),
-    pub extension: Option<(u32, u32)>,
+pub(crate) struct TransportMetricsTapPayload {
+    primary: (u32, u32),
+    extension: Option<(u32, u32)>,
+}
+
+impl TransportMetricsTapPayload {
+    #[inline]
+    pub(crate) const fn primary(&self) -> (u32, u32) {
+        self.primary
+    }
+
+    #[inline]
+    pub(crate) const fn extension(&self) -> Option<(u32, u32)> {
+        self.extension
+    }
 }
 
 /// Metrics facade returned by transports to feed routing SLO checks.
@@ -540,18 +496,16 @@ impl TransportMetrics for () {
 
 /// Direction of a send operation from the local role's perspective.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LocalDirection {
+pub(crate) enum LocalDirection {
     /// Sending to a peer over the transport.
     Send,
-    /// Metadata describes the receive-side mirror of a transport action.
-    Recv,
     /// Local-only self-send that must not hit the wire.
     Local,
 }
 
 /// Transport-owned metadata for an outgoing payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SendMeta {
+pub(crate) struct SendMeta {
     /// Effect index (stable identifier for the choreography step).
     pub eff_index: EffIndex,
     /// Message label.
@@ -573,11 +527,6 @@ impl SendMeta {
     }
 
     #[inline]
-    pub const fn is_recv(&self) -> bool {
-        matches!(self.direction, LocalDirection::Recv)
-    }
-
-    #[inline]
     pub const fn is_local(&self) -> bool {
         matches!(self.direction, LocalDirection::Local)
     }
@@ -586,8 +535,45 @@ impl SendMeta {
 /// Transport-owned outgoing frame.
 #[derive(Clone, Copy, Debug)]
 pub struct Outgoing<'f> {
-    pub meta: SendMeta,
-    pub payload: Payload<'f>,
+    pub(crate) meta: SendMeta,
+    pub(crate) payload: Payload<'f>,
+}
+
+impl<'f> Outgoing<'f> {
+    #[inline]
+    pub const fn label(&self) -> u8 {
+        self.meta.label
+    }
+
+    #[inline]
+    pub const fn peer(&self) -> u8 {
+        self.meta.peer
+    }
+
+    #[inline]
+    pub const fn lane(&self) -> u8 {
+        self.meta.lane
+    }
+
+    #[inline]
+    pub const fn is_control(&self) -> bool {
+        self.meta.is_control
+    }
+
+    #[inline]
+    pub const fn is_send(&self) -> bool {
+        self.meta.is_send()
+    }
+
+    #[inline]
+    pub const fn is_local(&self) -> bool {
+        self.meta.is_local()
+    }
+
+    #[inline]
+    pub const fn payload(&self) -> Payload<'f> {
+        self.payload
+    }
 }
 
 /// Semantic classification for transport-level telemetry events.
@@ -649,14 +635,14 @@ impl WirePayload for TransportEventKind {
 /// Telemetry describing an acknowledged or lost packet emitted by a transport.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TransportEvent {
-    pub kind: TransportEventKind,
-    pub packet_number: u64,
-    pub payload_len: u32,
-    pub retransmissions: u32,
+    kind: TransportEventKind,
+    packet_number: u64,
+    payload_len: u32,
+    retransmissions: u32,
     /// Packet number space identifier (transport-defined).
-    pub pn_space: u8,
+    pn_space: u8,
     /// Truncated tag identifying the relevant connection identifier (transport-defined).
-    pub cid_tag: u8,
+    cid_tag: u8,
 }
 
 impl WireEncode for TransportEvent {
@@ -735,7 +721,7 @@ impl TransportEvent {
         Self::new_with_metadata(kind, packet_number, payload_len, retransmissions, 0, 0)
     }
 
-    pub const fn new_with_metadata(
+    pub(crate) const fn new_with_metadata(
         kind: TransportEventKind,
         packet_number: u64,
         payload_len: u32,
@@ -753,14 +739,34 @@ impl TransportEvent {
         }
     }
 
-    pub const fn with_pn_space(mut self, pn_space: u8) -> Self {
-        self.pn_space = pn_space;
-        self
+    #[inline]
+    pub const fn kind(&self) -> TransportEventKind {
+        self.kind
     }
 
-    pub const fn with_cid_tag(mut self, cid_tag: u8) -> Self {
-        self.cid_tag = cid_tag;
-        self
+    #[inline]
+    pub const fn packet_number(&self) -> u64 {
+        self.packet_number
+    }
+
+    #[inline]
+    pub const fn payload_len(&self) -> u32 {
+        self.payload_len
+    }
+
+    #[inline]
+    pub const fn retransmissions(&self) -> u32 {
+        self.retransmissions
+    }
+
+    #[inline]
+    pub const fn pn_space(&self) -> u8 {
+        self.pn_space
+    }
+
+    #[inline]
+    pub const fn cid_tag(&self) -> u8 {
+        self.cid_tag
     }
 
     /// Encode the event into tap payload arguments.
@@ -955,14 +961,14 @@ mod tests {
             Err(CodecError::Invalid("transport event kind payload length"))
         );
 
-        let event = TransportEvent {
-            kind: TransportEventKind::Loss,
-            packet_number: 0x0102_0304_0506_0708,
-            payload_len: 0x1122_3344,
-            retransmissions: 0x5566_7788,
-            pn_space: 3,
-            cid_tag: 4,
-        };
+        let event = TransportEvent::new_with_metadata(
+            TransportEventKind::Loss,
+            0x0102_0304_0506_0708,
+            0x1122_3344,
+            0x5566_7788,
+            3,
+            4,
+        );
         let mut encoded = [0u8; 20];
         assert_eq!(event.encode_into(&mut encoded[..19]), Ok(19));
         assert_eq!(

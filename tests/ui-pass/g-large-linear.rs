@@ -1,5 +1,5 @@
 use hibana::g;
-use hibana::g::advanced::{RoleProgram, project};
+use hibana::substrate::program::{RoleProgram, project};
 
 fn main() {
     let program = g::send::<g::Role<0>, g::Role<1>, g::Msg<1, u8>, 0>();

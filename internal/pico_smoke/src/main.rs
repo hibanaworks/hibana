@@ -24,13 +24,14 @@ use core::{
 
 use hibana::{
     Endpoint,
-    g::advanced::RoleProgram,
+    substrate::program::RoleProgram,
     substrate::{
-        SessionId, SessionKit, Transport,
+        SessionKit, Transport,
         binding::NoBinding,
+        ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
         tap::TapEvent,
-        transport::{Outgoing, TransportError, TransportEvent},
+        transport::{Outgoing, TransportError, advanced::TransportEvent},
         wire::Payload,
     },
 };
@@ -339,9 +340,9 @@ impl Transport for PicoTransport {
         'a: 'f,
     {
         unsafe { &mut *transport_state() }
-            .role_mut(outgoing.meta.peer)
+            .role_mut(outgoing.peer())
             .queue
-            .push_back(FrameOwned::from_bytes(outgoing.payload.as_bytes()));
+            .push_back(FrameOwned::from_bytes(outgoing.payload().as_bytes()));
         Poll::Ready(Ok(()))
     }
 

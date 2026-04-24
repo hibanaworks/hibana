@@ -74,7 +74,7 @@ pub(crate) const fn control_op_modifies_history(op: ControlOp) -> bool {
 /// derived from interpreting a global protocol's Eff tree. It serves as the
 /// output of the EffInterpreter and input to rendezvous initialization.
 ///
-/// Uses fixed-size arrays for no_std/no_alloc compatibility.
+/// Uses fixed-size arrays for no_std/no_alloc execution.
 ///
 /// Note: This is distinct from `control::cluster::CpCommand`, which wraps
 /// individual effect executions with their runtime operands.
@@ -420,7 +420,8 @@ mod tests {
     #[test]
     fn test_interpreter_pure() {
         let program = crate::g::Program::<crate::global::steps::StepNil>::empty();
-        let projected: crate::g::advanced::RoleProgram<0> = crate::g::advanced::project(&program);
+        let projected: crate::substrate::program::RoleProgram<0> =
+            crate::substrate::program::project(&program);
         crate::global::compiled::materialize::with_compiled_program(
             lowering_input(&projected),
             |facts| {
@@ -443,7 +444,8 @@ mod tests {
             >,
             0,
         >();
-        let projected: crate::g::advanced::RoleProgram<0> = crate::g::advanced::project(&program);
+        let projected: crate::substrate::program::RoleProgram<0> =
+            crate::substrate::program::project(&program);
         crate::global::compiled::materialize::with_compiled_program(
             lowering_input(&projected),
             |facts| {

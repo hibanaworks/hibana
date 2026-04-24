@@ -226,7 +226,7 @@ if [[ -n "${README_STEP_PROJECTION_ALIASES}" ]]; then
 fi
 
 README_OLD_PROJECTED_LOCAL_WALKTHROUGH="$(
-  rg -n -U '(The exact projected `LocalSteps` type is part of the contract\.|Do not erase `LocalSteps`\.|use hibana::g::advanced::steps::\{ProjectRole, SendStep, StepCons, StepNil\};|as[[:space:]]+ProjectRole<)' \
+  rg -n -U '(The exact projected `LocalSteps` type is part of the contract\.|Do not erase `LocalSteps`\.|use hibana::(g::advanced|substrate::program)::steps::\{ProjectRole, SendStep, StepCons, StepNil\};|as[[:space:]]+ProjectRole<)' \
     README.md || true
 )"
 if [[ -n "${README_OLD_PROJECTED_LOCAL_WALKTHROUGH}" ]]; then
@@ -548,6 +548,117 @@ check_absent "(^|[^A-Za-z0-9_])([Qq][Uu][Ii][Cc]|[Hh]3|[Hh][Qq])([^A-Za-z0-9_]|$
 check_absent "fallback_|\\bfallback\\b" \
   "fallback residue vocabulary in production source" \
   src
+check_absent "\\b(for_test|_for_test)\\b|test-only|Test-only|\\bcompat(ibility)?\\b|\\blegacy\\b|\\brescue\\b|\\bheuristic\\b" \
+  "test-only or compatibility residue in production source" \
+  src
+check_absent "(?i)\\b(compat(ibility|ible)?|legacy|rescue|heuristic|fallback|state machine|infer(red|ence|s|ring)?|absorb mismatch|absorption)\\b" \
+  "runtime-intelligence vocabulary residue in public docs or core source" \
+  src README.md docs
+check_absent "\\b(test_from_slice|bind_test_storage)\\b" \
+  "named cfg-test constructor/helper residue in production source" \
+  src
+check_absent "\\b(LoopContinueSteps|LoopBreakSteps|LoopDecisionSteps)\\b" \
+  "loop control step alias residue in production source" \
+  src/global/steps.rs
+check_absent "\\bEndpointBinding\\b" \
+  "endpoint binding synonym alias residue in production source" \
+  src/endpoint.rs src/endpoint/flow.rs src/endpoint/carrier.rs
+check_absent "\\b(RouteResolutionOutcome|LoopResolutionOutcome)\\b" \
+  "resolver result alias residue in production source" \
+  src/control/cluster/core.rs
+check_absent "TransportAlgorithm,[[:space:]]*TransportError|TransportError,[[:space:]]*TransportEvent" \
+  "transport observation detail re-exported from the daily substrate transport bucket" \
+  src/substrate.rs .github/allowlists/substrate-public-api.txt
+check_absent "\\b(LocalDirection|SendMeta)\\b" \
+  "transport send metadata detail re-exported from the daily substrate transport bucket" \
+  src/substrate.rs .github/allowlists/substrate-public-api.txt
+check_absent "\\bTransportMetricsTapPayload\\b" \
+  "transport tap packing payload leaked into public substrate surface" \
+  src/substrate.rs .github/allowlists/substrate-public-api.txt
+check_absent "\\bTransportAlgorithm\\b" \
+  "transport algorithm enum leaked into public substrate surface" \
+  src/substrate.rs .github/allowlists/substrate-public-api.txt
+check_absent "pub[[:space:]]+use[[:space:]]+crate::binding::\\{[^}]*BindingSlot[^}]*Channel|pub[[:space:]]+use[[:space:]]+crate::binding::\\{[^}]*Channel[^}]*BindingSlot" \
+  "binding detail re-exported from the daily substrate binding bucket" \
+  src/substrate.rs .github/allowlists/substrate-public-api.txt
+POLICY_BLOCK="$(
+  awk '
+    /^pub mod policy \{/ { in_block=1 }
+    in_block {
+      print
+      if ($0 ~ /^\/\/\/ Canonical capability-token surface/) { exit }
+    }
+  ' src/substrate.rs
+)"
+if [[ -z "${POLICY_BLOCK}" ]]; then
+  echo "substrate policy block not found" >&2
+  FAILED=1
+elif printf '%s\n' "${POLICY_BLOCK}" | rg -n "pub[[:space:]]+mod[[:space:]]+advanced[[:space:]]*\\{" >/dev/null; then
+  echo "boundary deny pattern detected: substrate policy advanced compatibility bucket" >&2
+  FAILED=1
+else
+  for required in \
+    "pub use crate::policy_runtime::PolicySlot;" \
+    "ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider" \
+    "pub mod core {"
+  do
+    if ! printf '%s\n' "${POLICY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
+      echo "substrate policy single slot-input owner missing: ${required}" >&2
+      FAILED=1
+    fi
+  done
+fi
+check_absent "pub[[:space:]]+(kind|packet_number|payload_len|retransmissions|pn_space|cid_tag):|pub[[:space:]]+(primary|extension):|pub[[:space:]]+const[[:space:]]+fn[[:space:]]+(new_with_metadata|with_pn_space|with_cid_tag)\\b" \
+  "transport observation detail must stay accessor-only and non-literal" \
+  src/transport.rs
+check_absent "\\bTransportSnapshotParts\\b|from_parts\\(parts:" \
+  "transport snapshot option-bag constructor reintroduced" \
+  src/transport.rs
+check_absent "\\bConfigParts\\b|config\\.into_parts\\(\\)" \
+  "runtime config decomposition bag reintroduced" \
+  src/runtime/config.rs src/rendezvous/core.rs
+check_absent "\\bRegisteredTokenParts\\b|RawRegisteredCapToken::from_parts|take_registered_parts" \
+  "registered capability token transfer bag reintroduced" \
+  src/control/cap/typed_tokens.rs src/endpoint
+check_absent "pub[[:space:]]+bytes:[[:space:]]*\\[u8;[[:space:]]*CAP_TOKEN_LEN\\]|fn[[:space:]]+from_parts\\(" \
+  "generic capability token wire layout part constructor reintroduced" \
+  src/control/cap/mint.rs
+check_absent "pub[[:space:]]+fn[[:space:]]+(nonce|tag|control_header|shot|handle_bytes|handle_bytes_ref)\\(&self\\)" \
+  "generic capability token low-level accessor leaked as public API" \
+  src/control/cap/mint.rs
+check_absent "use crate::control::types::\\{RendezvousId, SessionId\\}" \
+  "substrate root must route identifier signatures through substrate::ids" \
+  src/substrate.rs
+check_absent "\\b(TopologyIntent|TopologyAck)::new\\(" \
+  "distributed topology constructor shim reintroduced instead of typed struct authority" \
+  src/control/automaton/distributed.rs src/control/automaton/topology.rs src/control/cluster/core.rs src/rendezvous/core.rs
+check_absent "\\bTopologyOperands::new\\(" \
+  "topology operand constructor shim reintroduced instead of typed struct authority" \
+  src/control/cluster/core.rs src/rendezvous/core.rs
+check_absent "\\b(StatelessRouteResolverFn|RouteResolverStatePayload[[:space:]]*<[^>]+>[[:space:]]*=|ErasedRouteResolverStatePayload|StatelessLoopResolverFn|LoopResolverStatePayload[[:space:]]*<[^>]+>[[:space:]]*=|ErasedLoopResolverStatePayload)\\b" \
+  "resolver storage type alias residue in production source" \
+  src/control/cluster/core.rs
+check_absent "type[[:space:]]+SessionLaneHandle[[:space:]]*=" \
+  "session-lane handle tuple alias residue in production source" \
+  src/control/cap/atomic_codecs.rs
+check_absent "RawEmittedCapToken::from_bytes" \
+  "test-only emitted-token constructor residue in production source" \
+  src/endpoint
+check_absent "\\b(PayloadValidator|SyntheticPayloadProvider|StageSendPayloadFn|EncodeControlHandleFn|PortStorage|GuardStorage|StoredMint)\\b" \
+  "private descriptor/helper alias residue in production source" \
+  src/endpoint
+check_absent "EndpointArenaLayout::from_footprint\\(" \
+  "test-only endpoint layout constructor alias residue in production source" \
+  src/endpoint
+check_absent "\\b(SlotArena|SlotStorage|SlotBundleHandle|SlotStageRecord|FACET_SLOTS|facets_slots|requires_slots|slot_arena)\\b" \
+  "test-only policy slot allocator residue in production source" \
+  src/rendezvous.rs src/rendezvous src/control/lease src/control/cluster/core.rs
+check_absent "LeaseGraph(::|::<[^>]+>::)new\\(" \
+  "test-only lease graph constructor residue in production source" \
+  src/control/lease
+check_absent "Self::init_empty\\(storage\\.as_mut_ptr\\(\\)\\)" \
+  "test-only lease graph storage constructor residue in production source" \
+  src/control/lease/graph.rs
 check_absent "std::env::var_os\\(" \
   "env lookup in hibana core" \
   src
@@ -883,7 +994,7 @@ if [[ -n "${ITEM_LEVEL_PROGRAM_PLACEHOLDER_RESIDUE}" ]]; then
 fi
 
 check_absent \
-  "g::advanced::steps" \
+  "(g::advanced::steps|substrate::program::steps)" \
   "public step names reintroduced in docs/examples" \
   README.md docs examples
 

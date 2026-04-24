@@ -10,11 +10,12 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 use common::TestTransport;
 use hibana::{
-    g::advanced::{RoleProgram, project},
     g::{self, Msg, Role},
+    substrate::program::{RoleProgram, project},
     substrate::{
-        Lane, SessionId, SessionKit,
+        SessionKit,
         binding::NoBinding,
+        ids::{Lane, SessionId},
         runtime::{Config, DefaultLabelUniverse},
         tap::TapEvent,
     },

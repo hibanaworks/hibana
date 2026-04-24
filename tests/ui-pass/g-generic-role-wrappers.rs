@@ -1,4 +1,4 @@
-use hibana::g::advanced::{RoleProgram, project};
+use hibana::substrate::program::{RoleProgram, project};
 use hibana::g::{self};
 
 fn generic_send<const ROLE: u8>() {

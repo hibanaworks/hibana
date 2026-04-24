@@ -19,12 +19,13 @@ mod runtime_support;
 use common::TestTransport;
 use hibana::{
     Endpoint, g,
-    g::advanced::{RoleProgram, project},
     g::{Msg, Role},
+    substrate::program::{RoleProgram, project},
     substrate::{
-        SessionId, SessionKit,
+        SessionKit,
         binding::NoBinding,
         cap::GenericCapToken,
+        ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
     },
 };
@@ -160,8 +161,8 @@ fn high_lane_worker_program() -> RoleProgram<1> {
 
 #[inline(never)]
 fn run_attached_sample(
-    controller_program: &hibana::g::advanced::RoleProgram<0>,
-    worker_program: &hibana::g::advanced::RoleProgram<1>,
+    controller_program: &hibana::substrate::program::RoleProgram<0>,
+    worker_program: &hibana::substrate::program::RoleProgram<1>,
     route_scope_count: usize,
     expected_branch_labels: &'static [u8],
     expected_acks: &'static [u8],

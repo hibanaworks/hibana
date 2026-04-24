@@ -19,6 +19,12 @@ fn global_rs() -> String {
         .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
 }
 
+fn substrate_rs() -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/substrate.rs");
+    fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+}
+
 fn g_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/g.rs");
     fs::read_to_string(&path)
@@ -27,6 +33,12 @@ fn g_rs() -> String {
 
 fn flow_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/endpoint/flow.rs");
+    fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
+}
+
+fn role_program_rs() -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/global/role_program.rs");
     fs::read_to_string(&path)
         .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err))
 }
@@ -60,17 +72,19 @@ fn root_visible_surface_stays_minimal() {
     let lib_rs = lib_rs();
     let endpoint_rs = endpoint_rs();
     let global_rs = global_rs();
+    let substrate_rs = substrate_rs();
     let g_rs = g_rs();
     let flow_rs = flow_rs();
+    let role_program_rs = role_program_rs();
     let g_ws = compact_ws(&g_rs);
-    let advanced_head = {
-        let start = global_rs
-            .find("pub mod advanced {")
-            .expect("advanced surface block must exist");
-        let rest = &global_rs[start..];
+    let program_head = {
+        let start = substrate_rs
+            .find("pub mod program {")
+            .expect("substrate program surface block must exist");
+        let rest = &substrate_rs[start..];
         let end = rest
-            .find("#[diagnostic::on_unimplemented(")
-            .expect("advanced surface block must end before route diagnostics");
+            .find("/// Everyday runtime setup owners")
+            .expect("program surface block must end before runtime surface");
         &rest[..end]
     };
 
@@ -79,10 +93,13 @@ fn root_visible_surface_stays_minimal() {
         "hibana root must expose g surface"
     );
     assert!(
-        g_ws.contains("pub use crate::global::advanced;")
-            && g_ws.contains("pub use crate::global::program::Program;")
+        g_ws.contains("pub use crate::global::program::Program;")
             && g_ws.contains("pub use crate::global::{Msg, Role, par, route, send, seq};"),
         "hibana::g root must stay on the canonical app primitives"
+    );
+    assert!(
+        !g_ws.contains("advanced") && !global_rs.contains("pub mod advanced {"),
+        "hibana::g must not expose protocol-implementor SPI"
     );
     assert!(
         lib_rs.contains("pub mod substrate;"),
@@ -92,6 +109,19 @@ fn root_visible_surface_stays_minimal() {
         lib_rs.contains("pub use endpoint::{Endpoint, RecvError, RecvResult, RouteBranch, SendError, SendResult};"),
         "hibana root must expose endpoint core API"
     );
+
+    for (owner, source) in [
+        ("lib.rs", lib_rs.as_str()),
+        ("global.rs", global_rs.as_str()),
+        ("substrate.rs", substrate_rs.as_str()),
+        ("role_program.rs", role_program_rs.as_str()),
+        ("endpoint/flow.rs", flow_rs.as_str()),
+    ] {
+        assert!(
+            !source.contains("#[allow(private_bounds)]"),
+            "{owner} must use an explicit expect or sealed API shape, not a blanket private_bounds allow"
+        );
+    }
 
     for forbidden in [
         "pub use global::{",
@@ -152,10 +182,36 @@ fn root_visible_surface_stays_minimal() {
         "MintConfigMarker",
         "MintConfig",
         "#[allow(private_bounds)]",
+        concat!("Flow", "Send", "Arg"),
+        concat!("Send", "Outcome", "Kind"),
+        concat!("pub struct ", "Send", "Value"),
+        "trait SendArg",
+        "trait SendOutcome",
+        "HibanaSend",
+        concat!("Cap", "Flow"),
+        concat!("Flow", "Inner"),
+        "CapRegisteredToken",
+        concat!("Cap", "Flow", "Token"),
+        "CapFrameToken",
     ] {
         assert!(
             !flow_rs.contains(forbidden),
             "app-facing flow surface must not mention mint-policy internals: {forbidden}"
+        );
+    }
+
+    for forbidden in [
+        "CapRegisteredToken",
+        concat!("Cap", "Flow", "Token"),
+        "CapFrameToken",
+        "pub(crate) mod handle;",
+    ] {
+        assert!(
+            !lib_rs.contains(forbidden)
+                && !global_rs.contains(forbidden)
+                && !substrate_rs.contains(forbidden)
+                && !g_rs.contains(forbidden),
+            "removed capability shim and cfg-test owners must not re-enter the public crate surface: {forbidden}"
         );
     }
 
@@ -165,7 +221,7 @@ fn root_visible_surface_stays_minimal() {
         concat!("Control", "Handling"),
         concat!("Control", "Message", "Kind"),
         concat!("Control", "Message"),
-        "LoopBreakSteps,",
+        concat!("Loop", "Break", "Steps,"),
         "PolicyMode,",
         "const_dsl::{\n            ControlScopeKind, DynamicMeta,",
         "LocalProgram,",
@@ -177,15 +233,15 @@ fn root_visible_surface_stays_minimal() {
         "pub mod steps {",
     ] {
         assert!(
-            !advanced_head.contains(forbidden),
-            "g::advanced root must not re-export typestate/internal helper: {forbidden}"
+            !program_head.contains(forbidden),
+            "substrate::program root must not re-export typestate/internal helper: {forbidden}"
         );
     }
 
     for required in ["RoleProgram", "project", "MessageSpec", "StaticControlDesc"] {
         assert!(
-            advanced_head.contains(required),
-            "g::advanced root must stay on projection + descriptor SPI only: {required}"
+            program_head.contains(required),
+            "substrate::program root must stay on projection + descriptor SPI only: {required}"
         );
     }
 
@@ -210,18 +266,32 @@ fn public_api_gate_tracks_g_and_substrate_surfaces() {
     let script = public_api_script_rs();
 
     for required in [
+        "export TOOLCHAIN=\"${TOOLCHAIN:-stable}\"",
+        "check_public_surface_budget.sh",
+        "check_surface_hygiene.sh",
+        "cargo +\"${TOOLCHAIN}\" test -p hibana --test root_surface --features std",
+        "cargo +\"${TOOLCHAIN}\" test -p hibana --test substrate_surface --features std",
+        "cargo +\"${TOOLCHAIN}\" test -p hibana --test public_surface_guards --features std",
+        "cargo +\"${TOOLCHAIN}\" test -p hibana --test docs_surface --features std",
+        "stable public API check passed",
+    ] {
+        assert!(
+            script.contains(required),
+            "crate-local public API gate must run the stable surface verifier: {required}"
+        );
+    }
+
+    for forbidden in [
         "target/doc/hibana.json",
         "rustup which cargo --toolchain nightly",
         "rustup which rustc --toolchain nightly",
         "rustup which rustdoc --toolchain nightly",
-        "\"${NIGHTLY_CARGO}\" rustdoc --lib --features std -- -Z unstable-options --output-format json",
+        "-Z unstable-options",
         "HIBANA_RUSTDOC_JSON",
-        "\"${NIGHTLY_CARGO}\" test --test semantic_surface --features std",
-        "semantic public API check passed",
     ] {
         assert!(
-            script.contains(required),
-            "crate-local public API gate must run the nightly rustdoc semantic verifier: {required}"
+            !script.contains(forbidden),
+            "crate-local public API gate must not depend on nightly rustdoc JSON: {forbidden}"
         );
     }
 }

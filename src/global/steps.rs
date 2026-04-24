@@ -7,74 +7,69 @@
 
 use core::marker::PhantomData;
 
-use crate::global::{KnownRole, MessageSpec, RoleMarker, SendableLabel};
+use crate::global::{KnownRole, MessageSpec, ROLE_DOMAIN_SIZE, RoleMarker, SendableLabel};
 
 // =============================================================================
-// RoleLaneSet — Lane-aware role set for g::par disjoint checking
+// RoleLaneMask — compact role/lane facts for g::par disjoint checking
 // =============================================================================
 
-/// Lane-indexed role set for parallel composition disjoint checking.
+/// Const bitset of `(role, lane)` pairs for parallel composition checking.
 ///
-/// Maintains the correlation between (role, lane) pairs to enable
-/// Lane-aware disjoint verification in `g::par`. From an AMPST perspective,
-/// different Lanes represent independent channels, so the same roles can
-/// communicate in parallel on different Lanes without violating linearity.
+/// This is the compiled summary used by `g::par`; the checker keeps the
+/// correlation between role and lane without carrying a typelist-shaped owner
+/// through the runtime path.
 ///
 /// # Capacity
-/// - Maximum 8 Lanes (sufficient for layered control/data parallelism)
-/// - Maximum 16 Roles per Lane (matches the public `Role<IDX>` contract)
-/// - Copy: 32 bytes (compile-time checking only, zero runtime cost)
+/// - Every `u8` lane.
+/// - Maximum 16 roles per lane.
+/// - Compile-time checking only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RoleLaneSet {
-    /// Each element is a 32-bit role mask for that Lane index.
-    /// lanes[0] = Lane 0's role mask, lanes[1] = Lane 1's role mask, etc.
-    lanes: [u32; 8],
+pub(crate) struct RoleLaneMask {
+    words: [u64; ROLE_LANE_WORDS],
 }
 
-impl RoleLaneSet {
-    /// Create an empty set with no roles in any lane.
+const ROLE_LANE_WORDS: usize = (ROLE_DOMAIN_SIZE * (u8::MAX as usize + 1)).div_ceil(64);
+
+impl RoleLaneMask {
+    /// Create an empty mask.
     pub const fn empty() -> Self {
-        Self { lanes: [0; 8] }
-    }
-
-    /// Add a role to a specific lane.
-    ///
-    /// # Panics
-    /// Panics if `lane >= 8` or `role_index >= 16`.
-    pub(crate) const fn with_role(mut self, role_index: u8, lane: u8) -> Self {
-        assert!(lane < 8, "lane must be < 8");
-        assert!(role_index < 16, "role_index must be < 16");
-        self.lanes[lane as usize] |= 1u32 << role_index;
-        self
-    }
-
-    /// Compute the union of two role-lane sets.
-    pub const fn union(self, other: Self) -> Self {
         Self {
-            lanes: [
-                self.lanes[0] | other.lanes[0],
-                self.lanes[1] | other.lanes[1],
-                self.lanes[2] | other.lanes[2],
-                self.lanes[3] | other.lanes[3],
-                self.lanes[4] | other.lanes[4],
-                self.lanes[5] | other.lanes[5],
-                self.lanes[6] | other.lanes[6],
-                self.lanes[7] | other.lanes[7],
-            ],
+            words: [0; ROLE_LANE_WORDS],
         }
     }
 
+    /// Add a role/lane fact.
+    pub(crate) const fn with_role(mut self, role_index: u8, lane: u8) -> Self {
+        assert!(
+            (role_index as usize) < ROLE_DOMAIN_SIZE,
+            "role_index must be < ROLE_DOMAIN_SIZE"
+        );
+        let bit_index = (lane as usize * ROLE_DOMAIN_SIZE) + role_index as usize;
+        let word = bit_index / 64;
+        let bit = 1u64 << (bit_index % 64);
+        self.words[word] |= bit;
+        self
+    }
+
+    /// Compute the union of two masks.
+    pub const fn union(self, other: Self) -> Self {
+        let mut out = Self::empty();
+        let mut idx = 0usize;
+        while idx < ROLE_LANE_WORDS {
+            out.words[idx] = self.words[idx] | other.words[idx];
+            idx += 1;
+        }
+        out
+    }
+
     /// Check if any role overlaps within the same lane.
-    ///
-    /// Returns `true` if there exists at least one lane where both sets
-    /// have a common role (i.e., `self.lanes[i] & other.lanes[i] != 0`).
     pub const fn intersects(&self, other: &Self) -> bool {
-        let mut i = 0;
-        while i < 8 {
-            if (self.lanes[i] & other.lanes[i]) != 0 {
+        let mut idx = 0usize;
+        while idx < ROLE_LANE_WORDS {
+            if (self.words[idx] & other.words[idx]) != 0 {
                 return true;
             }
-            i += 1;
+            idx += 1;
         }
         false
     }
@@ -92,16 +87,6 @@ pub struct StepCons<Head, Tail>(PhantomData<(Head, Tail)>);
 /// the same roles to communicate in parallel
 /// without violating the disjoint constraint.
 pub struct SendStep<From, To, Msg, const LANE: u8 = 0>(PhantomData<(From, To, Msg)>);
-
-/// Trait exposing the set of (role, lane) pairs participating in a typelist.
-///
-/// Used by `g::par` to verify that parallel lanes use disjoint (role, lane) pairs.
-/// From an AMPST perspective, different Lanes are independent channels, so the
-/// same roles can communicate in parallel on different Lanes.
-pub trait StepRoleSet {
-    /// The set of (role, lane) pairs in this typelist.
-    const ROLE_LANE_SET: RoleLaneSet;
-}
 
 /// Typelist beginning with a control message send.
 pub trait PolicyEligible {}
@@ -126,24 +111,6 @@ pub struct ParSteps<Left, Right>(PhantomData<(Left, Right)>);
 
 /// Policy annotation witness for the final atom in a fragment.
 pub struct PolicySteps<Inner, const POLICY_ID: u16>(PhantomData<Inner>);
-
-/// Loop continue arm with a controller self-send head.
-#[cfg(test)]
-pub type LoopContinueSteps<Controller, ContMsg, Tail = StepNil> =
-    SeqSteps<StepCons<SendStep<Controller, Controller, ContMsg>, StepNil>, Tail>;
-
-/// Loop break arm with a controller self-send head.
-#[cfg(test)]
-pub type LoopBreakSteps<Controller, BreakMsg, Tail = StepNil> =
-    StepCons<SendStep<Controller, Controller, BreakMsg>, Tail>;
-
-/// Binary loop decision witness composed from continue and break arms.
-#[cfg(test)]
-pub type LoopDecisionSteps<Controller, ContMsg, BreakMsg, BreakTail = StepNil, ContTail = StepNil> =
-    RouteSteps<
-        LoopContinueSteps<Controller, ContMsg, ContTail>,
-        LoopBreakSteps<Controller, BreakMsg, BreakTail>,
-    >;
 
 impl Default for StepNil {
     fn default() -> Self {
@@ -241,53 +208,6 @@ impl<From, Msg> LocalRecv<From, Msg> {
     }
 }
 
-impl StepRoleSet for StepNil {
-    const ROLE_LANE_SET: RoleLaneSet = RoleLaneSet::empty();
-}
-
-impl<From, To, Msg, const LANE: u8, Tail> StepRoleSet
-    for StepCons<SendStep<From, To, Msg, LANE>, Tail>
-where
-    From: KnownRole,
-    To: KnownRole,
-    Tail: StepRoleSet,
-{
-    const ROLE_LANE_SET: RoleLaneSet = Tail::ROLE_LANE_SET
-        .with_role(From::INDEX, LANE)
-        .with_role(To::INDEX, LANE);
-}
-
-impl<Left, Right> StepRoleSet for SeqSteps<Left, Right>
-where
-    Left: StepRoleSet,
-    Right: StepRoleSet,
-{
-    const ROLE_LANE_SET: RoleLaneSet = Left::ROLE_LANE_SET.union(Right::ROLE_LANE_SET);
-}
-
-impl<Left, Right> StepRoleSet for RouteSteps<Left, Right>
-where
-    Left: StepRoleSet,
-    Right: StepRoleSet,
-{
-    const ROLE_LANE_SET: RoleLaneSet = Left::ROLE_LANE_SET.union(Right::ROLE_LANE_SET);
-}
-
-impl<Left, Right> StepRoleSet for ParSteps<Left, Right>
-where
-    Left: StepRoleSet,
-    Right: StepRoleSet,
-{
-    const ROLE_LANE_SET: RoleLaneSet = Left::ROLE_LANE_SET.union(Right::ROLE_LANE_SET);
-}
-
-impl<Inner, const POLICY_ID: u16> StepRoleSet for PolicySteps<Inner, POLICY_ID>
-where
-    Inner: StepRoleSet,
-{
-    const ROLE_LANE_SET: RoleLaneSet = Inner::ROLE_LANE_SET;
-}
-
 impl<From, To, Msg, const LANE: u8> PolicyEligible
     for StepCons<SendStep<From, To, Msg, LANE>, StepNil>
 where
@@ -300,4 +220,38 @@ where
 impl<Inner, const POLICY_ID: u16> PolicyEligible for PolicySteps<Inner, POLICY_ID> where
     Inner: PolicyEligible
 {
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ROLE_LANE_WORDS, RoleLaneMask};
+    use core::mem::size_of;
+
+    #[test]
+    fn role_lane_mask_covers_every_u8_lane_as_fixed_bitset() {
+        assert_eq!(
+            size_of::<RoleLaneMask>(),
+            ROLE_LANE_WORDS * size_of::<u64>(),
+            "parallel ownership facts must stay as a fixed const bitset"
+        );
+    }
+
+    #[test]
+    fn role_lane_mask_tracks_same_role_same_lane_only() {
+        let lane0_role0 = RoleLaneMask::empty().with_role(0, 0);
+        let lane1_role0 = RoleLaneMask::empty().with_role(0, 1);
+        let lane0_role1 = RoleLaneMask::empty().with_role(1, 0);
+
+        assert!(!lane0_role0.intersects(&lane1_role0));
+        assert!(!lane0_role0.intersects(&lane0_role1));
+        assert!(lane0_role0.intersects(&RoleLaneMask::empty().with_role(0, 0)));
+    }
+
+    #[test]
+    fn role_lane_mask_tracks_high_u8_lanes() {
+        let high_role0 = RoleLaneMask::empty().with_role(0, u8::MAX);
+        let high_role1 = RoleLaneMask::empty().with_role(1, u8::MAX);
+        assert!(!high_role0.intersects(&high_role1));
+        assert!(high_role0.intersects(&RoleLaneMask::empty().with_role(0, u8::MAX)));
+    }
 }

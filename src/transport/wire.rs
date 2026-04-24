@@ -286,7 +286,7 @@ mod tests {
             <() as WirePayload>::synthetic_payload(&mut scratch)
                 .expect("unit synthetic payload")
                 .as_bytes(),
-            &[]
+            &[] as &[u8]
         );
         assert_eq!(
             <u32 as WirePayload>::synthetic_payload(&mut scratch)

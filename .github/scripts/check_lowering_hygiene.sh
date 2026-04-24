@@ -216,10 +216,10 @@ while IFS= read -r hit; do
     *"src/control/cap/resource_kinds.rs:"*"macro_rules! define_control_resource_kind"*) ;;
     *"src/control/cap/resource_kinds.rs:"*"macro_rules! decode_mask"*) ;;
     *"src/control/cluster/core.rs:"*"macro_rules! mask_for"*) ;;
-    *"src/global/steps.rs:"*"macro_rules! impl_role_eq"*) ;;
     *"src/endpoint/kernel/core_offer_tests.rs:"*"macro_rules! offer_fixture"*) ;;
     *"src/endpoint/kernel/core_offer_tests.rs:"*"macro_rules! with_offer_cluster"*) ;;
     *"src/endpoint/kernel/core_offer_tests.rs:"*"macro_rules! with_offer_value_slot"*) ;;
+    *"src/global/steps.rs:"*"macro_rules! impl_role_eq"*) ;;
     *"src/transport/wire.rs:"*"macro_rules! impl_wire_for_int"*) ;;
     *"src/transport/wire.rs:"*"macro_rules! push"*) ;;
     *)

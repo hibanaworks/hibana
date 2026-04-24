@@ -112,12 +112,6 @@ pub(crate) struct EndpointArenaLayout {
 }
 
 impl EndpointArenaLayout {
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn from_footprint(footprint: RoleFootprint) -> Self {
-        Self::from_footprint_with_binding(footprint, true)
-    }
-
     #[inline(always)]
     pub(crate) const fn from_footprint_with_binding(
         footprint: RoleFootprint,
@@ -531,7 +525,7 @@ mod tests {
     #[test]
     fn root_frontier_shared_pools_track_max_frontier_entries() {
         let footprint = RoleFootprint::for_endpoint_layout(3, 65, 65, 2, 4, 5);
-        let layout = EndpointArenaLayout::from_footprint(footprint);
+        let layout = EndpointArenaLayout::from_footprint_with_binding(footprint, true);
         assert_eq!(layout.frontier_root_rows().count(), 3);
         assert_eq!(layout.frontier_root_active_slots().count(), 5);
         assert_eq!(layout.frontier_root_observed_key_slots().count(), 5);

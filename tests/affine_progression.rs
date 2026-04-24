@@ -17,13 +17,14 @@ use common::{TestRx, TestTransport, TestTransportError, TestTransportMetrics, Te
 use futures::task::noop_waker_ref;
 use hibana::{
     g,
-    g::advanced::{RoleProgram, project},
     g::{Msg, Role},
+    substrate::program::{RoleProgram, project},
     substrate::{
-        SessionId, SessionKit, Transport,
+        SessionKit, Transport,
         binding::NoBinding,
+        ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
-        transport::{Outgoing, TransportEvent},
+        transport::{Outgoing, advanced::TransportEvent},
     },
 };
 use runtime_support::with_fixture;
@@ -97,7 +98,7 @@ impl Transport for PendingSendTransport {
     {
         self.state.polls.set(self.state.polls.get().wrapping_add(1));
         self.inner
-            .stage_send(tx, outgoing.meta.peer, outgoing.payload.as_bytes());
+            .stage_send(tx, outgoing.peer(), outgoing.payload().as_bytes());
         if !self.state.ready.get() {
             return Poll::Pending;
         }

@@ -110,13 +110,11 @@ mod offer;
 mod recv;
 #[path = "runtime/route_state.rs"]
 mod route_state;
-mod send;
 
 pub(crate) use self::core::cursor_endpoint_storage_layout;
 pub(super) use self::core::*;
 pub(crate) use self::core::{
-    CursorEndpoint, MaterializedRouteBranch, PublicEndpointRevoke, SendControlOutcome, SendDesc,
-    SendPreview,
+    CursorEndpoint, MaterializedRouteBranch, SendControlOutcome, SendDesc, SendPreview,
 };
 pub(crate) use self::decode::DecodeDesc;
 pub(crate) use self::frontier::FrontierScratchLayout;

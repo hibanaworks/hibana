@@ -6,11 +6,11 @@
 
 use core::marker::PhantomData;
 
-use crate::global::compiled::lowering::{LoweringSummary, ProgramStamp, validate_all_roles};
+use crate::global::compiled::lowering::{LoweringSummary, validate_all_roles};
 use crate::global::const_dsl::{EffList, PolicyMode, ScopeId};
 use crate::global::steps::{
-    LocalAction, LocalRecv, LocalSend, ParSteps, PolicyEligible, PolicySteps, RouteSteps, SendStep,
-    SeqSteps, StepCons, StepNil,
+    LocalAction, LocalRecv, LocalSend, ParSteps, PolicyEligible, PolicySteps, RoleLaneMask,
+    RouteSteps, SendStep, SeqSteps, StepCons, StepNil,
 };
 use crate::global::{
     LoopControlMeaning, NonEmptyParallelArm, RouteArmHead, RouteArmLoopHead,
@@ -20,18 +20,25 @@ use crate::global::{
 #[derive(Clone, Copy)]
 pub(crate) struct ProgramSourceData {
     eff: EffList,
+    role_lane_mask: RoleLaneMask,
     loop_scope_pending: bool,
     tail_is_loop_control: bool,
 }
 
 impl ProgramSourceData {
     pub(crate) const fn empty() -> Self {
-        Self::from_eff(EffList::new(), false, false)
+        Self::from_parts(EffList::new(), RoleLaneMask::empty(), false, false)
     }
 
-    const fn from_eff(eff: EffList, loop_scope_pending: bool, tail_is_loop_control: bool) -> Self {
+    const fn from_parts(
+        eff: EffList,
+        role_lane_mask: RoleLaneMask,
+        loop_scope_pending: bool,
+        tail_is_loop_control: bool,
+    ) -> Self {
         Self {
             eff,
+            role_lane_mask,
             loop_scope_pending,
             tail_is_loop_control,
         }
@@ -50,6 +57,11 @@ impl ProgramSourceData {
     #[inline(always)]
     const fn into_eff(self) -> EffList {
         self.eff
+    }
+
+    #[inline(always)]
+    pub(crate) const fn role_lane_mask(&self) -> RoleLaneMask {
+        self.role_lane_mask
     }
 
     const fn seq(self, next: Self) -> Self {
@@ -79,12 +91,18 @@ impl ProgramSourceData {
             scope_budget = add_scope_budget(scope_budget, next.scope_budget());
         }
         let _ = scope_budget;
-        Self::from_eff(eff, false, next_tail_is_loop_control)
+        Self::from_parts(
+            eff,
+            self.role_lane_mask.union(next.role_lane_mask),
+            false,
+            next_tail_is_loop_control,
+        )
     }
 
     const fn with_policy(self, policy_id: u16) -> Self {
-        Self::from_eff(
+        Self::from_parts(
             self.eff.with_policy(PolicyMode::dynamic(policy_id)),
+            self.role_lane_mask,
             self.loop_scope_pending,
             self.tail_is_loop_control,
         )
@@ -110,17 +128,26 @@ impl ProgramSourceData {
             eff
         };
         let loop_scope_pending = eff.scope_has_linger(scope);
-        Self::from_eff(eff, loop_scope_pending, right.tail_is_loop_control)
+        Self::from_parts(
+            eff,
+            self.role_lane_mask.union(right.role_lane_mask),
+            loop_scope_pending,
+            right.tail_is_loop_control,
+        )
     }
 
     const fn par(self, right: Self) -> Self {
+        if self.role_lane_mask.intersects(&right.role_lane_mask) {
+            panic!("parallel lanes must use disjoint (role, lane) pairs");
+        }
         let parallel_scope = ScopeId::parallel(0);
         let left_budget = self.scope_budget();
         let right_offset = add_scope_budget(1, left_budget);
         let left_eff = self.into_eff().rebase_scopes(1);
         let right_eff = right.into_eff().rebase_scopes(right_offset);
-        Self::from_eff(
+        Self::from_parts(
             left_eff.extend_list(right_eff).with_scope(parallel_scope),
+            self.role_lane_mask.union(right.role_lane_mask),
             false,
             right.tail_is_loop_control,
         )
@@ -149,16 +176,6 @@ where
         validate_all_roles(&summary);
         summary
     };
-
-    const STAMP: ProgramStamp = Self::SUMMARY.stamp();
-}
-
-#[inline(always)]
-pub(crate) const fn validated_program_stamp<Steps>() -> ProgramStamp
-where
-    Steps: BuildProgramSource,
-{
-    ValidatedProgram::<Steps>::STAMP
 }
 
 #[inline(always)]
@@ -184,8 +201,11 @@ where
     Tail: BuildProgramSource,
     StepCons<SendStep<From, To, Msg, LANE>, StepNil>: TailLoopControl,
 {
-    const SOURCE: ProgramSourceData = ProgramSourceData::from_eff(
+    const SOURCE: ProgramSourceData = ProgramSourceData::from_parts(
         crate::global::const_dsl::const_send_typed::<From, To, Msg, LANE>(),
+        RoleLaneMask::empty()
+            .with_role(<From as crate::global::KnownRole>::INDEX, LANE)
+            .with_role(<To as crate::global::KnownRole>::INDEX, LANE),
         false,
         <StepCons<SendStep<From, To, Msg, LANE>, StepNil> as TailLoopControl>::IS_LOOP_CONTROL,
     )
@@ -248,14 +268,8 @@ where
     Left: BuildProgramSource + NonEmptyParallelArm,
     Right: BuildProgramSource + NonEmptyParallelArm + TailLoopControl,
 {
-    const SOURCE: ProgramSourceData = {
-        let left_set = <Left as NonEmptyParallelArm>::ROLE_LANE_SET;
-        let right_set = <Right as NonEmptyParallelArm>::ROLE_LANE_SET;
-        if left_set.intersects(&right_set) {
-            panic!("parallel lanes must use disjoint (role, lane) pairs");
-        }
-        <Left as BuildProgramSource>::SOURCE.par(<Right as BuildProgramSource>::SOURCE)
-    };
+    const SOURCE: ProgramSourceData =
+        { <Left as BuildProgramSource>::SOURCE.par(<Right as BuildProgramSource>::SOURCE) };
 }
 
 impl<Steps, const POLICY_ID: u16> BuildProgramSource for PolicySteps<Steps, POLICY_ID>
@@ -271,7 +285,7 @@ where
 /// runtime image, not an attached endpoint, and not a transport handle.
 ///
 /// On stable Rust, do not hoist `Program<_>` into `const` or `static` items.
-/// Compose programs through local `let` inference and immediately project
+/// Compose programs through a local `let` choreography term and immediately project
 /// them through `project(&program)`.
 #[derive(Clone, Copy)]
 pub struct Program<Steps> {
@@ -299,14 +313,7 @@ impl<Steps> Program<Steps> {
         Program::new()
     }
 
-    #[inline(always)]
-    pub(crate) const fn stamp(&self) -> ProgramStamp
-    where
-        Steps: BuildProgramSource,
-    {
-        validated_program_stamp::<Steps>()
-    }
-
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn summary(&self) -> &'static LoweringSummary
     where
@@ -364,10 +371,13 @@ pub(crate) const fn par_binary<LeftSteps, RightSteps>(
     right: Program<RightSteps>,
 ) -> Program<ParSteps<LeftSteps, RightSteps>>
 where
-    LeftSteps: NonEmptyParallelArm,
-    RightSteps: NonEmptyParallelArm + TailLoopControl,
+    LeftSteps: BuildProgramSource + NonEmptyParallelArm,
+    RightSteps: BuildProgramSource + NonEmptyParallelArm + TailLoopControl,
 {
-    if LeftSteps::ROLE_LANE_SET.intersects(&RightSteps::ROLE_LANE_SET) {
+    if LeftSteps::SOURCE
+        .role_lane_mask()
+        .intersects(&RightSteps::SOURCE.role_lane_mask())
+    {
         panic!("parallel arms reuse a role on the same lane");
     }
     let _ = (left, right);
@@ -388,15 +398,25 @@ const fn is_binary_loop_route(
 mod tests {
     use super::Program;
     use crate::g;
-    use crate::global::steps::{LoopBreakSteps, LoopContinueSteps, LoopDecisionSteps, StepNil};
+    use crate::global::steps::{RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
     use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
     use crate::substrate::cap::GenericCapToken;
     use crate::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
 
     fn loop_continue_only() -> Program<
-        LoopContinueSteps<
-            g::Role<0>,
-            g::Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+        SeqSteps<
+            StepCons<
+                SendStep<
+                    g::Role<0>,
+                    g::Role<0>,
+                    g::Msg<
+                        { LABEL_LOOP_CONTINUE },
+                        GenericCapToken<LoopContinueKind>,
+                        LoopContinueKind,
+                    >,
+                >,
+                StepNil,
+            >,
             StepNil,
         >,
     > {
@@ -416,9 +436,12 @@ mod tests {
     }
 
     fn loop_break_only() -> Program<
-        LoopBreakSteps<
-            g::Role<0>,
-            g::Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+        StepCons<
+            SendStep<
+                g::Role<0>,
+                g::Role<0>,
+                g::Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+            >,
             StepNil,
         >,
     > {
@@ -431,12 +454,30 @@ mod tests {
     }
 
     fn loop_decision() -> Program<
-        LoopDecisionSteps<
-            g::Role<0>,
-            g::Msg<{ LABEL_LOOP_CONTINUE }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
-            g::Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
-            StepNil,
-            StepNil,
+        RouteSteps<
+            SeqSteps<
+                StepCons<
+                    SendStep<
+                        g::Role<0>,
+                        g::Role<0>,
+                        g::Msg<
+                            { LABEL_LOOP_CONTINUE },
+                            GenericCapToken<LoopContinueKind>,
+                            LoopContinueKind,
+                        >,
+                    >,
+                    StepNil,
+                >,
+                StepNil,
+            >,
+            StepCons<
+                SendStep<
+                    g::Role<0>,
+                    g::Role<0>,
+                    g::Msg<{ LABEL_LOOP_BREAK }, GenericCapToken<LoopBreakKind>, LoopBreakKind>,
+                >,
+                StepNil,
+            >,
         >,
     > {
         g::route(loop_continue_only(), loop_break_only())

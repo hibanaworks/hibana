@@ -7,7 +7,7 @@
 //! The core runtime treats context identifiers as opaque values. Protocol crates
 //! define their own identifiers and semantics.
 
-use crate::substrate::policy::PolicySlot;
+use crate::policy_runtime::PolicySlot;
 
 const POLICY_ATTRS_CAPACITY: usize = 16;
 const CORE_ATTR_COUNT: usize = 15;

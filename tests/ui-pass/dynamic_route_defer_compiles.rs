@@ -3,7 +3,7 @@
 #[path = "../support/control_kinds.rs"]
 mod control_kinds;
 
-use hibana::g::advanced::{RoleProgram, project};
+use hibana::substrate::program::{RoleProgram, project};
 use hibana::g::{self};
 use hibana::substrate::cap::GenericCapToken;
 use hibana::substrate::policy::RouteResolution;

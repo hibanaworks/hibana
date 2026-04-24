@@ -362,8 +362,6 @@ impl GlobalTap {
     }
 
     fn invoke_post(&self, event: &TapEvent) {
-        #[cfg(test)]
-        crate::observe::check::feed(*event);
         let _ = event;
     }
 }
@@ -500,20 +498,20 @@ mod tests {
     fn head_wraps_without_losing_alignment() {
         with_ring_storage(|storage| {
             let ring = TapRing::from_storage(storage);
-            // We are testing the Infra ring (default push goes to Infra if ID >= 0x0100)
+            // Exercise the Infra ring (default push goes to Infra if ID >= 0x0100)
             // RawEvent::new(0, idx) -> ID is idx.
             // If idx < 0x0100, it goes to User ring.
             // We need to use IDs >= 0x0100 to test Infra ring wrapping.
 
-            // Mock GlobalTap to avoid null pointer deref in push if hooks are called?
+            // GlobalTap is statically initialized before hooks are observed here.
             // TapRing::push calls GLOBAL_TAP hooks.
             // GLOBAL_TAP is static. It should be fine.
 
             // Use IDs >= 0x0100
             let base_id = 0x0200;
 
-            // Set head on Infra ring
-            ring.infra.set_head_for_test(usize::MAX - 2);
+            // Set head on Infra ring.
+            ring.infra.head.set(usize::MAX - 2);
 
             for idx in 0..4 {
                 ring.push(
@@ -705,11 +703,6 @@ impl<'a> RingBuffer<'a> {
             storage: self.as_slice(),
             mapper,
         }
-    }
-
-    #[cfg(test)]
-    fn set_head_for_test(&self, value: usize) {
-        self.head.set(value);
     }
 }
 

@@ -45,6 +45,7 @@ check_absent_outside_owner() {
   if rg -n -F \
     --glob "!${owner_a}" \
     --glob "!${owner_b}" \
+    --glob "!src/endpoint/kernel/core_offer_tests.rs" \
     "${pattern}" \
     "${path}" >/dev/null; then
     echo "route frontier owner violation: ${label}" >&2

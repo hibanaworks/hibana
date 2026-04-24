@@ -36,8 +36,8 @@ impl ControlResourceKind for WireLoopControlKind {
     const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(
-        _sid: hibana::substrate::SessionId,
-        _lane: hibana::substrate::Lane,
+        _sid: hibana::substrate::ids::SessionId,
+        _lane: hibana::substrate::ids::Lane,
         _scope: ScopeId,
     ) -> <Self as ResourceKind>::Handle {
     }

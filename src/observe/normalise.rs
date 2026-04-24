@@ -604,9 +604,9 @@ fn transport_metrics_trace(
 mod tests {
     use super::*;
     use crate::observe::events;
+    use crate::transport::context::{self, ContextValue, PolicyAttrs};
     use crate::transport::{
         TransportAlgorithm, TransportEvent, TransportEventKind, TransportSnapshot,
-        TransportSnapshotParts,
     };
     use core::cell::UnsafeCell;
     use std::thread_local;
@@ -640,6 +640,73 @@ mod tests {
         })
     }
 
+    const fn pack_endpoint_event(role: u8, lane: u8, label: u8, flags: u8) -> u32 {
+        ((role as u32) << 24) | ((lane as u32) << 16) | ((label as u32) << 8) | (flags as u32)
+    }
+
+    const fn raw_event(ts: u32, id: u16, arg0: u32, arg1: u32) -> TapEvent {
+        events::RawEvent::new(ts, id)
+            .with_arg0(arg0)
+            .with_arg1(arg1)
+    }
+
+    const fn endpoint_send_event(
+        ts: u32,
+        sid: u32,
+        role: u8,
+        lane: u8,
+        label: u8,
+        flags: u8,
+    ) -> TapEvent {
+        raw_event(
+            ts,
+            ids::ENDPOINT_SEND,
+            sid,
+            pack_endpoint_event(role, lane, label, flags),
+        )
+    }
+
+    const fn endpoint_recv_event(
+        ts: u32,
+        sid: u32,
+        role: u8,
+        lane: u8,
+        label: u8,
+        flags: u8,
+    ) -> TapEvent {
+        raw_event(
+            ts,
+            ids::ENDPOINT_RECV,
+            sid,
+            pack_endpoint_event(role, lane, label, flags),
+        )
+    }
+
+    const fn endpoint_control_event(
+        ts: u32,
+        sid: u32,
+        role: u8,
+        lane: u8,
+        label: u8,
+        flags: u8,
+    ) -> TapEvent {
+        raw_event(
+            ts,
+            ids::ENDPOINT_CONTROL,
+            sid,
+            pack_endpoint_event(role, lane, label, flags),
+        )
+    }
+
+    const fn topology_ack_event(ts: u32, from: u8, to: u8, generation: u16, sid: u32) -> TapEvent {
+        raw_event(
+            ts,
+            ids::TOPOLOGY_ACK,
+            ((generation as u32) << 16) | ((to as u32) << 8) | (from as u32),
+            sid,
+        )
+    }
+
     #[test]
     fn cap_events_decode_lifecycle_stages() {
         let sid = 42;
@@ -667,10 +734,9 @@ mod tests {
     #[test]
     fn endpoint_trace_decodes_sends_and_recvs() {
         with_normalise_storage(|storage| {
-            storage[0] = events::EndpointSend::new(0, 9, events::EndpointSend::pack(1, 2, 3, 0xAA));
-            storage[1] = events::EndpointRecv::new(1, 9, events::EndpointRecv::pack(4, 5, 6, 0x55));
-            storage[2] =
-                events::EndpointControl::new(2, 9, events::EndpointControl::pack(7, 8, 9, 0x10));
+            storage[0] = endpoint_send_event(0, 9, 1, 2, 3, 0xAA);
+            storage[1] = endpoint_recv_event(1, 9, 4, 5, 6, 0x55);
+            storage[2] = endpoint_control_event(2, 9, 7, 8, 9, 0x10);
 
             let events = endpoint_trace(storage, 0, 3);
             assert_eq!(events.len(), 3);
@@ -749,7 +815,7 @@ mod tests {
     #[test]
     fn topology_ack_event_decodes() {
         with_normalise_storage(|storage| {
-            storage[0] = events::TopologyAck::new(0, 0x0034_1205, 900);
+            storage[0] = topology_ack_event(0, 5, 0x12, 0x34, 900);
 
             let events = delegation_trace(storage, 0, 1);
             assert_eq!(events.len(), 1);
@@ -810,22 +876,33 @@ mod tests {
     #[test]
     fn transport_metrics_trace_decodes_snapshot() {
         with_normalise_storage(|storage| {
-            let snapshot = TransportSnapshot::from_parts(TransportSnapshotParts {
-                latency_us: Some(1500),
-                queue_depth: Some(12),
-                srtt_us: Some(3200),
-                congestion_window: Some(64 * 1024),
-                in_flight_bytes: Some(32 * 1024),
-                retransmissions: Some(7),
-                congestion_marks: Some(3),
-                pacing_interval_us: Some(500),
-                algorithm: Some(TransportAlgorithm::Cubic),
-                ..TransportSnapshotParts::new()
-            });
+            let mut attrs = PolicyAttrs::new();
+            assert!(attrs.insert(context::core::LATENCY_US, ContextValue::from_u64(1500)));
+            assert!(attrs.insert(context::core::QUEUE_DEPTH, ContextValue::from_u32(12)));
+            assert!(attrs.insert(context::core::SRTT_US, ContextValue::from_u64(3200)));
+            assert!(attrs.insert(
+                context::core::CONGESTION_WINDOW,
+                ContextValue::from_u64(64 * 1024),
+            ));
+            assert!(attrs.insert(
+                context::core::IN_FLIGHT_BYTES,
+                ContextValue::from_u64(32 * 1024),
+            ));
+            assert!(attrs.insert(context::core::RETRANSMISSIONS, ContextValue::from_u32(7),));
+            assert!(attrs.insert(context::core::CONGESTION_MARKS, ContextValue::from_u32(3),));
+            assert!(attrs.insert(
+                context::core::PACING_INTERVAL_US,
+                ContextValue::from_u64(500),
+            ));
+            assert!(attrs.insert(
+                context::core::TRANSPORT_ALGORITHM,
+                ContextValue::from_u32(1),
+            ));
+            let snapshot = TransportSnapshot::from_policy_attrs(&attrs);
             let payload = snapshot.encode_tap_metrics().expect("metrics encode");
-            let (arg0, arg1) = payload.primary;
+            let (arg0, arg1) = payload.primary();
             storage[0] = events::TransportMetrics::new(0, arg0, arg1);
-            if let Some((ext0, ext1)) = payload.extension {
+            if let Some((ext0, ext1)) = payload.extension() {
                 storage[1] = events::TransportMetricsExt::new(1, ext0, ext1);
             }
 
@@ -846,16 +923,24 @@ mod tests {
     #[test]
     fn transport_metrics_trace_handles_missing_extension() {
         with_normalise_storage(|storage| {
-            let snapshot = TransportSnapshot::from_parts(TransportSnapshotParts {
-                queue_depth: Some(4),
-                srtt_us: Some(6400),
-                congestion_window: Some(8 * 1024),
-                in_flight_bytes: Some(4 * 1024),
-                algorithm: Some(TransportAlgorithm::Reno),
-                ..TransportSnapshotParts::new()
-            });
+            let mut attrs = PolicyAttrs::new();
+            assert!(attrs.insert(context::core::QUEUE_DEPTH, ContextValue::from_u32(4)));
+            assert!(attrs.insert(context::core::SRTT_US, ContextValue::from_u64(6400)));
+            assert!(attrs.insert(
+                context::core::CONGESTION_WINDOW,
+                ContextValue::from_u64(8 * 1024),
+            ));
+            assert!(attrs.insert(
+                context::core::IN_FLIGHT_BYTES,
+                ContextValue::from_u64(4 * 1024),
+            ));
+            assert!(attrs.insert(
+                context::core::TRANSPORT_ALGORITHM,
+                ContextValue::from_u32(2),
+            ));
+            let snapshot = TransportSnapshot::from_policy_attrs(&attrs);
             let payload = snapshot.encode_tap_metrics().expect("metrics encode");
-            let (arg0, arg1) = payload.primary;
+            let (arg0, arg1) = payload.primary();
             storage[0] = events::TransportMetrics::new(0, arg0, arg1);
 
             let events = transport_metrics_trace(storage, 0, 1);
@@ -872,11 +957,7 @@ mod tests {
     fn endpoint_seq_events_preserve_order() {
         with_normalise_storage(|storage| {
             for (idx, label) in [10u8, 11, 12].iter().enumerate() {
-                storage[idx] = events::EndpointSend::new(
-                    idx as u32,
-                    0x20,
-                    events::EndpointSend::pack(0, 1, *label, 0),
-                );
+                storage[idx] = endpoint_send_event(idx as u32, 0x20, 0, 1, *label, 0);
             }
 
             let events = endpoint_trace(storage, 0, 3);
@@ -894,8 +975,8 @@ mod tests {
     #[test]
     fn endpoint_alt_arms_remain_disjoint() {
         with_normalise_storage_pair(|left, right| {
-            left[0] = events::EndpointSend::new(0, 0x30, events::EndpointSend::pack(2, 1, 0x1, 0));
-            right[0] = events::EndpointSend::new(0, 0x30, events::EndpointSend::pack(3, 1, 0x2, 0));
+            left[0] = endpoint_send_event(0, 0x30, 2, 1, 0x1, 0);
+            right[0] = endpoint_send_event(0, 0x30, 3, 1, 0x2, 0);
 
             let left_events = endpoint_trace(left, 0, 1);
             let right_events = endpoint_trace(right, 0, 1);
@@ -925,22 +1006,14 @@ mod tests {
                 .iter()
                 .enumerate()
             {
-                seq_storage[idx] = events::EndpointSend::new(
-                    idx as u32,
-                    0x44,
-                    events::EndpointSend::pack(0, lane, label, 0),
-                );
+                seq_storage[idx] = endpoint_send_event(idx as u32, 0x44, 0, lane, label, 0);
             }
 
             for (idx, &(lane, label)) in [(1u8, 0x40u8), (2, 0x50), (1, 0x41), (2, 0x51)]
                 .iter()
                 .enumerate()
             {
-                interleaved_storage[idx] = events::EndpointSend::new(
-                    idx as u32,
-                    0x44,
-                    events::EndpointSend::pack(0, lane, label, 0),
-                );
+                interleaved_storage[idx] = endpoint_send_event(idx as u32, 0x44, 0, lane, label, 0);
             }
 
             let seq_events = endpoint_trace(seq_storage, 0, 4);

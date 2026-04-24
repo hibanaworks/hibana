@@ -11,7 +11,7 @@ Public names stay fixed:
 
 Implementation constraints:
 
-- no compiler-generated `async fn` state machine on the hot path
+- no compiler-generated `async fn` poll object on the hot path
 - no whole-lane rebuild in `offer()`
 - no whole-scope scan in `offer()`
 - pending transport futures are retained and re-polled, not recreated

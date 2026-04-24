@@ -2,7 +2,10 @@ use core::ptr;
 use hibana::substrate::{
     Transport,
     policy::PolicyAttrs,
-    transport::{TransportError, TransportEvent, TransportMetrics},
+    transport::{
+        TransportError,
+        advanced::{TransportEvent, TransportMetrics},
+    },
     wire::Payload,
 };
 use std::cell::UnsafeCell;
@@ -503,7 +506,7 @@ impl Transport for TestTransport {
     where
         'a: 'f,
     {
-        self.stage_send(tx, outgoing.meta.peer, outgoing.payload.as_bytes());
+        self.stage_send(tx, outgoing.peer(), outgoing.payload().as_bytes());
         self.poll_send_staged(tx)
     }
 

@@ -3,8 +3,8 @@
 //! `RoleProgram` is the typed entry point for a role projection witness.
 //! Crate-private lowering facts stay behind this module and the compiled layer.
 
-use super::compiled::lowering::{ProgramStamp, RoleLoweringCounts};
-use super::program::{BuildProgramSource, Program};
+use super::compiled::lowering::{LoweringSummary, ProgramStamp, RoleLoweringCounts};
+use super::program::{BuildProgramSource, Program, validated_program_summary};
 use crate::control::cap::mint::CapShot;
 use crate::{
     eff::EffIndex,
@@ -460,9 +460,35 @@ impl LocalStep {
 /// Erased lowering input derived from a typed `RoleProgram` witness.
 #[derive(Clone, Copy)]
 pub(crate) struct RoleLoweringInput {
-    summary: &'static crate::global::compiled::lowering::LoweringSummary,
-    stamp: ProgramStamp,
-    counts: RoleLoweringCounts,
+    image: RoleImageRef,
+}
+
+#[derive(Clone, Copy)]
+struct ProjectedRoleImage {
+    summary: &'static LoweringSummary,
+    start: EffIndex,
+    facts: RoleFacts,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RoleFacts {
+    scope_count: u16,
+    eff_count: u16,
+    local_step_count: u16,
+    phase_count: u16,
+    phase_lane_entry_count: u16,
+    phase_lane_word_count: u16,
+    parallel_enter_count: u16,
+    route_scope_count: u16,
+    passive_linger_route_scope_count: u16,
+    active_lane_count: u16,
+    endpoint_lane_slot_count: u16,
+    logical_lane_count: u16,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RoleImageRef {
+    image: &'static ProjectedRoleImage,
 }
 
 mod private {
@@ -541,57 +567,121 @@ impl RoleFootprint {
 
 impl RoleLoweringInput {
     #[inline(always)]
-    pub(crate) const fn summary(
-        &self,
-    ) -> &'static crate::global::compiled::lowering::LoweringSummary {
-        self.summary
+    pub(crate) const fn summary(&self) -> &'static LoweringSummary {
+        self.image.summary()
     }
 
     #[inline(always)]
     pub(crate) const fn stamp(&self) -> ProgramStamp {
-        self.stamp
+        self.image.stamp()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn start(&self) -> EffIndex {
+        self.image.start()
     }
 
     #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn eff_count(&self) -> usize {
-        self.counts.eff_count
+        self.image.footprint().eff_count
     }
 
     #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn local_step_count(&self) -> usize {
-        self.counts.local_step_count
+        self.image.footprint().local_step_count
     }
 
     #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn route_scope_count(&self) -> usize {
-        self.counts.route_scope_count
+        self.image.footprint().route_scope_count
     }
 
     #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn passive_linger_route_scope_count(&self) -> usize {
-        self.counts.passive_linger_route_scope_count
+        self.image.footprint().passive_linger_route_scope_count
     }
 
     #[inline(always)]
     pub(crate) const fn footprint(&self) -> RoleFootprint {
+        self.image.footprint()
+    }
+}
+
+impl ProjectedRoleImage {
+    #[inline(always)]
+    const fn new<const ROLE: u8>(summary: &'static LoweringSummary) -> Self {
+        Self {
+            summary,
+            start: EffIndex::ZERO,
+            facts: RoleFacts::from_summary::<ROLE>(summary),
+        }
+    }
+
+    #[inline(always)]
+    const fn summary(&self) -> &'static LoweringSummary {
+        self.summary
+    }
+
+    #[inline(always)]
+    const fn stamp(&self) -> ProgramStamp {
+        self.summary.stamp()
+    }
+}
+
+impl RoleFacts {
+    #[inline(always)]
+    const fn compact_count(value: usize) -> u16 {
+        if value > u16::MAX as usize {
+            panic!("role descriptor fact overflow");
+        }
+        value as u16
+    }
+
+    #[inline(always)]
+    const fn from_summary<const ROLE: u8>(summary: &'static LoweringSummary) -> Self {
+        Self::from_counts(summary.role_lowering_counts::<ROLE>())
+    }
+
+    #[inline(always)]
+    const fn from_counts(counts: RoleLoweringCounts) -> Self {
+        Self {
+            scope_count: Self::compact_count(counts.scope_count),
+            eff_count: Self::compact_count(counts.eff_count),
+            local_step_count: Self::compact_count(counts.local_step_count),
+            phase_count: Self::compact_count(counts.phase_count),
+            phase_lane_entry_count: Self::compact_count(counts.phase_lane_entry_count),
+            phase_lane_word_count: Self::compact_count(counts.phase_lane_word_count),
+            parallel_enter_count: Self::compact_count(counts.parallel_enter_count),
+            route_scope_count: Self::compact_count(counts.route_scope_count),
+            passive_linger_route_scope_count: Self::compact_count(
+                counts.passive_linger_route_scope_count,
+            ),
+            active_lane_count: Self::compact_count(counts.active_lane_count),
+            endpoint_lane_slot_count: Self::compact_count(counts.endpoint_lane_slot_count),
+            logical_lane_count: Self::compact_count(counts.logical_lane_count),
+        }
+    }
+
+    #[inline(always)]
+    const fn footprint(self) -> RoleFootprint {
         RoleFootprint {
-            scope_count: self.counts.scope_count,
-            eff_count: self.counts.eff_count,
-            phase_count: self.counts.phase_count,
-            phase_lane_entry_count: self.counts.phase_lane_entry_count,
-            phase_lane_word_count: self.counts.phase_lane_word_count,
-            parallel_enter_count: self.counts.parallel_enter_count,
-            route_scope_count: self.counts.route_scope_count,
-            local_step_count: self.counts.local_step_count,
-            passive_linger_route_scope_count: self.counts.passive_linger_route_scope_count,
-            active_lane_count: self.counts.active_lane_count,
-            endpoint_lane_slot_count: self.counts.endpoint_lane_slot_count,
-            logical_lane_count: self.counts.logical_lane_count,
-            logical_lane_word_count: self.counts.logical_lane_word_count,
+            scope_count: self.scope_count as usize,
+            eff_count: self.eff_count as usize,
+            phase_count: self.phase_count as usize,
+            phase_lane_entry_count: self.phase_lane_entry_count as usize,
+            phase_lane_word_count: self.phase_lane_word_count as usize,
+            parallel_enter_count: self.parallel_enter_count as usize,
+            route_scope_count: self.route_scope_count as usize,
+            local_step_count: self.local_step_count as usize,
+            passive_linger_route_scope_count: self.passive_linger_route_scope_count as usize,
+            active_lane_count: self.active_lane_count as usize,
+            endpoint_lane_slot_count: self.endpoint_lane_slot_count as usize,
+            logical_lane_count: self.logical_lane_count as usize,
+            logical_lane_word_count: lane_word_count(self.logical_lane_count as usize),
             max_route_stack_depth: 0,
             scope_evidence_count: 0,
             frontier_entry_count: 0,
@@ -599,33 +689,59 @@ impl RoleLoweringInput {
     }
 }
 
+impl RoleImageRef {
+    #[inline(always)]
+    const fn new(image: &'static ProjectedRoleImage) -> Self {
+        Self { image }
+    }
+
+    #[inline(always)]
+    const fn start(self) -> EffIndex {
+        self.image.start
+    }
+
+    #[inline(always)]
+    const fn footprint(self) -> RoleFootprint {
+        self.image.facts.footprint()
+    }
+
+    #[inline(always)]
+    const fn summary(self) -> &'static LoweringSummary {
+        self.image.summary()
+    }
+
+    #[inline(always)]
+    const fn stamp(self) -> ProgramStamp {
+        self.image.stamp()
+    }
+}
+
+struct ValidatedRoleImage<Steps, const ROLE: u8>(core::marker::PhantomData<Steps>);
+
+impl<Steps, const ROLE: u8> ValidatedRoleImage<Steps, ROLE>
+where
+    Steps: BuildProgramSource,
+{
+    const IMAGE: ProjectedRoleImage =
+        ProjectedRoleImage::new::<ROLE>(validated_program_summary::<Steps>());
+}
+
 pub struct RoleProgram<const ROLE: u8> {
     _seal: private::RoleProgramSeal,
-    summary: &'static crate::global::compiled::lowering::LoweringSummary,
-    stamp: ProgramStamp,
+    image: RoleImageRef,
 }
 
 impl<const ROLE: u8> RoleProgram<ROLE> {
-    const fn new(
-        summary: &'static crate::global::compiled::lowering::LoweringSummary,
-        stamp: ProgramStamp,
-    ) -> Self {
+    const fn new(image: &'static ProjectedRoleImage) -> Self {
         Self {
             _seal: private::RoleProgramSeal,
-            summary,
-            stamp,
+            image: RoleImageRef::new(image),
         }
     }
 
     #[inline(always)]
     pub(crate) const fn stamp(&self) -> ProgramStamp {
-        self.stamp
-    }
-
-    #[inline(always)]
-    #[cfg(test)]
-    pub(crate) fn borrow_id(&self) -> usize {
-        self.summary as *const crate::global::compiled::lowering::LoweringSummary as usize
+        self.image.stamp()
     }
 }
 
@@ -648,20 +764,22 @@ pub(crate) const fn lowering_input<const ROLE: u8>(
     program: &RoleProgram<ROLE>,
 ) -> RoleLoweringInput {
     RoleLoweringInput {
-        summary: program.summary,
-        stamp: program.stamp,
-        counts: program.summary.role_lowering_counts::<ROLE>(),
+        image: program.image,
     }
 }
 
 /// Project a typed program into the local view for `ROLE`.
-#[allow(private_bounds)]
+#[expect(
+    private_bounds,
+    reason = "projection source reconstruction is sealed behind typed Program witnesses"
+)]
 pub const fn project<const ROLE: u8, Steps>(program: &Program<Steps>) -> RoleProgram<ROLE>
 where
     Steps: BuildProgramSource,
 {
     crate::global::validate_role_index(ROLE);
-    RoleProgram::new(program.summary(), program.stamp())
+    let _ = program;
+    RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::IMAGE)
 }
 
 #[cfg(test)]

@@ -559,13 +559,6 @@ where
 /// that decision inside a minted token, not the primary API for choosing shot
 /// discipline.
 ///
-/// # Usage
-/// ```rust,ignore
-/// let shot = token.shot()?;
-/// if matches!(shot, CapShot::One) {
-///     // single-use token
-/// }
-/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CapShot {
     /// Single-use capability (affine linearity).
@@ -963,28 +956,25 @@ pub enum CapError {
     Mismatch,
 }
 
-/// Capability token wire format: `[nonce | header | tag]` = `[16B | 40B | 16B]`.
+/// Opaque capability-token payload carried by control messages.
 ///
-/// Header layout:
-/// - `[0]`         — version
-/// - `[1..5)`      — session id
-/// - `[5]`         — lane id in wire form
-/// - `[6]`         — role id for endpoint resources (0 for others)
-/// - `[7]`         — resource tag (`ResourceKind::TAG`)
-/// - `[8]`         — control label
-/// - `[9]`         — atomic control op (`ControlOp::as_u8()`)
-/// - `[10]`        — control path (`ControlPath::as_u8()`)
-/// - `[11]`        — shot discipline (`CapShot::as_u8()`)
-/// - `[12]`        — scope kind
-/// - `[13]`        — descriptor flags
-/// - `[14..16)`    — compact scope id
-/// - `[16..18)`    — epoch
-/// - `[18..40)`    — resource-specific payload supplied by `ResourceKind`
+/// Protocol authors name this type in a `g::Msg<..., GenericCapToken<K>, K>`
+/// payload. Descriptor metadata and token header details live under the
+/// substrate capability metadata bucket; ordinary choreography code should only
+/// pass the token as an opaque payload.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct GenericCapToken<K: ResourceKind> {
-    pub bytes: [u8; CAP_TOKEN_LEN],
+    bytes: [u8; CAP_TOKEN_LEN],
     _marker: PhantomData<K>,
+}
+
+impl<K: ResourceKind> Copy for GenericCapToken<K> {}
+
+impl<K: ResourceKind> Clone for GenericCapToken<K> {
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
 impl<K: ResourceKind> GenericCapToken<K> {
@@ -992,21 +982,6 @@ impl<K: ResourceKind> GenericCapToken<K> {
         bytes: [0u8; CAP_TOKEN_LEN],
         _marker: PhantomData,
     };
-
-    pub fn from_parts(
-        nonce: [u8; CAP_NONCE_LEN],
-        header: [u8; CAP_HEADER_LEN],
-        tag: [u8; CAP_TAG_LEN],
-    ) -> Self {
-        let mut bytes = [0u8; CAP_TOKEN_LEN];
-        bytes[0..CAP_NONCE_LEN].copy_from_slice(&nonce);
-        bytes[CAP_NONCE_LEN..CAP_NONCE_LEN + CAP_HEADER_LEN].copy_from_slice(&header);
-        bytes[CAP_NONCE_LEN + CAP_HEADER_LEN..CAP_TOKEN_LEN].copy_from_slice(&tag);
-        Self {
-            bytes,
-            _marker: PhantomData,
-        }
-    }
 
     #[inline(always)]
     pub const fn from_bytes(bytes: [u8; CAP_TOKEN_LEN]) -> Self {
@@ -1028,7 +1003,7 @@ impl<K: ResourceKind> GenericCapToken<K> {
             .expect("CAP_HEADER_LEN is compile-time constant")
     }
 
-    pub fn nonce(&self) -> [u8; CAP_NONCE_LEN] {
+    pub(crate) fn nonce(&self) -> [u8; CAP_NONCE_LEN] {
         let mut nonce = [0u8; CAP_NONCE_LEN];
         nonce.copy_from_slice(&self.bytes[0..CAP_NONCE_LEN]);
         nonce
@@ -1040,22 +1015,9 @@ impl<K: ResourceKind> GenericCapToken<K> {
         header
     }
 
-    pub fn tag(&self) -> [u8; CAP_TAG_LEN] {
-        let mut tag = [0u8; CAP_TAG_LEN];
-        tag.copy_from_slice(
-            &self.bytes
-                [CAP_NONCE_LEN + CAP_HEADER_LEN..CAP_NONCE_LEN + CAP_HEADER_LEN + CAP_TAG_LEN],
-        );
-        tag
-    }
-
     #[inline]
-    pub fn control_header(&self) -> Result<CapHeader, CapError> {
+    pub(crate) fn control_header(&self) -> Result<CapHeader, CapError> {
         CapHeader::decode(self.raw_header())
-    }
-
-    pub fn shot(&self) -> Result<CapShot, CapError> {
-        Ok(self.control_header()?.shot())
     }
 
     /// Extract the structured scope identifier encoded in the handle, if any.
@@ -1063,7 +1025,7 @@ impl<K: ResourceKind> GenericCapToken<K> {
         self.as_view().ok().and_then(|view| view.scope())
     }
 
-    pub fn handle_bytes(&self) -> [u8; CAP_HANDLE_LEN] {
+    pub(crate) fn handle_bytes(&self) -> [u8; CAP_HANDLE_LEN] {
         *self.handle_bytes_ref()
     }
 
@@ -1077,7 +1039,7 @@ impl<K: ResourceKind> GenericCapToken<K> {
     /// This is a zero-copy operation that returns a slice reference
     /// to the handle payload embedded in the token header.
     #[inline(always)]
-    pub fn handle_bytes_ref(&self) -> &[u8; CAP_HANDLE_LEN] {
+    pub(crate) fn handle_bytes_ref(&self) -> &[u8; CAP_HANDLE_LEN] {
         self.header_slice()
             [CAP_CONTROL_HEADER_FIXED_LEN..CAP_CONTROL_HEADER_FIXED_LEN + CAP_HANDLE_LEN]
             .try_into()
@@ -1244,7 +1206,7 @@ impl<K: ResourceKind> Drop for VerifiedCap<K> {
 // - Single-process applications with shared Rendezvous
 // - Localhost communication (127.0.0.1)
 // - Trusted secure enclaves (SGX, TrustZone)
-// - Development/testing environments
+// - Local validation domains
 //
 // # When NOT to Use
 // - Multi-node distributed systems
@@ -1291,12 +1253,25 @@ mod tests {
         header
     }
 
+    fn token_from_wire<K: ResourceKind>(
+        nonce: [u8; super::CAP_NONCE_LEN],
+        header: [u8; super::CAP_HEADER_LEN],
+        tag: [u8; super::CAP_TAG_LEN],
+    ) -> GenericCapToken<K> {
+        let mut bytes = [0u8; super::CAP_TOKEN_LEN];
+        bytes[..super::CAP_NONCE_LEN].copy_from_slice(&nonce);
+        bytes[super::CAP_NONCE_LEN..super::CAP_NONCE_LEN + super::CAP_HEADER_LEN]
+            .copy_from_slice(&header);
+        bytes[super::CAP_NONCE_LEN + super::CAP_HEADER_LEN..].copy_from_slice(&tag);
+        GenericCapToken::from_bytes(bytes)
+    }
+
     fn endpoint_token_with_mutated_header(
         mutate: fn(&mut [u8; super::CAP_HEADER_LEN]),
     ) -> GenericCapToken<EndpointResource> {
         let mut header = endpoint_header_fixture();
         mutate(&mut header);
-        GenericCapToken::<EndpointResource>::from_parts(
+        token_from_wire::<EndpointResource>(
             [0u8; super::CAP_NONCE_LEN],
             header,
             [0u8; super::CAP_TAG_LEN],
@@ -1370,7 +1345,7 @@ mod tests {
     /// 4. Verify handle bytes survive round-trip
     #[test]
     fn generic_cap_token_as_view() {
-        use super::{CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TAG_LEN, GenericCapToken};
+        use super::{CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TAG_LEN};
 
         let handle = EndpointHandle::new(SessionId::new(7), Lane::new(3), 1);
         let handle_bytes = EndpointResource::encode_handle(&handle);
@@ -1393,11 +1368,8 @@ mod tests {
         )
         .encode(&mut header);
 
-        let token = GenericCapToken::<EndpointResource>::from_parts(
-            [0u8; CAP_NONCE_LEN],
-            header,
-            [0u8; CAP_TAG_LEN],
-        );
+        let token =
+            token_from_wire::<EndpointResource>([0u8; CAP_NONCE_LEN], header, [0u8; CAP_TAG_LEN]);
 
         // Extract HandleView via as_view()
         let view = token.as_view().expect("as_view should succeed");
@@ -1530,7 +1502,7 @@ mod tests {
         .encode(&mut header);
         header[9] = 0xFF;
 
-        let token = GenericCapToken::<LoopContinueKind>::from_parts(
+        let token = token_from_wire::<LoopContinueKind>(
             [0u8; super::CAP_NONCE_LEN],
             header,
             [0u8; super::CAP_TAG_LEN],
@@ -1562,7 +1534,7 @@ mod tests {
         .encode(&mut header);
         header[10] = 0xFF;
 
-        let token = GenericCapToken::<()>::from_parts(
+        let token = token_from_wire::<()>(
             [0u8; super::CAP_NONCE_LEN],
             header,
             [0u8; super::CAP_TAG_LEN],
@@ -1646,7 +1618,7 @@ mod tests {
             let handle: &mut [u8; super::CAP_HANDLE_LEN] =
                 handle.try_into().expect("endpoint handle payload must fit");
             mutate(handle);
-            GenericCapToken::<EndpointResource>::from_parts(
+            token_from_wire::<EndpointResource>(
                 [0u8; super::CAP_NONCE_LEN],
                 header,
                 [0u8; super::CAP_TAG_LEN],

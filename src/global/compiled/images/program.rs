@@ -559,7 +559,6 @@ mod tests {
 
         let budget = compiled.lease_budget;
         assert!(!budget.requires_caps());
-        assert!(!budget.requires_slots());
         assert!(!budget.requires_topology());
         assert!(!budget.requires_delegation());
 

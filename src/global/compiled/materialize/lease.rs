@@ -400,6 +400,7 @@ pub(crate) unsafe fn with_lowering_lease<R>(
     mode: LoweringLeaseMode,
     f: impl FnOnce(LoweringLease<'_>) -> R,
 ) -> Option<R> {
+    debug_assert_eq!(input.start(), crate::eff::EffIndex::ZERO);
     let storage = unsafe {
         TransientLoweringLeaseStorage::from_storage(storage, len, mode, input.footprint())
     }?;

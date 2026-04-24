@@ -18,7 +18,7 @@
 //! leases, while topology stores child topology leases.
 //!
 //! ```rust,ignore
-//! use hibana::substrate::RendezvousId;
+//! use hibana::substrate::ids::RendezvousId;
 //! use hibana::control::lease::graph::{LeaseGraph, LeaseSpec};
 //!
 //! // Example: rendezvous IDs with a minimal unit facet.
@@ -30,12 +30,12 @@
 //!     const MAX_CHILDREN: usize = 4;
 //! }
 //!
-//! // Acquire the root rendezvous slot lease
-//! let mut graph = LeaseGraph::<RvSlotSpec>::new(
-//!     root_id,
-//!     (),
-//!     root_context,
-//! );
+//! // Acquire the root rendezvous slot lease into caller-owned storage.
+//! let mut graph_storage = core::mem::MaybeUninit::<LeaseGraph<RvSlotSpec>>::uninit();
+//! unsafe {
+//!     LeaseGraph::<RvSlotSpec>::init_new(graph_storage.as_mut_ptr(), root_id, (), root_context);
+//! }
+//! let mut graph = unsafe { graph_storage.assume_init() };
 //!
 //! // Add a child rendezvous (with context)
 //! graph.add_child(
@@ -181,8 +181,6 @@ impl<'graph, S: LeaseSpec> NodeData<'graph, S> {
 pub(crate) trait LeaseNodeStorage<'graph, S: LeaseSpec> {
     const CAPACITY: usize;
 
-    #[cfg(test)]
-    fn empty() -> Self;
     unsafe fn init_empty(dst: *mut Self);
 
     unsafe fn write(&mut self, idx: usize, node: NodeData<'graph, S>);
@@ -202,16 +200,6 @@ impl<'graph, S: LeaseSpec, const CAPACITY: usize> LeaseNodeStorage<'graph, S>
     for InlineLeaseNodeStorage<'graph, S, CAPACITY>
 {
     const CAPACITY: usize = CAPACITY;
-
-    #[inline]
-    #[cfg(test)]
-    fn empty() -> Self {
-        let mut storage = MaybeUninit::<Self>::uninit();
-        unsafe {
-            Self::init_empty(storage.as_mut_ptr());
-            storage.assume_init()
-        }
-    }
 
     #[inline]
     unsafe fn init_empty(dst: *mut Self) {
@@ -383,37 +371,6 @@ impl<'graph, S: LeaseSpec + 'graph> LeaseGraph<'graph, S> {
             core::ptr::addr_of_mut!((*dst).state).write(GraphState::Active);
             let nodes = &mut *core::ptr::addr_of_mut!((*dst).nodes);
             nodes.write(0, NodeData::new(root_id, root_facet, root_context));
-        }
-    }
-
-    /// Create a new `LeaseGraph` starting with the root node.
-    #[cfg(test)]
-    pub(crate) fn new(
-        root_id: S::NodeId,
-        root_facet: S::Facet,
-        root_context: <<S as LeaseSpec>::Facet as LeaseFacet>::Context<'graph>,
-    ) -> Self {
-        debug_assert!(S::MAX_NODES > 0, "LeaseGraph requires MAX_NODES > 0");
-        debug_assert!(S::MAX_CHILDREN > 0, "LeaseGraph requires MAX_CHILDREN > 0");
-        debug_assert!(
-            S::MAX_NODES == <S::NodeStorage<'graph> as LeaseNodeStorage<'graph, S>>::CAPACITY,
-            "LeaseGraph node storage must match LeaseSpec capacity"
-        );
-        debug_assert!(
-            S::MAX_CHILDREN == <S::ChildStorage as LeaseChildStorage<S::NodeId>>::CAPACITY,
-            "LeaseGraph child storage must match LeaseSpec capacity"
-        );
-
-        let mut nodes = S::NodeStorage::empty();
-        unsafe {
-            nodes.write(0, NodeData::new(root_id, root_facet, root_context));
-        }
-
-        Self {
-            nodes,
-            node_count: 1,
-            root_id,
-            state: GraphState::Active,
         }
     }
 
@@ -756,11 +713,28 @@ mod tests {
         const MAX_CHILDREN: usize = 3;
     }
 
+    fn test_graph<'ctx>(
+        root_id: u8,
+        log: &'ctx RefCell<TestLog>,
+        label: &'static str,
+        value: u32,
+    ) -> LeaseGraph<'ctx, TestSpec> {
+        let mut graph = MaybeUninit::<LeaseGraph<'ctx, TestSpec>>::uninit();
+        unsafe {
+            LeaseGraph::<TestSpec>::init_new(
+                graph.as_mut_ptr(),
+                root_id,
+                TestFacet,
+                TestContext::new(log, label, value),
+            );
+            graph.assume_init()
+        }
+    }
+
     #[test]
     fn handle_updates_context() {
         let log = RefCell::new(TestLog::default());
-        let mut graph =
-            LeaseGraph::<TestSpec>::new(0, TestFacet, TestContext::new(&log, "root", 1));
+        let mut graph = test_graph(0, &log, "root", 1);
         graph
             .add_child(0, 1, TestFacet, TestContext::new(&log, "child", 2))
             .unwrap();
@@ -777,8 +751,7 @@ mod tests {
     #[test]
     fn commit_traverses_in_reverse_order() {
         let log = RefCell::new(TestLog::default());
-        let mut graph =
-            LeaseGraph::<TestSpec>::new(0, TestFacet, TestContext::new(&log, "commit_root", 0));
+        let mut graph = test_graph(0, &log, "commit_root", 0);
         graph
             .add_child(0, 1, TestFacet, TestContext::new(&log, "commit_child", 0))
             .unwrap();
@@ -791,8 +764,7 @@ mod tests {
     #[test]
     fn rollback_traverses_in_reverse_order() {
         let log = RefCell::new(TestLog::default());
-        let mut graph =
-            LeaseGraph::<TestSpec>::new(0, TestFacet, TestContext::new(&log, "rollback_root", 0));
+        let mut graph = test_graph(0, &log, "rollback_root", 0);
         graph
             .add_child(0, 1, TestFacet, TestContext::new(&log, "rollback_child", 0))
             .unwrap();
@@ -805,8 +777,7 @@ mod tests {
     #[test]
     fn navigate_accesses_descendants() {
         let log = RefCell::new(TestLog::default());
-        let mut graph =
-            LeaseGraph::<TestSpec>::new(0, TestFacet, TestContext::new(&log, "root", 1));
+        let mut graph = test_graph(0, &log, "root", 1);
         graph
             .add_child(0, 1, TestFacet, TestContext::new(&log, "child", 2))
             .unwrap();
@@ -821,8 +792,7 @@ mod tests {
     #[test]
     fn children_iterator_exposes_inserted_ids() {
         let log = RefCell::new(TestLog::default());
-        let mut graph =
-            LeaseGraph::<TestSpec>::new(5, TestFacet, TestContext::new(&log, "root", 0));
+        let mut graph = test_graph(5, &log, "root", 0);
 
         graph
             .add_child(5, 7, TestFacet, TestContext::new(&log, "child_a", 0))

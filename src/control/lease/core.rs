@@ -592,6 +592,7 @@ mod automaton_tests {
     use super::*;
     use crate::control::lease::graph::LeaseFacet;
     use crate::control::types::RendezvousId;
+    use core::mem::MaybeUninit;
 
     #[derive(Clone, Copy, Default)]
     struct TestFacet;
@@ -627,8 +628,16 @@ mod automaton_tests {
         let root_id = RendezvousId::new(1);
         let child_id = RendezvousId::new(2);
 
-        let mut graph =
-            LeaseGraph::<RvLeaseSpec>::new(root_id, TestFacet, TestContext { value: 10 });
+        let mut graph_storage = MaybeUninit::<LeaseGraph<'_, RvLeaseSpec>>::uninit();
+        let mut graph = unsafe {
+            LeaseGraph::<RvLeaseSpec>::init_new(
+                graph_storage.as_mut_ptr(),
+                root_id,
+                TestFacet,
+                TestContext { value: 10 },
+            );
+            graph_storage.assume_init()
+        };
         graph
             .add_child(root_id, child_id, TestFacet, TestContext { value: 20 })
             .unwrap();

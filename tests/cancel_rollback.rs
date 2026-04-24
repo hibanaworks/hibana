@@ -10,15 +10,16 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 use common::TestTransport;
 use hibana::{
-    g::advanced::{RoleProgram, project},
     g::{self, Msg, Role},
     substrate::cap::{
         CapShot, ControlResourceKind, GenericCapToken, ResourceKind,
         advanced::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId},
     },
+    substrate::program::{RoleProgram, project},
     substrate::{
-        Lane, SessionId, SessionKit,
+        SessionKit,
         binding::NoBinding,
+        ids::{Lane, SessionId},
         runtime::{Config, CounterClock, DefaultLabelUniverse},
     },
 };

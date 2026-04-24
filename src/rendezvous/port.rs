@@ -461,7 +461,7 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         let mut last_loss = None;
         let mut emit_event = |event: TransportEvent| {
             let (arg0, arg1) = event.encode_tap_args();
-            if matches!(event.kind, TransportEventKind::Loss) {
+            if matches!(event.kind(), TransportEventKind::Loss) {
                 last_loss = Some(event);
             }
             emit(tap, events::TransportEvent::new(clock.now32(), arg0, arg1));
@@ -470,12 +470,12 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         let metrics_attrs = self.transport.metrics().attrs();
         let snapshot = crate::transport::TransportSnapshot::from_policy_attrs(&metrics_attrs);
         if let Some(payload) = snapshot.encode_tap_metrics() {
-            let (arg0, arg1) = payload.primary;
+            let (arg0, arg1) = payload.primary();
             emit(
                 tap,
                 events::TransportMetrics::new(clock.now32(), arg0, arg1),
             );
-            if let Some((ext0, ext1)) = payload.extension {
+            if let Some((ext0, ext1)) = payload.extension() {
                 emit(
                     tap,
                     events::TransportMetricsExt::new(clock.now32(), ext0, ext1),
