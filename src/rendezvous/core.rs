@@ -3874,42 +3874,6 @@ where
         let begin_result = self.topology.begin(dst_lane, pending);
         begin_result?;
 
-        // Update generation table
-        let update_result = if last_gen.0 == 0 {
-            let _ = self.r#gen.check_and_update(dst_lane, Generation(0));
-            self.r#gen
-                .check_and_update(dst_lane, new_gen)
-                .map_err(|err| match err {
-                    GenError::StaleOrDuplicate(GenerationRecord { lane, last, new }) => {
-                        TopologyError::StaleGeneration { lane, last, new }
-                    }
-                    GenError::Overflow { lane, last } => {
-                        TopologyError::GenerationOverflow { lane, last }
-                    }
-                    GenError::InvalidInitial { lane, new } => {
-                        TopologyError::InvalidInitial { lane, new }
-                    }
-                })
-        } else {
-            self.r#gen
-                .check_and_update(dst_lane, new_gen)
-                .map_err(|err| match err {
-                    GenError::StaleOrDuplicate(GenerationRecord { lane, last, new }) => {
-                        TopologyError::StaleGeneration { lane, last, new }
-                    }
-                    GenError::Overflow { lane, last } => {
-                        TopologyError::GenerationOverflow { lane, last }
-                    }
-                    GenError::InvalidInitial { lane, new } => {
-                        TopologyError::InvalidInitial { lane, new }
-                    }
-                })
-        };
-        if let Err(err) = update_result {
-            self.topology.reset_lane(dst_lane);
-            return Err(err);
-        }
-
         // Create ack using control::automaton::distributed::TopologyAck::new
         let ack = TopologyAck::new(
             intent.src_rv,
@@ -3979,44 +3943,27 @@ where
         Ok(())
     }
 
-    pub(crate) fn rollback_destination_topology_prepare(
+    fn commit_prepared_destination_generation(
         &self,
-        sid: SessionId,
-    ) -> Result<bool, TopologyError> {
-        let state = self.topology.session_state(sid);
-        let Some(pending) = self.topology.take_pending_for_sid(sid) else {
-            return Ok(false);
-        };
-        let (
-            pending_sid,
-            lane,
-            previous_generation,
-            target,
-            lease_state,
-            state_txn,
-            fences,
-            expected_ack,
-        ) = pending.into_parts();
-        if matches!(state, Some(TopologySessionState::SourcePending { .. })) {
-            self.topology.begin(
-                lane,
-                PendingTopology::source_prepare(
-                    pending_sid,
-                    lane,
-                    previous_generation,
-                    target,
-                    state_txn
-                        .expect("source pending topology rollback must preserve the transaction"),
-                    fences,
-                    expected_ack.expect("source topology rollback must preserve the expected ack"),
-                ),
-            )?;
-            return Ok(false);
+        lane: Lane,
+        target: Generation,
+    ) -> Result<(), TopologyError> {
+        if self.r#gen.last(lane).is_none() {
+            let _ = self.r#gen.check_and_update(lane, Generation::ZERO);
         }
-        let _ = (lease_state, state_txn, fences, expected_ack);
-        self.topology.reset_lane(lane);
-        self.restore_topology_generation(lane, previous_generation)?;
-        Ok(true)
+        self.r#gen
+            .check_and_update(lane, target)
+            .map_err(|err| match err {
+                GenError::StaleOrDuplicate(GenerationRecord { lane, last, new }) => {
+                    TopologyError::StaleGeneration { lane, last, new }
+                }
+                GenError::Overflow { lane, last } => {
+                    TopologyError::GenerationOverflow { lane, last }
+                }
+                GenError::InvalidInitial { lane, new } => {
+                    TopologyError::InvalidInitial { lane, new }
+                }
+            })
     }
 
     pub(crate) fn abort_topology_state(&self, sid: SessionId) -> Result<bool, TopologyError> {
@@ -4320,7 +4267,13 @@ where
         lane: Lane,
     ) -> Result<(), TopologyError> {
         self.preflight_destination_topology_commit(sid, lane)?;
-        self.topology.finalize_destination(lane, sid)?;
+        let (previous_generation, target) =
+            self.topology.prepared_destination_generation(lane, sid)?;
+        self.commit_prepared_destination_generation(lane, target)?;
+        if let Err(err) = self.topology.finalize_destination(lane, sid) {
+            self.restore_topology_generation(lane, previous_generation)?;
+            return Err(err);
+        }
         Ok(())
     }
 
@@ -5956,7 +5909,7 @@ mod epf_tests {
     }
 
     #[test]
-    fn process_topology_intent_rolls_back_pending_state_on_generation_failure() {
+    fn process_topology_intent_leaves_no_pending_state_on_generation_failure() {
         with_epf_test_rendezvous(|rendezvous| {
             let sid = SessionId::new(32);
             let lane = Lane::new(1);
@@ -6032,7 +5985,16 @@ mod epf_tests {
                 .expect("fresh destination lane must not reject an established source generation");
 
             assert_eq!(ack, TopologyAck::from_intent(&intent));
-            assert_eq!(rendezvous.lane_generation(dst_lane), Generation::new(6));
+            assert_eq!(
+                rendezvous.lane_generation(dst_lane),
+                Generation::ZERO,
+                "destination prepare must reserve topology state without committing generation",
+            );
+            assert_eq!(
+                rendezvous.preflight_destination_topology_commit(sid, dst_lane),
+                Ok(()),
+                "destination prepare must stay pending until source commit closes it",
+            );
         });
     }
 
@@ -6450,7 +6412,7 @@ mod epf_tests {
     }
 
     #[test]
-    fn rollback_destination_topology_prepare_rewinds_generation_and_clears_pending_state() {
+    fn abort_topology_state_clears_destination_prepare_explicitly() {
         with_epf_test_rendezvous(|rendezvous| {
             let sid = SessionId::new(34);
             let lane = Lane::new(1);
@@ -6472,28 +6434,32 @@ mod epf_tests {
             );
             rendezvous
                 .process_topology_intent(&intent)
-                .expect("destination prepare must succeed before rollback");
-            assert_eq!(rendezvous.lane_generation(lane), Generation::new(6));
+                .expect("destination prepare must succeed before explicit abort");
+            assert_eq!(
+                rendezvous.lane_generation(lane),
+                Generation::ZERO,
+                "destination prepare must not advance generation before commit",
+            );
             assert_eq!(
                 rendezvous.preflight_destination_topology_commit(sid, lane),
                 Ok(()),
-                "destination prepare must be pending before rollback",
+                "destination prepare must be pending before explicit abort",
             );
 
             assert_eq!(
-                rendezvous.rollback_destination_topology_prepare(sid),
+                rendezvous.abort_topology_state(sid),
                 Ok(true),
-                "rollback must clear destination-only prepared topology",
+                "explicit abort must clear destination-only prepared topology",
             );
             assert_eq!(
                 rendezvous.preflight_destination_topology_commit(sid, lane),
                 Err(TopologyError::NoPending { lane }),
-                "rollback must remove destination pending topology state",
+                "explicit abort must remove destination pending topology state",
             );
             assert_eq!(
                 rendezvous.r#gen.last(lane),
                 None,
-                "rollback must restore a fresh destination lane to its pre-ack generation state",
+                "explicit abort must keep a fresh destination lane at its pre-ack generation state",
             );
         });
     }

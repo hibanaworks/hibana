@@ -325,7 +325,42 @@ impl TopologyStateTable {
         };
         unsafe {
             match (&*slots.add(idx)).as_ref() {
-                Some(pending) if pending.sid == sid && !pending.is_attach_ready() => Ok(()),
+                Some(pending)
+                    if pending.sid == sid
+                        && matches!(
+                            pending.lease_state,
+                            TopologyLeaseState::DestinationPrepared
+                        ) =>
+                {
+                    Ok(())
+                }
+                Some(pending) if pending.sid == sid => Err(TopologyError::InProgress { lane }),
+                Some(pending) => Err(TopologyError::UnknownSession { sid: pending.sid }),
+                None => Err(TopologyError::NoPending { lane }),
+            }
+        }
+    }
+
+    pub(super) fn prepared_destination_generation(
+        &self,
+        lane: Lane,
+        sid: SessionId,
+    ) -> Result<(Option<Generation>, Generation), TopologyError> {
+        let slots = self.lanes_ptr();
+        let Some(idx) = self.lane_slot(lane) else {
+            return Err(TopologyError::NoPending { lane });
+        };
+        unsafe {
+            match (&*slots.add(idx)).as_ref() {
+                Some(pending)
+                    if pending.sid == sid
+                        && matches!(
+                            pending.lease_state,
+                            TopologyLeaseState::DestinationPrepared
+                        ) =>
+                {
+                    Ok((pending.previous_generation, pending.target))
+                }
                 Some(pending) if pending.sid == sid => Err(TopologyError::InProgress { lane }),
                 Some(pending) => Err(TopologyError::UnknownSession { sid: pending.sid }),
                 None => Err(TopologyError::NoPending { lane }),

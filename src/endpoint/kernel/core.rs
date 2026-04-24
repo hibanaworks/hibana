@@ -4199,8 +4199,8 @@ where
         <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-        let descriptor =
-            TopologyDescriptor::decode(descriptor_handle).map_err(Self::map_cp_error)?;
+        let descriptor = TopologyDescriptor::decode_for(control.op(), descriptor_handle)
+            .map_err(Self::map_cp_error)?;
         let operands = cluster
             .prepare_topology_operands_from_descriptor(src_rv, cp_lane, control, descriptor)
             .map_err(Self::map_cp_error)?;
@@ -4231,8 +4231,8 @@ where
         let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
         let rv_id = RendezvousId::new(self.rendezvous_id().raw());
         let cp_lane = Lane::new(lane.raw());
-        let descriptor =
-            TopologyDescriptor::decode(descriptor_handle).map_err(Self::map_cp_error)?;
+        let descriptor = TopologyDescriptor::decode_for(control.op(), descriptor_handle)
+            .map_err(Self::map_cp_error)?;
         let preview_operands = cluster
             .cached_topology_operands(cp_sid)
             .or_else(|| cluster.distributed_topology_operands(cp_sid))

@@ -76,38 +76,36 @@ struct PublicEndpointStorageLayout {
     arena_align: usize,
 }
 
-fn topology_operands_from_handle(handle: TopologyHandle) -> TopologyOperands {
-    TopologyOperands::new(
-        RendezvousId::new(handle.src_rv),
-        RendezvousId::new(handle.dst_rv),
-        Lane::new(handle.src_lane as u32),
-        Lane::new(handle.dst_lane as u32),
-        Generation::new(handle.old_gen),
-        Generation::new(handle.new_gen),
-        handle.seq_tx,
-        handle.seq_rx,
-    )
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TopologyDescriptor {
-    handle: TopologyHandle,
+    operands: TopologyOperands,
 }
 
 impl TopologyDescriptor {
     #[inline]
-    pub(crate) fn decode(
+    pub(crate) fn decode_for(
+        operation: ControlOp,
         bytes: [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
     ) -> Result<Self, CpError> {
         let handle = TopologyHandle::decode(bytes).map_err(|_| CpError::Authorisation {
-            operation: ControlOp::TopologyBegin as u8,
+            operation: operation as u8,
         })?;
-        Ok(Self { handle })
+        let operands = TopologyOperands::new(
+            RendezvousId::new(handle.src_rv),
+            RendezvousId::new(handle.dst_rv),
+            Lane::new(handle.src_lane as u32),
+            Lane::new(handle.dst_lane as u32),
+            Generation::new(handle.old_gen),
+            Generation::new(handle.new_gen),
+            handle.seq_tx,
+            handle.seq_rx,
+        );
+        Ok(Self { operands })
     }
 
     #[inline]
-    pub(crate) const fn handle(self) -> TopologyHandle {
-        self.handle
+    pub(crate) const fn operands(self) -> TopologyOperands {
+        self.operands
     }
 }
 
@@ -3254,7 +3252,7 @@ where
                 operation: ControlOp::TopologyBegin as u8,
             });
         }
-        self.validate_topology_begin_with_handle(rv_id, src_lane, descriptor.handle(), None)
+        self.validate_topology_begin_operands(rv_id, src_lane, descriptor.operands(), None)
     }
 
     pub(crate) fn validate_topology_operands_from_descriptor(
@@ -3267,12 +3265,12 @@ where
     ) -> Result<(), CpError> {
         let expected = match desc.op() {
             ControlOp::TopologyAck => {
-                self.validate_topology_ack_with_handle(rv_id, src_lane, descriptor.handle(), None)?
+                self.validate_topology_ack_operands(rv_id, src_lane, descriptor.operands(), None)?
             }
-            ControlOp::TopologyCommit => self.validate_topology_commit_with_handle(
+            ControlOp::TopologyCommit => self.validate_topology_commit_operands(
                 rv_id,
                 src_lane,
-                descriptor.handle(),
+                descriptor.operands(),
                 None,
             )?,
             _ => {
@@ -3313,27 +3311,13 @@ where
         self.with_control_mut(|core| core.cached_operands_remove(sid))
     }
 
-    fn dispatch_topology_begin_with_handle(
-        &self,
-        rv_id: RendezvousId,
-        cp_sid: SessionId,
-        cp_lane: Lane,
-        handle: TopologyHandle,
-        generation: Option<Generation>,
-    ) -> Result<(), CpError> {
-        let operands =
-            self.validate_topology_begin_with_handle(rv_id, cp_lane, handle, generation)?;
-        self.run_effect(operands.src_rv, CpCommand::topology_begin(cp_sid, operands))
-    }
-
-    fn validate_topology_begin_with_handle(
+    fn validate_topology_begin_operands(
         &self,
         rv_id: RendezvousId,
         cp_lane: Lane,
-        handle: TopologyHandle,
+        operands: TopologyOperands,
         generation: Option<Generation>,
     ) -> Result<TopologyOperands, CpError> {
-        let operands = topology_operands_from_handle(handle);
         validate_topology_rendezvous_pair(
             operands.src_rv,
             operands.dst_rv,
@@ -3361,6 +3345,7 @@ where
         Ok(operands)
     }
 
+    #[cfg(test)]
     fn dispatch_topology_ack_with_handle(
         &self,
         rv_id: RendezvousId,
@@ -3369,19 +3354,19 @@ where
         handle: TopologyHandle,
         generation: Option<Generation>,
     ) -> Result<(), CpError> {
+        let descriptor = TopologyDescriptor::decode_for(ControlOp::TopologyAck, handle.encode())?;
         let operands =
-            self.validate_topology_ack_with_handle(rv_id, cp_lane, handle, generation)?;
+            self.validate_topology_ack_operands(rv_id, cp_lane, descriptor.operands(), generation)?;
         self.run_effect(operands.dst_rv, CpCommand::topology_ack(cp_sid, operands))
     }
 
-    fn validate_topology_ack_with_handle(
+    fn validate_topology_ack_operands(
         &self,
         rv_id: RendezvousId,
         cp_lane: Lane,
-        handle: TopologyHandle,
+        operands: TopologyOperands,
         generation: Option<Generation>,
     ) -> Result<TopologyOperands, CpError> {
-        let operands = topology_operands_from_handle(handle);
         validate_topology_rendezvous_pair(
             operands.src_rv,
             operands.dst_rv,
@@ -3409,30 +3394,13 @@ where
         Ok(operands)
     }
 
-    fn dispatch_topology_commit_with_handle(
-        &self,
-        rv_id: RendezvousId,
-        cp_sid: SessionId,
-        cp_lane: Lane,
-        handle: TopologyHandle,
-        generation: Option<Generation>,
-    ) -> Result<(), CpError> {
-        let operands =
-            self.validate_topology_commit_with_handle(rv_id, cp_lane, handle, generation)?;
-        self.run_effect(
-            operands.src_rv,
-            CpCommand::topology_commit(cp_sid, operands),
-        )
-    }
-
-    fn validate_topology_commit_with_handle(
+    fn validate_topology_commit_operands(
         &self,
         rv_id: RendezvousId,
         cp_lane: Lane,
-        handle: TopologyHandle,
+        operands: TopologyOperands,
         generation: Option<Generation>,
     ) -> Result<TopologyOperands, CpError> {
-        let operands = topology_operands_from_handle(handle);
         validate_topology_rendezvous_pair(
             operands.src_rv,
             operands.dst_rv,
@@ -3790,11 +3758,7 @@ where
 
         match desc.op() {
             ControlOp::TopologyBegin | ControlOp::TopologyAck | ControlOp::TopologyCommit => {
-                TopologyHandle::decode(token.handle_bytes()).map_err(|_| {
-                    CpError::Authorisation {
-                        operation: desc.op() as u8,
-                    }
-                })?;
+                TopologyDescriptor::decode_for(desc.op(), token.handle_bytes())?;
             }
             ControlOp::AbortBegin
             | ControlOp::AbortAck
@@ -3847,28 +3811,36 @@ where
         let cp_lane = header.lane();
         match desc.op() {
             ControlOp::TopologyBegin => {
-                let handle = TopologyHandle::decode(token.handle_bytes()).map_err(|_| {
-                    CpError::Authorisation {
-                        operation: ControlOp::TopologyBegin as u8,
-                    }
-                })?;
-                let _ = self.validate_topology_begin_with_handle(rv_id, cp_lane, handle, None)?;
+                let descriptor =
+                    TopologyDescriptor::decode_for(ControlOp::TopologyBegin, token.handle_bytes())?;
+                let _ = self.validate_topology_begin_operands(
+                    rv_id,
+                    cp_lane,
+                    descriptor.operands(),
+                    None,
+                )?;
             }
             ControlOp::TopologyAck => {
-                let handle = TopologyHandle::decode(token.handle_bytes()).map_err(|_| {
-                    CpError::Authorisation {
-                        operation: ControlOp::TopologyAck as u8,
-                    }
-                })?;
-                let _ = self.validate_topology_ack_with_handle(rv_id, cp_lane, handle, None)?;
+                let descriptor =
+                    TopologyDescriptor::decode_for(ControlOp::TopologyAck, token.handle_bytes())?;
+                let _ = self.validate_topology_ack_operands(
+                    rv_id,
+                    cp_lane,
+                    descriptor.operands(),
+                    None,
+                )?;
             }
             ControlOp::TopologyCommit => {
-                let handle = TopologyHandle::decode(token.handle_bytes()).map_err(|_| {
-                    CpError::Authorisation {
-                        operation: ControlOp::TopologyCommit as u8,
-                    }
-                })?;
-                let _ = self.validate_topology_commit_with_handle(rv_id, cp_lane, handle, None)?;
+                let descriptor = TopologyDescriptor::decode_for(
+                    ControlOp::TopologyCommit,
+                    token.handle_bytes(),
+                )?;
+                let _ = self.validate_topology_commit_operands(
+                    rv_id,
+                    cp_lane,
+                    descriptor.operands(),
+                    None,
+                )?;
             }
             ControlOp::AbortBegin => {
                 let handle = decode_session_lane_handle(token.handle_bytes()).map_err(|_| {
@@ -3987,22 +3959,26 @@ where
         let cp_lane = header.lane();
         match desc.op() {
             ControlOp::TopologyBegin => {
-                let handle = TopologyHandle::decode(token.handle_bytes()).map_err(|_| {
-                    CpError::Authorisation {
-                        operation: ControlOp::TopologyBegin as u8,
-                    }
-                })?;
-                self.dispatch_topology_begin_with_handle(
-                    rv_id, cp_sid, cp_lane, handle, generation,
+                let descriptor =
+                    TopologyDescriptor::decode_for(ControlOp::TopologyBegin, token.handle_bytes())?;
+                let operands = self.validate_topology_begin_operands(
+                    rv_id,
+                    cp_lane,
+                    descriptor.operands(),
+                    generation,
                 )?;
+                self.run_effect(operands.src_rv, CpCommand::topology_begin(cp_sid, operands))?;
             }
             ControlOp::TopologyAck => {
-                let handle = TopologyHandle::decode(token.handle_bytes()).map_err(|_| {
-                    CpError::Authorisation {
-                        operation: ControlOp::TopologyAck as u8,
-                    }
-                })?;
-                self.dispatch_topology_ack_with_handle(rv_id, cp_sid, cp_lane, handle, generation)?;
+                let descriptor =
+                    TopologyDescriptor::decode_for(ControlOp::TopologyAck, token.handle_bytes())?;
+                let operands = self.validate_topology_ack_operands(
+                    rv_id,
+                    cp_lane,
+                    descriptor.operands(),
+                    generation,
+                )?;
+                self.run_effect(operands.dst_rv, CpCommand::topology_ack(cp_sid, operands))?;
             }
             ControlOp::AbortBegin => {
                 let handle = decode_session_lane_handle(token.handle_bytes()).map_err(|_| {
@@ -4064,13 +4040,19 @@ where
                 return Err(CpError::UnsupportedEffect(ControlOp::CapDelegate as u8));
             }
             ControlOp::TopologyCommit => {
-                let handle = TopologyHandle::decode(token.handle_bytes()).map_err(|_| {
-                    CpError::Authorisation {
-                        operation: ControlOp::TopologyCommit as u8,
-                    }
-                })?;
-                self.dispatch_topology_commit_with_handle(
-                    rv_id, cp_sid, cp_lane, handle, generation,
+                let descriptor = TopologyDescriptor::decode_for(
+                    ControlOp::TopologyCommit,
+                    token.handle_bytes(),
+                )?;
+                let operands = self.validate_topology_commit_operands(
+                    rv_id,
+                    cp_lane,
+                    descriptor.operands(),
+                    generation,
+                )?;
+                self.run_effect(
+                    operands.src_rv,
+                    CpCommand::topology_commit(cp_sid, operands),
                 )?;
             }
         }
@@ -4453,8 +4435,9 @@ where
                     )));
                 }
                 Some(TopologySessionState::DestinationPending { .. }) => {
-                    rv.rollback_destination_topology_prepare(sid)
-                        .map_err(|err| AttachError::Control(CpError::Topology(err.into())))?;
+                    return Err(AttachError::Control(CpError::Topology(
+                        TopologyError::InvalidState,
+                    )));
                 }
             }
             Ok(())
@@ -6926,26 +6909,31 @@ mod tests {
                             seq_tx: 0,
                             seq_rx: 0,
                         };
+                        let descriptor = TopologyDescriptor::decode_for(
+                            ControlOp::TopologyBegin,
+                            handle.encode(),
+                        )
+                        .expect("topology handle must lower to descriptor");
+                        let operands = descriptor.operands();
 
                         assert_eq!(
                             cluster
-                                .validate_topology_begin_with_handle(rv_id, src_lane, handle, None),
+                                .validate_topology_begin_operands(rv_id, src_lane, operands, None,),
                             Err(CpError::Authorisation {
                                 operation: ControlOp::TopologyBegin as u8,
                             }),
                             "same-rendezvous topology begin must be rejected at descriptor validation",
                         );
                         assert_eq!(
-                            cluster
-                                .validate_topology_ack_with_handle(rv_id, dst_lane, handle, None),
+                            cluster.validate_topology_ack_operands(rv_id, dst_lane, operands, None),
                             Err(CpError::Authorisation {
                                 operation: ControlOp::TopologyAck as u8,
                             }),
                             "same-rendezvous topology ack must be rejected at descriptor validation",
                         );
                         assert_eq!(
-                            cluster.validate_topology_commit_with_handle(
-                                rv_id, src_lane, handle, None
+                            cluster.validate_topology_commit_operands(
+                                rv_id, src_lane, operands, None,
                             ),
                             Err(CpError::Authorisation {
                                 operation: ControlOp::TopologyCommit as u8,
@@ -7806,9 +7794,9 @@ mod tests {
     }
 
     #[test]
-    fn enter_rolls_back_orphaned_destination_prepare_without_cluster_topology_state() {
+    fn enter_rejects_orphaned_destination_prepare_without_cluster_topology_state() {
         run_on_transient_compiled_test_stack(
-            "enter_rolls_back_orphaned_destination_prepare_without_cluster_topology_state",
+            "enter_rejects_orphaned_destination_prepare_without_cluster_topology_state",
             || {
                 with_cluster_fixture(|clock, dst_cfg| {
                     with_test_cluster(clock, |cluster| {
@@ -7852,8 +7840,35 @@ mod tests {
                                 .expect("destination rendezvous")
                                 .preflight_destination_topology_commit(sid, dst_lane),
                             Ok(()),
-                            "direct orphan prepare must leave destination pending before attach cleanup",
+                            "direct orphan prepare must leave destination pending before explicit abort",
                         );
+
+                        assert!(
+                            matches!(
+                                cluster.enter(
+                                    dst_id,
+                                    sid,
+                                    &lane1_worker_program(),
+                                    crate::binding::BindingHandle::None(crate::binding::NoBinding),
+                                ),
+                                Err(AttachError::Control(CpError::Topology(
+                                    TopologyError::InvalidState
+                                ))),
+                            ),
+                            "attach must not silently recover orphaned destination prepare",
+                        );
+
+                        cluster.with_control_mut(|core| {
+                            let rv = core
+                                .locals
+                                .get_mut(&dst_id)
+                                .expect("destination rendezvous");
+                            assert_eq!(
+                                rv.abort_topology_state(sid),
+                                Ok(true),
+                                "explicit abort must consume orphaned destination prepare",
+                            );
+                        });
 
                         let handle = cluster
                             .enter(
@@ -7862,9 +7877,7 @@ mod tests {
                                 &lane1_worker_program(),
                                 crate::binding::BindingHandle::None(crate::binding::NoBinding),
                             )
-                            .expect(
-                                "attach must roll back orphaned destination prepare before materializing the endpoint",
-                            );
+                            .expect("attach may proceed only after explicit topology recovery");
 
                         assert!(
                             cluster
@@ -7877,9 +7890,9 @@ mod tests {
                             cluster
                                 .get_local(&dst_id)
                                 .expect("destination rendezvous")
-                                .rollback_destination_topology_prepare(sid),
+                                .abort_topology_state(sid),
                             Ok(false),
-                            "orphan cleanup must consume the stale prepared topology before attach completes",
+                            "explicit abort must consume the stale prepared topology before attach completes",
                         );
 
                         unsafe {
@@ -9004,9 +9017,11 @@ mod tests {
                             13,
                             14,
                         );
-                        let descriptor =
-                            TopologyDescriptor::decode(topology_handle(expected).encode())
-                                .expect("typed topology handle must decode");
+                        let descriptor = TopologyDescriptor::decode_for(
+                            ControlOp::TopologyBegin,
+                            topology_handle(expected).encode(),
+                        )
+                        .expect("typed topology handle must decode");
                         let operands = cluster
                             .prepare_topology_operands_from_descriptor(
                                 src_id,
@@ -9056,9 +9071,11 @@ mod tests {
                             13,
                             14,
                         );
-                        let descriptor =
-                            TopologyDescriptor::decode(topology_handle(operands).encode())
-                                .expect("typed topology handle must decode");
+                        let descriptor = TopologyDescriptor::decode_for(
+                            ControlOp::TopologyBegin,
+                            topology_handle(operands).encode(),
+                        )
+                        .expect("typed topology handle must decode");
                         let err = cluster
                             .prepare_topology_operands_from_descriptor(
                                 rv_id,
@@ -9132,9 +9149,11 @@ mod tests {
                             13,
                             14,
                         );
-                        let descriptor =
-                            TopologyDescriptor::decode(topology_handle(mismatched).encode())
-                                .expect("typed topology handle must decode");
+                        let descriptor = TopologyDescriptor::decode_for(
+                            ControlOp::TopologyAck,
+                            topology_handle(mismatched).encode(),
+                        )
+                        .expect("typed topology handle must decode");
                         let err = cluster
                             .validate_topology_operands_from_descriptor(
                                 dst_id,

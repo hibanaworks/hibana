@@ -41,6 +41,11 @@ check_absent \
   src tests
 
 check_absent \
+  "topology_operands_from_handle|descriptor\\.handle\\(|struct[[:space:]]+TopologyDescriptor[[:space:]]*\\{[[:space:][:cntrl:]]*handle:" \
+  "TopologyDescriptor regressed into a runtime handle wrapper instead of typed topology facts" \
+  src tests
+
+check_absent \
   "POLICY_MODE_ENFORCE_TAG|PolicyVerdict::Proceed" \
   "core audit conflates no-engine with enforce/proceed" \
   src tests
