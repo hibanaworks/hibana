@@ -3099,13 +3099,7 @@ where
         };
         let arm = match resolution {
             DynamicResolution::RouteArm { arm } => arm,
-            DynamicResolution::Loop { decision } => {
-                if decision {
-                    0
-                } else {
-                    1
-                }
-            }
+            DynamicResolution::Loop { .. } => return Err(RecvError::PhaseInvariant),
             DynamicResolution::Defer { retry_hint } => {
                 return Ok(RouteResolveStep::Deferred {
                     retry_hint,

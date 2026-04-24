@@ -3189,17 +3189,17 @@ where
             .map_err(|_| CpError::PolicyAbort { reason: policy_id })?;
 
         match (op, resolution) {
-            (
-                ControlOp::LoopContinue | ControlOp::LoopBreak | ControlOp::RouteDecision,
-                DynamicResolution::RouteArm { arm },
-            ) => {
+            (ControlOp::RouteDecision, DynamicResolution::RouteArm { arm }) => {
                 if scope_hint.is_none() {
+                    return Err(CpError::PolicyAbort { reason: policy_id });
+                }
+                if arm > 1 {
                     return Err(CpError::PolicyAbort { reason: policy_id });
                 }
                 Ok(DynamicResolution::RouteArm { arm })
             }
             (
-                ControlOp::LoopContinue | ControlOp::LoopBreak | ControlOp::RouteDecision,
+                ControlOp::LoopContinue | ControlOp::LoopBreak,
                 DynamicResolution::Loop { decision },
             ) => {
                 if scope_hint.is_none() {
@@ -9863,6 +9863,134 @@ mod tests {
                                 ResolverRef::from_fn(defer_resolution),
                             )
                             .expect_err("reroute resolver must be rejected");
+                    });
+                });
+            },
+        );
+    }
+
+    #[test]
+    fn dynamic_resolver_rejects_cross_semantic_results() {
+        run_on_transient_compiled_test_stack(
+            "dynamic_resolver_rejects_cross_semantic_results",
+            || {
+                fn loop_resolution(
+                    _ctx: ResolverContext,
+                ) -> Result<DynamicResolution, ResolverError> {
+                    Ok(DynamicResolution::Loop { decision: false })
+                }
+
+                fn route_resolution(
+                    _ctx: ResolverContext,
+                ) -> Result<DynamicResolution, ResolverError> {
+                    Ok(DynamicResolution::RouteArm { arm: 0 })
+                }
+
+                fn non_binary_route_resolution(
+                    _ctx: ResolverContext,
+                ) -> Result<DynamicResolution, ResolverError> {
+                    Ok(DynamicResolution::RouteArm { arm: 2 })
+                }
+
+                with_cluster_fixture(|clock, config| {
+                    with_test_cluster(clock, |cluster| {
+                        let rv_id = cluster
+                            .add_rendezvous_from_config(config, DummyTransport)
+                            .expect("register rendezvous");
+                        let policy = crate::global::const_dsl::PolicyMode::dynamic(914)
+                            .with_scope(ScopeId::route(1));
+                        let eff_index = EffIndex::new(8);
+                        let tag = crate::control::cap::resource_kinds::RouteDecisionKind::TAG;
+
+                        cluster
+                            .register_dynamic_policy_resolver(
+                                rv_id,
+                                eff_index,
+                                tag,
+                                policy,
+                                tag,
+                                ControlOp::RouteDecision,
+                                None,
+                                ResolverRef::from_fn(loop_resolution),
+                            )
+                            .expect("register route resolver");
+                        assert!(
+                            matches!(
+                                cluster.resolve_dynamic_policy(
+                                    rv_id,
+                                    None,
+                                    Lane::new(1),
+                                    eff_index,
+                                    tag,
+                                    ControlOp::RouteDecision,
+                                    [0; 4],
+                                    &crate::transport::context::PolicyAttrs::EMPTY,
+                                ),
+                                Err(CpError::PolicyAbort { reason: 914 })
+                            ),
+                            "route decision must reject loop resolver vocabulary"
+                        );
+
+                        let loop_eff = EffIndex::new(9);
+                        let loop_tag = crate::control::cap::resource_kinds::LoopContinueKind::TAG;
+                        cluster
+                            .register_dynamic_policy_resolver(
+                                rv_id,
+                                loop_eff,
+                                loop_tag,
+                                policy,
+                                loop_tag,
+                                ControlOp::LoopContinue,
+                                None,
+                                ResolverRef::from_fn(route_resolution),
+                            )
+                            .expect("register loop resolver");
+                        assert!(
+                            matches!(
+                                cluster.resolve_dynamic_policy(
+                                    rv_id,
+                                    None,
+                                    Lane::new(1),
+                                    loop_eff,
+                                    loop_tag,
+                                    ControlOp::LoopContinue,
+                                    [0; 4],
+                                    &crate::transport::context::PolicyAttrs::EMPTY,
+                                ),
+                                Err(CpError::PolicyAbort { reason: 914 })
+                            ),
+                            "loop control must reject route-arm resolver vocabulary"
+                        );
+
+                        let non_binary_eff = EffIndex::new(10);
+                        cluster
+                            .register_dynamic_policy_resolver(
+                                rv_id,
+                                non_binary_eff,
+                                tag,
+                                policy,
+                                tag,
+                                ControlOp::RouteDecision,
+                                None,
+                                ResolverRef::from_fn(non_binary_route_resolution),
+                            )
+                            .expect("register non-binary route resolver");
+                        assert!(
+                            matches!(
+                                cluster.resolve_dynamic_policy(
+                                    rv_id,
+                                    None,
+                                    Lane::new(1),
+                                    non_binary_eff,
+                                    tag,
+                                    ControlOp::RouteDecision,
+                                    [0; 4],
+                                    &crate::transport::context::PolicyAttrs::EMPTY,
+                                ),
+                                Err(CpError::PolicyAbort { reason: 914 })
+                            ),
+                            "route decision must reject non-binary route arms"
+                        );
                     });
                 });
             },

@@ -697,6 +697,8 @@ mod tests {
         worker_program: fn() -> crate::g::advanced::RoleProgram<1>,
         run: fn(&mut Endpoint<'_, 0>, &mut Endpoint<'_, 1>),
     ) -> RuntimeShapeMetrics {
+        let controller_program_image = controller_program();
+        let worker_program_image = worker_program();
         let bounds = current_thread_stack_bounds();
         unsafe {
             initialize_stack_canary(bounds);
@@ -707,19 +709,20 @@ mod tests {
 
         let mut runtime_metrics = None::<RuntimeShapeMetrics>;
         with_pico_fixture(|clock, tap_buf, slab| {
+            // The host test fixture itself can consume more stack than the pico
+            // budget. Measure only additional runtime stack below this point.
+            let baseline_peak_stack_bytes = measure_peak_stack_bytes(bounds);
             let transport = PicoTransport;
-            let controller_program = controller_program();
-            let worker_program = worker_program();
             let kit = PicoKit::new(clock);
             let rv_id = kit
                 .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
                 .expect("register rendezvous");
             let sid = SessionId::new(0x6000);
             let mut controller = kit
-                .enter(rv_id, sid, &controller_program, NoBinding)
+                .enter(rv_id, sid, &controller_program_image, NoBinding)
                 .expect("enter controller");
             let mut worker = kit
-                .enter(rv_id, sid, &worker_program, NoBinding)
+                .enter(rv_id, sid, &worker_program_image, NoBinding)
                 .expect("enter worker");
 
             run(&mut controller, &mut worker);
@@ -744,18 +747,23 @@ mod tests {
                     peak_stack_bytes: 0,
                 }
             };
+            let raw_peak_stack_bytes = measure_peak_stack_bytes(bounds);
+            let mut runtime_snapshot = runtime_snapshot;
+            runtime_snapshot.peak_stack_bytes = raw_peak_stack_bytes
+                .saturating_sub(baseline_peak_stack_bytes)
+                .saturating_add(STACK_CANARY_HEADROOM_BYTES);
             runtime_metrics = Some(runtime_snapshot);
         });
 
-        let mut runtime_metrics = runtime_metrics.expect("runtime metrics");
-        runtime_metrics.peak_stack_bytes = measure_peak_stack_bytes(bounds);
-        runtime_metrics
+        runtime_metrics.expect("runtime metrics")
     }
 
     fn assert_pico_runtime_metrics(shape: &'static str, metrics: RuntimeShapeMetrics) {
         assert!(
             metrics.peak_stack_bytes <= HOST_STACK_BYTES,
-            "{shape} peak stack bytes must fit within the 32 KiB host thread budget"
+            "{shape} peak stack bytes must fit within the 32 KiB host thread budget: {} > {}",
+            metrics.peak_stack_bytes,
+            HOST_STACK_BYTES
         );
         assert!(
             metrics.peak_live_slab_bytes <= HOST_MEASURE_SLAB_BYTES,
