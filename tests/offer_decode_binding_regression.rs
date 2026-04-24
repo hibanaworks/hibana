@@ -18,18 +18,22 @@ use core::{
     cell::{Cell, UnsafeCell},
     mem::MaybeUninit,
 };
-use hibana::g::advanced::{MessageSpec, RoleProgram, project};
 use hibana::g::{self, Msg, Role};
+use hibana::substrate::program::{MessageSpec, RoleProgram, project};
 use hibana::substrate::{
-    RendezvousId,
-    cap::{GenericCapToken, advanced::RouteDecisionKind},
-    policy::{PolicySignalsProvider, ResolverContext, ResolverError, RouteResolution},
-};
-use hibana::substrate::{
-    SessionId, SessionKit, Transport,
-    binding::{BindingSlot, Channel, IncomingClassification, TransportOpsError},
+    SessionKit, Transport,
+    binding::{
+        BindingSlot,
+        advanced::{Channel, IncomingClassification, TransportOpsError},
+    },
+    ids::SessionId,
     runtime::{Config, CounterClock, DefaultLabelUniverse},
     transport::Outgoing,
+};
+use hibana::substrate::{
+    cap::{GenericCapToken, advanced::RouteDecisionKind},
+    ids::RendezvousId,
+    policy::{PolicySignalsProvider, ResolverContext, ResolverError, RouteResolution},
 };
 use local_only_support::LocalCell;
 use placement_support::write_value;
@@ -346,23 +350,21 @@ impl Transport for FlowTransport {
     where
         'a: 'f,
     {
-        if outgoing.meta.direction == hibana::substrate::transport::LocalDirection::Send
-            && outgoing.meta.label == <Msg<71, u32> as MessageSpec>::LABEL
-        {
+        if outgoing.is_send() && outgoing.label() == <Msg<71, u32> as MessageSpec>::LABEL {
             self.shared.state.with_mut(|shared| {
                 let channel = Channel::new(shared.next_channel);
                 shared.next_channel += 1;
-                shared.store_payload(channel.raw(), outgoing.payload.as_bytes());
+                shared.store_payload(channel.raw(), outgoing.payload().as_bytes());
                 let classification = IncomingClassification {
-                    label: outgoing.meta.label,
+                    label: outgoing.label(),
                     instance: 0,
                     has_fin: false,
                     channel,
                 };
                 shared.push_incoming(
-                    outgoing.meta.peer,
+                    outgoing.peer(),
                     PendingInbound {
-                        lane: outgoing.meta.lane,
+                        lane: outgoing.lane(),
                         classification,
                     },
                 );
@@ -388,7 +390,10 @@ impl Transport for FlowTransport {
         self.inner.requeue(rx)
     }
 
-    fn drain_events(&self, emit: &mut dyn FnMut(hibana::substrate::transport::TransportEvent)) {
+    fn drain_events(
+        &self,
+        emit: &mut dyn FnMut(hibana::substrate::transport::advanced::TransportEvent),
+    ) {
         self.shared
             .state
             .with_mut(|state| state.drain_calls = state.drain_calls.wrapping_add(1));

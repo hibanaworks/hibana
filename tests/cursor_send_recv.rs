@@ -11,10 +11,10 @@ use core::{
 
 use common::TestTransport;
 use hibana::{
-    g::advanced::{RoleProgram, project},
     g::{self, Msg, Role},
+    substrate::program::{RoleProgram, project},
     substrate::{
-        SessionId, SessionKit,
+        SessionKit,
         binding::NoBinding,
         cap::{
             CapShot, ControlResourceKind, GenericCapToken, ResourceKind,
@@ -23,6 +23,7 @@ use hibana::{
                 ScopeId,
             },
         },
+        ids::SessionId,
         runtime::{Config, CounterClock},
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
@@ -101,7 +102,7 @@ impl ControlResourceKind for ManualWireControl {
 
     fn mint_handle(
         session: SessionId,
-        lane: hibana::substrate::Lane,
+        lane: hibana::substrate::ids::Lane,
         _scope: ScopeId,
     ) -> Self::Handle {
         (session.raw(), lane.as_wire() as u16)
@@ -144,7 +145,7 @@ impl ControlResourceKind for ManualWireAbortAckControl {
 
     fn mint_handle(
         session: SessionId,
-        lane: hibana::substrate::Lane,
+        lane: hibana::substrate::ids::Lane,
         _scope: ScopeId,
     ) -> Self::Handle {
         (session.raw(), lane.as_wire() as u16)
@@ -187,7 +188,7 @@ impl ControlResourceKind for ManualWireOneShotAbortAckControl {
 
     fn mint_handle(
         session: SessionId,
-        lane: hibana::substrate::Lane,
+        lane: hibana::substrate::ids::Lane,
         _scope: ScopeId,
     ) -> Self::Handle {
         (session.raw(), lane.as_wire() as u16)
@@ -196,7 +197,7 @@ impl ControlResourceKind for ManualWireOneShotAbortAckControl {
 
 fn manual_wire_token(
     sid: SessionId,
-    lane: hibana::substrate::Lane,
+    lane: hibana::substrate::ids::Lane,
     peer: u8,
 ) -> GenericCapToken<ManualWireControl> {
     let handle = ManualWireControl::encode_handle(&(sid.raw(), lane.as_wire() as u16));
@@ -229,7 +230,7 @@ fn manual_wire_token(
 
 fn manual_wire_abort_ack_token(
     sid: SessionId,
-    lane: hibana::substrate::Lane,
+    lane: hibana::substrate::ids::Lane,
     peer: u8,
     label: u8,
     scope_id: u16,
@@ -249,7 +250,7 @@ fn manual_wire_abort_ack_token(
 
 fn manual_wire_abort_ack_token_with_handle(
     sid: SessionId,
-    lane: hibana::substrate::Lane,
+    lane: hibana::substrate::ids::Lane,
     peer: u8,
     label: u8,
     scope_id: u16,
@@ -271,7 +272,7 @@ fn manual_wire_abort_ack_token_with_handle(
 
 fn manual_wire_one_shot_abort_ack_token(
     sid: SessionId,
-    lane: hibana::substrate::Lane,
+    lane: hibana::substrate::ids::Lane,
     peer: u8,
     scope_id: u16,
     epoch: u16,
@@ -290,7 +291,7 @@ fn manual_wire_one_shot_abort_ack_token(
 
 fn manual_wire_abort_ack_token_for<K>(
     sid: SessionId,
-    lane: hibana::substrate::Lane,
+    lane: hibana::substrate::ids::Lane,
     peer: u8,
     label: u8,
     scope_id: u16,
@@ -534,7 +535,7 @@ fn cursor_send_and_recv_manual_wire_control_token() {
                     .enter(rv_id, sid, &target_program, NoBinding)
                     .expect("target endpoint");
 
-                let token = manual_wire_token(sid, hibana::substrate::Lane::new(0), 1);
+                let token = manual_wire_token(sid, hibana::substrate::ids::Lane::new(0), 1);
 
                 let () = futures::executor::block_on(
                     origin_endpoint
@@ -555,15 +556,11 @@ fn cursor_send_and_recv_manual_wire_control_token() {
                 >>())
                 .expect("recv succeeds");
 
-                let header = received.control_header().expect("control header");
                 assert_eq!(
                     received.decode_handle().expect("decode handle"),
                     (sid.raw(), 0)
                 );
-                assert_eq!(header.label(), LABEL_MANUAL_WIRE_CONTROL);
-                assert_eq!(header.path(), ControlPath::Wire);
-                assert_eq!(header.op(), ControlOp::Fence);
-                assert_eq!(received.bytes, token.bytes);
+                assert_eq!(received.into_bytes(), token.into_bytes());
                 assert!(transport_queue_is_empty(&transport));
             },
         );
@@ -610,7 +607,7 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
 
                 let token = manual_wire_abort_ack_token(
                     sid,
-                    hibana::substrate::Lane::new(0),
+                    hibana::substrate::ids::Lane::new(0),
                     1,
                     LABEL_MANUAL_WIRE_ABORT_ACK,
                     0,
@@ -635,7 +632,7 @@ fn manual_wire_control_send_dispatches_exactly_one_abort_ack() {
                     ManualWireAbortAckControl,
                 >>())
                 .expect("recv succeeds");
-                assert_eq!(received.bytes, token.bytes);
+                assert_eq!(received.into_bytes(), token.into_bytes());
                 assert!(transport_queue_is_empty(&transport));
             },
         );
@@ -690,7 +687,7 @@ fn manual_wire_one_shot_control_send_rejects_before_transport() {
 
                 let token = manual_wire_one_shot_abort_ack_token(
                     sid,
-                    hibana::substrate::Lane::new(0),
+                    hibana::substrate::ids::Lane::new(0),
                     1,
                     0,
                     0,
@@ -761,7 +758,7 @@ fn manual_wire_control_send_rejects_descriptor_mismatch_before_transport() {
 
                 let mismatched = manual_wire_abort_ack_token(
                     sid,
-                    hibana::substrate::Lane::new(0),
+                    hibana::substrate::ids::Lane::new(0),
                     1,
                     LABEL_MANUAL_WIRE_ABORT_ACK.wrapping_add(1),
                     0,
@@ -798,7 +795,7 @@ fn manual_wire_control_send_rejects_session_binding_before_transport() {
     let sid = SessionId::new(12);
     let token = manual_wire_abort_ack_token(
         SessionId::new(13),
-        hibana::substrate::Lane::new(0),
+        hibana::substrate::ids::Lane::new(0),
         1,
         LABEL_MANUAL_WIRE_ABORT_ACK,
         0,
@@ -812,7 +809,7 @@ fn manual_wire_control_send_rejects_lane_binding_before_transport() {
     let sid = SessionId::new(14);
     let token = manual_wire_abort_ack_token(
         sid,
-        hibana::substrate::Lane::new(1),
+        hibana::substrate::ids::Lane::new(1),
         1,
         LABEL_MANUAL_WIRE_ABORT_ACK,
         0,
@@ -826,7 +823,7 @@ fn manual_wire_control_send_rejects_role_binding_before_transport() {
     let sid = SessionId::new(15);
     let token = manual_wire_abort_ack_token(
         sid,
-        hibana::substrate::Lane::new(0),
+        hibana::substrate::ids::Lane::new(0),
         0,
         LABEL_MANUAL_WIRE_ABORT_ACK,
         0,
@@ -840,7 +837,7 @@ fn manual_wire_control_send_rejects_handle_mismatch_before_transport() {
     let sid = SessionId::new(16);
     let token = manual_wire_abort_ack_token_with_handle(
         sid,
-        hibana::substrate::Lane::new(0),
+        hibana::substrate::ids::Lane::new(0),
         1,
         LABEL_MANUAL_WIRE_ABORT_ACK,
         0,

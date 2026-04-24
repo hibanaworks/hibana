@@ -22,7 +22,7 @@
 //! ## Invariant Registry
 //!
 //! - **NoCrossLaneAliasing**: Marked at the type level
-//! - **AtMostOnceCommit**: Enforced by typestate machine
+//! - **AtMostOnceCommit**: Enforced by the typestate protocol
 //! - **IncreasingGen**: Maintained by `Generation::bump()` and rendezvous
 //! - **One**: Single-use shot discipline enforced by the type marker
 //!
@@ -59,9 +59,6 @@ pub(crate) mod brand;
 pub(crate) mod cap;
 /// Control-plane cluster coordination.
 pub(crate) mod cluster;
-/// Control handle definitions.
-#[cfg(test)]
-pub(crate) mod handle;
 /// Lease planning and capacity checks.
 pub(crate) mod lease;
 /// Control-plane types and invariants.

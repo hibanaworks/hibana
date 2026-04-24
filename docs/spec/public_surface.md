@@ -3,7 +3,7 @@
 `hibana` exposes exactly two public faces:
 
 - app surface: `hibana::g` plus the attached `Endpoint` localside API
-- substrate surface: `hibana::g::advanced` plus `hibana::substrate`
+- substrate surface: `hibana::substrate::program` plus `hibana::substrate`
 
 The root crate must not regrow:
 

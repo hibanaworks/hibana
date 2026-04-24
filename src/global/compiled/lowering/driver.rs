@@ -152,7 +152,6 @@ struct RoleLoweringFacts {
     active_lane_count: u16,
     endpoint_lane_slot_count: u16,
     logical_lane_count: u16,
-    logical_lane_word_count: u16,
 }
 
 impl RoleLoweringFacts {
@@ -165,7 +164,6 @@ impl RoleLoweringFacts {
         active_lane_count: 0,
         endpoint_lane_slot_count: 0,
         logical_lane_count: 0,
-        logical_lane_word_count: 0,
     };
 }
 
@@ -183,7 +181,6 @@ pub(crate) struct RoleLoweringCounts {
     pub(crate) active_lane_count: usize,
     pub(crate) endpoint_lane_slot_count: usize,
     pub(crate) logical_lane_count: usize,
-    pub(crate) logical_lane_word_count: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -388,7 +385,6 @@ impl LoweringRoleData {
             active_lane_count: role.active_lane_count as usize,
             endpoint_lane_slot_count: role.endpoint_lane_slot_count as usize,
             logical_lane_count: role.logical_lane_count as usize,
-            logical_lane_word_count: role.logical_lane_word_count as usize,
         }
     }
 }
@@ -602,8 +598,6 @@ impl LoweringSummary {
             summary.roles.facts[role_idx].endpoint_lane_slot_count =
                 exact_facts.endpoint_lane_slot_count;
             summary.roles.facts[role_idx].logical_lane_count = exact_facts.logical_lane_count;
-            summary.roles.facts[role_idx].logical_lane_word_count =
-                exact_facts.logical_lane_word_count;
             role_idx += 1;
         }
 

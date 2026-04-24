@@ -33,8 +33,8 @@ fn transport_context_uses_generic_policy_slot_owner() {
     let context_src = read("src/transport/context.rs");
 
     assert!(
-        context_src.contains("use crate::substrate::policy::PolicySlot;"),
-        "transport context must use the surviving generic PolicySlot owner"
+        context_src.contains("use crate::policy_runtime::PolicySlot;"),
+        "transport context must use the core slot type while exposing it only through policy"
     );
     assert!(
         !context_src.contains("policy::epf::Slot"),
@@ -53,6 +53,7 @@ fn transport_context_uses_generic_policy_slot_owner() {
 #[test]
 fn core_resource_kind_catalogue_keeps_mgmt_and_policy_lifecycle_internal_only() {
     let resource_kinds_src = read("src/control/cap/resource_kinds.rs");
+    let mint_src = read("src/control/cap/mint.rs");
 
     for forbidden in [
         "pub struct PolicyLoadKind;",
@@ -65,6 +66,25 @@ fn core_resource_kind_catalogue_keeps_mgmt_and_policy_lifecycle_internal_only() 
         assert!(
             !resource_kinds_src.contains(forbidden),
             "core must not remain the public owner of mgmt/policy lifecycle kinds: {forbidden}"
+        );
+    }
+
+    assert!(
+        !mint_src.contains("pub bytes: [u8; CAP_TOKEN_LEN]")
+            && !mint_src.contains("fn from_parts("),
+        "GenericCapToken must not expose or retain capability wire-layout part constructors"
+    );
+    for forbidden in [
+        "pub fn nonce(&self)",
+        "pub fn tag(&self)",
+        "pub fn control_header(&self)",
+        "pub fn shot(&self)",
+        "pub fn handle_bytes(&self)",
+        "pub fn handle_bytes_ref(&self)",
+    ] {
+        assert!(
+            !mint_src.contains(forbidden),
+            "GenericCapToken must keep low-level token/header accessors internal: {forbidden}"
         );
     }
 }
@@ -94,17 +114,43 @@ fn substrate_tap_surface_stays_on_tapevent_only() {
 }
 
 #[test]
-fn substrate_policy_surface_exports_policyslot_only() {
+fn substrate_policy_surface_is_single_slot_input_owner() {
     let substrate_src = read("src/substrate.rs");
 
     assert!(
-        substrate_src.contains("pub use crate::policy_runtime::PolicySlot;"),
-        "substrate::policy must re-export PolicySlot"
+        substrate_src.contains("pub use crate::policy_runtime::PolicySlot;")
+            && substrate_src.contains(
+                "pub use crate::transport::context::{\n        ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider,"
+            ),
+        "substrate::policy must own the slot-input surface directly"
     );
-    for forbidden in ["pub mod epf {", "crate::epf::", "policy::epf"] {
+    let policy_root = substrate_src
+        .split("pub mod policy {")
+        .nth(1)
+        .and_then(|tail| tail.split("/// Canonical capability-token surface").next())
+        .expect("substrate policy surface must be followed by cap surface");
+    for required in [
+        "ContextId",
+        "ContextValue",
+        "PolicyAttrs",
+        "PolicySignals,",
+        "PolicySlot",
+        "pub mod core",
+    ] {
         assert!(
-            !substrate_src.contains(forbidden),
-            "substrate::policy must not regrow the deleted epf bucket: {forbidden}"
+            policy_root.contains(required),
+            "substrate::policy must keep the single slot-input owner: {required}"
+        );
+    }
+    for forbidden in [
+        "pub mod advanced {",
+        "pub mod epf {",
+        "crate::epf::",
+        "policy::epf",
+    ] {
+        assert!(
+            !policy_root.contains(forbidden),
+            "substrate::policy must not regrow deleted or compatibility buckets: {forbidden}"
         );
     }
 }
@@ -144,10 +190,22 @@ fn dynamic_policy_surface_is_split_by_control_semantics() {
     }
 
     for forbidden in [
-        "pub fn route_fn(resolver: fn(ResolverContext) -> RouteResolutionOutcome)",
-        "pub fn loop_fn(resolver: fn(ResolverContext) -> LoopResolutionOutcome)",
-        "resolver: fn(&S, ResolverContext) -> RouteResolutionOutcome,",
-        "resolver: fn(&S, ResolverContext) -> LoopResolutionOutcome,",
+        concat!(
+            "pub fn route_fn(resolver: fn(ResolverContext) -> RouteResolution",
+            "Outcome)"
+        ),
+        concat!(
+            "pub fn loop_fn(resolver: fn(ResolverContext) -> LoopResolution",
+            "Outcome)"
+        ),
+        concat!(
+            "resolver: fn(&S, ResolverContext) -> RouteResolution",
+            "Outcome,"
+        ),
+        concat!(
+            "resolver: fn(&S, ResolverContext) -> LoopResolution",
+            "Outcome,"
+        ),
     ] {
         assert!(
             !cluster_src.contains(forbidden),
@@ -168,7 +226,7 @@ fn core_policy_runtime_has_no_in_crate_appliance_shim() {
     ] {
         assert!(
             !policy_runtime.contains(forbidden),
-            "hibana core must not keep a policy appliance compatibility shim: {forbidden}"
+            "hibana core must not keep an old policy appliance shim: {forbidden}"
         );
     }
 
@@ -210,12 +268,12 @@ fn transport_snapshot_surface_stays_getter_only() {
         "TransportSnapshot must stay internal"
     );
     assert!(
-        !transport_src.contains("pub struct TransportSnapshotParts"),
-        "transport snapshot option-bag constructor must stay internal"
+        !transport_src.contains("TransportSnapshotParts"),
+        "transport snapshot option-bag constructor must not exist"
     );
     assert!(
-        !transport_src.contains("pub const fn from_parts(parts: TransportSnapshotParts) -> Self"),
-        "transport snapshot parts constructor must stay internal"
+        !transport_src.contains("from_parts(parts:"),
+        "transport snapshot parts constructor must not exist"
     );
     assert!(
         !substrate_src.contains("TransportSnapshotParts"),
@@ -234,7 +292,8 @@ fn transport_snapshot_surface_stays_getter_only() {
         "TransportMetrics must expose packed PolicyAttrs"
     );
     assert!(
-        readme_src.contains("`PolicyAttrs`") && readme_src.contains("TransportMetrics::attrs()"),
+        readme_src.contains("`PolicyAttrs`")
+            && readme_src.contains("transport::advanced::TransportMetrics::attrs()"),
         "README must describe PolicyAttrs-based transport observation"
     );
     for required in [
@@ -261,6 +320,25 @@ fn transport_snapshot_surface_stays_getter_only() {
         assert!(
             !transport_src.contains(forbidden),
             "transport snapshot builder surface must stay removed: {forbidden}"
+        );
+    }
+    for forbidden in [
+        "TransportMetricsTapPayload,",
+        "pub primary: (u32, u32)",
+        "pub extension: Option<(u32, u32)>",
+        "pub kind: TransportEventKind",
+        "pub packet_number: u64",
+        "pub payload_len: u32",
+        "pub retransmissions: u32",
+        "pub pn_space: u8",
+        "pub cid_tag: u8",
+        "pub const fn new_with_metadata",
+        "pub const fn with_pn_space",
+        "pub const fn with_cid_tag",
+    ] {
+        assert!(
+            !transport_src.contains(forbidden) && !substrate_src.contains(forbidden),
+            "transport observation detail must stay accessor-only and non-literal: {forbidden}"
         );
     }
 }

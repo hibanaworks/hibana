@@ -1,7 +1,7 @@
-use hibana::g::advanced::{RoleProgram, project};
 use hibana::g::{self, Msg, Role};
 use hibana::substrate::cap::GenericCapToken;
 use hibana::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
+use hibana::substrate::program::{RoleProgram, project};
 
 const LABEL_LOOP_CONTINUE: u8 = 48;
 const LABEL_LOOP_BREAK: u8 = 49;

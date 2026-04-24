@@ -1,9 +1,9 @@
 //! Role-local typestate synthesis derived from `EffList`.
 //!
-//! This module materialises a compact state machine for a given role directly
-//! from an `EffList`. Each state captures the local action (send/recv/control)
-//! together with the successor index, allowing higher layers to drive endpoint
-//! transitions.
+//! This module materialises compact role-local transition facts from an
+//! `EffList`. Each node captures the local action (send/recv/control) together
+//! with the successor index, allowing higher layers to drive endpoint
+//! transitions from compiled facts.
 
 mod builder;
 mod cursor;

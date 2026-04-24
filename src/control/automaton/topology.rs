@@ -91,7 +91,7 @@ where
 /// ## Usage
 ///
 /// ```ignore
-/// let intent = TopologyIntent::new(src_rv, dst_rv, sid, old_gen, new_gen, ...);
+/// let intent = TopologyIntent { src_rv, dst_rv, sid, old_gen, new_gen, ... };
 /// let mut lease = core.lease::<TopologySpec>(src_rv)?;
 /// let result = TopologyBeginAutomaton::run(&mut lease, intent);
 /// match result {
@@ -250,7 +250,8 @@ mod tests {
         },
         transport::{TransportError, wire::Payload},
     };
-    use std::boxed::Box;
+    use core::{cell::UnsafeCell, mem::MaybeUninit};
+    use std::{boxed::Box, thread_local};
 
     const MAX_RV: usize = 4;
     const TEST_SLAB_CAPACITY: usize = 8 * 1024;
@@ -319,6 +320,18 @@ mod tests {
         MAX_RV,
     >;
 
+    thread_local! {
+        static TOPOLOGY_GRAPH: UnsafeCell<MaybeUninit<LeaseGraph<
+            'static,
+            TopologyLeaseSpec<
+                DummyTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                crate::control::cap::mint::EpochTbl,
+            >,
+        >>> = const { UnsafeCell::new(MaybeUninit::uninit()) };
+    }
+
     fn test_config() -> Config<'static, DefaultLabelUniverse, CounterClock> {
         let tap = Box::leak(Box::new([TapEvent::zero(); RING_EVENTS]));
         let slab = Box::leak(Box::new([0u8; TEST_SLAB_CAPACITY]));
@@ -348,40 +361,40 @@ mod tests {
             .expect("source topology storage must be available");
         core.get(&src_id)
             .expect("source rendezvous shared access")
-            .activate_lane_for_test(sid, lane)
-            .expect("source lane must attach for release-path testing");
+            .activate_lane_attachment(sid, lane)
+            .expect("source lane must attach for release-path validation");
     }
 
     #[test]
     fn topology_intent_validation() {
-        let intent = TopologyIntent::new(
-            RendezvousId::new(1),
-            RendezvousId::new(2),
-            42,
-            Generation::new(1),
-            Generation::new(2),
-            0,
-            0,
-            Lane::new(0),
-            Lane::new(1),
-        );
+        let intent = TopologyIntent {
+            src_rv: RendezvousId::new(1),
+            dst_rv: RendezvousId::new(2),
+            sid: 42,
+            old_gen: Generation::new(1),
+            new_gen: Generation::new(2),
+            seq_tx: 0,
+            seq_rx: 0,
+            src_lane: Lane::new(0),
+            dst_lane: Lane::new(1),
+        };
 
         assert!(intent.new_gen.raw() > intent.old_gen.raw());
     }
 
     #[test]
     fn topology_ack_from_intent() {
-        let intent = TopologyIntent::new(
-            RendezvousId::new(1),
-            RendezvousId::new(2),
-            42,
-            Generation::new(1),
-            Generation::new(2),
-            100,
-            200,
-            Lane::new(0),
-            Lane::new(1),
-        );
+        let intent = TopologyIntent {
+            src_rv: RendezvousId::new(1),
+            dst_rv: RendezvousId::new(2),
+            sid: 42,
+            old_gen: Generation::new(1),
+            new_gen: Generation::new(2),
+            seq_tx: 100,
+            seq_rx: 200,
+            src_lane: Lane::new(0),
+            dst_lane: Lane::new(1),
+        };
 
         let ack = TopologyAck::from_intent(&intent);
 
@@ -398,17 +411,17 @@ mod tests {
     #[test]
     fn begin_run_rejects_mismatched_source_rendezvous() {
         let (mut core, src_id, dst_id) = new_test_core();
-        let intent = TopologyIntent::new(
-            dst_id,
-            src_id,
-            42,
-            Generation::ZERO,
-            Generation::new(1),
-            0,
-            0,
-            Lane::new(0),
-            Lane::new(1),
-        );
+        let intent = TopologyIntent {
+            src_rv: dst_id,
+            dst_rv: src_id,
+            sid: 42,
+            old_gen: Generation::ZERO,
+            new_gen: Generation::new(1),
+            seq_tx: 0,
+            seq_rx: 0,
+            src_lane: Lane::new(0),
+            dst_lane: Lane::new(1),
+        };
 
         let mut lease = core
             .lease::<TopologySpec>(src_id)
@@ -425,17 +438,17 @@ mod tests {
         let sid = SessionId::new(7);
         let src_lane = Lane::new(0);
         let dst_lane = Lane::new(1);
-        let intent = TopologyIntent::new(
-            src_id,
-            dst_id,
-            sid.raw(),
-            Generation::ZERO,
-            Generation::new(1),
-            17,
-            23,
-            src_lane,
-            dst_lane,
-        );
+        let intent = TopologyIntent {
+            src_rv: src_id,
+            dst_rv: dst_id,
+            sid: sid.raw(),
+            old_gen: Generation::ZERO,
+            new_gen: Generation::new(1),
+            seq_tx: 17,
+            seq_rx: 23,
+            src_lane: src_lane,
+            dst_lane: dst_lane,
+        };
 
         prepare_source_lane(&mut core, src_id, sid, src_lane);
 
@@ -495,17 +508,17 @@ mod tests {
         let sid = SessionId::new(9);
         let src_lane = Lane::new(0);
         let dst_lane = Lane::new(1);
-        let intent = TopologyIntent::new(
-            src_id,
-            dst_id,
-            sid.raw(),
-            Generation::ZERO,
-            Generation::new(1),
-            31,
-            37,
-            src_lane,
-            dst_lane,
-        );
+        let intent = TopologyIntent {
+            src_rv: src_id,
+            dst_rv: dst_id,
+            sid: sid.raw(),
+            old_gen: Generation::ZERO,
+            new_gen: Generation::new(1),
+            seq_tx: 31,
+            seq_rx: 37,
+            src_lane: src_lane,
+            dst_lane: dst_lane,
+        };
 
         prepare_source_lane(&mut core, src_id, sid, src_lane);
 
@@ -522,36 +535,41 @@ mod tests {
         let mut root_ctx = LeaseBundleContext::from_control_core::<MAX_RV>(&mut core, src_id)
             .expect("root bundle context");
         root_ctx.set_topology(TopologyGraphContext::new(Some(intent)));
-        let graph = Box::leak(Box::new(LeaseGraph::<
-            TopologyLeaseSpec<
-                DummyTransport,
-                DefaultLabelUniverse,
-                CounterClock,
-                crate::control::cap::mint::EpochTbl,
-            >,
-        >::new(
-            src_id,
-            LeaseBundleFacet::<
-                DummyTransport,
-                DefaultLabelUniverse,
-                CounterClock,
-                crate::control::cap::mint::EpochTbl,
-            >::default(),
-            root_ctx,
-        )));
-        graph
-            .add_child_with_bundle(&mut core, src_id, dst_id)
-            .expect("graph child added");
+        TOPOLOGY_GRAPH.with(|graph_storage| unsafe {
+            let graph_storage = &mut *graph_storage.get();
+            LeaseGraph::<
+                TopologyLeaseSpec<
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    crate::control::cap::mint::EpochTbl,
+                >,
+            >::init_new(
+                graph_storage.as_mut_ptr(),
+                src_id,
+                LeaseBundleFacet::<
+                    DummyTransport,
+                    DefaultLabelUniverse,
+                    CounterClock,
+                    crate::control::cap::mint::EpochTbl,
+                >::default(),
+                root_ctx,
+            );
+            let graph = graph_storage.assume_init_mut();
+            graph
+                .add_child_with_bundle(&mut core, src_id, dst_id)
+                .expect("graph child added");
 
-        let mut mismatched_ack = TopologyAck::from_intent(&intent);
-        mismatched_ack.src_lane = Lane::new(2);
+            let mut mismatched_ack = TopologyAck::from_intent(&intent);
+            mismatched_ack.src_lane = Lane::new(2);
 
-        let mut lease = core
-            .lease::<TopologySpec>(src_id)
-            .expect("lease source rendezvous for graph commit");
-        assert!(matches!(
-            TopologyCommitAutomaton::run_with_graph(graph, &mut lease, mismatched_ack),
-            ControlStep::Abort(TopologyError::InvalidState)
-        ));
+            let mut lease = core
+                .lease::<TopologySpec>(src_id)
+                .expect("lease source rendezvous for graph commit");
+            assert!(matches!(
+                TopologyCommitAutomaton::run_with_graph(graph, &mut lease, mismatched_ack),
+                ControlStep::Abort(TopologyError::InvalidState)
+            ));
+        });
     }
 }

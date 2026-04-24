@@ -13,6 +13,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+          components: rust-src
           targets: thumbv6m-none-eabi
       - name: Install ripgrep
         run: sudo apt-get update && sudo apt-get install -y ripgrep
@@ -28,14 +29,26 @@ jobs:
         run: ./.github/scripts/check_topology_hygiene.sh
       - name: Lowering hygiene gate
         run: ./.github/scripts/check_lowering_hygiene.sh
+      - name: Compiled descriptor authority gate
+        run: ./.github/scripts/check_compiled_descriptor_authority.sh
+      - name: Frozen image hygiene gate
+        run: bash ./.github/scripts/check_frozen_image_hygiene.sh
       - name: Summary authority hygiene gate
         run: ./.github/scripts/check_summary_authority_hygiene.sh
       - name: Exact layout hygiene gate
         run: bash ./.github/scripts/check_exact_layout_hygiene.sh
+      - name: Raw future hygiene gate
+        run: bash ./.github/scripts/check_raw_future_hygiene.sh
+      - name: Message monomorphization hygiene gate
+        run: bash ./.github/scripts/check_message_monomorphization_hygiene.sh
+      - name: Message-heavy matrix gate
+        run: bash ./.github/scripts/check_message_heavy_matrix.sh
       - name: Route frontier owner gate
         run: bash ./.github/scripts/check_route_frontier_owner.sh
       - name: Surface hygiene gate
         run: ./.github/scripts/check_surface_hygiene.sh
+      - name: Public surface budget gate
+        run: ./.github/scripts/check_public_surface_budget.sh
       - name: Boundary contracts gate
         run: ./.github/scripts/check_boundary_contracts.sh
       - name: Warning-free gate
@@ -56,8 +69,6 @@ jobs:
         run: cargo check --all-targets -p hibana
       - name: Cargo check no_std lib
         run: cargo check --no-default-features --lib -p hibana
-      - name: Rust 1.95 compatibility gate
-        run: bash ./.github/scripts/check_stable_1_95.sh
       - name: Cargo test std
         run: cargo test -p hibana --features std
       - name: UI gate
@@ -75,6 +86,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-      - name: Semantic public API gate
-        run: ./.github/scripts/check_hibana_public_api.sh
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Stable public API gate
+        run: bash ./.github/scripts/check_hibana_public_api.sh

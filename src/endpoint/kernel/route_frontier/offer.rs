@@ -1,7 +1,5 @@
 //! Offer-path helpers for scope selection and branch materialization.
 
-#[cfg(test)]
-use core::{future::Future, pin::Pin, task::Context};
 use core::{ops::ControlFlow, task::Poll};
 
 use super::authority::{
@@ -97,52 +95,6 @@ struct OfferResolveState<'a> {
 enum OfferRunStage<'a> {
     CollectEvidence(OfferCollectState<'a>),
     ResolveToken(OfferResolveState<'a>),
-}
-
-#[cfg(test)]
-pub(crate) struct CursorOfferFuture<
-    'a,
-    'r,
-    const ROLE: u8,
-    T,
-    U,
-    C,
-    E,
-    const MAX_RV: usize,
-    Mint,
-    B,
-> where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: BindingSlot,
-{
-    endpoint: &'a mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    state: OfferState<'r>,
-}
-
-#[cfg(test)]
-impl<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B> Future
-    for CursorOfferFuture<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: BindingSlot,
-    'r: 'a,
-{
-    type Output = RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        this.endpoint
-            .poll_offer_state(&mut this.state, cx)
-            .map(|result| result.map(Into::into))
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4659,19 +4611,6 @@ where
         state.run_stage = machine.run_stage.take();
         state.pending_recv = machine.pending_recv;
         poll
-    }
-
-    #[cfg(test)]
-    pub(crate) fn offer<'a>(
-        &'a mut self,
-    ) -> CursorOfferFuture<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
-    where
-        'r: 'a,
-    {
-        CursorOfferFuture {
-            endpoint: self,
-            state: OfferState::new(),
-        }
     }
 
     pub(in crate::endpoint::kernel) fn commit_branch_preview(

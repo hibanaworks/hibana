@@ -24,10 +24,10 @@
 It has two public surfaces:
 
 - App surface: `hibana::g` plus `Endpoint`
-- Substrate surface: `hibana::g::advanced` plus `hibana::substrate`
+- Substrate surface: `hibana::substrate::program` plus `hibana::substrate`
 
 Application code should stay on `hibana::g` and `Endpoint`. Protocol crates
-use `hibana::g::advanced` and `hibana::substrate` to attach transport,
+use `hibana::substrate::program` and `hibana::substrate` to attach transport,
 binding, resolver, and policy.
 
 Everything else is lower layer.
@@ -227,7 +227,7 @@ This keeps the user-facing path small while preserving typed projection and a
 protocol-neutral core.
 
 `Program<Steps>` stays public as the choreography witness, but on stable Rust
-the canonical path is local `let` inference rather than a named item
+the canonical path is a local `let` choreography term rather than a named item
 signature. Keep choreography terms local and project them immediately.
 
 ### Driver and Branching
@@ -288,7 +288,7 @@ representation; they are not semantic authority on their own.
 | Surface | Who uses it | Main owners |
 | --- | --- | --- |
 | App surface | application code | `hibana::g`, `Endpoint`, `RouteBranch`, `SendResult`, `RecvResult` |
-| Substrate surface | protocol implementations | `hibana::g::advanced`, `hibana::substrate` |
+| Substrate surface | protocol implementations | `hibana::substrate::program`, `hibana::substrate` |
 
 If a concept is not owned by one of the two surfaces above, treat it as lower
 layer rather than as part of the app-facing contract.
@@ -300,7 +300,7 @@ There is no second composition DSL.
 
 ```rust
 use hibana::g;
-use hibana::g::advanced::{RoleProgram, project};
+use hibana::substrate::program::{RoleProgram, project};
 
 let transport_prefix = g::seq(
     g::send::<g::Role<0>, g::Role<1>, g::Msg<1, ()>, 0>(),
@@ -326,7 +326,7 @@ runtime artifact.
 Protocol implementors use the protocol-neutral SPI:
 
 - `hibana::g` owns choreography composition
-- `hibana::g::advanced` owns typed projection and compile-time control-message
+- `hibana::substrate::program` owns typed projection and compile-time control-message
   typing
 - `hibana::substrate` owns attach, enter, binding, resolver, policy, and
   transport seams
@@ -335,26 +335,26 @@ Protocol implementors use the protocol-neutral SPI:
 
 The everyday protocol-side owners are:
 
-- `hibana::g::advanced::{project, RoleProgram, MessageSpec, StaticControlDesc}`
+- `hibana::substrate::program::{project, RoleProgram, MessageSpec, StaticControlDesc}`
 - `hibana::substrate::SessionKit`
-- `hibana::substrate::{AttachError, CpError, EffIndex, Lane, RendezvousId, SessionId}`
+- `hibana::substrate::{AttachError, CpError}`
+- `hibana::substrate::ids::{EffIndex, Lane, RendezvousId, SessionId}`
 - `hibana::substrate::Transport`
 - `hibana::substrate::binding::{BindingSlot, NoBinding}`
-- `hibana::substrate::policy::{ContextId, ContextValue, LoopResolution, PolicyAttrs, PolicySignals, PolicySignalsProvider, ResolverContext, ResolverError, ResolverRef, RouteResolution, PolicySlot}`
+- `hibana::substrate::policy::{LoopResolution, PolicySignalsProvider, ResolverContext, ResolverError, ResolverRef, RouteResolution}`
 - `hibana::substrate::runtime::{Clock, Config, CounterClock, DefaultLabelUniverse, LabelUniverse}`
 - `hibana::substrate::tap::TapEvent`
-- `hibana::substrate::cap::{CapRegisteredToken, CapShot, ControlResourceKind, GenericCapToken, Many, One, ResourceKind}`
-- `hibana::substrate::cap::advanced::{CAP_HANDLE_LEN, CapError, CapHeader, ControlOp, ControlPath, ControlScopeKind, LoopBreakKind, LoopContinueKind, RouteDecisionKind, ScopeId}`
+- `hibana::substrate::cap::{CapShot, ControlResourceKind, GenericCapToken, Many, One, ResourceKind}`
 - `hibana::substrate::wire::{Payload, WireEncode, WirePayload}`
-- `hibana::substrate::transport::{Outgoing, TransportError, TransportEvent, TransportEventKind, TransportMetrics}`
+- `hibana::substrate::transport::{Outgoing, TransportError}`
 
-Advanced buckets:
+Lower-level substrate buckets:
 
-- `hibana::substrate::policy::core::*` for fixed context-key ids
+- `hibana::substrate::policy::{ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySlot}` plus `core::*` for fixed context-key ids
 - `hibana::substrate::cap::advanced` for descriptor metadata plus the built-in
   route / loop control kinds
-- `hibana::substrate::transport` detail owners for send direction, algorithm
-  reporting, and metrics translation
+- `hibana::substrate::transport::advanced` for event-kind classification and
+  metrics translation
 
 Everything in this section is protocol-neutral. If a concept is protocol
 specific, keep it outside `hibana`'s public surface.
@@ -400,9 +400,10 @@ route / loop kinds under `hibana::substrate::cap::advanced`:
 - `LoopContinueKind`
 - `LoopBreakKind`
 
-If a protocol needs a custom control kind, implement the capability traits in
-`hibana::substrate::cap::advanced` and carry that kind through
-`GenericCapToken<K>` plus `K`.
+If a protocol needs a custom control kind, implement `ResourceKind` and
+`ControlResourceKind` from `hibana::substrate::cap`, using
+`hibana::substrate::cap::advanced` only for descriptor metadata constants and
+built-in route / loop control kinds.
 
 Control kinds are still just message types in the choreography:
 
@@ -413,7 +414,7 @@ use hibana::substrate::cap::advanced::{
     CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind,
     LoopContinueKind, ScopeId,
 };
-use hibana::substrate::{Lane, SessionId};
+use hibana::substrate::ids::{Lane, SessionId};
 
 let loop_continue = g::send::<
     g::Role<0>,
@@ -470,7 +471,7 @@ payload.
 Capability-building owners live in two layers:
 
 - `hibana::substrate::cap::{One, Many}` for affine shot discipline
-- `hibana::substrate::cap::{CapRegisteredToken, CapShot, ResourceKind, ControlResourceKind}` for
+- `hibana::substrate::cap::{CapShot, ResourceKind, ControlResourceKind}` for
   runtime capability representation
 - `hibana::substrate::cap::advanced::{CAP_HANDLE_LEN, CapError, CapHeader,
   ControlOp, ControlPath, ControlScopeKind, LoopBreakKind, LoopContinueKind,
@@ -525,10 +526,10 @@ impl hibana::substrate::Transport for MyTransport {
 
     fn drain_events(
         &self,
-        emit: &mut dyn FnMut(hibana::substrate::transport::TransportEvent),
+        emit: &mut dyn FnMut(hibana::substrate::transport::advanced::TransportEvent),
     ) {
-        emit(hibana::substrate::transport::TransportEvent::new(
-            hibana::substrate::transport::TransportEventKind::Ack,
+        emit(hibana::substrate::transport::advanced::TransportEvent::new(
+            hibana::substrate::transport::advanced::TransportEventKind::Ack,
             10,
             1200,
             0,
@@ -555,7 +556,8 @@ Transport rules:
 - `requeue()` is how transport hands an unconsumed frame back
 - `drain_events()` feeds protocol-neutral transport observation
 - `recv_label_hint()` is a demux hint, not route authority
-- `metrics()` returns packed `PolicyAttrs` through `TransportMetrics`
+- `metrics()` returns packed `PolicyAttrs` through
+  `transport::advanced::TransportMetrics`
 
 ### SessionKit and Endpoint Attachment
 
@@ -583,7 +585,7 @@ let rv_id = cluster.add_rendezvous_from_config(config, transport)?;
 
 let endpoint = cluster.enter(
     rv_id,
-    hibana::substrate::SessionId::new(1),
+    hibana::substrate::ids::SessionId::new(1),
     &CLIENT,
     hibana::substrate::binding::NoBinding,
 )?;
@@ -614,14 +616,14 @@ arms.
 
 ```rust
 struct MyBinding {
-    signals: hibana::substrate::policy::PolicySignals,
+    signals: hibana::substrate::policy::PolicySignals<'static>,
 }
 
 impl hibana::substrate::policy::PolicySignalsProvider for MyBinding {
     fn signals(
         &self,
         _slot: hibana::substrate::policy::PolicySlot,
-    ) -> hibana::substrate::policy::PolicySignals {
+    ) -> hibana::substrate::policy::PolicySignals<'_> {
         self.signals
     }
 }
@@ -630,22 +632,22 @@ impl hibana::substrate::binding::BindingSlot for MyBinding {
     fn poll_incoming_for_lane(
         &mut self,
         _logical_lane: u8,
-    ) -> Option<hibana::substrate::binding::IncomingClassification> {
-        Some(hibana::substrate::binding::IncomingClassification {
+    ) -> Option<hibana::substrate::binding::advanced::IncomingClassification> {
+        Some(hibana::substrate::binding::advanced::IncomingClassification {
             label: 40,
             instance: 0,
             has_fin: false,
-            channel: hibana::substrate::binding::Channel::new(7),
+            channel: hibana::substrate::binding::advanced::Channel::new(7),
         })
     }
 
     fn on_recv<'a>(
         &'a mut self,
-        _channel: hibana::substrate::binding::Channel,
+        _channel: hibana::substrate::binding::advanced::Channel,
         scratch: &'a mut [u8],
     ) -> Result<
         hibana::substrate::wire::Payload<'a>,
-        hibana::substrate::binding::TransportOpsError,
+        hibana::substrate::binding::advanced::TransportOpsError,
     > {
         scratch[..4].copy_from_slice(&[1, 2, 3, 4]);
         Ok(hibana::substrate::wire::Payload::new(&scratch[..4]))
@@ -669,11 +671,11 @@ Binding rules:
 
 Supporting binding owners:
 
-- `Channel`, `ChannelDirection`, and `ChannelKey` identify stream and channel
-  endpoints
-- `ChannelStore` is the storage contract when the binding owns multiple
-  channels
-- `TransportOpsError` is the canonical binding-side I/O error
+- `binding::advanced::{Channel, ChannelDirection, ChannelKey}` identify stream
+  and channel endpoints
+- `binding::advanced::ChannelStore` is the storage contract when the binding
+  owns multiple channels
+- `binding::advanced::TransportOpsError` is the canonical binding-side I/O error
 
 ### Policy
 
@@ -755,8 +757,9 @@ cluster.set_resolver::<POLICY_ID, 0>(
 `hibana::substrate::wire::{Payload, WireEncode, WirePayload}` is the canonical
 payload seam.
 
-`hibana::substrate::transport::{TransportEvent, TransportEventKind,
-TransportMetrics}` is the canonical transport event / metrics seam.
+`hibana::substrate::transport::advanced::TransportEvent` is the canonical
+transport event seam. Event-kind classification and metrics translation live in
+the same advanced bucket.
 
 If a payload type crosses the wire and is not already a codec type, implement
 `WireEncode` plus `WirePayload`. Borrowed payload views use
@@ -769,12 +772,12 @@ Transport telemetry is surfaced two ways:
 
 - resolvers read transport attrs through `ResolverContext::attr()` and
   `hibana::substrate::policy::core::*`
-- transports emit semantic events through `TransportEvent` and
-  `TransportEventKind`
+- transports emit semantic events through `transport::advanced::TransportEvent`;
+  the kind classifier is `transport::advanced::TransportEventKind`
 - codec failures report through `CodecError`
 - transport failures report through `TransportError`
-- `TransportMetrics` turns implementation-specific counters into
-  `PolicyAttrs`
+- `transport::advanced::TransportMetrics` turns implementation-specific counters
+  into `PolicyAttrs`
 
 Example transport-attr access:
 
@@ -785,8 +788,8 @@ let _ = attrs.insert(
     hibana::substrate::policy::ContextValue::from_u32(3),
 );
 
-let transport_event = hibana::substrate::transport::TransportEvent::new(
-    hibana::substrate::transport::TransportEventKind::Ack,
+let transport_event = hibana::substrate::transport::advanced::TransportEvent::new(
+    hibana::substrate::transport::advanced::TransportEventKind::Ack,
     42,
     1200,
     0,
@@ -796,7 +799,7 @@ let _ = (
     attrs
         .get(hibana::substrate::policy::core::QUEUE_DEPTH)
         .map(|value| value.as_u32()),
-    transport_event.packet_number,
+    transport_event.packet_number(),
 );
 ```
 
@@ -806,7 +809,7 @@ let _ = (
   identifiers such as `LATENCY_US`, `QUEUE_DEPTH`, `RETRANSMISSIONS`,
   `CONGESTION_WINDOW`, and `TRANSPORT_ALGORITHM`
 - transports own metric collection and publish packed attrs through
-  `TransportMetrics::attrs()`
+  `transport::advanced::TransportMetrics::attrs()`
 
 ### Management Boundary
 
@@ -821,14 +824,14 @@ Management-style usage still follows the normal substrate path:
 
 ```rust
 use hibana::g;
-use hibana::g::advanced::project;
+use hibana::substrate::program::project;
 
 let mgmt_prefix = build_management_prefix();
 let app = build_app();
 let program = g::seq(mgmt_prefix, app);
 
-let controller_program: hibana::g::advanced::RoleProgram<0> = project(&program);
-let cluster_program: hibana::g::advanced::RoleProgram<1> = project(&program);
+let controller_program: hibana::substrate::program::RoleProgram<0> = project(&program);
+let cluster_program: hibana::substrate::program::RoleProgram<1> = project(&program);
 
 let controller = cluster.enter(
     rv_id,
@@ -852,7 +855,15 @@ The canonical local validation flow is:
 
 ```bash
 bash ./.github/scripts/check_policy_surface_hygiene.sh
+bash ./.github/scripts/check_lowering_hygiene.sh
+bash ./.github/scripts/check_compiled_descriptor_authority.sh
+bash ./.github/scripts/check_frozen_image_hygiene.sh
+bash ./.github/scripts/check_exact_layout_hygiene.sh
+bash ./.github/scripts/check_raw_future_hygiene.sh
+bash ./.github/scripts/check_message_monomorphization_hygiene.sh
+bash ./.github/scripts/check_message_heavy_matrix.sh
 bash ./.github/scripts/check_surface_hygiene.sh
+bash ./.github/scripts/check_public_surface_budget.sh
 bash ./.github/scripts/check_boundary_contracts.sh
 bash ./.github/scripts/check_plane_boundaries.sh
 bash ./.github/scripts/check_mgmt_boundary.sh
@@ -860,7 +871,7 @@ bash ./.github/scripts/check_resolver_context_surface.sh
 bash ./.github/scripts/check_warning_free.sh
 bash ./.github/scripts/check_direct_projection_binary.sh
 bash ./.github/scripts/check_no_std_build.sh
-bash ./.github/scripts/check_stable_1_95.sh
+bash ./.github/scripts/check_pico_size_matrix.sh
 
 cargo check --all-targets -p hibana
 cargo check --no-default-features --lib -p hibana
@@ -880,6 +891,6 @@ Before pushing, also verify these invariants:
 
 - `hibana/src/**/*.rs` stays protocol-neutral
 - route authority stays `Ack | Resolver | Poll`
-- static unprojectable route stays compile-error, not runtime rescue
+- static unprojectable route stays compile-error, not runtime repair
 - typed projection stays intact
 - substrate names do not leak back into the app surface

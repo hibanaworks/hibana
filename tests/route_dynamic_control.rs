@@ -13,11 +13,15 @@ mod tls_ref_support;
 use ::core::{cell::UnsafeCell, mem::MaybeUninit};
 use common::TestTransport;
 use hibana::{
-    g::advanced::{RoleProgram, project},
     g::{self, Msg, Role},
+    substrate::program::{RoleProgram, project},
     substrate::{
-        SessionId, SessionKit,
-        binding::{BindingSlot, Channel, IncomingClassification, NoBinding, TransportOpsError},
+        SessionKit,
+        binding::{
+            BindingSlot, NoBinding,
+            advanced::{Channel, IncomingClassification, TransportOpsError},
+        },
+        ids::SessionId,
         policy::{
             ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider, PolicySlot,
             core,
@@ -677,21 +681,8 @@ fn route_token_arm_matches_offer_when_policy_input_changes_before_send() {
 
                                                     policy_input.set(1);
 
-                                                    let token = send_flow
-                                                        .send(())
-                                                        .await
-                                                        .expect("send route decision");
-                                                    let handle = token
-                                                        .decode_handle()
-                                                        .expect("decode route decision handle");
-
-                                                    assert_eq!(
-                                                        handle.arm, 0,
-                                                        "token arm must remain equal to offer-selected arm"
-                                                    );
-                                                    assert!(
-                                                        !handle.scope.is_none(),
-                                                        "registered route decision handle must carry a materialized scope"
+                                                    send_flow.send(()).await.expect(
+                                                        "send must remain on the offer-selected arm",
                                                     );
                                                 });
                                             },

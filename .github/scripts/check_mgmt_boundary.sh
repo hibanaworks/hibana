@@ -16,11 +16,23 @@ if rg -n "mod epf;|pub mod epf\\b|substrate::policy::epf" src/lib.rs src/substra
   exit 1
 fi
 
-# The surviving core policy surface is the generic slot boundary only.
-if ! rg -n "pub use crate::policy_runtime::PolicySlot;" src/substrate.rs; then
-  echo "mgmt boundary violation: substrate::policy must re-export PolicySlot" >&2
+# The surviving core policy slot and packed signal metadata have a single
+# policy owner. The old advanced bucket must not remain as a compatibility path.
+POLICY_BLOCK="$(sed -n '/^pub mod policy {/,/^\/\/\/ Canonical capability-token surface/p' src/substrate.rs)"
+if printf "%s\n" "${POLICY_BLOCK}" | rg -n "pub mod advanced \\{" >/dev/null; then
+  echo "mgmt boundary violation: substrate::policy must not keep an advanced compatibility bucket" >&2
   exit 1
 fi
+for required in \
+  "pub use crate::policy_runtime::PolicySlot;" \
+  "ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider" \
+  "pub mod core {"
+do
+  if ! printf "%s\n" "${POLICY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
+    echo "mgmt boundary violation: substrate::policy missing single slot-input owner: ${required}" >&2
+    exit 1
+  fi
+done
 
 # Core must not remain the public owner for management/policy lifecycle kinds.
 if rg -n \

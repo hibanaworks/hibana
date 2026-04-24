@@ -9,12 +9,9 @@ use core::{
     task::{Context, Poll},
 };
 
-use crate::{
-    binding::BindingHandle,
-    transport::{
-        TransportError,
-        wire::{CodecError, Payload, WirePayload},
-    },
+use crate::transport::{
+    TransportError,
+    wire::{CodecError, Payload, WirePayload},
 };
 
 /// Affine endpoint helpers.
@@ -28,8 +25,6 @@ pub(crate) mod flow;
 /// Internal endpoint kernel implementation.
 pub(crate) mod kernel;
 
-type EndpointBinding<'r> = BindingHandle<'r>;
-
 #[inline]
 fn validate_wire_payload<P: WirePayload>(payload: Payload<'_>) -> Result<(), CodecError> {
     P::decode_payload(payload).map(|_| ())
@@ -40,32 +35,36 @@ fn synthetic_wire_payload<P: WirePayload>(scratch: &mut [u8]) -> Result<Payload<
     P::synthetic_payload(scratch)
 }
 
-struct EndpointInner<'r, const ROLE: u8> {
-    state: core::ptr::NonNull<()>,
-    ops: *const (),
-    handle: carrier::PackedEndpointHandle,
-    generation: u32,
-    _borrow: core::marker::PhantomData<&'r mut EndpointBinding<'r>>,
-    _local_only: crate::local::LocalOnly,
-}
-
 /// Public endpoint facade for app-facing localside interaction.
 pub struct Endpoint<'r, const ROLE: u8> {
-    inner: EndpointInner<'r, ROLE>,
+    ptr: core::ptr::NonNull<carrier::KernelEndpointHeader>,
+    handle: carrier::PackedEndpointHandle,
+    _borrow: core::marker::PhantomData<&'r mut crate::binding::BindingHandle<'r>>,
+    _local_only: crate::local::LocalOnly,
 }
 
 /// Public route-branch facade returned by [`Endpoint::offer`].
 pub struct RouteBranch<'e, 'r, const ROLE: u8> {
     endpoint: *mut Endpoint<'r, ROLE>,
     label: u8,
-    _borrow: core::marker::PhantomData<&'e mut EndpointBinding<'r>>,
+    _borrow: core::marker::PhantomData<&'e mut crate::binding::BindingHandle<'r>>,
     _local_only: crate::local::LocalOnly,
 }
 
-struct OfferFuture<'e, 'r, const ROLE: u8> {
+struct RawOfferFuture<'e, 'r, const ROLE: u8> {
     endpoint: *mut Endpoint<'r, ROLE>,
     completed: bool,
-    _borrow: core::marker::PhantomData<&'e mut EndpointBinding<'r>>,
+    _borrow: core::marker::PhantomData<&'e mut crate::binding::BindingHandle<'r>>,
+}
+
+struct OfferFuture<'e, 'r, const ROLE: u8> {
+    raw: RawOfferFuture<'e, 'r, ROLE>,
+}
+
+struct RawDecodeFuture<'e, 'r, const ROLE: u8> {
+    endpoint: *mut Endpoint<'r, ROLE>,
+    completed: bool,
+    _borrow: core::marker::PhantomData<&'e mut crate::binding::BindingHandle<'r>>,
 }
 
 struct DecodeFuture<'e, 'r, const ROLE: u8, M>
@@ -73,10 +72,14 @@ where
     M: crate::global::MessageSpec,
     M::Payload: crate::transport::wire::WirePayload,
 {
+    raw: RawDecodeFuture<'e, 'r, ROLE>,
+    _msg: core::marker::PhantomData<M>,
+}
+
+struct RawRecvFuture<'e, 'r, const ROLE: u8> {
     endpoint: *mut Endpoint<'r, ROLE>,
     completed: bool,
-    _borrow: core::marker::PhantomData<&'e mut EndpointBinding<'r>>,
-    _msg: core::marker::PhantomData<M>,
+    _borrow: core::marker::PhantomData<&'e mut crate::binding::BindingHandle<'r>>,
 }
 
 struct RecvFuture<'e, 'r, const ROLE: u8, M>
@@ -84,17 +87,11 @@ where
     M: crate::global::MessageSpec,
     M::Payload: crate::transport::wire::WirePayload,
 {
-    endpoint: *mut Endpoint<'r, ROLE>,
-    completed: bool,
-    _borrow: core::marker::PhantomData<&'e mut EndpointBinding<'r>>,
+    raw: RawRecvFuture<'e, 'r, ROLE>,
     _msg: core::marker::PhantomData<M>,
 }
 
-impl<'e, 'r, const ROLE: u8, M> DecodeFuture<'e, 'r, ROLE, M>
-where
-    M: crate::global::MessageSpec,
-    M::Payload: crate::transport::wire::WirePayload,
-{
+impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
     #[inline]
     fn new(branch: RouteBranch<'e, 'r, ROLE>) -> Self {
         let endpoint = branch.endpoint;
@@ -106,6 +103,70 @@ where
             endpoint,
             completed: false,
             _borrow: core::marker::PhantomData,
+        }
+    }
+
+    #[inline]
+    fn poll_raw(
+        &mut self,
+        desc: kernel::DecodeDesc,
+        cx: &mut Context<'_>,
+    ) -> Poll<RecvResult<carrier::RawPayload>> {
+        let endpoint = unsafe { &mut *self.endpoint };
+        match endpoint.poll_decode(desc, cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(payload)) => {
+                self.completed = true;
+                Poll::Ready(Ok(payload))
+            }
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+        }
+    }
+}
+
+impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
+    #[inline]
+    fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
+        unsafe {
+            endpoint.init_public_recv_state();
+        }
+        Self {
+            endpoint: core::ptr::from_mut(endpoint),
+            completed: false,
+            _borrow: core::marker::PhantomData,
+        }
+    }
+
+    #[inline]
+    fn poll_raw(
+        &mut self,
+        desc: kernel::RecvDesc,
+        cx: &mut Context<'_>,
+    ) -> Poll<RecvResult<carrier::RawPayload>> {
+        let endpoint = unsafe { &mut *self.endpoint };
+        match endpoint.poll_recv(desc, cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(payload)) => {
+                self.completed = true;
+                Poll::Ready(Ok(payload))
+            }
+            Poll::Ready(Err(err)) => {
+                self.completed = true;
+                Poll::Ready(Err(err))
+            }
+        }
+    }
+}
+
+impl<'e, 'r, const ROLE: u8, M> DecodeFuture<'e, 'r, ROLE, M>
+where
+    M: crate::global::MessageSpec,
+    M::Payload: crate::transport::wire::WirePayload,
+{
+    #[inline]
+    fn new(branch: RouteBranch<'e, 'r, ROLE>) -> Self {
+        Self {
+            raw: RawDecodeFuture::new(branch),
             _msg: core::marker::PhantomData,
         }
     }
@@ -118,13 +179,8 @@ where
 {
     #[inline]
     fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
-        unsafe {
-            endpoint.init_public_recv_state();
-        }
         Self {
-            endpoint: core::ptr::from_mut(endpoint),
-            completed: false,
-            _borrow: core::marker::PhantomData,
+            raw: RawRecvFuture::new(endpoint),
             _msg: core::marker::PhantomData,
         }
     }
@@ -141,17 +197,15 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = unsafe { self.get_unchecked_mut() };
-        let endpoint = unsafe { &mut *this.endpoint };
         let desc = kernel::DecodeDesc::new(
             <M as crate::global::MessageSpec>::LABEL,
             <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
             validate_wire_payload::<M::Payload>,
             synthetic_wire_payload::<M::Payload>,
         );
-        match endpoint.poll_decode(desc, cx) {
+        match this.raw.poll_raw(desc, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
-                this.completed = true;
                 let payload: Payload<'e> = unsafe { payload.into_payload() };
                 Poll::Ready(
                     <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::decode_payload(payload)
@@ -174,34 +228,25 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = unsafe { self.get_unchecked_mut() };
-        let endpoint = unsafe { &mut *this.endpoint };
         let desc = kernel::RecvDesc::new(
             <M as crate::global::MessageSpec>::LABEL,
             <M::Payload as WirePayload>::decode_payload(Payload::new(&[])).is_ok(),
         );
-        match endpoint.poll_recv(desc, cx) {
+        match this.raw.poll_raw(desc, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
-                this.completed = true;
                 let payload: Payload<'e> = unsafe { payload.into_payload() };
                 Poll::Ready(
                     <<M as crate::global::MessageSpec>::Payload as crate::transport::wire::WirePayload>::decode_payload(payload)
                         .map_err(RecvError::Codec),
                 )
             }
-            Poll::Ready(Err(err)) => {
-                this.completed = true;
-                Poll::Ready(Err(err))
-            }
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
     }
 }
 
-impl<'e, 'r, const ROLE: u8, M> Drop for DecodeFuture<'e, 'r, ROLE, M>
-where
-    M: crate::global::MessageSpec,
-    M::Payload: crate::transport::wire::WirePayload,
-{
+impl<'e, 'r, const ROLE: u8> Drop for RawDecodeFuture<'e, 'r, ROLE> {
     fn drop(&mut self) {
         if !self.completed {
             unsafe {
@@ -211,11 +256,7 @@ where
     }
 }
 
-impl<'e, 'r, const ROLE: u8, M> Drop for RecvFuture<'e, 'r, ROLE, M>
-where
-    M: crate::global::MessageSpec,
-    M::Payload: crate::transport::wire::WirePayload,
-{
+impl<'e, 'r, const ROLE: u8> Drop for RawRecvFuture<'e, 'r, ROLE> {
     fn drop(&mut self) {
         if !self.completed {
             unsafe {
@@ -225,128 +266,91 @@ where
     }
 }
 
-impl<'r, const ROLE: u8> EndpointInner<'r, ROLE> {
+impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
-    fn new<K: carrier::SessionKitFamily + 'r>(
-        kit: &'r K,
+    fn new(
+        ptr: core::ptr::NonNull<carrier::KernelEndpointHeader>,
         handle: carrier::PackedEndpointHandle,
-        generation: u32,
     ) -> Self {
         Self {
-            state: core::ptr::NonNull::from(kit).cast(),
-            ops: K::endpoint_ops::<ROLE>(),
+            ptr,
             handle,
-            generation,
             _borrow: core::marker::PhantomData,
             _local_only: crate::local::LocalOnly::new(),
         }
     }
-}
 
-impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
-    fn ops(&self) -> &carrier::EndpointOps<'r, ROLE> {
-        unsafe { &*self.inner.ops.cast::<carrier::EndpointOps<'r, ROLE>>() }
+    fn ops(&self) -> &carrier::EndpointOps<'r> {
+        unsafe { &*self.ptr.as_ref().ops().cast::<carrier::EndpointOps<'r>>() }
     }
 
     #[inline]
-    pub(crate) fn from_handle<K: carrier::SessionKitFamily + 'r>(
-        kit: &'r K,
+    pub(crate) fn from_handle(
+        ptr: core::ptr::NonNull<carrier::KernelEndpointHeader>,
         handle: carrier::PackedEndpointHandle,
-        generation: u32,
     ) -> Self {
-        Self {
-            inner: EndpointInner::new(kit, handle, generation),
-        }
+        Self::new(ptr, handle)
     }
 
     #[inline]
     unsafe fn drop_kernel_endpoint(&mut self) {
         unsafe {
-            (self.ops().drop_endpoint)(self.inner.state, self.inner.handle, self.inner.generation);
+            (self.ops().drop_endpoint)(self.ptr, self.handle);
         }
     }
 
     #[inline]
     unsafe fn reset_public_offer_state(&mut self) {
         unsafe {
-            (self.ops().reset_public_offer_state)(
-                self.inner.state,
-                self.inner.handle,
-                self.inner.generation,
-            );
+            (self.ops().reset_public_offer_state)(self.ptr, self.handle);
         }
     }
 
     #[inline]
     unsafe fn restore_public_route_branch(&mut self) {
         unsafe {
-            (self.ops().restore_public_route_branch)(
-                self.inner.state,
-                self.inner.handle,
-                self.inner.generation,
-            );
+            (self.ops().restore_public_route_branch)(self.ptr, self.handle);
         }
     }
 
     #[inline]
     unsafe fn init_public_send_state(
         &mut self,
+        desc: kernel::SendDesc,
         preview: kernel::SendPreview,
         payload: Option<kernel::RawSendPayload>,
     ) {
         unsafe {
-            (self.ops().init_public_send_state)(
-                self.inner.state,
-                self.inner.handle,
-                self.inner.generation,
-                preview,
-                payload,
-            );
+            (self.ops().init_public_send_state)(self.ptr, self.handle, desc, preview, payload);
         }
     }
 
     #[inline]
     unsafe fn reset_public_send_state(&mut self) {
         unsafe {
-            (self.ops().reset_public_send_state)(
-                self.inner.state,
-                self.inner.handle,
-                self.inner.generation,
-            );
+            (self.ops().reset_public_send_state)(self.ptr, self.handle);
         }
     }
 
     #[inline]
     unsafe fn init_public_recv_state(&mut self) {
         unsafe {
-            (self.ops().init_public_recv_state)(
-                self.inner.state,
-                self.inner.handle,
-                self.inner.generation,
-            );
+            (self.ops().init_public_recv_state)(self.ptr, self.handle);
         }
     }
 
     #[inline]
     unsafe fn reset_public_recv_state(&mut self) {
         unsafe {
-            (self.ops().reset_public_recv_state)(
-                self.inner.state,
-                self.inner.handle,
-                self.inner.generation,
-            );
+            (self.ops().reset_public_recv_state)(self.ptr, self.handle);
         }
     }
 
     #[inline]
     unsafe fn begin_public_decode_state(&mut self) -> RecvResult<()> {
         unsafe {
-            (self.ops().begin_public_decode_state)(
-                self.inner.state,
-                self.inner.handle,
-                self.inner.generation,
-            );
+            (self.ops().begin_public_decode_state)(self.ptr, self.handle);
         }
         Ok(())
     }
@@ -354,23 +358,12 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
     unsafe fn reset_public_decode_state(&mut self) {
         unsafe {
-            (self.ops().reset_public_decode_state)(
-                self.inner.state,
-                self.inner.handle,
-                self.inner.generation,
-            );
+            (self.ops().reset_public_decode_state)(self.ptr, self.handle);
         }
     }
     #[inline]
     fn preview_flow(&mut self, desc: kernel::SendDesc) -> SendResult<kernel::SendPreview> {
-        unsafe {
-            (self.ops().preview_flow)(
-                self.inner.state,
-                self.inner.handle,
-                self.inner.generation,
-                desc,
-            )
-        }
+        unsafe { (self.ops().preview_flow)(self.ptr, self.handle, desc) }
     }
 
     #[inline]
@@ -379,27 +372,12 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         desc: kernel::RecvDesc,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
-        unsafe {
-            (self.ops().poll_recv)(
-                self.inner.state,
-                self.inner.handle,
-                self.inner.generation,
-                desc,
-                cx,
-            )
-        }
+        unsafe { (self.ops().poll_recv)(self.ptr, self.handle, desc, cx) }
     }
 
     #[inline]
     fn poll_offer(&mut self, cx: &mut Context<'_>) -> Poll<RecvResult<u8>> {
-        unsafe {
-            (self.ops().poll_offer)(
-                self.inner.state,
-                self.inner.handle,
-                self.inner.generation,
-                cx,
-            )
-        }
+        unsafe { (self.ops().poll_offer)(self.ptr, self.handle, cx) }
     }
 
     #[inline]
@@ -408,32 +386,15 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         desc: kernel::DecodeDesc,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
-        unsafe {
-            (self.ops().poll_decode)(
-                self.inner.state,
-                self.inner.handle,
-                self.inner.generation,
-                desc,
-                cx,
-            )
-        }
+        unsafe { (self.ops().poll_decode)(self.ptr, self.handle, desc, cx) }
     }
 
     #[inline]
     pub(crate) fn poll_send(
         &mut self,
-        desc: kernel::SendDesc,
         cx: &mut Context<'_>,
     ) -> Poll<SendResult<kernel::SendControlOutcome<'r>>> {
-        unsafe {
-            (self.ops().poll_send)(
-                self.inner.state,
-                self.inner.handle,
-                self.inner.generation,
-                desc,
-                cx,
-            )
-        }
+        unsafe { (self.ops().poll_send)(self.ptr, self.handle, cx) }
     }
 
     #[inline]
@@ -444,9 +405,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         let endpoint = core::ptr::from_mut(self);
         let desc = flow::send_desc::<M>();
         let preview = self.preview_flow(desc)?;
-        Ok(flow::Flow::from_cap_flow(flow::CapFlow::new(
-            endpoint, preview, desc,
-        )))
+        Ok(flow::Flow::new(endpoint, preview, desc))
     }
 
     #[inline]
@@ -516,7 +475,7 @@ impl<'e, 'r, const ROLE: u8> Drop for RouteBranch<'e, 'r, ROLE> {
     }
 }
 
-impl<'e, 'r, const ROLE: u8> OfferFuture<'e, 'r, ROLE> {
+impl<'e, 'r, const ROLE: u8> RawOfferFuture<'e, 'r, ROLE> {
     #[inline]
     fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
         let endpoint_ptr = core::ptr::from_mut(endpoint);
@@ -526,6 +485,30 @@ impl<'e, 'r, const ROLE: u8> OfferFuture<'e, 'r, ROLE> {
             _borrow: core::marker::PhantomData,
         }
     }
+
+    #[inline]
+    fn poll_raw(&mut self, cx: &mut Context<'_>) -> Poll<RecvResult<u8>> {
+        match unsafe { (&mut *self.endpoint).poll_offer(cx) } {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(err)) => {
+                self.completed = true;
+                Poll::Ready(Err(err))
+            }
+            Poll::Ready(Ok(label)) => {
+                self.completed = true;
+                Poll::Ready(Ok(label))
+            }
+        }
+    }
+}
+
+impl<'e, 'r, const ROLE: u8> OfferFuture<'e, 'r, ROLE> {
+    #[inline]
+    fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
+        Self {
+            raw: RawOfferFuture::new(endpoint),
+        }
+    }
 }
 
 impl<'e, 'r, const ROLE: u8> Future for OfferFuture<'e, 'r, ROLE> {
@@ -533,21 +516,17 @@ impl<'e, 'r, const ROLE: u8> Future for OfferFuture<'e, 'r, ROLE> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        match unsafe { (&mut *this.endpoint).poll_offer(cx) } {
+        match this.raw.poll_raw(cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(err)) => {
-                this.completed = true;
-                Poll::Ready(Err(err))
-            }
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(label)) => {
-                this.completed = true;
-                Poll::Ready(Ok(RouteBranch::from_parts(this.endpoint, label)))
+                Poll::Ready(Ok(RouteBranch::from_parts(this.raw.endpoint, label)))
             }
         }
     }
 }
 
-impl<'e, 'r, const ROLE: u8> Drop for OfferFuture<'e, 'r, ROLE> {
+impl<'e, 'r, const ROLE: u8> Drop for RawOfferFuture<'e, 'r, ROLE> {
     fn drop(&mut self) {
         if !self.completed {
             unsafe {
@@ -601,34 +580,11 @@ pub enum RecvError {
     PolicyAbort { reason: u16 },
 }
 
-/// Send result alias.
+/// Canonical send result returned by endpoint send operations.
 pub type SendResult<T> = core::result::Result<T, SendError>;
 
-/// Receive result alias.
+/// Canonical receive result returned by endpoint receive operations.
 pub type RecvResult<T> = core::result::Result<T, RecvError>;
-
-/// Errors surfaced when executing local actions.
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct LocalFailureReason {
-    code: u16,
-}
-
-#[cfg(test)]
-impl LocalFailureReason {
-    /// Internal invariant violation detected by the runtime.
-    pub(crate) const INTERNAL: Self = Self::custom(0xFFFF);
-
-    /// Create a custom failure reason (0x0000-0xFFFE reserved for user space).
-    pub(crate) const fn custom(code: u16) -> Self {
-        Self { code }
-    }
-
-    #[inline]
-    pub(crate) const fn from_raw(raw: u16) -> Self {
-        Self { code: raw }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -637,28 +593,45 @@ mod tests {
 
     type RecvFut = RecvFuture<'static, 'static, 0, crate::g::Msg<7, ()>>;
     type DecodeFut = DecodeFuture<'static, 'static, 0, crate::g::Msg<7, ()>>;
+    type RecvFutU8 = RecvFuture<'static, 'static, 0, crate::g::Msg<8, u8>>;
+    type RecvFutU64 = RecvFuture<'static, 'static, 0, crate::g::Msg<9, u64>>;
+    type RecvFutBytes = RecvFuture<'static, 'static, 0, crate::g::Msg<10, [u8; 32]>>;
+    type DecodeFutU8 = DecodeFuture<'static, 'static, 0, crate::g::Msg<11, u8>>;
+    type DecodeFutU64 = DecodeFuture<'static, 'static, 0, crate::g::Msg<12, u64>>;
+    type DecodeFutBytes = DecodeFuture<'static, 'static, 0, crate::g::Msg<13, [u8; 32]>>;
 
     #[test]
     fn endpoint_surface_size_gates_hold() {
+        const WORD: usize = size_of::<usize>();
         assert!(
-            size_of::<Endpoint<'static, 0>>() <= 40,
-            "Endpoint<'_, ROLE> must stay role-only and compact"
+            size_of::<Endpoint<'static, 0>>() <= 3 * WORD,
+            "Endpoint<'_, ROLE> must stay within the 3-word budget"
         );
         assert!(
-            size_of::<RouteBranch<'static, 'static, 0>>() <= 32,
-            "RouteBranch<'_, '_, ROLE> must stay compact"
+            size_of::<RouteBranch<'static, 'static, 0>>() <= 2 * WORD,
+            "RouteBranch<'_, '_, ROLE> must stay within the 2-word budget"
         );
         assert!(
-            size_of::<OfferFuture<'static, 'static, 0>>() <= 48,
-            "OfferFuture must stay within the localside size budget"
+            size_of::<OfferFuture<'static, 'static, 0>>() <= 3 * WORD,
+            "OfferFuture must stay within the 3-word budget"
         );
         assert!(
-            size_of::<RecvFut>() <= 48,
-            "RecvFuture must stay within the localside size budget"
+            size_of::<RecvFut>() <= 3 * WORD,
+            "RecvFuture must stay within the 3-word budget"
         );
         assert!(
-            size_of::<DecodeFut>() <= 48,
-            "DecodeFuture must stay within the localside size budget"
+            size_of::<DecodeFut>() <= 3 * WORD,
+            "DecodeFuture must stay within the 3-word budget"
         );
+    }
+
+    #[test]
+    fn message_type_variation_does_not_change_future_layout() {
+        assert_eq!(size_of::<RecvFut>(), size_of::<RecvFutU8>());
+        assert_eq!(size_of::<RecvFut>(), size_of::<RecvFutU64>());
+        assert_eq!(size_of::<RecvFut>(), size_of::<RecvFutBytes>());
+        assert_eq!(size_of::<DecodeFut>(), size_of::<DecodeFutU8>());
+        assert_eq!(size_of::<DecodeFut>(), size_of::<DecodeFutU64>());
+        assert_eq!(size_of::<DecodeFut>(), size_of::<DecodeFutBytes>());
     }
 }

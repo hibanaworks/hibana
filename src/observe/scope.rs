@@ -3,7 +3,7 @@
 //! Scope range/nest ordinals are encoded into tap `arg2` fields so that
 //! observers (CLI, EPF, etc.) can reconstruct structured scopes. This module
 //! provides decoding/encoding utilities and `TapEvent` extraction helpers
-//! in a no_std compatible manner.
+//! without allocation.
 
 #[cfg(test)]
 use crate::observe::core::TapEvent;

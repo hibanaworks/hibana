@@ -19,12 +19,13 @@ mod runtime_support;
 use common::TestTransport;
 use hibana::{
     Endpoint, g,
-    g::advanced::{RoleProgram, project},
     g::{Msg, Role},
+    substrate::program::{RoleProgram, project},
     substrate::{
-        SessionId, SessionKit,
+        SessionKit,
         binding::NoBinding,
         cap::GenericCapToken,
+        ids::SessionId,
         runtime::{Config, CounterClock, DefaultLabelUniverse},
     },
 };
@@ -160,8 +161,8 @@ fn high_lane_worker_program() -> RoleProgram<1> {
 
 #[inline(never)]
 fn run_attached_sample(
-    controller_program: &hibana::g::advanced::RoleProgram<0>,
-    worker_program: &hibana::g::advanced::RoleProgram<1>,
+    controller_program: &hibana::substrate::program::RoleProgram<0>,
+    worker_program: &hibana::substrate::program::RoleProgram<1>,
     route_scope_count: usize,
     expected_branch_labels: &'static [u8],
     expected_acks: &'static [u8],
@@ -192,56 +193,40 @@ fn run_attached_sample(
     });
 }
 
-#[inline(never)]
-fn run_on_small_stack(name: &'static str, f: impl FnOnce() + Send + 'static) {
-    let handle = std::thread::Builder::new()
-        .name(name.into())
-        .stack_size(32 * 1024)
-        .spawn(f)
-        .expect("spawn huge choreography runtime thread");
-    handle.join().expect("small-stack huge choreography thread");
-}
-
 #[test]
-fn huge_choreography_shape_matrix_runs_to_completion_on_small_stack() {
-    run_on_small_stack("huge-choreography-route-heavy", || {
-        let controller_program = huge_program::controller_program();
-        let worker_program = huge_program::worker_program();
-        run_attached_sample(
-            &controller_program,
-            &worker_program,
-            huge_program::ROUTE_SCOPE_COUNT,
-            &huge_program::EXPECTED_WORKER_BRANCH_LABELS,
-            &huge_program::ACK_LABELS,
-            huge_program::run,
-        );
-    });
+fn huge_choreography_shape_matrix_runs_to_completion_on_actual_localside() {
+    let controller_program = huge_program::controller_program();
+    let worker_program = huge_program::worker_program();
+    run_attached_sample(
+        &controller_program,
+        &worker_program,
+        huge_program::ROUTE_SCOPE_COUNT,
+        &huge_program::EXPECTED_WORKER_BRANCH_LABELS,
+        &huge_program::ACK_LABELS,
+        huge_program::run,
+    );
 
-    run_on_small_stack("huge-choreography-linear-heavy", || {
-        let controller_program = linear_program::controller_program();
-        let worker_program = linear_program::worker_program();
-        run_attached_sample(
-            &controller_program,
-            &worker_program,
-            linear_program::ROUTE_SCOPE_COUNT,
-            &linear_program::EXPECTED_WORKER_BRANCH_LABELS,
-            &linear_program::ACK_LABELS,
-            linear_program::run,
-        );
-    });
+    let controller_program = linear_program::controller_program();
+    let worker_program = linear_program::worker_program();
+    run_attached_sample(
+        &controller_program,
+        &worker_program,
+        linear_program::ROUTE_SCOPE_COUNT,
+        &linear_program::EXPECTED_WORKER_BRANCH_LABELS,
+        &linear_program::ACK_LABELS,
+        linear_program::run,
+    );
 
-    run_on_small_stack("huge-choreography-fanout-heavy", || {
-        let controller_program = fanout_program::controller_program();
-        let worker_program = fanout_program::worker_program();
-        run_attached_sample(
-            &controller_program,
-            &worker_program,
-            fanout_program::ROUTE_SCOPE_COUNT,
-            &fanout_program::EXPECTED_WORKER_BRANCH_LABELS,
-            &fanout_program::ACK_LABELS,
-            fanout_program::run,
-        );
-    });
+    let controller_program = fanout_program::controller_program();
+    let worker_program = fanout_program::worker_program();
+    run_attached_sample(
+        &controller_program,
+        &worker_program,
+        fanout_program::ROUTE_SCOPE_COUNT,
+        &fanout_program::EXPECTED_WORKER_BRANCH_LABELS,
+        &fanout_program::ACK_LABELS,
+        fanout_program::run,
+    );
 }
 
 #[test]

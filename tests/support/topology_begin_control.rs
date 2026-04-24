@@ -2,7 +2,7 @@ use hibana::substrate::cap::{
     CapShot, ControlResourceKind, ResourceKind,
     advanced::{CAP_HANDLE_LEN, CapError, ControlOp, ControlPath, ControlScopeKind, ScopeId},
 };
-use hibana::substrate::{Lane, SessionId};
+use hibana::substrate::ids::{Lane, SessionId};
 
 pub(crate) const LABEL_TOPOLOGY_BEGIN_CONTROL: u8 = 121;
 pub(crate) const TAG_TOPOLOGY_BEGIN_CONTROL: u8 = 0x71;

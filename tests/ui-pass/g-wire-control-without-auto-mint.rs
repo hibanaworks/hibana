@@ -34,8 +34,8 @@ impl ControlResourceKind for ManualWireControl {
     const AUTO_MINT_WIRE: bool = false;
 
     fn mint_handle(
-        _session: hibana::substrate::SessionId,
-        _lane: hibana::substrate::Lane,
+        _session: hibana::substrate::ids::SessionId,
+        _lane: hibana::substrate::ids::Lane,
         _scope: ScopeId,
     ) -> Self::Handle {
     }

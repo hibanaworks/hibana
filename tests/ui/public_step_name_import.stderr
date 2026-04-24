@@ -1,5 +1,5 @@
-error[E0432]: unresolved import `hibana::g::advanced::steps`
- --> tests/ui/public_step_name_import.rs:1:26
+error[E0432]: unresolved import `hibana::substrate::program::steps`
+ --> tests/ui/public_step_name_import.rs:1:33
   |
-1 | use hibana::g::advanced::steps::StepNil;
-  |                          ^^^^^ could not find `steps` in `advanced`
+1 | use hibana::substrate::program::steps::StepNil;
+  |                                 ^^^^^ could not find `steps` in `program`

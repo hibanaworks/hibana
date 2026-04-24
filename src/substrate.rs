@@ -2,15 +2,10 @@
 
 pub use crate::control::cluster::error::{AttachError, CpError};
 
-pub use crate::control::types::{Lane, RendezvousId, SessionId};
-pub use crate::eff::EffIndex;
 pub use crate::transport::Transport;
 
 use crate::control;
 use crate::control::cluster;
-
-type KernelSessionCluster<'cfg, T, U, C, const MAX_RV: usize> =
-    crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>;
 
 /// Protocol-neutral session kit facade for protocol implementors.
 ///
@@ -24,7 +19,7 @@ where
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
-    inner: KernelSessionCluster<'cfg, T, U, C, MAX_RV>,
+    inner: crate::control::cluster::core::SessionCluster<'cfg, T, U, C, MAX_RV>,
     _cfg: core::marker::PhantomData<crate::endpoint::carrier::SessionCfg<Self>>,
     _local_only: crate::local::LocalOnly,
 }
@@ -60,54 +55,20 @@ where
         &self,
         config: crate::substrate::runtime::Config<'cfg, U, C>,
         transport: T,
-    ) -> Result<RendezvousId, CpError> {
+    ) -> Result<crate::substrate::ids::RendezvousId, CpError> {
         self.inner.add_rendezvous_from_config(config, transport)
     }
 
     #[inline]
-    pub(crate) unsafe fn public_endpoint_kernel_ptr<'r, const ROLE: u8, Mint>(
-        &'r self,
-        handle: crate::endpoint::carrier::PackedEndpointHandle,
-        generation: u32,
-    ) -> Option<
-        *mut crate::endpoint::carrier::KernelCursorEndpoint<
-            'r,
-            ROLE,
-            Self,
-            control::cap::mint::EpochTbl,
-            Mint,
-            crate::binding::BindingHandle<'r>,
-        >,
-    >
-    where
-        Mint: control::cap::mint::MintConfigMarker,
-        'cfg: 'r,
-    {
-        let rv = handle.rendezvous();
-        let slot = handle.slot();
-        unsafe {
-            self.inner
-                .public_endpoint_ptr::<ROLE, Mint>(rv, slot, generation)
-                .map(|ptr| {
-                    ptr.cast::<crate::endpoint::carrier::KernelCursorEndpoint<
-                        'r,
-                        ROLE,
-                        Self,
-                        control::cap::mint::EpochTbl,
-                        Mint,
-                        crate::binding::BindingHandle<'r>,
-                    >>()
-                })
-        }
-    }
-
-    #[inline]
-    #[allow(private_bounds)]
+    #[expect(
+        private_bounds,
+        reason = "binding argument resolution is sealed to canonical binding handles"
+    )]
     pub fn enter<'r, const ROLE: u8, B>(
         &'r self,
-        rv: RendezvousId,
-        sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<ROLE>,
+        rv: crate::substrate::ids::RendezvousId,
+        sid: crate::substrate::ids::SessionId,
+        program: &crate::substrate::program::RoleProgram<ROLE>,
         binding: B,
     ) -> Result<crate::Endpoint<'r, ROLE>, AttachError>
     where
@@ -121,31 +82,45 @@ where
     #[inline]
     fn enter_with_binding<'r, const ROLE: u8>(
         &'r self,
-        rv: RendezvousId,
-        sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<ROLE>,
+        rv: crate::substrate::ids::RendezvousId,
+        sid: crate::substrate::ids::SessionId,
+        program: &crate::substrate::program::RoleProgram<ROLE>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<crate::Endpoint<'r, ROLE>, AttachError>
     where
         'cfg: 'r,
     {
         let (slot, generation) = self.inner.enter::<ROLE>(rv, sid, program, binding)?;
-        let handle = crate::endpoint::carrier::PackedEndpointHandle::new(rv, slot);
-        Ok(crate::endpoint::Endpoint::from_handle(
-            self, handle, generation,
-        ))
+        let ptr = self
+            .inner
+            .public_endpoint_header_ptr(rv, slot, generation)
+            .ok_or(AttachError::Control(CpError::ResourceExhausted))?;
+        let handle = crate::endpoint::carrier::PackedEndpointHandle::new(rv, slot, generation);
+        Ok(crate::endpoint::Endpoint::from_handle(ptr, handle))
     }
 
     #[inline]
     pub fn set_resolver<const POLICY: u16, const ROLE: u8>(
         &self,
-        rv: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<ROLE>,
+        rv: crate::substrate::ids::RendezvousId,
+        program: &crate::substrate::program::RoleProgram<ROLE>,
         resolver: crate::substrate::policy::ResolverRef<'cfg>,
     ) -> Result<(), CpError> {
         self.inner
             .set_resolver::<POLICY, ROLE>(rv, program, resolver)
     }
+}
+
+/// Projection and verified program descriptors for protocol implementors.
+pub mod program {
+    pub use crate::global::role_program::{RoleProgram, project};
+    pub use crate::global::{MessageSpec, StaticControlDesc};
+}
+
+/// Canonical protocol-neutral identifiers.
+pub mod ids {
+    pub use crate::control::types::{Lane, RendezvousId, SessionId};
+    pub use crate::eff::EffIndex;
 }
 
 /// Everyday runtime setup owners for protocol implementors.
@@ -161,22 +136,28 @@ pub mod tap {
 
 /// Canonical binding and ingress classification surface.
 pub mod binding {
-    pub use crate::binding::{
-        BindingSlot, Channel, ChannelDirection, ChannelKey, ChannelStore, IncomingClassification,
-        NoBinding, TransportOpsError,
-    };
+    pub use crate::binding::{BindingSlot, NoBinding};
+
+    /// Advanced binding details for custom demux and channel adapters.
+    pub mod advanced {
+        pub use crate::binding::{
+            Channel, ChannelDirection, ChannelKey, ChannelStore, IncomingClassification,
+            TransportOpsError,
+        };
+    }
 }
 
-/// Canonical resolver/policy surface plus advanced metadata buckets.
+/// Canonical resolver, slot-input, and policy metadata surface.
 pub mod policy {
     pub use super::cluster::core::{
         LoopResolution, ResolverContext, ResolverError, ResolverRef, RouteResolution,
     };
+    pub use crate::policy_runtime::PolicySlot;
     pub use crate::transport::context::{
         ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider,
     };
 
-    /// Advanced fixed metadata keys for resolver-context attributes.
+    /// Fixed metadata keys for resolver-context attributes.
     pub mod core {
         pub use crate::transport::context::core::{
             CONGESTION_MARKS, CONGESTION_WINDOW, IN_FLIGHT_BYTES, LANE, LATENCY_US, LATEST_ACK_PN,
@@ -184,8 +165,6 @@ pub mod policy {
             SRTT_US, TAG, TRANSPORT_ALGORITHM,
         };
     }
-
-    pub use crate::policy_runtime::PolicySlot;
 }
 
 /// Canonical capability-token surface plus advanced mint/control-kind owners.
@@ -204,7 +183,6 @@ pub mod cap {
     pub use crate::control::cap::mint::{
         CapShot, ControlResourceKind, GenericCapToken, ResourceKind,
     };
-    pub use crate::control::cap::typed_tokens::CapRegisteredToken;
     pub use crate::control::types::{Many, One};
 }
 
@@ -215,10 +193,12 @@ pub mod wire {
 
 /// Canonical transport I/O surface plus observation/detail owners.
 pub mod transport {
-    pub use crate::transport::{
-        LocalDirection, Outgoing, SendMeta, TransportAlgorithm, TransportError, TransportEvent,
-        TransportEventKind, TransportMetrics,
-    };
+    pub use crate::transport::{Outgoing, TransportError};
+
+    /// Advanced transport observation details for policy integration.
+    pub mod advanced {
+        pub use crate::transport::{TransportEvent, TransportEventKind, TransportMetrics};
+    }
 }
 
 #[cfg(all(test, feature = "std"))]
@@ -230,10 +210,11 @@ mod tests {
     use crate::{
         Endpoint,
         substrate::{
-            SessionId, SessionKit, Transport,
+            SessionKit, Transport,
             binding::NoBinding,
+            ids::SessionId,
             runtime::{Config, CounterClock, DefaultLabelUniverse},
-            transport::{Outgoing, TransportError, TransportEvent},
+            transport::{Outgoing, TransportError, advanced::TransportEvent},
             wire::Payload,
         },
     };
@@ -294,13 +275,16 @@ mod tests {
     fn retain_pico_smoke_fixture_symbols() {
         let _ = huge_program::run
             as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
-        let _ = huge_program::controller_program as fn() -> crate::g::advanced::RoleProgram<0>;
+        let _ =
+            huge_program::controller_program as fn() -> crate::substrate::program::RoleProgram<0>;
         let _ = linear_program::run
             as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
-        let _ = linear_program::controller_program as fn() -> crate::g::advanced::RoleProgram<0>;
+        let _ =
+            linear_program::controller_program as fn() -> crate::substrate::program::RoleProgram<0>;
         let _ = fanout_program::run
             as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
-        let _ = fanout_program::controller_program as fn() -> crate::g::advanced::RoleProgram<0>;
+        let _ =
+            fanout_program::controller_program as fn() -> crate::substrate::program::RoleProgram<0>;
         let _ =
             localside::worker_offer_decode_u8::<0> as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
     }
@@ -508,9 +492,9 @@ mod tests {
         {
             with_transport_state(|state| {
                 state
-                    .role_mut(outgoing.meta.peer)
+                    .role_mut(outgoing.peer())
                     .queue
-                    .push_back(FrameOwned::from_bytes(outgoing.payload.as_bytes()));
+                    .push_back(FrameOwned::from_bytes(outgoing.payload().as_bytes()));
             });
             core::task::Poll::Ready(Ok(()))
         }
@@ -693,8 +677,8 @@ mod tests {
         route_scope_count: usize,
         expected_branch_labels: &'static [u8],
         expected_acks: &'static [u8],
-        controller_program: fn() -> crate::g::advanced::RoleProgram<0>,
-        worker_program: fn() -> crate::g::advanced::RoleProgram<1>,
+        controller_program: fn() -> crate::substrate::program::RoleProgram<0>,
+        worker_program: fn() -> crate::substrate::program::RoleProgram<1>,
         run: fn(&mut Endpoint<'_, 0>, &mut Endpoint<'_, 1>),
     ) -> RuntimeShapeMetrics {
         let controller_program_image = controller_program();

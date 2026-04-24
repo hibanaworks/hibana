@@ -9,18 +9,17 @@
 //!
 //! - **App surface**: [`g`] plus [`Endpoint`] and its localside core API
 //!   (`flow().send()`, `recv()`, `offer()`, `decode()`).
-//! - **Substrate surface**: [`g::advanced`] plus [`substrate`] for protocol
-//!   implementors that need projection, attach/enter, binding, resolver, and
-//!   policy seams.
+//! - **Substrate surface**: [`substrate`] for protocol implementors that need
+//!   projection, attach/enter, binding, resolver, and policy seams.
 //!
 //! Application code should stay on `hibana::g` and `hibana::Endpoint`.
-//! Protocol crates should stay on `hibana::g::advanced` and `hibana::substrate`.
+//! Protocol crates should stay on `hibana::substrate::program` and `hibana::substrate`.
 //! The crate root stays intentionally small; protocol seams live under
-//! `hibana::g::advanced` and `hibana::substrate`.
+//! `hibana::substrate`.
 //! Inside [`substrate`], everyday protocol-implementor owners stay at the
 //! module root plus `runtime`, `binding`, `policy`, `wire`, and `transport`;
-//! heavier detail buckets stay under `substrate::cap::advanced` and
-//! `substrate::policy::core`.
+//! heavier detail buckets stay under `substrate::cap::advanced`,
+//! and `substrate::transport::advanced`.
 //!
 //! ```rust,ignore
 //! use hibana::g;
@@ -38,10 +37,9 @@
 //! let () = received;
 //! ```
 //!
-//! Protocol implementors use [`g::advanced`] and [`substrate`] to compose
-//! [`g::Program`] values, project them, and enter attached endpoints. That
-//! lower-level flow is documented in `README.md`; it is not the primary
-//! app-author path.
+//! Protocol implementors use [`substrate::program`] to project [`g::Program`]
+//! values and [`substrate`] to enter attached endpoints. That lower-level flow
+//! is documented in `README.md`; it is not the primary app-author path.
 //!
 //! Run the verification flow documented in `AGENTS.md` after integrating a
 //! protocol to ensure rendezvous and localside invariants stay intact. The same
@@ -70,7 +68,7 @@
 //!
 //! # Cargo Features
 //!
-//! - `std` — Enables transport/testing utilities and observability
+//! - `std` — Enables host transport utilities and observability
 //!   normalisers. The runtime remains slab-backed and `no_alloc` oriented in
 //!   both modes; `std` does not switch the core localside path to heap-backed
 //!   ownership.
@@ -112,11 +110,11 @@ mod binding;
 
 mod eff;
 
-/// Rendezvous (internal state machine, evaluates ControlOp)
+/// Rendezvous (internal descriptor evaluator for ControlOp)
 ///
 /// **INTERNAL IMPLEMENTATION - DO NOT USE DIRECTLY**
 ///
-/// This module contains the internal implementation of the Rendezvous state machine.
+/// This module contains the internal implementation of the Rendezvous descriptor evaluator.
 /// It evaluates descriptor-baked `ControlOp` values and manages local control state.
 ///
 /// **For application code**, use:

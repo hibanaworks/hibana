@@ -384,7 +384,7 @@ impl PolicyMode {
     /// let program = g::route(left, right);
     ///
     /// // Register resolver before use
-    /// let controller = hibana::g::advanced::project(&program);
+    /// let controller = hibana::substrate::program::project(&program);
     /// struct RouteState {
     ///     preferred_arm: u8,
     /// }

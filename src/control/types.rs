@@ -137,6 +137,3 @@ mod tests {
         assert_eq!(max_gen.bump(), max_gen);
     }
 }
-
-// Note: ra types are just aliases to cp types (see ra/types.rs),
-// so no From implementations are needed.

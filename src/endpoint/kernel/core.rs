@@ -46,7 +46,7 @@ use crate::{
                 E0, EndpointEpoch, EpochTable, EpochTbl, GenericCapToken, MintConfigMarker, Owner,
                 ResourceKind,
             },
-            typed_tokens::{RawRegisteredCapToken, RegisteredTokenParts},
+            typed_tokens::RawRegisteredCapToken,
         },
         cluster::{
             core::{DynamicPolicyResolution, TopologyDescriptor, TopologyOperands},
@@ -74,55 +74,6 @@ use crate::{
     },
 };
 
-type PortStorage<'r, T, E> = LaneSlotArray<Port<'r, T, E>>;
-type GuardStorage<'r, T, U, C> = LaneSlotArray<LaneGuard<'r, T, U, C>>;
-
-type StoredMint<Mint> = crate::control::cap::mint::MintConfig<
-    <Mint as MintConfigMarker>::Spec,
-    <Mint as MintConfigMarker>::Policy,
->;
-
-#[derive(Clone, Copy)]
-pub(crate) struct PublicEndpointRevoke {
-    revoke_for_session: unsafe fn(*mut (), SessionId, *mut Lane, usize) -> usize,
-}
-
-impl PublicEndpointRevoke {
-    #[cfg(test)]
-    pub(crate) const UNARMED: Self = Self {
-        revoke_for_session: Self::unarmed,
-    };
-
-    #[inline]
-    pub(crate) const fn new(
-        revoke_for_session: unsafe fn(*mut (), SessionId, *mut Lane, usize) -> usize,
-    ) -> Self {
-        Self { revoke_for_session }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn revoke_for_session(
-        self,
-        endpoint: *mut (),
-        sid: SessionId,
-        lanes: *mut Lane,
-        lane_capacity: usize,
-    ) -> usize {
-        unsafe { (self.revoke_for_session)(endpoint, sid, lanes, lane_capacity) }
-    }
-
-    #[inline]
-    #[cfg(test)]
-    unsafe fn unarmed(
-        _endpoint: *mut (),
-        _sid: SessionId,
-        _lanes: *mut Lane,
-        _lane_capacity: usize,
-    ) -> usize {
-        0
-    }
-}
-
 #[derive(Clone, Copy)]
 enum BindingLanePreference {
     Any,
@@ -132,6 +83,10 @@ enum BindingLanePreference {
 
 #[cfg(test)]
 use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
+
+#[cfg(test)]
+#[path = "core_offer_tests.rs"]
+mod offer_regression_tests;
 
 #[inline]
 fn checked_state_index(idx: usize) -> Option<StateIndex> {
@@ -273,7 +228,7 @@ mod route_policy_tests {
 
 #[cfg(test)]
 mod send_rollback_tests {
-    use super::{PendingCapRelease, RawCapFlowToken, StagedDispatchToken};
+    use super::{PendingCapRelease, RawEmittedCapToken, StagedDispatchToken};
     use crate::{
         control::cap::{
             mint::{CAP_NONCE_LEN, CAP_TOKEN_LEN, CapShot, ResourceKind},
@@ -284,15 +239,26 @@ mod send_rollback_tests {
             capability::{CapEntry, CapReleaseCtx, CapTable},
             tables::StateSnapshotTable,
         },
-        substrate::{Lane, SessionId},
+        substrate::ids::{Lane, SessionId},
     };
     use core::cell::Cell;
     use std::vec;
 
+    fn cap_table() -> CapTable {
+        const CAP_TABLE_SLOTS: usize = 64;
+        let mut table = CapTable::empty();
+        let storage = vec![Option::<CapEntry>::None; CAP_TABLE_SLOTS].into_boxed_slice();
+        let ptr = std::boxed::Box::leak(storage).as_mut_ptr().cast::<u8>();
+        unsafe {
+            table.bind_from_storage(ptr, CAP_TABLE_SLOTS, 0);
+        }
+        table
+    }
+
     fn provisional_release_ctx(
         lane: Lane,
     ) -> (CapTable, StateSnapshotTable, Cell<u64>, std::vec::Vec<u8>) {
-        let table = CapTable::new();
+        let table = cap_table();
         let mut snapshot_storage = vec![0u8; StateSnapshotTable::storage_bytes(1)];
         let mut snapshots = StateSnapshotTable::empty();
         unsafe {
@@ -331,7 +297,7 @@ mod send_rollback_tests {
             .expect("insert succeeds");
 
         drop(StagedDispatchToken {
-            token: RawCapFlowToken::from_bytes([0u8; CAP_TOKEN_LEN]),
+            token: RawEmittedCapToken::new([0u8; CAP_TOKEN_LEN]),
             rollback: PendingCapRelease::new(
                 nonce,
                 CapReleaseCtx::new(&table, &snapshots, &revisions, lane),
@@ -384,7 +350,7 @@ mod send_rollback_tests {
             .expect("insert succeeds");
 
         let mut token = StagedDispatchToken {
-            token: RawCapFlowToken::from_bytes([0u8; CAP_TOKEN_LEN]),
+            token: RawEmittedCapToken::new([0u8; CAP_TOKEN_LEN]),
             rollback: PendingCapRelease::new(
                 nonce,
                 CapReleaseCtx::new(&table, &snapshots, &revisions, lane),
@@ -439,9 +405,9 @@ mod send_rollback_tests {
             .expect("insert succeeds");
 
         let mut rollback = PendingCapRelease::inert();
-        let parts = rollback.take_registered_parts([0u8; CAP_TOKEN_LEN]);
+        let token = rollback.take_registered_token([0u8; CAP_TOKEN_LEN]);
         assert!(
-            parts.is_none(),
+            token.is_none(),
             "explicit payload tokens must not fabricate registered capability ownership"
         );
         drop(rollback);
@@ -469,9 +435,6 @@ mod frontier_observation;
 mod frontier_select;
 #[path = "route_frontier/offer_refresh.rs"]
 mod offer_refresh;
-#[cfg(test)]
-#[path = "core_offer_tests.rs"]
-mod offer_regression_tests;
 #[path = "route_frontier/scope_evidence_logic.rs"]
 mod scope_evidence_logic;
 
@@ -497,12 +460,12 @@ pub struct CursorEndpoint<
     Mint: MintConfigMarker,
     B: BindingSlot + 'r,
 {
-    pub(super) public_revoke: PublicEndpointRevoke,
+    pub(super) public_header: crate::endpoint::carrier::KernelEndpointHeader,
     /// Multi-lane port array. Each active lane has its own port.
     /// For single-lane programs, only `ports[0]` is used.
-    pub(super) ports: PortStorage<'r, T, E>,
+    pub(super) ports: LaneSlotArray<Port<'r, T, E>>,
     /// Multi-lane guard array. Each active lane has its own guard.
-    pub(super) guards: GuardStorage<'r, T, U, C>,
+    pub(super) guards: LaneSlotArray<LaneGuard<'r, T, U, C>>,
     /// Primary lane index (first live application lane, not always lane 0).
     pub(super) primary_lane: usize,
     pub(super) sid: SessionId,
@@ -525,7 +488,10 @@ pub struct CursorEndpoint<
     pub(super) binding_inbox: LeasedState<BindingInbox>,
     pub(super) restored_binding_payload: Option<RestoredBindingPayload<'r>>,
     pub(super) liveness_policy: crate::runtime::config::LivenessPolicy,
-    pub(super) mint: StoredMint<Mint>,
+    pub(super) mint: crate::control::cap::mint::MintConfig<
+        <Mint as MintConfigMarker>::Spec,
+        <Mint as MintConfigMarker>::Policy,
+    >,
     pub(super) binding: B,
 }
 
@@ -684,14 +650,13 @@ where
 }
 
 #[derive(Clone, Copy)]
-pub struct RawCapFlowToken {
+pub(crate) struct RawEmittedCapToken {
     bytes: [u8; CAP_TOKEN_LEN],
 }
 
-impl RawCapFlowToken {
-    #[cfg(test)]
+impl RawEmittedCapToken {
     #[inline(always)]
-    pub(crate) const fn from_bytes(bytes: [u8; CAP_TOKEN_LEN]) -> Self {
+    pub(crate) const fn new(bytes: [u8; CAP_TOKEN_LEN]) -> Self {
         Self { bytes }
     }
 
@@ -704,7 +669,11 @@ impl RawCapFlowToken {
 struct PreparedSendControl {
     minted_control: Option<MintedControlToken>,
     dispatch: Option<DescriptorDispatch>,
-    stage_payload: StageSendPayloadFn,
+    stage_payload: fn(
+        Option<MintedControlToken>,
+        Option<lane_port::RawSendPayload>,
+        &mut [u8],
+    ) -> SendResult<StagedSendPayload>,
 }
 
 #[derive(Clone, Copy)]
@@ -726,7 +695,7 @@ impl DescriptorDispatch {
 }
 
 struct MintedControlToken {
-    token: RawCapFlowToken,
+    token: RawEmittedCapToken,
     dispatch: DescriptorDispatch,
     rollback: PendingCapRelease,
 }
@@ -764,14 +733,14 @@ impl PendingCapRelease {
     }
 
     #[inline(always)]
-    fn take_registered_parts(
+    fn take_registered_token<'rv>(
         &mut self,
         bytes: [u8; CAP_TOKEN_LEN],
-    ) -> Option<RegisteredTokenParts> {
+    ) -> Option<RawRegisteredCapToken<'rv>> {
         let release_ctx = self.release_ctx.take()?;
         let nonce = self.nonce;
         self.nonce.fill(0);
-        Some(RegisteredTokenParts::from_registered_bytes(
+        Some(RawRegisteredCapToken::from_registered_bytes(
             bytes,
             nonce,
             release_ctx,
@@ -789,7 +758,7 @@ impl Drop for PendingCapRelease {
 }
 
 struct StagedDispatchToken {
-    token: RawCapFlowToken,
+    token: RawEmittedCapToken,
     rollback: PendingCapRelease,
 }
 
@@ -823,19 +792,11 @@ impl StagedControlEmission {
     }
 }
 
-enum DispatchSendTokenResult {
+enum DispatchSendTokenResult<'rv> {
     None,
     Emitted,
-    Registered(RegisteredTokenParts),
+    Registered(RawRegisteredCapToken<'rv>),
 }
-
-type StageSendPayloadFn = for<'payload, 'scratch> fn(
-    Option<MintedControlToken>,
-    Option<lane_port::RawSendPayload>,
-    &'scratch mut [u8],
-) -> SendResult<StagedSendPayload>;
-
-type EncodeControlHandleFn = fn(SessionId, Lane, ScopeId) -> [u8; CAP_HANDLE_LEN];
 
 struct StagedSendPayload {
     encoded_len: usize,
@@ -886,7 +847,7 @@ enum SendInitOutcome<'r> {
 pub enum SendControlOutcome<'rv> {
     None,
     Registered(RawRegisteredCapToken<'rv>),
-    Emitted(RawCapFlowToken),
+    Emitted(RawEmittedCapToken),
 }
 
 #[derive(Clone, Copy)]
@@ -894,7 +855,7 @@ pub(crate) struct SendDesc {
     label: u8,
     expects_control: bool,
     control: Option<ControlDesc>,
-    encode_control_handle: Option<EncodeControlHandleFn>,
+    encode_control_handle: Option<fn(SessionId, Lane, ScopeId) -> [u8; CAP_HANDLE_LEN]>,
 }
 
 impl SendDesc {
@@ -903,7 +864,7 @@ impl SendDesc {
         label: u8,
         expects_control: bool,
         control: Option<ControlDesc>,
-        encode_control_handle: Option<EncodeControlHandleFn>,
+        encode_control_handle: Option<fn(SessionId, Lane, ScopeId) -> [u8; CAP_HANDLE_LEN]>,
     ) -> Self {
         Self {
             label,
@@ -924,13 +885,16 @@ impl SendDesc {
     }
 
     #[inline]
-    pub(crate) const fn encode_control_handle(self) -> Option<EncodeControlHandleFn> {
+    pub(crate) const fn encode_control_handle(
+        self,
+    ) -> Option<fn(SessionId, Lane, ScopeId) -> [u8; CAP_HANDLE_LEN]> {
         self.encode_control_handle
     }
 }
 
 pub(crate) enum SendState<'r> {
     Init {
+        descriptor: SendDesc,
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
         payload: Option<lane_port::RawSendPayload>,
@@ -1161,11 +1125,13 @@ where
     #[inline]
     pub(in crate::endpoint) fn init_public_send_state(
         &mut self,
+        descriptor: SendDesc,
         preview: SendPreview,
         payload: Option<lane_port::RawSendPayload>,
     ) {
         let (meta, preview_cursor_index) = preview.into_parts();
         self.public_send_state = SendState::Init {
+            descriptor,
             meta,
             preview_cursor_index: Some(preview_cursor_index),
             payload,
@@ -1296,14 +1262,13 @@ where
     #[inline]
     pub(in crate::endpoint) fn poll_public_send(
         &mut self,
-        descriptor: SendDesc,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<SendResult<SendControlOutcome<'r>>>
     where
         <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
     {
         let mut send_state = core::mem::replace(&mut self.public_send_state, SendState::Done);
-        match self.poll_send_state(descriptor, &mut send_state, cx) {
+        match self.poll_send_state(&mut send_state, cx) {
             Poll::Pending => {
                 self.public_send_state = send_state;
                 Poll::Pending
@@ -3269,7 +3234,7 @@ where
             encoded_len,
             control: StagedControlEmission::Emitted {
                 dispatch_token: StagedDispatchToken {
-                    token: RawCapFlowToken { bytes },
+                    token: RawEmittedCapToken::new(bytes),
                     rollback: PendingCapRelease::inert(),
                 },
                 return_emitted: true,
@@ -3377,10 +3342,16 @@ where
         )
         .encode(&mut header);
         let tag = strategy.derive_tag(&nonce, &header);
+        let mut token_bytes = [0u8; crate::control::cap::mint::CAP_TOKEN_LEN];
+        token_bytes[..crate::control::cap::mint::CAP_NONCE_LEN].copy_from_slice(&nonce);
+        token_bytes[crate::control::cap::mint::CAP_NONCE_LEN
+            ..crate::control::cap::mint::CAP_NONCE_LEN + crate::control::cap::mint::CAP_HEADER_LEN]
+            .copy_from_slice(&header);
+        token_bytes[crate::control::cap::mint::CAP_NONCE_LEN
+            + crate::control::cap::mint::CAP_HEADER_LEN..]
+            .copy_from_slice(&tag);
         Ok(MintedControlToken {
-            token: RawCapFlowToken {
-                bytes: GenericCapToken::<()>::from_parts(nonce, header, tag).bytes,
-            },
+            token: RawEmittedCapToken::new(token_bytes),
             dispatch: DescriptorDispatch::new(control, scope, epoch),
             rollback,
         })
@@ -3498,7 +3469,7 @@ where
         &self,
         dispatch: Option<DescriptorDispatch>,
         mut token: StagedDispatchToken,
-    ) -> SendResult<DispatchSendTokenResult> {
+    ) -> SendResult<DispatchSendTokenResult<'r>> {
         let Some(dispatch) = dispatch else {
             return Ok(DispatchSendTokenResult::None);
         };
@@ -3514,8 +3485,8 @@ where
             )
             .map_err(|_| SendError::PhaseInvariant)?;
 
-        match token.rollback.take_registered_parts(token.bytes()) {
-            Some(parts) => Ok(DispatchSendTokenResult::Registered(parts)),
+        match token.rollback.take_registered_token(token.bytes()) {
+            Some(token) => Ok(DispatchSendTokenResult::Registered(token)),
             None => Ok(DispatchSendTokenResult::Emitted),
         }
     }
@@ -3808,9 +3779,7 @@ where
         token: StagedDispatchToken,
     ) -> SendResult<SendControlOutcome<'r>> {
         match self.dispatch_send_token(dispatch, token)? {
-            DispatchSendTokenResult::Registered(parts) => Ok(SendControlOutcome::Registered(
-                RawRegisteredCapToken::from_parts(parts),
-            )),
+            DispatchSendTokenResult::Registered(token) => Ok(SendControlOutcome::Registered(token)),
             DispatchSendTokenResult::None | DispatchSendTokenResult::Emitted => {
                 Err(SendError::PhaseInvariant)
             }
@@ -3826,14 +3795,12 @@ where
     ) -> SendResult<SendControlOutcome<'r>> {
         let emitted = dispatch_token.token;
         match self.dispatch_send_token(dispatch, dispatch_token)? {
-            DispatchSendTokenResult::Registered(parts) => {
+            DispatchSendTokenResult::Registered(token) => {
                 if return_emitted {
-                    drop(parts);
+                    drop(token);
                     Ok(SendControlOutcome::Emitted(emitted))
                 } else {
-                    Ok(SendControlOutcome::Registered(
-                        RawRegisteredCapToken::from_parts(parts),
-                    ))
+                    Ok(SendControlOutcome::Registered(token))
                 }
             }
             DispatchSendTokenResult::Emitted => {
@@ -3872,7 +3839,6 @@ where
     #[inline(never)]
     pub(crate) fn poll_send_state(
         &mut self,
-        descriptor: SendDesc,
         state: &mut SendState<'r>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<SendResult<SendControlOutcome<'r>>>
@@ -3882,11 +3848,12 @@ where
         loop {
             match state {
                 SendState::Init {
+                    descriptor,
                     meta,
                     preview_cursor_index,
                     payload,
                 } => match self.poll_send_init(
-                    descriptor,
+                    *descriptor,
                     *meta,
                     *preview_cursor_index,
                     payload.take(),
@@ -5620,6 +5587,7 @@ where
     }
 
     pub(crate) fn invalidate_public_owner(&mut self) {
+        self.public_header.invalidate();
         self.public_generation = 0;
         self.public_slot_owned = false;
     }
@@ -5666,7 +5634,9 @@ where
                     self.public_generation,
                 );
             }
+            self.public_header.invalidate();
             self.public_generation = 0;
+            self.public_slot_owned = false;
         }
     }
 }

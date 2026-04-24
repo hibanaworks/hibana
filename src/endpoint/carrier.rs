@@ -1,4 +1,4 @@
-//! Crate-private carrier markers and alias owners for internal endpoint packs.
+//! Crate-private carrier markers for internal endpoint packs.
 
 use core::{
     marker::PhantomData,
@@ -7,7 +7,9 @@ use core::{
 };
 
 use crate::{
-    control::types::RendezvousId, rendezvous::core::EndpointLeaseId, transport::wire::Payload,
+    control::types::{Lane, RendezvousId, SessionId},
+    rendezvous::core::EndpointLeaseId,
+    transport::wire::Payload,
 };
 
 pub(crate) struct SessionCfg<K>(pub(crate) PhantomData<fn() -> K>);
@@ -32,62 +34,102 @@ impl RawPayload {
     }
 }
 
-pub(crate) struct EndpointOps<'r, const ROLE: u8> {
+#[repr(C)]
+pub(crate) struct KernelEndpointHeader {
+    ops: *const (),
+    generation: u32,
+    role: u8,
+    _reserved: [u8; 3],
+}
+
+impl KernelEndpointHeader {
+    #[inline(always)]
+    pub(crate) const fn new(ops: *const (), generation: u32, role: u8) -> Self {
+        Self {
+            ops,
+            generation,
+            role,
+            _reserved: [0; 3],
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn ops(&self) -> *const () {
+        self.ops
+    }
+
+    #[inline(always)]
+    pub(crate) const fn generation(&self) -> u32 {
+        self.generation
+    }
+
+    #[inline(always)]
+    pub(crate) const fn role(&self) -> u8 {
+        self.role
+    }
+
+    #[inline(always)]
+    pub(crate) fn invalidate(&mut self) {
+        self.generation = 0;
+    }
+}
+
+pub(crate) struct EndpointOps<'r> {
     pub(crate) drop_endpoint:
-        unsafe fn(state: NonNull<()>, handle: PackedEndpointHandle, generation: u32),
+        unsafe fn(ptr: NonNull<KernelEndpointHeader>, handle: PackedEndpointHandle),
+    pub(crate) revoke_for_session: unsafe fn(
+        ptr: NonNull<KernelEndpointHeader>,
+        sid: SessionId,
+        lanes: *mut Lane,
+        lane_capacity: usize,
+    ) -> usize,
     pub(crate) restore_public_route_branch:
-        unsafe fn(state: NonNull<()>, handle: PackedEndpointHandle, generation: u32),
+        unsafe fn(ptr: NonNull<KernelEndpointHeader>, handle: PackedEndpointHandle),
     pub(crate) reset_public_offer_state:
-        unsafe fn(state: NonNull<()>, handle: PackedEndpointHandle, generation: u32),
+        unsafe fn(ptr: NonNull<KernelEndpointHeader>, handle: PackedEndpointHandle),
     pub(crate) init_public_send_state: unsafe fn(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
+        desc: crate::endpoint::kernel::SendDesc,
         preview: crate::endpoint::kernel::SendPreview,
         payload: Option<crate::endpoint::kernel::RawSendPayload>,
     ),
     pub(crate) reset_public_send_state:
-        unsafe fn(state: NonNull<()>, handle: PackedEndpointHandle, generation: u32),
+        unsafe fn(ptr: NonNull<KernelEndpointHeader>, handle: PackedEndpointHandle),
     pub(crate) init_public_recv_state:
-        unsafe fn(state: NonNull<()>, handle: PackedEndpointHandle, generation: u32),
+        unsafe fn(ptr: NonNull<KernelEndpointHeader>, handle: PackedEndpointHandle),
     pub(crate) reset_public_recv_state:
-        unsafe fn(state: NonNull<()>, handle: PackedEndpointHandle, generation: u32),
+        unsafe fn(ptr: NonNull<KernelEndpointHeader>, handle: PackedEndpointHandle),
     pub(crate) begin_public_decode_state:
-        unsafe fn(state: NonNull<()>, handle: PackedEndpointHandle, generation: u32),
+        unsafe fn(ptr: NonNull<KernelEndpointHeader>, handle: PackedEndpointHandle),
     pub(crate) reset_public_decode_state:
-        unsafe fn(state: NonNull<()>, handle: PackedEndpointHandle, generation: u32),
+        unsafe fn(ptr: NonNull<KernelEndpointHeader>, handle: PackedEndpointHandle),
     pub(crate) preview_flow:
         unsafe fn(
-            state: NonNull<()>,
+            ptr: NonNull<KernelEndpointHeader>,
             handle: PackedEndpointHandle,
-            generation: u32,
             desc: crate::endpoint::kernel::SendDesc,
         ) -> crate::endpoint::SendResult<crate::endpoint::kernel::SendPreview>,
     pub(crate) poll_recv: unsafe fn(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
         desc: crate::endpoint::kernel::RecvDesc,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>>,
     pub(crate) poll_offer: unsafe fn(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<u8>>,
     pub(crate) poll_decode: unsafe fn(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
         desc: crate::endpoint::kernel::DecodeDesc,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>>,
     pub(crate) poll_send: unsafe fn(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
-        desc: crate::endpoint::kernel::SendDesc,
         cx: &mut Context<'_>,
     ) -> Poll<
         crate::endpoint::SendResult<crate::endpoint::kernel::SendControlOutcome<'r>>,
@@ -96,60 +138,28 @@ pub(crate) struct EndpointOps<'r, const ROLE: u8> {
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub(crate) struct PackedEndpointHandle(u32);
+pub(crate) struct PackedEndpointHandle(u64);
 
 impl PackedEndpointHandle {
     #[inline]
-    pub(crate) fn new(rv: RendezvousId, slot: EndpointLeaseId) -> Self {
-        Self(((rv.raw() as u32) << 16) | (u16::from(slot) as u32))
+    pub(crate) fn new(rv: RendezvousId, slot: EndpointLeaseId, generation: u32) -> Self {
+        Self(((generation as u64) << 32) | ((rv.raw() as u64) << 16) | (u16::from(slot) as u64))
     }
 
     #[inline]
-    pub(crate) fn rendezvous(self) -> RendezvousId {
-        RendezvousId::new((self.0 >> 16) as u16)
+    pub(crate) const fn generation(self) -> u32 {
+        (self.0 >> 32) as u32
     }
 
     #[inline]
-    pub(crate) fn slot(self) -> EndpointLeaseId {
-        EndpointLeaseId::from(self.0 as u16)
+    pub(crate) fn matches_header(self, header: &KernelEndpointHeader, role: u8) -> bool {
+        header.generation() == self.generation() && header.role() == role
     }
 }
 
 pub(crate) trait SessionKitFamily {
-    type Transport;
-    type LabelUniverse;
-    type Clock;
-
-    type KernelSessionCluster<'cfg>
-    where
-        Self: 'cfg;
-
-    type KernelCursorEndpoint<'r, const ROLE: u8, E, Mint, B>
-    where
-        Self: 'r,
-        E: crate::control::cap::mint::EpochTable + 'r,
-        Mint: crate::control::cap::mint::MintConfigMarker,
-        B: crate::binding::BindingSlot + 'r;
-
     fn endpoint_ops<const ROLE: u8>() -> *const ();
 }
-
-pub(crate) type KernelCursorEndpoint<'r, const ROLE: u8, K, E, Mint, B> =
-    <K as SessionKitFamily>::KernelCursorEndpoint<'r, ROLE, E, Mint, B>;
-
-type EndpointBinding<'r> = crate::binding::BindingHandle<'r>;
-type PublicKernelEndpoint<'r, const ROLE: u8, T, U, C, const MAX_RV: usize> =
-    crate::endpoint::kernel::CursorEndpoint<
-        'r,
-        ROLE,
-        T,
-        U,
-        C,
-        crate::control::cap::mint::EpochTbl,
-        MAX_RV,
-        crate::control::cap::mint::MintConfig,
-        EndpointBinding<'r>,
-    >;
 
 impl<'cfg, T, U, C, const MAX_RV: usize> crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV>
 where
@@ -157,33 +167,52 @@ where
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
-    unsafe fn public_endpoint_ptr_from_parts<'r, const ROLE: u8>(
-        state: NonNull<()>,
+    unsafe fn public_endpoint_ptr_from_header<'r, const ROLE: u8>(
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
-    ) -> Option<*mut PublicKernelEndpoint<'r, ROLE, T, U, C, MAX_RV>>
+    ) -> Option<
+        *mut crate::endpoint::kernel::CursorEndpoint<
+            'r,
+            ROLE,
+            T,
+            U,
+            C,
+            crate::control::cap::mint::EpochTbl,
+            MAX_RV,
+            crate::control::cap::mint::MintConfig,
+            crate::binding::BindingHandle<'r>,
+        >,
+    >
     where
         'cfg: 'r,
     {
-        let kit = unsafe { state.cast::<Self>().as_ref() };
-        unsafe {
-            kit.public_endpoint_kernel_ptr::<ROLE, crate::control::cap::mint::MintConfig>(
-                handle, generation,
-            )
+        let header = unsafe { ptr.as_ref() };
+        if !handle.matches_header(header, ROLE) {
+            return None;
         }
+        Some(
+            ptr.cast::<crate::endpoint::kernel::CursorEndpoint<
+                'r,
+                ROLE,
+                T,
+                U,
+                C,
+                crate::control::cap::mint::EpochTbl,
+                MAX_RV,
+                crate::control::cap::mint::MintConfig,
+                crate::binding::BindingHandle<'r>,
+            >>()
+            .as_ptr(),
+        )
     }
 
     unsafe fn drop_public_endpoint_raw<const ROLE: u8>(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
     ) {
-        let kit = unsafe { state.cast::<Self>().as_ref() };
-        let Some(endpoint) = (unsafe {
-            kit.public_endpoint_kernel_ptr::<ROLE, crate::control::cap::mint::MintConfig>(
-                handle, generation,
-            )
-        }) else {
+        let Some(endpoint) =
+            (unsafe { Self::public_endpoint_ptr_from_header::<'_, ROLE>(ptr, handle) })
+        else {
             return;
         };
         unsafe {
@@ -191,17 +220,61 @@ where
         }
     }
 
+    unsafe fn revoke_public_endpoint_raw<const ROLE: u8>(
+        ptr: NonNull<KernelEndpointHeader>,
+        sid: SessionId,
+        lanes: *mut Lane,
+        lane_capacity: usize,
+    ) -> usize {
+        let header = unsafe { ptr.as_ref() };
+        if header.role() != ROLE || header.generation() == 0 {
+            return 0;
+        }
+        let endpoint = ptr
+            .cast::<crate::endpoint::kernel::CursorEndpoint<
+                'cfg,
+                ROLE,
+                T,
+                U,
+                C,
+                crate::control::cap::mint::EpochTbl,
+                MAX_RV,
+                crate::control::cap::mint::MintConfig,
+                crate::binding::BindingHandle<'cfg>,
+            >>()
+            .as_ptr();
+        let endpoint = unsafe { &mut *endpoint };
+        if !endpoint.matches_session(sid) {
+            return 0;
+        }
+
+        let mut released = 0usize;
+        endpoint.for_each_physical_lane(|owned_lane| {
+            if released < lane_capacity {
+                unsafe {
+                    lanes.add(released).write(owned_lane);
+                }
+            }
+            released += 1;
+        });
+        debug_assert!(
+            released <= lane_capacity,
+            "public endpoint revoke lane buffer must cover every owned lane"
+        );
+        endpoint.revoke_public_owner();
+        unsafe {
+            core::ptr::drop_in_place(endpoint);
+        }
+        core::cmp::min(released, lane_capacity)
+    }
+
     unsafe fn reset_public_offer_state_raw<const ROLE: u8>(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
     ) {
-        let kit = unsafe { state.cast::<Self>().as_ref() };
-        let Some(endpoint) = (unsafe {
-            kit.public_endpoint_kernel_ptr::<ROLE, crate::control::cap::mint::MintConfig>(
-                handle, generation,
-            )
-        }) else {
+        let Some(endpoint) =
+            (unsafe { Self::public_endpoint_ptr_from_header::<'_, ROLE>(ptr, handle) })
+        else {
             return;
         };
         unsafe {
@@ -210,16 +283,12 @@ where
     }
 
     unsafe fn restore_public_route_branch_raw<const ROLE: u8>(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
     ) {
-        let kit = unsafe { state.cast::<Self>().as_ref() };
-        let Some(endpoint) = (unsafe {
-            kit.public_endpoint_kernel_ptr::<ROLE, crate::control::cap::mint::MintConfig>(
-                handle, generation,
-            )
-        }) else {
+        let Some(endpoint) =
+            (unsafe { Self::public_endpoint_ptr_from_header::<'_, ROLE>(ptr, handle) })
+        else {
             return;
         };
         unsafe {
@@ -228,14 +297,13 @@ where
     }
 
     unsafe fn preview_public_endpoint<const ROLE: u8>(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
         desc: crate::endpoint::kernel::SendDesc,
     ) -> crate::endpoint::SendResult<crate::endpoint::kernel::SendPreview> {
-        let Some(kernel) = (unsafe {
-            Self::public_endpoint_ptr_from_parts::<'_, ROLE>(state, handle, generation)
-        }) else {
+        let Some(kernel) =
+            (unsafe { Self::public_endpoint_ptr_from_header::<'_, ROLE>(ptr, handle) })
+        else {
             return Err(crate::endpoint::SendError::Transport(
                 crate::transport::TransportError::Failed,
             ));
@@ -244,30 +312,29 @@ where
     }
 
     unsafe fn init_public_send_state_raw<const ROLE: u8>(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
+        desc: crate::endpoint::kernel::SendDesc,
         preview: crate::endpoint::kernel::SendPreview,
         payload: Option<crate::endpoint::kernel::RawSendPayload>,
     ) {
-        let Some(kernel) = (unsafe {
-            Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
-        }) else {
+        let Some(kernel) =
+            (unsafe { Self::public_endpoint_ptr_from_header::<'cfg, ROLE>(ptr, handle) })
+        else {
             return;
         };
         unsafe {
-            (&mut *kernel).init_public_send_state(preview, payload);
+            (&mut *kernel).init_public_send_state(desc, preview, payload);
         }
     }
 
     unsafe fn reset_public_send_state_raw<const ROLE: u8>(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
     ) {
-        let Some(kernel) = (unsafe {
-            Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
-        }) else {
+        let Some(kernel) =
+            (unsafe { Self::public_endpoint_ptr_from_header::<'cfg, ROLE>(ptr, handle) })
+        else {
             return;
         };
         unsafe {
@@ -276,13 +343,12 @@ where
     }
 
     unsafe fn init_public_recv_state_raw<const ROLE: u8>(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
     ) {
-        let Some(kernel) = (unsafe {
-            Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
-        }) else {
+        let Some(kernel) =
+            (unsafe { Self::public_endpoint_ptr_from_header::<'cfg, ROLE>(ptr, handle) })
+        else {
             return;
         };
         unsafe {
@@ -291,13 +357,12 @@ where
     }
 
     unsafe fn reset_public_recv_state_raw<const ROLE: u8>(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
     ) {
-        let Some(kernel) = (unsafe {
-            Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
-        }) else {
+        let Some(kernel) =
+            (unsafe { Self::public_endpoint_ptr_from_header::<'cfg, ROLE>(ptr, handle) })
+        else {
             return;
         };
         unsafe {
@@ -306,13 +371,12 @@ where
     }
 
     unsafe fn begin_public_decode_state_raw<const ROLE: u8>(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
     ) {
-        let Some(kernel) = (unsafe {
-            Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
-        }) else {
+        let Some(kernel) =
+            (unsafe { Self::public_endpoint_ptr_from_header::<'cfg, ROLE>(ptr, handle) })
+        else {
             return;
         };
         unsafe {
@@ -321,13 +385,12 @@ where
     }
 
     unsafe fn reset_public_decode_state_raw<const ROLE: u8>(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
     ) {
-        let Some(kernel) = (unsafe {
-            Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
-        }) else {
+        let Some(kernel) =
+            (unsafe { Self::public_endpoint_ptr_from_header::<'cfg, ROLE>(ptr, handle) })
+        else {
             return;
         };
         unsafe {
@@ -336,15 +399,14 @@ where
     }
 
     unsafe fn poll_recv_public_endpoint<const ROLE: u8>(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
         desc: crate::endpoint::kernel::RecvDesc,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>> {
-        let Some(kernel) = (unsafe {
-            Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
-        }) else {
+        let Some(kernel) =
+            (unsafe { Self::public_endpoint_ptr_from_header::<'cfg, ROLE>(ptr, handle) })
+        else {
             return Poll::Ready(Err(crate::endpoint::RecvError::Transport(
                 crate::transport::TransportError::Failed,
             )));
@@ -357,14 +419,13 @@ where
     }
 
     unsafe fn poll_offer_public_endpoint<const ROLE: u8>(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<u8>> {
-        let Some(kernel) = (unsafe {
-            Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
-        }) else {
+        let Some(kernel) =
+            (unsafe { Self::public_endpoint_ptr_from_header::<'cfg, ROLE>(ptr, handle) })
+        else {
             return Poll::Ready(Err(crate::endpoint::RecvError::Transport(
                 crate::transport::TransportError::Failed,
             )));
@@ -373,15 +434,14 @@ where
     }
 
     unsafe fn poll_decode_public_endpoint<const ROLE: u8>(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
         desc: crate::endpoint::kernel::DecodeDesc,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>> {
-        let Some(kernel) = (unsafe {
-            Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
-        }) else {
+        let Some(kernel) =
+            (unsafe { Self::public_endpoint_ptr_from_header::<'cfg, ROLE>(ptr, handle) })
+        else {
             return Poll::Ready(Err(crate::endpoint::RecvError::Transport(
                 crate::transport::TransportError::Failed,
             )));
@@ -394,20 +454,18 @@ where
     }
 
     unsafe fn poll_send_public_endpoint<const ROLE: u8>(
-        state: NonNull<()>,
+        ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        generation: u32,
-        desc: crate::endpoint::kernel::SendDesc,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::SendResult<crate::endpoint::kernel::SendControlOutcome<'cfg>>> {
-        let Some(kernel) = (unsafe {
-            Self::public_endpoint_ptr_from_parts::<'cfg, ROLE>(state, handle, generation)
-        }) else {
+        let Some(kernel) =
+            (unsafe { Self::public_endpoint_ptr_from_header::<'cfg, ROLE>(ptr, handle) })
+        else {
             return Poll::Ready(Err(crate::endpoint::SendError::Transport(
                 crate::transport::TransportError::Failed,
             )));
         };
-        unsafe { (&mut *kernel).poll_public_send(desc, cx) }
+        unsafe { (&mut *kernel).poll_public_send(cx) }
     }
 }
 
@@ -418,26 +476,10 @@ where
     U: crate::runtime::consts::LabelUniverse + 'cfg,
     C: crate::runtime::config::Clock + 'cfg,
 {
-    type Transport = T;
-    type LabelUniverse = U;
-    type Clock = C;
-
-    type KernelSessionCluster<'lease>
-        = crate::control::cluster::core::SessionCluster<'lease, T, U, C, MAX_RV>
-    where
-        Self: 'lease;
-
-    type KernelCursorEndpoint<'r, const ROLE: u8, E, Mint, B>
-        = crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
-    where
-        Self: 'r,
-        E: crate::control::cap::mint::EpochTable + 'r,
-        Mint: crate::control::cap::mint::MintConfigMarker,
-        B: crate::binding::BindingSlot + 'r;
-
     fn endpoint_ops<const ROLE: u8>() -> *const () {
-        let ops: *const EndpointOps<'cfg, ROLE> = &EndpointOps::<'cfg, ROLE> {
+        let ops: *const EndpointOps<'cfg> = &EndpointOps::<'cfg> {
             drop_endpoint: Self::drop_public_endpoint_raw::<ROLE>,
+            revoke_for_session: Self::revoke_public_endpoint_raw::<ROLE>,
             restore_public_route_branch: Self::restore_public_route_branch_raw::<ROLE>,
             reset_public_offer_state: Self::reset_public_offer_state_raw::<ROLE>,
             init_public_send_state: Self::init_public_send_state_raw::<ROLE>,

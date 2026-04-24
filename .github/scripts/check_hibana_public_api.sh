@@ -2,23 +2,29 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-RUSTDOC_JSON="${ROOT_DIR}/target/doc/hibana.json"
-NIGHTLY_CARGO="$(rustup which cargo --toolchain nightly)"
-NIGHTLY_RUSTC="$(rustup which rustc --toolchain nightly)"
-NIGHTLY_RUSTDOC="$(rustup which rustdoc --toolchain nightly)"
-
 cd "${ROOT_DIR}"
 
-RUSTC="${NIGHTLY_RUSTC}" RUSTDOC="${NIGHTLY_RUSTDOC}" \
-  "${NIGHTLY_CARGO}" rustdoc --lib --features std -- -Z unstable-options --output-format json
+export TOOLCHAIN="${TOOLCHAIN:-stable}"
+bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
 
-if [[ ! -f "${RUSTDOC_JSON}" ]]; then
-  echo "missing rustdoc JSON output: ${RUSTDOC_JSON}" >&2
-  exit 1
-fi
+run_stable_gate() {
+  local label="$1"
+  shift
+  echo "==> ${label}"
+  "$@"
+}
 
-HIBANA_RUSTDOC_JSON="${RUSTDOC_JSON}" \
-  RUSTC="${NIGHTLY_RUSTC}" RUSTDOC="${NIGHTLY_RUSTDOC}" \
-  "${NIGHTLY_CARGO}" test --test semantic_surface --features std
+run_stable_gate "public surface budget" \
+  bash "${ROOT_DIR}/.github/scripts/check_public_surface_budget.sh"
+run_stable_gate "surface hygiene" \
+  bash "${ROOT_DIR}/.github/scripts/check_surface_hygiene.sh"
+run_stable_gate "root surface" \
+  cargo +"${TOOLCHAIN}" test -p hibana --test root_surface --features std
+run_stable_gate "substrate surface" \
+  cargo +"${TOOLCHAIN}" test -p hibana --test substrate_surface --features std
+run_stable_gate "public surface guards" \
+  cargo +"${TOOLCHAIN}" test -p hibana --test public_surface_guards --features std
+run_stable_gate "docs surface" \
+  cargo +"${TOOLCHAIN}" test -p hibana --test docs_surface --features std
 
-echo "semantic public API check passed"
+echo "stable public API check passed"

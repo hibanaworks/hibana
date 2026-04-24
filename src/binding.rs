@@ -191,15 +191,15 @@ pub struct IncomingClassification {
 
 /// Slot trait for transport binding on an attached endpoint.
 ///
-/// Transport/runtime adapters implement this trait to connect hibana's flow
-/// operations to their ingress/egress substrate.
+/// Transport/runtime adapters implement this trait to connect hibana's
+/// localside send/recv operations to their ingress/egress substrate.
 ///
 /// When `B = NoBinding` (the default), all methods inline to no-ops at
 /// compile time, providing zero runtime overhead.
 ///
-/// # Receive Flow
+/// # Receive Path
 ///
-/// The receive flow uses a lane-aware two-step approach:
+/// The receive path uses a lane-aware two-step approach:
 ///
 /// 1. **Classification** (`poll_incoming_for_lane`): Called by `offer()` to
 ///    gather demux evidence for the selected logical lane. Only returns

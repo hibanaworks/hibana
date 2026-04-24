@@ -8,11 +8,12 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 use common::TestTransport;
 use hibana::{
-    g::advanced::{RoleProgram, project},
     g::{self, Msg, Role},
+    substrate::program::{RoleProgram, project},
     substrate::{
-        SessionId, SessionKit,
+        SessionKit,
         binding::NoBinding,
+        ids::SessionId,
         runtime::{Config, CounterClock},
         tap::TapEvent,
         wire::{CodecError, Payload, WireEncode, WirePayload},

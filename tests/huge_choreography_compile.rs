@@ -14,7 +14,7 @@ mod route_control_kinds;
 #[path = "../internal/pico_smoke/src/route_localside.rs"]
 mod route_localside;
 
-use hibana::g::advanced::RoleProgram;
+use hibana::substrate::program::RoleProgram;
 
 fn drive<F: core::future::Future>(future: F) -> F::Output {
     futures::executor::block_on(future)

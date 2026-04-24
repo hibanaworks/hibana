@@ -1,8 +1,6 @@
 //! Decode-path helpers for `RouteBranch`.
 
 use core::task::Poll;
-#[cfg(test)]
-use core::{future::Future, marker::PhantomData, pin::Pin, task::Context};
 
 use super::{
     core::{CursorEndpoint, MaterializedRouteBranch, RouteBranch},
@@ -24,37 +22,12 @@ use crate::{
     },
 };
 
-#[cfg(test)]
-use crate::{
-    global::{ControlPayloadKind, MessageSpec},
-    transport::wire::WirePayload,
-};
-
-#[cfg(test)]
-type DecodedPayload<'a, M> = <<M as MessageSpec>::Payload as WirePayload>::Decoded<'a>;
-
-#[cfg(test)]
-#[inline]
-fn validate_decode_payload<P: WirePayload>(payload: Payload<'_>) -> Result<(), CodecError> {
-    P::decode_payload(payload).map(|_| ())
-}
-
-#[cfg(test)]
-#[inline]
-fn synthetic_decode_payload<P: WirePayload>(scratch: &mut [u8]) -> Result<Payload<'_>, CodecError> {
-    P::synthetic_payload(scratch)
-}
-
-pub(crate) type PayloadValidator = for<'a> fn(Payload<'a>) -> Result<(), CodecError>;
-pub(crate) type SyntheticPayloadProvider =
-    for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, CodecError>;
-
 #[derive(Clone, Copy)]
 pub(crate) struct DecodeDesc {
     label: u8,
     expects_control: bool,
-    validate_payload: PayloadValidator,
-    synthetic_payload: SyntheticPayloadProvider,
+    validate_payload: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
+    synthetic_payload: for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, CodecError>,
 }
 
 impl DecodeDesc {
@@ -62,8 +35,8 @@ impl DecodeDesc {
     pub(crate) const fn new(
         label: u8,
         expects_control: bool,
-        validate_payload: PayloadValidator,
-        synthetic_payload: SyntheticPayloadProvider,
+        validate_payload: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
+        synthetic_payload: for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, CodecError>,
     ) -> Self {
         Self {
             label,
@@ -99,121 +72,6 @@ impl<'r> DecodeState<'r> {
             prepared_meta: None,
             pending_recv: lane_port::PendingRecv::new(),
             restore_on_drop: true,
-        }
-    }
-}
-
-#[cfg(test)]
-pub(crate) struct RouteDecodeFuture<
-    'a,
-    'r,
-    const ROLE: u8,
-    T: Transport + 'r,
-    U,
-    C,
-    E: EpochTable,
-    const MAX_RV: usize,
-    Mint,
-    B: BindingSlot + 'r,
-    M,
-> where
-    U: LabelUniverse,
-    C: Clock,
-    Mint: MintConfigMarker,
-    M: MessageSpec,
-    M::Payload: WirePayload,
-{
-    endpoint: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    state: DecodeState<'r>,
-    _borrow: PhantomData<&'a mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>,
-    _msg: PhantomData<M>,
-}
-
-#[cfg(test)]
-impl<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B, M>
-    RouteDecodeFuture<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
-where
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
-    M: MessageSpec,
-    M::Payload: WirePayload,
-{
-    #[inline]
-    pub(super) fn new(
-        endpoint: &'a mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-        branch: RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    ) -> Self {
-        Self {
-            endpoint: core::ptr::from_mut(endpoint),
-            state: DecodeState::new(branch.into()),
-            _borrow: PhantomData,
-            _msg: PhantomData,
-        }
-    }
-}
-
-#[cfg(test)]
-impl<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B, M> Future
-    for RouteDecodeFuture<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
-where
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
-    M: MessageSpec,
-    M::Payload: WirePayload,
-{
-    type Output = RecvResult<DecodedPayload<'a, M>>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = unsafe { self.get_unchecked_mut() };
-        let endpoint = unsafe { &mut *this.endpoint };
-        let desc = DecodeDesc::new(
-            <M as MessageSpec>::LABEL,
-            <M::ControlKind as ControlPayloadKind>::IS_CONTROL,
-            validate_decode_payload::<M::Payload>,
-            synthetic_decode_payload::<M::Payload>,
-        );
-        match endpoint.poll_decode_state(desc, &mut this.state, cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(payload)) => {
-                let payload_view: Payload<'a> = lane_port::shrink_payload(payload);
-                Poll::Ready(
-                    <<M as MessageSpec>::Payload as WirePayload>::decode_payload(payload_view)
-                        .map_err(RecvError::Codec),
-                )
-            }
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
-        }
-    }
-}
-
-#[cfg(test)]
-impl<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B, M> Drop
-    for RouteDecodeFuture<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
-where
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
-    M: MessageSpec,
-    M::Payload: WirePayload,
-{
-    fn drop(&mut self) {
-        if self.state.restore_on_drop {
-            if let Some(branch) = self.state.branch.take() {
-                unsafe {
-                    (&mut *self.endpoint).restore_materialized_route_branch(branch.into());
-                }
-            }
         }
     }
 }
@@ -344,18 +202,6 @@ where
             (desc.synthetic_payload)(scratch).map_err(RecvError::Codec)?
         };
         Ok(lane_port::shrink_payload(payload))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn decode_branch<'a, M>(
-        &'a mut self,
-        branch: &mut RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    ) -> RouteDecodeFuture<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
-    where
-        M: MessageSpec,
-        M::Payload: WirePayload,
-    {
-        RouteDecodeFuture::new(self, branch.clone())
     }
 
     fn finish_route_branch_decode(
@@ -712,29 +558,6 @@ where
             lane,
         );
         Ok(())
-    }
-}
-
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
-    RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
-where
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    B: BindingSlot + 'r,
-{
-    #[cfg(test)]
-    #[inline]
-    pub(super) const fn label(&self) -> u8 {
-        self.label
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(super) fn scope_id(&self) -> crate::global::const_dsl::ScopeId {
-        self.branch_meta.scope_id
     }
 }
 

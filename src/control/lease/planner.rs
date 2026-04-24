@@ -8,16 +8,12 @@
 
 use crate::{
     control::cap::mint::ControlOp,
-    global::{
-        ControlDesc,
-        const_dsl::{ControlScopeKind, PolicyMode},
-    },
+    global::{ControlDesc, const_dsl::PolicyMode},
 };
 
 pub(crate) const FACET_CAPS: u8 = 1 << 0;
-pub(crate) const FACET_SLOTS: u8 = 1 << 1;
-pub(crate) const FACET_TOPOLOGY: u8 = 1 << 2;
-pub(crate) const FACET_DELEGATION: u8 = 1 << 3;
+pub(crate) const FACET_TOPOLOGY: u8 = 1 << 1;
+pub(crate) const FACET_DELEGATION: u8 = 1 << 2;
 
 /// Maximum number of delegation links tracked in [`DelegationChildSet`].
 pub(crate) const DELEGATION_CHILD_SET_CAPACITY: usize = 4;
@@ -36,7 +32,7 @@ impl LeaseFacetNeeds {
     #[inline(always)]
     pub(crate) const fn all() -> Self {
         Self {
-            bits: FACET_CAPS | FACET_SLOTS | FACET_TOPOLOGY | FACET_DELEGATION,
+            bits: FACET_CAPS | FACET_TOPOLOGY | FACET_DELEGATION,
         }
     }
 
@@ -57,11 +53,6 @@ impl LeaseFacetNeeds {
     }
 
     #[inline(always)]
-    pub(crate) const fn requires_slots(&self) -> bool {
-        (self.bits & FACET_SLOTS) != 0
-    }
-
-    #[inline(always)]
     pub(crate) const fn requires_topology(&self) -> bool {
         (self.bits & FACET_TOPOLOGY) != 0
     }
@@ -77,13 +68,6 @@ impl core::fmt::Display for LeaseFacetNeeds {
         let mut wrote = false;
         if self.requires_caps() {
             f.write_str("caps")?;
-            wrote = true;
-        }
-        if self.requires_slots() {
-            if wrote {
-                f.write_str("|")?;
-            }
-            f.write_str("slots")?;
             wrote = true;
         }
         if self.requires_topology() {
@@ -108,18 +92,10 @@ impl core::fmt::Display for LeaseFacetNeeds {
 }
 
 #[inline(always)]
-pub(crate) const fn facets(
-    caps: bool,
-    slots: bool,
-    topology: bool,
-    delegation: bool,
-) -> LeaseFacetNeeds {
+pub(crate) const fn facets(caps: bool, topology: bool, delegation: bool) -> LeaseFacetNeeds {
     let mut bits = 0;
     if caps {
         bits |= FACET_CAPS;
-    }
-    if slots {
-        bits |= FACET_SLOTS;
     }
     if topology {
         bits |= FACET_TOPOLOGY;
@@ -132,22 +108,17 @@ pub(crate) const fn facets(
 
 #[inline(always)]
 pub(crate) const fn facets_caps() -> LeaseFacetNeeds {
-    facets(true, false, false, false)
-}
-
-#[inline(always)]
-pub(crate) const fn facets_slots() -> LeaseFacetNeeds {
-    facets(false, true, false, false)
+    facets(true, false, false)
 }
 
 #[inline(always)]
 pub(crate) const fn facets_caps_topology() -> LeaseFacetNeeds {
-    facets(true, false, true, false)
+    facets(true, true, false)
 }
 
 #[inline(always)]
 pub(crate) const fn facets_caps_delegation() -> LeaseFacetNeeds {
-    facets(true, false, false, true)
+    facets(true, false, true)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -250,12 +221,6 @@ impl LeaseGraphBudget {
 
     #[inline(always)]
     #[cfg(test)]
-    pub(crate) const fn requires_slots(&self) -> bool {
-        self.facets.requires_slots()
-    }
-
-    #[inline(always)]
-    #[cfg(test)]
     pub(crate) const fn requires_topology(&self) -> bool {
         self.facets.requires_topology()
     }
@@ -299,7 +264,7 @@ pub(crate) const fn policy_requirements(
 }
 
 const fn base_facets_for_control(desc: ControlDesc) -> LeaseFacetNeeds {
-    let mut facets = match desc.op() {
+    match desc.op() {
         ControlOp::TopologyBegin | ControlOp::TopologyAck | ControlOp::TopologyCommit => {
             facets_caps_topology()
         }
@@ -314,11 +279,5 @@ const fn base_facets_for_control(desc: ControlDesc) -> LeaseFacetNeeds {
         | ControlOp::RouteDecision
         | ControlOp::LoopContinue
         | ControlOp::LoopBreak => LeaseFacetNeeds::new(),
-    };
-
-    if matches!(desc.scope_kind(), ControlScopeKind::Policy) {
-        facets = facets.union(facets_slots());
     }
-
-    facets
 }

@@ -37,32 +37,6 @@ use crate::global::ControlDesc;
 use crate::global::const_dsl::ControlScopeKind;
 use crate::rendezvous::TopologySessionState;
 
-type PublicEndpointKernel<'r, const ROLE: u8, T, U, C, const MAX_RV: usize, Mint> =
-    crate::endpoint::kernel::CursorEndpoint<
-        'r,
-        ROLE,
-        T,
-        U,
-        C,
-        crate::control::cap::mint::EpochTbl,
-        MAX_RV,
-        Mint,
-        crate::binding::BindingHandle<'r>,
-    >;
-#[cfg(test)]
-type PublicEndpointKernelRaw<'cfg, T, U, C, const MAX_RV: usize> =
-    crate::endpoint::kernel::CursorEndpoint<
-        'cfg,
-        0,
-        T,
-        U,
-        C,
-        crate::control::cap::mint::EpochTbl,
-        MAX_RV,
-        crate::control::cap::mint::MintConfig,
-        crate::binding::BindingHandle<'cfg>,
-    >;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PublicEndpointStorageLayout {
     total_bytes: usize,
@@ -90,16 +64,16 @@ impl TopologyDescriptor {
         let handle = TopologyHandle::decode(bytes).map_err(|_| CpError::Authorisation {
             operation: operation as u8,
         })?;
-        let operands = TopologyOperands::new(
-            RendezvousId::new(handle.src_rv),
-            RendezvousId::new(handle.dst_rv),
-            Lane::new(handle.src_lane as u32),
-            Lane::new(handle.dst_lane as u32),
-            Generation::new(handle.old_gen),
-            Generation::new(handle.new_gen),
-            handle.seq_tx,
-            handle.seq_rx,
-        );
+        let operands = TopologyOperands {
+            src_rv: RendezvousId::new(handle.src_rv),
+            dst_rv: RendezvousId::new(handle.dst_rv),
+            src_lane: Lane::new(handle.src_lane as u32),
+            dst_lane: Lane::new(handle.dst_lane as u32),
+            old_gen: Generation::new(handle.old_gen),
+            new_gen: Generation::new(handle.new_gen),
+            seq_tx: handle.seq_tx,
+            seq_rx: handle.seq_rx,
+        };
         Ok(Self { operands })
     }
 
@@ -184,54 +158,31 @@ pub(crate) struct TopologyOperands {
 }
 
 impl TopologyOperands {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) const fn new(
-        src_rv: RendezvousId,
-        dst_rv: RendezvousId,
-        src_lane: Lane,
-        dst_lane: Lane,
-        old_gen: Generation,
-        new_gen: Generation,
-        seq_tx: u32,
-        seq_rx: u32,
-    ) -> Self {
-        Self {
-            src_rv,
-            dst_rv,
-            src_lane,
-            dst_lane,
-            old_gen,
-            new_gen,
-            seq_tx,
-            seq_rx,
+    pub(crate) fn intent(&self, sid: SessionId) -> TopologyIntent {
+        TopologyIntent {
+            src_rv: self.src_rv,
+            dst_rv: self.dst_rv,
+            sid: sid.raw(),
+            old_gen: self.old_gen,
+            new_gen: self.new_gen,
+            seq_tx: self.seq_tx,
+            seq_rx: self.seq_rx,
+            src_lane: self.src_lane,
+            dst_lane: self.dst_lane,
         }
     }
 
-    pub(crate) fn intent(&self, sid: SessionId) -> TopologyIntent {
-        TopologyIntent::new(
-            self.src_rv,
-            self.dst_rv,
-            sid.raw(),
-            self.old_gen,
-            self.new_gen,
-            self.seq_tx,
-            self.seq_rx,
-            self.src_lane,
-            self.dst_lane,
-        )
-    }
-
     pub(crate) fn ack(&self, sid: SessionId) -> TopologyAck {
-        TopologyAck::new(
-            self.src_rv,
-            self.dst_rv,
-            sid.raw(),
-            self.new_gen,
-            self.src_lane,
-            self.dst_lane,
-            self.seq_tx,
-            self.seq_rx,
-        )
+        TopologyAck {
+            src_rv: self.src_rv,
+            dst_rv: self.dst_rv,
+            sid: sid.raw(),
+            new_gen: self.new_gen,
+            src_lane: self.src_lane,
+            new_lane: self.dst_lane,
+            seq_tx: self.seq_tx,
+            seq_rx: self.seq_rx,
+        }
     }
 }
 
@@ -435,9 +386,6 @@ pub enum ResolverError {
     Reject,
 }
 
-type RouteResolutionOutcome = Result<RouteResolution, ResolverError>;
-type LoopResolutionOutcome = Result<LoopResolution, ResolverError>;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResolverContext {
     rv_id: RendezvousId,
@@ -505,37 +453,45 @@ impl ResolverContext {
     }
 }
 
-type StatelessRouteResolverFn = fn(ResolverContext) -> RouteResolutionOutcome;
-type RouteResolverStatePayload<S> = (*const S, fn(&S, ResolverContext) -> RouteResolutionOutcome);
-type ErasedRouteResolverStatePayload = RouteResolverStatePayload<()>;
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RouteResolverStatePayload<S> {
+    state: *const S,
+    resolver: fn(&S, ResolverContext) -> Result<RouteResolution, ResolverError>,
+}
 
-type StatelessLoopResolverFn = fn(ResolverContext) -> LoopResolutionOutcome;
-type LoopResolverStatePayload<S> = (*const S, fn(&S, ResolverContext) -> LoopResolutionOutcome);
-type ErasedLoopResolverStatePayload = LoopResolverStatePayload<()>;
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct LoopResolverStatePayload<S> {
+    state: *const S,
+    resolver: fn(&S, ResolverContext) -> Result<LoopResolution, ResolverError>,
+}
 
 #[derive(Clone, Copy)]
 union RouteResolverStorage {
-    stateless: StatelessRouteResolverFn,
-    _stateful: ErasedRouteResolverStatePayload,
+    stateless: fn(ResolverContext) -> Result<RouteResolution, ResolverError>,
+    _stateful: RouteResolverStatePayload<()>,
 }
 
 #[derive(Clone, Copy)]
 union LoopResolverStorage {
-    stateless: StatelessLoopResolverFn,
-    _stateful: ErasedLoopResolverStatePayload,
+    stateless: fn(ResolverContext) -> Result<LoopResolution, ResolverError>,
+    _stateful: LoopResolverStatePayload<()>,
 }
 
 #[derive(Clone, Copy)]
 struct RouteResolverRef<'cfg> {
     storage: RouteResolverStorage,
-    dispatch: unsafe fn(RouteResolverStorage, ResolverContext) -> RouteResolutionOutcome,
+    dispatch:
+        unsafe fn(RouteResolverStorage, ResolverContext) -> Result<RouteResolution, ResolverError>,
     _marker: PhantomData<&'cfg ()>,
 }
 
 #[derive(Clone, Copy)]
 struct LoopResolverRef<'cfg> {
     storage: LoopResolverStorage,
-    dispatch: unsafe fn(LoopResolverStorage, ResolverContext) -> LoopResolutionOutcome,
+    dispatch:
+        unsafe fn(LoopResolverStorage, ResolverContext) -> Result<LoopResolution, ResolverError>,
     _marker: PhantomData<&'cfg ()>,
 }
 
@@ -559,14 +515,17 @@ impl<'cfg> ResolverRef<'cfg> {
         const {
             assert!(
                 core::mem::size_of::<RouteResolverStatePayload<S>>()
-                    == core::mem::size_of::<ErasedRouteResolverStatePayload>()
+                    == core::mem::size_of::<RouteResolverStatePayload<()>>()
             );
             assert!(
                 core::mem::align_of::<RouteResolverStatePayload<S>>()
-                    == core::mem::align_of::<ErasedRouteResolverStatePayload>()
+                    == core::mem::align_of::<RouteResolverStatePayload<()>>()
             );
         }
-        let payload = (core::ptr::from_ref(state), resolver);
+        let payload = RouteResolverStatePayload {
+            state: core::ptr::from_ref(state),
+            resolver,
+        };
         let mut storage = MaybeUninit::<RouteResolverStorage>::uninit();
         unsafe {
             storage
@@ -606,14 +565,17 @@ impl<'cfg> ResolverRef<'cfg> {
         const {
             assert!(
                 core::mem::size_of::<LoopResolverStatePayload<S>>()
-                    == core::mem::size_of::<ErasedLoopResolverStatePayload>()
+                    == core::mem::size_of::<LoopResolverStatePayload<()>>()
             );
             assert!(
                 core::mem::align_of::<LoopResolverStatePayload<S>>()
-                    == core::mem::align_of::<ErasedLoopResolverStatePayload>()
+                    == core::mem::align_of::<LoopResolverStatePayload<()>>()
             );
         }
-        let payload = (core::ptr::from_ref(state), resolver);
+        let payload = LoopResolverStatePayload {
+            state: core::ptr::from_ref(state),
+            resolver,
+        };
         let mut storage = MaybeUninit::<LoopResolverStorage>::uninit();
         unsafe {
             storage
@@ -656,7 +618,7 @@ impl<'cfg> ResolverRef<'cfg> {
     }
 
     #[inline]
-    fn resolve_route(self, ctx: ResolverContext) -> RouteResolutionOutcome {
+    fn resolve_route(self, ctx: ResolverContext) -> Result<RouteResolution, ResolverError> {
         match self.inner {
             ResolverRefInner::Route(resolver) => unsafe {
                 (resolver.dispatch)(resolver.storage, ctx)
@@ -666,7 +628,7 @@ impl<'cfg> ResolverRef<'cfg> {
     }
 
     #[inline]
-    fn resolve_loop(self, ctx: ResolverContext) -> LoopResolutionOutcome {
+    fn resolve_loop(self, ctx: ResolverContext) -> Result<LoopResolution, ResolverError> {
         match self.inner {
             ResolverRefInner::Loop(resolver) => unsafe {
                 (resolver.dispatch)(resolver.storage, ctx)
@@ -679,30 +641,30 @@ impl<'cfg> ResolverRef<'cfg> {
 unsafe fn dispatch_route_state<S>(
     storage: RouteResolverStorage,
     ctx: ResolverContext,
-) -> RouteResolutionOutcome {
+) -> Result<RouteResolution, ResolverError> {
     const {
         assert!(
             core::mem::size_of::<RouteResolverStatePayload<S>>()
-                == core::mem::size_of::<ErasedRouteResolverStatePayload>()
+                == core::mem::size_of::<RouteResolverStatePayload<()>>()
         );
         assert!(
             core::mem::align_of::<RouteResolverStatePayload<S>>()
-                == core::mem::align_of::<ErasedRouteResolverStatePayload>()
+                == core::mem::align_of::<RouteResolverStatePayload<()>>()
         );
     }
-    let (state, resolver) = unsafe {
+    let payload = unsafe {
         (&storage as *const RouteResolverStorage)
             .cast::<RouteResolverStatePayload<S>>()
             .read()
     };
-    let state = unsafe { &*state };
-    resolver(state, ctx)
+    let state = unsafe { &*payload.state };
+    (payload.resolver)(state, ctx)
 }
 
 unsafe fn dispatch_route_fn(
     storage: RouteResolverStorage,
     ctx: ResolverContext,
-) -> RouteResolutionOutcome {
+) -> Result<RouteResolution, ResolverError> {
     let resolver = unsafe { storage.stateless };
     resolver(ctx)
 }
@@ -710,30 +672,30 @@ unsafe fn dispatch_route_fn(
 unsafe fn dispatch_loop_state<S>(
     storage: LoopResolverStorage,
     ctx: ResolverContext,
-) -> LoopResolutionOutcome {
+) -> Result<LoopResolution, ResolverError> {
     const {
         assert!(
             core::mem::size_of::<LoopResolverStatePayload<S>>()
-                == core::mem::size_of::<ErasedLoopResolverStatePayload>()
+                == core::mem::size_of::<LoopResolverStatePayload<()>>()
         );
         assert!(
             core::mem::align_of::<LoopResolverStatePayload<S>>()
-                == core::mem::align_of::<ErasedLoopResolverStatePayload>()
+                == core::mem::align_of::<LoopResolverStatePayload<()>>()
         );
     }
-    let (state, resolver) = unsafe {
+    let payload = unsafe {
         (&storage as *const LoopResolverStorage)
             .cast::<LoopResolverStatePayload<S>>()
             .read()
     };
-    let state = unsafe { &*state };
-    resolver(state, ctx)
+    let state = unsafe { &*payload.state };
+    (payload.resolver)(state, ctx)
 }
 
 unsafe fn dispatch_loop_fn(
     storage: LoopResolverStorage,
     ctx: ResolverContext,
-) -> LoopResolutionOutcome {
+) -> Result<LoopResolution, ResolverError> {
     let resolver = unsafe { storage.stateless };
     resolver(ctx)
 }
@@ -1466,18 +1428,7 @@ impl<const MAX: usize> DistributedTopologyState<MAX> {
         }
 
         let mut tap = NoopTap;
-        let (in_begin, intent) = DistributedTopology::begin(
-            operands.src_rv,
-            operands.dst_rv,
-            sid.raw(),
-            operands.old_gen,
-            operands.new_gen,
-            operands.seq_tx,
-            operands.seq_rx,
-            operands.src_lane,
-            operands.dst_lane,
-            &mut tap,
-        );
+        let (in_begin, intent) = DistributedTopology::begin(operands.intent(sid), &mut tap);
 
         let entry = DistributedEntry {
             operands,
@@ -1842,7 +1793,8 @@ impl CachedTopologyBucket {
 /// # Example
 ///
 /// ```rust,ignore
-/// use hibana::substrate::{RendezvousId, SessionCluster};
+/// use hibana::substrate::ids::RendezvousId;
+/// use hibana::substrate::SessionKit;
 ///
 /// let clock = CounterClock::new();
 /// let mut cluster: SessionCluster<8> = SessionCluster::new(&clock);
@@ -2392,7 +2344,17 @@ where
     ) -> Option<(
         EndpointLeaseId,
         u32,
-        *mut PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>,
+        *mut crate::endpoint::kernel::CursorEndpoint<
+            'r,
+            ROLE,
+            T,
+            U,
+            C,
+            crate::control::cap::mint::EpochTbl,
+            MAX_RV,
+            Mint,
+            crate::binding::BindingHandle<'r>,
+        >,
     )>
     where
         Mint: crate::control::cap::mint::MintConfigMarker,
@@ -2403,7 +2365,17 @@ where
                 (
                     slot,
                     generation,
-                    ptr.cast::<PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>>(),
+                    ptr.cast::<crate::endpoint::kernel::CursorEndpoint<
+                        'r,
+                        ROLE,
+                        T,
+                        U,
+                        C,
+                        crate::control::cap::mint::EpochTbl,
+                        MAX_RV,
+                        Mint,
+                        crate::binding::BindingHandle<'r>,
+                    >>(),
                 )
             })
     }
@@ -2442,6 +2414,18 @@ where
             return None;
         }
         Some(unsafe { slab_ptr.add(offset).cast() })
+    }
+
+    pub(crate) fn public_endpoint_header_ptr(
+        &self,
+        rv_id: RendezvousId,
+        slot: EndpointLeaseId,
+        generation: u32,
+    ) -> Option<core::ptr::NonNull<crate::endpoint::carrier::KernelEndpointHeader>> {
+        core::ptr::NonNull::new(
+            self.public_endpoint_storage_raw_ptr(rv_id, slot, generation)?
+                .cast::<crate::endpoint::carrier::KernelEndpointHeader>(),
+        )
     }
 
     fn ensure_compiled_program_ref<'prog, const ROLE: u8, P>(
@@ -2594,33 +2578,6 @@ where
         self.ensure_role_image_slice(rv_id, program)
     }
 
-    unsafe fn public_endpoint_storage_ptr<'r, const ROLE: u8, Mint>(
-        &self,
-        rv_id: RendezvousId,
-        slot: EndpointLeaseId,
-        generation: u32,
-    ) -> Option<*mut PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>>
-    where
-        Mint: crate::control::cap::mint::MintConfigMarker,
-        'cfg: 'r,
-    {
-        self.public_endpoint_storage_raw_ptr(rv_id, slot, generation)
-            .map(|ptr| ptr.cast::<PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>>())
-    }
-
-    pub(crate) unsafe fn public_endpoint_ptr<'r, const ROLE: u8, Mint>(
-        &self,
-        rv_id: RendezvousId,
-        slot: EndpointLeaseId,
-        generation: u32,
-    ) -> Option<*mut PublicEndpointKernel<'r, ROLE, T, U, C, MAX_RV, Mint>>
-    where
-        Mint: crate::control::cap::mint::MintConfigMarker,
-        'cfg: 'r,
-    {
-        unsafe { self.public_endpoint_storage_ptr::<ROLE, Mint>(rv_id, slot, generation) }
-    }
-
     pub(crate) unsafe fn release_public_endpoint_slot(
         &self,
         rv_id: RendezvousId,
@@ -2650,46 +2607,6 @@ where
             return Err(AttachError::Control(CpError::ResourceExhausted));
         }
         Ok(())
-    }
-
-    unsafe fn revoke_public_endpoint<const ROLE: u8>(
-        endpoint: *mut (),
-        sid: SessionId,
-        lanes: *mut Lane,
-        lane_capacity: usize,
-    ) -> usize {
-        let endpoint = endpoint.cast::<PublicEndpointKernel<
-            'cfg,
-            ROLE,
-            T,
-            U,
-            C,
-            MAX_RV,
-            crate::control::cap::mint::MintConfig,
-        >>();
-        let endpoint = unsafe { &mut *endpoint };
-        if !endpoint.matches_session(sid) {
-            return 0;
-        }
-
-        let mut released = 0usize;
-        endpoint.for_each_physical_lane(|owned_lane| {
-            if released < lane_capacity {
-                unsafe {
-                    lanes.add(released).write(owned_lane);
-                }
-            }
-            released += 1;
-        });
-        debug_assert!(
-            released <= lane_capacity,
-            "public endpoint revoke lane buffer must cover every owned lane"
-        );
-        endpoint.revoke_public_owner();
-        unsafe {
-            core::ptr::drop_in_place(endpoint);
-        }
-        core::cmp::min(released, lane_capacity)
     }
 
     #[inline]
@@ -3242,7 +3159,7 @@ where
     pub(crate) fn set_resolver<'prog, const POLICY: u16, const ROLE: u8>(
         &self,
         rv_id: RendezvousId,
-        program: &crate::g::advanced::RoleProgram<ROLE>,
+        program: &crate::substrate::program::RoleProgram<ROLE>,
         resolver: ResolverRef<'cfg>,
     ) -> Result<(), CpError> {
         self.with_transient_compiled_program(rv_id, program, |compiled| {
@@ -3599,9 +3516,8 @@ where
         handle: SessionLaneHandle,
         operation: ControlOp,
     ) -> Result<(), CpError> {
-        let (sid_raw, lane_raw) = handle;
-        let handle_sid = SessionId::new(sid_raw);
-        let handle_lane = Lane::new(lane_raw as u32);
+        let handle_sid = SessionId::new(handle.sid());
+        let handle_lane = Lane::new(handle.lane() as u32);
         if handle_sid != expected_sid || handle_lane != expected_lane {
             return Err(CpError::Authorisation {
                 operation: operation as u8,
@@ -4406,8 +4322,8 @@ where
         role_image: RoleImageSlice<ROLE>,
         public_slot: EndpointLeaseId,
         public_generation: u32,
+        public_ops: *const (),
         public_slot_owned: bool,
-        public_revoke: crate::endpoint::kernel::PublicEndpointRevoke,
         mint: Mint,
         binding_enabled: bool,
         binding: B,
@@ -4485,8 +4401,8 @@ where
                 rv_id,
                 public_slot,
                 public_generation,
+                public_ops,
                 public_slot_owned,
-                public_revoke,
                 liveness_policy,
                 control,
                 mint,
@@ -4533,7 +4449,7 @@ where
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<ROLE>,
+        program: &crate::substrate::program::RoleProgram<ROLE>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
@@ -4648,6 +4564,7 @@ where
                     None => return Err(AttachError::Control(CpError::ResourceExhausted)),
                 };
                 let arena_storage = dst.cast::<u8>().add(storage_layout.arena_offset);
+                let public_ops = <crate::substrate::SessionKit<'cfg, T, U, C, MAX_RV> as crate::endpoint::carrier::SessionKitFamily>::endpoint_ops::<ROLE>();
                 if let Err(err) = self.init_endpoint_with_compiled_into::<
                     ROLE,
                     crate::control::cap::mint::MintConfig,
@@ -4660,10 +4577,8 @@ where
                     role_image,
                     slot,
                     generation,
+                    public_ops,
                     true,
-                    crate::endpoint::kernel::PublicEndpointRevoke::new(
-                        Self::revoke_public_endpoint::<ROLE>,
-                    ),
                     crate::control::cap::mint::MintConfig::INSTANCE,
                     binding_enabled,
                     binding,
@@ -4740,8 +4655,8 @@ where
                 role_image,
                 slot,
                 generation,
+                core::ptr::null(),
                 true,
-                crate::endpoint::kernel::PublicEndpointRevoke::UNARMED,
                 Mint::INSTANCE,
                 binding_enabled,
                 binding,
@@ -4763,7 +4678,7 @@ where
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<ROLE>,
+        program: &crate::substrate::program::RoleProgram<ROLE>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
@@ -4777,7 +4692,7 @@ where
         &'r self,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<ROLE>,
+        program: &crate::substrate::program::RoleProgram<ROLE>,
         binding: crate::binding::BindingHandle<'r>,
     ) -> Result<(EndpointLeaseId, u32), AttachError>
     where
@@ -4958,8 +4873,7 @@ mod tests {
 
     use crate::control::cap::mint::{
         CAP_HANDLE_LEN, CAP_HEADER_LEN, CAP_NONCE_LEN, CAP_TAG_LEN, CAP_TOKEN_LEN, CapError,
-        CapHeader, CapShot, ControlPath, ControlResourceKind, GenericCapToken, MintConfig,
-        ResourceKind,
+        CapHeader, CapShot, ControlPath, ControlResourceKind, GenericCapToken, ResourceKind,
     };
     use crate::control::cap::resource_kinds::{RouteArmHandle, RouteDecisionKind};
     use crate::control::types::{Generation, Lane, SessionId};
@@ -4975,6 +4889,18 @@ mod tests {
     use core::mem::size_of;
     use core::{cell::UnsafeCell, mem::MaybeUninit};
     use std::{string::String, thread_local};
+
+    fn token_wire_image(
+        nonce: [u8; CAP_NONCE_LEN],
+        header: [u8; CAP_HEADER_LEN],
+        tag: [u8; CAP_TAG_LEN],
+    ) -> [u8; CAP_TOKEN_LEN] {
+        let mut bytes = [0u8; CAP_TOKEN_LEN];
+        bytes[..CAP_NONCE_LEN].copy_from_slice(&nonce);
+        bytes[CAP_NONCE_LEN..CAP_NONCE_LEN + CAP_HEADER_LEN].copy_from_slice(&header);
+        bytes[CAP_NONCE_LEN + CAP_HEADER_LEN..].copy_from_slice(&tag);
+        bytes
+    }
 
     #[test]
     fn resolver_ref_route_state_dispatches_borrowed_state() {
@@ -5020,7 +4946,7 @@ mod tests {
     type SharedBorrowProgram = Program<SharedBorrowSteps>;
     type SharedBorrowPolicyProgram<const POLICY_ID: u16> =
         Program<PolicySteps<SharedBorrowSteps, POLICY_ID>>;
-    type SharedBorrowRoleProgram = crate::g::advanced::RoleProgram<0>;
+    type SharedBorrowRoleProgram = crate::substrate::program::RoleProgram<0>;
 
     fn shared_borrow_program_a() -> SharedBorrowProgram {
         g::send::<
@@ -5059,7 +4985,7 @@ mod tests {
         >()
         .policy::<ROUTE_POLICY_TWO>()
     }
-    // Dummy transport for testing
+    // Minimal transport used by resident runtime validation.
     struct DummyTransport;
 
     impl Transport for DummyTransport {
@@ -5385,12 +5311,12 @@ mod tests {
         }
     }
 
-    type AttachRoleProgram = crate::g::advanced::RoleProgram<0>;
+    type AttachRoleProgram = crate::substrate::program::RoleProgram<0>;
     fn attach_program() -> AttachRoleProgram {
         role_program::project(&g::send::<Role<0>, Role<1>, Msg<0x41, u8>, 0>())
     }
 
-    type Lane1WorkerRoleProgram = crate::g::advanced::RoleProgram<1>;
+    type Lane1WorkerRoleProgram = crate::substrate::program::RoleProgram<1>;
     fn lane1_worker_program() -> Lane1WorkerRoleProgram {
         role_program::project(&g::send::<Role<1>, Role<0>, Msg<0x42, u8>, 1>())
     }
@@ -5399,7 +5325,7 @@ mod tests {
         cluster: &'static StaticTestCluster<4>,
         rv_id: RendezvousId,
         sid: SessionId,
-        program: &crate::g::advanced::RoleProgram<ROLE>,
+        program: &crate::substrate::program::RoleProgram<ROLE>,
     ) -> ((EndpointLeaseId, u32), Lane) {
         let handle = cluster
             .enter(
@@ -5414,7 +5340,7 @@ mod tests {
             .expect("registered rendezvous")
             .session_lane(sid)
             .expect("attached session must own a lane");
-        (handle, lane)
+        ((handle.0, handle.1), lane)
     }
 
     fn attach_session_lane(
@@ -5449,7 +5375,7 @@ mod tests {
         cluster
             .get_local(&rv_id)
             .expect("registered rendezvous")
-            .advance_lane_generation_for_test(lane, target);
+            .advance_lane_generation_to(lane, target);
     }
 
     fn session_lane_control_token<K: ControlResourceKind>(
@@ -5483,7 +5409,7 @@ mod tests {
             handle,
         )
         .encode(&mut header);
-        GenericCapToken::<()>::from_parts([0; CAP_NONCE_LEN], header, [0; CAP_TAG_LEN]).into_bytes()
+        token_wire_image([0; CAP_NONCE_LEN], header, [0; CAP_TAG_LEN])
     }
 
     #[inline]
@@ -6261,7 +6187,17 @@ mod tests {
             "public endpoint lease must stay a small metadata owner"
         );
         let endpoint_storage_bytes = size_of::<
-            PublicEndpointKernelRaw<'static, DummyTransport, DefaultLabelUniverse, CounterClock, 2>,
+            crate::endpoint::kernel::CursorEndpoint<
+                'static,
+                0,
+                DummyTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                crate::control::cap::mint::EpochTbl,
+                2,
+                crate::control::cap::mint::MintConfig,
+                crate::binding::BindingHandle<'static>,
+            >,
         >();
         assert!(
             endpoint_storage_bytes <= CLUSTER_TEST_SLAB_CAPACITY,
@@ -6316,11 +6252,7 @@ mod tests {
                         );
 
                         unsafe {
-                            let worker_endpoint = cluster
-                                .public_endpoint_ptr::<1, MintConfig>(rv_id, second.0, second.1)
-                                .expect("live worker endpoint");
-                            core::ptr::drop_in_place(worker_endpoint);
-                            cluster.release_public_endpoint_slot_owned(rv_id, second.0, second.1);
+                            drop_test_public_endpoint_for_role::<1, 1>(cluster, rv_id, second);
                             drop_test_public_endpoint(cluster, rv_id, first);
                         }
                     });
@@ -6451,7 +6383,17 @@ mod tests {
                 crate::global::lowering_input(&route_heavy_worker).footprint(),
             );
         let endpoint_storage_bytes = size_of::<
-            PublicEndpointKernelRaw<'static, DummyTransport, DefaultLabelUniverse, CounterClock, 1>,
+            crate::endpoint::kernel::CursorEndpoint<
+                'static,
+                0,
+                DummyTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                crate::control::cap::mint::EpochTbl,
+                1,
+                crate::control::cap::mint::MintConfig,
+                crate::binding::BindingHandle<'static>,
+            >,
         >();
         let rendezvous_header_bytes = size_of::<
             crate::rendezvous::core::Rendezvous<
@@ -6466,7 +6408,6 @@ mod tests {
         let route_table_bytes = size_of::<crate::rendezvous::tables::RouteTable>();
         let loop_table_bytes = size_of::<crate::rendezvous::tables::LoopTable>();
         let cap_table_bytes = size_of::<crate::rendezvous::capability::CapTable>();
-        let slot_arena_bytes = size_of::<crate::rendezvous::slots::SlotArena>();
         let delegation_graph_bytes = size_of::<
             LeaseGraph<
                 'static,
@@ -6504,10 +6445,9 @@ mod tests {
                 && route_table_bytes <= 128
                 && loop_table_bytes <= 64
                 && cap_table_bytes <= 64
-                && slot_arena_bytes <= 512
                 && delegation_graph_bytes <= 3_000
                 && topology_graph_bytes <= 2_000,
-            "resident regression: session_cluster={session_cluster_bytes} control_core={control_core_bytes} rv_core={rv_core_bytes} resolver={resolver_core_bytes} lowering_summary={lowering_summary_bytes} compiled_program={compiled_program_bytes} compiled_role={compiled_role_bytes} role_compile_scratch={role_compile_scratch_bytes} endpoint_storage={endpoint_storage_bytes} rendezvous_header={rendezvous_header_bytes} route_table={route_table_bytes} loop_table={loop_table_bytes} cap_table={cap_table_bytes} slot_arena={slot_arena_bytes} delegation_graph={delegation_graph_bytes} topology_graph={topology_graph_bytes}"
+            "resident regression: session_cluster={session_cluster_bytes} control_core={control_core_bytes} rv_core={rv_core_bytes} resolver={resolver_core_bytes} lowering_summary={lowering_summary_bytes} compiled_program={compiled_program_bytes} compiled_role={compiled_role_bytes} role_compile_scratch={role_compile_scratch_bytes} endpoint_storage={endpoint_storage_bytes} rendezvous_header={rendezvous_header_bytes} route_table={route_table_bytes} loop_table={loop_table_bytes} cap_table={cap_table_bytes} delegation_graph={delegation_graph_bytes} topology_graph={topology_graph_bytes}"
         );
     }
 
@@ -6851,14 +6791,19 @@ mod tests {
         rv_id: RendezvousId,
         handle: (crate::rendezvous::core::EndpointLeaseId, u32),
     ) {
-        if let Some(endpoint) =
-            unsafe { cluster.public_endpoint_ptr::<ROLE, MintConfig>(rv_id, handle.0, handle.1) }
-        {
+        if let Some(header) = cluster.public_endpoint_header_ptr(rv_id, handle.0, handle.1) {
+            let packed =
+                crate::endpoint::carrier::PackedEndpointHandle::new(rv_id, handle.0, handle.1);
+            let ops = unsafe {
+                &*header
+                    .as_ref()
+                    .ops()
+                    .cast::<crate::endpoint::carrier::EndpointOps<'static>>()
+            };
             unsafe {
-                core::ptr::drop_in_place(endpoint);
+                (ops.drop_endpoint)(header, packed);
             }
         }
-        cluster.release_public_endpoint_slot_owned(rv_id, handle.0, handle.1);
     }
 
     unsafe fn drop_test_public_endpoint<const MAX_RV: usize>(
@@ -6902,16 +6847,16 @@ mod tests {
                         let sid = SessionId::new(7);
                         let (src_handle, src_lane) = attach_session_lane(cluster, src_id, sid);
                         let dst_lane = Lane::new(1);
-                        let operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         let pending = cluster
                             .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
@@ -6936,16 +6881,16 @@ mod tests {
                             .expect("dispatch succeeds");
 
                         let sid_fail = SessionId::new(9);
-                        let operands_fail = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            Generation::new(1),
-                            Generation::new(2),
-                            0,
-                            0,
-                        );
+                        let operands_fail = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(1),
+                            new_gen: Generation::new(2),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         let err = cluster
                             .run_effect_step(
@@ -6994,16 +6939,16 @@ mod tests {
                         let sid = SessionId::new(15);
                         let src_lane = Lane::new(0);
                         let dst_lane = Lane::new(1);
-                        let operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         let err = cluster
                             .run_effect_step(dst_id, CpCommand::topology_begin(sid, operands))
@@ -7144,16 +7089,16 @@ mod tests {
 
                         advance_lane_generation(cluster, src_id, src_lane, Generation::new(1));
 
-                        let stale = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            Generation::new(0),
-                            Generation::new(2),
-                            0,
-                            0,
-                        );
+                        let stale = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(2),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         let err = cluster
                             .run_effect_step(src_id, CpCommand::topology_begin(sid, stale))
@@ -7177,16 +7122,16 @@ mod tests {
                             Generation::new(1)
                         );
 
-                        let correct = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            Generation::new(1),
-                            Generation::new(2),
-                            0,
-                            0,
-                        );
+                        let correct = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(1),
+                            new_gen: Generation::new(2),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         let pending = cluster
                             .run_effect_step(src_id, CpCommand::topology_begin(sid, correct))
@@ -7221,16 +7166,16 @@ mod tests {
                         let sid = SessionId::new(17);
                         let (src_handle, src_lane) = attach_session_lane(cluster, src_id, sid);
                         let dst_lane = Lane::new(1);
-                        let operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         cluster
                             .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
@@ -7312,16 +7257,16 @@ mod tests {
                         let sid = SessionId::new(19);
                         let (src_handle, src_lane) = attach_session_lane(cluster, src_id, sid);
                         let dst_lane = Lane::new(1);
-                        let operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         cluster
                             .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
@@ -7356,16 +7301,16 @@ mod tests {
                             "ack must preserve source-side expected ACK until commit",
                         );
 
-                        let bad_operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            operands.old_gen,
-                            Generation::new(2),
-                            operands.seq_tx,
-                            operands.seq_rx,
-                        );
+                        let bad_operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: operands.old_gen,
+                            new_gen: Generation::new(2),
+                            seq_tx: operands.seq_tx,
+                            seq_rx: operands.seq_rx,
+                        };
 
                         let err = cluster
                             .run_effect_step(src_id, CpCommand::topology_commit(sid, bad_operands))
@@ -7398,15 +7343,9 @@ mod tests {
                             "rejected commit must clear cluster-owned distributed topology state",
                         );
                         assert!(
-                            unsafe {
-                                cluster
-                                    .public_endpoint_ptr::<0, MintConfig>(
-                                        src_id,
-                                        src_handle.0,
-                                        src_handle.1,
-                                    )
-                                    .is_some()
-                            },
+                            cluster
+                                .public_endpoint_header_ptr(src_id, src_handle.0, src_handle.1)
+                                .is_some(),
                             "rejected commit must not revoke the source public endpoint",
                         );
 
@@ -7438,16 +7377,16 @@ mod tests {
                         let sid = SessionId::new(21);
                         let (src_handle, src_lane) = attach_session_lane(cluster, src_id, sid);
                         let dst_lane = Lane::new(1);
-                        let operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         cluster
                             .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
@@ -7536,15 +7475,9 @@ mod tests {
                             "rejected destination attach must roll back the source-side topology owner",
                         );
                         assert!(
-                            unsafe {
-                                cluster
-                                    .public_endpoint_ptr::<0, MintConfig>(
-                                        src_id,
-                                        src_handle.0,
-                                        src_handle.1,
-                                    )
-                                    .is_some()
-                            },
+                            cluster
+                                .public_endpoint_header_ptr(src_id, src_handle.0, src_handle.1)
+                                .is_some(),
                             "rejected destination attach must not revoke the existing source public endpoint",
                         );
 
@@ -7590,16 +7523,16 @@ mod tests {
                         let sid = SessionId::new(32);
                         let (src_handle, src_lane) = attach_session_lane(cluster, src_id, sid);
                         let dst_lane = Lane::new(1);
-                        let operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         cluster
                             .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
@@ -7708,16 +7641,16 @@ mod tests {
                         let sid = SessionId::new(33);
                         let (src_handle, src_lane) = attach_session_lane(cluster, src_id, sid);
                         let dst_lane = Lane::new(1);
-                        let operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         cluster
                             .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
@@ -7817,16 +7750,16 @@ mod tests {
                         let sid = SessionId::new(22);
                         let (_src_handle, src_lane) = attach_session_lane(cluster, src_id, sid);
                         let dst_lane = Lane::new(1);
-                        let operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         cluster
                             .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
@@ -7973,17 +7906,17 @@ mod tests {
                             rv.prepare_topology_control_scope(dst_lane)
                                 .expect("orphan prepare test must bind topology storage");
                             rv.process_topology_intent(
-                                &crate::control::automaton::distributed::TopologyIntent::new(
-                                    RendezvousId::new(99),
-                                    dst_id,
-                                    sid.raw(),
-                                    Generation::ZERO,
-                                    Generation::new(1),
-                                    0,
-                                    0,
-                                    Lane::new(0),
-                                    dst_lane,
-                                ),
+                                &crate::control::automaton::distributed::TopologyIntent {
+                                    src_rv: RendezvousId::new(99),
+                                    dst_rv: dst_id,
+                                    sid: sid.raw(),
+                                    old_gen: Generation::ZERO,
+                                    new_gen: Generation::new(1),
+                                    seq_tx: 0,
+                                    seq_rx: 0,
+                                    src_lane: Lane::new(0),
+                                    dst_lane: dst_lane,
+                                },
                             )
                             .expect("direct orphan prepare must stage destination pending state");
                         });
@@ -8079,16 +8012,16 @@ mod tests {
 
                         let sid = SessionId::new(35);
                         let (src_handle, src_lane) = attach_session_lane(cluster, src_id, sid);
-                        let operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            Lane::new(1),
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: Lane::new(1),
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         cluster
                             .with_control_mut(|core| {
@@ -8172,16 +8105,16 @@ mod tests {
                             &route_policy_projected,
                         );
                         let dst_lane = Lane::new(0);
-                        let operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         cluster
                             .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
@@ -8265,16 +8198,16 @@ mod tests {
                         let sid = SessionId::new(23);
                         let (src_handle, src_lane) = attach_session_lane(cluster, src_id, sid);
                         let dst_lane = Lane::new(1);
-                        let operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         cluster
                             .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
@@ -8302,15 +8235,9 @@ mod tests {
                             .expect("ack succeeds");
 
                         assert!(
-                            unsafe {
-                                cluster
-                                    .public_endpoint_ptr::<0, MintConfig>(
-                                        src_id,
-                                        src_handle.0,
-                                        src_handle.1,
-                                    )
-                                    .is_some()
-                            },
+                            cluster
+                                .public_endpoint_header_ptr(src_id, src_handle.0, src_handle.1)
+                                .is_some(),
                             "source endpoint must be live before the rejected direct commit",
                         );
 
@@ -8327,15 +8254,9 @@ mod tests {
                         );
 
                         assert!(
-                            unsafe {
-                                cluster
-                                    .public_endpoint_ptr::<0, MintConfig>(
-                                        src_id,
-                                        src_handle.0,
-                                        src_handle.1,
-                                    )
-                                    .is_some()
-                            },
+                            cluster
+                                .public_endpoint_header_ptr(src_id, src_handle.0, src_handle.1)
+                                .is_some(),
                             "rejected direct commit must not revoke the source public endpoint",
                         );
                         assert_eq!(
@@ -8365,15 +8286,9 @@ mod tests {
                             .expect("cluster-owned topology commit must succeed");
 
                         assert!(
-                            unsafe {
-                                cluster
-                                    .public_endpoint_ptr::<0, MintConfig>(
-                                        src_id,
-                                        src_handle.0,
-                                        src_handle.1,
-                                    )
-                                    .is_none()
-                            },
+                            cluster
+                                .public_endpoint_header_ptr(src_id, src_handle.0, src_handle.1)
+                                .is_none(),
                             "cluster-owned topology commit must revoke the source public endpoint",
                         );
                         assert_eq!(
@@ -8430,16 +8345,16 @@ mod tests {
                             &worker_program,
                         );
                         let dst_lane = Lane::new(1);
-                        let operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         cluster
                             .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
@@ -8471,15 +8386,9 @@ mod tests {
                             .expect("commit succeeds");
 
                         assert!(
-                            unsafe {
-                                cluster
-                                    .public_endpoint_ptr::<1, MintConfig>(
-                                        src_id,
-                                        src_handle.0,
-                                        src_handle.1,
-                                    )
-                                    .is_none()
-                            },
+                            cluster
+                                .public_endpoint_header_ptr(src_id, src_handle.0, src_handle.1)
+                                .is_none(),
                             "commit must revoke a nonzero-role source endpoint without role punning",
                         );
                         assert_eq!(
@@ -8531,16 +8440,16 @@ mod tests {
                             "controller endpoint should remain on the canonical control lane",
                         );
 
-                        let operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         cluster
                             .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
@@ -8565,27 +8474,23 @@ mod tests {
                             .expect("ack succeeds");
 
                         assert!(
-                            unsafe {
-                                cluster
-                                    .public_endpoint_ptr::<0, MintConfig>(
-                                        src_id,
-                                        controller_handle.0,
-                                        controller_handle.1,
-                                    )
-                                    .is_some()
-                            },
+                            cluster
+                                .public_endpoint_header_ptr(
+                                    src_id,
+                                    controller_handle.0,
+                                    controller_handle.1,
+                                )
+                                .is_some(),
                             "controller endpoint must be live before commit",
                         );
                         assert!(
-                            unsafe {
-                                cluster
-                                    .public_endpoint_ptr::<1, MintConfig>(
-                                        src_id,
-                                        worker_handle.0,
-                                        worker_handle.1,
-                                    )
-                                    .is_some()
-                            },
+                            cluster
+                                .public_endpoint_header_ptr(
+                                    src_id,
+                                    worker_handle.0,
+                                    worker_handle.1,
+                                )
+                                .is_some(),
                             "worker endpoint must be live before commit",
                         );
 
@@ -8594,27 +8499,23 @@ mod tests {
                             .expect("commit succeeds");
 
                         assert!(
-                            unsafe {
-                                cluster
-                                    .public_endpoint_ptr::<0, MintConfig>(
-                                        src_id,
-                                        controller_handle.0,
-                                        controller_handle.1,
-                                    )
-                                    .is_none()
-                            },
+                            cluster
+                                .public_endpoint_header_ptr(
+                                    src_id,
+                                    controller_handle.0,
+                                    controller_handle.1,
+                                )
+                                .is_none(),
                             "commit must revoke controller endpoints that share the migrated session even without owning the source lane",
                         );
                         assert!(
-                            unsafe {
-                                cluster
-                                    .public_endpoint_ptr::<1, MintConfig>(
-                                        src_id,
-                                        worker_handle.0,
-                                        worker_handle.1,
-                                    )
-                                    .is_none()
-                            },
+                            cluster
+                                .public_endpoint_header_ptr(
+                                    src_id,
+                                    worker_handle.0,
+                                    worker_handle.1,
+                                )
+                                .is_none(),
                             "commit must also revoke the endpoint that owns the migrated source lane",
                         );
                         assert_eq!(
@@ -8661,20 +8562,20 @@ mod tests {
 
                         cluster.with_control_mut(|core| {
                             let rv = core.locals.get_mut(&src_id).expect("source rendezvous");
-                            rv.activate_lane_for_test(sid, src_lane)
+                            rv.activate_lane_attachment(sid, src_lane)
                                 .expect("test fixture must create a non-public source lane");
                         });
 
-                        let operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         cluster
                             .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
@@ -8699,15 +8600,13 @@ mod tests {
                             .expect("ack succeeds");
 
                         assert!(
-                            unsafe {
-                                cluster
-                                    .public_endpoint_ptr::<0, MintConfig>(
-                                        src_id,
-                                        controller_handle.0,
-                                        controller_handle.1,
-                                    )
-                                    .is_some()
-                            },
+                            cluster
+                                .public_endpoint_header_ptr(
+                                    src_id,
+                                    controller_handle.0,
+                                    controller_handle.1,
+                                )
+                                .is_some(),
                             "controller endpoint must be live before commit",
                         );
 
@@ -8716,15 +8615,13 @@ mod tests {
                             .expect("commit succeeds");
 
                         assert!(
-                            unsafe {
-                                cluster
-                                    .public_endpoint_ptr::<0, MintConfig>(
-                                        src_id,
-                                        controller_handle.0,
-                                        controller_handle.1,
-                                    )
-                                    .is_none()
-                            },
+                            cluster
+                                .public_endpoint_header_ptr(
+                                    src_id,
+                                    controller_handle.0,
+                                    controller_handle.1,
+                                )
+                                .is_none(),
                             "commit must still revoke same-session public endpoints before retiring the hidden source lane",
                         );
                         assert_eq!(
@@ -8772,22 +8669,22 @@ mod tests {
 
                         cluster.with_control_mut(|core| {
                             let rv = core.locals.get_mut(&src_id).expect("source rendezvous");
-                            rv.activate_lane_for_test(sid, extra_lane)
+                            rv.activate_lane_attachment(sid, extra_lane)
                                 .expect("fixture must create an extra hidden same-session lane");
-                            rv.activate_lane_for_test(sid, src_lane)
+                            rv.activate_lane_attachment(sid, src_lane)
                                 .expect("fixture must create the hidden source lane");
                         });
 
-                        let operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         cluster
                             .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
@@ -8812,15 +8709,13 @@ mod tests {
                             .expect("ack succeeds");
 
                         assert!(
-                            unsafe {
-                                cluster
-                                    .public_endpoint_ptr::<0, MintConfig>(
-                                        src_id,
-                                        controller_handle.0,
-                                        controller_handle.1,
-                                    )
-                                    .is_some()
-                            },
+                            cluster
+                                .public_endpoint_header_ptr(
+                                    src_id,
+                                    controller_handle.0,
+                                    controller_handle.1,
+                                )
+                                .is_some(),
                             "controller endpoint must be live before commit",
                         );
                         assert_eq!(
@@ -8837,15 +8732,13 @@ mod tests {
                             .expect("commit succeeds");
 
                         assert!(
-                            unsafe {
-                                cluster
-                                    .public_endpoint_ptr::<0, MintConfig>(
-                                        src_id,
-                                        controller_handle.0,
-                                        controller_handle.1,
-                                    )
-                                    .is_none()
-                            },
+                            cluster
+                                .public_endpoint_header_ptr(
+                                    src_id,
+                                    controller_handle.0,
+                                    controller_handle.1,
+                                )
+                                .is_none(),
                             "commit must revoke the public controller endpoint before session teardown",
                         );
                         assert_eq!(
@@ -8894,16 +8787,16 @@ mod tests {
                         );
 
                         let dst_lane = Lane::new(1);
-                        let operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            controller_lane,
-                            dst_lane,
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: controller_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         cluster
                             .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
@@ -8928,27 +8821,23 @@ mod tests {
                             .expect("ack succeeds");
 
                         assert!(
-                            unsafe {
-                                cluster
-                                    .public_endpoint_ptr::<0, MintConfig>(
-                                        src_id,
-                                        controller_handle.0,
-                                        controller_handle.1,
-                                    )
-                                    .is_some()
-                            },
+                            cluster
+                                .public_endpoint_header_ptr(
+                                    src_id,
+                                    controller_handle.0,
+                                    controller_handle.1,
+                                )
+                                .is_some(),
                             "controller endpoint must be live before commit",
                         );
                         assert!(
-                            unsafe {
-                                cluster
-                                    .public_endpoint_ptr::<1, MintConfig>(
-                                        src_id,
-                                        worker_handle.0,
-                                        worker_handle.1,
-                                    )
-                                    .is_some()
-                            },
+                            cluster
+                                .public_endpoint_header_ptr(
+                                    src_id,
+                                    worker_handle.0,
+                                    worker_handle.1,
+                                )
+                                .is_some(),
                             "worker endpoint must be live before commit",
                         );
 
@@ -8957,27 +8846,23 @@ mod tests {
                             .expect("commit succeeds");
 
                         assert!(
-                            unsafe {
-                                cluster
-                                    .public_endpoint_ptr::<0, MintConfig>(
-                                        src_id,
-                                        controller_handle.0,
-                                        controller_handle.1,
-                                    )
-                                    .is_none()
-                            },
+                            cluster
+                                .public_endpoint_header_ptr(
+                                    src_id,
+                                    controller_handle.0,
+                                    controller_handle.1,
+                                )
+                                .is_none(),
                             "commit must revoke the controller endpoint",
                         );
                         assert!(
-                            unsafe {
-                                cluster
-                                    .public_endpoint_ptr::<1, MintConfig>(
-                                        src_id,
-                                        worker_handle.0,
-                                        worker_handle.1,
-                                    )
-                                    .is_none()
-                            },
+                            cluster
+                                .public_endpoint_header_ptr(
+                                    src_id,
+                                    worker_handle.0,
+                                    worker_handle.1,
+                                )
+                                .is_none(),
                             "commit must revoke every public endpoint sharing the source lane",
                         );
                         assert_eq!(
@@ -9024,8 +8909,7 @@ mod tests {
                         handle.encode(),
                     )
                     .encode(&mut header);
-                    GenericCapToken::<()>::from_parts([0; CAP_NONCE_LEN], header, [0; CAP_TAG_LEN])
-                        .into_bytes()
+                    token_wire_image([0; CAP_NONCE_LEN], header, [0; CAP_TAG_LEN])
                 }
 
                 with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
@@ -9041,16 +8925,16 @@ mod tests {
                         let (src_handle, src_lane) = attach_session_lane(cluster, src_id, sid);
                         let dst_lane = Lane::new(1);
                         let wrong_header_lane = Lane::new(2);
-                        let operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            src_lane,
-                            dst_lane,
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: src_lane,
+                            dst_lane: dst_lane,
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         cluster
                             .run_effect_step(src_id, CpCommand::topology_begin(sid, operands))
@@ -9166,16 +9050,16 @@ mod tests {
                             .add_rendezvous_from_config(dst_cfg, DummyTransport)
                             .expect("register dst");
 
-                        let expected = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            Lane::new(3),
-                            Lane::new(7),
-                            Generation::new(11),
-                            Generation::new(12),
-                            13,
-                            14,
-                        );
+                        let expected = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: Lane::new(3),
+                            dst_lane: Lane::new(7),
+                            old_gen: Generation::new(11),
+                            new_gen: Generation::new(12),
+                            seq_tx: 13,
+                            seq_rx: 14,
+                        };
                         let descriptor = TopologyDescriptor::decode_for(
                             ControlOp::TopologyBegin,
                             topology_handle(expected).encode(),
@@ -9220,16 +9104,16 @@ mod tests {
                             .expect("register rendezvous");
                         let sid = SessionId::new(22);
 
-                        let operands = TopologyOperands::new(
-                            rv_id,
-                            rv_id,
-                            Lane::new(3),
-                            Lane::new(7),
-                            Generation::new(11),
-                            Generation::new(12),
-                            13,
-                            14,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: rv_id,
+                            dst_rv: rv_id,
+                            src_lane: Lane::new(3),
+                            dst_lane: Lane::new(7),
+                            old_gen: Generation::new(11),
+                            new_gen: Generation::new(12),
+                            seq_tx: 13,
+                            seq_rx: 14,
+                        };
                         let descriptor = TopologyDescriptor::decode_for(
                             ControlOp::TopologyBegin,
                             topology_handle(operands).encode(),
@@ -9287,27 +9171,27 @@ mod tests {
                             .add_rendezvous_from_config(dst_cfg, DummyTransport)
                             .expect("register dst");
 
-                        let operands = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            Lane::new(3),
-                            Lane::new(7),
-                            Generation::new(11),
-                            Generation::new(12),
-                            13,
-                            14,
-                        );
+                        let operands = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: Lane::new(3),
+                            dst_lane: Lane::new(7),
+                            old_gen: Generation::new(11),
+                            new_gen: Generation::new(12),
+                            seq_tx: 13,
+                            seq_rx: 14,
+                        };
 
-                        let mismatched = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            Lane::new(3),
-                            Lane::new(7),
-                            Generation::new(11),
-                            Generation::new(13),
-                            13,
-                            14,
-                        );
+                        let mismatched = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: Lane::new(3),
+                            dst_lane: Lane::new(7),
+                            old_gen: Generation::new(11),
+                            new_gen: Generation::new(13),
+                            seq_tx: 13,
+                            seq_rx: 14,
+                        };
                         let descriptor = TopologyDescriptor::decode_for(
                             ControlOp::TopologyAck,
                             topology_handle(mismatched).encode(),
@@ -9417,10 +9301,12 @@ mod tests {
         )
         .encode(&mut header);
 
-        let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_parts(
-            [0xAB; crate::control::cap::mint::CAP_NONCE_LEN],
-            header,
-            [0; crate::control::cap::mint::CAP_TAG_LEN],
+        let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_bytes(
+            token_wire_image(
+                [0xAB; crate::control::cap::mint::CAP_NONCE_LEN],
+                header,
+                [0; crate::control::cap::mint::CAP_TAG_LEN],
+            ),
         );
         let command = CpCommand::new(ControlOp::CapDelegate).with_delegate(DelegateOperands {
             claim: false,
@@ -9460,10 +9346,12 @@ mod tests {
             .encode(&mut header);
             mutate(&mut header);
 
-            let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_parts(
-                [0xAB; crate::control::cap::mint::CAP_NONCE_LEN],
-                header,
-                [0; crate::control::cap::mint::CAP_TAG_LEN],
+            let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_bytes(
+                token_wire_image(
+                    [0xAB; crate::control::cap::mint::CAP_NONCE_LEN],
+                    header,
+                    [0; crate::control::cap::mint::CAP_TAG_LEN],
+                ),
             );
 
             CpCommand::new(ControlOp::CapDelegate).with_delegate(DelegateOperands {
@@ -9567,10 +9455,12 @@ mod tests {
                 .expect("endpoint handle payload must fit");
             mutate(handle_bytes);
 
-            let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_parts(
-                [0xAB; crate::control::cap::mint::CAP_NONCE_LEN],
-                header,
-                [0; crate::control::cap::mint::CAP_TAG_LEN],
+            let token = GenericCapToken::<crate::control::cap::mint::EndpointResource>::from_bytes(
+                token_wire_image(
+                    [0xAB; crate::control::cap::mint::CAP_NONCE_LEN],
+                    header,
+                    [0; crate::control::cap::mint::CAP_TAG_LEN],
+                ),
             );
 
             CpCommand::new(ControlOp::CapDelegate).with_delegate(DelegateOperands {
@@ -9630,26 +9520,26 @@ mod tests {
 
                     let sid0 = SessionId::new(7);
                     let sid1 = SessionId::new(9);
-                    let ops0 = TopologyOperands::new(
-                        src_id,
-                        dst_id,
-                        Lane::new(0),
-                        Lane::new(1),
-                        Generation::new(0),
-                        Generation::new(1),
-                        0,
-                        0,
-                    );
-                    let ops1 = TopologyOperands::new(
-                        dst_id,
-                        src_id,
-                        Lane::new(1),
-                        Lane::new(0),
-                        Generation::new(2),
-                        Generation::new(3),
-                        1,
-                        1,
-                    );
+                    let ops0 = TopologyOperands {
+                        src_rv: src_id,
+                        dst_rv: dst_id,
+                        src_lane: Lane::new(0),
+                        dst_lane: Lane::new(1),
+                        old_gen: Generation::new(0),
+                        new_gen: Generation::new(1),
+                        seq_tx: 0,
+                        seq_rx: 0,
+                    };
+                    let ops1 = TopologyOperands {
+                        src_rv: dst_id,
+                        dst_rv: src_id,
+                        src_lane: Lane::new(1),
+                        dst_lane: Lane::new(0),
+                        old_gen: Generation::new(2),
+                        new_gen: Generation::new(3),
+                        seq_tx: 1,
+                        seq_rx: 1,
+                    };
 
                     cluster
                         .cache_topology_operands(sid0, ops0)
@@ -9671,16 +9561,16 @@ mod tests {
 
     fn test_distributed_topology_entry(seq_tx: u32) -> DistributedEntry {
         DistributedEntry {
-            operands: TopologyOperands::new(
-                RendezvousId::new(1),
-                RendezvousId::new(2),
-                Lane::new(3),
-                Lane::new(4),
-                Generation::new(5),
-                Generation::new(6),
-                seq_tx,
-                8,
-            ),
+            operands: TopologyOperands {
+                src_rv: RendezvousId::new(1),
+                dst_rv: RendezvousId::new(2),
+                src_lane: Lane::new(3),
+                dst_lane: Lane::new(4),
+                old_gen: Generation::new(5),
+                new_gen: Generation::new(6),
+                seq_tx: seq_tx,
+                seq_rx: 8,
+            },
             phase: DistributedPhase::Begin { txn: None },
         }
     }
@@ -9762,26 +9652,26 @@ mod tests {
 
                         let sid0 = SessionId::new(11);
                         let sid1 = SessionId::new(13);
-                        let ops0 = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            Lane::new(0),
-                            Lane::new(1),
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
-                        let ops1 = TopologyOperands::new(
-                            dst_id,
-                            src_id,
-                            Lane::new(1),
-                            Lane::new(0),
-                            Generation::new(2),
-                            Generation::new(3),
-                            1,
-                            1,
-                        );
+                        let ops0 = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: Lane::new(0),
+                            dst_lane: Lane::new(1),
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
+                        let ops1 = TopologyOperands {
+                            src_rv: dst_id,
+                            dst_rv: src_id,
+                            src_lane: Lane::new(1),
+                            dst_lane: Lane::new(0),
+                            old_gen: Generation::new(2),
+                            new_gen: Generation::new(3),
+                            seq_tx: 1,
+                            seq_rx: 1,
+                        };
 
                         cluster.with_control_mut(|core| {
                             assert!(
@@ -9866,16 +9756,16 @@ mod tests {
                             .expect("register dst");
 
                         let sid = SessionId::new(29);
-                        let ops = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            Lane::new(0),
-                            Lane::new(1),
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
+                        let ops = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: Lane::new(0),
+                            dst_lane: Lane::new(1),
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
 
                         cluster.with_control_mut(|core| {
                             core.ensure_distributed_topology_capacity(src_id, 1)
@@ -9888,16 +9778,16 @@ mod tests {
                                 "begin entry must advance to acked phase before commit",
                             );
 
-                            let mismatched_ack = TopologyAck::new(
-                                ops.src_rv,
-                                ops.dst_rv,
-                                sid.raw(),
-                                Generation::new(2),
-                                ops.src_lane,
-                                ops.dst_lane,
-                                ops.seq_tx,
-                                ops.seq_rx,
-                            );
+                            let mismatched_ack = TopologyAck {
+                src_rv: ops.src_rv,
+                dst_rv: ops.dst_rv,
+                sid: sid.raw(),
+                new_gen: Generation::new(2),
+                src_lane: ops.src_lane,
+                new_lane: ops.dst_lane,
+                seq_tx: ops.seq_tx,
+                seq_rx: ops.seq_rx,
+            };
                             assert_eq!(
                                 core.topology_state
                                     .topology_commit(sid, src_id, Some(mismatched_ack)),
@@ -9936,26 +9826,26 @@ mod tests {
                             .expect("register dst");
 
                         let sid = SessionId::new(23);
-                        let ops0 = TopologyOperands::new(
-                            src_id,
-                            dst_id,
-                            Lane::new(0),
-                            Lane::new(1),
-                            Generation::new(0),
-                            Generation::new(1),
-                            0,
-                            0,
-                        );
-                        let ops1 = TopologyOperands::new(
-                            dst_id,
-                            src_id,
-                            Lane::new(1),
-                            Lane::new(0),
-                            Generation::new(2),
-                            Generation::new(3),
-                            1,
-                            1,
-                        );
+                        let ops0 = TopologyOperands {
+                            src_rv: src_id,
+                            dst_rv: dst_id,
+                            src_lane: Lane::new(0),
+                            dst_lane: Lane::new(1),
+                            old_gen: Generation::new(0),
+                            new_gen: Generation::new(1),
+                            seq_tx: 0,
+                            seq_rx: 0,
+                        };
+                        let ops1 = TopologyOperands {
+                            src_rv: dst_id,
+                            dst_rv: src_id,
+                            src_lane: Lane::new(1),
+                            dst_lane: Lane::new(0),
+                            old_gen: Generation::new(2),
+                            new_gen: Generation::new(3),
+                            seq_tx: 1,
+                            seq_rx: 1,
+                        };
 
                         cluster
                             .cache_topology_operands(sid, ops0)
@@ -10269,8 +10159,10 @@ mod tests {
                             shared_borrow_projected_b.stamp()
                         );
                         assert_eq!(
-                            shared_borrow_projected_a.borrow_id(),
-                            shared_borrow_projected_b.borrow_id(),
+                            crate::global::lowering_input(&shared_borrow_projected_a).summary()
+                                as *const crate::global::compiled::lowering::LoweringSummary,
+                            crate::global::lowering_input(&shared_borrow_projected_b).summary()
+                                as *const crate::global::compiled::lowering::LoweringSummary,
                             "equivalent thin RoleProgram values should borrow the same shared source owner"
                         );
 

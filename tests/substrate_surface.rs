@@ -5,7 +5,7 @@ use std::mem::size_of_val;
 use std::path::PathBuf;
 
 use hibana::g;
-use hibana::g::advanced::{RoleProgram, project};
+use hibana::substrate::program::{RoleProgram, project};
 use hibana::substrate::{
     SessionKit,
     runtime::{CounterClock, DefaultLabelUniverse},
@@ -65,22 +65,90 @@ fn witness_sizes_stay_small() {
 #[test]
 fn substrate_root_exposes_only_core_buckets() {
     let substrate_rs = read("src/substrate.rs");
+    let root_prefix = substrate_rs
+        .split("pub mod ids {")
+        .next()
+        .expect("substrate source must contain ids bucket");
+    assert!(
+        !root_prefix.contains("pub use crate::control::types::{Lane, RendezvousId, SessionId}")
+            && !root_prefix.contains("use crate::control::types::{RendezvousId, SessionId}")
+            && !root_prefix.contains("pub use crate::eff::EffIndex"),
+        "substrate root must not keep identifier aliases outside substrate::ids"
+    );
+    assert!(
+        substrate_rs.contains("crate::substrate::ids::RendezvousId")
+            && substrate_rs.contains("crate::substrate::ids::SessionId"),
+        "SessionKit signatures must point callers at substrate::ids"
+    );
 
     for required in [
         "pub mod runtime {",
+        "pub mod ids {",
         "pub mod tap {",
         "pub mod binding {",
+        "pub use crate::binding::{BindingSlot, NoBinding};",
+        "pub mod advanced {",
+        "ChannelStore",
+        "IncomingClassification",
         "pub mod policy {",
+        "pub use crate::transport::context::{",
+        "ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider",
+        "pub mod core {",
         "pub mod cap {",
         "pub mod wire {",
         "pub mod transport {",
         "pub use crate::observe::core::TapEvent;",
         "pub use crate::policy_runtime::PolicySlot;",
+        "pub use crate::eff::EffIndex;",
+        "TransportMetrics",
         "WirePayload",
     ] {
         assert!(
             substrate_rs.contains(required),
             "substrate surface must keep the core bucket: {required}"
+        );
+    }
+
+    let policy_root = substrate_rs
+        .split("pub mod policy {")
+        .nth(1)
+        .and_then(|tail| tail.split("/// Canonical capability-token surface").next())
+        .expect("substrate policy bucket must be followed by the cap bucket");
+    for required in [
+        "ContextId",
+        "ContextValue",
+        "PolicyAttrs",
+        "PolicySignals,",
+        "PolicySignalsProvider",
+        "PolicySlot",
+        "pub mod core",
+    ] {
+        assert!(
+            policy_root.contains(required),
+            "substrate::policy must own the single slot-input surface: {required}"
+        );
+    }
+    assert!(
+        !policy_root.contains("pub mod advanced {"),
+        "substrate::policy must not keep an advanced compatibility bucket"
+    );
+
+    let binding_root = substrate_rs
+        .split("pub mod binding {")
+        .nth(1)
+        .and_then(|tail| tail.split("pub mod advanced {").next())
+        .expect("substrate binding bucket must keep an advanced detail bucket");
+    for forbidden in [
+        "Channel",
+        "ChannelDirection",
+        "ChannelKey",
+        "ChannelStore",
+        "IncomingClassification",
+        "TransportOpsError",
+    ] {
+        assert!(
+            !binding_root.contains(forbidden),
+            "substrate::binding root must stay on BindingSlot + NoBinding; detail belongs under binding::advanced: {forbidden}"
         );
     }
 
@@ -90,12 +158,22 @@ fn substrate_root_exposes_only_core_buckets() {
         "crate::runtime::mgmt",
         "crate::epf",
         "WireDecode",
+        "LocalDirection",
+        "SendMeta",
+        "TransportAlgorithm",
+        "TransportMetricsTapPayload",
+        "TransportAlgorithm, TransportError",
+        "TransportError, TransportEvent",
     ] {
         assert!(
             !substrate_rs.contains(forbidden),
             "substrate surface must not keep deleted in-crate mgmt/epf owners: {forbidden}"
         );
     }
+    assert!(
+        substrate_rs.contains("TransportEvent, TransportEventKind, TransportMetrics"),
+        "transport event-kind and metrics detail must live in the advanced bucket"
+    );
 }
 
 #[test]
@@ -122,6 +200,7 @@ fn substrate_allowlist_tracks_core_boundary() {
     for required in [
         "pub mod tap {",
         "pub use crate::observe::core::TapEvent;",
+        "pub mod advanced {",
         "pub use crate::policy_runtime::PolicySlot;",
         "WirePayload",
     ] {
@@ -137,10 +216,20 @@ fn substrate_allowlist_tracks_core_boundary() {
         "crate::runtime::mgmt",
         "crate::epf",
         "WireDecode",
+        "LocalDirection",
+        "SendMeta",
+        "TransportAlgorithm",
+        "TransportMetricsTapPayload",
+        "TransportAlgorithm, TransportError",
+        "TransportError, TransportEvent",
     ] {
         assert!(
             !allowlist.contains(forbidden),
             "substrate allowlist must not keep deleted mgmt/epf buckets: {forbidden}"
         );
     }
+    assert!(
+        allowlist.contains("TransportEvent, TransportEventKind, TransportMetrics"),
+        "substrate allowlist must keep transport event-kind detail in advanced"
+    );
 }

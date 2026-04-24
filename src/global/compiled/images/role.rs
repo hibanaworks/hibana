@@ -196,7 +196,6 @@ impl CompiledRoleImage {
 
     #[cfg(test)]
     #[inline(always)]
-    #[cfg(test)]
     pub(crate) const fn persistent_bytes_for_counts(
         scope_count: usize,
         route_scope_count: usize,

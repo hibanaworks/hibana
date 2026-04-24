@@ -20,7 +20,7 @@ pub(crate) fn policy_check_summary(
     start: usize,
     end: usize,
 ) -> PolicyCheckSummary {
-    let (records, _) = policy_lane_trace(storage, start, end);
+    let records = policy_lane_trace(storage, start, end);
     let mut summary = PolicyCheckSummary::default();
     summary.policy_lane_total = records.len() as u32;
     for record in records.iter() {

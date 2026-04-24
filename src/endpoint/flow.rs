@@ -1,5 +1,5 @@
-//! Capability-oriented flow pipeline tying typestate metadata and transport
-//! emission into a single affine value.
+//! Send pipeline tying descriptor metadata and transport emission into a single
+//! affine value.
 
 use core::{
     future::Future,
@@ -9,51 +9,12 @@ use core::{
 };
 
 use crate::{
-    binding::BindingHandle,
-    control::cap::{mint::ControlResourceKind, typed_tokens::CapRegisteredToken},
-    endpoint::{SendError, SendResult, kernel},
+    endpoint::{SendResult, kernel},
     global::{ControlDesc, ControlPayloadKind, MessageSpec, SendableLabel},
     transport::wire::WireEncode,
 };
 
-type EndpointBinding<'r> = BindingHandle<'r>;
-
-pub trait SendOutcomeKind<'r>: ControlPayloadKind {
-    type Output;
-
-    fn finish_send(outcome: kernel::SendControlOutcome<'r>) -> SendResult<Self::Output>;
-}
-
-impl<'r> SendOutcomeKind<'r> for () {
-    type Output = ();
-
-    #[inline]
-    fn finish_send(outcome: kernel::SendControlOutcome<'r>) -> SendResult<Self::Output> {
-        match outcome {
-            kernel::SendControlOutcome::None => Ok(()),
-            _ => Err(SendError::PhaseInvariant),
-        }
-    }
-}
-
-impl<'r, K> SendOutcomeKind<'r> for K
-where
-    K: ControlResourceKind + 'r,
-{
-    type Output = CapRegisteredToken<'r, K>;
-
-    #[inline]
-    fn finish_send(outcome: kernel::SendControlOutcome<'r>) -> SendResult<Self::Output> {
-        match outcome {
-            kernel::SendControlOutcome::None => Err(SendError::PhaseInvariant),
-            kernel::SendControlOutcome::Registered(token) => Ok(token.into_typed::<K>()),
-            kernel::SendControlOutcome::Emitted(_) => Err(SendError::PhaseInvariant),
-        }
-    }
-}
-
-/// Affine flow handle for a pending send transition.
-pub(crate) struct CapFlow<'e, 'r, const ROLE: u8, M>
+pub struct Flow<'e, 'r, const ROLE: u8, M>
 where
     M: MessageSpec + SendableLabel,
 {
@@ -63,36 +24,27 @@ where
     _msg: PhantomData<(&'e mut super::Endpoint<'r, ROLE>, M)>,
 }
 
-struct FlowInner<'e, 'r, const ROLE: u8, M>
+pub(crate) trait ErasedSendInput<'a, M>: sealed::Sealed<M>
 where
     M: MessageSpec + SendableLabel,
 {
-    inner: CapFlow<'e, 'r, ROLE, M>,
+    fn into_payload(self) -> Option<&'a M::Payload>;
 }
 
-pub struct Flow<'e, 'r, const ROLE: u8, M>
-where
-    M: MessageSpec + SendableLabel,
-{
-    inner: FlowInner<'e, 'r, ROLE, M>,
+mod sealed {
+    pub trait Sealed<M> {}
+    impl<M> Sealed<M> for () {}
+    impl<'a, M> Sealed<M> for &'a M::Payload where M: super::MessageSpec {}
 }
 
-struct SendFuture<'e, 'a, 'r, const ROLE: u8, M, A>
-where
-    M: MessageSpec + SendableLabel,
-    M::Payload: WireEncode,
-    M::ControlKind: SendOutcomeKind<'r>,
-    <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-    A: FlowSendArg<'a, M>,
-    'r: 'a,
-{
+struct RawSendFuture<'e, 'r, const ROLE: u8> {
     endpoint: *mut super::Endpoint<'r, ROLE>,
-    desc: kernel::SendDesc,
     completed: bool,
-    _borrow: PhantomData<&'e mut EndpointBinding<'r>>,
-    _payload: PhantomData<&'a M::Payload>,
-    _msg: PhantomData<M>,
-    _arg: PhantomData<A>,
+    _borrow: PhantomData<&'e mut crate::binding::BindingHandle<'r>>,
+}
+
+pub(crate) struct SendFuture<'e, 'r, const ROLE: u8> {
+    raw: RawSendFuture<'e, 'r, ROLE>,
 }
 
 #[inline]
@@ -115,18 +67,6 @@ impl<'e, 'r, const ROLE: u8, M> Flow<'e, 'r, ROLE, M>
 where
     M: MessageSpec + SendableLabel,
 {
-    #[inline]
-    pub(crate) fn from_cap_flow(inner: CapFlow<'e, 'r, ROLE, M>) -> Self {
-        Self {
-            inner: FlowInner { inner },
-        }
-    }
-}
-
-impl<'e, 'r, const ROLE: u8, M> CapFlow<'e, 'r, ROLE, M>
-where
-    M: MessageSpec + SendableLabel,
-{
     pub(crate) fn new(
         endpoint: *mut super::Endpoint<'r, ROLE>,
         preview: kernel::SendPreview,
@@ -139,116 +79,86 @@ where
             _msg: PhantomData,
         }
     }
-
-    fn into_parts(
-        self,
-    ) -> (
-        *mut super::Endpoint<'r, ROLE>,
-        kernel::SendPreview,
-        kernel::SendDesc,
-    ) {
-        (self.endpoint, self.preview, self.desc)
-    }
-}
-
-impl<'e, 'r, const ROLE: u8, M> CapFlow<'e, 'r, ROLE, M>
-where
-    M: MessageSpec + SendableLabel,
-    M::Payload: WireEncode,
-    M::ControlKind: SendOutcomeKind<'r>,
-    <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-{
-    #[inline]
-    pub(crate) fn send<'a, A>(self, arg: A) -> impl Future<Output = SendResult<A::Output<'r>>> + 'a
-    where
-        A: FlowSendArg<'a, M>,
-        M::ControlKind: SendOutcomeKind<'r>,
-        A::Output<'r>: 'a,
-        M::Payload: 'a,
-        M: 'a,
-        A: 'a,
-        'e: 'a,
-        'r: 'a,
-    {
-        let (endpoint, preview, desc) = self.into_parts();
-        let payload = arg
-            .into_payload()
-            .map(kernel::RawSendPayload::from_typed::<M::Payload>);
-        unsafe {
-            (&mut *endpoint).init_public_send_state(preview, payload);
-        }
-        SendFuture::<'e, 'a, 'r, ROLE, M, A> {
-            endpoint,
-            desc,
-            completed: false,
-            _borrow: PhantomData,
-            _payload: PhantomData,
-            _msg: PhantomData,
-            _arg: PhantomData,
-        }
-    }
 }
 
 impl<'e, 'r, const ROLE: u8, M> Flow<'e, 'r, ROLE, M>
 where
     M: MessageSpec + SendableLabel,
     M::Payload: WireEncode,
-    M::ControlKind: SendOutcomeKind<'r>,
-    <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
 {
     #[inline]
-    pub fn send<'a, A>(self, arg: A) -> impl Future<Output = SendResult<A::Output<'r>>> + 'a
+    #[expect(
+        private_bounds,
+        reason = "send argument resolution is sealed to () and &Payload"
+    )]
+    pub fn send<'a, A>(
+        self,
+        arg: A,
+    ) -> impl Future<Output = SendResult<()>> + 'a + use<'a, 'e, 'r, A, M, ROLE>
     where
-        A: FlowSendArg<'a, M>,
-        M::ControlKind: SendOutcomeKind<'r>,
-        A::Output<'r>: 'a,
+        A: ErasedSendInput<'a, M>,
         M::Payload: 'a,
         M: 'a,
         A: 'a,
         'e: 'a,
         'r: 'a,
     {
-        self.inner.inner.send(arg)
+        let payload = arg
+            .into_payload()
+            .map(kernel::RawSendPayload::from_typed::<M::Payload>);
+        unsafe {
+            (&mut *self.endpoint).init_public_send_state(self.desc, self.preview, payload);
+        }
+        SendFuture {
+            raw: RawSendFuture::new(self.endpoint),
+        }
     }
 }
 
-impl<'e, 'a, 'r, const ROLE: u8, M, A> Future for SendFuture<'e, 'a, 'r, ROLE, M, A>
-where
-    M: MessageSpec + SendableLabel,
-    M::Payload: WireEncode,
-    M::ControlKind: SendOutcomeKind<'r>,
-    <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-    A: FlowSendArg<'a, M>,
-    'r: 'a,
-{
-    type Output = SendResult<A::Output<'r>>;
+impl<'e, 'r, const ROLE: u8> RawSendFuture<'e, 'r, ROLE> {
+    #[inline]
+    fn new(endpoint: *mut super::Endpoint<'r, ROLE>) -> Self {
+        Self {
+            endpoint,
+            completed: false,
+            _borrow: PhantomData,
+        }
+    }
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = unsafe { self.get_unchecked_mut() };
-        let endpoint = unsafe { &mut *this.endpoint };
-        match endpoint.poll_send(this.desc, cx) {
+    #[inline]
+    fn poll_raw(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<SendResult<kernel::SendControlOutcome<'r>>> {
+        let endpoint = unsafe { &mut *self.endpoint };
+        match endpoint.poll_send(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(outcome)) => {
-                this.completed = true;
-                Poll::Ready(<A as FlowSendArg<'a, M>>::finish_send::<'r>(outcome))
+                self.completed = true;
+                Poll::Ready(Ok(outcome))
             }
             Poll::Ready(Err(err)) => {
-                this.completed = true;
+                self.completed = true;
                 Poll::Ready(Err(err))
             }
         }
     }
 }
 
-impl<'e, 'a, 'r, const ROLE: u8, M, A> Drop for SendFuture<'e, 'a, 'r, ROLE, M, A>
-where
-    M: MessageSpec + SendableLabel,
-    M::Payload: WireEncode,
-    M::ControlKind: SendOutcomeKind<'r>,
-    <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-    A: FlowSendArg<'a, M>,
-    'r: 'a,
-{
+impl<'e, 'r, const ROLE: u8> Future for SendFuture<'e, 'r, ROLE> {
+    type Output = SendResult<()>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = unsafe { self.get_unchecked_mut() };
+        match this.raw.poll_raw(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(outcome)) => Poll::Ready(finish_send(outcome)),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+        }
+    }
+}
+
+impl<'e, 'r, const ROLE: u8> Drop for RawSendFuture<'e, 'r, ROLE> {
     fn drop(&mut self) {
         if !self.completed {
             unsafe {
@@ -258,9 +168,66 @@ where
     }
 }
 
+#[inline(always)]
+fn finish_send(outcome: kernel::SendControlOutcome<'_>) -> SendResult<()> {
+    match outcome {
+        kernel::SendControlOutcome::None => Ok(()),
+        kernel::SendControlOutcome::Emitted(token) => {
+            let _ = token.bytes();
+            Ok(())
+        }
+        kernel::SendControlOutcome::Registered(token) => {
+            drop(token);
+            Ok(())
+        }
+    }
+}
+
+impl<'a, M> ErasedSendInput<'a, M> for ()
+where
+    M: MessageSpec + SendableLabel,
+{
+    #[inline(always)]
+    fn into_payload(self) -> Option<&'a M::Payload> {
+        const {
+            assert!(
+                match <M as MessageSpec>::CONTROL {
+                    Some(desc) => match desc.path() {
+                        crate::control::cap::mint::ControlPath::Local => true,
+                        crate::control::cap::mint::ControlPath::Wire => desc.auto_mint_wire(),
+                    },
+                    None => false,
+                },
+                "Unit () can only be used with local control or auto-minted wire control"
+            );
+        }
+        None
+    }
+}
+
+impl<'a, M> ErasedSendInput<'a, M> for &'a M::Payload
+where
+    M: MessageSpec + SendableLabel,
+{
+    #[inline(always)]
+    fn into_payload(self) -> Option<&'a M::Payload> {
+        const {
+            assert!(
+                match <M as MessageSpec>::CONTROL {
+                    None => true,
+                    Some(desc) =>
+                        matches!(desc.path(), crate::control::cap::mint::ControlPath::Wire),
+                },
+                "Payload reference can only be used with data messages or wire control tokens"
+            );
+        }
+        Some(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{SendFuture, SendOutcomeKind};
+    use super::{SendFuture, finish_send};
     use crate::{
         control::cap::{
             mint::{
@@ -268,7 +235,7 @@ mod tests {
                 ControlResourceKind, ResourceKind,
             },
             resource_kinds::{LoopContinueKind, LoopDecisionHandle},
-            typed_tokens::{RawRegisteredCapToken, RegisteredTokenParts},
+            typed_tokens::RawRegisteredCapToken,
         },
         endpoint::kernel::SendControlOutcome,
         global::const_dsl::ScopeId,
@@ -276,12 +243,24 @@ mod tests {
             capability::{CapEntry, CapReleaseCtx, CapTable},
             tables::StateSnapshotTable,
         },
-        substrate::{Lane, SessionId},
+        substrate::ids::{Lane, SessionId},
     };
     use core::{cell::Cell, mem::size_of};
     use std::vec;
 
-    type SendFut = SendFuture<'static, 'static, 'static, 0, crate::g::Msg<7, ()>, ()>;
+    type SendFut = SendFuture<'static, 'static, 0>;
+    type SendFutAltRole = SendFuture<'static, 'static, 1>;
+
+    fn cap_table() -> CapTable {
+        const CAP_TABLE_SLOTS: usize = 64;
+        let mut table = CapTable::empty();
+        let storage = vec![Option::<CapEntry>::None; CAP_TABLE_SLOTS].into_boxed_slice();
+        let ptr = std::boxed::Box::leak(storage).as_mut_ptr().cast::<u8>();
+        unsafe {
+            table.bind_from_storage(ptr, CAP_TABLE_SLOTS, 0);
+        }
+        table
+    }
 
     fn make_test_token_bytes(
         nonce: [u8; CAP_NONCE_LEN],
@@ -315,15 +294,21 @@ mod tests {
 
     #[test]
     fn send_future_stays_within_size_budget() {
+        const WORD: usize = size_of::<usize>();
         assert!(
-            size_of::<SendFut>() <= 48,
-            "SendFuture must stay within the localside size budget"
+            size_of::<SendFut>() <= 3 * WORD,
+            "SendFuture must stay within the 3-word budget"
         );
     }
 
     #[test]
-    fn dropping_registered_send_outcome_releases_capability() {
-        let table = CapTable::new();
+    fn send_future_layout_is_message_independent() {
+        assert_eq!(size_of::<SendFut>(), size_of::<SendFutAltRole>());
+    }
+
+    #[test]
+    fn registered_send_outcome_is_released_by_finish_send() {
+        let table = cap_table();
         let lane = Lane::new(3);
         let sid = SessionId::new(42);
         let role = 0u8;
@@ -357,16 +342,14 @@ mod tests {
         }
         let revisions = Cell::new(0u64);
 
-        let outcome =
-            <LoopContinueKind as SendOutcomeKind<'_>>::finish_send(SendControlOutcome::Registered(
-                RawRegisteredCapToken::from_parts(RegisteredTokenParts::from_registered_bytes(
-                    bytes,
-                    nonce,
-                    CapReleaseCtx::new(&table, &snapshots, &revisions, lane),
-                )),
-            ))
-            .expect("registered local control send");
-        drop(outcome);
+        finish_send(SendControlOutcome::Registered(
+            RawRegisteredCapToken::from_registered_bytes(
+                bytes,
+                nonce,
+                CapReleaseCtx::new(&table, &snapshots, &revisions, lane),
+            ),
+        ))
+        .expect("registered local control send");
 
         assert!(
             table
@@ -380,122 +363,16 @@ mod tests {
                     2,
                 )
                 .is_err(),
-            "dropping the send outcome must release the registered capability"
+            "finishing a registered send must release the registered capability"
         );
     }
 
     #[test]
-    fn emitted_control_send_outcome_is_phase_invariant() {
+    fn emitted_control_send_outcome_completes_erased_send() {
         let bytes = [0u8; CAP_TOKEN_LEN];
-        let err =
-            <LoopContinueKind as SendOutcomeKind<'_>>::finish_send(SendControlOutcome::Emitted(
-                crate::endpoint::kernel::RawCapFlowToken::from_bytes(bytes),
-            ))
-            .expect_err("wire-emitted control sends must resolve through registered owner output");
-
-        assert!(matches!(err, crate::endpoint::SendError::PhaseInvariant));
-    }
-}
-
-/// Sealed trait for type-level send argument resolution.
-pub trait FlowSendArg<'a, M>
-where
-    M: MessageSpec + SendableLabel,
-{
-    type Output<'r>
-    where
-        M::ControlKind: SendOutcomeKind<'r>,
-        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-        'r: 'a;
-
-    fn into_payload(self) -> Option<&'a M::Payload>
-    where
-        Self: Sized;
-
-    fn finish_send<'r>(outcome: kernel::SendControlOutcome<'r>) -> SendResult<Self::Output<'r>>
-    where
-        M::ControlKind: SendOutcomeKind<'r>,
-        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-        'r: 'a;
-}
-
-impl<'a, M> FlowSendArg<'a, M> for ()
-where
-    M: MessageSpec + SendableLabel,
-    M::ControlKind: ControlPayloadKind,
-{
-    type Output<'r>
-        = <M::ControlKind as SendOutcomeKind<'r>>::Output
-    where
-        M::ControlKind: SendOutcomeKind<'r>,
-        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-        'r: 'a;
-
-    #[inline(always)]
-    fn into_payload(self) -> Option<&'a M::Payload> {
-        const {
-            assert!(
-                match <M as MessageSpec>::CONTROL {
-                    Some(desc) => match desc.path() {
-                        crate::control::cap::mint::ControlPath::Local => true,
-                        crate::control::cap::mint::ControlPath::Wire => desc.auto_mint_wire(),
-                    },
-                    None => false,
-                },
-                "Unit () can only be used with local control or auto-minted wire control"
-            );
-        }
-        None
-    }
-
-    #[inline(always)]
-    fn finish_send<'r>(outcome: kernel::SendControlOutcome<'r>) -> SendResult<Self::Output<'r>>
-    where
-        M::ControlKind: SendOutcomeKind<'r>,
-        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-        'r: 'a,
-    {
-        <M::ControlKind as SendOutcomeKind<'r>>::finish_send(outcome)
-    }
-}
-
-impl<'a, M> FlowSendArg<'a, M> for &'a M::Payload
-where
-    M: MessageSpec + SendableLabel,
-    M::ControlKind: ControlPayloadKind,
-{
-    type Output<'r>
-        = ()
-    where
-        M::ControlKind: SendOutcomeKind<'r>,
-        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-        'r: 'a;
-
-    #[inline(always)]
-    fn into_payload(self) -> Option<&'a M::Payload> {
-        const {
-            assert!(
-                match <M as MessageSpec>::CONTROL {
-                    None => true,
-                    Some(desc) =>
-                        matches!(desc.path(), crate::control::cap::mint::ControlPath::Wire),
-                },
-                "Payload reference can only be used with data messages or wire control tokens"
-            );
-        }
-        Some(self)
-    }
-
-    #[inline(always)]
-    fn finish_send<'r>(outcome: kernel::SendControlOutcome<'r>) -> SendResult<Self::Output<'r>>
-    where
-        M::ControlKind: SendOutcomeKind<'r>,
-        <<M as MessageSpec>::ControlKind as ControlPayloadKind>::ResourceKind: 'r,
-        'r: 'a,
-    {
-        match outcome {
-            kernel::SendControlOutcome::None | kernel::SendControlOutcome::Emitted(_) => Ok(()),
-            _ => Err(SendError::PhaseInvariant),
-        }
+        finish_send(SendControlOutcome::Emitted(
+            crate::endpoint::kernel::RawEmittedCapToken::new(bytes),
+        ))
+        .expect("wire-emitted control sends complete through erased output");
     }
 }

@@ -32,9 +32,25 @@ check_absent \
   src
 
 check_absent \
+  "RoleLaneSet|ROLE_LANE_SET|StepRoleSet|ROLE_LANE_MASK" \
+  "parallel ownership facts must stay on ProgramSourceData's compact role/lane bitset owner" \
+  src/global.rs \
+  src/global
+
+check_required \
+  "pub(crate) struct RoleLaneMask {" \
+  "compact role/lane bitset owner missing" \
+  src/global/steps.rs
+
+check_absent \
   "EndpointArenaLayout::new\\(" \
   "legacy multi-argument endpoint arena layout constructor reintroduced" \
   src
+
+check_absent \
+  "EndpointInner" \
+  "endpoint facade must stay as direct header pointer plus packed handle" \
+  src/endpoint.rs
 
 check_absent \
   "PUBLIC_ATTACH_TAIL_FLOOR|IMAGE_BANK_EXPANSION_TAIL_FLOOR|PUBLIC_ENDPOINT_ATTACH_TAIL_FLOOR" \
@@ -112,7 +128,7 @@ check_absent \
 check_absent \
   "LANES_MAX_USIZE|zero_u64_cell_array\\(|zero_u32_cell_array\\(|struct CheckState \\{" \
   "observe checker must derive summaries from actual tap storage instead of fixed-width lane state" \
-  src/observe/check.rs
+  src/observe
 
 check_absent \
   "role_program::\\{MAX_LANES, Phase\\}" \
@@ -233,7 +249,7 @@ check_required \
   src/endpoint/kernel/runtime/layout.rs
 
 check_required \
-  "pub(crate) const fn from_footprint(footprint: RoleFootprint) -> Self {" \
+  "pub(crate) const fn from_footprint_with_binding(" \
   "EndpointArenaLayout must be constructed from RoleFootprint" \
   src/endpoint/kernel/runtime/layout.rs
 

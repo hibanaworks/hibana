@@ -21,21 +21,22 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 use common::TestTransport;
 use hibana::{
-    g::advanced::{RoleProgram, project},
     g::{self, Msg, Role},
+    substrate::program::{RoleProgram, project},
     substrate::{
-        RendezvousId,
+        SessionKit,
+        binding::NoBinding,
+        ids::SessionId,
+        runtime::{Config, CounterClock, DefaultLabelUniverse},
+        tap::TapEvent,
+    },
+    substrate::{
         cap::{
             GenericCapToken,
             advanced::{LoopBreakKind, LoopContinueKind},
         },
+        ids::RendezvousId,
         policy::{LoopResolution, ResolverContext, ResolverError},
-    },
-    substrate::{
-        SessionId, SessionKit,
-        binding::NoBinding,
-        runtime::{Config, CounterClock, DefaultLabelUniverse},
-        tap::TapEvent,
     },
 };
 use placement_support::write_value;

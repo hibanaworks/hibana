@@ -19,7 +19,6 @@ pub(super) struct ExactRolePhaseFacts {
     pub(super) active_lane_count: u16,
     pub(super) endpoint_lane_slot_count: u16,
     pub(super) logical_lane_count: u16,
-    pub(super) logical_lane_word_count: u16,
 }
 
 #[inline(always)]
@@ -135,7 +134,6 @@ pub(super) const fn exact_role_phase_facts(
     }
     let logical_lane_count =
         logical_lane_count_for_role(active_lane_count, endpoint_lane_slot_count);
-    let logical_lane_word_count = lane_word_count(logical_lane_count);
 
     if local_len == 0 {
         return ExactRolePhaseFacts {
@@ -153,10 +151,6 @@ pub(super) const fn exact_role_phase_facts(
             logical_lane_count: encode_u16_count(
                 logical_lane_count,
                 "compiled role logical lane count overflow",
-            ),
-            logical_lane_word_count: encode_u16_count(
-                logical_lane_word_count,
-                "compiled role logical lane word count overflow",
             ),
         };
     }
@@ -278,10 +272,6 @@ pub(super) const fn exact_role_phase_facts(
         logical_lane_count: encode_u16_count(
             logical_lane_count,
             "compiled role logical lane count overflow",
-        ),
-        logical_lane_word_count: encode_u16_count(
-            logical_lane_word_count,
-            "compiled role logical lane word count overflow",
         ),
     }
 }

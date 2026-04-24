@@ -1,7 +1,7 @@
 //! Global session type DSL (iso-recursive).
 //!
 //! This module exposes the primitives needed to assemble global choreographies
-//! as local inferred witnesses and project them to role-local views.
+//! as local choreography witnesses and project them to role-local views.
 
 use core::marker::PhantomData;
 
@@ -25,11 +25,6 @@ pub(crate) use role_program::lowering_input;
 pub(crate) mod steps;
 /// Typestate graph and cursor infrastructure.
 pub(crate) mod typestate;
-/// Protocol-implementor compile-time SPI.
-pub mod advanced {
-    pub use super::role_program::{RoleProgram, project};
-    pub use super::{MessageSpec, StaticControlDesc};
-}
 #[diagnostic::on_unimplemented(
     message = "`g::route(left, right)` arms must begin with a controller self-send",
     label = "route arm must begin with a controller self-send"
@@ -71,9 +66,7 @@ where
     message = "`g::par(left, right)` arms must be non-empty protocol fragments",
     label = "parallel arm is empty"
 )]
-pub(crate) trait NonEmptyParallelArm {
-    const ROLE_LANE_SET: steps::RoleLaneSet;
-}
+pub(crate) trait NonEmptyParallelArm {}
 
 // -----------------------------------------------------------------------------
 // Roles
@@ -124,13 +117,13 @@ impl<const LABEL_VALUE: u8> LabelTag for LabelMarker<LABEL_VALUE> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Message<Label, Payload, Control = ()>(PhantomData<(Label, Payload, Control)>);
 
-/// Type alias for convenience when the label is known as a const generic.
+/// Canonical message descriptor when the label is known as a const generic.
 pub type Msg<const LABEL: u8, Payload, Control = ()> =
     Message<LabelMarker<LABEL>, Payload, Control>;
 
 fn encode_control_handle_for<K>(
-    sid: crate::substrate::SessionId,
-    lane: crate::substrate::Lane,
+    sid: crate::substrate::ids::SessionId,
+    lane: crate::substrate::ids::Lane,
     scope: const_dsl::ScopeId,
 ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN]
 where
@@ -146,8 +139,8 @@ pub trait ControlPayloadKind {
     const IS_CONTROL: bool;
     const ENCODE_CONTROL_HANDLE: Option<
         fn(
-            crate::substrate::SessionId,
-            crate::substrate::Lane,
+            crate::substrate::ids::SessionId,
+            crate::substrate::ids::Lane,
             const_dsl::ScopeId,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
     >;
@@ -158,8 +151,8 @@ impl ControlPayloadKind for () {
     const IS_CONTROL: bool = false;
     const ENCODE_CONTROL_HANDLE: Option<
         fn(
-            crate::substrate::SessionId,
-            crate::substrate::Lane,
+            crate::substrate::ids::SessionId,
+            crate::substrate::ids::Lane,
             const_dsl::ScopeId,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
     > = None;
@@ -173,8 +166,8 @@ where
     const IS_CONTROL: bool = true;
     const ENCODE_CONTROL_HANDLE: Option<
         fn(
-            crate::substrate::SessionId,
-            crate::substrate::Lane,
+            crate::substrate::ids::SessionId,
+            crate::substrate::ids::Lane,
             const_dsl::ScopeId,
         ) -> [u8; crate::control::cap::mint::CAP_HANDLE_LEN],
     > = Some(encode_control_handle_for::<K>);
@@ -358,62 +351,30 @@ where
 impl<Controller> SameRouteControllerRole<Controller> for Controller where Controller: RoleMarker {}
 
 #[diagnostic::do_not_recommend]
-impl<Head, Tail> NonEmptyParallelArm for StepCons<Head, Tail>
-where
-    StepCons<Head, Tail>: steps::StepRoleSet,
+impl<Head, Tail> NonEmptyParallelArm for StepCons<Head, Tail> {}
+
+#[diagnostic::do_not_recommend]
+impl<Left, Right> NonEmptyParallelArm for SeqSteps<Left, Right> where Left: NonEmptyParallelArm {}
+
+#[diagnostic::do_not_recommend]
+impl<Right> NonEmptyParallelArm for SeqSteps<StepNil, Right> where Right: NonEmptyParallelArm {}
+
+#[diagnostic::do_not_recommend]
+impl<Left, Right> NonEmptyParallelArm for steps::RouteSteps<Left, Right> where
+    Left: NonEmptyParallelArm
 {
-    const ROLE_LANE_SET: steps::RoleLaneSet =
-        <StepCons<Head, Tail> as steps::StepRoleSet>::ROLE_LANE_SET;
 }
 
 #[diagnostic::do_not_recommend]
-impl<Left, Right> NonEmptyParallelArm for SeqSteps<Left, Right>
-where
-    Left: NonEmptyParallelArm,
-    SeqSteps<Left, Right>: steps::StepRoleSet,
+impl<Left, Right> NonEmptyParallelArm for steps::ParSteps<Left, Right> where
+    Left: NonEmptyParallelArm
 {
-    const ROLE_LANE_SET: steps::RoleLaneSet =
-        <SeqSteps<Left, Right> as steps::StepRoleSet>::ROLE_LANE_SET;
 }
 
 #[diagnostic::do_not_recommend]
-impl<Right> NonEmptyParallelArm for SeqSteps<StepNil, Right>
-where
-    Right: NonEmptyParallelArm,
-    SeqSteps<StepNil, Right>: steps::StepRoleSet,
+impl<Inner, const POLICY_ID: u16> NonEmptyParallelArm for steps::PolicySteps<Inner, POLICY_ID> where
+    Inner: NonEmptyParallelArm
 {
-    const ROLE_LANE_SET: steps::RoleLaneSet =
-        <SeqSteps<StepNil, Right> as steps::StepRoleSet>::ROLE_LANE_SET;
-}
-
-#[diagnostic::do_not_recommend]
-impl<Left, Right> NonEmptyParallelArm for steps::RouteSteps<Left, Right>
-where
-    Left: NonEmptyParallelArm,
-    steps::RouteSteps<Left, Right>: steps::StepRoleSet,
-{
-    const ROLE_LANE_SET: steps::RoleLaneSet =
-        <steps::RouteSteps<Left, Right> as steps::StepRoleSet>::ROLE_LANE_SET;
-}
-
-#[diagnostic::do_not_recommend]
-impl<Left, Right> NonEmptyParallelArm for steps::ParSteps<Left, Right>
-where
-    Left: NonEmptyParallelArm,
-    steps::ParSteps<Left, Right>: steps::StepRoleSet,
-{
-    const ROLE_LANE_SET: steps::RoleLaneSet =
-        <steps::ParSteps<Left, Right> as steps::StepRoleSet>::ROLE_LANE_SET;
-}
-
-#[diagnostic::do_not_recommend]
-impl<Inner, const POLICY_ID: u16> NonEmptyParallelArm for steps::PolicySteps<Inner, POLICY_ID>
-where
-    Inner: NonEmptyParallelArm,
-    steps::PolicySteps<Inner, POLICY_ID>: steps::StepRoleSet,
-{
-    const ROLE_LANE_SET: steps::RoleLaneSet =
-        <steps::PolicySteps<Inner, POLICY_ID> as steps::StepRoleSet>::ROLE_LANE_SET;
 }
 
 #[diagnostic::do_not_recommend]
@@ -985,7 +946,10 @@ pub const fn seq<LeftSteps, RightSteps>(
 ///
 /// The controller is derived from the first self-send control point in each arm.
 /// Both arms must begin with the same controller self-send.
-#[allow(private_bounds)]
+#[expect(
+    private_bounds,
+    reason = "route validation traits are internal compile-time witnesses"
+)]
 pub const fn route<LeftSteps, RightSteps>(
     left: Program<LeftSteps>,
     right: Program<RightSteps>,
@@ -1000,14 +964,17 @@ where
 }
 
 /// Construct a binary parallel composition.
-#[allow(private_bounds)]
+#[expect(
+    private_bounds,
+    reason = "parallel validation traits are internal compile-time witnesses"
+)]
 pub const fn par<LeftSteps, RightSteps>(
     left: Program<LeftSteps>,
     right: Program<RightSteps>,
 ) -> Program<ParSteps<LeftSteps, RightSteps>>
 where
-    LeftSteps: NonEmptyParallelArm,
-    RightSteps: NonEmptyParallelArm + TailLoopControl,
+    LeftSteps: program::BuildProgramSource + NonEmptyParallelArm,
+    RightSteps: program::BuildProgramSource + NonEmptyParallelArm + TailLoopControl,
 {
     program::par_binary(left, right)
 }

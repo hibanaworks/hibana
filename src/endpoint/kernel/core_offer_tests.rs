@@ -56,6 +56,369 @@ const OFFER_FIXTURE_SLAB_CAPACITY: usize = 262_144;
 const ROUTE_HINT_RIGHT_LABEL: u8 = 122;
 type RouteHintRightKind = RouteControl<ROUTE_HINT_RIGHT_LABEL, 0>;
 
+fn overwrite_global_active_entries_fixture<
+    'r,
+    const ROLE: u8,
+    T,
+    U,
+    C,
+    E,
+    const MAX_RV: usize,
+    Mint,
+    B,
+>(
+    endpoint: &mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    src: ActiveEntrySet,
+) where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot,
+{
+    endpoint.init_global_frontier_scratch_if_needed();
+    let mut dst = endpoint.global_active_entries();
+    dst.copy_from(src);
+}
+
+fn overwrite_global_frontier_observed_fixture<
+    'r,
+    const ROLE: u8,
+    T,
+    U,
+    C,
+    E,
+    const MAX_RV: usize,
+    Mint,
+    B,
+>(
+    endpoint: &mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    src: ObservedEntrySet,
+) where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot,
+{
+    endpoint.init_global_frontier_scratch_if_needed();
+    let mut key = endpoint.cached_global_frontier_observation_key();
+    key.copy_slots_from_observed_entries(src);
+    endpoint.frontier_state.global_frontier_observed = src.summary();
+}
+
+fn overwrite_global_frontier_observed_key_fixture<
+    'r,
+    const ROLE: u8,
+    T,
+    U,
+    C,
+    E,
+    const MAX_RV: usize,
+    Mint,
+    B,
+>(
+    endpoint: &mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    key: FrontierObservationKey,
+) where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot,
+{
+    endpoint.init_global_frontier_scratch_if_needed();
+    let mut dst = endpoint.cached_global_frontier_observation_key();
+    dst.copy_from(key);
+}
+
+struct CursorSend<M>(PhantomData<M>);
+
+impl<M> CursorSend<M>
+where
+    M: MessageSpec + SendableLabel,
+{
+    fn run<'a, 'r, A, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
+        endpoint: &'a mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        arg: A,
+    ) -> impl Future<Output = SendResult<()>> + 'a
+    where
+        M: 'a,
+        M::Payload: crate::transport::wire::WireEncode + 'a,
+        M::ControlKind: crate::global::ControlPayloadKind,
+        A: crate::endpoint::flow::ErasedSendInput<'a, M>,
+        T: Transport + 'r,
+        U: LabelUniverse,
+        C: crate::runtime::config::Clock,
+        E: crate::control::cap::mint::EpochTable,
+        Mint: crate::control::cap::mint::MintConfigMarker<
+                Policy: crate::control::cap::mint::AllowsEndpointMint,
+            >,
+        B: crate::binding::BindingSlot + 'r,
+        A: 'a,
+        'r: 'a,
+    {
+        let desc = crate::endpoint::flow::send_desc::<M>();
+        let mut preview = Some(endpoint.preview_flow_meta(desc.label()));
+        let mut payload = crate::endpoint::flow::ErasedSendInput::into_payload(arg)
+            .map(crate::endpoint::kernel::RawSendPayload::from_typed::<M::Payload>);
+        let mut state = None;
+
+        core::future::poll_fn(move |cx| {
+            if state.is_none() {
+                let preview = preview.take().expect("cursor send polled after completion");
+                let preview = match preview {
+                    Ok(preview) => preview,
+                    Err(err) => return Poll::Ready(Err(err)),
+                };
+                let (meta, preview_cursor_index) = preview.into_parts();
+                state = Some(SendState::Init {
+                    descriptor: desc,
+                    meta,
+                    preview_cursor_index: Some(preview_cursor_index),
+                    payload: payload.take(),
+                });
+            }
+
+            let state = state
+                .as_mut()
+                .expect("cursor send state must be initialized");
+            match endpoint.poll_send_state(state, cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(Ok(_)) => Poll::Ready(Ok(())),
+                Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            }
+        })
+    }
+
+    fn run_with_meta<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
+        endpoint: &'a mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        meta: SendMeta,
+        payload: Option<&'a M::Payload>,
+    ) -> impl Future<Output = SendResult<()>> + 'a
+    where
+        M: 'a,
+        M::Payload: crate::transport::wire::WireEncode + 'a,
+        M::ControlKind: crate::global::ControlPayloadKind,
+        T: Transport + 'r,
+        U: LabelUniverse,
+        C: crate::runtime::config::Clock,
+        E: crate::control::cap::mint::EpochTable,
+        Mint: crate::control::cap::mint::MintConfigMarker<
+                Policy: crate::control::cap::mint::AllowsEndpointMint,
+            >,
+        B: crate::binding::BindingSlot + 'r,
+        'r: 'a,
+    {
+        let desc = crate::endpoint::flow::send_desc::<M>();
+        let mut state = SendState::Init {
+            descriptor: desc,
+            meta,
+            preview_cursor_index: None,
+            payload: payload.map(crate::endpoint::kernel::RawSendPayload::from_typed::<M::Payload>),
+        };
+
+        core::future::poll_fn(move |cx| match endpoint.poll_send_state(&mut state, cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(_)) => Poll::Ready(Ok(())),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+        })
+    }
+}
+
+struct CursorOffer<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot + 'r,
+{
+    endpoint: &'a mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    state: OfferState<'r>,
+}
+
+impl<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B> Future
+    for CursorOffer<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot + 'r,
+    'r: 'a,
+{
+    type Output = RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>;
+
+    fn poll(self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        this.endpoint
+            .poll_offer_state(&mut this.state, cx)
+            .map(|result| result.map(Into::into))
+    }
+}
+
+fn cursor_offer<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
+    endpoint: &'a mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+) -> CursorOffer<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot + 'r,
+    'r: 'a,
+{
+    CursorOffer {
+        endpoint,
+        state: OfferState::new(),
+    }
+}
+
+fn branch_label<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
+    branch: &RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+) -> u8
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot + 'r,
+{
+    branch.label
+}
+
+fn branch_scope<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
+    branch: &RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+) -> ScopeId
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot + 'r,
+{
+    branch.branch_meta.scope_id
+}
+
+struct CursorDecode<M>(PhantomData<M>);
+
+impl<M> CursorDecode<M>
+where
+    M: MessageSpec,
+    M::Payload: crate::transport::wire::WirePayload,
+{
+    fn run<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
+        endpoint: &'a mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        branch: &mut RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    ) -> CursorDecodeFuture<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
+    where
+        T: Transport + 'r,
+        U: LabelUniverse,
+        C: crate::runtime::config::Clock,
+        E: crate::control::cap::mint::EpochTable,
+        Mint: crate::control::cap::mint::MintConfigMarker,
+        B: crate::binding::BindingSlot + 'r,
+    {
+        CursorDecodeFuture {
+            endpoint: core::ptr::from_mut(endpoint),
+            state: super::super::decode::DecodeState::new(branch.clone().into()),
+            _borrow: PhantomData,
+            _msg: PhantomData,
+        }
+    }
+}
+
+struct CursorDecodeFuture<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B, M>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot + 'r,
+    M: MessageSpec,
+    M::Payload: crate::transport::wire::WirePayload,
+{
+    endpoint: *mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+    state: super::super::decode::DecodeState<'r>,
+    _borrow: PhantomData<&'a mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>,
+    _msg: PhantomData<M>,
+}
+
+impl<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B, M> Future
+    for CursorDecodeFuture<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot + 'r,
+    M: MessageSpec,
+    M::Payload: crate::transport::wire::WirePayload,
+{
+    type Output = RecvResult<<M::Payload as crate::transport::wire::WirePayload>::Decoded<'a>>;
+
+    fn poll(self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = unsafe { self.get_unchecked_mut() };
+        let endpoint = unsafe { &mut *this.endpoint };
+        let desc = super::super::decode::DecodeDesc::new(
+            <M as MessageSpec>::LABEL,
+            <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
+            |payload| {
+                <M::Payload as crate::transport::wire::WirePayload>::decode_payload(payload)
+                    .map(|_| ())
+            },
+            |scratch| {
+                <M::Payload as crate::transport::wire::WirePayload>::synthetic_payload(scratch)
+            },
+        );
+        match endpoint.poll_decode_state(desc, &mut this.state, cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(payload)) => {
+                let payload = super::super::lane_port::shrink_payload(payload);
+                Poll::Ready(
+                    <M::Payload as crate::transport::wire::WirePayload>::decode_payload(payload)
+                        .map_err(RecvError::Codec),
+                )
+            }
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+        }
+    }
+}
+
+impl<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B, M> Drop
+    for CursorDecodeFuture<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: crate::runtime::config::Clock,
+    E: crate::control::cap::mint::EpochTable,
+    Mint: crate::control::cap::mint::MintConfigMarker,
+    B: crate::binding::BindingSlot + 'r,
+    M: MessageSpec,
+    M::Payload: crate::transport::wire::WirePayload,
+{
+    fn drop(&mut self) {
+        if self.state.restore_on_drop
+            && let Some(branch) = self.state.branch.take()
+        {
+            unsafe {
+                (&mut *self.endpoint).restore_materialized_route_branch(branch.into());
+            }
+        }
+    }
+}
+
 const fn max_usize(values: &[usize]) -> usize {
     let mut idx = 0usize;
     let mut max = 0usize;
@@ -256,6 +619,42 @@ fn frontier_candidates<const N: usize>() -> [FrontierCandidate; N] {
 
 fn frontier_visit_slots<const N: usize>() -> [ScopeId; N] {
     [ScopeId::none(); N]
+}
+
+fn frontier_snapshot_fixture<const N: usize>(
+    current_scope: ScopeId,
+    current_entry_idx: usize,
+    current_parallel_root: ScopeId,
+    current_frontier: FrontierKind,
+    candidates: &mut [FrontierCandidate; N],
+    candidate_len: usize,
+) -> FrontierSnapshot {
+    let source = *candidates;
+    let len = core::cmp::min(candidate_len, N);
+    let mut snapshot = unsafe {
+        FrontierSnapshot::from_parts(
+            current_scope,
+            current_entry_idx,
+            current_parallel_root,
+            current_frontier,
+            candidates.as_mut_ptr(),
+            N,
+        )
+    };
+    let mut idx = 0usize;
+    while idx < len {
+        assert!(snapshot.push_candidate(source[idx]));
+        idx += 1;
+    }
+    snapshot
+}
+
+fn frontier_visit_set_fixture(slots: &mut [ScopeId]) -> FrontierVisitSet {
+    unsafe { FrontierVisitSet::from_parts(slots.as_mut_ptr(), slots.len()) }
+}
+
+fn empty_frontier_visit_set() -> FrontierVisitSet {
+    unsafe { FrontierVisitSet::from_parts(core::ptr::null_mut(), 0) }
 }
 
 const fn offer_endpoint_slot_bytes<const ROLE: u8, T, B>(lane_capacity: usize) -> usize
@@ -3151,7 +3550,7 @@ fn align_cursor_to_selected_scope_skips_observation_for_single_active_entry() {
                                 .active_frontier_entries(None)
                                 .contains_only(current_idx)
                         );
-                        let observed_key = worker.global_frontier_observed_key_for_test();
+                        let observed_key = worker.cached_global_frontier_observation_key();
                         let observed_entries = worker.global_frontier_observed_entries();
 
                         RouteFrontierMachine::new(&mut *worker)
@@ -3160,7 +3559,7 @@ fn align_cursor_to_selected_scope_skips_observation_for_single_active_entry() {
 
                         assert_eq!(worker.cursor.index(), current_idx);
                         assert!(
-                            worker.global_frontier_observed_key_for_test() == observed_key,
+                            worker.cached_global_frontier_observation_key() == observed_key,
                             "single-active fast path must not rebuild cached observation key during align"
                         );
                         assert!(
@@ -3231,16 +3630,16 @@ fn align_cursor_to_selected_scope_reuses_cached_multi_entry_observation() {
                         let current_idx = worker.cursor.index();
                         let (_active_slots, active_entries) =
                             active_entry_set_from_pairs(&[(current_idx, 0)]);
-                        worker.overwrite_global_active_entries_for_test(active_entries);
+                        overwrite_global_active_entries_fixture(&mut *worker, active_entries);
                         let (_observed_slots, observed_entries) =
                             observed_entries_with_ready_current_only(current_idx);
-                        worker.overwrite_global_frontier_observed_for_test(observed_entries);
+                        overwrite_global_frontier_observed_fixture(&mut *worker, observed_entries);
                         let stored_key = RouteFrontierMachine::frontier_observation_key(
                             &worker,
                             ScopeId::none(),
                             false,
                         );
-                        worker.overwrite_global_frontier_observed_key_for_test(stored_key);
+                        overwrite_global_frontier_observed_key_fixture(&mut *worker, stored_key);
                         worker.frontier_state.frontier_observation_epoch = 17;
 
                         RouteFrontierMachine::new(&mut *worker)
@@ -3304,16 +3703,16 @@ fn align_cursor_to_selected_scope_ignores_unrelated_lane_binding_changes() {
                         let current_idx = worker.cursor.index();
                         let (_active_slots, active_entries) =
                             active_entry_set_from_pairs(&[(current_idx, 0)]);
-                        worker.overwrite_global_active_entries_for_test(active_entries);
+                        overwrite_global_active_entries_fixture(&mut *worker, active_entries);
                         let (_observed_slots, observed_entries) =
                             observed_entries_with_ready_current_only(current_idx);
-                        worker.overwrite_global_frontier_observed_for_test(observed_entries);
+                        overwrite_global_frontier_observed_fixture(&mut *worker, observed_entries);
                         let stored_key = RouteFrontierMachine::frontier_observation_key(
                             &worker,
                             ScopeId::none(),
                             false,
                         );
-                        worker.overwrite_global_frontier_observed_key_for_test(stored_key);
+                        overwrite_global_frontier_observed_key_fixture(&mut *worker, stored_key);
                         worker.frontier_state.frontier_observation_epoch = 23;
 
                         let unrelated = crate::binding::IncomingClassification {
@@ -3387,10 +3786,10 @@ fn align_cursor_to_selected_scope_ignores_relevant_lane_binding_content_changes(
                         let current_idx = worker.cursor.index();
                         let (_active_slots, active_entries) =
                             active_entry_set_from_pairs(&[(current_idx, 0)]);
-                        worker.overwrite_global_active_entries_for_test(active_entries);
+                        overwrite_global_active_entries_fixture(&mut *worker, active_entries);
                         let (_observed_slots, observed_entries) =
                             observed_entries_with_ready_current_only(current_idx);
-                        worker.overwrite_global_frontier_observed_for_test(observed_entries);
+                        overwrite_global_frontier_observed_fixture(&mut *worker, observed_entries);
 
                         let first = crate::binding::IncomingClassification {
                             label: 31,
@@ -3410,7 +3809,7 @@ fn align_cursor_to_selected_scope_ignores_relevant_lane_binding_content_changes(
                             ScopeId::none(),
                             false,
                         );
-                        worker.overwrite_global_frontier_observed_key_for_test(stored_key);
+                        overwrite_global_frontier_observed_key_fixture(&mut *worker, stored_key);
                         worker.frontier_state.frontier_observation_epoch = 27;
 
                         assert!(worker.binding_inbox.push_back(0, second));
@@ -3480,16 +3879,16 @@ fn align_cursor_to_selected_scope_ignores_unrelated_scope_evidence_changes() {
                         let current_idx = worker.cursor.index();
                         let (_active_slots, active_entries) =
                             active_entry_set_from_pairs(&[(current_idx, 0)]);
-                        worker.overwrite_global_active_entries_for_test(active_entries);
+                        overwrite_global_active_entries_fixture(&mut *worker, active_entries);
                         let (_observed_slots, observed_entries) =
                             observed_entries_with_ready_current_only(current_idx);
-                        worker.overwrite_global_frontier_observed_for_test(observed_entries);
+                        overwrite_global_frontier_observed_fixture(&mut *worker, observed_entries);
                         let stored_key = RouteFrontierMachine::frontier_observation_key(
                             &worker,
                             ScopeId::none(),
                             false,
                         );
-                        worker.overwrite_global_frontier_observed_key_for_test(stored_key);
+                        overwrite_global_frontier_observed_key_fixture(&mut *worker, stored_key);
                         worker.frontier_state.frontier_observation_epoch = 29;
 
                         let current_scope_slot = worker
@@ -3568,16 +3967,16 @@ fn align_cursor_to_selected_scope_ignores_unrelated_lane_frontier_refresh() {
                         let current_idx = worker.cursor.index();
                         let (_active_slots, active_entries) =
                             active_entry_set_from_pairs(&[(current_idx, 0)]);
-                        worker.overwrite_global_active_entries_for_test(active_entries);
+                        overwrite_global_active_entries_fixture(&mut *worker, active_entries);
                         let (_observed_slots, observed_entries) =
                             observed_entries_with_ready_current_only(current_idx);
-                        worker.overwrite_global_frontier_observed_for_test(observed_entries);
+                        overwrite_global_frontier_observed_fixture(&mut *worker, observed_entries);
                         let stored_key = RouteFrontierMachine::frontier_observation_key(
                             &worker,
                             ScopeId::none(),
                             false,
                         );
-                        worker.overwrite_global_frontier_observed_key_for_test(stored_key);
+                        overwrite_global_frontier_observed_key_fixture(&mut *worker, stored_key);
                         worker.frontier_state.frontier_observation_epoch = 31;
 
                         worker.refresh_lane_offer_state(2);
@@ -3930,13 +4329,13 @@ fn refresh_cached_frontier_observation_entry_updates_stable_slot_in_place() {
                             false,
                         ),
                     );
-                    worker.overwrite_global_frontier_observed_for_test(observed_entries);
+                    overwrite_global_frontier_observed_fixture(&mut *worker, observed_entries);
                     let stored_key = RouteFrontierMachine::frontier_observation_key(
                         &worker,
                         ScopeId::none(),
                         false,
                     );
-                    worker.overwrite_global_frontier_observed_key_for_test(stored_key);
+                    overwrite_global_frontier_observed_key_fixture(&mut *worker, stored_key);
                     worker.frontier_state.frontier_observation_epoch = 41;
                     assert_eq!(
                         worker.frontier_state.global_frontier_observed.ready_mask & observed_bit,
@@ -3969,11 +4368,12 @@ fn refresh_cached_frontier_observation_entry_updates_stable_slot_in_place() {
                         "stable active-entry slot should patch the cached frontier observation in place",
                     );
                     assert!(
-                        worker.global_frontier_observed_key_for_test() == updated_key,
+                        worker.cached_global_frontier_observation_key() == updated_key,
                         "targeted patch should publish the refreshed observation under the new key",
                     );
-                    let current_bit =
-                        worker.global_frontier_observed_entry_bit_for_test(current_idx);
+                    let current_bit = worker
+                        .global_frontier_observed_entries()
+                        .entry_bit(current_idx);
                     assert_ne!(current_bit, 0);
                     assert_ne!(
                         worker.frontier_state.global_frontier_observed.ready_mask & current_bit,
@@ -4302,7 +4702,7 @@ fn cached_frontier_changed_entry_slot_mask_ignores_non_representative_route_lane
                     let current_idx = worker.cursor.index();
                     let (_active_slots, active_entries) =
                         active_entry_set_from_pairs(&[(current_idx, 0)]);
-                    worker.overwrite_global_active_entries_for_test(active_entries);
+                    overwrite_global_active_entries_fixture(&mut *worker, active_entries);
 
                     let (
                         _cached_key_slots,
@@ -4706,20 +5106,11 @@ fn has_progress_controller_sibling(
     scope_id: ScopeId,
     entry_idx: usize,
 ) -> bool {
-    let mut idx = 0usize;
-    while idx < snapshot.candidate_len {
-        let candidate = snapshot.candidate(idx).expect("candidate in bounds");
-        if snapshot.matches_parallel_root(candidate)
-            && candidate.ready()
-            && candidate.has_evidence()
-            && candidate.is_controller()
-            && (candidate.scope_id != scope_id || candidate.entry_idx as usize != entry_idx)
-        {
-            return true;
-        }
-        idx += 1;
-    }
-    false
+    snapshot
+        .select_exhausted_controller_candidate(empty_frontier_visit_set())
+        .is_some_and(|candidate| {
+            candidate.scope_id != scope_id || candidate.entry_idx as usize != entry_idx
+        })
 }
 
 #[test]
@@ -4741,7 +5132,7 @@ fn passive_frontier_detects_progress_controller_sibling() {
         frontier: FrontierKind::Loop,
         flags: FrontierCandidate::pack_flags(true, false, true, true),
     };
-    let snapshot = FrontierSnapshot::test_from_slice(
+    let snapshot = frontier_snapshot_fixture(
         current_scope,
         63,
         ScopeId::none(),
@@ -4771,7 +5162,7 @@ fn passive_frontier_ignores_controller_without_progress_evidence() {
         frontier: FrontierKind::Loop,
         flags: FrontierCandidate::pack_flags(true, false, false, true),
     };
-    let snapshot = FrontierSnapshot::test_from_slice(
+    let snapshot = frontier_snapshot_fixture(
         current_scope,
         63,
         ScopeId::none(),
@@ -4805,7 +5196,7 @@ fn passive_frontier_ignores_non_controller_sibling_for_controller_preemption() {
         frontier: FrontierKind::PassiveObserver,
         flags: FrontierCandidate::pack_flags(false, false, false, true),
     };
-    let snapshot = FrontierSnapshot::test_from_slice(
+    let snapshot = frontier_snapshot_fixture(
         current_scope,
         63,
         ScopeId::none(),
@@ -4823,7 +5214,7 @@ fn passive_frontier_ignores_non_controller_sibling_for_controller_preemption() {
 #[test]
 fn frontier_yield_ping_pong_is_bounded() {
     let mut visited_slots = frontier_visit_slots::<2>();
-    let mut visited = FrontierVisitSet::test_from_slice(&mut visited_slots);
+    let mut visited = frontier_visit_set_fixture(&mut visited_slots);
     let scope_a = ScopeId::generic(31);
     let scope_b = ScopeId::generic(32);
     visited.record(scope_a);
@@ -4853,7 +5244,7 @@ fn route_defer_yields_to_sibling_scope() {
         frontier: FrontierKind::Route,
         flags: FrontierCandidate::pack_flags(true, true, true, true),
     };
-    let snapshot = FrontierSnapshot::test_from_slice(
+    let snapshot = frontier_snapshot_fixture(
         current_scope,
         10,
         ScopeId::none(),
@@ -4862,7 +5253,7 @@ fn route_defer_yields_to_sibling_scope() {
         2,
     );
     let picked = snapshot
-        .select_yield_candidate(FrontierVisitSet::empty())
+        .select_yield_candidate(empty_frontier_visit_set())
         .expect("route frontier must yield to progress sibling");
     assert_eq!(picked.scope_id, sibling_scope);
     assert_eq!(picked.frontier, FrontierKind::Route);
@@ -4887,7 +5278,7 @@ fn loop_defer_yields_to_sibling_scope() {
         frontier: FrontierKind::Loop,
         flags: FrontierCandidate::pack_flags(true, true, true, true),
     };
-    let snapshot = FrontierSnapshot::test_from_slice(
+    let snapshot = frontier_snapshot_fixture(
         current_scope,
         20,
         ScopeId::none(),
@@ -4896,7 +5287,7 @@ fn loop_defer_yields_to_sibling_scope() {
         2,
     );
     let picked = snapshot
-        .select_yield_candidate(FrontierVisitSet::empty())
+        .select_yield_candidate(empty_frontier_visit_set())
         .expect("loop frontier must yield to progress sibling");
     assert_eq!(picked.scope_id, sibling_scope);
     assert_eq!(picked.frontier, FrontierKind::Loop);
@@ -4922,7 +5313,7 @@ fn defer_yields_across_frontier_in_same_parallel_root() {
         frontier: FrontierKind::Route,
         flags: FrontierCandidate::pack_flags(true, true, true, true),
     };
-    let snapshot = FrontierSnapshot::test_from_slice(
+    let snapshot = frontier_snapshot_fixture(
         current_scope,
         20,
         root,
@@ -4931,7 +5322,7 @@ fn defer_yields_across_frontier_in_same_parallel_root() {
         2,
     );
     let picked = snapshot
-        .select_yield_candidate(FrontierVisitSet::empty())
+        .select_yield_candidate(empty_frontier_visit_set())
         .expect("defer must yield to progress sibling in same parallel root");
     assert_eq!(picked.scope_id, sibling_scope);
     assert_eq!(picked.frontier, FrontierKind::Route);
@@ -4964,7 +5355,7 @@ fn parallel_frontier_prefers_ready_lane_before_phase_join() {
         frontier: FrontierKind::Parallel,
         flags: FrontierCandidate::pack_flags(false, false, true, true),
     };
-    let snapshot = FrontierSnapshot::test_from_slice(
+    let snapshot = frontier_snapshot_fixture(
         current_scope,
         30,
         root,
@@ -4973,7 +5364,7 @@ fn parallel_frontier_prefers_ready_lane_before_phase_join() {
         3,
     );
     let picked = snapshot
-        .select_yield_candidate(FrontierVisitSet::empty())
+        .select_yield_candidate(empty_frontier_visit_set())
         .expect("parallel frontier must choose progress sibling");
     assert_eq!(picked.scope_id, ready_scope);
     assert_eq!(picked.entry_idx, 32);
@@ -4998,7 +5389,7 @@ fn passive_observer_defer_follow_is_progressive() {
         frontier: FrontierKind::PassiveObserver,
         flags: FrontierCandidate::pack_flags(false, false, true, true),
     };
-    let snapshot = FrontierSnapshot::test_from_slice(
+    let snapshot = frontier_snapshot_fixture(
         current_scope,
         40,
         ScopeId::none(),
@@ -5007,7 +5398,7 @@ fn passive_observer_defer_follow_is_progressive() {
         2,
     );
     let mut visited_slots = frontier_visit_slots::<1>();
-    let mut visited = FrontierVisitSet::test_from_slice(&mut visited_slots);
+    let mut visited = frontier_visit_set_fixture(&mut visited_slots);
     visited.record(current_scope);
     let picked = snapshot
         .select_yield_candidate(visited)
@@ -5036,7 +5427,7 @@ fn passive_observer_defer_stops_without_progress_evidence() {
         frontier: FrontierKind::Loop,
         flags: FrontierCandidate::pack_flags(true, false, false, true),
     };
-    let snapshot = FrontierSnapshot::test_from_slice(
+    let snapshot = frontier_snapshot_fixture(
         current_scope,
         50,
         root,
@@ -5045,7 +5436,7 @@ fn passive_observer_defer_stops_without_progress_evidence() {
         2,
     );
     let mut visited_slots = frontier_visit_slots::<1>();
-    let mut visited = FrontierVisitSet::test_from_slice(&mut visited_slots);
+    let mut visited = frontier_visit_set_fixture(&mut visited_slots);
     visited.record(current_scope);
     assert_eq!(snapshot.select_yield_candidate(visited), None);
 }
@@ -5086,7 +5477,7 @@ fn frontier_arbitration_is_uniform_across_route_loop_parallel_observer() {
             frontier,
             flags: FrontierCandidate::pack_flags(true, true, true, true),
         };
-        let snapshot = FrontierSnapshot::test_from_slice(
+        let snapshot = frontier_snapshot_fixture(
             current_scope,
             70 + idx,
             parallel_root,
@@ -5095,7 +5486,7 @@ fn frontier_arbitration_is_uniform_across_route_loop_parallel_observer() {
             2,
         );
         let picked = snapshot
-            .select_yield_candidate(FrontierVisitSet::empty())
+            .select_yield_candidate(empty_frontier_visit_set())
             .expect("uniform frontier defer must pick progress-evidence-bearing sibling");
         assert_eq!(picked.scope_id, sibling_scope);
         assert_eq!(picked.frontier, frontier);
@@ -5155,7 +5546,7 @@ fn dynamic_route_ignores_hint_classification_for_authority() {
                         let worker = worker_slot.borrow_mut();
                         let mut cx = Context::from_waker(noop_waker_ref());
                         let branch = {
-                            let mut offer = pin!(worker.offer());
+                            let mut offer = pin!(cursor_offer(worker));
                             let first_poll = offer.as_mut().poll(&mut cx);
                             let mut branch = match first_poll {
                                 Poll::Ready(Ok(next_branch)) => Some(next_branch),
@@ -5189,7 +5580,7 @@ fn dynamic_route_ignores_hint_classification_for_authority() {
                             branch.expect("offer should become ready after authoritative decision")
                         };
                         assert_eq!(
-                            branch.label(),
+                            branch_label(&branch),
                             HINT_LEFT_DATA_LABEL,
                             "resolved branch must follow authoritative arm, not hint-derived ACK"
                         );
@@ -6462,7 +6853,7 @@ fn record_route_decision_for_scope_lanes_refreshes_sibling_frontier_cache() {
 
                         let mut cx = Context::from_waker(noop_waker_ref());
                         {
-                            let mut offer = pin!(worker.offer());
+                            let mut offer = pin!(cursor_offer(worker));
                             assert!(
                                 matches!(offer.as_mut().poll(&mut cx), Poll::Pending),
                                 "unresolved split-lane route must cache a pending frontier observation before the decision arrives"
@@ -6475,11 +6866,11 @@ fn record_route_decision_for_scope_lanes_refreshes_sibling_frontier_cache() {
                             RouteDecisionToken::from_ack(Arm::new(1).expect("binary route arm")),
                         );
 
-                        let mut offer = pin!(worker.offer());
+                        let mut offer = pin!(cursor_offer(worker));
                         let branch =
                             poll_ready_ok(&mut cx, offer.as_mut(), "split-lane sibling offer");
                         assert_eq!(
-                            branch.label(),
+                            branch_label(&branch),
                             HINT_RIGHT_DATA_LABEL,
                             "broadcast route decisions must invalidate sibling-lane frontier caches immediately"
                         );
@@ -6638,7 +7029,7 @@ fn selected_route_arm_keeps_later_same_lane_sends_available() {
 
                         {
                             let mut route_right =
-                                pin!(controller.send_direct::<MultiSendRouteRightMsg, _>(()));
+                                pin!(CursorSend::<MultiSendRouteRightMsg>::run(controller, ()));
                             let _ =
                                 poll_ready_ok(&mut cx, route_right.as_mut(), "route-right send");
                         }
@@ -6649,7 +7040,7 @@ fn selected_route_arm_keeps_later_same_lane_sends_available() {
                         );
                         {
                             let mut first_payload =
-                                pin!(controller.send_direct::<MultiSendRightFirstMsg, _>(&1));
+                                pin!(CursorSend::<MultiSendRightFirstMsg>::run(controller, &1));
                             let _ = poll_ready_ok(
                                 &mut cx,
                                 first_payload.as_mut(),
@@ -6663,7 +7054,7 @@ fn selected_route_arm_keeps_later_same_lane_sends_available() {
                         );
                         {
                             let mut second_payload =
-                                pin!(controller.send_direct::<MultiSendRightSecondMsg, _>(&2));
+                                pin!(CursorSend::<MultiSendRightSecondMsg>::run(controller, &2));
                             let _ = poll_ready_ok(
                                 &mut cx,
                                 second_payload.as_mut(),
@@ -7212,7 +7603,7 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label() {
                         &mut *controller_storage.as_mut_ptr().cast::<ControllerEndpoint>()
                     };
                     let mut route_right = core::pin::pin!(
-                        controller.send_direct::<DeepRightStaticRouteRightMsg, _>(())
+                        CursorSend::<DeepRightStaticRouteRightMsg>::run(controller, ())
                     );
                     let _ = poll_ready_ok(&mut cx, route_right.as_mut(), "outer route-right send");
                 }
@@ -7221,7 +7612,7 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label() {
                         &mut *controller_storage.as_mut_ptr().cast::<ControllerEndpoint>()
                     };
                     let mut route_right = core::pin::pin!(
-                        controller.send_direct::<DeepRightStaticRouteRightMsg, _>(())
+                        CursorSend::<DeepRightStaticRouteRightMsg>::run(controller, ())
                     );
                     let _ = poll_ready_ok(&mut cx, route_right.as_mut(), "middle route-right send");
                 }
@@ -7230,7 +7621,7 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label() {
                         &mut *controller_storage.as_mut_ptr().cast::<ControllerEndpoint>()
                     };
                     let mut route_right = core::pin::pin!(
-                        controller.send_direct::<DeepRightStaticRouteRightMsg, _>(())
+                        CursorSend::<DeepRightStaticRouteRightMsg>::run(controller, ())
                     );
                     let _ = poll_ready_ok(&mut cx, route_right.as_mut(), "third route-right send");
                 }
@@ -7239,7 +7630,7 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label() {
                         &mut *controller_storage.as_mut_ptr().cast::<ControllerEndpoint>()
                     };
                     let mut route_right = core::pin::pin!(
-                        controller.send_direct::<DeepRightStaticRouteRightMsg, _>(())
+                        CursorSend::<DeepRightStaticRouteRightMsg>::run(controller, ())
                     );
                     let _ = poll_ready_ok(&mut cx, route_right.as_mut(), "final route-right send");
                 }
@@ -7248,14 +7639,14 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label() {
                         &mut *controller_storage.as_mut_ptr().cast::<ControllerEndpoint>()
                     };
                     let mut reply_send = core::pin::pin!(
-                        controller.send_direct::<DeepRightFinalRightMsg, _>(&payload)
+                        CursorSend::<DeepRightFinalRightMsg>::run(controller, &payload)
                     );
                     let _ = poll_ready_ok(&mut cx, reply_send.as_mut(), "final right reply send");
                 }
 
                 let worker = unsafe { &mut *worker_storage.as_mut_ptr().cast::<WorkerEndpoint>() };
                 let mut branch = {
-                    let mut offer = pin!(worker.offer());
+                    let mut offer = pin!(cursor_offer(worker));
                     match offer.as_mut().poll(&mut cx) {
                         Poll::Ready(Ok(branch)) => branch,
                         Poll::Ready(Err(err)) => {
@@ -7267,11 +7658,14 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label() {
                     }
                 };
                 assert_eq!(
-                    branch.label(),
+                    branch_label(&branch),
                     0x55,
                     "worker must materialize the deep final reply"
                 );
-                let mut decode = pin!(worker.decode_branch::<DeepRightFinalRightMsg>(&mut branch));
+                let mut decode = pin!(CursorDecode::<DeepRightFinalRightMsg>::run(
+                    worker,
+                    &mut branch
+                ));
                 match decode.as_mut().poll(&mut cx) {
                     Poll::Ready(Ok(reply)) => assert_eq!(reply, payload),
                     Poll::Ready(Err(err)) => {
@@ -7381,9 +7775,11 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label_with_deferred_bin
                         let controller = unsafe {
                             &mut *controller_storage.as_mut_ptr().cast::<ControllerEndpoint>()
                         };
-                        let mut route_right = core::pin::pin!(
-                            controller.send_direct::<DeepRightStaticRouteRightMsg, _>(())
-                        );
+                        let mut route_right = core::pin::pin!(CursorSend::<
+                            DeepRightStaticRouteRightMsg,
+                        >::run(
+                            controller, ()
+                        ));
                         let _ = poll_ready_ok(
                             &mut cx,
                             route_right.as_mut(),
@@ -7394,9 +7790,11 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label_with_deferred_bin
                         let controller = unsafe {
                             &mut *controller_storage.as_mut_ptr().cast::<ControllerEndpoint>()
                         };
-                        let mut route_right = core::pin::pin!(
-                            controller.send_direct::<DeepRightStaticRouteRightMsg, _>(())
-                        );
+                        let mut route_right = core::pin::pin!(CursorSend::<
+                            DeepRightStaticRouteRightMsg,
+                        >::run(
+                            controller, ()
+                        ));
                         let _ = poll_ready_ok(
                             &mut cx,
                             route_right.as_mut(),
@@ -7407,9 +7805,11 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label_with_deferred_bin
                         let controller = unsafe {
                             &mut *controller_storage.as_mut_ptr().cast::<ControllerEndpoint>()
                         };
-                        let mut route_right = core::pin::pin!(
-                            controller.send_direct::<DeepRightStaticRouteRightMsg, _>(())
-                        );
+                        let mut route_right = core::pin::pin!(CursorSend::<
+                            DeepRightStaticRouteRightMsg,
+                        >::run(
+                            controller, ()
+                        ));
                         let _ = poll_ready_ok(
                             &mut cx,
                             route_right.as_mut(),
@@ -7420,9 +7820,11 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label_with_deferred_bin
                         let controller = unsafe {
                             &mut *controller_storage.as_mut_ptr().cast::<ControllerEndpoint>()
                         };
-                        let mut route_right = core::pin::pin!(
-                            controller.send_direct::<DeepRightStaticRouteRightMsg, _>(())
-                        );
+                        let mut route_right = core::pin::pin!(CursorSend::<
+                            DeepRightStaticRouteRightMsg,
+                        >::run(
+                            controller, ()
+                        ));
                         let _ = poll_ready_ok(
                             &mut cx,
                             route_right.as_mut(),
@@ -7434,7 +7836,7 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label_with_deferred_bin
                             &mut *controller_storage.as_mut_ptr().cast::<ControllerEndpoint>()
                         };
                         let mut reply_send = core::pin::pin!(
-                            controller.send_direct::<DeepRightFinalRightMsg, _>(&payload)
+                            CursorSend::<DeepRightFinalRightMsg>::run(controller, &payload)
                         );
                         let _ = poll_ready_ok(
                             &mut cx,
@@ -7446,7 +7848,7 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label_with_deferred_bin
                     let worker =
                         unsafe { &mut *worker_storage.as_mut_ptr().cast::<WorkerEndpoint>() };
                     let mut branch = {
-                        let mut offer = pin!(worker.offer());
+                        let mut offer = pin!(cursor_offer(worker));
                         match offer.as_mut().poll(&mut cx) {
                             Poll::Ready(Ok(branch)) => branch,
                             Poll::Ready(Err(err)) => {
@@ -7458,12 +7860,14 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label_with_deferred_bin
                         }
                     };
                     assert_eq!(
-                        branch.label(),
+                        branch_label(&branch),
                         0x55,
                         "worker must materialize the deep final reply after deferred binding ingress"
                     );
-                    let mut decode =
-                        pin!(worker.decode_branch::<DeepRightFinalRightMsg>(&mut branch));
+                    let mut decode = pin!(CursorDecode::<DeepRightFinalRightMsg>::run(
+                        worker,
+                        &mut branch
+                    ));
                     match decode.as_mut().poll(&mut cx) {
                         Poll::Ready(Ok(reply)) => assert_eq!(reply, payload),
                         Poll::Ready(Err(err)) => {
@@ -8326,9 +8730,11 @@ fn loop_continue_then_nested_custom_route_right_send_stays_well_scoped() {
             ) -> SendMeta {
                 {
                     let controller = controller_slot.borrow_mut();
-                    let mut continue_send = core::pin::pin!(
-                        controller.send_direct::<LoopContinueScopedContinueMsg, _>(())
-                    );
+                    let mut continue_send = core::pin::pin!(CursorSend::<
+                        LoopContinueScopedContinueMsg,
+                    >::run(
+                        controller, ()
+                    ));
                     let _ = poll_ready_ok(cx, continue_send.as_mut(), "loop continue send");
                 }
 
@@ -8403,12 +8809,11 @@ fn loop_continue_then_nested_custom_route_right_send_stays_well_scoped() {
                 route_right_meta: &SendMeta,
             ) {
                 let controller = controller_slot.borrow_mut();
-                let mut route_right_send = core::pin::pin!(
-                    controller.send_with_meta_in_place::<LoopContinueScopedRouteRightMsg>(
-                        *route_right_meta,
-                        None,
-                    )
-                );
+                let mut route_right_send = core::pin::pin!(CursorSend::<
+                    LoopContinueScopedRouteRightMsg,
+                >::run_with_meta(
+                    controller, *route_right_meta, None,
+                ));
                 let _ = poll_ready_ok(
                     cx,
                     route_right_send.as_mut(),
@@ -8481,9 +8886,11 @@ fn send_preview_commit_clears_stale_route_hints_on_selected_lane() {
                     let route_right_meta = {
                         let controller = controller_slot.borrow_mut();
                         {
-                            let mut continue_send = core::pin::pin!(
-                                controller.send_direct::<LoopContinueScopedContinueMsg, _>(())
-                            );
+                            let mut continue_send = core::pin::pin!(CursorSend::<
+                                LoopContinueScopedContinueMsg,
+                            >::run(
+                                controller, ()
+                            ));
                             let _ = poll_ready_ok(
                                 &mut cx,
                                 continue_send.as_mut(),
@@ -8521,12 +8928,13 @@ fn send_preview_commit_clears_stale_route_hints_on_selected_lane() {
                     );
 
                     {
-                        let mut route_right_send = core::pin::pin!(
-                            controller.send_with_meta_in_place::<LoopContinueScopedRouteRightMsg>(
-                                route_right_meta,
-                                None
-                            )
-                        );
+                        let mut route_right_send = core::pin::pin!(CursorSend::<
+                            LoopContinueScopedRouteRightMsg,
+                        >::run_with_meta(
+                            controller,
+                            route_right_meta,
+                            None
+                        ));
                         let _ = poll_ready_ok(
                             &mut cx,
                             route_right_send.as_mut(),
@@ -8577,9 +8985,11 @@ fn send_preview_commits_ack_route_bookkeeping_on_flow_send() {
 
                     {
                         let controller = controller_slot.borrow_mut();
-                        let mut continue_send = core::pin::pin!(
-                            controller.send_direct::<LoopContinueScopedContinueMsg, _>(())
-                        );
+                        let mut continue_send = core::pin::pin!(CursorSend::<
+                            LoopContinueScopedContinueMsg,
+                        >::run(
+                            controller, ()
+                        ));
                         let _ =
                             poll_ready_ok(&mut cx, continue_send.as_mut(), "loop continue send");
                     }
@@ -8602,9 +9012,11 @@ fn send_preview_commits_ack_route_bookkeeping_on_flow_send() {
                     );
 
                     {
-                        let mut route_right_send = core::pin::pin!(
-                            controller.send_direct::<LoopContinueScopedRouteRightMsg, _>(())
-                        );
+                        let mut route_right_send = core::pin::pin!(CursorSend::<
+                            LoopContinueScopedRouteRightMsg,
+                        >::run(
+                            controller, ()
+                        ));
                         let _ = poll_ready_ok(
                             &mut cx,
                             route_right_send.as_mut(),
@@ -8647,16 +9059,20 @@ fn passive_offer_descends_into_nested_route_after_loop_continue_and_custom_route
             ) {
                 {
                     let controller = controller_slot.borrow_mut();
-                    let mut continue_send = core::pin::pin!(
-                        controller.send_direct::<LoopContinueScopedContinueMsg, _>(())
-                    );
+                    let mut continue_send = core::pin::pin!(CursorSend::<
+                        LoopContinueScopedContinueMsg,
+                    >::run(
+                        controller, ()
+                    ));
                     let _ = poll_ready_ok(cx, continue_send.as_mut(), "loop continue send");
                 }
                 {
                     let controller = controller_slot.borrow_mut();
-                    let mut route_right_send = core::pin::pin!(
-                        controller.send_direct::<LoopContinueScopedRouteRightMsg, _>(())
-                    );
+                    let mut route_right_send = core::pin::pin!(CursorSend::<
+                        LoopContinueScopedRouteRightMsg,
+                    >::run(
+                        controller, ()
+                    ));
                     let _ = poll_ready_ok(cx, route_right_send.as_mut(), "nested route-right send");
                 }
             }
@@ -8671,7 +9087,7 @@ fn passive_offer_descends_into_nested_route_after_loop_continue_and_custom_route
                 let outer_ack = worker.peek_scope_ack(outer_scope);
                 let outer_ready_mask = worker.scope_ready_arm_mask(outer_scope);
                 let outer_poll_ready_mask = worker.scope_poll_ready_arm_mask(outer_scope);
-                let mut offer = pin!(worker.offer());
+                let mut offer = pin!(cursor_offer(worker));
                 let branch = match offer.as_mut().poll(cx) {
                     Poll::Ready(Ok(branch)) => branch,
                     Poll::Ready(Err(err)) => panic!(
@@ -8687,7 +9103,7 @@ fn passive_offer_descends_into_nested_route_after_loop_continue_and_custom_route
                         Poll::Pending => panic!("passive nested offer remained pending"),
                     },
                 };
-                branch.label()
+                branch_label(&branch)
             }
 
             offer_fixture!(2048, clock, config);
@@ -8932,12 +9348,12 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                 let client = client_slot.borrow_mut();
                 {
                     let mut continue_send =
-                        core::pin::pin!(client.send_direct::<LoopContinueMsg, _>(()));
+                        core::pin::pin!(CursorSend::<LoopContinueMsg>::run(client, ()));
                     let _ = poll_ready_ok(cx, continue_send.as_mut(), continue_context);
                 }
                 {
                     let mut request_send =
-                        core::pin::pin!(client.send_direct::<SessionRequestWireMsg, _>(&payload));
+                        core::pin::pin!(CursorSend::<SessionRequestWireMsg>::run(client, &payload));
                     let _ = poll_ready_ok(cx, request_send.as_mut(), request_context);
                 }
             }
@@ -8950,23 +9366,24 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
             ) {
                 let server = server_slot.borrow_mut();
                 let mut branch = {
-                    let mut server_offer = core::pin::pin!(server.offer());
+                    let mut server_offer = core::pin::pin!(cursor_offer(server));
                     poll_ready_ok(cx, server_offer.as_mut(), "server request offer")
                 };
                 assert_eq!(
-                    branch.label(),
+                    branch_label(&branch),
                     0x10,
                     "server must first observe the request"
                 );
                 {
-                    let mut server_decode =
-                        core::pin::pin!(server.decode_branch::<SessionRequestWireMsg>(&mut branch));
+                    let mut server_decode = core::pin::pin!(
+                        CursorDecode::<SessionRequestWireMsg>::run(server, &mut branch)
+                    );
                     let _request =
                         poll_ready_ok(cx, server_decode.as_mut(), "server request decode");
                 }
                 {
                     let mut send_outer_right =
-                        core::pin::pin!(server.send_direct::<StaticRouteRightMsg, _>(()));
+                        core::pin::pin!(CursorSend::<StaticRouteRightMsg>::run(server, ()));
                     let _ = poll_ready_ok(
                         cx,
                         send_outer_right.as_mut(),
@@ -8975,19 +9392,19 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                 }
                 {
                     let mut send_category_left =
-                        core::pin::pin!(server.send_direct::<StaticRouteLeftMsg, _>(()));
+                        core::pin::pin!(CursorSend::<StaticRouteLeftMsg>::run(server, ()));
                     let _ =
                         poll_ready_ok(cx, send_category_left.as_mut(), "category route-left send");
                 }
                 {
                     let mut send_snapshot_left =
-                        core::pin::pin!(server.send_direct::<StaticRouteLeftMsg, _>(()));
+                        core::pin::pin!(CursorSend::<StaticRouteLeftMsg>::run(server, ()));
                     let _ =
                         poll_ready_ok(cx, send_snapshot_left.as_mut(), "snapshot route-left send");
                 }
                 {
                     let mut reply_send = core::pin::pin!(
-                        server.send_direct::<SnapshotCandidatesReplyMsg, _>(&reply_payload)
+                        CursorSend::<SnapshotCandidatesReplyMsg>::run(server, &reply_payload)
                     );
                     let _ =
                         poll_ready_ok(cx, reply_send.as_mut(), "snapshot candidates reply send");
@@ -9001,25 +9418,27 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
             ) {
                 let client = client_slot.borrow_mut();
                 let mut reply_branch = {
-                    let mut client_offer = core::pin::pin!(client.offer());
+                    let mut client_offer = core::pin::pin!(cursor_offer(client));
                     poll_ready_ok(cx, client_offer.as_mut(), "client snapshot reply offer")
                 };
                 assert_eq!(
-                    reply_branch.label(),
+                    branch_label(&reply_branch),
                     0x51,
                     "client must materialize the selected snapshot candidates reply label"
                 );
-                let reply_branch_scope = reply_branch.scope_id();
+                let reply_branch_scope = branch_scope(&reply_branch);
                 {
-                    let mut client_decode = core::pin::pin!(
-                        client.decode_branch::<SnapshotCandidatesReplyMsg>(&mut reply_branch)
-                    );
+                    let mut client_decode = core::pin::pin!(CursorDecode::<
+                        SnapshotCandidatesReplyMsg,
+                    >::run(
+                        client, &mut reply_branch
+                    ));
                     let _reply =
                         poll_ready_ok(cx, client_decode.as_mut(), "client snapshot reply decode");
                 }
                 {
                     let mut checkpoint_send =
-                        core::pin::pin!(client.send_direct::<CheckpointMsg, _>(()));
+                        core::pin::pin!(CursorSend::<CheckpointMsg>::run(client, ()));
                     let _ = poll_ready_ok(
                         cx,
                         checkpoint_send.as_mut(),
@@ -9041,23 +9460,24 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
             ) {
                 let server = server_slot.borrow_mut();
                 let mut branch = {
-                    let mut server_offer = core::pin::pin!(server.offer());
+                    let mut server_offer = core::pin::pin!(cursor_offer(server));
                     poll_ready_ok(cx, server_offer.as_mut(), "server commit request offer")
                 };
                 assert_eq!(
-                    branch.label(),
+                    branch_label(&branch),
                     0x10,
                     "server must observe the second request"
                 );
                 {
-                    let mut server_decode =
-                        core::pin::pin!(server.decode_branch::<SessionRequestWireMsg>(&mut branch));
+                    let mut server_decode = core::pin::pin!(
+                        CursorDecode::<SessionRequestWireMsg>::run(server, &mut branch)
+                    );
                     let _request =
                         poll_ready_ok(cx, server_decode.as_mut(), "server commit request decode");
                 }
                 {
                     let mut send_outer_right =
-                        core::pin::pin!(server.send_direct::<StaticRouteRightMsg, _>(()));
+                        core::pin::pin!(CursorSend::<StaticRouteRightMsg>::run(server, ()));
                     let _ = poll_ready_ok(
                         cx,
                         send_outer_right.as_mut(),
@@ -9066,7 +9486,7 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                 }
                 {
                     let mut send_category_right =
-                        core::pin::pin!(server.send_direct::<StaticRouteRightMsg, _>(()));
+                        core::pin::pin!(CursorSend::<StaticRouteRightMsg>::run(server, ()));
                     let _ = poll_ready_ok(
                         cx,
                         send_category_right.as_mut(),
@@ -9075,7 +9495,7 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                 }
                 {
                     let mut send_commit_left =
-                        core::pin::pin!(server.send_direct::<StaticRouteLeftMsg, _>(()));
+                        core::pin::pin!(CursorSend::<StaticRouteLeftMsg>::run(server, ()));
                     let _ = poll_ready_ok(
                         cx,
                         send_commit_left.as_mut(),
@@ -9083,9 +9503,11 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                     );
                 }
                 {
-                    let mut commit_reply_send = core::pin::pin!(
-                        server.send_direct::<CommitCandidatesReplyMsg, _>(&reply_payload)
-                    );
+                    let mut commit_reply_send = core::pin::pin!(CursorSend::<
+                        CommitCandidatesReplyMsg,
+                    >::run(
+                        server, &reply_payload
+                    ));
                     let _ = poll_ready_ok(
                         cx,
                         commit_reply_send.as_mut(),
@@ -9101,24 +9523,24 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
             ) {
                 let client = client_slot.borrow_mut();
                 let mut commit_branch = {
-                    let mut client_offer = core::pin::pin!(client.offer());
+                    let mut client_offer = core::pin::pin!(cursor_offer(client));
                     poll_ready_ok(cx, client_offer.as_mut(), "client commit reply offer")
                 };
                 assert_eq!(
-                    commit_branch.label(),
+                    branch_label(&commit_branch),
                     0x53,
                     "client must materialize the selected commit candidates reply label"
                 );
                 {
                     let mut client_decode = core::pin::pin!(
-                        client.decode_branch::<CommitCandidatesReplyMsg>(&mut commit_branch)
+                        CursorDecode::<CommitCandidatesReplyMsg>::run(client, &mut commit_branch)
                     );
                     let _reply =
                         poll_ready_ok(cx, client_decode.as_mut(), "client commit reply decode");
                 }
                 {
                     let mut checkpoint_send =
-                        core::pin::pin!(client.send_direct::<CheckpointMsg, _>(()));
+                        core::pin::pin!(CursorSend::<CheckpointMsg>::run(client, ()));
                     let _ = poll_ready_ok(
                         cx,
                         checkpoint_send.as_mut(),
@@ -9134,14 +9556,14 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
             ) {
                 let server = server_slot.borrow_mut();
                 {
-                    let mut server_next_offer = core::pin::pin!(server.offer());
+                    let mut server_next_offer = core::pin::pin!(cursor_offer(server));
                     match server_next_offer.as_mut().poll(cx) {
                         Poll::Ready(Err(err)) => {
                             panic!("server next offer after commit path must not fail: {err:?}")
                         }
                         Poll::Ready(Ok(branch)) => panic!(
                             "server next offer after commit path must not spuriously materialize a branch: label={}",
-                            branch.label()
+                            branch_label(&branch)
                         ),
                         Poll::Pending => {}
                     }
@@ -9341,12 +9763,12 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                 let client = client_slot.borrow_mut();
                 {
                     let mut send_continue =
-                        core::pin::pin!(client.send_direct::<LoopContinueMsg, _>(()));
+                        core::pin::pin!(CursorSend::<LoopContinueMsg>::run(client, ()));
                     let _ = poll_ready_ok(cx, send_continue.as_mut(), "client continue send");
                 }
                 {
                     let mut send_request =
-                        core::pin::pin!(client.send_direct::<SessionRequestWireMsg, _>(&1u8));
+                        core::pin::pin!(CursorSend::<SessionRequestWireMsg>::run(client, &1u8));
                     let _ = poll_ready_ok(cx, send_request.as_mut(), "client admin request send");
                 }
             }
@@ -9359,29 +9781,31 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
             ) {
                 let server = server_slot.borrow_mut();
                 let mut branch = {
-                    let mut offer_request = core::pin::pin!(server.offer());
+                    let mut offer_request = core::pin::pin!(cursor_offer(server));
                     poll_ready_ok(cx, offer_request.as_mut(), "server admin request offer")
                 };
                 assert_eq!(
-                    branch.label(),
+                    branch_label(&branch),
                     0x10,
                     "server must first observe the admin request"
                 );
                 {
-                    let mut decode_request =
-                        core::pin::pin!(server.decode_branch::<SessionRequestWireMsg>(&mut branch));
+                    let mut decode_request = core::pin::pin!(
+                        CursorDecode::<SessionRequestWireMsg>::run(server, &mut branch)
+                    );
                     let _ =
                         poll_ready_ok(cx, decode_request.as_mut(), "server admin request decode");
                 }
                 {
                     let mut send_route_left =
-                        core::pin::pin!(server.send_direct::<StaticRouteLeftMsg, _>(()));
+                        core::pin::pin!(CursorSend::<StaticRouteLeftMsg>::run(server, ()));
                     let _ = poll_ready_ok(cx, send_route_left.as_mut(), "admin route-left send");
                 }
                 {
-                    let mut send_reply = core::pin::pin!(
-                        server.send_direct::<AdminReplyMsg, _>(&admin_reply_payload)
-                    );
+                    let mut send_reply = core::pin::pin!(CursorSend::<AdminReplyMsg>::run(
+                        server,
+                        &admin_reply_payload
+                    ));
                     let _ = poll_ready_ok(cx, send_reply.as_mut(), "admin reply send");
                 }
             }
@@ -9393,18 +9817,20 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
             ) {
                 let client = client_slot.borrow_mut();
                 let mut admin_branch = {
-                    let mut offer_reply = core::pin::pin!(client.offer());
+                    let mut offer_reply = core::pin::pin!(cursor_offer(client));
                     poll_ready_ok(cx, offer_reply.as_mut(), "client admin reply offer")
                 };
                 assert_eq!(
-                    admin_branch.label(),
+                    branch_label(&admin_branch),
                     0x50,
                     "client must materialize the admin reply"
                 );
-                let admin_reply_scope = admin_branch.scope_id();
+                let admin_reply_scope = branch_scope(&admin_branch);
                 {
-                    let mut decode_reply =
-                        core::pin::pin!(client.decode_branch::<AdminReplyMsg>(&mut admin_branch));
+                    let mut decode_reply = core::pin::pin!(CursorDecode::<AdminReplyMsg>::run(
+                        client,
+                        &mut admin_branch
+                    ));
                     let _ = poll_ready_ok(cx, decode_reply.as_mut(), "client admin reply decode");
                 }
                 assert_eq!(
@@ -9434,13 +9860,13 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                 let client = client_slot.borrow_mut();
                 {
                     let mut send_continue =
-                        core::pin::pin!(client.send_direct::<LoopContinueMsg, _>(()));
+                        core::pin::pin!(CursorSend::<LoopContinueMsg>::run(client, ()));
                     let _ =
                         poll_ready_ok(cx, send_continue.as_mut(), "client snapshot continue send");
                 }
                 {
                     let mut send_request =
-                        core::pin::pin!(client.send_direct::<SessionRequestWireMsg, _>(&2u8));
+                        core::pin::pin!(CursorSend::<SessionRequestWireMsg>::run(client, &2u8));
                     let _ =
                         poll_ready_ok(cx, send_request.as_mut(), "client snapshot request send");
                 }
@@ -9454,17 +9880,18 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
             ) {
                 let server = server_slot.borrow_mut();
                 let mut branch = {
-                    let mut offer_request = core::pin::pin!(server.offer());
+                    let mut offer_request = core::pin::pin!(cursor_offer(server));
                     poll_ready_ok(cx, offer_request.as_mut(), "server snapshot request offer")
                 };
                 assert_eq!(
-                    branch.label(),
+                    branch_label(&branch),
                     0x10,
                     "server must observe the snapshot request"
                 );
                 {
-                    let mut decode_request =
-                        core::pin::pin!(server.decode_branch::<SessionRequestWireMsg>(&mut branch));
+                    let mut decode_request = core::pin::pin!(
+                        CursorDecode::<SessionRequestWireMsg>::run(server, &mut branch)
+                    );
                     let _ = poll_ready_ok(
                         cx,
                         decode_request.as_mut(),
@@ -9473,7 +9900,7 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                 }
                 {
                     let mut send_outer_right =
-                        core::pin::pin!(server.send_direct::<StaticRouteRightMsg, _>(()));
+                        core::pin::pin!(CursorSend::<StaticRouteRightMsg>::run(server, ()));
                     let _ = poll_ready_ok(
                         cx,
                         send_outer_right.as_mut(),
@@ -9482,7 +9909,7 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                 }
                 {
                     let mut send_category_left =
-                        core::pin::pin!(server.send_direct::<StaticRouteLeftMsg, _>(()));
+                        core::pin::pin!(CursorSend::<StaticRouteLeftMsg>::run(server, ()));
                     let _ = poll_ready_ok(
                         cx,
                         send_category_left.as_mut(),
@@ -9491,7 +9918,7 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                 }
                 {
                     let mut send_reply_left =
-                        core::pin::pin!(server.send_direct::<StaticRouteLeftMsg, _>(()));
+                        core::pin::pin!(CursorSend::<StaticRouteLeftMsg>::run(server, ()));
                     let _ = poll_ready_ok(
                         cx,
                         send_reply_left.as_mut(),
@@ -9499,10 +9926,11 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                     );
                 }
                 {
-                    let mut send_snapshot_reply = core::pin::pin!(
-                        server
-                            .send_direct::<SnapshotCandidatesReplyMsg, _>(&snapshot_reply_payload)
-                    );
+                    let mut send_snapshot_reply =
+                        core::pin::pin!(CursorSend::<SnapshotCandidatesReplyMsg>::run(
+                            server,
+                            &snapshot_reply_payload
+                        ));
                     let _ = poll_ready_ok(
                         cx,
                         send_snapshot_reply.as_mut(),
@@ -9518,7 +9946,7 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
             ) {
                 let client = client_slot.borrow_mut();
                 let mut snapshot_branch = {
-                    let mut offer_reply = core::pin::pin!(client.offer());
+                    let mut offer_reply = core::pin::pin!(cursor_offer(client));
                     poll_ready_ok(
                         cx,
                         offer_reply.as_mut(),
@@ -9526,14 +9954,16 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                     )
                 };
                 assert_eq!(
-                    snapshot_branch.label(),
+                    branch_label(&snapshot_branch),
                     0x51,
                     "snapshot reply must still materialize after an earlier admin-left iteration"
                 );
                 {
-                    let mut decode_reply = core::pin::pin!(
-                        client.decode_branch::<SnapshotCandidatesReplyMsg>(&mut snapshot_branch)
-                    );
+                    let mut decode_reply = core::pin::pin!(CursorDecode::<
+                        SnapshotCandidatesReplyMsg,
+                    >::run(
+                        client, &mut snapshot_branch
+                    ));
                     let _ = poll_ready_ok(
                         cx,
                         decode_reply.as_mut(),
@@ -9542,7 +9972,7 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                 }
                 {
                     let mut send_checkpoint =
-                        core::pin::pin!(client.send_direct::<CheckpointMsg, _>(()));
+                        core::pin::pin!(CursorSend::<CheckpointMsg>::run(client, ()));
                     let _ = poll_ready_ok(
                         cx,
                         send_checkpoint.as_mut(),
@@ -9853,12 +10283,12 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                 let client = client_slot.borrow_mut();
                 {
                     let mut continue_send =
-                        core::pin::pin!(client.send_direct::<LoopContinueMsg, _>(()));
+                        core::pin::pin!(CursorSend::<LoopContinueMsg>::run(client, ()));
                     let _ = poll_ready_ok(cx, continue_send.as_mut(), continue_context);
                 }
                 {
                     let mut request_send =
-                        core::pin::pin!(client.send_direct::<SessionRequestWireMsg, _>(&payload));
+                        core::pin::pin!(CursorSend::<SessionRequestWireMsg>::run(client, &payload));
                     let _ = poll_ready_ok(cx, request_send.as_mut(), request_context);
                 }
             }
@@ -9871,19 +10301,20 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
             ) {
                 let server = server_slot.borrow_mut();
                 let mut branch = {
-                    let mut server_offer = core::pin::pin!(server.offer());
+                    let mut server_offer = core::pin::pin!(cursor_offer(server));
                     poll_ready_ok(cx, server_offer.as_mut(), "server first request offer")
                 };
-                assert_eq!(branch.label(), 0x10);
+                assert_eq!(branch_label(&branch), 0x10);
                 {
-                    let mut server_decode =
-                        core::pin::pin!(server.decode_branch::<SessionRequestWireMsg>(&mut branch));
+                    let mut server_decode = core::pin::pin!(
+                        CursorDecode::<SessionRequestWireMsg>::run(server, &mut branch)
+                    );
                     let _request =
                         poll_ready_ok(cx, server_decode.as_mut(), "server first request decode");
                 }
                 {
                     let mut send_outer_right =
-                        core::pin::pin!(server.send_direct::<StaticRouteRightMsg, _>(()));
+                        core::pin::pin!(CursorSend::<StaticRouteRightMsg>::run(server, ()));
                     let _ = poll_ready_ok(
                         cx,
                         send_outer_right.as_mut(),
@@ -9892,7 +10323,7 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                 }
                 {
                     let mut send_category_left =
-                        core::pin::pin!(server.send_direct::<StaticRouteLeftMsg, _>(()));
+                        core::pin::pin!(CursorSend::<StaticRouteLeftMsg>::run(server, ()));
                     let _ = poll_ready_ok(
                         cx,
                         send_category_left.as_mut(),
@@ -9901,7 +10332,7 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                 }
                 {
                     let mut send_snapshot_left =
-                        core::pin::pin!(server.send_direct::<StaticRouteLeftMsg, _>(()));
+                        core::pin::pin!(CursorSend::<StaticRouteLeftMsg>::run(server, ()));
                     let _ = poll_ready_ok(
                         cx,
                         send_snapshot_left.as_mut(),
@@ -9910,7 +10341,7 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                 }
                 {
                     let mut reply_send = core::pin::pin!(
-                        server.send_direct::<SnapshotCandidatesReplyMsg, _>(&reply_payload)
+                        CursorSend::<SnapshotCandidatesReplyMsg>::run(server, &reply_payload)
                     );
                     let _ = poll_ready_ok(cx, reply_send.as_mut(), "first snapshot reply send");
                 }
@@ -9923,20 +10354,22 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
             ) {
                 let client = client_slot.borrow_mut();
                 let mut branch = {
-                    let mut client_offer = core::pin::pin!(client.offer());
+                    let mut client_offer = core::pin::pin!(cursor_offer(client));
                     poll_ready_ok(cx, client_offer.as_mut(), "client first offer")
                 };
-                assert_eq!(branch.label(), 0x51);
-                let branch_scope = branch.scope_id();
+                assert_eq!(branch_label(&branch), 0x51);
+                let branch_scope = branch_scope(&branch);
                 {
-                    let mut client_decode = core::pin::pin!(
-                        client.decode_branch::<SnapshotCandidatesReplyMsg>(&mut branch)
-                    );
+                    let mut client_decode = core::pin::pin!(CursorDecode::<
+                        SnapshotCandidatesReplyMsg,
+                    >::run(
+                        client, &mut branch
+                    ));
                     let _reply = poll_ready_ok(cx, client_decode.as_mut(), "client first decode");
                 }
                 {
                     let mut checkpoint_send =
-                        core::pin::pin!(client.send_direct::<CheckpointMsg, _>(()));
+                        core::pin::pin!(CursorSend::<CheckpointMsg>::run(client, ()));
                     let _ = poll_ready_ok(cx, checkpoint_send.as_mut(), "snapshot checkpoint send");
                 }
                 assert_eq!(
@@ -9954,19 +10387,20 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
             ) {
                 let server = server_slot.borrow_mut();
                 let mut branch = {
-                    let mut server_offer = core::pin::pin!(server.offer());
+                    let mut server_offer = core::pin::pin!(cursor_offer(server));
                     poll_ready_ok(cx, server_offer.as_mut(), "server second request offer")
                 };
-                assert_eq!(branch.label(), 0x10);
+                assert_eq!(branch_label(&branch), 0x10);
                 {
-                    let mut server_decode =
-                        core::pin::pin!(server.decode_branch::<SessionRequestWireMsg>(&mut branch));
+                    let mut server_decode = core::pin::pin!(
+                        CursorDecode::<SessionRequestWireMsg>::run(server, &mut branch)
+                    );
                     let _request =
                         poll_ready_ok(cx, server_decode.as_mut(), "server second request decode");
                 }
                 {
                     let mut send_outer_right =
-                        core::pin::pin!(server.send_direct::<StaticRouteRightMsg, _>(()));
+                        core::pin::pin!(CursorSend::<StaticRouteRightMsg>::run(server, ()));
                     let _ = poll_ready_ok(
                         cx,
                         send_outer_right.as_mut(),
@@ -9975,7 +10409,7 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                 }
                 {
                     let mut send_category_right =
-                        core::pin::pin!(server.send_direct::<StaticRouteRightMsg, _>(()));
+                        core::pin::pin!(CursorSend::<StaticRouteRightMsg>::run(server, ()));
                     let _ = poll_ready_ok(
                         cx,
                         send_category_right.as_mut(),
@@ -9984,7 +10418,7 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                 }
                 {
                     let mut send_commit_tail_right =
-                        core::pin::pin!(server.send_direct::<StaticRouteRightMsg, _>(()));
+                        core::pin::pin!(CursorSend::<StaticRouteRightMsg>::run(server, ()));
                     let _ = poll_ready_ok(
                         cx,
                         send_commit_tail_right.as_mut(),
@@ -9993,7 +10427,7 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                 }
                 {
                     let mut send_commit_final_right =
-                        core::pin::pin!(server.send_direct::<StaticRouteRightMsg, _>(()));
+                        core::pin::pin!(CursorSend::<StaticRouteRightMsg>::run(server, ()));
                     let _ = poll_ready_ok(
                         cx,
                         send_commit_final_right.as_mut(),
@@ -10001,9 +10435,10 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                     );
                 }
                 {
-                    let mut reply_send = core::pin::pin!(
-                        server.send_direct::<CommitFinalReplyMsg, _>(&reply_payload)
-                    );
+                    let mut reply_send = core::pin::pin!(CursorSend::<CommitFinalReplyMsg>::run(
+                        server,
+                        &reply_payload
+                    ));
                     let _ =
                         poll_ready_ok(cx, reply_send.as_mut(), "second commit final reply send");
                 }
@@ -10016,18 +10451,19 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
             ) {
                 let client = client_slot.borrow_mut();
                 let mut branch = {
-                    let mut client_offer = core::pin::pin!(client.offer());
+                    let mut client_offer = core::pin::pin!(cursor_offer(client));
                     poll_ready_ok(cx, client_offer.as_mut(), "client second offer")
                 };
-                assert_eq!(branch.label(), 0x55);
+                assert_eq!(branch_label(&branch), 0x55);
                 {
-                    let mut client_decode =
-                        core::pin::pin!(client.decode_branch::<CommitFinalReplyMsg>(&mut branch));
+                    let mut client_decode = core::pin::pin!(
+                        CursorDecode::<CommitFinalReplyMsg>::run(client, &mut branch)
+                    );
                     let _reply = poll_ready_ok(cx, client_decode.as_mut(), "client second decode");
                 }
                 {
                     let mut cancel_send =
-                        core::pin::pin!(client.send_direct::<SessionCancelControlMsg, _>(()));
+                        core::pin::pin!(CursorSend::<SessionCancelControlMsg>::run(client, ()));
                     let _ = poll_ready_ok(cx, cancel_send.as_mut(), "commit final cancel send");
                 }
             }
@@ -10179,11 +10615,11 @@ fn dropping_pending_decode_future_preserves_preview_branch_state() {
 
                             let mut cx = Context::from_waker(noop_waker_ref());
                             let mut branch = {
-                                let mut offer = pin!(worker.offer());
+                                let mut offer = pin!(cursor_offer(worker));
                                 poll_ready_ok(&mut cx, offer.as_mut(), "preview branch offer")
                             };
                             assert_eq!(
-                                branch.label(),
+                                branch_label(&branch),
                                 HINT_LEFT_DATA_LABEL,
                                 "offer must preview the hinted recv branch before decode"
                             );
@@ -10192,7 +10628,7 @@ fn dropping_pending_decode_future_preserves_preview_branch_state() {
 
                             {
                                 let mut decode =
-                                    pin!(worker.decode_branch::<Msg<100, u8>>(&mut branch));
+                                    pin!(CursorDecode::<Msg<100, u8>>::run(worker, &mut branch));
                                 assert!(
                                     matches!(decode.as_mut().poll(&mut cx), Poll::Pending),
                                     "decode should wait on transport recv before commit"
@@ -10380,12 +10816,12 @@ fn static_passive_offer_with_known_arm_waits_on_transport_without_busy_restart()
 
                             let waker = noop_waker_ref();
                             let mut cx = Context::from_waker(waker);
-                            let mut offer = pin!(worker.offer());
+                            let mut offer = pin!(cursor_offer(worker));
                             match offer.as_mut().poll(&mut cx) {
                                 Poll::Ready(Ok(branch)) => {
                                     panic!(
                                         "offer must not materialize before transport ingress: {}",
-                                        branch.label()
+                                        branch_label(&branch)
                                     )
                                 }
                                 Poll::Ready(Err(err)) => {
@@ -10458,7 +10894,7 @@ fn parked_passive_offer_does_not_drain_hint_from_same_lane() {
 
                             let waker = noop_waker_ref();
                             let mut cx = Context::from_waker(waker);
-                            let mut offer = pin!(worker.offer());
+                            let mut offer = pin!(cursor_offer(worker));
 
                             assert!(
                                 matches!(offer.as_mut().poll(&mut cx), Poll::Pending),
@@ -10547,19 +10983,21 @@ fn decode_branch_commit_clears_stale_route_hints_on_selected_lane() {
 
                         let mut cx = Context::from_waker(noop_waker_ref());
                         let mut branch = {
-                            let mut offer = pin!(worker.offer());
+                            let mut offer = pin!(cursor_offer(worker));
                             poll_ready_ok(&mut cx, offer.as_mut(), "offer selected right branch")
                         };
                         assert_eq!(
-                            branch.label(),
+                            branch_label(&branch),
                             HINT_RIGHT_DATA_LABEL,
                             "offer must still materialize the selected right branch"
                         );
 
                         {
-                            let mut decode = pin!(
-                                worker.decode_branch::<Msg<HINT_RIGHT_DATA_LABEL, u8>>(&mut branch)
-                            );
+                            let mut decode =
+                                pin!(CursorDecode::<Msg<HINT_RIGHT_DATA_LABEL, u8>>::run(
+                                    worker,
+                                    &mut branch
+                                ));
                             let _ = poll_ready_ok(
                                 &mut cx,
                                 decode.as_mut(),
@@ -10600,11 +11038,11 @@ fn nested_dispatch_arm_counts_as_recv_for_known_passive_route() {
                     "nested first-recv dispatch must count as recv-bearing arm"
                 );
 
-                let mut offer = pin!(worker.offer());
+                let mut offer = pin!(cursor_offer(worker));
                 match offer.as_mut().poll(cx) {
                     Poll::Ready(Ok(branch)) => panic!(
                         "known passive route with nested dispatch recv must wait for wire ingress, got {}",
-                        branch.label()
+                        branch_label(&branch)
                     ),
                     Poll::Ready(Err(err)) => {
                         panic!(

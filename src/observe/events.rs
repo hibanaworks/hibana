@@ -1,120 +1,11 @@
-//! Type-safe TapEvent builders.
+//! Internal TapEvent encoders.
 //!
-//! Each event type has a dedicated struct with a `new()` constructor that
-//! encodes arguments correctly. This eliminates argument ordering mistakes
-//! and centralizes encoding logic.
+//! Production callers use the event owner that matches the runtime operation;
+//! crate tests build synthetic events in their own fixtures.
 
 use super::{core::TapEvent, ids};
 
 // ────────────── Cancel / Endpoint (0x0200-0x020F) ──────────────
-
-/// Control abort initiated.
-#[cfg(test)]
-pub(crate) struct AbortBegin;
-#[cfg(test)]
-impl AbortBegin {
-    #[inline(always)]
-    pub(crate) const fn new(ts: u32, sid: u32, lane: u32) -> TapEvent {
-        TapEvent {
-            ts,
-            id: ids::ABORT_BEGIN,
-            causal_key: 0,
-            arg0: sid,
-            arg1: lane,
-            arg2: 0,
-        }
-    }
-}
-
-/// Control abort acknowledged.
-#[cfg(test)]
-pub(crate) struct AbortAck;
-#[cfg(test)]
-impl AbortAck {
-    #[inline(always)]
-    pub(crate) const fn new(ts: u32, sid: u32, lane: u32) -> TapEvent {
-        TapEvent {
-            ts,
-            id: ids::ABORT_ACK,
-            causal_key: 0,
-            arg0: sid,
-            arg1: lane,
-            arg2: 0,
-        }
-    }
-}
-
-/// Endpoint send operation.
-#[cfg(test)]
-pub(crate) struct EndpointSend;
-#[cfg(test)]
-impl EndpointSend {
-    /// Pack role/lane/label/flags into arg0.
-    #[inline(always)]
-    pub(crate) const fn pack(role: u8, lane: u8, label: u8, flags: u8) -> u32 {
-        ((role as u32) << 24) | ((lane as u32) << 16) | ((label as u32) << 8) | (flags as u32)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn new(ts: u32, sid: u32, packed: u32) -> TapEvent {
-        TapEvent {
-            ts,
-            id: ids::ENDPOINT_SEND,
-            causal_key: 0,
-            arg0: sid,
-            arg1: packed,
-            arg2: 0,
-        }
-    }
-}
-
-/// Endpoint receive operation.
-#[cfg(test)]
-pub(crate) struct EndpointRecv;
-#[cfg(test)]
-impl EndpointRecv {
-    #[inline(always)]
-    pub(crate) const fn pack(role: u8, lane: u8, label: u8, flags: u8) -> u32 {
-        ((role as u32) << 24) | ((lane as u32) << 16) | ((label as u32) << 8) | (flags as u32)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn new(ts: u32, sid: u32, packed: u32) -> TapEvent {
-        TapEvent {
-            ts,
-            id: ids::ENDPOINT_RECV,
-            causal_key: 0,
-            arg0: sid,
-            arg1: packed,
-            arg2: 0,
-        }
-    }
-}
-
-/// Endpoint control-plane event.
-#[cfg(test)]
-pub(crate) struct EndpointControl;
-#[cfg(test)]
-impl EndpointControl {
-    #[inline(always)]
-    #[cfg(test)]
-    pub(crate) const fn pack(role: u8, lane: u8, label: u8, flags: u8) -> u32 {
-        ((role as u32) << 24) | ((lane as u32) << 16) | ((label as u32) << 8) | (flags as u32)
-    }
-
-    #[inline(always)]
-    #[cfg(test)]
-    pub(crate) const fn new(ts: u32, sid: u32, packed: u32) -> TapEvent {
-        TapEvent {
-            ts,
-            id: ids::ENDPOINT_CONTROL,
-            causal_key: 0,
-            arg0: sid,
-            arg1: packed,
-            arg2: 0,
-        }
-    }
-}
 
 // ────────────── Lane lifecycle (0x0210-0x021F) ──────────────
 
@@ -222,24 +113,6 @@ impl EffectInit {
 
 // ────────────── State Snapshot / State Restore (0x0130-0x013F) ──────────────
 
-/// State restore requested.
-#[cfg(test)]
-pub(crate) struct StateRestoreReq;
-#[cfg(test)]
-impl StateRestoreReq {
-    #[inline(always)]
-    pub(crate) const fn new(ts: u32, sid: u32, target_gen: u32) -> TapEvent {
-        TapEvent {
-            ts,
-            id: ids::STATE_RESTORE_REQ,
-            causal_key: 0,
-            arg0: sid,
-            arg1: target_gen,
-            arg2: 0,
-        }
-    }
-}
-
 /// State restore completed.
 pub(crate) struct StateRestoreOk;
 impl StateRestoreOk {
@@ -326,33 +199,14 @@ impl DelegBegin {
     }
 }
 
-/// Topology handshake acknowledged.
-#[cfg(test)]
-pub(crate) struct TopologyAck;
-#[cfg(test)]
-impl TopologyAck {
-    /// Create with pre-packed arg0 and sid.
-    #[inline(always)]
-    pub(crate) const fn new(ts: u32, arg0: u32, sid: u32) -> TapEvent {
-        TapEvent {
-            ts,
-            id: ids::TOPOLOGY_ACK,
-            causal_key: 0,
-            arg0,
-            arg1: sid,
-            arg2: 0,
-        }
-    }
-}
-
 // ────────────── Policy VM (0x0400-0x041F) ──────────────
 
-// ────────────── Raw builder (for testing / zero-init) ──────────────
+// ────────────── Raw builder for fixed event encoders ──────────────
 
-/// Raw TapEvent builder (for special cases only).
+/// Raw TapEvent builder for callers that already own the event identifier.
 pub struct RawEvent;
 impl RawEvent {
-    /// Raw event with explicit id (for tests and edge cases).
+    /// Raw event with an explicit id.
     #[inline(always)]
     pub const fn new(ts: u32, id: u16) -> TapEvent {
         TapEvent {

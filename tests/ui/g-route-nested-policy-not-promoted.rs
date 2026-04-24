@@ -1,5 +1,5 @@
 use hibana::g::{self, Msg, Role};
-use hibana::g::advanced::{RoleProgram, project};
+use hibana::substrate::program::{RoleProgram, project};
 use hibana::substrate::cap::GenericCapToken;
 use hibana::substrate::cap::advanced::{LoopBreakKind, LoopContinueKind};
 
