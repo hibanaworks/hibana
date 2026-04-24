@@ -124,6 +124,9 @@ pub(crate) fn encode_session_lane_handle(handle: SessionLaneHandle) -> [u8; CAP_
 pub(crate) fn decode_session_lane_handle(
     data: [u8; CAP_HANDLE_LEN],
 ) -> Result<SessionLaneHandle, CapError> {
+    if data[6..].iter().any(|byte| *byte != 0) {
+        return Err(CapError::Mismatch);
+    }
     let sid = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
     let lane = u16::from_le_bytes([data[4], data[5]]);
     Ok((sid, lane))
@@ -167,6 +170,20 @@ mod tests {
         assert!(
             !source[start..end].contains("flags:"),
             "topology handle must keep [20..22) as reserved wire bytes, not a runtime field"
+        );
+    }
+
+    #[test]
+    fn session_lane_handle_rejects_reserved_tail() {
+        let handle = mint_session_lane_handle(SessionId::new(11), Lane::new(3));
+        let encoded = encode_session_lane_handle(handle);
+        assert_eq!(decode_session_lane_handle(encoded), Ok(handle));
+
+        let mut trailing = encoded;
+        trailing[6] = 0xA5;
+        assert_eq!(
+            decode_session_lane_handle(trailing),
+            Err(CapError::Mismatch)
         );
     }
 }

@@ -1153,8 +1153,11 @@ impl<K: ResourceKind> WirePayload for GenericCapToken<K> {
         if bytes_in.len() < CAP_TOKEN_LEN {
             return Err(CodecError::Truncated);
         }
+        if bytes_in.len() != CAP_TOKEN_LEN {
+            return Err(CodecError::Invalid("trailing bytes after GenericCapToken"));
+        }
         let mut bytes = [0u8; CAP_TOKEN_LEN];
-        bytes.copy_from_slice(&bytes_in[0..CAP_TOKEN_LEN]);
+        bytes.copy_from_slice(bytes_in);
         Ok(Self {
             bytes,
             _marker: PhantomData,
@@ -1263,6 +1266,7 @@ mod tests {
             types::{Lane, SessionId},
         },
         global::const_dsl::ScopeId,
+        transport::wire::{CodecError, Payload, WirePayload},
     };
 
     fn endpoint_header_fixture() -> [u8; super::CAP_HEADER_LEN] {
@@ -1470,6 +1474,33 @@ mod tests {
         assert!(
             matches!(CapHeader::decode(raw), Err(super::CapError::Mismatch)),
             "reserved control header flags must fail closed",
+        );
+    }
+
+    #[test]
+    fn generic_cap_token_decode_requires_exact_wire_length() {
+        let exact = GenericCapToken::<()>::AUTO.into_bytes();
+        assert!(
+            <GenericCapToken<()> as WirePayload>::decode_payload(Payload::new(&exact)).is_ok(),
+            "exact-size capability tokens must decode"
+        );
+
+        let mut short = [0u8; super::CAP_TOKEN_LEN - 1];
+        short.copy_from_slice(&exact[..super::CAP_TOKEN_LEN - 1]);
+        assert!(matches!(
+            <GenericCapToken<()> as WirePayload>::decode_payload(Payload::new(&short)),
+            Err(CodecError::Truncated)
+        ));
+
+        let mut trailing = [0u8; super::CAP_TOKEN_LEN + 1];
+        trailing[..super::CAP_TOKEN_LEN].copy_from_slice(&exact);
+        trailing[super::CAP_TOKEN_LEN] = 0xA5;
+        assert!(
+            matches!(
+                <GenericCapToken<()> as WirePayload>::decode_payload(Payload::new(&trailing)),
+                Err(CodecError::Invalid("trailing bytes after GenericCapToken"))
+            ),
+            "control tokens are fixed-size and must reject ignored trailing bytes"
         );
     }
 

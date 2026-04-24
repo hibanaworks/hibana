@@ -20,6 +20,11 @@ use crate::{
     runtime::consts,
 };
 
+#[inline]
+fn bytes_are_zero(bytes: &[u8]) -> bool {
+    bytes.iter().all(|byte| *byte == 0)
+}
+
 /// Route decision handle carrying the selected arm and scope trace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct RouteArmHandle {
@@ -36,6 +41,9 @@ impl RouteArmHandle {
     }
 
     pub fn decode(data: [u8; CAP_HANDLE_LEN]) -> Result<Self, CapError> {
+        if data[0] > 1 || !bytes_are_zero(&data[9..]) {
+            return Err(CapError::Mismatch);
+        }
         let mut scope_bytes = [0u8; 8];
         scope_bytes.copy_from_slice(&data[1..9]);
         Ok(Self {
@@ -63,6 +71,9 @@ impl LoopDecisionHandle {
     }
 
     pub fn decode(data: [u8; CAP_HANDLE_LEN]) -> Result<Self, CapError> {
+        if !bytes_are_zero(&data[14..]) {
+            return Err(CapError::Mismatch);
+        }
         let sid = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         let lane = u16::from_le_bytes([data[4], data[5]]);
         let mut scope_bytes = [0u8; 8];
@@ -184,5 +195,46 @@ impl ControlResourceKind for RouteDecisionKind {
 
     fn mint_handle(_sid: SessionId, _lane: Lane, scope: ScopeId) -> Self::Handle {
         RouteArmHandle { scope, arm: 0 }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn route_arm_handle_rejects_non_binary_arms_and_reserved_tail() {
+        let handle = RouteArmHandle {
+            scope: ScopeId::route(3),
+            arm: 1,
+        };
+        let encoded = handle.encode();
+        assert_eq!(RouteArmHandle::decode(encoded), Ok(handle));
+
+        let mut non_binary = encoded;
+        non_binary[0] = 2;
+        assert_eq!(RouteArmHandle::decode(non_binary), Err(CapError::Mismatch));
+
+        let mut trailing = encoded;
+        trailing[9] = 0xA5;
+        assert_eq!(RouteArmHandle::decode(trailing), Err(CapError::Mismatch));
+    }
+
+    #[test]
+    fn loop_decision_handle_rejects_reserved_tail() {
+        let handle = LoopDecisionHandle {
+            sid: 9,
+            lane: 4,
+            scope: ScopeId::loop_scope(7),
+        };
+        let encoded = handle.encode();
+        assert_eq!(LoopDecisionHandle::decode(encoded), Ok(handle));
+
+        let mut trailing = encoded;
+        trailing[14] = 0x5A;
+        assert_eq!(
+            LoopDecisionHandle::decode(trailing),
+            Err(CapError::Mismatch)
+        );
     }
 }
