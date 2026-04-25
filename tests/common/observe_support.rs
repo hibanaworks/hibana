@@ -97,9 +97,9 @@ fn decode_lane_event(event: TapEvent) -> Option<(u16, Option<LaneAssociation>)> 
 }
 
 fn policy_event_lane(event: TapEvent) -> Option<u16> {
-    match event.causal_role() {
+    match event.causal_key {
         0 => None,
-        lane => Some(u16::from(lane.saturating_sub(1))),
+        _ => Some(u16::from(event.causal_role())),
     }
 }
 

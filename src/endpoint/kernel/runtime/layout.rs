@@ -10,7 +10,7 @@ use super::frontier::{
 use super::frontier_state::FrontierState;
 use super::inbox::{BindingInbox, PackedIncomingClassification};
 use super::route_state::{RouteScopeSelectedArmSlot, RouteState};
-use crate::global::role_program::{LaneWord, RoleFootprint, lane_word_count};
+use crate::global::role_program::{DenseLaneOrdinal, LaneWord, RoleFootprint, lane_word_count};
 use crate::global::typestate::PhaseCursorState;
 
 pub(super) struct LeasedState<T> {
@@ -139,7 +139,7 @@ impl EndpointArenaLayout {
         total_align = max_usize(total_align, route_state.align);
 
         let route_state_lane_dense_by_lane =
-            Self::section_array::<u8>(offset, footprint.logical_lane_count);
+            Self::section_array::<DenseLaneOrdinal>(offset, footprint.logical_lane_count);
         offset = route_state_lane_dense_by_lane.offset + route_state_lane_dense_by_lane.bytes;
         total_align = max_usize(total_align, route_state_lane_dense_by_lane.align);
 
@@ -257,7 +257,8 @@ impl EndpointArenaLayout {
         } else {
             0
         };
-        let binding_lane_dense_by_lane = Self::section_array::<u8>(offset, binding_lane_count);
+        let binding_lane_dense_by_lane =
+            Self::section_array::<DenseLaneOrdinal>(offset, binding_lane_count);
         offset = binding_lane_dense_by_lane.offset + binding_lane_dense_by_lane.bytes;
         total_align = max_usize(total_align, binding_lane_dense_by_lane.align);
 

@@ -2,7 +2,7 @@ use core::cell::UnsafeCell;
 use hibana::substrate::{runtime::CounterClock, tap::TapEvent};
 
 pub(crate) const RING_EVENTS: usize = 128;
-const FIXTURE_SLAB_CAPACITY: usize = 262_144;
+const FIXTURE_SLAB_CAPACITY: usize = 1_048_576;
 
 std::thread_local! {
     static FIXTURE_CLOCK: CounterClock = const { CounterClock::new() };

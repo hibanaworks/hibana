@@ -57,7 +57,7 @@ impl RouteArmHandle {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct LoopDecisionHandle {
     pub sid: u32,
-    pub lane: u16,
+    pub lane: u8,
     pub scope: ScopeId,
 }
 
@@ -65,7 +65,7 @@ impl LoopDecisionHandle {
     pub fn encode(self) -> [u8; CAP_HANDLE_LEN] {
         let mut buf = [0u8; CAP_HANDLE_LEN];
         buf[0..4].copy_from_slice(&self.sid.to_le_bytes());
-        buf[4..6].copy_from_slice(&self.lane.to_le_bytes());
+        buf[4..6].copy_from_slice(&u16::from(self.lane).to_le_bytes());
         buf[6..14].copy_from_slice(&self.scope.raw().to_le_bytes());
         buf
     }
@@ -75,12 +75,15 @@ impl LoopDecisionHandle {
             return Err(CapError::Mismatch);
         }
         let sid = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-        let lane = u16::from_le_bytes([data[4], data[5]]);
+        let lane_raw = u16::from_le_bytes([data[4], data[5]]);
+        if lane_raw > u8::MAX as u16 {
+            return Err(CapError::Mismatch);
+        }
         let mut scope_bytes = [0u8; 8];
         scope_bytes.copy_from_slice(&data[6..14]);
         Ok(Self {
             sid,
-            lane,
+            lane: lane_raw as u8,
             scope: ScopeId::from_raw(u64::from_le_bytes(scope_bytes)),
         })
     }
@@ -118,7 +121,7 @@ impl ControlResourceKind for LoopContinueKind {
     fn mint_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> Self::Handle {
         LoopDecisionHandle {
             sid: sid.raw(),
-            lane: lane.raw() as u16,
+            lane: lane.as_wire(),
             scope,
         }
     }
@@ -156,7 +159,7 @@ impl ControlResourceKind for LoopBreakKind {
     fn mint_handle(sid: SessionId, lane: Lane, scope: ScopeId) -> Self::Handle {
         LoopDecisionHandle {
             sid: sid.raw(),
-            lane: lane.raw() as u16,
+            lane: lane.as_wire(),
             scope,
         }
     }
@@ -235,6 +238,14 @@ mod tests {
         assert_eq!(
             LoopDecisionHandle::decode(trailing),
             Err(CapError::Mismatch)
+        );
+
+        let mut out_of_domain_lane = encoded;
+        out_of_domain_lane[4..6].copy_from_slice(&256u16.to_le_bytes());
+        assert_eq!(
+            LoopDecisionHandle::decode(out_of_domain_lane),
+            Err(CapError::Mismatch),
+            "loop control handles must fail closed on lanes outside the wire domain"
         );
     }
 }

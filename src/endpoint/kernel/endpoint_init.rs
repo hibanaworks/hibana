@@ -7,6 +7,7 @@ use crate::endpoint::kernel::frontier_state::FrontierState;
 use crate::endpoint::kernel::inbox::BindingInbox;
 use crate::endpoint::kernel::route_state::RouteState;
 use crate::global::compiled::images::{CompiledProgramRef, CompiledRoleImage};
+use crate::global::role_program::DenseLaneOrdinal;
 use crate::global::typestate::PhaseCursor;
 use crate::rendezvous::core::EndpointLeaseId;
 use crate::rendezvous::port::Port;
@@ -144,8 +145,10 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
 {
     unsafe {
         let compiled_role = &*compiled_role;
-        let active_lane_dense_by_lane =
-            section_ptr::<u8>(arena_storage, arena_layout.route_state_lane_dense_by_lane());
+        let active_lane_dense_by_lane = section_ptr::<DenseLaneOrdinal>(
+            arena_storage,
+            arena_layout.route_state_lane_dense_by_lane(),
+        );
         let active_lane_count =
             compiled_role.fill_active_lane_dense_by_lane(core::slice::from_raw_parts_mut(
                 active_lane_dense_by_lane,
@@ -273,8 +276,10 @@ unsafe fn init_endpoint_binding<'r, const ROLE: u8, T, U, C, E, const MAX_RV: us
 {
     unsafe {
         let compiled_role = &*compiled_role;
-        let logical_lane_dense_by_lane =
-            section_ptr::<u8>(arena_storage, arena_layout.binding_lane_dense_by_lane());
+        let logical_lane_dense_by_lane = section_ptr::<DenseLaneOrdinal>(
+            arena_storage,
+            arena_layout.binding_lane_dense_by_lane(),
+        );
         let logical_lane_count = if binding_enabled {
             compiled_role.fill_logical_lane_dense_by_lane(core::slice::from_raw_parts_mut(
                 logical_lane_dense_by_lane,

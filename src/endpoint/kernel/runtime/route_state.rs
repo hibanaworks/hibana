@@ -4,7 +4,9 @@ use super::evidence::RouteArmState;
 use super::evidence_store::{ScopeEvidenceSlot, ScopeEvidenceTable};
 use super::frontier::LaneOfferState;
 use crate::global::const_dsl::ScopeId;
-use crate::global::role_program::{LaneSet, LaneSetView, LaneWord};
+use crate::global::role_program::{
+    DENSE_LANE_NONE, DenseLaneOrdinal, LaneSet, LaneSetView, LaneWord,
+};
 const NO_SELECTED_ARM: u8 = u8::MAX;
 
 #[derive(Clone, Copy)]
@@ -24,7 +26,7 @@ impl RouteScopeSelectedArmSlot {
 #[derive(Clone, Copy)]
 struct RouteArmStackView {
     ptr: *mut RouteArmState,
-    lane_dense_by_lane: *mut u8,
+    lane_dense_by_lane: *mut DenseLaneOrdinal,
     lane_slot_count: usize,
     active_lane_count: usize,
     depth: u8,
@@ -34,7 +36,7 @@ impl RouteArmStackView {
     unsafe fn init(
         dst: *mut Self,
         ptr: *mut RouteArmState,
-        lane_dense_by_lane: *mut u8,
+        lane_dense_by_lane: *mut DenseLaneOrdinal,
         lane_slot_count: usize,
         active_lane_count: usize,
         depth: usize,
@@ -65,10 +67,10 @@ impl RouteArmStackView {
             return None;
         }
         let dense = unsafe { *self.lane_dense_by_lane.add(lane_idx) };
-        if dense == u8::MAX {
+        if dense == DENSE_LANE_NONE || dense.get() >= self.active_lane_count {
             None
         } else {
-            Some(dense as usize)
+            Some(dense.get())
         }
     }
 
@@ -108,7 +110,7 @@ impl RouteArmStackView {
 #[derive(Clone, Copy)]
 struct LaneOfferStateView {
     ptr: *mut LaneOfferState,
-    lane_dense_by_lane: *mut u8,
+    lane_dense_by_lane: *mut DenseLaneOrdinal,
     lane_slot_count: usize,
     len: usize,
 }
@@ -117,11 +119,11 @@ impl LaneOfferStateView {
     unsafe fn init(
         dst: *mut Self,
         ptr: *mut LaneOfferState,
-        lane_dense_by_lane: *mut u8,
+        lane_dense_by_lane: *mut DenseLaneOrdinal,
         lane_slot_count: usize,
         len: usize,
     ) {
-        if len > u8::MAX as usize {
+        if len >= DENSE_LANE_NONE.get() {
             panic!("lane offer state capacity overflow");
         }
         unsafe {
@@ -145,10 +147,10 @@ impl LaneOfferStateView {
             return None;
         }
         let dense = unsafe { *self.lane_dense_by_lane.add(lane_idx) };
-        if dense == u8::MAX || dense as usize >= self.len {
+        if dense == DENSE_LANE_NONE || dense.get() >= self.len {
             None
         } else {
-            Some(dense as usize)
+            Some(dense.get())
         }
     }
 
@@ -194,7 +196,7 @@ impl RouteState {
         lane_offer_state_storage: *mut LaneOfferState,
         scope_evidence_slots: *mut ScopeEvidenceSlot,
         scope_selected_arms: *mut RouteScopeSelectedArmSlot,
-        lane_dense_by_lane: *mut u8,
+        lane_dense_by_lane: *mut DenseLaneOrdinal,
         lane_slot_count: usize,
         lane_route_arm_lens: *mut u8,
         lane_linger_counts: *mut u8,
@@ -577,5 +579,77 @@ impl RouteState {
     #[inline]
     pub(super) fn lane_offer_linger_lanes(&self) -> LaneSetView {
         self.lane_offer_linger_lanes.view()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::global::role_program::{DenseLaneOrdinal, lane_word_count};
+    use core::mem::MaybeUninit;
+
+    #[test]
+    fn route_state_keeps_lane_255_addressable_in_full_lane_domain() {
+        const LANES: usize = 256;
+        let lane_words = lane_word_count(LANES);
+        let mut lane_dense_by_lane: std::vec::Vec<DenseLaneOrdinal> = (0..LANES)
+            .map(|lane| DenseLaneOrdinal::new(lane).expect("test lane dense ordinal"))
+            .collect();
+        let mut route_arm_storage = std::vec::Vec::with_capacity(LANES);
+        route_arm_storage.resize(LANES, RouteArmState::EMPTY);
+        let mut lane_offer_state_storage = std::vec::Vec::with_capacity(LANES);
+        lane_offer_state_storage.resize(LANES, LaneOfferState::EMPTY);
+        let mut scope_evidence_slots = std::vec::Vec::<MaybeUninit<ScopeEvidenceSlot>>::new();
+        let mut scope_selected_arms = std::vec::Vec::with_capacity(1);
+        scope_selected_arms.resize(1, RouteScopeSelectedArmSlot::EMPTY);
+        let mut lane_route_arm_lens = std::vec::Vec::with_capacity(LANES);
+        lane_route_arm_lens.resize(LANES, 0u8);
+        let mut lane_linger_counts = std::vec::Vec::with_capacity(LANES);
+        lane_linger_counts.resize(LANES, 0u8);
+        let mut active_route_lane_words = std::vec::Vec::with_capacity(lane_words);
+        active_route_lane_words.resize(lane_words, 0usize);
+        let mut lane_linger_words = std::vec::Vec::with_capacity(lane_words);
+        lane_linger_words.resize(lane_words, 0usize);
+        let mut lane_offer_linger_words = std::vec::Vec::with_capacity(lane_words);
+        lane_offer_linger_words.resize(lane_words, 0usize);
+        let mut active_offer_lane_words = std::vec::Vec::with_capacity(lane_words);
+        active_offer_lane_words.resize(lane_words, 0usize);
+        let mut state = MaybeUninit::<RouteState>::uninit();
+        unsafe {
+            RouteState::init_empty(
+                state.as_mut_ptr(),
+                route_arm_storage.as_mut_ptr(),
+                lane_offer_state_storage.as_mut_ptr(),
+                scope_evidence_slots
+                    .as_mut_ptr()
+                    .cast::<ScopeEvidenceSlot>(),
+                scope_selected_arms.as_mut_ptr(),
+                lane_dense_by_lane.as_mut_ptr(),
+                LANES,
+                lane_route_arm_lens.as_mut_ptr(),
+                lane_linger_counts.as_mut_ptr(),
+                active_route_lane_words.as_mut_ptr(),
+                lane_linger_words.as_mut_ptr(),
+                lane_offer_linger_words.as_mut_ptr(),
+                active_offer_lane_words.as_mut_ptr(),
+                LANES,
+                lane_words,
+                LANES,
+                1,
+                0,
+                1,
+            );
+        }
+        let mut state = unsafe { state.assume_init() };
+        let scope = ScopeId::route(1);
+
+        assert_eq!(state.lane_route_arm_len(255), 0);
+        assert!(state.set_route_arm(255, scope, 0, 1, false).is_ok());
+        assert_eq!(state.lane_route_arm_len(255), 1);
+        assert_eq!(state.route_arm_for(255, scope), Some(1));
+        assert_eq!(state.selected_arm_for_scope_slot(0), Some(1));
+        assert!(state.pop_route_arm(255, scope, 0, false));
+        assert_eq!(state.lane_route_arm_len(255), 0);
+        assert_eq!(state.selected_arm_for_scope_slot(0), None);
     }
 }

@@ -16,20 +16,54 @@ if rg -n "mod epf;|pub mod epf\\b|substrate::policy::epf" src/lib.rs src/substra
   exit 1
 fi
 
-# The surviving core policy slot and packed signal metadata have a single
-# policy owner. The old advanced bucket must not remain as a compatibility path.
+# The surviving core policy surface keeps resolver/provider ownership at the
+# root and slot metadata under policy::signals. The old advanced bucket must
+# not remain as a compatibility path.
 POLICY_BLOCK="$(sed -n '/^pub mod policy {/,/^\/\/\/ Canonical capability-token surface/p' src/substrate.rs)"
 if printf "%s\n" "${POLICY_BLOCK}" | rg -n "pub mod advanced \\{" >/dev/null; then
   echo "mgmt boundary violation: substrate::policy must not keep an advanced compatibility bucket" >&2
   exit 1
 fi
+POLICY_ROOT_BEFORE_SIGNALS="$(
+  printf "%s\n" "${POLICY_BLOCK}" | awk '
+    /pub mod signals \{/ { exit }
+    { print }
+  '
+)"
+POLICY_SIGNALS_BLOCK="$(
+  printf "%s\n" "${POLICY_BLOCK}" | awk '
+    /pub mod signals \{/ { in_block=1 }
+    in_block { print }
+  '
+)"
 for required in \
-  "pub use crate::policy_runtime::PolicySlot;" \
-  "ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider" \
-  "pub mod core {"
+  "PolicySignalsProvider" \
+  "pub mod signals {"
 do
   if ! printf "%s\n" "${POLICY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-    echo "mgmt boundary violation: substrate::policy missing single slot-input owner: ${required}" >&2
+    echo "mgmt boundary violation: substrate::policy missing resolver/provider surface: ${required}" >&2
+    exit 1
+  fi
+done
+for forbidden in \
+  "ContextId" \
+  "ContextValue" \
+  "PolicyAttrs" \
+  "PolicySignals," \
+  "PolicySlot"
+do
+  if printf "%s\n" "${POLICY_ROOT_BEFORE_SIGNALS}" | rg -n -F "${forbidden}" >/dev/null; then
+    echo "mgmt boundary violation: substrate::policy root leaks signal metadata: ${forbidden}" >&2
+    exit 1
+  fi
+done
+for required in \
+  "pub use crate::policy_runtime::PolicySlot;" \
+  "ContextId, ContextValue, PolicyAttrs, PolicySignals" \
+  "pub mod core {"
+do
+  if ! printf "%s\n" "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${required}" >/dev/null; then
+    echo "mgmt boundary violation: substrate::policy::signals missing slot-input owner: ${required}" >&2
     exit 1
   fi
 done

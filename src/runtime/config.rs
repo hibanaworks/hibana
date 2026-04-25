@@ -8,7 +8,9 @@
 use core::{cell::Cell, fmt, ops::Range};
 
 use crate::observe::core::TapEvent;
-use crate::runtime::consts::{DefaultLabelUniverse, LANES_MAX, LabelUniverse, RING_EVENTS};
+use crate::runtime::consts::{
+    DefaultLabelUniverse, LANE_DOMAIN_SIZE, LANES_MAX, LabelUniverse, RING_EVENTS,
+};
 
 /// Clock source used to timestamp tap events.
 pub trait Clock {
@@ -93,7 +95,7 @@ impl fmt::Debug for CounterClock {
 pub struct Config<'a, U: LabelUniverse = DefaultLabelUniverse, C: Clock = CounterClock> {
     pub(crate) tap_buf: &'a mut [TapEvent; RING_EVENTS],
     pub(crate) slab: &'a mut [u8],
-    pub(crate) lane_range: Range<u8>,
+    pub(crate) lane_range: Range<u16>,
     universe: U,
     pub(crate) clock: C,
     pub(crate) liveness_policy: LivenessPolicy,
@@ -139,7 +141,7 @@ impl<'a, U: LabelUniverse, C: Clock> Config<'a, U, C> {
     ///
     /// The canonical public attach path always realises control traffic on lane
     /// `0`, so the configured window must include that reserved control lane.
-    pub fn with_lane_range(mut self, range: Range<u8>) -> Self {
+    pub fn with_lane_range(mut self, range: Range<u16>) -> Self {
         assert!(
             range.start <= range.end,
             "lane range {:?} must satisfy start <= end",
@@ -150,12 +152,17 @@ impl<'a, U: LabelUniverse, C: Clock> Config<'a, U, C> {
             "lane range {:?} must include reserved control lane 0 for SessionKit attach",
             range
         );
+        assert!(
+            range.end <= LANE_DOMAIN_SIZE,
+            "lane range {:?} must stay inside the u8 wire lane domain",
+            range
+        );
         self.lane_range = range;
         self
     }
 
     /// Access the lane range currently configured.
-    pub fn lane_range(&self) -> Range<u8> {
+    pub fn lane_range(&self) -> Range<u16> {
         self.lane_range.clone()
     }
 
@@ -221,6 +228,32 @@ mod tests {
             config.lane_range(),
             0..35,
             "public SessionKit config must keep accepting zero-based high-lane windows"
+        );
+    }
+
+    #[test]
+    fn with_lane_range_accepts_full_wire_lane_domain() {
+        let mut tap_buf = [TapEvent::zero(); RING_EVENTS];
+        let mut slab = [0u8; 256];
+        let config = Config::new(&mut tap_buf, &mut slab).with_lane_range(0..LANE_DOMAIN_SIZE);
+
+        assert!(
+            config.lane_range().contains(&u16::from(u8::MAX)),
+            "public SessionKit config must be able to include lane 255"
+        );
+    }
+
+    #[test]
+    fn with_lane_range_rejects_out_of_wire_domain_window() {
+        let mut tap_buf = [TapEvent::zero(); RING_EVENTS];
+        let mut slab = [0u8; 256];
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            let _ = Config::new(&mut tap_buf, &mut slab).with_lane_range(0..(LANE_DOMAIN_SIZE + 1));
+        }));
+
+        assert!(
+            panic.is_err(),
+            "public SessionKit config must reject lanes outside the u8 wire domain"
         );
     }
 }

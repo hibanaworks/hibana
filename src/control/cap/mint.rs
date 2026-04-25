@@ -1692,12 +1692,12 @@ mod tests {
 
             /// Property test for `LoopContinueKind`.
             ///
-            /// The handle is represented as a `(u32, u16, scope)` payload;
+            /// The handle is represented as a `(u32, u8, scope)` payload;
             /// verify that HandleView preserves the typed handle and bytes.
             #[test]
             fn handle_view_loop_continue_roundtrip(
                 generation in 0u32..10000,
-                lane in 0u16..256
+                lane in any::<u8>()
             ) {
                 let handle = LoopDecisionHandle {
                     sid: generation,

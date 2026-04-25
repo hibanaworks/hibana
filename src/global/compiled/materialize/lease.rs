@@ -313,9 +313,13 @@ impl<'a> TransientLoweringLeaseStorage<'a> {
     }
 
     #[inline]
-    unsafe fn init(self, summary: &LoweringSummary, stamp: ProgramStamp) -> LoweringLease<'a> {
+    unsafe fn init(
+        self,
+        source: crate::global::role_program::RoleImageSource,
+        stamp: ProgramStamp,
+    ) -> LoweringLease<'a> {
         unsafe {
-            summary.write_clone_to(self.lowering);
+            source.init_lowering(self.lowering);
             let summary = &*self.lowering;
             debug_assert_eq!(summary.stamp(), stamp);
             let mut role_lowering_scratch = self.role_lowering_scratch;
@@ -404,7 +408,7 @@ pub(crate) unsafe fn with_lowering_lease<R>(
     let storage = unsafe {
         TransientLoweringLeaseStorage::from_storage(storage, len, mode, input.footprint())
     }?;
-    let lease = unsafe { storage.init(input.summary(), input.stamp()) };
+    let lease = unsafe { storage.init(input.source(), input.stamp()) };
     Some(f(lease))
 }
 
@@ -456,10 +460,12 @@ pub(crate) fn with_compiled_program<R>(
     input: RoleLoweringInput,
     f: impl FnOnce(&CompiledProgram) -> R,
 ) -> R {
-    let summary = input.summary();
     let mut compiled = core::mem::MaybeUninit::<CompiledProgram>::uninit();
     unsafe {
-        CompiledProgram::init_from_summary(compiled.as_mut_ptr(), summary);
+        let mut summary = core::mem::MaybeUninit::<LoweringSummary>::uninit();
+        input.source().init_lowering(summary.as_mut_ptr());
+        CompiledProgram::init_from_summary(compiled.as_mut_ptr(), summary.assume_init_ref());
+        summary.assume_init_drop();
         let result = f(compiled.assume_init_ref());
         compiled.assume_init_drop();
         result

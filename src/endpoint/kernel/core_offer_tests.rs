@@ -27,7 +27,7 @@ use crate::control::cap::resource_kinds::RouteDecisionKind;
 use crate::control::cluster::core::SessionCluster;
 use crate::g::{self, Msg, Role};
 use crate::global::role_program::{
-    LaneSet, LaneSetView, LaneWord, RoleProgram, lane_word_count, project,
+    DenseLaneOrdinal, LaneSet, LaneSetView, LaneWord, RoleProgram, lane_word_count, project,
 };
 use crate::global::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
 use crate::observe::core::TapEvent;
@@ -471,8 +471,10 @@ fn assert_buffered_lanes_eq(inbox: &BindingInbox, label_mask: u128, expected: &[
 fn with_test_binding_inbox<const ACTIVE_LANES: usize, R>(
     f: impl FnOnce(&mut BindingInbox) -> R,
 ) -> R {
-    let mut lane_dense_by_lane: [u8; ACTIVE_LANES] =
-        core::array::from_fn(|lane_idx| lane_idx as u8);
+    let mut lane_dense_by_lane: [DenseLaneOrdinal; ACTIVE_LANES] =
+        core::array::from_fn(|lane_idx| {
+            DenseLaneOrdinal::new(lane_idx).expect("test lane dense ordinal")
+        });
     let mut slots = [[[0u32; 3]; BindingInbox::PER_LANE_CAPACITY]; ACTIVE_LANES];
     let mut len = [0u8; ACTIVE_LANES];
     let mut label_masks = [0u128; ACTIVE_LANES];

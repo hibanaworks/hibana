@@ -63,6 +63,30 @@ fn witness_sizes_stay_small() {
 }
 
 #[test]
+fn role_program_handle_is_not_summary_backed() {
+    let role_program = read("src/global/role_program.rs");
+    let role_image = role_program
+        .split("struct RoleImage {")
+        .nth(1)
+        .and_then(|tail| tail.split("}").next())
+        .expect("RoleImage definition must stay present");
+
+    assert!(
+        !role_image.contains("summary:")
+            && !role_program.contains("const fn summary(self) -> &'static LoweringSummary")
+            && !role_program
+                .contains("pub(crate) const fn summary(&self) -> &'static LoweringSummary"),
+        "RoleProgram must not store or expose a LoweringSummary-backed projection handle"
+    );
+    assert!(
+        role_image.contains("stamp: ProgramStamp")
+            && role_image.contains("facts: RoleFacts")
+            && role_image.contains("source: RoleImageSource"),
+        "RoleProgram must stay a compact verified descriptor handle plus sealed materialization source"
+    );
+}
+
+#[test]
 fn substrate_root_exposes_only_core_buckets() {
     let substrate_rs = read("src/substrate.rs");
     let root_prefix = substrate_rs
@@ -91,8 +115,9 @@ fn substrate_root_exposes_only_core_buckets() {
         "ChannelStore",
         "IncomingClassification",
         "pub mod policy {",
-        "pub use crate::transport::context::{",
-        "ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider",
+        "pub use crate::transport::context::PolicySignalsProvider;",
+        "pub mod signals {",
+        "ContextId, ContextValue, PolicyAttrs, PolicySignals",
         "pub mod core {",
         "pub mod cap {",
         "pub mod wire {",
@@ -114,18 +139,26 @@ fn substrate_root_exposes_only_core_buckets() {
         .nth(1)
         .and_then(|tail| tail.split("/// Canonical capability-token surface").next())
         .expect("substrate policy bucket must be followed by the cap bucket");
-    for required in [
+    for required in ["PolicySignalsProvider", "pub mod signals {", "pub mod core"] {
+        assert!(
+            policy_root.contains(required),
+            "substrate::policy must own the resolver/provider surface and signals bucket: {required}"
+        );
+    }
+    let policy_root_before_signals = policy_root
+        .split("pub mod signals {")
+        .next()
+        .expect("policy root must contain the signals bucket");
+    for forbidden in [
         "ContextId",
         "ContextValue",
         "PolicyAttrs",
         "PolicySignals,",
-        "PolicySignalsProvider",
         "PolicySlot",
-        "pub mod core",
     ] {
         assert!(
-            policy_root.contains(required),
-            "substrate::policy must own the single slot-input surface: {required}"
+            !policy_root_before_signals.contains(forbidden),
+            "policy root must not expose signal metadata directly: {forbidden}"
         );
     }
     assert!(
@@ -201,6 +234,7 @@ fn substrate_allowlist_tracks_core_boundary() {
         "pub mod tap {",
         "pub use crate::observe::core::TapEvent;",
         "pub mod advanced {",
+        "pub mod signals {",
         "pub use crate::policy_runtime::PolicySlot;",
         "WirePayload",
     ] {

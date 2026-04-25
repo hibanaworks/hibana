@@ -140,6 +140,30 @@ fn public_surface_allowlists_keep_forbidden_names_out() {
 }
 
 #[test]
+fn topology_validation_has_no_test_only_semantic_owner() {
+    let topology = read("src/control/automaton/topology.rs");
+    let distributed = read("src/control/automaton/distributed.rs");
+    let rendezvous_topology = read("src/rendezvous/topology.rs");
+    let rendezvous_core = read("src/rendezvous/core.rs");
+
+    for forbidden in [
+        "TopologyCommitAutomaton",
+        "pub(crate) fn process_intent",
+        "DistributedTopology::process_intent",
+        "pub(super) fn topology_commit",
+        ".topology.topology_commit(",
+    ] {
+        assert!(
+            !topology.contains(forbidden)
+                && !distributed.contains(forbidden)
+                && !rendezvous_topology.contains(forbidden)
+                && !rendezvous_core.contains(forbidden),
+            "topology validation must use production cluster/rendezvous paths, not test-only owner: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn stable_public_api_gate_has_no_nightly_or_rustdoc_json_owner() {
     let script = read(".github/scripts/check_hibana_public_api.sh");
     let workflow = read(".github/workflows/quality-gates.yml");

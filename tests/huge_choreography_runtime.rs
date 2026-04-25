@@ -69,6 +69,9 @@ const HIGH_LANE_LEFT_REPLY_LABEL: u8 = 84;
 const HIGH_LANE_RIGHT_REPLY_LABEL: u8 = 85;
 const HIGH_LANE_LEFT: u8 = 33;
 const HIGH_LANE_RIGHT: u8 = 34;
+const EDGE_LANE: u8 = 255;
+const EDGE_LANE_LABEL: u8 = 86;
+const EDGE_LANE_REPLY_LABEL: u8 = 87;
 
 type HighLaneLeftKind = route_control_kinds::RouteControl<HIGH_LANE_LEFT_CTRL, 0>;
 type HighLaneRightKind = route_control_kinds::RouteControl<HIGH_LANE_RIGHT_CTRL, 1>;
@@ -156,6 +159,22 @@ fn high_lane_worker_program() -> RoleProgram<1> {
     };
 
     let program = g::route(high_lane_left_program, high_lane_right_program);
+    project(&program)
+}
+
+fn edge_lane_controller_program() -> RoleProgram<0> {
+    let program = g::seq(
+        g::send::<Role<0>, Role<1>, Msg<{ EDGE_LANE_LABEL }, u8>, EDGE_LANE>(),
+        g::send::<Role<1>, Role<0>, Msg<{ EDGE_LANE_REPLY_LABEL }, u8>, EDGE_LANE>(),
+    );
+    project(&program)
+}
+
+fn edge_lane_worker_program() -> RoleProgram<1> {
+    let program = g::seq(
+        g::send::<Role<0>, Role<1>, Msg<{ EDGE_LANE_LABEL }, u8>, EDGE_LANE>(),
+        g::send::<Role<1>, Role<0>, Msg<{ EDGE_LANE_REPLY_LABEL }, u8>, EDGE_LANE>(),
+    );
     project(&program)
 }
 
@@ -306,6 +325,55 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
         assert!(
             transport.queue_is_empty(),
             "high-lane localside route test must drain every transport frame"
+        );
+    });
+}
+
+#[test]
+fn lane_255_runs_to_completion_on_public_sessionkit_path() {
+    runtime_support::with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        let kit = HugeKit::new(clock);
+        let rv_id = kit
+            .add_rendezvous_from_config(
+                Config::new(tap_buf, slab).with_lane_range(0..256),
+                transport.clone(),
+            )
+            .expect("register rendezvous with the full wire lane domain");
+
+        let mut controller = kit
+            .enter(
+                rv_id,
+                SessionId::new(0x6200),
+                &edge_lane_controller_program(),
+                NoBinding,
+            )
+            .expect("enter lane-255 controller");
+        let mut worker = kit
+            .enter(
+                rv_id,
+                SessionId::new(0x6200),
+                &edge_lane_worker_program(),
+                NoBinding,
+            )
+            .expect("enter lane-255 worker");
+
+        localside::controller_send_u8::<{ EDGE_LANE_LABEL }>(&mut controller, 11);
+        assert_eq!(
+            localside::worker_recv_u8::<{ EDGE_LANE_LABEL }>(&mut worker),
+            11,
+            "lane 255 payload must be reachable through public SessionKit config"
+        );
+        localside::worker_send_u8::<{ EDGE_LANE_REPLY_LABEL }>(&mut worker, 29);
+        assert_eq!(
+            localside::controller_recv_u8::<{ EDGE_LANE_REPLY_LABEL }>(&mut controller),
+            29,
+            "lane 255 reply must roundtrip through the real localside runtime"
+        );
+
+        assert!(
+            transport.queue_is_empty(),
+            "lane-255 localside test must drain every transport frame"
         );
     });
 }

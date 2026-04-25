@@ -597,13 +597,46 @@ elif printf '%s\n' "${POLICY_BLOCK}" | rg -n "pub[[:space:]]+mod[[:space:]]+adva
   echo "boundary deny pattern detected: substrate policy advanced compatibility bucket" >&2
   FAILED=1
 else
+  POLICY_ROOT_BEFORE_SIGNALS="$(
+    printf '%s\n' "${POLICY_BLOCK}" | awk '
+      /pub mod signals \{/ { exit }
+      { print }
+    '
+  )"
+  POLICY_SIGNALS_BLOCK="$(
+    printf '%s\n' "${POLICY_BLOCK}" | awk '
+      /pub mod signals \{/ { in_block=1 }
+      in_block { print }
+    '
+  )"
   for required in \
-    "pub use crate::policy_runtime::PolicySlot;" \
-    "ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider" \
-    "pub mod core {"
+    "PolicySignalsProvider" \
+    "pub mod signals {"
   do
     if ! printf '%s\n' "${POLICY_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-      echo "substrate policy single slot-input owner missing: ${required}" >&2
+      echo "substrate policy resolver/provider surface missing: ${required}" >&2
+      FAILED=1
+    fi
+  done
+  for forbidden in \
+    "ContextId" \
+    "ContextValue" \
+    "PolicyAttrs" \
+    "PolicySignals," \
+    "PolicySlot"
+  do
+    if printf '%s\n' "${POLICY_ROOT_BEFORE_SIGNALS}" | rg -n -F "${forbidden}" >/dev/null; then
+      echo "boundary deny pattern detected: substrate policy root signal metadata leak: ${forbidden}" >&2
+      FAILED=1
+    fi
+  done
+  for required in \
+    "pub use crate::policy_runtime::PolicySlot;" \
+    "ContextId, ContextValue, PolicyAttrs, PolicySignals" \
+    "pub mod core {"
+  do
+    if ! printf '%s\n' "${POLICY_SIGNALS_BLOCK}" | rg -n -F "${required}" >/dev/null; then
+      echo "substrate policy signals bucket missing: ${required}" >&2
       FAILED=1
     fi
   done

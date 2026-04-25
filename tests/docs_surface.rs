@@ -47,7 +47,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "## Validation",
         "`hibana::substrate::wire::{Payload, WireEncode, WirePayload}`",
         "`hibana::substrate::ids::{EffIndex, Lane, RendezvousId, SessionId}`",
-        "`hibana::substrate::policy::PolicySlot`",
+        "`hibana::substrate::policy::signals::PolicySlot`",
         "`hibana::substrate::tap::TapEvent`",
         "App code builds a local choreography term with `hibana::g`",
         "the canonical path is a local `let` choreography term rather than a named item",
@@ -256,8 +256,8 @@ fn policy_semantics_doc_stays_on_current_core_boundary() {
 
     for required in [
         "daily policy boundary to resolver inputs only",
-        "`hibana::substrate::policy::PolicySlot`",
-        "`hibana::substrate::policy::PolicySlot::Route`",
+        "`hibana::substrate::policy::signals::PolicySlot`",
+        "`hibana::substrate::policy::signals::PolicySlot::Route`",
     ] {
         assert!(
             boundary.contains(required),

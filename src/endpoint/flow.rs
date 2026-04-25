@@ -315,7 +315,7 @@ mod tests {
         let nonce = [0xAC; CAP_NONCE_LEN];
         let handle = LoopDecisionHandle {
             sid: sid.raw(),
-            lane: lane.raw() as u16,
+            lane: lane.as_wire(),
             scope: ScopeId::loop_scope(2),
         };
         let bytes = make_test_token_bytes(nonce, &handle);

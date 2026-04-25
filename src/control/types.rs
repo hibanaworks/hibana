@@ -28,29 +28,39 @@ pub struct One;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Many;
 
-/// Lane identifier (newtype for type safety).
+/// Lane identifier.
+///
+/// Lanes are wire-visible `u8` values. Construction rejects values outside the
+/// wire domain so capability and topology handles cannot silently alias lanes by
+/// truncation.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct Lane(pub u32);
+pub struct Lane(u8);
 
 impl Lane {
     /// Create a new lane identifier.
     pub const fn new(id: u32) -> Self {
-        Self(id)
+        assert!(id <= u8::MAX as u32, "lane id must be <= 255");
+        Self(id as u8)
+    }
+
+    /// Fallible constructor for descriptor and wire decode paths.
+    pub const fn try_new(id: u32) -> Option<Self> {
+        if id <= u8::MAX as u32 {
+            Some(Self(id as u8))
+        } else {
+            None
+        }
     }
 
     /// Get the raw lane identifier.
     pub const fn raw(self) -> u32 {
-        self.0
+        self.0 as u32
     }
 
-    /// Convert to wire format (u8).
-    ///
-    /// # Note
-    /// The wire format uses u8 for lane identifiers (maximum 256 lanes).
-    /// Values >= 256 will be truncated.
+    /// Convert to wire format.
     pub const fn as_wire(self) -> u8 {
-        self.0 as u8
+        self.0
     }
 }
 

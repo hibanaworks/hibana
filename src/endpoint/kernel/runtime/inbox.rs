@@ -2,7 +2,7 @@
 
 use crate::{
     binding::{BindingSlot, IncomingClassification},
-    global::role_program::{LaneSet, LaneSetView, LaneWord},
+    global::role_program::{DENSE_LANE_NONE, DenseLaneOrdinal, LaneSet, LaneSetView, LaneWord},
 };
 
 #[inline]
@@ -16,35 +16,36 @@ const fn label_bit(label: u8) -> u128 {
 
 #[derive(Clone, Copy)]
 struct DenseLaneIndex {
-    lane_dense_by_lane: *mut u8,
-    active_lane_count: u8,
+    lane_dense_by_lane: *mut DenseLaneOrdinal,
+    active_lane_count: DenseLaneOrdinal,
 }
 
 impl DenseLaneIndex {
     unsafe fn init_from_parts(
         dst: *mut Self,
-        lane_dense_by_lane: *mut u8,
+        lane_dense_by_lane: *mut DenseLaneOrdinal,
         active_lane_count: usize,
     ) {
-        if active_lane_count > u8::MAX as usize {
+        if active_lane_count >= DENSE_LANE_NONE.get() {
             panic!("binding inbox lane count overflow");
         }
         unsafe {
             core::ptr::addr_of_mut!((*dst).lane_dense_by_lane).write(lane_dense_by_lane);
-            core::ptr::addr_of_mut!((*dst).active_lane_count).write(active_lane_count as u8);
+            core::ptr::addr_of_mut!((*dst).active_lane_count)
+                .write(DenseLaneOrdinal::new(active_lane_count).expect("active lane count fits"));
         }
     }
 
     #[inline]
     fn dense_ordinal(&self, lane_idx: usize) -> Option<usize> {
-        if lane_idx >= self.active_lane_count as usize {
+        if lane_idx >= self.active_lane_count.get() {
             return None;
         }
         let dense = unsafe { *self.lane_dense_by_lane.add(lane_idx) };
-        if dense == u8::MAX || dense as usize >= self.active_lane_count as usize {
+        if dense == DENSE_LANE_NONE || dense.get() >= self.active_lane_count.get() {
             None
         } else {
-            Some(dense as usize)
+            Some(dense.get())
         }
     }
 
@@ -302,7 +303,7 @@ impl BindingInbox {
         len: *mut u8,
         label_masks: *mut u128,
         nonempty_lane_words: *mut LaneWord,
-        lane_dense_by_lane: *mut u8,
+        lane_dense_by_lane: *mut DenseLaneOrdinal,
         active_lane_count: usize,
         nonempty_lane_word_count: usize,
     ) {
@@ -405,7 +406,7 @@ impl BindingInbox {
     #[inline]
     pub(super) fn buffered_lanes_for_labels(&self, label_mask: u128, dst: &mut [u8]) -> usize {
         let mut len = 0usize;
-        let lane_limit = self.lanes.active_lane_count as usize;
+        let lane_limit = self.lanes.active_lane_count.get();
         let mut lane_idx = 0usize;
         while lane_idx < lane_limit {
             if (self.label_masks.get_value(&self.lanes, lane_idx) & label_mask) != 0 {
@@ -629,5 +630,70 @@ impl BindingInbox {
     #[inline]
     pub(super) fn buffered_label_mask_for_lane(&self, lane_idx: usize) -> u128 {
         self.label_masks.get_value(&self.lanes, lane_idx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        binding::Channel,
+        global::role_program::{DenseLaneOrdinal, lane_word_count},
+    };
+    use core::mem::MaybeUninit;
+
+    #[test]
+    fn binding_inbox_keeps_lane_255_addressable_in_full_lane_domain() {
+        const LANES: usize = 256;
+        let mut lane_dense_by_lane: std::vec::Vec<DenseLaneOrdinal> = (0..LANES)
+            .map(|lane| DenseLaneOrdinal::new(lane).expect("test lane dense ordinal"))
+            .collect();
+        let mut slots = std::vec::Vec::with_capacity(LANES * BindingInbox::PER_LANE_CAPACITY);
+        slots.resize(
+            LANES * BindingInbox::PER_LANE_CAPACITY,
+            PackedIncomingClassification::EMPTY,
+        );
+        let mut len = std::vec::Vec::with_capacity(LANES);
+        len.resize(LANES, 0u8);
+        let mut label_masks = std::vec::Vec::with_capacity(LANES);
+        label_masks.resize(LANES, 0u128);
+        let mut nonempty_lane_words = std::vec::Vec::with_capacity(lane_word_count(LANES));
+        nonempty_lane_words.resize(lane_word_count(LANES), 0usize);
+        let mut inbox = MaybeUninit::<BindingInbox>::uninit();
+        unsafe {
+            BindingInbox::init_empty(
+                inbox.as_mut_ptr(),
+                slots.as_mut_ptr(),
+                len.as_mut_ptr(),
+                label_masks.as_mut_ptr(),
+                nonempty_lane_words.as_mut_ptr(),
+                lane_dense_by_lane.as_mut_ptr(),
+                LANES,
+                lane_word_count(LANES),
+            );
+        }
+        let mut inbox = unsafe { inbox.assume_init() };
+
+        inbox.put_back(
+            255,
+            IncomingClassification {
+                label: 7,
+                instance: 1,
+                has_fin: false,
+                channel: Channel::new(9),
+            },
+        );
+
+        assert!(inbox.nonempty_lanes().contains(255));
+        assert!(inbox.lane_has_buffered_label(255, 1u128 << 7));
+        assert_eq!(inbox.buffered_label_mask_for_lane(255), 1u128 << 7);
+        assert_eq!(
+            inbox
+                .remove_buffered_at(255, 0)
+                .expect("lane 255 buffered classification")
+                .channel,
+            Channel::new(9)
+        );
+        assert!(!inbox.nonempty_lanes().contains(255));
     }
 }

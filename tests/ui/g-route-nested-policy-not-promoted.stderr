@@ -56,6 +56,12 @@ note: erroneous constant encountered
 note: erroneous constant encountered
  --> src/global/role_program.rs
   |
+  |         Self::STAMP,
+  |         ^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/role_program.rs
+  |
   |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::IMAGE)
   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

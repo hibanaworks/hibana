@@ -275,7 +275,7 @@ mod send_rollback_tests {
         let nonce = [0xAB; CAP_NONCE_LEN];
         let handle = LoopDecisionHandle {
             sid: sid.raw(),
-            lane: lane.raw() as u16,
+            lane: lane.as_wire(),
             scope: ScopeId::loop_scope(2),
         };
         let handle_bytes = LoopContinueKind::encode_handle(&handle);
@@ -328,7 +328,7 @@ mod send_rollback_tests {
         let nonce = [0xCD; CAP_NONCE_LEN];
         let handle = LoopDecisionHandle {
             sid: sid.raw(),
-            lane: lane.raw() as u16,
+            lane: lane.as_wire(),
             scope: ScopeId::loop_scope(3),
         };
         let handle_bytes = LoopContinueKind::encode_handle(&handle);
@@ -383,7 +383,7 @@ mod send_rollback_tests {
         let nonce = [0xEF; CAP_NONCE_LEN];
         let handle = LoopDecisionHandle {
             sid: sid.raw(),
-            lane: lane.raw() as u16,
+            lane: lane.as_wire(),
             scope: ScopeId::loop_scope(4),
         };
         let handle_bytes = LoopContinueKind::encode_handle(&handle);
@@ -1679,14 +1679,7 @@ where
     #[inline]
     fn emit_policy_audit_event(&self, id: u16, arg0: u32, arg1: u32, arg2: u32, lane: Lane) {
         let port = self.port_for_lane(lane.raw() as usize);
-        let causal = {
-            let raw = lane.raw();
-            debug_assert!(
-                raw <= u32::from(u8::MAX),
-                "lane id must fit within causal key encoding"
-            );
-            TapEvent::make_causal_key(raw as u8 + 1, 0)
-        };
+        let causal = TapEvent::make_causal_key(lane.as_wire(), 1);
         let event = events::RawEvent::new(port.now32(), id)
             .with_causal_key(causal)
             .with_arg0(arg0)
@@ -4010,7 +4003,7 @@ where
             epoch,
             LoopDecisionHandle {
                 sid: self.sid.raw(),
-                lane: lane.raw() as u16,
+                lane: lane.as_wire(),
                 scope: loop_scope,
             },
         )
@@ -4053,7 +4046,7 @@ where
             epoch,
             LoopDecisionHandle {
                 sid: self.sid.raw(),
-                lane: lane.raw() as u16,
+                lane: lane.as_wire(),
                 scope: loop_scope,
             },
         )

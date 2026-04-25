@@ -12,6 +12,29 @@ use crate::{
 };
 
 pub(crate) use core::primitive::usize as LaneWord;
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DenseLaneOrdinal(u16);
+
+impl DenseLaneOrdinal {
+    pub(crate) const ZERO: Self = Self(0);
+    pub(crate) const NONE: Self = Self(u16::MAX);
+
+    pub(crate) const fn new(index: usize) -> Option<Self> {
+        if index < u16::MAX as usize {
+            Some(Self(index as u16))
+        } else {
+            None
+        }
+    }
+
+    pub(crate) const fn get(self) -> usize {
+        self.0 as usize
+    }
+}
+
+pub(crate) const LANE_DOMAIN_SIZE: usize = u8::MAX as usize + 1;
+pub(crate) const DENSE_LANE_NONE: DenseLaneOrdinal = DenseLaneOrdinal::NONE;
 pub(crate) const RESERVED_BINDING_LANES: usize = 2;
 
 #[inline(always)]
@@ -242,10 +265,15 @@ pub(crate) const fn logical_lane_count_for_role(
     endpoint_lane_slot_count: usize,
 ) -> usize {
     let reserved = active_lane_count.saturating_add(RESERVED_BINDING_LANES);
-    if reserved > endpoint_lane_slot_count {
+    let requested = if reserved > endpoint_lane_slot_count {
         reserved
     } else {
         endpoint_lane_slot_count
+    };
+    if requested > LANE_DOMAIN_SIZE {
+        LANE_DOMAIN_SIZE
+    } else {
+        requested
     }
 }
 
@@ -464,10 +492,11 @@ pub(crate) struct RoleLoweringInput {
 }
 
 #[derive(Clone, Copy)]
-struct ProjectedRoleImage {
-    summary: &'static LoweringSummary,
+struct RoleImage {
     start: EffIndex,
+    stamp: ProgramStamp,
     facts: RoleFacts,
+    source: RoleImageSource,
 }
 
 #[derive(Clone, Copy)]
@@ -488,7 +517,26 @@ pub(crate) struct RoleFacts {
 
 #[derive(Clone, Copy)]
 pub(crate) struct RoleImageRef {
-    image: &'static ProjectedRoleImage,
+    image: &'static RoleImage,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RoleImageSource {
+    init_lowering: unsafe fn(*mut LoweringSummary),
+}
+
+impl RoleImageSource {
+    #[inline(always)]
+    const fn new(init_lowering: unsafe fn(*mut LoweringSummary)) -> Self {
+        Self { init_lowering }
+    }
+
+    #[inline(always)]
+    pub(crate) unsafe fn init_lowering(self, dst: *mut LoweringSummary) {
+        unsafe {
+            (self.init_lowering)(dst);
+        }
+    }
 }
 
 mod private {
@@ -567,8 +615,8 @@ impl RoleFootprint {
 
 impl RoleLoweringInput {
     #[inline(always)]
-    pub(crate) const fn summary(&self) -> &'static LoweringSummary {
-        self.image.summary()
+    pub(crate) const fn source(&self) -> RoleImageSource {
+        self.image.source()
     }
 
     #[inline(always)]
@@ -584,51 +632,59 @@ impl RoleLoweringInput {
     #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn eff_count(&self) -> usize {
-        self.image.footprint().eff_count
+        self.footprint().eff_count
     }
 
     #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn local_step_count(&self) -> usize {
-        self.image.footprint().local_step_count
+        self.footprint().local_step_count
     }
 
     #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn route_scope_count(&self) -> usize {
-        self.image.footprint().route_scope_count
+        self.footprint().route_scope_count
     }
 
     #[cfg(test)]
     #[inline(always)]
     pub(crate) const fn passive_linger_route_scope_count(&self) -> usize {
-        self.image.footprint().passive_linger_route_scope_count
+        self.footprint().passive_linger_route_scope_count
     }
 
     #[inline(always)]
     pub(crate) const fn footprint(&self) -> RoleFootprint {
         self.image.footprint()
     }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) fn with_summary<R>(&self, f: impl FnOnce(&LoweringSummary) -> R) -> R {
+        let mut summary = core::mem::MaybeUninit::<LoweringSummary>::uninit();
+        unsafe {
+            self.source().init_lowering(summary.as_mut_ptr());
+            let out = f(summary.assume_init_ref());
+            summary.assume_init_drop();
+            out
+        }
+    }
 }
 
-impl ProjectedRoleImage {
+impl RoleImage {
     #[inline(always)]
-    const fn new<const ROLE: u8>(summary: &'static LoweringSummary) -> Self {
+    const fn new(stamp: ProgramStamp, facts: RoleFacts, source: RoleImageSource) -> Self {
         Self {
-            summary,
             start: EffIndex::ZERO,
-            facts: RoleFacts::from_summary::<ROLE>(summary),
+            stamp,
+            facts,
+            source,
         }
     }
 
     #[inline(always)]
-    const fn summary(&self) -> &'static LoweringSummary {
-        self.summary
-    }
-
-    #[inline(always)]
     const fn stamp(&self) -> ProgramStamp {
-        self.summary.stamp()
+        self.stamp
     }
 }
 
@@ -639,11 +695,6 @@ impl RoleFacts {
             panic!("role descriptor fact overflow");
         }
         value as u16
-    }
-
-    #[inline(always)]
-    const fn from_summary<const ROLE: u8>(summary: &'static LoweringSummary) -> Self {
-        Self::from_counts(summary.role_lowering_counts::<ROLE>())
     }
 
     #[inline(always)]
@@ -691,7 +742,7 @@ impl RoleFacts {
 
 impl RoleImageRef {
     #[inline(always)]
-    const fn new(image: &'static ProjectedRoleImage) -> Self {
+    const fn new(image: &'static RoleImage) -> Self {
         Self { image }
     }
 
@@ -706,8 +757,8 @@ impl RoleImageRef {
     }
 
     #[inline(always)]
-    const fn summary(self) -> &'static LoweringSummary {
-        self.image.summary()
+    const fn source(self) -> RoleImageSource {
+        self.image.source
     }
 
     #[inline(always)]
@@ -722,8 +773,20 @@ impl<Steps, const ROLE: u8> ValidatedRoleImage<Steps, ROLE>
 where
     Steps: BuildProgramSource,
 {
-    const IMAGE: ProjectedRoleImage =
-        ProjectedRoleImage::new::<ROLE>(validated_program_summary::<Steps>());
+    unsafe fn init_lowering(dst: *mut LoweringSummary) {
+        unsafe {
+            validated_program_summary::<Steps>().write_clone_to(dst);
+        }
+    }
+
+    const STAMP: ProgramStamp = validated_program_summary::<Steps>().stamp();
+    const FACTS: RoleFacts =
+        RoleFacts::from_counts(validated_program_summary::<Steps>().role_lowering_counts::<ROLE>());
+    const IMAGE: RoleImage = RoleImage::new(
+        Self::STAMP,
+        Self::FACTS,
+        RoleImageSource::new(Self::init_lowering),
+    );
 }
 
 pub struct RoleProgram<const ROLE: u8> {
@@ -732,7 +795,7 @@ pub struct RoleProgram<const ROLE: u8> {
 }
 
 impl<const ROLE: u8> RoleProgram<ROLE> {
-    const fn new(image: &'static ProjectedRoleImage) -> Self {
+    const fn new(image: &'static RoleImage) -> Self {
         Self {
             _seal: private::RoleProgramSeal,
             image: RoleImageRef::new(image),
@@ -798,6 +861,14 @@ mod tests {
             crate::global::lowering_input(program),
             f,
         )
+    }
+
+    #[test]
+    fn logical_lane_count_stays_inside_wire_lane_domain() {
+        assert_eq!(logical_lane_count_for_role(0, 1), RESERVED_BINDING_LANES);
+        assert_eq!(logical_lane_count_for_role(254, 255), LANE_DOMAIN_SIZE);
+        assert_eq!(logical_lane_count_for_role(255, 256), LANE_DOMAIN_SIZE);
+        assert_eq!(logical_lane_count_for_role(256, 256), LANE_DOMAIN_SIZE);
     }
 
     fn assert_parallel_phase_shape(image: &CompiledRoleImage) {
@@ -867,24 +938,23 @@ mod tests {
     fn parallel_route_projection_keeps_scope_markers_without_public_step_surface() {
         let parallel_route_program = parallel_route_program();
         let program: RoleProgram<0> = project(&parallel_route_program);
-        let scope_markers = super::lowering_input(&program)
-            .summary()
-            .view()
-            .scope_markers();
+        super::lowering_input(&program).with_summary(|summary| {
+            let scope_markers = summary.view().scope_markers();
 
-        assert!(
-            scope_markers
-                .iter()
-                .any(|marker| matches!(marker.scope_kind, ScopeKind::Parallel)
-                    && matches!(marker.event, ScopeEvent::Enter)),
-            "parallel projection should preserve parallel enter marker"
-        );
-        assert!(
-            scope_markers
-                .iter()
-                .any(|marker| matches!(marker.scope_kind, ScopeKind::Route)
-                    && matches!(marker.event, ScopeEvent::Enter)),
-            "parallel route projection should preserve route enter marker"
-        );
+            assert!(
+                scope_markers
+                    .iter()
+                    .any(|marker| matches!(marker.scope_kind, ScopeKind::Parallel)
+                        && matches!(marker.event, ScopeEvent::Enter)),
+                "parallel projection should preserve parallel enter marker"
+            );
+            assert!(
+                scope_markers
+                    .iter()
+                    .any(|marker| matches!(marker.scope_kind, ScopeKind::Route)
+                        && matches!(marker.event, ScopeEvent::Enter)),
+                "parallel route projection should preserve route enter marker"
+            );
+        });
     }
 }

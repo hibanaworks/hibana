@@ -23,8 +23,8 @@ use hibana::{
         },
         ids::SessionId,
         policy::{
-            ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider, PolicySlot,
-            core,
+            PolicySignalsProvider,
+            signals::{ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySlot, core},
         },
         runtime::{Config, DefaultLabelUniverse},
     },

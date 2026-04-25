@@ -147,23 +147,26 @@ pub mod binding {
     }
 }
 
-/// Canonical resolver, slot-input, and policy metadata surface.
+/// Canonical resolver and slot-input provider surface.
 pub mod policy {
     pub use super::cluster::core::{
         LoopResolution, ResolverContext, ResolverError, ResolverRef, RouteResolution,
     };
-    pub use crate::policy_runtime::PolicySlot;
-    pub use crate::transport::context::{
-        ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider,
-    };
+    pub use crate::transport::context::PolicySignalsProvider;
 
-    /// Fixed metadata keys for resolver-context attributes.
-    pub mod core {
-        pub use crate::transport::context::core::{
-            CONGESTION_MARKS, CONGESTION_WINDOW, IN_FLIGHT_BYTES, LANE, LATENCY_US, LATEST_ACK_PN,
-            PACING_INTERVAL_US, PTO_COUNT, QUEUE_DEPTH, RETRANSMISSIONS, RV_ID, SESSION_ID,
-            SRTT_US, TAG, TRANSPORT_ALGORITHM,
-        };
+    /// Slot-scoped policy input and attribute metadata.
+    pub mod signals {
+        pub use crate::policy_runtime::PolicySlot;
+        pub use crate::transport::context::{ContextId, ContextValue, PolicyAttrs, PolicySignals};
+
+        /// Fixed metadata keys for resolver-context attributes.
+        pub mod core {
+            pub use crate::transport::context::core::{
+                CONGESTION_MARKS, CONGESTION_WINDOW, IN_FLIGHT_BYTES, LANE, LATENCY_US,
+                LATEST_ACK_PN, PACING_INTERVAL_US, PTO_COUNT, QUEUE_DEPTH, RETRANSMISSIONS, RV_ID,
+                SESSION_ID, SRTT_US, TAG, TRANSPORT_ALGORITHM,
+            };
+        }
     }
 }
 

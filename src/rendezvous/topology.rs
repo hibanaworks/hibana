@@ -409,28 +409,6 @@ impl TopologyStateTable {
         }
     }
 
-    /// Commit a pending topology operation.
-    ///
-    /// This validates that the pending topology state matches the given sid and clears it.
-    #[cfg(test)]
-    pub(super) fn topology_commit(&self, lane: Lane, sid: SessionId) -> Result<(), TopologyError> {
-        let slots = self.lanes_ptr();
-        let Some(idx) = self.lane_slot(lane) else {
-            return Err(TopologyError::NoPending { lane });
-        };
-        unsafe {
-            let slot = &mut *slots.add(idx);
-            match slot {
-                Some(pending) if pending.sid == sid => {
-                    *slot = None;
-                    Ok(())
-                }
-                Some(pending) => Err(TopologyError::UnknownSession { sid: pending.sid }),
-                None => Err(TopologyError::NoPending { lane }),
-            }
-        }
-    }
-
     pub(super) fn finalize_destination(
         &self,
         lane: Lane,
@@ -490,7 +468,7 @@ mod tests {
         assert!(!table.is_bound());
         assert!(table.take(lane).is_none());
         assert_eq!(
-            table.topology_commit(lane, sid),
+            table.preflight_commit(lane, sid),
             Err(TopologyError::NoPending { lane })
         );
         table.reset_lane(lane);

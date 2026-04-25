@@ -29,7 +29,7 @@ use hibana::substrate::{
 use hibana::substrate::{
     cap::{GenericCapToken, ResourceKind, advanced::RouteDecisionKind},
     ids::RendezvousId,
-    policy::{ResolverContext, ResolverError, RouteResolution, core},
+    policy::{ResolverContext, ResolverError, RouteResolution, signals::core},
 };
 use placement_support::write_value;
 use runtime_support::with_fixture;

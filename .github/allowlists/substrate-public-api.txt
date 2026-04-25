@@ -22,8 +22,10 @@ pub mod advanced {
 pub use crate::binding::{ Channel, ChannelDirection, ChannelKey, ChannelStore, IncomingClassification, TransportOpsError, };
 pub mod policy {
 pub use super::cluster::core::{ LoopResolution, ResolverContext, ResolverError, ResolverRef, RouteResolution, };
+pub use crate::transport::context::PolicySignalsProvider;
+pub mod signals {
 pub use crate::policy_runtime::PolicySlot;
-pub use crate::transport::context::{ ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider, };
+pub use crate::transport::context::{ContextId, ContextValue, PolicyAttrs, PolicySignals};
 pub mod core {
 pub use crate::transport::context::core::{ CONGESTION_MARKS, CONGESTION_WINDOW, IN_FLIGHT_BYTES, LANE, LATENCY_US, LATEST_ACK_PN, PACING_INTERVAL_US, PTO_COUNT, QUEUE_DEPTH, RETRANSMISSIONS, RV_ID, SESSION_ID, SRTT_US, TAG, TRANSPORT_ALGORITHM, };
 pub mod cap {

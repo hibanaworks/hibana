@@ -42,7 +42,7 @@ fn policy_lane_trace_matches_lane_assignments() {
         let rv: u32 = 7;
         let sid: u32 = 0x1234;
         let lane: u16 = 3;
-        let causal = TapEvent::make_causal_key((lane as u8) + 1, 0);
+        let causal = TapEvent::make_causal_key(lane as u8, 1);
 
         storage[0] = raw_event(1, LANE_ACQUIRE_ID)
             .with_arg0(rv)

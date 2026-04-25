@@ -35,10 +35,7 @@ use crate::{
 };
 
 #[cfg(test)]
-use crate::control::{
-    automaton::distributed::TopologyAck,
-    types::{Lane, SessionId},
-};
+use crate::control::{automaton::distributed::TopologyAck, types::Lane};
 
 #[derive(Debug, Default)]
 pub(crate) struct TopologyGraphContext {
@@ -182,66 +179,10 @@ where
 }
 
 #[cfg(test)]
-/// Commit automaton for distributed topology transitions.
-///
-/// Distributed topology commit is cluster-owned because it must retire the
-/// source rendezvous, finalize the destination rendezvous, and close the
-/// cluster-wide bookkeeping entry as one protocol step. A single-rendezvous
-/// lease cannot own that full transition safely, so direct automaton commit
-/// entrypoints fail closed.
-///
-/// Use [`SessionCluster::run_effect_step`](crate::control::cluster::core::SessionCluster::run_effect_step)
-/// for distributed commit orchestration.
-pub(crate) struct TopologyCommitAutomaton;
-
-#[cfg(test)]
-impl<T, U, C, E> ControlAutomaton<T, U, C, E> for TopologyCommitAutomaton
-where
-    T: Transport,
-    U: LabelUniverse,
-    C: Clock,
-    E: crate::control::cap::mint::EpochTable,
-{
-    type Spec = TopologySpec;
-    type Seed = TopologyAck;
-    type Output = TopologyAck;
-    type Error = TopologyError;
-    type GraphSpec = TopologyLeaseSpec<T, U, C, E>;
-
-    fn run<'lease, 'cfg>(
-        _lease: &mut RendezvousLease<'lease, 'cfg, T, U, C, E, Self::Spec>,
-        _ack: Self::Seed,
-    ) -> ControlStep<Self::Output, Self::Error>
-    where
-        'cfg: 'lease,
-    {
-        ControlStep::Abort(TopologyError::InvalidState)
-    }
-
-    fn run_with_graph<'lease, 'cfg, 'graph>(
-        _graph: &'graph mut crate::control::lease::graph::LeaseGraph<
-            'graph,
-            TopologyLeaseSpec<T, U, C, E>,
-        >,
-        _root_lease: &mut RendezvousLease<'lease, 'cfg, T, U, C, E, Self::Spec>,
-        _ack: Self::Seed,
-    ) -> ControlStep<Self::Output, Self::Error>
-    where
-        'cfg: 'lease,
-    {
-        ControlStep::Abort(TopologyError::InvalidState)
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        control::lease::{
-            bundle::{LeaseBundleContext, LeaseBundleFacet, LeaseGraphBundleExt},
-            core::ControlCore,
-            graph::LeaseGraph,
-        },
+        control::lease::core::ControlCore,
         control::types::Generation,
         observe::core::TapEvent,
         runtime::{
@@ -250,8 +191,7 @@ mod tests {
         },
         transport::{TransportError, wire::Payload},
     };
-    use core::{cell::UnsafeCell, mem::MaybeUninit};
-    use std::{boxed::Box, thread_local};
+    use std::boxed::Box;
 
     const MAX_RV: usize = 4;
     const TEST_SLAB_CAPACITY: usize = 8 * 1024;
@@ -320,18 +260,6 @@ mod tests {
         MAX_RV,
     >;
 
-    thread_local! {
-        static TOPOLOGY_GRAPH: UnsafeCell<MaybeUninit<LeaseGraph<
-            'static,
-            TopologyLeaseSpec<
-                DummyTransport,
-                DefaultLabelUniverse,
-                CounterClock,
-                crate::control::cap::mint::EpochTbl,
-            >,
-        >>> = const { UnsafeCell::new(MaybeUninit::uninit()) };
-    }
-
     fn test_config() -> Config<'static, DefaultLabelUniverse, CounterClock> {
         let tap = Box::leak(Box::new([TapEvent::zero(); RING_EVENTS]));
         let slab = Box::leak(Box::new([0u8; TEST_SLAB_CAPACITY]));
@@ -349,37 +277,28 @@ mod tests {
         (core, src_id, dst_id)
     }
 
-    fn prepare_source_lane(
-        core: &mut TestControlCore,
-        src_id: RendezvousId,
-        sid: SessionId,
-        lane: Lane,
-    ) {
-        core.get_mut(&src_id)
-            .expect("source rendezvous present")
-            .prepare_topology_control_scope(lane)
-            .expect("source topology storage must be available");
-        core.get(&src_id)
-            .expect("source rendezvous shared access")
-            .activate_lane_attachment(sid, lane)
-            .expect("source lane must attach for release-path validation");
-    }
-
     #[test]
-    fn topology_intent_validation() {
+    fn begin_run_rejects_non_increasing_generation() {
+        let (mut core, src_id, dst_id) = new_test_core();
         let intent = TopologyIntent {
-            src_rv: RendezvousId::new(1),
-            dst_rv: RendezvousId::new(2),
+            src_rv: src_id,
+            dst_rv: dst_id,
             sid: 42,
             old_gen: Generation::new(1),
-            new_gen: Generation::new(2),
+            new_gen: Generation::new(1),
             seq_tx: 0,
             seq_rx: 0,
             src_lane: Lane::new(0),
             dst_lane: Lane::new(1),
         };
 
-        assert!(intent.new_gen.raw() > intent.old_gen.raw());
+        let mut lease = core
+            .lease::<TopologySpec>(src_id)
+            .expect("lease source rendezvous");
+        assert!(matches!(
+            TopologyBeginAutomaton::run(&mut lease, intent),
+            ControlStep::Abort(TopologyError::GenerationMismatch)
+        ));
     }
 
     #[test]
@@ -430,146 +349,5 @@ mod tests {
             TopologyBeginAutomaton::run(&mut lease, intent),
             ControlStep::Abort(TopologyError::RendezvousIdMismatch)
         ));
-    }
-
-    #[test]
-    fn commit_run_is_cluster_owned_and_does_not_mutate_source_lane() {
-        let (mut core, src_id, dst_id) = new_test_core();
-        let sid = SessionId::new(7);
-        let src_lane = Lane::new(0);
-        let dst_lane = Lane::new(1);
-        let intent = TopologyIntent {
-            src_rv: src_id,
-            dst_rv: dst_id,
-            sid: sid.raw(),
-            old_gen: Generation::ZERO,
-            new_gen: Generation::new(1),
-            seq_tx: 17,
-            seq_rx: 23,
-            src_lane: src_lane,
-            dst_lane: dst_lane,
-        };
-
-        prepare_source_lane(&mut core, src_id, sid, src_lane);
-
-        {
-            let mut lease = core
-                .lease::<TopologySpec>(src_id)
-                .expect("lease source rendezvous");
-            assert!(matches!(
-                TopologyBeginAutomaton::run(&mut lease, intent),
-                ControlStep::Complete(_)
-            ));
-        }
-
-        let mut mismatched_ack = TopologyAck::from_intent(&intent);
-        mismatched_ack.src_lane = Lane::new(2);
-
-        {
-            let mut lease = core
-                .lease::<TopologySpec>(src_id)
-                .expect("lease source rendezvous for mismatched ack");
-            assert!(matches!(
-                TopologyCommitAutomaton::run(&mut lease, mismatched_ack),
-                ControlStep::Abort(TopologyError::InvalidState)
-            ));
-        }
-
-        assert_eq!(
-            core.get(&src_id)
-                .expect("source rendezvous shared access")
-                .session_lane(sid),
-            Some(src_lane),
-            "mismatched ack must not release the source lane"
-        );
-
-        {
-            let mut lease = core
-                .lease::<TopologySpec>(src_id)
-                .expect("lease source rendezvous for successful commit");
-            assert!(matches!(
-                TopologyCommitAutomaton::run(&mut lease, TopologyAck::from_intent(&intent)),
-                ControlStep::Abort(TopologyError::InvalidState)
-            ));
-        }
-
-        assert_eq!(
-            core.get(&src_id)
-                .expect("source rendezvous shared access")
-                .session_lane(sid),
-            Some(src_lane),
-            "direct automaton commit must not bypass the cluster-owned topology commit path"
-        );
-    }
-
-    #[test]
-    fn commit_run_with_graph_is_cluster_owned() {
-        let (mut core, src_id, dst_id) = new_test_core();
-        let sid = SessionId::new(9);
-        let src_lane = Lane::new(0);
-        let dst_lane = Lane::new(1);
-        let intent = TopologyIntent {
-            src_rv: src_id,
-            dst_rv: dst_id,
-            sid: sid.raw(),
-            old_gen: Generation::ZERO,
-            new_gen: Generation::new(1),
-            seq_tx: 31,
-            seq_rx: 37,
-            src_lane: src_lane,
-            dst_lane: dst_lane,
-        };
-
-        prepare_source_lane(&mut core, src_id, sid, src_lane);
-
-        {
-            let mut lease = core
-                .lease::<TopologySpec>(src_id)
-                .expect("lease source rendezvous");
-            assert!(matches!(
-                TopologyBeginAutomaton::run(&mut lease, intent),
-                ControlStep::Complete(_)
-            ));
-        }
-
-        let mut root_ctx = LeaseBundleContext::from_control_core::<MAX_RV>(&mut core, src_id)
-            .expect("root bundle context");
-        root_ctx.set_topology(TopologyGraphContext::new(Some(intent)));
-        TOPOLOGY_GRAPH.with(|graph_storage| unsafe {
-            let graph_storage = &mut *graph_storage.get();
-            LeaseGraph::<
-                TopologyLeaseSpec<
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    crate::control::cap::mint::EpochTbl,
-                >,
-            >::init_new(
-                graph_storage.as_mut_ptr(),
-                src_id,
-                LeaseBundleFacet::<
-                    DummyTransport,
-                    DefaultLabelUniverse,
-                    CounterClock,
-                    crate::control::cap::mint::EpochTbl,
-                >::default(),
-                root_ctx,
-            );
-            let graph = graph_storage.assume_init_mut();
-            graph
-                .add_child_with_bundle(&mut core, src_id, dst_id)
-                .expect("graph child added");
-
-            let mut mismatched_ack = TopologyAck::from_intent(&intent);
-            mismatched_ack.src_lane = Lane::new(2);
-
-            let mut lease = core
-                .lease::<TopologySpec>(src_id)
-                .expect("lease source rendezvous for graph commit");
-            assert!(matches!(
-                TopologyCommitAutomaton::run_with_graph(graph, &mut lease, mismatched_ack),
-                ControlStep::Abort(TopologyError::InvalidState)
-            ));
-        });
     }
 }

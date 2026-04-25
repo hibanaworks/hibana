@@ -46,6 +46,12 @@ check_absent \
   src tests
 
 check_absent \
+  "pub\\(super\\)[[:space:]]+fn[[:space:]]+topology_commit\\(|\\.topology\\.topology_commit\\(" \
+  "test-only topology commit owner bypasses cluster-owned production commit path" \
+  src/rendezvous src/control tests \
+  -g '!tests/semantic_surface.rs'
+
+check_absent \
   "POLICY_MODE_ENFORCE_TAG|PolicyVerdict::Proceed" \
   "core audit conflates no-engine with enforce/proceed" \
   src tests

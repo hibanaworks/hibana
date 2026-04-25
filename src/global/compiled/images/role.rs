@@ -5,8 +5,8 @@ use crate::global::compiled::layout::{
     compiled_role_image_align, compiled_role_image_bytes_for_layout,
 };
 use crate::global::role_program::{
-    LaneSetView, LaneSteps, LaneWord, PhaseRouteGuard, RoleFootprint, lane_word_count,
-    logical_lane_count_for_role,
+    DENSE_LANE_NONE, DenseLaneOrdinal, LaneSetView, LaneSteps, LaneWord, PhaseRouteGuard,
+    RoleFootprint, lane_word_count, logical_lane_count_for_role,
 };
 use crate::global::typestate::{RoleTypestateValue, StateIndex};
 
@@ -398,12 +398,12 @@ impl CompiledRoleImage {
     }
 
     #[inline(always)]
-    pub(crate) fn fill_active_lane_dense_by_lane(&self, dst: &mut [u8]) -> usize {
+    pub(crate) fn fill_active_lane_dense_by_lane(&self, dst: &mut [DenseLaneOrdinal]) -> usize {
         Self::build_active_lane_dense_map_into(self, dst)
     }
 
     #[inline(always)]
-    pub(crate) fn fill_logical_lane_dense_by_lane(&self, dst: &mut [u8]) -> usize {
+    pub(crate) fn fill_logical_lane_dense_by_lane(&self, dst: &mut [DenseLaneOrdinal]) -> usize {
         Self::build_logical_lane_dense_map_into(self.logical_lane_count(), dst)
     }
 
@@ -555,8 +555,8 @@ impl CompiledRoleImage {
         self.typestate_ref().frontier_entry_capacity()
     }
 
-    fn build_active_lane_dense_map_into(image: &Self, dst: &mut [u8]) -> usize {
-        dst.fill(u8::MAX);
+    fn build_active_lane_dense_map_into(image: &Self, dst: &mut [DenseLaneOrdinal]) -> usize {
+        dst.fill(DENSE_LANE_NONE);
         let mut phase_idx = 0usize;
         while phase_idx < image.phase_len() {
             if let Some(header) = image.phase_header(phase_idx) {
@@ -565,7 +565,7 @@ impl CompiledRoleImage {
                 while entry_idx < lane_entries.len() {
                     let lane = lane_entries[entry_idx].lane as usize;
                     if lane < dst.len() {
-                        dst[lane] = 0;
+                        dst[lane] = DenseLaneOrdinal::ZERO;
                     }
                     entry_idx += 1;
                 }
@@ -575,8 +575,9 @@ impl CompiledRoleImage {
         let mut lane_idx = 0usize;
         let mut dense = 0usize;
         while lane_idx < dst.len() {
-            if dst[lane_idx] != u8::MAX {
-                dst[lane_idx] = dense as u8;
+            if dst[lane_idx] != DENSE_LANE_NONE {
+                dst[lane_idx] =
+                    DenseLaneOrdinal::new(dense).expect("dense active lane ordinal fits u16");
                 dense += 1;
             }
             lane_idx += 1;
@@ -584,13 +585,16 @@ impl CompiledRoleImage {
         dense
     }
 
-    fn build_logical_lane_dense_map_into(logical_lane_count: usize, dst: &mut [u8]) -> usize {
+    fn build_logical_lane_dense_map_into(
+        logical_lane_count: usize,
+        dst: &mut [DenseLaneOrdinal],
+    ) -> usize {
         let mut lane_idx = 0usize;
         while lane_idx < dst.len() {
             dst[lane_idx] = if lane_idx < logical_lane_count {
-                lane_idx as u8
+                DenseLaneOrdinal::new(lane_idx).expect("logical lane ordinal fits u16")
             } else {
-                u8::MAX
+                DENSE_LANE_NONE
             };
             lane_idx += 1;
         }
@@ -704,6 +708,24 @@ mod tests {
     #[test]
     fn pico_smoke_fixture_symbols_are_reachable() {
         retain_pico_smoke_fixture_symbols();
+    }
+
+    #[test]
+    fn logical_lane_dense_map_preserves_lane_255() {
+        let mut lanes = [role_program::DENSE_LANE_NONE; role_program::LANE_DOMAIN_SIZE + 2];
+        let count = CompiledRoleImage::build_logical_lane_dense_map_into(
+            role_program::LANE_DOMAIN_SIZE,
+            &mut lanes,
+        );
+
+        assert_eq!(count, role_program::LANE_DOMAIN_SIZE);
+        assert_eq!(
+            lanes[255],
+            role_program::DenseLaneOrdinal::new(255).expect("lane 255 dense ordinal")
+        );
+        assert_ne!(lanes[255], role_program::DENSE_LANE_NONE);
+        assert_eq!(lanes[256], role_program::DENSE_LANE_NONE);
+        assert_eq!(lanes[257], role_program::DENSE_LANE_NONE);
     }
 
     type SendOnly<const LANE: u8, S, D, M> = StepCons<SendStep<S, D, M, LANE>, StepNil>;
@@ -1307,8 +1329,7 @@ mod tests {
     fn huge_shape_phase_counts_stay_bounded_by_parallel_markers() {
         let route_worker = huge_program::worker_program();
         let route_lowering = crate::global::lowering_input(&route_worker);
-        let route_summary = route_lowering.summary();
-        let route_parallel_markers = count_parallel_enter_markers(route_summary);
+        let route_parallel_markers = route_lowering.with_summary(count_parallel_enter_markers);
         with_compiled_role_image(&route_worker, |image| {
             let phase_count = image.phase_len();
             let phase_lane_entry_len = image.phase_lane_entry_len();
@@ -1337,8 +1358,7 @@ mod tests {
 
         let linear_worker = linear_program::worker_program();
         let linear_lowering = crate::global::lowering_input(&linear_worker);
-        let linear_summary = linear_lowering.summary();
-        let linear_parallel_markers = count_parallel_enter_markers(linear_summary);
+        let linear_parallel_markers = linear_lowering.with_summary(count_parallel_enter_markers);
         with_compiled_role_image(&linear_worker, |image| {
             let phase_count = image.phase_len();
             let local_len = image.local_len();
@@ -1361,8 +1381,7 @@ mod tests {
 
         let fanout_worker = fanout_program::worker_program();
         let fanout_lowering = crate::global::lowering_input(&fanout_worker);
-        let fanout_summary = fanout_lowering.summary();
-        let fanout_parallel_markers = count_parallel_enter_markers(fanout_summary);
+        let fanout_parallel_markers = fanout_lowering.with_summary(count_parallel_enter_markers);
         with_compiled_role_image(&fanout_worker, |image| {
             let phase_count = image.phase_len();
             let local_len = image.local_len();
@@ -1404,7 +1423,7 @@ mod tests {
 
         let worker: role_program::RoleProgram<0> = role_program::project(&program);
         let lowering = crate::global::lowering_input(&worker);
-        let counts = lowering.summary().role_lowering_counts::<0>();
+        let counts = lowering.with_summary(|summary| summary.role_lowering_counts::<0>());
 
         with_compiled_role_image(&worker, |image| {
             assert_eq!(counts.phase_count, image.phase_len());
@@ -1421,21 +1440,22 @@ mod tests {
         worker: &role_program::RoleProgram<ROLE>,
     ) {
         let lowering = crate::global::lowering_input(&worker);
-        let summary = lowering.summary();
         let scope_count = lowering.footprint().scope_count;
         let eff_count = lowering.eff_count();
-        let route_enter_count = summary
-            .view()
-            .scope_markers()
-            .iter()
-            .filter(|marker| {
-                matches!(marker.event, crate::global::const_dsl::ScopeEvent::Enter)
-                    && matches!(
-                        marker.scope_kind,
-                        crate::global::const_dsl::ScopeKind::Route
-                    )
-            })
-            .count();
+        let route_enter_count = lowering.with_summary(|summary| {
+            summary
+                .view()
+                .scope_markers()
+                .iter()
+                .filter(|marker| {
+                    matches!(marker.event, crate::global::const_dsl::ScopeEvent::Enter)
+                        && matches!(
+                            marker.scope_kind,
+                            crate::global::const_dsl::ScopeKind::Route
+                        )
+                })
+                .count()
+        });
         let local_len = lowering.local_step_count();
         let phase_cap = compiled_role_phase_cap(lowering.footprint());
         let typestate_node_cap = compiled_role_typestate_node_cap(

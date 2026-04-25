@@ -103,23 +103,35 @@ for required in [
 
 role_program = read("src/global/role_program.rs")
 for required in [
-    "struct ProjectedRoleImage",
+    "struct RoleImage",
     "pub(crate) struct RoleImageRef",
+    "pub(crate) struct RoleImageSource",
     "pub(crate) struct RoleFacts",
     "image: RoleImageRef",
-    "image: &'static ProjectedRoleImage",
+    "image: &'static RoleImage",
+    "stamp: ProgramStamp",
     "facts: RoleFacts",
+    "source: RoleImageSource",
+    "const fn source(&self) -> RoleImageSource",
+    "pub(crate) const fn source(&self) -> RoleImageSource",
     "fn footprint(self) -> RoleFootprint",
-    "ProjectedRoleImage::new::<ROLE>(validated_program_summary::<Steps>())",
+    "RoleImage::new(",
+    "RoleImageSource::new(Self::init_lowering)",
     "&ValidatedRoleImage::<Steps, ROLE>::IMAGE",
 ]:
     if required not in role_program:
         fail(f"RoleProgram is not a compact verified descriptor handle: {required}")
 for forbidden in [
+    "summary: &'static LoweringSummary",
+    "const fn summary(",
+    "pub(crate) const fn summary(",
+    "pub(crate) fn summary(",
+    "program.image.summary()",
     "\n    counts: RoleLoweringCounts,\n",
     "program.summary.role_lowering_counts::<ROLE>()",
     "let counts = program.image.summary().role_lowering_counts::<ROLE>();",
     "footprint: program.facts.footprint(counts)",
+    "RoleImage::new::<ROLE>(validated_program_summary::<Steps>())",
 ]:
     if forbidden in role_program:
         fail(f"RoleProgram retained old lowering-summary witness shape: {forbidden}")

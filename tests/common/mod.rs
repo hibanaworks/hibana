@@ -1,7 +1,7 @@
 use core::ptr;
 use hibana::substrate::{
     Transport,
-    policy::PolicyAttrs,
+    policy::signals::PolicyAttrs,
     transport::{
         TransportError,
         advanced::{TransportEvent, TransportMetrics},

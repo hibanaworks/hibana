@@ -19,7 +19,7 @@ pub(super) struct RootFrontierTable {
     observed_key_slots: *mut FrontierObservationSlot,
     observed_key_offer_lanes: *mut LaneWord,
     observed_key_binding_nonempty_lanes: *mut LaneWord,
-    capacity: u8,
+    capacity: u16,
     pool_capacity: u8,
     observed_key_lane_word_count: u8,
 }
@@ -36,7 +36,7 @@ impl RootFrontierTable {
         pool_capacity: usize,
         observed_key_lane_word_count: usize,
     ) {
-        if root_frontier_capacity > u8::MAX as usize {
+        if root_frontier_capacity > u16::MAX as usize {
             panic!("root frontier row capacity overflow");
         }
         if pool_capacity > u8::MAX as usize {
@@ -53,7 +53,7 @@ impl RootFrontierTable {
                 .write(observed_key_offer_lanes);
             core::ptr::addr_of_mut!((*dst).observed_key_binding_nonempty_lanes)
                 .write(observed_key_binding_nonempty_lanes);
-            core::ptr::addr_of_mut!((*dst).capacity).write(root_frontier_capacity as u8);
+            core::ptr::addr_of_mut!((*dst).capacity).write(root_frontier_capacity as u16);
             core::ptr::addr_of_mut!((*dst).pool_capacity).write(pool_capacity as u8);
             core::ptr::addr_of_mut!((*dst).observed_key_lane_word_count)
                 .write(observed_key_lane_word_count as u8);
@@ -803,6 +803,38 @@ mod tests {
         key.clear();
         key.set_active_entries_from(active);
         (key_slots, offer_lanes, binding_nonempty_lanes, key)
+    }
+
+    #[test]
+    fn root_frontier_table_accepts_full_u8_lane_domain_rows() {
+        const ROWS: usize = 256;
+        let mut rows = std::vec::Vec::with_capacity(ROWS);
+        rows.resize(ROWS, RootFrontierState::EMPTY);
+        let mut active = [ActiveEntrySlot::EMPTY; 1];
+        let mut observed = [FrontierObservationSlot::EMPTY; 1];
+        let mut table = MaybeUninit::<RootFrontierTable>::uninit();
+        unsafe {
+            RootFrontierTable::init_from_parts(
+                table.as_mut_ptr(),
+                rows.as_mut_ptr(),
+                active.as_mut_ptr(),
+                observed.as_mut_ptr(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                ROWS,
+                1,
+                0,
+            );
+        }
+        let mut table = unsafe { table.assume_init() };
+
+        for idx in 0..ROWS {
+            table.prepare_row(idx, test_scope(idx as u64 + 1));
+        }
+
+        assert_eq!(table.capacity(), ROWS);
+        assert_eq!(table.len(), ROWS);
+        assert_eq!(table[255].root, test_scope(256));
     }
 
     #[test]

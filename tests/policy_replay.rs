@@ -1,7 +1,7 @@
 #![cfg(feature = "std")]
 
 use hibana::substrate::{
-    policy::{
+    policy::signals::{
         ContextValue, PolicyAttrs, PolicySlot,
         core::{
             CONGESTION_MARKS, CONGESTION_WINDOW, IN_FLIGHT_BYTES, LATENCY_US, LATEST_ACK_PN,

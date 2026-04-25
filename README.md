@@ -350,7 +350,7 @@ The everyday protocol-side owners are:
 
 Lower-level substrate buckets:
 
-- `hibana::substrate::policy::{ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySlot}` plus `core::*` for fixed context-key ids
+- `hibana::substrate::policy::signals::{ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySlot}` plus `signals::core::*` for fixed context-key ids
 - `hibana::substrate::cap::advanced` for descriptor metadata plus the built-in
   route / loop control kinds
 - `hibana::substrate::transport::advanced` for event-kind classification and
@@ -599,7 +599,7 @@ Key points:
   `enter()`
 - `Config::new(tap_buf, slab)` allocates tap storage and the rendezvous slab
 - `Config::with_lane_range(range)` reserves lane space for the transport/appkit
-  split
+  split; the exclusive end is `u16` so `0..256` includes every wire lane
 - `Config::with_universe(universe)` and `Config::with_clock(clock)` install
   custom label-universe and clock owners
 - bootstrap failures use `hibana::substrate::CpError` and
@@ -616,14 +616,14 @@ arms.
 
 ```rust
 struct MyBinding {
-    signals: hibana::substrate::policy::PolicySignals<'static>,
+    signals: hibana::substrate::policy::signals::PolicySignals<'static>,
 }
 
 impl hibana::substrate::policy::PolicySignalsProvider for MyBinding {
     fn signals(
         &self,
-        _slot: hibana::substrate::policy::PolicySlot,
-    ) -> hibana::substrate::policy::PolicySignals<'_> {
+        _slot: hibana::substrate::policy::signals::PolicySlot,
+    ) -> hibana::substrate::policy::signals::PolicySignals<'_> {
         self.signals
     }
 }
@@ -696,7 +696,7 @@ only public accessors.
 
 The public policy-owner surface is intentionally narrow:
 
-- `hibana::substrate::policy::PolicySlot` owns the generic slot identity
+- `hibana::substrate::policy::signals::PolicySlot` owns the generic slot identity
 - an external policy engine may execute inside the same resolver slot, but that
   engine is not part of the `hibana` crate surface
 - policy execution is fail-closed; verifier, trap, and fuel failures reject
@@ -704,14 +704,14 @@ The public policy-owner surface is intentionally narrow:
 
 Useful policy owners and helpers:
 
-- `ContextId` and `ContextValue` for fixed-width policy inputs and attrs
-- `PolicyAttrs` for the attribute bag copied into resolver context
-- `PolicySignals` for slot-scoped inputs delivered by
-  `PolicySignalsProvider`
+- `policy::signals::ContextId` and `ContextValue` for fixed-width policy inputs and attrs
+- `policy::signals::PolicyAttrs` for the attribute bag copied into resolver context
+- `policy::signals::PolicySignals` for slot-scoped inputs delivered by
+  `policy::PolicySignalsProvider`
 - `ResolverRef::route_state()` / `ResolverRef::loop_state()` for borrowed-state
   resolvers
 - `ResolverRef::route_fn()` / `ResolverRef::loop_fn()` for stateless callbacks
-- `hibana::substrate::policy::core::*` for fixed metadata such as `RV_ID`,
+- `hibana::substrate::policy::signals::core::*` for fixed metadata such as `RV_ID`,
   `SESSION_ID`, `LANE`, `QUEUE_DEPTH`, `SRTT_US`, `PTO_COUNT`,
   `IN_FLIGHT_BYTES`, and `TRANSPORT_ALGORITHM`
 
@@ -734,7 +734,7 @@ fn route_resolver(
     }
 
     if ctx
-        .attr(hibana::substrate::policy::core::QUEUE_DEPTH)
+        .attr(hibana::substrate::policy::signals::core::QUEUE_DEPTH)
         .is_some_and(|value| value.as_u32() > 128)
     {
         return Err(hibana::substrate::policy::ResolverError::Reject);
@@ -771,7 +771,7 @@ they reject trailing bytes, and non-wire local route materialization uses
 Transport telemetry is surfaced two ways:
 
 - resolvers read transport attrs through `ResolverContext::attr()` and
-  `hibana::substrate::policy::core::*`
+  `hibana::substrate::policy::signals::core::*`
 - transports emit semantic events through `transport::advanced::TransportEvent`;
   the kind classifier is `transport::advanced::TransportEventKind`
 - codec failures report through `CodecError`
@@ -782,10 +782,10 @@ Transport telemetry is surfaced two ways:
 Example transport-attr access:
 
 ```rust
-let mut attrs = hibana::substrate::policy::PolicyAttrs::EMPTY;
+let mut attrs = hibana::substrate::policy::signals::PolicyAttrs::EMPTY;
 let _ = attrs.insert(
-    hibana::substrate::policy::core::QUEUE_DEPTH,
-    hibana::substrate::policy::ContextValue::from_u32(3),
+    hibana::substrate::policy::signals::core::QUEUE_DEPTH,
+    hibana::substrate::policy::signals::ContextValue::from_u32(3),
 );
 
 let transport_event = hibana::substrate::transport::advanced::TransportEvent::new(
@@ -797,7 +797,7 @@ let transport_event = hibana::substrate::transport::advanced::TransportEvent::ne
 
 let _ = (
     attrs
-        .get(hibana::substrate::policy::core::QUEUE_DEPTH)
+        .get(hibana::substrate::policy::signals::core::QUEUE_DEPTH)
         .map(|value| value.as_u32()),
     transport_event.packet_number(),
 );
@@ -805,7 +805,7 @@ let _ = (
 
 `PolicyAttrs` is the packed transport-observation view that resolvers see:
 
-- use `PolicyAttrs::get()` with `hibana::substrate::policy::core::*`
+- use `PolicyAttrs::get()` with `hibana::substrate::policy::signals::core::*`
   identifiers such as `LATENCY_US`, `QUEUE_DEPTH`, `RETRANSMISSIONS`,
   `CONGESTION_WINDOW`, and `TRANSPORT_ALGORITHM`
 - transports own metric collection and publish packed attrs through

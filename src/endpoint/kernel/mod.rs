@@ -21,17 +21,17 @@ mod lane_port;
 mod lane_slots {
     pub(super) struct LaneSlotArray<T> {
         ptr: *mut Option<T>,
-        len: u8,
+        len: u16,
     }
 
     impl<T> LaneSlotArray<T> {
         pub(super) unsafe fn init_from_parts(dst: *mut Self, ptr: *mut Option<T>, len: usize) {
-            if len > u8::MAX as usize {
+            if len > u16::MAX as usize {
                 panic!("lane slot array overflow");
             }
             unsafe {
                 core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
-                core::ptr::addr_of_mut!((*dst).len).write(len as u8);
+                core::ptr::addr_of_mut!((*dst).len).write(len as u16);
             }
             let mut idx = 0usize;
             while idx < len {
@@ -98,6 +98,31 @@ mod lane_slots {
                 }
                 idx += 1;
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::LaneSlotArray;
+        use core::mem::MaybeUninit;
+
+        #[test]
+        fn lane_slot_array_accepts_full_u8_lane_domain() {
+            let mut storage = std::vec::Vec::with_capacity(256);
+            storage.resize_with(256, MaybeUninit::<Option<u16>>::uninit);
+            let mut array = MaybeUninit::<LaneSlotArray<u16>>::uninit();
+            unsafe {
+                LaneSlotArray::init_from_parts(
+                    array.as_mut_ptr(),
+                    storage.as_mut_ptr().cast::<Option<u16>>(),
+                    256,
+                );
+            }
+            let mut array = unsafe { array.assume_init() };
+
+            assert_eq!(array.len(), 256);
+            *array.get_mut(255).expect("lane 255 slot") = Some(7);
+            assert_eq!(*array.get(255).expect("lane 255 slot"), Some(7));
         }
     }
 }

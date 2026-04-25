@@ -64,11 +64,17 @@ impl TopologyDescriptor {
         let handle = TopologyHandle::decode(bytes).map_err(|_| CpError::Authorisation {
             operation: operation as u8,
         })?;
+        let src_lane = Lane::try_new(u32::from(handle.src_lane)).ok_or(CpError::Authorisation {
+            operation: operation as u8,
+        })?;
+        let dst_lane = Lane::try_new(u32::from(handle.dst_lane)).ok_or(CpError::Authorisation {
+            operation: operation as u8,
+        })?;
         let operands = TopologyOperands {
             src_rv: RendezvousId::new(handle.src_rv),
             dst_rv: RendezvousId::new(handle.dst_rv),
-            src_lane: Lane::new(handle.src_lane as u32),
-            dst_lane: Lane::new(handle.dst_lane as u32),
+            src_lane,
+            dst_lane,
             old_gen: Generation::new(handle.old_gen),
             new_gen: Generation::new(handle.new_gen),
             seq_tx: handle.seq_tx,
@@ -114,12 +120,15 @@ fn delegation_handle_from_route_input(
             operation: ControlOp::CapDelegate as u8,
         });
     }
+    let dst_lane = Lane::try_new(u32::from(dst_lane_raw)).ok_or(CpError::Authorisation {
+        operation: ControlOp::CapDelegate as u8,
+    })?;
 
     Ok(DelegationHandle {
         src_rv: rv_id.raw(),
         dst_rv: dst_rv_raw,
-        src_lane: src_lane.raw() as u16,
-        dst_lane: dst_lane_raw,
+        src_lane: u16::from(src_lane.as_wire()),
+        dst_lane: u16::from(dst_lane.as_wire()),
         seq_tx: input[1],
         seq_rx: input[2],
         shard: input[3],
@@ -3517,7 +3526,10 @@ where
         operation: ControlOp,
     ) -> Result<(), CpError> {
         let handle_sid = SessionId::new(handle.sid());
-        let handle_lane = Lane::new(handle.lane() as u32);
+        let handle_lane =
+            Lane::try_new(u32::from(handle.lane())).ok_or(CpError::Authorisation {
+                operation: operation as u8,
+            })?;
         if handle_sid != expected_sid || handle_lane != expected_lane {
             return Err(CpError::Authorisation {
                 operation: operation as u8,
@@ -6094,8 +6106,7 @@ mod tests {
                     .add_rendezvous_from_config(config, DummyTransport)
                     .expect("register rendezvous");
                 let lowering = crate::global::lowering_input(&projected);
-                let summary = lowering.summary();
-                let counts = summary.compiled_program_counts();
+                let counts = lowering.with_summary(|summary| summary.compiled_program_counts());
                 let program_bytes = CompiledProgramFacts::persistent_bytes_for_counts(counts);
                 let role_image = cluster
                     .materialize_test_role_image::<ROLE, _>(rv_id, projected)
@@ -9093,6 +9104,32 @@ mod tests {
     }
 
     #[test]
+    fn topology_descriptor_rejects_lanes_outside_wire_domain() {
+        let mut handle = TopologyHandle {
+            src_rv: 1,
+            dst_rv: 2,
+            src_lane: 256,
+            dst_lane: 7,
+            old_gen: 11,
+            new_gen: 12,
+            seq_tx: 13,
+            seq_rx: 14,
+        };
+
+        assert!(
+            TopologyDescriptor::decode_for(ControlOp::TopologyBegin, handle.encode()).is_err(),
+            "topology descriptor decode must fail closed instead of truncating source lane 256"
+        );
+
+        handle.src_lane = 3;
+        handle.dst_lane = 256;
+        assert!(
+            TopologyDescriptor::decode_for(ControlOp::TopologyBegin, handle.encode()).is_err(),
+            "topology descriptor decode must fail closed instead of truncating destination lane 256"
+        );
+    }
+
+    #[test]
     fn prepare_topology_operands_from_descriptor_rejects_same_rendezvous() {
         run_on_transient_compiled_test_stack(
             "prepare_topology_operands_from_descriptor_rejects_same_rendezvous",
@@ -9268,6 +9305,45 @@ mod tests {
                                 seq_rx: 22,
                                 shard: 23,
                                 flags: 0,
+                            }
+                        );
+                    });
+                });
+            },
+        );
+    }
+
+    #[test]
+    fn prepare_reroute_handle_from_policy_rejects_out_of_domain_lane() {
+        run_on_transient_compiled_test_stack(
+            "prepare_reroute_handle_from_policy_rejects_out_of_domain_lane",
+            || {
+                with_cluster_fixture_pair(|clock, src_cfg, dst_cfg| {
+                    with_test_cluster(clock, |cluster| {
+                        let src_id = cluster
+                            .add_rendezvous_from_config(src_cfg, DummyTransport)
+                            .expect("register src");
+                        let dst_id = cluster
+                            .add_rendezvous_from_config(dst_cfg, DummyTransport)
+                            .expect("register dst");
+
+                        let err = cluster
+                            .prepare_reroute_handle_from_policy(
+                                src_id,
+                                Lane::new(4),
+                                EffIndex::new(10),
+                                TAG_CAP_DELEGATE_CONTROL,
+                                ControlOp::CapDelegate,
+                                PolicyMode::Static,
+                                [pack_u16_pair(dst_id.raw(), 256), 21, 22, 23],
+                                &crate::transport::context::PolicyAttrs::EMPTY,
+                            )
+                            .expect_err("static cap-delegate input must reject lane 256");
+
+                        assert_eq!(
+                            err,
+                            CpError::Authorisation {
+                                operation: ControlOp::CapDelegate as u8
                             }
                         );
                     });
@@ -10157,13 +10233,6 @@ mod tests {
                         assert_eq!(
                             shared_borrow_projected_a.stamp(),
                             shared_borrow_projected_b.stamp()
-                        );
-                        assert_eq!(
-                            crate::global::lowering_input(&shared_borrow_projected_a).summary()
-                                as *const crate::global::compiled::lowering::LoweringSummary,
-                            crate::global::lowering_input(&shared_borrow_projected_b).summary()
-                                as *const crate::global::compiled::lowering::LoweringSummary,
-                            "equivalent thin RoleProgram values should borrow the same shared source owner"
                         );
 
                         cluster

@@ -118,18 +118,30 @@ fn substrate_policy_surface_is_single_slot_input_owner() {
     let substrate_src = read("src/substrate.rs");
 
     assert!(
-        substrate_src.contains("pub use crate::policy_runtime::PolicySlot;")
+        substrate_src.contains("pub use crate::transport::context::PolicySignalsProvider;")
+            && substrate_src.contains("pub mod signals {")
+            && substrate_src.contains("pub use crate::policy_runtime::PolicySlot;")
             && substrate_src.contains(
-                "pub use crate::transport::context::{\n        ContextId, ContextValue, PolicyAttrs, PolicySignals, PolicySignalsProvider,"
+                "pub use crate::transport::context::{ContextId, ContextValue, PolicyAttrs, PolicySignals};"
             ),
-        "substrate::policy must own the slot-input surface directly"
+        "substrate::policy must keep resolver/provider root and move signal metadata under policy::signals"
     );
     let policy_root = substrate_src
         .split("pub mod policy {")
         .nth(1)
         .and_then(|tail| tail.split("/// Canonical capability-token surface").next())
         .expect("substrate policy surface must be followed by cap surface");
-    for required in [
+    for required in ["PolicySignalsProvider", "pub mod signals"] {
+        assert!(
+            policy_root.contains(required),
+            "substrate::policy must keep the resolver/provider root and signals owner: {required}"
+        );
+    }
+    let policy_root_before_signals = policy_root
+        .split("pub mod signals {")
+        .next()
+        .expect("policy root must contain signals bucket");
+    for forbidden in [
         "ContextId",
         "ContextValue",
         "PolicyAttrs",
@@ -138,8 +150,8 @@ fn substrate_policy_surface_is_single_slot_input_owner() {
         "pub mod core",
     ] {
         assert!(
-            policy_root.contains(required),
-            "substrate::policy must keep the single slot-input owner: {required}"
+            !policy_root_before_signals.contains(forbidden),
+            "substrate::policy root must not expose lower-level signal metadata: {forbidden}"
         );
     }
     for forbidden in [
@@ -297,7 +309,8 @@ fn transport_snapshot_surface_stays_getter_only() {
         "README must describe PolicyAttrs-based transport observation"
     );
     for required in [
-        "pub use crate::transport::context::{",
+        "pub mod signals {",
+        "pub use crate::transport::context::{ContextId, ContextValue, PolicyAttrs, PolicySignals};",
         "ContextId",
         "ContextValue",
         "PolicyAttrs",

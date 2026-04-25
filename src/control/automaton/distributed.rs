@@ -8,8 +8,6 @@
 //! The lifecycle maps directly to control::Txn's typestate transitions.
 
 use crate::control::automaton::txn::{Closed, InAcked, InBegin, Tap, Txn};
-#[cfg(test)]
-use crate::control::cluster::error::TopologyError;
 use crate::control::types::{
     AtMostOnceCommit, Generation, IncreasingGen, Lane, NoCrossLaneAliasing, One,
 };
@@ -121,18 +119,6 @@ impl DistributedTopology {
         (in_begin, intent)
     }
 
-    #[cfg(test)]
-    pub(crate) fn process_intent(
-        intent: &TopologyIntent,
-        _tap: &mut impl Tap,
-    ) -> Result<TopologyAck, TopologyError> {
-        if intent.new_gen.raw() <= intent.old_gen.raw() {
-            return Err(TopologyError::GenerationMismatch);
-        }
-
-        Ok(TopologyAck::from_intent(intent))
-    }
-
     /// Acknowledge a topology intent.
     ///
     /// Transitions the transaction from InBegin to InAcked state.
@@ -163,7 +149,7 @@ mod tests {
     use crate::control::types::RendezvousId;
 
     #[test]
-    fn test_distributed_topology_happy_path() {
+    fn distributed_topology_typestate_begin_ack_commit_path_closes() {
         let mut tap = NoopTap;
 
         let (in_begin, intent) = DistributedTopology::begin(
@@ -187,36 +173,8 @@ mod tests {
         assert_eq!(intent.old_gen, Generation::new(10));
         assert_eq!(intent.new_gen, Generation::new(11));
 
-        let ack = DistributedTopology::process_intent(&intent, &mut tap).unwrap();
-        assert_eq!(ack.new_gen, Generation::new(11));
-
         let in_acked = DistributedTopology::acknowledge(in_begin, &mut tap);
 
         let _closed = DistributedTopology::topology_commit(in_acked, &mut tap);
-    }
-
-    #[test]
-    fn test_distributed_topology_failure() {
-        let mut tap = NoopTap;
-
-        // Begin with invalid generation (new_gen <= old_gen)
-        let (_in_begin, intent) = DistributedTopology::begin(
-            TopologyIntent {
-                src_rv: RendezvousId::new(1),
-                dst_rv: RendezvousId::new(2),
-                sid: 42,
-                old_gen: Generation::new(10),
-                new_gen: Generation::new(10),
-                seq_tx: 0,
-                seq_rx: 0,
-                src_lane: Lane::new(1),
-                dst_lane: Lane::new(2),
-            },
-            &mut tap,
-        );
-
-        // Process should fail due to invalid generation
-        let result = DistributedTopology::process_intent(&intent, &mut tap);
-        assert!(result.is_err());
     }
 }

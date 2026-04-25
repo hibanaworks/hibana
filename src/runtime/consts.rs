@@ -21,13 +21,15 @@ pub const LABEL_LOOP_BREAK: u8 = 49;
 pub const LABEL_ROUTE_DECISION: u8 = 57;
 pub(crate) const LABEL_PROTOCOL_CONTROL_MIN: u8 = 106;
 
-/// Maximum number of logical lanes per rendezvous.
+/// Default number of logical lanes per rendezvous.
 ///
 /// Lanes are represented as `u8` throughout the crate (see
-/// [`crate::control::types::Lane`]), so this bound never exceeds `u8::MAX`. Configuration
-/// surfaces such as [`crate::runtime::config::Config::with_lane_range`] refer to this
-/// constant when validating caller-provided ranges.
-pub const LANES_MAX: u8 = 8;
+/// [`crate::control::types::Lane`]). Configuration surfaces use an exclusive
+/// `u16` end bound so callers can express the full `0..256` lane domain.
+pub const LANES_MAX: u16 = 8;
+
+/// Exclusive upper bound for the complete wire lane domain.
+pub const LANE_DOMAIN_SIZE: u16 = u8::MAX as u16 + 1;
 
 /// Number of tap events maintained in the observation ring buffer.
 pub const RING_EVENTS: usize = 128;

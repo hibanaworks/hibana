@@ -1971,12 +1971,7 @@ where
 
     fn emit_effect(&self, effect: ControlOp, sid: SessionId, lane: Lane, arg: u32) {
         let event_id = control_op_tap_event_id(effect);
-        let raw = lane.raw();
-        debug_assert!(
-            raw <= u32::from(u8::MAX),
-            "lane id must fit within causal key encoding"
-        );
-        let causal = TapEvent::make_causal_key(raw as u8 + 1, 0);
+        let causal = TapEvent::make_causal_key(lane.as_wire(), 1);
         emit(
             self.tap(),
             RawEvent::new(self.clock.now32(), event_id)
@@ -2013,15 +2008,7 @@ where
         arg2: u32,
     ) {
         let causal = lane
-            .map(|lane| {
-                let raw = lane.raw();
-                debug_assert!(
-                    raw <= u32::from(u8::MAX),
-                    "lane id must fit within causal key encoding"
-                );
-                let marker = raw as u8 + 1;
-                TapEvent::make_causal_key(marker, 0)
-            })
+            .map(|lane| TapEvent::make_causal_key(lane.as_wire(), 1))
             .unwrap_or(0);
 
         emit(
@@ -2811,7 +2798,7 @@ where
         rv_id: RendezvousId,
         tap_buf: &'cfg mut [crate::observe::core::TapEvent; crate::runtime::consts::RING_EVENTS],
         slab: &mut [u8],
-        lane_range: core::ops::Range<u8>,
+        lane_range: core::ops::Range<u16>,
         clock: C,
         liveness_policy: crate::runtime::config::LivenessPolicy,
         transport: T,
@@ -2852,7 +2839,7 @@ where
             core::ptr::addr_of_mut!((*dst).free_regions)
                 .write([FreeRegion::EMPTY; FREE_REGION_CAPACITY]);
             core::ptr::addr_of_mut!((*dst).lane_range)
-                .write((lane_range.start as u32)..(lane_range.end as u32));
+                .write(u32::from(lane_range.start)..u32::from(lane_range.end));
             core::ptr::addr_of_mut!((*dst).universe_marker).write(PhantomData);
             core::ptr::addr_of_mut!((*dst).transport).write(transport);
             GenTable::init_empty(core::ptr::addr_of_mut!((*dst).r#gen));
@@ -3519,7 +3506,7 @@ where
         sid: SessionId,
         lane: Lane,
     ) -> Result<(), RendezvousError> {
-        if !self.lane_range.contains(&lane.0) {
+        if !self.lane_range.contains(&lane.raw()) {
             return Err(RendezvousError::LaneOutOfRange { lane });
         }
         let attach_ready_sid = self.topology.attach_ready_sid(lane);
@@ -3556,7 +3543,7 @@ where
                     crate::control::cluster::effects::lane_open_tap_event_id(),
                 )
                 .with_arg0(sid.raw())
-                .with_arg1(lane.0),
+                .with_arg1(lane.raw()),
             );
 
             if attach_ready_sid == Some(sid) {
@@ -4989,7 +4976,7 @@ mod epf_tests {
             assert_eq!(commit.arg1, commit_generation.0 as u32);
             assert_eq!(
                 commit.causal_key,
-                TapEvent::make_causal_key(commit_lane.as_wire() + 1, 0),
+                TapEvent::make_causal_key(commit_lane.as_wire(), 1),
                 "commit tap must encode the originating lane in its causal key"
             );
 
@@ -5002,7 +4989,7 @@ mod epf_tests {
             assert_eq!(tx_abort.arg1, abort_generation.0 as u32);
             assert_eq!(
                 tx_abort.causal_key,
-                TapEvent::make_causal_key(abort_lane.as_wire() + 1, 0),
+                TapEvent::make_causal_key(abort_lane.as_wire(), 1),
                 "tx-abort tap must encode the originating lane in its causal key"
             );
         });
@@ -5320,9 +5307,21 @@ mod epf_tests {
                 "duplicate begin rejection must keep the canonical expected ACK bound to the first lane"
             );
             assert_eq!(
-                rendezvous.topology.topology_commit(lane_b, sid),
-                Err(TopologyError::NoPending { lane: lane_b }),
-                "duplicate begin rejection must leave the second lane untouched"
+                rendezvous.validate_topology_commit_operands(sid, second),
+                Err(TopologyError::RendezvousIdMismatch {
+                    expected: first.dst_rv,
+                    got: second.dst_rv,
+                }),
+                "duplicate begin rejection must keep commit validation bound to the first pending topology"
+            );
+            assert!(matches!(
+                EffectRunner::run_effect(rendezvous, CpCommand::topology_commit(sid, second)),
+                Err(CpError::Topology(_))
+            ));
+            assert_eq!(
+                rendezvous.expected_topology_ack(sid),
+                Ok(first.ack(sid)),
+                "rejected commit through the production effect path must preserve the first pending topology"
             );
         });
     }
