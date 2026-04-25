@@ -29,6 +29,7 @@ const ROUTE_DECISION_ID: u16 = 0x0221;
 const TRANSPORT_EVENT_ID: u16 = 0x0212;
 const REPLAY_LOG_CAPACITY: usize = 2048;
 const AUDIT_ROW_CAPACITY: usize = 128;
+const DEFER_SOURCE_RESOLVER: u8 = 0x80;
 
 fn transport_attrs(
     latency_us: Option<u64>,
@@ -529,7 +530,7 @@ fn replay_audit_rows(log: &ReplayLog, cursor: &mut usize) -> Result<AuditRows, &
             }
             POLICY_AUDIT_DEFER_ID => {
                 let source = ((event.arg0 >> 24) & 0xFF) as u8;
-                if source > 2 {
+                if source != DEFER_SOURCE_RESOLVER {
                     return Err("invalid defer source");
                 }
                 let reason = ((event.arg2 >> 16) & 0xFFFF) as u16;
@@ -812,7 +813,7 @@ fn public_policy_audit_tuple_roundtrips_logged_inputs() {
     );
     log.push(
         raw_event(102, POLICY_AUDIT_DEFER_ID)
-            .with_arg0((2u32 << 24) | (1u32 << 16) | 4u32)
+            .with_arg0((u32::from(DEFER_SOURCE_RESOLVER) << 24) | (1u32 << 16) | 4u32)
             .with_arg1(0)
             .with_arg2((1u32 << 16) | 0),
     );
@@ -863,7 +864,7 @@ fn public_policy_audit_tuple_rejects_corruption() {
     );
     log.push(
         raw_event(201, POLICY_AUDIT_DEFER_ID)
-            .with_arg0((1u32 << 24) | (3u32 << 16) | 6u32)
+            .with_arg0((u32::from(DEFER_SOURCE_RESOLVER) << 24) | (3u32 << 16) | 6u32)
             .with_arg1(1)
             .with_arg2((9u32 << 16) | 0),
     );

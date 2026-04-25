@@ -8074,8 +8074,25 @@ fn defer_budget_exhaustion_forces_poll_then_abort() {
 
 #[test]
 fn defer_never_promotes_to_route_authority() {
-    assert!(RouteDecisionSource::from_tap_seq(4).is_none());
-    assert_eq!(DeferSource::Resolver, DeferSource::Resolver);
+    let defer_tag = DeferSource::Resolver.as_audit_tag();
+    assert_eq!(
+        DeferSource::from_audit_tag(defer_tag),
+        Some(DeferSource::Resolver)
+    );
+    assert!(
+        RouteDecisionSource::from_tap_seq(defer_tag).is_none(),
+        "defer audit tags must stay outside route authority tap tags"
+    );
+    for authority_tag in [
+        RouteDecisionSource::Ack.as_tap_seq(),
+        RouteDecisionSource::Resolver.as_tap_seq(),
+        RouteDecisionSource::Poll.as_tap_seq(),
+    ] {
+        assert!(
+            DeferSource::from_audit_tag(authority_tag).is_none(),
+            "route authority tap tags must not decode as defer sources"
+        );
+    }
 }
 
 #[test]

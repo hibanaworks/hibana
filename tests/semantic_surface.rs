@@ -161,6 +161,25 @@ fn topology_validation_has_no_test_only_semantic_owner() {
             "topology validation must use production cluster/rendezvous paths, not test-only owner: {forbidden}"
         );
     }
+
+    let perform_effect = rendezvous_core
+        .split_once("fn perform_effect(")
+        .and_then(|(_, tail)| {
+            tail.split_once("fn eval_effect(")
+                .map(|(section, _)| section)
+        })
+        .expect("rendezvous core must keep perform_effect before eval_effect");
+
+    for forbidden in [
+        "ControlOp::TopologyBegin",
+        "ControlOp::TopologyAck",
+        "ControlOp::TopologyCommit",
+    ] {
+        assert!(
+            !perform_effect.contains(forbidden),
+            "topology operations must stay out of direct Rendezvous::perform_effect: {forbidden}"
+        );
+    }
 }
 
 #[test]

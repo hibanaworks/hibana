@@ -1704,9 +1704,7 @@ where
         exhausted: bool,
         lane: u8,
     ) {
-        let source_tag = match source {
-            DeferSource::Resolver => 2u32,
-        };
+        let source_tag = u32::from(source.as_audit_tag());
         let scope_slot = self
             .scope_slot_for_route(scope_id)
             .and_then(|slot| u16::try_from(slot).ok())

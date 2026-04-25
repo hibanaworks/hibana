@@ -256,12 +256,13 @@ representation; they are not semantic authority on their own.
 
 ### Lane and Binding Discipline
 
-- `hibana` の app surface では、lane の意味は固定されません
-- app lane ownership は protocol / appkit contract が決めます
-- canonical な attach path では control traffic を lane `0` に載せます
-- additional reserved lanes があるかどうかは transport / appkit 側の契約です
+- The `hibana` application surface does not assign semantic meaning to lanes.
+- Application lane ownership is defined by the protocol / appkit contract.
+- The canonical attach path carries control traffic on lane `0`.
+- Additional reserved lanes, if any, belong to the transport / appkit contract.
 - bindings own demux and channel resolution, not route authority
-- `hibana` runtime が app lane を推測したり吸収したりはしません
+- the `hibana` runtime only checks lanes against the projected descriptor and
+  binding contract
 - unknown lanes are errors once the binding / transport contract is fixed
 
 ### Policy and Management Boundary

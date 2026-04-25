@@ -1,10 +1,10 @@
+#![allow(unreachable_code)]
+
 use hibana::substrate::program::RoleProgram;
 
 fn main() {
-    let _ = RoleProgram::<'static, 0, ()> {
-        _borrow: core::marker::PhantomData,
-        _seal: todo!(),
-        summary: todo!(),
-        stamp: todo!(),
+    let _forged: RoleProgram<0> = RoleProgram::<0> {
+        _seal: unreachable!(),
+        image: unreachable!(),
     };
 }

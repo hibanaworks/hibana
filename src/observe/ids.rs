@@ -323,6 +323,7 @@ pub(crate) const POLICY_REPLAY_EVENT_EXT: u16 = 0x040F;
 /// Policy liveness/defer audit tuple.
 ///
 /// - `arg0`: `defer_source<<24 | retry_hint<<16 | remaining_budget`
+///           (`defer_source` is not a `RouteDecisionSource` tap sequence)
 /// - `arg1`: `scope_slot<<16 | selected_arm<<8 | ready_arm_mask`
 ///            (`scope_slot=0xFFFF` means non-route frontier, `selected_arm=0xFF` means unknown)
 /// - `arg2`: `defer_reason<<16 | hint<<8 | frontier<<4 | binding_ready<<1 | exhausted_flag`

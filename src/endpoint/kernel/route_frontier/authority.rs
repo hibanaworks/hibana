@@ -124,6 +124,26 @@ pub(super) enum DeferSource {
     Resolver,
 }
 
+impl DeferSource {
+    const RESOLVER_AUDIT_TAG: u8 = 0x80;
+
+    #[inline]
+    pub(super) const fn as_audit_tag(self) -> u8 {
+        match self {
+            Self::Resolver => Self::RESOLVER_AUDIT_TAG,
+        }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(super) const fn from_audit_tag(value: u8) -> Option<Self> {
+        match value {
+            Self::RESOLVER_AUDIT_TAG => Some(Self::Resolver),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DeferReason {
     Unsupported = 1,

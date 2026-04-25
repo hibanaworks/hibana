@@ -1,37 +1,15 @@
-error[E0107]: struct takes 0 lifetime arguments but 1 lifetime argument was supplied
- --> tests/ui/g-roleprogram-witness-mismatch.rs:4:13
+error[E0451]: fields `_seal` and `image` of struct `RoleProgram` are private
+ --> tests/ui/g-roleprogram-witness-mismatch.rs:7:9
   |
-4 |     let _ = RoleProgram::<'static, 0, ()> {
-  |             ^^^^^^^^^^^   ------- help: remove the lifetime argument
-  |             |
-  |             expected 0 lifetime arguments
-  |
-note: struct defined here, with 0 lifetime parameters
- --> src/global/role_program.rs
-  |
-  | pub struct RoleProgram<const ROLE: u8> {
-  |            ^^^^^^^^^^^
+6 |     let _forged: RoleProgram<0> = RoleProgram::<0> {
+  |                                   ---------------- in this type
+7 |         _seal: unreachable!(),
+  |         ^^^^^ private field
+8 |         image: unreachable!(),
+  |         ^^^^^ private field
 
-error[E0107]: struct takes 1 generic argument but 2 generic arguments were supplied
- --> tests/ui/g-roleprogram-witness-mismatch.rs:4:13
+error: type `hibana::global::role_program::RoleImageRef` is private
+ --> tests/ui/g-roleprogram-witness-mismatch.rs:8:16
   |
-4 |     let _ = RoleProgram::<'static, 0, ()> {
-  |             ^^^^^^^^^^^             ---- help: remove the unnecessary generic argument
-  |             |
-  |             expected 1 generic argument
-  |
-note: struct defined here, with 1 generic parameter: `ROLE`
- --> src/global/role_program.rs
-  |
-  | pub struct RoleProgram<const ROLE: u8> {
-  |            ^^^^^^^^^^^ --------------
-
-warning: unreachable expression
- --> tests/ui/g-roleprogram-witness-mismatch.rs:7:18
-  |
-6 |         _seal: todo!(),
-  |                ------- any code following this expression is unreachable
-7 |         summary: todo!(),
-  |                  ^^^^^^^ unreachable expression
-  |
-  = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+8 |         image: unreachable!(),
+  |                ^^^^^^^^^^^^^^ private type

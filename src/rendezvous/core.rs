@@ -2023,60 +2023,6 @@ where
 
     fn perform_effect(&mut self, envelope: CpCommand) -> Result<(), CpError> {
         match envelope.effect {
-            ControlOp::TopologyBegin => {
-                let sid = envelope.sid.ok_or(CpError::Topology(
-                    crate::control::cluster::error::TopologyError::InvalidSession,
-                ))?;
-                let sid = SessionId::new(sid.raw());
-                let operands = envelope.topology.ok_or(CpError::Topology(
-                    crate::control::cluster::error::TopologyError::InvalidState,
-                ))?;
-                self.topology_begin_from_intent(operands.intent(sid))
-                    .map_err(map_topology_error)
-            }
-            ControlOp::TopologyAck => {
-                let sid = envelope.sid.ok_or(CpError::Topology(
-                    crate::control::cluster::error::TopologyError::InvalidSession,
-                ))?;
-                let operands = envelope.topology.ok_or(CpError::Topology(
-                    crate::control::cluster::error::TopologyError::InvalidState,
-                ))?;
-                let intent = operands.intent(sid);
-                let ack_expected = operands.ack(sid);
-
-                let ack_result = self
-                    .process_topology_intent(&intent)
-                    .map_err(map_topology_error)?;
-
-                if ack_result != ack_expected {
-                    return Err(CpError::Topology(
-                        crate::control::cluster::error::TopologyError::GenerationMismatch,
-                    ));
-                }
-
-                self.emit_topology_ack(
-                    SessionId::new(intent.sid),
-                    intent.src_lane,
-                    Lane::new(intent.dst_lane.raw()),
-                    ack_result.new_gen,
-                );
-                Ok(())
-            }
-            ControlOp::TopologyCommit => {
-                let sid = envelope.sid.ok_or(CpError::Topology(
-                    crate::control::cluster::error::TopologyError::InvalidSession,
-                ))?;
-                let sid = SessionId::new(sid.raw());
-                let operands = envelope.topology.ok_or(CpError::Topology(
-                    crate::control::cluster::error::TopologyError::InvalidState,
-                ))?;
-                let lane = self
-                    .validate_topology_commit_operands(sid, operands)
-                    .map_err(map_topology_error)?;
-                self.topology_commit(sid, lane)
-                    .map_err(map_topology_error)?;
-                Ok(())
-            }
             ControlOp::CapDelegate => {
                 let delegate = envelope.delegate.ok_or(CpError::Delegation(
                     crate::control::cluster::error::DelegationError::InvalidToken,
@@ -3987,39 +3933,6 @@ where
     }
 }
 
-// ============================================================================
-// Deleted topology helpers stay out of the descriptor evaluator.
-// All topology operations now go through control::CpCommand and EffectRunner.
-// The control-plane mini-kernel architecture is responsible for rendezvous access control.
-
-fn map_topology_error(err: TopologyError) -> CpError {
-    match err {
-        TopologyError::LaneOutOfRange { .. } => {
-            CpError::Topology(crate::control::cluster::error::TopologyError::InvalidLane)
-        }
-        TopologyError::LaneMismatch { .. }
-        | TopologyError::InProgress { .. }
-        | TopologyError::NoPending { .. }
-        | TopologyError::SeqnoMismatch { .. } => {
-            CpError::Topology(crate::control::cluster::error::TopologyError::InvalidState)
-        }
-        TopologyError::UnknownSession { .. } => {
-            CpError::Topology(crate::control::cluster::error::TopologyError::InvalidSession)
-        }
-        TopologyError::StaleGeneration { .. }
-        | TopologyError::GenerationOverflow { .. }
-        | TopologyError::InvalidInitial { .. } => {
-            CpError::Topology(crate::control::cluster::error::TopologyError::GenerationMismatch)
-        }
-        TopologyError::RemoteRendezvousMismatch { expected, got }
-        | TopologyError::RendezvousIdMismatch { expected, got } => CpError::RendezvousMismatch {
-            expected: expected.raw(),
-            actual: got.raw(),
-        },
-        TopologyError::PendingTableFull => CpError::ResourceExhausted,
-    }
-}
-
 #[inline]
 fn classify_topology_ack_mismatch(expected: TopologyAck, got: TopologyAck) -> TopologyError {
     if got.sid != expected.sid {
@@ -4136,9 +4049,7 @@ where
     C: Clock,
     E: crate::control::cap::mint::EpochTable,
 {
-    /// Begin a local topology operation.
-    ///
-    /// This is called by EffectRunner::run_effect() for ControlOp::TopologyBegin.
+    /// Begin a local topology operation for the cluster-owned topology automaton.
     fn topology_begin(
         &self,
         sid: SessionId,
@@ -4313,9 +4224,7 @@ where
         }
     }
 
-    /// Commit a local topology operation.
-    ///
-    /// This is called by EffectRunner::run_effect() for ControlOp::TopologyCommit.
+    /// Commit a local topology operation after cluster-owned source/destination preflight.
     pub(crate) fn topology_commit(
         &mut self,
         sid: SessionId,
