@@ -4,11 +4,16 @@ use crate::global::typestate::{
     LocalNode, RoleTypestateValue, RouteDispatchEntry, RouteDispatchShape, RouteScopeRecord,
     ScopeRecord, StateIndex,
 };
+use core::ptr::NonNull;
 
-use super::super::images::role::{CompiledRoleImage, PhaseImageHeader, PhaseLaneEntry};
+use super::super::images::role::{
+    CompiledRoleImage, CompiledRoleSegmentHeader, PhaseImageHeader, PhaseLaneEntry,
+};
 
 pub(in crate::global::compiled) struct CompiledRoleScopeStorage {
     pub(super) typestate: *mut RoleTypestateValue,
+    pub(super) segment_headers: *mut CompiledRoleSegmentHeader,
+    pub(super) segment_header_cap: usize,
     pub(super) typestate_nodes: *mut LocalNode,
     pub(super) typestate_node_cap: usize,
     pub(super) phase_headers: *mut PhaseImageHeader,
@@ -24,6 +29,7 @@ pub(in crate::global::compiled) struct CompiledRoleScopeStorage {
     pub(super) route_dense_by_slot: *mut u16,
     pub(super) route_records: *mut RouteScopeRecord,
     pub(super) route_offer_lane_words: *mut LaneWord,
+    pub(super) route_arm0_lane_words: *mut LaneWord,
     pub(super) route_arm1_lane_words: *mut LaneWord,
     pub(super) route_arm0_lane_last_eff_by_slot: *mut EffIndex,
     pub(super) route_dispatch_shapes: *mut RouteDispatchShape,
@@ -51,6 +57,15 @@ impl CompiledRoleScopeStorage {
     #[inline(always)]
     pub(in crate::global::compiled) const fn route_scope_cap(route_scope_count: usize) -> usize {
         route_scope_count
+    }
+
+    #[inline(always)]
+    pub(in crate::global::compiled) const fn segment_header_cap(eff_count: usize) -> usize {
+        if eff_count == 0 {
+            0
+        } else {
+            eff_count.div_ceil(crate::eff::meta::MAX_SEGMENT_EFFS)
+        }
     }
 
     #[inline(always)]
@@ -110,6 +125,7 @@ impl CompiledRoleScopeStorage {
     ) -> Self {
         let scope_cap = Self::scope_cap(footprint.scope_count);
         let route_scope_cap = Self::route_scope_cap(footprint.route_scope_count);
+        let segment_header_cap = Self::segment_header_cap(footprint.eff_count);
         let typestate_node_cap = Self::typestate_node_cap(
             footprint.scope_count,
             footprint.passive_linger_route_scope_count,
@@ -126,8 +142,16 @@ impl CompiledRoleScopeStorage {
         let route_dispatch_target_cap = route_dispatch_entry_cap;
         let base = image.cast::<u8>() as usize;
         let header_end = base + core::mem::size_of::<CompiledRoleImage>();
-        let typestate_start =
-            Self::align_up(header_end, core::mem::align_of::<RoleTypestateValue>());
+        let segment_headers_start = Self::align_up(
+            header_end,
+            core::mem::align_of::<CompiledRoleSegmentHeader>(),
+        );
+        let segment_headers_end = segment_headers_start
+            + segment_header_cap.saturating_mul(core::mem::size_of::<CompiledRoleSegmentHeader>());
+        let typestate_start = Self::align_up(
+            segment_headers_end,
+            core::mem::align_of::<RoleTypestateValue>(),
+        );
         let typestate_end = typestate_start + core::mem::size_of::<RoleTypestateValue>();
         let typestate_nodes_start =
             Self::align_up(typestate_end, core::mem::align_of::<LocalNode>());
@@ -171,10 +195,14 @@ impl CompiledRoleScopeStorage {
             Self::align_up(route_records_end, core::mem::align_of::<LaneWord>());
         let route_offer_lane_words_end = route_offer_lane_words_start
             + route_scope_lane_word_cap.saturating_mul(core::mem::size_of::<LaneWord>());
-        let route_arm1_lane_words_start = Self::align_up(
+        let route_arm0_lane_words_start = Self::align_up(
             route_offer_lane_words_end,
             core::mem::align_of::<LaneWord>(),
         );
+        let route_arm0_lane_words_end = route_arm0_lane_words_start
+            + route_scope_lane_word_cap.saturating_mul(core::mem::size_of::<LaneWord>());
+        let route_arm1_lane_words_start =
+            Self::align_up(route_arm0_lane_words_end, core::mem::align_of::<LaneWord>());
         let route_arm1_lane_words_end = route_arm1_lane_words_start
             + route_scope_lane_word_cap.saturating_mul(core::mem::size_of::<LaneWord>());
         let route_arm0_lane_last_start =
@@ -199,6 +227,12 @@ impl CompiledRoleScopeStorage {
         );
         Self {
             typestate: typestate_start as *mut RoleTypestateValue,
+            segment_headers: if segment_header_cap == 0 {
+                NonNull::<CompiledRoleSegmentHeader>::dangling().as_ptr()
+            } else {
+                segment_headers_start as *mut CompiledRoleSegmentHeader
+            },
+            segment_header_cap,
             typestate_nodes: typestate_nodes_start as *mut LocalNode,
             typestate_node_cap,
             phase_headers: phase_headers_start as *mut PhaseImageHeader,
@@ -214,6 +248,7 @@ impl CompiledRoleScopeStorage {
             route_dense_by_slot: route_dense_start as *mut u16,
             route_records: route_records_start as *mut RouteScopeRecord,
             route_offer_lane_words: route_offer_lane_words_start as *mut LaneWord,
+            route_arm0_lane_words: route_arm0_lane_words_start as *mut LaneWord,
             route_arm1_lane_words: route_arm1_lane_words_start as *mut LaneWord,
             route_arm0_lane_last_eff_by_slot: route_arm0_lane_last_start as *mut EffIndex,
             route_dispatch_shapes: route_dispatch_shapes_start as *mut RouteDispatchShape,
@@ -238,7 +273,7 @@ fn used_route_lane_word_words(
         return (0, 0);
     }
     let mut offer_words = 0usize;
-    let mut arm1_words = 0usize;
+    let mut route_arm_words = 0usize;
     let mut idx = 0usize;
     while idx < route_scope_count {
         let record = unsafe { &*route_records.add(idx) };
@@ -246,13 +281,13 @@ fn used_route_lane_word_words(
         if offer_end > offer_words {
             offer_words = offer_end;
         }
-        let arm1_end = record.arm1_lane_word_start as usize + lane_word_len;
-        if arm1_end > arm1_words {
-            arm1_words = arm1_end;
+        let route_arm_end = record.route_arm_lane_word_start as usize + lane_word_len;
+        if route_arm_end > route_arm_words {
+            route_arm_words = route_arm_end;
         }
         idx += 1;
     }
-    (offer_words, arm1_words)
+    (offer_words, route_arm_words)
 }
 
 #[inline(always)]
@@ -274,13 +309,18 @@ pub(super) unsafe fn compact_route_scope_tail(
         route_scope_count,
         lane_word_len,
     );
+    let arm0_lane_word_words = arm1_lane_word_words;
 
     let offer_lane_words_start =
         CompiledRoleScopeStorage::align_up(route_records_end, core::mem::align_of::<LaneWord>());
     let offer_lane_words_end = offer_lane_words_start
         .saturating_add(offer_lane_word_words.saturating_mul(core::mem::size_of::<LaneWord>()));
-    let arm1_lane_words_start =
+    let arm0_lane_words_start =
         CompiledRoleScopeStorage::align_up(offer_lane_words_end, core::mem::align_of::<LaneWord>());
+    let arm0_lane_words_end = arm0_lane_words_start
+        .saturating_add(arm0_lane_word_words.saturating_mul(core::mem::size_of::<LaneWord>()));
+    let arm1_lane_words_start =
+        CompiledRoleScopeStorage::align_up(arm0_lane_words_end, core::mem::align_of::<LaneWord>());
     let arm1_lane_words_end = arm1_lane_words_start
         .saturating_add(arm1_lane_word_words.saturating_mul(core::mem::size_of::<LaneWord>()));
     let arm0_lane_last_start =
@@ -310,6 +350,7 @@ pub(super) unsafe fn compact_route_scope_tail(
     let dispatch_entries_dst = dispatch_entries_start as *mut RouteDispatchEntry;
     let dispatch_targets_dst = dispatch_targets_start as *mut StateIndex;
     let offer_lane_words_dst = offer_lane_words_start as *mut LaneWord;
+    let arm0_lane_words_dst = arm0_lane_words_start as *mut LaneWord;
     let arm1_lane_words_dst = arm1_lane_words_start as *mut LaneWord;
     let arm0_lane_last_dst = arm0_lane_last_start as *mut EffIndex;
 
@@ -323,6 +364,13 @@ pub(super) unsafe fn compact_route_scope_tail(
         }
     }
     if arm1_lane_word_words != 0 {
+        unsafe {
+            core::ptr::copy(
+                storage.route_arm0_lane_words,
+                arm0_lane_words_dst,
+                arm0_lane_word_words,
+            );
+        }
         unsafe {
             core::ptr::copy(
                 storage.route_arm1_lane_words,
@@ -372,6 +420,7 @@ pub(super) unsafe fn compact_route_scope_tail(
         typestate.relocate_compact_route_payload(
             storage.route_records.cast_const(),
             offer_lane_words_dst.cast_const(),
+            arm0_lane_words_dst.cast_const(),
             arm1_lane_words_dst.cast_const(),
             dispatch_shapes_dst.cast_const(),
             dispatch_shape_count,

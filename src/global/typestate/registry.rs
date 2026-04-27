@@ -57,7 +57,7 @@ pub(crate) struct RouteScopeRecord {
     pub passive_arm_jump: [StateIndex; 2],
     pub offer_lane_word_start: u16,
     pub offer_entry: StateIndex,
-    pub arm1_lane_word_start: u16,
+    pub route_arm_lane_word_start: u16,
     pub dispatch_shape: u16,
     pub dispatch_target_start: u16,
 }
@@ -79,7 +79,7 @@ pub(crate) struct RouteDispatchShape {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct RouteScopeScratchRecord {
+pub(crate) struct RouteScopeScratchRecord {
     pub route_recv: [StateIndex; 2],
     pub passive_arm_jump: [StateIndex; 2],
     pub lane_word_start: u16,
@@ -101,6 +101,7 @@ pub(super) struct ScopeRegistry {
     pub(super) route_records: *const RouteScopeRecord,
     pub(super) route_scope_len: u16,
     pub(super) route_offer_lane_words: *const LaneWord,
+    pub(super) route_arm0_lane_words: *const LaneWord,
     pub(super) route_arm1_lane_words: *const LaneWord,
     pub(super) route_lane_word_len: u16,
     pub(super) route_dispatch_shapes: *const RouteDispatchShape,
@@ -162,7 +163,7 @@ impl RouteScopeRecord {
         passive_arm_jump: [StateIndex::MAX, StateIndex::MAX],
         offer_lane_word_start: 0,
         offer_entry: StateIndex::MAX,
-        arm1_lane_word_start: 0,
+        route_arm_lane_word_start: 0,
         dispatch_shape: ROUTE_DISPATCH_SHAPE_NONE,
         dispatch_target_start: 0,
     };
@@ -190,13 +191,18 @@ impl RouteScopeRecord {
     }
 
     #[inline(always)]
-    const fn offer_lane_word_start(&self) -> usize {
+    pub(crate) const fn offer_lane_word_start(&self) -> usize {
         self.offer_lane_word_start as usize
     }
 
     #[inline(always)]
-    const fn arm1_lane_word_start(&self) -> usize {
-        self.arm1_lane_word_start as usize
+    pub(crate) const fn offer_entry(&self) -> StateIndex {
+        self.offer_entry
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_arm_lane_word_start(&self) -> usize {
+        self.route_arm_lane_word_start as usize
     }
 }
 
@@ -307,6 +313,11 @@ impl ScopeRegistry {
     }
 
     #[inline(always)]
+    pub(crate) fn route_dense_by_slot_table(&self) -> &[u16] {
+        self.route_dense_by_slot()
+    }
+
+    #[inline(always)]
     fn route_records(&self) -> &[RouteScopeRecord] {
         if self.route_scope_len == 0 {
             &[]
@@ -314,6 +325,41 @@ impl ScopeRegistry {
             unsafe {
                 core::slice::from_raw_parts(self.route_records, self.route_scope_len as usize)
             }
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_records_table(&self) -> &[RouteScopeRecord] {
+        self.route_records()
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_offer_lane_words_table(&self) -> &[LaneWord] {
+        let len = (self.route_scope_len as usize).saturating_mul(self.route_lane_word_len());
+        if len == 0 {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(self.route_offer_lane_words, len) }
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_arm0_lane_words_table(&self) -> &[LaneWord] {
+        let len = (self.route_scope_len as usize).saturating_mul(self.route_lane_word_len());
+        if len == 0 {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(self.route_arm0_lane_words, len) }
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_arm1_lane_words_table(&self) -> &[LaneWord] {
+        let len = (self.route_scope_len as usize).saturating_mul(self.route_lane_word_len());
+        if len == 0 {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(self.route_arm1_lane_words, len) }
         }
     }
 
@@ -360,11 +406,12 @@ impl ScopeRegistry {
     }
 
     #[inline(always)]
-    fn route_lane_word_len(&self) -> usize {
+    pub(crate) fn route_lane_word_len(&self) -> usize {
         self.route_lane_word_len as usize
     }
 
     #[inline(always)]
+    #[cfg(test)]
     fn route_offer_lane_set_for(&self, route: &RouteScopeRecord) -> LaneSetView {
         let word_len = self.route_lane_word_len();
         if word_len == 0 {
@@ -387,7 +434,10 @@ impl ScopeRegistry {
             LaneSetView::EMPTY
         } else {
             LaneSetView::from_parts(
-                unsafe { self.route_arm1_lane_words.add(route.arm1_lane_word_start()) },
+                unsafe {
+                    self.route_arm1_lane_words
+                        .add(route.route_arm_lane_word_start())
+                },
                 word_len,
             )
         }
@@ -608,6 +658,7 @@ impl ScopeRegistry {
         Some(route.route_recv_count() as u16)
     }
 
+    #[cfg(test)]
     pub(super) fn route_offer_lane_set(&self, scope_id: ScopeId) -> Option<LaneSetView> {
         let (_record, route) = self.lookup_route_record(scope_id)?;
         Some(self.route_offer_lane_set_for(route))
@@ -618,11 +669,6 @@ impl ScopeRegistry {
     pub(super) fn route_arm1_lane_set(&self, scope_id: ScopeId) -> Option<LaneSetView> {
         let (_record, route) = self.lookup_route_record(scope_id)?;
         Some(self.route_arm1_lane_set_for(route))
-    }
-
-    pub(super) fn route_offer_entry(&self, scope_id: ScopeId) -> Option<StateIndex> {
-        let (_record, route) = self.lookup_route_record(scope_id)?;
-        Some(route.offer_entry)
     }
 
     #[inline]
@@ -636,6 +682,7 @@ impl ScopeRegistry {
     }
 
     #[inline]
+    #[cfg(test)]
     pub(super) fn route_scope_dense_ordinal(&self, slot: usize) -> Option<usize> {
         if slot >= self.len as usize {
             return None;
@@ -672,6 +719,7 @@ impl ScopeRegistry {
         &mut self,
         route_records: *const RouteScopeRecord,
         route_offer_lane_words: *const LaneWord,
+        route_arm0_lane_words: *const LaneWord,
         route_arm1_lane_words: *const LaneWord,
         route_dispatch_shapes: *const RouteDispatchShape,
         route_dispatch_shape_len: usize,
@@ -683,6 +731,7 @@ impl ScopeRegistry {
     ) {
         self.route_records = route_records;
         self.route_offer_lane_words = route_offer_lane_words;
+        self.route_arm0_lane_words = route_arm0_lane_words;
         self.route_arm1_lane_words = route_arm1_lane_words;
         self.route_dispatch_shapes = route_dispatch_shapes;
         self.route_dispatch_shape_len = encode_typestate_len(route_dispatch_shape_len);
@@ -755,7 +804,12 @@ impl ScopeRegistry {
     }
 
     pub(super) fn max_route_stack_depth(&self) -> usize {
-        self.derive_max_route_stack_depth()
+        let depth = self.derive_max_route_stack_depth();
+        if depth == 0 {
+            0
+        } else {
+            depth.saturating_add(1)
+        }
     }
 
     pub(super) fn derive_max_route_stack_depth(&self) -> usize {

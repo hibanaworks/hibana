@@ -5,7 +5,7 @@ use crate::endpoint::affine::LaneGuard;
 use crate::endpoint::control::SessionControlCtx;
 use crate::endpoint::kernel::frontier_state::FrontierState;
 use crate::endpoint::kernel::inbox::BindingInbox;
-use crate::endpoint::kernel::route_state::RouteState;
+use crate::endpoint::kernel::route_state::{RouteCommitProofWorkspace, RouteState};
 use crate::global::compiled::images::{CompiledProgramRef, CompiledRoleImage};
 use crate::global::role_program::DenseLaneOrdinal;
 use crate::global::typestate::PhaseCursor;
@@ -156,6 +156,22 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usiz
             ));
         let route_state = section_ptr::<RouteState>(arena_storage, arena_layout.route_state());
         LeasedState::init_from_ptr(::core::ptr::addr_of_mut!((*dst).route_state), route_state);
+        let route_commit_proof_workspace = section_ptr::<RouteCommitProofWorkspace>(
+            arena_storage,
+            arena_layout.route_commit_proof_workspace(),
+        );
+        LeasedState::init_from_ptr(
+            ::core::ptr::addr_of_mut!((*dst).route_commit_proofs),
+            route_commit_proof_workspace,
+        );
+        RouteCommitProofWorkspace::init(
+            route_commit_proof_workspace,
+            section_ptr::<crate::endpoint::kernel::route_state::RouteArmCommitProof>(
+                arena_storage,
+                arena_layout.route_state_commit_proofs(),
+            ),
+            arena_layout.route_state_commit_proofs().count(),
+        );
         RouteState::init_empty(
             route_state,
             section_ptr::<crate::endpoint::kernel::evidence::RouteArmState>(
@@ -296,7 +312,7 @@ unsafe fn init_endpoint_binding<'r, const ROLE: u8, T, U, C, E, const MAX_RV: us
         );
         BindingInbox::init_empty(
             binding_inbox,
-            section_ptr::<crate::endpoint::kernel::inbox::PackedIncomingClassification>(
+            section_ptr::<crate::endpoint::kernel::inbox::PackedIngressEvidence>(
                 arena_storage,
                 arena_layout.binding_slots(),
             ),

@@ -24,7 +24,7 @@ use hibana::substrate::{
     SessionKit, Transport,
     binding::{
         BindingSlot,
-        advanced::{Channel, IncomingClassification, TransportOpsError},
+        advanced::{Channel, IngressEvidence, TransportOpsError},
     },
     ids::SessionId,
     runtime::{Config, CounterClock, DefaultLabelUniverse},
@@ -146,7 +146,7 @@ fn worker_program() -> RoleProgram<1> {
 #[derive(Clone, Copy)]
 struct PendingInbound {
     lane: u8,
-    classification: IncomingClassification,
+    evidence: IngressEvidence,
 }
 
 const FLOW_ROLE_SLOTS: usize = 2;
@@ -191,25 +191,21 @@ impl FlowBindingSharedState {
         panic!("incoming queue exhausted");
     }
 
-    fn take_incoming_for_lane(
-        &mut self,
-        role: u8,
-        logical_lane: u8,
-    ) -> Option<IncomingClassification> {
+    fn take_incoming_for_lane(&mut self, role: u8, logical_lane: u8) -> Option<IngressEvidence> {
         let queue = self.incoming.get_mut(role as usize)?;
         let mut idx = 0usize;
         while idx < queue.len() {
             if let Some(entry) = queue[idx]
                 && entry.lane == logical_lane
             {
-                let classification = entry.classification;
+                let evidence = entry.evidence;
                 let mut tail = idx;
                 while tail + 1 < queue.len() {
                     queue[tail] = queue[tail + 1];
                     tail += 1;
                 }
                 queue[queue.len() - 1] = None;
-                return Some(classification);
+                return Some(evidence);
             }
             idx += 1;
         }
@@ -287,7 +283,7 @@ impl FlowBinding {
 }
 
 impl BindingSlot for FlowBinding {
-    fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IncomingClassification> {
+    fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IngressEvidence> {
         self.shared
             .state
             .with_mut(|state| state.take_incoming_for_lane(self.role, logical_lane))
@@ -355,7 +351,7 @@ impl Transport for FlowTransport {
                 let channel = Channel::new(shared.next_channel);
                 shared.next_channel += 1;
                 shared.store_payload(channel.raw(), outgoing.payload().as_bytes());
-                let classification = IncomingClassification {
+                let evidence = IngressEvidence {
                     label: outgoing.label(),
                     instance: 0,
                     has_fin: false,
@@ -365,7 +361,7 @@ impl Transport for FlowTransport {
                     outgoing.peer(),
                     PendingInbound {
                         lane: outgoing.lane(),
-                        classification,
+                        evidence,
                     },
                 );
             });
@@ -548,7 +544,7 @@ fn flow_preview_is_policy_free_until_send_consumes_it() {
 }
 
 #[test]
-fn offer_decode_binding_consumes_classification_once() {
+fn offer_decode_binding_consumes_evidence_once() {
     with_fixture(|clock, tap_buf, slab| {
         with_tls_ref(
             &SESSION_SLOT,
@@ -1135,7 +1131,7 @@ fn codec_error_in_public_decode_preserves_preview_branch() {
 }
 
 #[test]
-fn dynamic_route_passive_ignores_non_authoritative_binding_classification() {
+fn dynamic_route_passive_ignores_non_authoritative_binding_evidence() {
     with_fixture(|clock, tap_buf, slab| {
         with_tls_ref(
             &SESSION_SLOT,
@@ -1213,8 +1209,8 @@ fn dynamic_route_passive_ignores_non_authoritative_binding_classification() {
                                                                     1,
                                                                     PendingInbound {
                                                                         lane: 0,
-                                                                        classification:
-                                                                            IncomingClassification {
+                                                                        evidence:
+                                                                            IngressEvidence {
                                                                                 label: <Msg<72, u32> as MessageSpec>::LABEL,
                                                                                 instance: 0,
                                                                                 has_fin: false,

@@ -2,7 +2,10 @@
 
 use core::task::Poll;
 
-use super::{core::CursorEndpoint, lane_port};
+use super::{
+    core::{CursorEndpoint, RecvRuntimeDesc},
+    lane_port,
+};
 use crate::{
     binding::BindingSlot,
     control::cap::mint::{EpochTable, MintConfigMarker},
@@ -19,25 +22,9 @@ use crate::{
     },
 };
 
-enum RecvPayloadSource<'a> {
+pub(crate) enum RecvPayloadSource<'a> {
     Empty,
     Borrowed(Payload<'a>),
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct RecvDesc {
-    target_label: u8,
-    accepts_empty_payload: bool,
-}
-
-impl RecvDesc {
-    #[inline]
-    pub(crate) const fn new(target_label: u8, accepts_empty_payload: bool) -> Self {
-        Self {
-            target_label,
-            accepts_empty_payload,
-        }
-    }
 }
 
 pub(crate) struct RecvState {
@@ -53,15 +40,30 @@ impl RecvState {
             pending_recv: lane_port::PendingRecv::new(),
         }
     }
+
+    #[inline]
+    pub(crate) fn descriptor(&self) -> Option<RecvDescriptor> {
+        self.desc
+    }
+
+    #[inline]
+    pub(crate) fn set_descriptor(&mut self, desc: RecvDescriptor) {
+        self.desc = Some(desc);
+    }
+
+    #[inline]
+    pub(crate) fn clear_descriptor(&mut self) {
+        self.desc = None;
+    }
 }
 
 #[derive(Clone, Copy)]
-struct RecvDescriptor {
-    target_label: u8,
-    meta: crate::global::typestate::RecvMeta,
-    sid_raw: u32,
-    lane_idx: usize,
-    lane_wire: u8,
+pub(crate) struct RecvDescriptor {
+    pub(crate) target_label: u8,
+    pub(crate) meta: crate::global::typestate::RecvMeta,
+    pub(crate) sid_raw: u32,
+    pub(crate) lane_idx: usize,
+    pub(crate) lane_wire: u8,
 }
 
 impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
@@ -74,42 +76,18 @@ where
     Mint: MintConfigMarker,
     B: BindingSlot + 'r,
 {
-    pub(crate) fn poll_recv_state<'a>(
+    #[cfg(test)]
+    #[expect(
+        dead_code,
+        reason = "H4 recv delegate proves loop ownership stays in kernel_recv"
+    )]
+    pub(crate) fn poll_recv_state(
         &mut self,
-        erased: RecvDesc,
+        erased: RecvRuntimeDesc,
         state: &mut RecvState,
         cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<Payload<'a>>> {
-        let descriptor = match state.desc {
-            Some(descriptor) => descriptor,
-            None => {
-                let descriptor = match self.prepare_recv_descriptor(erased.target_label) {
-                    Ok(descriptor) => descriptor,
-                    Err(err) => return Poll::Ready(Err(err)),
-                };
-                state.desc = Some(descriptor);
-                descriptor
-            }
-        };
-        match self.poll_recv_payload_source(
-            descriptor,
-            erased.accepts_empty_payload,
-            &mut state.pending_recv,
-            cx,
-        ) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(payload_source)) => {
-                state.desc = None;
-                Poll::Ready(
-                    self.finish_recv_payload(descriptor, payload_source, erased)
-                        .map(lane_port::shrink_payload),
-                )
-            }
-            Poll::Ready(Err(err)) => {
-                state.desc = None;
-                Poll::Ready(Err(err))
-            }
-        }
+    ) -> Poll<RecvResult<Payload<'r>>> {
+        super::core::kernel_recv(self, erased, state, cx)
     }
 
     fn prepare_recv_descriptor(&mut self, target_label: u8) -> RecvResult<RecvDescriptor> {
@@ -169,13 +147,11 @@ where
                     let recv_idx = self.cursor.route_scope_arm_recv_index(scope_id, arm);
                     if let Some(idx) = recv_idx {
                         self.set_cursor_index(idx);
-                        self.set_route_arm(lane_wire, scope_id, arm)?;
                         continue;
                     }
                     if let Some(nav) = self.cursor.follow_passive_observer_arm(arm) {
                         let PassiveArmNavigation::WithinArm { entry } = nav;
                         self.set_cursor_index(state_index_to_usize(entry));
-                        self.set_route_arm(lane_wire, scope_id, arm)?;
                         continue;
                     }
                     if self.cursor.advance_scope_if_kind_in_place(ScopeKind::Route) {
@@ -275,7 +251,7 @@ where
         &mut self,
         desc: RecvDescriptor,
         payload_source: RecvPayloadSource<'r>,
-        erased: RecvDesc,
+        erased: RecvRuntimeDesc,
     ) -> RecvResult<Payload<'r>> {
         let meta = desc.meta;
         self.emit_endpoint_policy_audit(
@@ -311,12 +287,50 @@ where
 
         self.advance_lane_cursor(desc.lane_idx, meta.eff_index);
         self.maybe_skip_remaining_route_arm(meta.scope, meta.lane, meta.route_arm, meta.eff_index);
-        self.settle_scope_after_action(meta.scope, meta.route_arm, Some(meta.eff_index), meta.lane);
+        self.publish_scope_settlement(meta.scope, meta.route_arm, Some(meta.eff_index), meta.lane);
         self.maybe_advance_phase();
         match payload_source {
-            RecvPayloadSource::Empty if erased.accepts_empty_payload => Ok(Payload::new(&[])),
+            RecvPayloadSource::Empty if erased.accepts_empty_payload() => Ok(Payload::new(&[])),
             RecvPayloadSource::Empty => Err(RecvError::PhaseInvariant),
             RecvPayloadSource::Borrowed(payload) => Ok(payload),
         }
+    }
+}
+
+impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>
+    super::core::RecvKernelEndpoint<'r> for CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>
+where
+    T: Transport + 'r,
+    U: LabelUniverse,
+    C: Clock,
+    E: EpochTable,
+    Mint: MintConfigMarker,
+    B: BindingSlot + 'r,
+{
+    #[inline]
+    fn prepare_recv_kernel_descriptor(&mut self, label: u8) -> RecvResult<RecvDescriptor> {
+        self.prepare_recv_descriptor(label)
+    }
+
+    #[inline]
+    fn poll_recv_kernel_payload_source(
+        &mut self,
+        desc: RecvDescriptor,
+        accepts_empty_payload: bool,
+        state: &mut RecvState,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<RecvPayloadSource<'r>>> {
+        let pending_recv = &mut state.pending_recv;
+        self.poll_recv_payload_source(desc, accepts_empty_payload, pending_recv, cx)
+    }
+
+    #[inline]
+    fn finish_recv_kernel_payload(
+        &mut self,
+        desc: RecvDescriptor,
+        payload_source: RecvPayloadSource<'r>,
+        erased: RecvRuntimeDesc,
+    ) -> RecvResult<Payload<'r>> {
+        self.finish_recv_payload(desc, payload_source, erased)
     }
 }

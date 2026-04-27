@@ -56,11 +56,12 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "`AUTO_MINT_WIRE` only enables endpoint-side auto-mint",
         "send an explicit `GenericCapToken<K>`",
         "delegation stays on the lower-layer endpoint-token path; it is not a public",
-        "bash ./.github/scripts/check_lowering_hygiene.sh",
-        "bash ./.github/scripts/check_frozen_image_hygiene.sh",
-        "bash ./.github/scripts/check_exact_layout_hygiene.sh",
-        "bash ./.github/scripts/check_raw_future_hygiene.sh",
-        "bash ./.github/scripts/check_pico_size_matrix.sh",
+        "bash ./.github/scripts/run_final_form_gates.sh",
+        "bash ./.github/scripts/check_segmented_lowering_hygiene.sh",
+        "bash ./.github/scripts/check_descriptor_streaming_hygiene.sh",
+        "bash ./.github/scripts/check_kernel_monomorphization_quarantine.sh",
+        "bash ./.github/scripts/check_route_authority_taxonomy.sh",
+        "bash ./.github/scripts/check_final_form_measurements.sh",
         "cargo check --all-targets -p hibana",
         "cargo test -p hibana --test ui --features std",
     ] {
@@ -160,23 +161,25 @@ fn projection_constructor_stays_on_canonical_call_shape() {
 fn quality_gates_do_not_directly_execute_non_executable_scripts() {
     let workflow = read(".github/workflows/quality-gates.yml");
 
-    for required in [
-        "bash ./.github/scripts/check_plane_boundaries.sh",
-        "bash ./.github/scripts/check_pico_smoke.sh",
-    ] {
-        assert!(
-            workflow.contains(required),
-            "quality gates must invoke non-executable scripts through bash: {required}"
-        );
-    }
+    let required = "bash ./.github/scripts/run_final_form_gates.sh";
+    assert!(
+        workflow.contains(required),
+        "quality gates must use the final-form gate as the only script authority: {required}"
+    );
 
     for forbidden in [
+        "dtolnay/rust-toolchain",
+        "toolchain: stable",
+        "cargo test",
+        "cargo check",
         "run: ./.github/scripts/check_plane_boundaries.sh",
         "run: ./.github/scripts/check_pico_smoke.sh",
+        "check_topology_hygiene.sh",
+        "check_text_integrity.sh",
     ] {
         assert!(
             !workflow.contains(forbidden),
-            "quality gates must not rely on executable bits for 100644 scripts: {forbidden}"
+            "quality gates must remain a thin final-form wrapper: {forbidden}"
         );
     }
 }

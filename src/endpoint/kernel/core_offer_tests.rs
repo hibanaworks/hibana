@@ -20,8 +20,9 @@ mod snapshot_control_kind {
     ));
 }
 
+use super::super::offer::LaneIngressEvidence;
 use super::*;
-use crate::binding::{Channel, IncomingClassification, TransportOpsError};
+use crate::binding::{Channel, IngressEvidence, TransportOpsError};
 use crate::control::cap::mint::{ControlOp, GenericCapToken, ResourceKind};
 use crate::control::cap::resource_kinds::RouteDecisionKind;
 use crate::control::cluster::core::SessionCluster;
@@ -52,7 +53,9 @@ use std::{task::Waker, thread_local};
 
 type SendOnly<const LANE: u8, S, D, M> = StepCons<SendStep<S, D, M, LANE>, StepNil>;
 type BranchSteps<L, R> = RouteSteps<L, R>;
-const OFFER_FIXTURE_SLAB_CAPACITY: usize = 262_144;
+const PICO_OFFER_FIXTURE_SLAB_CAPACITY: usize = 64 * 1024;
+const LARGE_HOST_OFFER_FIXTURE_SLAB_CAPACITY: usize = 1_048_576;
+const OFFER_FIXTURE_SLAB_CAPACITY: usize = LARGE_HOST_OFFER_FIXTURE_SLAB_CAPACITY;
 const ROUTE_HINT_RIGHT_LABEL: u8 = 122;
 type RouteHintRightKind = RouteControl<ROUTE_HINT_RIGHT_LABEL, 0>;
 
@@ -253,13 +256,11 @@ where
     B: crate::binding::BindingSlot + 'r,
     'r: 'a,
 {
-    type Output = RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>>;
+    type Output = RecvResult<MaterializedRouteBranch<'r>>;
 
     fn poll(self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        this.endpoint
-            .poll_offer_state(&mut this.state, cx)
-            .map(|result| result.map(Into::into))
+        this.endpoint.poll_offer_state(&mut this.state, cx)
     }
 }
 
@@ -281,32 +282,20 @@ where
     }
 }
 
-fn branch_label<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
-    branch: &RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-) -> u8
-where
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: crate::control::cap::mint::EpochTable,
-    Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot + 'r,
-{
+fn branch_label(branch: &MaterializedRouteBranch<'_>) -> u8 {
     branch.label
 }
 
-fn branch_scope<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
-    branch: &RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-) -> ScopeId
-where
-    T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: crate::control::cap::mint::EpochTable,
-    Mint: crate::control::cap::mint::MintConfigMarker,
-    B: crate::binding::BindingSlot + 'r,
-{
+fn branch_scope(branch: &MaterializedRouteBranch<'_>) -> ScopeId {
     branch.branch_meta.scope_id
+}
+
+fn branch_has_staged_payload(branch: &MaterializedRouteBranch<'_>) -> bool {
+    branch.staged_payload.is_some()
+}
+
+fn branch_has_transport_payload(branch: &MaterializedRouteBranch<'_>) -> bool {
+    matches!(branch.staged_payload, Some(StagedPayload::Transport { .. }))
 }
 
 struct CursorDecode<M>(PhantomData<M>);
@@ -318,7 +307,7 @@ where
 {
     fn run<'a, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint, B>(
         endpoint: &'a mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-        branch: &mut RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
+        branch: MaterializedRouteBranch<'r>,
     ) -> CursorDecodeFuture<'a, 'r, ROLE, T, U, C, E, MAX_RV, Mint, B, M>
     where
         T: Transport + 'r,
@@ -330,7 +319,7 @@ where
     {
         CursorDecodeFuture {
             endpoint: core::ptr::from_mut(endpoint),
-            state: super::super::decode::DecodeState::new(branch.clone().into()),
+            state: super::super::decode::DecodeState::new(branch),
             _borrow: PhantomData,
             _msg: PhantomData,
         }
@@ -371,7 +360,7 @@ where
     fn poll(self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = unsafe { self.get_unchecked_mut() };
         let endpoint = unsafe { &mut *this.endpoint };
-        let desc = super::super::decode::DecodeDesc::new(
+        let desc = DecodeRuntimeDesc::new(
             <M as MessageSpec>::LABEL,
             <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
             |payload| {
@@ -1120,6 +1109,17 @@ type PendingControllerEndpoint = CursorEndpoint<
     crate::control::cap::mint::MintConfig,
     NoBinding,
 >;
+type PendingControllerBindingEndpoint = CursorEndpoint<
+    'static,
+    0,
+    PendingTransport,
+    DefaultLabelUniverse,
+    CounterClock,
+    crate::control::cap::mint::EpochTbl,
+    4,
+    crate::control::cap::mint::MintConfig,
+    TestBinding,
+>;
 type HintPendingControllerEndpoint = CursorEndpoint<
     'static,
     0,
@@ -1158,6 +1158,8 @@ const OFFER_VALUE_SLOT_BYTES: usize = max_usize(&[
     offer_endpoint_slot_bytes::<1, HintOnlyTransport, LaneAwareTestBinding>(3),
     offer_endpoint_slot_bytes::<0, PendingTransport, NoBinding>(1),
     offer_endpoint_slot_bytes::<1, PendingTransport, NoBinding>(1),
+    offer_endpoint_slot_bytes::<0, PendingTransport, TestBinding>(1),
+    offer_endpoint_slot_bytes::<1, PendingTransport, TestBinding>(1),
     offer_endpoint_slot_bytes::<0, HintPendingTransport, NoBinding>(1),
     offer_endpoint_slot_bytes::<1, HintPendingTransport, NoBinding>(1),
     size_of::<PendingTransportState>(),
@@ -1175,6 +1177,17 @@ type PendingWorkerEndpoint = CursorEndpoint<
     4,
     crate::control::cap::mint::MintConfig,
     NoBinding,
+>;
+type PendingWorkerBindingEndpoint = CursorEndpoint<
+    'static,
+    1,
+    PendingTransport,
+    DefaultLabelUniverse,
+    CounterClock,
+    crate::control::cap::mint::EpochTbl,
+    4,
+    crate::control::cap::mint::MintConfig,
+    TestBinding,
 >;
 
 struct OfferTestFixtureGuard<const N: usize> {
@@ -1486,24 +1499,22 @@ impl FixedPayload {
 }
 
 struct TestBinding {
-    incoming: FixedQueue<IncomingClassification, TEST_BINDING_QUEUE_CAPACITY>,
+    incoming: FixedQueue<IngressEvidence, TEST_BINDING_QUEUE_CAPACITY>,
     recv_payloads: FixedQueue<FixedPayload, TEST_BINDING_QUEUE_CAPACITY>,
     polls: Cell<usize>,
+    last_recv_channel: Cell<Option<Channel>>,
 }
 
 impl TestBinding {
-    fn with_incoming(incoming: &[IncomingClassification]) -> Self {
+    fn with_incoming(incoming: &[IngressEvidence]) -> Self {
         let mut binding = Self::default();
-        for classification in incoming.iter().copied() {
-            binding.incoming.push_back(classification);
+        for evidence in incoming.iter().copied() {
+            binding.incoming.push_back(evidence);
         }
         binding
     }
 
-    fn with_incoming_and_payloads(
-        incoming: &[IncomingClassification],
-        recv_payloads: &[&[u8]],
-    ) -> Self {
+    fn with_incoming_and_payloads(incoming: &[IngressEvidence], recv_payloads: &[&[u8]]) -> Self {
         let mut binding = Self::with_incoming(incoming);
         for payload in recv_payloads {
             binding
@@ -1516,6 +1527,10 @@ impl TestBinding {
     fn poll_count(&self) -> usize {
         self.polls.get()
     }
+
+    fn last_recv_channel(&self) -> Option<Channel> {
+        self.last_recv_channel.get()
+    }
 }
 
 impl Default for TestBinding {
@@ -1524,17 +1539,18 @@ impl Default for TestBinding {
             incoming: FixedQueue::new(),
             recv_payloads: FixedQueue::new(),
             polls: Cell::new(0),
+            last_recv_channel: Cell::new(None),
         }
     }
 }
 
 struct LaneAwareTestBinding {
-    incoming: std::vec::Vec<FixedQueue<IncomingClassification, TEST_BINDING_QUEUE_CAPACITY>>,
+    incoming: std::vec::Vec<FixedQueue<IngressEvidence, TEST_BINDING_QUEUE_CAPACITY>>,
     polls: std::vec::Vec<usize>,
 }
 
 impl LaneAwareTestBinding {
-    fn with_lane_incoming(incoming: &[(u8, IncomingClassification)]) -> Self {
+    fn with_lane_incoming(incoming: &[(u8, IngressEvidence)]) -> Self {
         let lane_capacity = incoming
             .iter()
             .map(|(lane, _)| usize::from(*lane).saturating_add(1))
@@ -1546,10 +1562,10 @@ impl LaneAwareTestBinding {
                 .collect(),
             polls: std::vec![0; lane_capacity],
         };
-        for (lane, classification) in incoming.iter().copied() {
+        for (lane, evidence) in incoming.iter().copied() {
             let lane_idx = lane as usize;
             if lane_idx < binding.incoming.len() {
-                binding.incoming[lane_idx].push_back(classification);
+                binding.incoming[lane_idx].push_back(evidence);
             }
         }
         binding
@@ -1561,7 +1577,7 @@ impl LaneAwareTestBinding {
 }
 
 impl BindingSlot for LaneAwareTestBinding {
-    fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IncomingClassification> {
+    fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IngressEvidence> {
         let lane_idx = logical_lane as usize;
         if lane_idx >= self.incoming.len() {
             return None;
@@ -1586,16 +1602,17 @@ impl BindingSlot for LaneAwareTestBinding {
 }
 
 impl BindingSlot for TestBinding {
-    fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IncomingClassification> {
+    fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IngressEvidence> {
         self.polls.set(self.polls.get().saturating_add(1));
         self.incoming.pop_front()
     }
 
     fn on_recv<'a>(
         &'a mut self,
-        _channel: Channel,
+        channel: Channel,
         buf: &'a mut [u8],
     ) -> Result<Payload<'a>, TransportOpsError> {
+        self.last_recv_channel.set(Some(channel));
         let Some(payload) = self.recv_payloads.pop_front() else {
             return Ok(Payload::new(&[]));
         };
@@ -1825,11 +1842,16 @@ impl PendingTransport {
     fn poll_count(&self) -> usize {
         self.state.polls.get()
     }
+
+    fn requeue_count(&self) -> usize {
+        self.state.requeues.get()
+    }
 }
 
 #[derive(Default)]
 struct PendingTransportState {
     polls: Cell<usize>,
+    requeues: Cell<usize>,
     ready: Cell<bool>,
     recv_parked: Cell<bool>,
     hint_drains_while_recv_parked: Cell<usize>,
@@ -1838,7 +1860,7 @@ struct PendingTransportState {
 }
 
 struct DeferredIngressState {
-    incoming: UnsafeCell<FixedQueue<IncomingClassification, TEST_BINDING_QUEUE_CAPACITY>>,
+    incoming: UnsafeCell<FixedQueue<IngressEvidence, TEST_BINDING_QUEUE_CAPACITY>>,
     recv_payloads: UnsafeCell<FixedQueue<FixedPayload, TEST_BINDING_QUEUE_CAPACITY>>,
     available: Cell<usize>,
 }
@@ -1852,9 +1874,9 @@ impl DeferredIngressState {
         }
     }
 
-    fn push_incoming(&self, classification: IncomingClassification) {
+    fn push_incoming(&self, evidence: IngressEvidence) {
         unsafe {
-            (&mut *self.incoming.get()).push_back(classification);
+            (&mut *self.incoming.get()).push_back(evidence);
         }
     }
 
@@ -1864,7 +1886,7 @@ impl DeferredIngressState {
         }
     }
 
-    fn pop_incoming(&self) -> Option<IncomingClassification> {
+    fn pop_incoming(&self) -> Option<IngressEvidence> {
         unsafe { (&mut *self.incoming.get()).pop_front() }
     }
 
@@ -1881,11 +1903,11 @@ struct DeferredIngressBinding {
 impl DeferredIngressBinding {
     fn with_incoming_and_payloads(
         state: &'static DeferredIngressState,
-        incoming: &[IncomingClassification],
+        incoming: &[IngressEvidence],
         recv_payloads: &[&[u8]],
     ) -> Self {
-        for classification in incoming.iter().copied() {
-            state.push_incoming(classification);
+        for evidence in incoming.iter().copied() {
+            state.push_incoming(evidence);
         }
         for payload in recv_payloads {
             state.push_recv_payload(FixedPayload::from_bytes(payload));
@@ -1898,16 +1920,16 @@ impl DeferredIngressBinding {
 }
 
 impl BindingSlot for DeferredIngressBinding {
-    fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IncomingClassification> {
+    fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IngressEvidence> {
         self.polls.set(self.polls.get().saturating_add(1));
         if self.state.available.get() == 0 {
             return None;
         }
-        let classification = self.state.pop_incoming()?;
+        let evidence = self.state.pop_incoming()?;
         self.state
             .available
             .set(self.state.available.get().saturating_sub(1));
-        Some(classification)
+        Some(evidence)
     }
 
     fn on_recv<'a>(
@@ -1981,7 +2003,7 @@ impl Transport for PendingTransport {
         self.state.polls.set(self.state.polls.get().wrapping_add(1));
         if self.state.ready.get() {
             self.state.recv_parked.set(false);
-            Poll::Ready(Ok(Payload::new(&[])))
+            Poll::Ready(Ok(Payload::new(&[0x5a])))
         } else {
             self.state.recv_parked.set(true);
             unsafe {
@@ -1993,7 +2015,11 @@ impl Transport for PendingTransport {
 
     fn cancel_send<'a>(&'a self, _tx: &'a mut Self::Tx<'a>) {}
 
-    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {}
+    fn requeue<'a>(&'a self, _rx: &'a mut Self::Rx<'a>) {
+        self.state
+            .requeues
+            .set(self.state.requeues.get().wrapping_add(1));
+    }
 
     fn drain_events(&self, _emit: &mut dyn FnMut(crate::transport::TransportEvent)) {}
 
@@ -2300,35 +2326,36 @@ type NestedRouteSteps = RouteSteps<HintRouteSteps, EntryRouteSteps>;
 fn NESTED_ROUTE_PROGRAM() -> g::Program<NestedRouteSteps> {
     g::route(HINT_ROUTE_PROGRAM(), ENTRY_ROUTE_PROGRAM())
 }
+const ENTRY_ARM0_CONTROL_LABEL: u8 = 102;
 const ENTRY_ARM0_SIGNAL_LABEL: u8 = 103;
 
 #[test]
 fn binding_inbox_take_is_one_shot() {
-    let classification = IncomingClassification {
+    let evidence = IngressEvidence {
         label: 7,
         instance: 3,
         has_fin: false,
         channel: Channel::new(1),
     };
-    let mut binding = TestBinding::with_incoming(&[classification]);
+    let mut binding = TestBinding::with_incoming(&[evidence]);
     with_test_binding_inbox::<1, _>(|inbox| {
-        assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(classification));
+        assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(evidence));
         assert_eq!(inbox.take_or_poll(&mut binding, 0), None);
 
-        inbox.put_back(0, classification);
-        assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(classification));
+        inbox.put_back(0, evidence);
+        assert_eq!(inbox.take_or_poll(&mut binding, 0), Some(evidence));
     });
 }
 
 #[test]
 fn binding_inbox_take_matching_skips_head_mismatch() {
-    let head = IncomingClassification {
+    let head = IngressEvidence {
         label: 7,
         instance: 3,
         has_fin: false,
         channel: Channel::new(1),
     };
-    let expected = IncomingClassification {
+    let expected = IngressEvidence {
         label: 9,
         instance: 4,
         has_fin: false,
@@ -2344,19 +2371,19 @@ fn binding_inbox_take_matching_skips_head_mismatch() {
 
 #[test]
 fn binding_inbox_take_matching_scans_buffered_entries() {
-    let first = IncomingClassification {
+    let first = IngressEvidence {
         label: 3,
         instance: 1,
         has_fin: false,
         channel: Channel::new(11),
     };
-    let second = IncomingClassification {
+    let second = IngressEvidence {
         label: 4,
         instance: 2,
         has_fin: false,
         channel: Channel::new(12),
     };
-    let expected = IncomingClassification {
+    let expected = IngressEvidence {
         label: 5,
         instance: 3,
         has_fin: false,
@@ -2377,13 +2404,13 @@ fn binding_inbox_take_matching_scans_buffered_entries() {
 
 #[test]
 fn binding_inbox_nonempty_mask_tracks_buffered_lanes() {
-    let first = IncomingClassification {
+    let first = IngressEvidence {
         label: 3,
         instance: 1,
         has_fin: false,
         channel: Channel::new(11),
     };
-    let second = IncomingClassification {
+    let second = IngressEvidence {
         label: 4,
         instance: 2,
         has_fin: false,
@@ -2412,19 +2439,19 @@ fn binding_inbox_nonempty_mask_tracks_buffered_lanes() {
 
 #[test]
 fn binding_inbox_label_masks_track_buffered_labels_exactly() {
-    let first = IncomingClassification {
+    let first = IngressEvidence {
         label: 3,
         instance: 1,
         has_fin: false,
         channel: Channel::new(11),
     };
-    let second = IncomingClassification {
+    let second = IngressEvidence {
         label: 4,
         instance: 2,
         has_fin: false,
         channel: Channel::new(12),
     };
-    let third = IncomingClassification {
+    let third = IngressEvidence {
         label: 7,
         instance: 3,
         has_fin: false,
@@ -2464,19 +2491,19 @@ fn binding_inbox_label_masks_track_buffered_labels_exactly() {
 
 #[test]
 fn binding_inbox_take_matching_mask_drops_buffered_loop_control_labels() {
-    let loop_control = IncomingClassification {
+    let loop_control = IngressEvidence {
         label: LABEL_LOOP_CONTINUE,
         instance: 1,
         has_fin: false,
         channel: Channel::new(11),
     };
-    let deferred = IncomingClassification {
+    let deferred = IngressEvidence {
         label: 33,
         instance: 2,
         has_fin: false,
         channel: Channel::new(12),
     };
-    let expected = IncomingClassification {
+    let expected = IngressEvidence {
         label: 55,
         instance: 3,
         has_fin: false,
@@ -2503,19 +2530,19 @@ fn binding_inbox_take_matching_mask_drops_buffered_loop_control_labels() {
 
 #[test]
 fn binding_mismatch_scan_finds_later_matching_label() {
-    let first = IncomingClassification {
+    let first = IngressEvidence {
         label: 11,
         instance: 1,
         has_fin: false,
         channel: Channel::new(21),
     };
-    let second = IncomingClassification {
+    let second = IngressEvidence {
         label: 12,
         instance: 2,
         has_fin: false,
         channel: Channel::new(22),
     };
-    let expected = IncomingClassification {
+    let expected = IngressEvidence {
         label: 13,
         instance: 3,
         has_fin: false,
@@ -3162,7 +3189,7 @@ fn selection_materialization_helpers_match_reference_lookup_logic() {
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &ENTRY_CONTROLLER_PROGRAM(),
+                                    &HINT_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -3171,7 +3198,7 @@ fn selection_materialization_helpers_match_reference_lookup_logic() {
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &ENTRY_WORKER_PROGRAM(),
+                                    &HINT_WORKER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach worker endpoint");
@@ -3717,7 +3744,7 @@ fn align_cursor_to_selected_scope_ignores_unrelated_lane_binding_changes() {
                         overwrite_global_frontier_observed_key_fixture(&mut *worker, stored_key);
                         worker.frontier_state.frontier_observation_epoch = 23;
 
-                        let unrelated = crate::binding::IncomingClassification {
+                        let unrelated = crate::binding::IngressEvidence {
                             label: 91,
                             channel: crate::binding::Channel::new(7),
                             instance: 7,
@@ -3793,13 +3820,13 @@ fn align_cursor_to_selected_scope_ignores_relevant_lane_binding_content_changes(
                             observed_entries_with_ready_current_only(current_idx);
                         overwrite_global_frontier_observed_fixture(&mut *worker, observed_entries);
 
-                        let first = crate::binding::IncomingClassification {
+                        let first = crate::binding::IngressEvidence {
                             label: 31,
                             channel: crate::binding::Channel::new(3),
                             instance: 3,
                             has_fin: false,
                         };
-                        let second = crate::binding::IncomingClassification {
+                        let second = crate::binding::IngressEvidence {
                             label: 32,
                             channel: crate::binding::Channel::new(4),
                             instance: 4,
@@ -4057,10 +4084,10 @@ fn align_cursor_to_selected_scope_keeps_descended_nested_route_entry_authoritati
 
                     assert_ne!(outer_entry, nested_entry);
                     worker
-                        .set_route_arm(0, outer_scope, 1)
+                        .test_commit_route_arm(0, outer_scope, 1)
                         .expect("select outer nested arm");
                     worker
-                        .set_route_arm(0, nested_scope, 0)
+                        .test_commit_route_arm(0, nested_scope, 0)
                         .expect("select nested arm");
                     worker.set_cursor_index(nested_entry);
 
@@ -4720,7 +4747,7 @@ fn cached_frontier_changed_entry_slot_mask_ignores_non_representative_route_lane
                         worker.cursor.max_frontier_entries(),
                         worker.cursor.logical_lane_count(),
                     );
-                    let unrelated = crate::binding::IncomingClassification {
+                    let unrelated = crate::binding::IngressEvidence {
                         label: 91,
                         channel: crate::binding::Channel::new(7),
                         instance: 7,
@@ -4850,7 +4877,7 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
                         .expect("nested route must retain an offer entry");
 
                     worker
-                        .set_route_arm(0, outer_scope, 1)
+                        .test_commit_route_arm(0, outer_scope, 1)
                         .expect("select outer right arm");
                     worker.set_cursor_index(right_entry);
                     RouteFrontierMachine::new(&mut *worker)
@@ -4915,7 +4942,7 @@ fn refresh_frontier_observed_entries_from_cache_updates_changed_offer_lane_slots
 
                     assert!(worker.binding_inbox.push_back(
                         2,
-                        crate::binding::IncomingClassification {
+                        crate::binding::IngressEvidence {
                             label: INNER_LEFT_DATA_LABEL,
                             channel: crate::binding::Channel::new(7),
                             instance: 7,
@@ -5497,113 +5524,110 @@ fn frontier_arbitration_is_uniform_across_route_loop_parallel_observer() {
 }
 
 #[test]
-fn dynamic_route_ignores_hint_classification_for_authority() {
-    run_offer_regression_test(
-        "dynamic_route_ignores_hint_classification_for_authority",
-        || {
-            offer_fixture!(2048, clock, config);
-            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
-                with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
-                    with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
-                        let transport = HintOnlyTransport::new(HINT_LEFT_DATA_LABEL);
-                        let rv_id = cluster_ref
-                            .add_rendezvous_from_config(config, transport)
-                            .expect("register rendezvous");
-                        let sid = SessionId::new(904);
-                        unsafe {
-                            cluster_ref
-                                .attach_endpoint_into::<0, _, _, _>(
-                                    controller_slot.ptr(),
-                                    rv_id,
-                                    sid,
-                                    &HINT_CONTROLLER_PROGRAM(),
-                                    NoBinding,
-                                )
-                                .expect("attach controller endpoint");
-                            cluster_ref
-                                .attach_endpoint_into::<1, _, _, _>(
-                                    worker_slot.ptr(),
-                                    rv_id,
-                                    sid,
-                                    &HINT_WORKER_PROGRAM(),
-                                    NoBinding,
-                                )
-                                .expect("attach worker endpoint");
-                        }
+fn dynamic_route_ignores_hint_evidence_for_authority() {
+    run_offer_regression_test("dynamic_route_ignores_hint_evidence_for_authority", || {
+        offer_fixture!(2048, clock, config);
+        with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
+            with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
+                with_offer_value_slot!(OfferHintWorkerEndpoint, worker_slot, {
+                    let transport = HintOnlyTransport::new(HINT_LEFT_DATA_LABEL);
+                    let rv_id = cluster_ref
+                        .add_rendezvous_from_config(config, transport)
+                        .expect("register rendezvous");
+                    let sid = SessionId::new(904);
+                    unsafe {
+                        cluster_ref
+                            .attach_endpoint_into::<0, _, _, _>(
+                                controller_slot.ptr(),
+                                rv_id,
+                                sid,
+                                &HINT_CONTROLLER_PROGRAM(),
+                                NoBinding,
+                            )
+                            .expect("attach controller endpoint");
+                        cluster_ref
+                            .attach_endpoint_into::<1, _, _, _>(
+                                worker_slot.ptr(),
+                                rv_id,
+                                sid,
+                                &HINT_WORKER_PROGRAM(),
+                                NoBinding,
+                            )
+                            .expect("attach worker endpoint");
+                    }
 
-                        let scope = {
-                            let worker = worker_slot.borrow_mut();
-                            let scope = worker.cursor.node_scope_id();
-                            assert!(!scope.is_none(), "worker must start at route scope");
-                            assert!(
-                                worker
-                                    .cursor
-                                    .first_recv_target(scope, HINT_LEFT_DATA_LABEL)
-                                    .is_none(),
-                                "dynamic route arm authority must not depend on first-recv dispatch"
-                            );
-                            scope
-                        };
-
+                    let scope = {
                         let worker = worker_slot.borrow_mut();
-                        let mut cx = Context::from_waker(noop_waker_ref());
-                        let branch = {
-                            let mut offer = pin!(cursor_offer(worker));
-                            let first_poll = offer.as_mut().poll(&mut cx);
-                            let mut branch = match first_poll {
-                                Poll::Ready(Ok(next_branch)) => Some(next_branch),
-                                Poll::Ready(Err(err)) => {
-                                    panic!("offer should not fail before decision: {err:?}")
-                                }
-                                Poll::Pending => None,
-                            };
-                            {
-                                let controller = controller_slot.borrow_mut();
-                                controller.port_for_lane(0).record_route_decision(scope, 0);
+                        let scope = worker.cursor.node_scope_id();
+                        assert!(!scope.is_none(), "worker must start at route scope");
+                        assert!(
+                            worker
+                                .cursor
+                                .first_recv_target(scope, HINT_LEFT_DATA_LABEL)
+                                .is_none(),
+                            "dynamic route arm authority must not depend on first-recv dispatch"
+                        );
+                        scope
+                    };
+
+                    let worker = worker_slot.borrow_mut();
+                    let mut cx = Context::from_waker(noop_waker_ref());
+                    let branch = {
+                        let mut offer = pin!(cursor_offer(worker));
+                        let first_poll = offer.as_mut().poll(&mut cx);
+                        let mut branch = match first_poll {
+                            Poll::Ready(Ok(next_branch)) => Some(next_branch),
+                            Poll::Ready(Err(err)) => {
+                                panic!("offer should not fail before decision: {err:?}")
                             }
-                            if branch.is_none() {
-                                let mut attempts = 0usize;
-                                while attempts < 4 {
-                                    match offer.as_mut().poll(&mut cx) {
-                                        Poll::Ready(Ok(next_branch)) => {
-                                            branch = Some(next_branch);
-                                            break;
-                                        }
-                                        Poll::Ready(Err(err)) => {
-                                            panic!(
-                                                "offer should resolve via authoritative decision: {err:?}"
-                                            );
-                                        }
-                                        Poll::Pending => {}
-                                    }
-                                    attempts += 1;
-                                }
-                            }
-                            branch.expect("offer should become ready after authoritative decision")
+                            Poll::Pending => None,
                         };
-                        assert_eq!(
-                            branch_label(&branch),
-                            HINT_LEFT_DATA_LABEL,
-                            "resolved branch must follow authoritative arm, not hint-derived ACK"
-                        );
-                        drop(branch);
-                        assert!(
-                            worker.peek_scope_ack(scope).is_some(),
-                            "dropping a preview branch must not consume authoritative ACK evidence"
-                        );
-                        assert!(
-                            worker.scope_has_ready_arm_evidence(scope),
-                            "dropping a preview branch must not clear ready-arm evidence"
-                        );
-                        assert!(
-                            worker.selected_arm_for_scope(scope).is_none(),
-                            "dropping a preview branch must not commit route progress"
-                        );
-                    });
+                        {
+                            let controller = controller_slot.borrow_mut();
+                            controller.port_for_lane(0).record_route_decision(scope, 0);
+                        }
+                        if branch.is_none() {
+                            let mut attempts = 0usize;
+                            while attempts < 4 {
+                                match offer.as_mut().poll(&mut cx) {
+                                    Poll::Ready(Ok(next_branch)) => {
+                                        branch = Some(next_branch);
+                                        break;
+                                    }
+                                    Poll::Ready(Err(err)) => {
+                                        panic!(
+                                            "offer should resolve via authoritative decision: {err:?}"
+                                        );
+                                    }
+                                    Poll::Pending => {}
+                                }
+                                attempts += 1;
+                            }
+                        }
+                        branch.expect("offer should become ready after authoritative decision")
+                    };
+                    assert_eq!(
+                        branch_label(&branch),
+                        HINT_LEFT_DATA_LABEL,
+                        "resolved branch must follow authoritative arm, not hint-derived ACK"
+                    );
+                    drop(branch);
+                    assert!(
+                        worker.peek_scope_ack(scope).is_some(),
+                        "dropping a preview branch must not consume authoritative ACK evidence"
+                    );
+                    assert!(
+                        worker.scope_has_ready_arm_evidence(scope),
+                        "dropping a preview branch must not clear ready-arm evidence"
+                    );
+                    assert!(
+                        worker.selected_arm_for_scope(scope).is_none(),
+                        "dropping a preview branch must not commit route progress"
+                    );
                 });
             });
-        },
-    );
+        });
+    });
 }
 
 #[test]
@@ -5751,7 +5775,7 @@ fn preview_offer_entry_evidence_skips_binding_probe_when_ack_already_progresses_
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_CONTROLLER_PROGRAM(),
+                                    &ENTRY_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -5760,7 +5784,7 @@ fn preview_offer_entry_evidence_skips_binding_probe_when_ack_already_progresses_
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM(),
+                                    &ENTRY_WORKER_PROGRAM(),
                                     TestBinding::default(),
                                 )
                                 .expect("attach worker endpoint");
@@ -5818,8 +5842,8 @@ fn preview_offer_entry_evidence_defers_binding_poll_until_selected_scope() {
                             .add_rendezvous_from_config(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(9043);
-                        let classification = IncomingClassification {
-                            label: HINT_LEFT_DATA_LABEL,
+                        let evidence = IngressEvidence {
+                            label: ENTRY_ARM0_SIGNAL_LABEL,
                             instance: 9,
                             has_fin: false,
                             channel: Channel::new(3),
@@ -5830,7 +5854,7 @@ fn preview_offer_entry_evidence_defers_binding_poll_until_selected_scope() {
                                     controller_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_CONTROLLER_PROGRAM(),
+                                    &ENTRY_CONTROLLER_PROGRAM(),
                                     NoBinding,
                                 )
                                 .expect("attach controller endpoint");
@@ -5839,8 +5863,8 @@ fn preview_offer_entry_evidence_defers_binding_poll_until_selected_scope() {
                                     worker_slot.ptr(),
                                     rv_id,
                                     sid,
-                                    &HINT_WORKER_PROGRAM(),
-                                    TestBinding::with_incoming(&[classification]),
+                                    &ENTRY_WORKER_PROGRAM(),
+                                    TestBinding::with_incoming(&[evidence]),
                                 )
                                 .expect("attach worker endpoint");
                         }
@@ -5863,11 +5887,11 @@ fn preview_offer_entry_evidence_defers_binding_poll_until_selected_scope() {
                         );
                         assert!(
                             !has_ack,
-                            "classification-only prepass must not synthesize ACK authority"
+                            "evidence-only prepass must not synthesize ACK authority"
                         );
                         assert!(
                             !has_ready_arm_evidence,
-                            "classification-only prepass must not synthesize ready-arm evidence"
+                            "evidence-only prepass must not synthesize ready-arm evidence"
                         );
                         assert_eq!(
                             worker.binding.poll_count(),
@@ -5883,8 +5907,8 @@ fn preview_offer_entry_evidence_defers_binding_poll_until_selected_scope() {
                         );
                         assert_eq!(
                             picked,
-                            Some((0, classification)),
-                            "selected-scope poll must still resolve the deferred binding classification"
+                            Some((0, evidence)),
+                            "selected-scope poll must still resolve the deferred binding evidence"
                         );
                         assert_eq!(
                             worker.binding.poll_count(),
@@ -5899,8 +5923,8 @@ fn preview_offer_entry_evidence_defers_binding_poll_until_selected_scope() {
 }
 
 #[test]
-fn hint_or_classification_never_writes_ack_authority() {
-    run_offer_regression_test("hint_or_classification_never_writes_ack_authority", || {
+fn hint_or_evidence_never_writes_ack_authority() {
+    run_offer_regression_test("hint_or_evidence_never_writes_ack_authority", || {
         offer_fixture!(2048, clock, config);
         type WorkerEndpoint = CursorEndpoint<
             'static,
@@ -5937,7 +5961,7 @@ fn hint_or_classification_never_writes_ack_authority() {
                                 rv_id,
                                 sid,
                                 &HINT_WORKER_PROGRAM(),
-                                TestBinding::with_incoming(&[IncomingClassification {
+                                TestBinding::with_incoming(&[IngressEvidence {
                                     label: HINT_LEFT_DATA_LABEL,
                                     instance: 0,
                                     has_fin: false,
@@ -5966,29 +5990,23 @@ fn hint_or_classification_never_writes_ack_authority() {
                         "dynamic hint ingest must not mint ack authority"
                     );
 
-                    let mut binding_classification = None;
-                    worker.cache_binding_classification_for_offer(
+                    let mut binding_evidence = None;
+                    worker.cache_binding_evidence_for_offer(
                         scope,
                         0,
                         label_meta,
                         worker.offer_scope_materialization_meta(scope, 0),
-                        &mut binding_classification,
+                        &mut binding_evidence,
                     );
                     assert!(
-                        binding_classification.is_some(),
-                        "binding classification should still be staged for decode/demux"
+                        binding_evidence.is_some(),
+                        "binding evidence should still be staged for decode/demux"
                     );
-                    let classification =
-                        binding_classification.expect("binding classification should be available");
-                    worker.ingest_binding_scope_evidence(
-                        scope,
-                        classification.label,
-                        true,
-                        label_meta,
-                    );
+                    let evidence = binding_evidence.expect("binding evidence should be available");
+                    worker.ingest_binding_scope_evidence(scope, evidence.label(), true, label_meta);
                     assert!(
                         worker.peek_scope_ack(scope).is_none(),
-                        "classification must not mint ack authority for dynamic route"
+                        "evidence must not mint ack authority for dynamic route"
                     );
                     assert_eq!(
                         worker.poll_arm_from_ready_mask(scope),
@@ -6043,13 +6061,13 @@ fn poll_binding_for_offer_prefers_exact_label_for_ack_arm() {
                                     sid,
                                     &HINT_WORKER_PROGRAM(),
                                     TestBinding::with_incoming(&[
-                                        IncomingClassification {
+                                        IngressEvidence {
                                             label: HINT_LEFT_DATA_LABEL,
                                             instance: 7,
                                             has_fin: false,
                                             channel: Channel::new(3),
                                         },
-                                        IncomingClassification {
+                                        IngressEvidence {
                                             label: HINT_RIGHT_DATA_LABEL,
                                             instance: 9,
                                             has_fin: false,
@@ -6099,8 +6117,7 @@ fn poll_binding_for_offer_prefers_exact_label_for_ack_arm() {
                             entry_state.materialization_meta,
                         );
                         assert_eq!(
-                            picked
-                                .map(|(lane_idx, classification)| (lane_idx, classification.label)),
+                            picked.map(|(lane_idx, evidence)| (lane_idx, evidence.label)),
                             Some((0, HINT_RIGHT_DATA_LABEL)),
                             "authoritative arm should narrow binding demux to the exact matching label"
                         );
@@ -6110,9 +6127,9 @@ fn poll_binding_for_offer_prefers_exact_label_for_ack_arm() {
                             HINT_LEFT_DATA_LABEL,
                         );
                         assert_eq!(
-                            deferred.map(|classification| classification.label),
+                            deferred.map(|evidence| evidence.label),
                             Some(HINT_LEFT_DATA_LABEL),
-                            "non-authoritative arm classification must remain buffered"
+                            "non-authoritative arm evidence must remain buffered"
                         );
                     });
                 });
@@ -6170,7 +6187,7 @@ fn poll_binding_for_offer_prefers_buffered_matching_lane_before_empty_poll_lane(
                         let scope = worker.cursor.node_scope_id();
                         assert!(!scope.is_none(), "worker must start at route scope");
 
-                        let buffered = IncomingClassification {
+                        let buffered = IngressEvidence {
                             label: HINT_RIGHT_DATA_LABEL,
                             instance: 9,
                             has_fin: false,
@@ -6257,13 +6274,13 @@ fn poll_binding_for_offer_skips_non_demux_lanes_for_authoritative_arm() {
                         let scope = worker.cursor.node_scope_id();
                         assert!(!scope.is_none(), "worker must start at route scope");
 
-                        let matching = IncomingClassification {
+                        let matching = IngressEvidence {
                             label: HINT_RIGHT_DATA_LABEL,
                             instance: 9,
                             has_fin: false,
                             channel: Channel::new(5),
                         };
-                        let loop_mismatch = IncomingClassification {
+                        let loop_mismatch = IngressEvidence {
                             label: LABEL_LOOP_CONTINUE,
                             instance: 1,
                             has_fin: false,
@@ -6356,13 +6373,13 @@ fn poll_binding_for_offer_prefers_authoritative_arm_label_mask_when_non_singleto
                                     sid,
                                     &HINT_WORKER_PROGRAM(),
                                     TestBinding::with_incoming(&[
-                                        IncomingClassification {
+                                        IngressEvidence {
                                             label: HINT_RIGHT_DATA_LABEL,
                                             instance: 9,
                                             has_fin: false,
                                             channel: Channel::new(5),
                                         },
-                                        IncomingClassification {
+                                        IngressEvidence {
                                             label: HINT_LEFT_DATA_LABEL,
                                             instance: 7,
                                             has_fin: false,
@@ -6421,8 +6438,7 @@ fn poll_binding_for_offer_prefers_authoritative_arm_label_mask_when_non_singleto
                             entry_state.materialization_meta,
                         );
                         assert_eq!(
-                            picked
-                                .map(|(lane_idx, classification)| (lane_idx, classification.label)),
+                            picked.map(|(lane_idx, evidence)| (lane_idx, evidence.label)),
                             Some((0, HINT_LEFT_DATA_LABEL)),
                             "authoritative arm mask should skip buffered labels from the other arm"
                         );
@@ -6432,9 +6448,9 @@ fn poll_binding_for_offer_prefers_authoritative_arm_label_mask_when_non_singleto
                             HINT_RIGHT_DATA_LABEL,
                         );
                         assert_eq!(
-                            deferred.map(|classification| classification.label),
+                            deferred.map(|evidence| evidence.label),
                             Some(HINT_RIGHT_DATA_LABEL),
-                            "non-authoritative arm classification must remain buffered after mask match"
+                            "non-authoritative arm evidence must remain buffered after mask match"
                         );
                     });
                 });
@@ -6481,13 +6497,13 @@ fn poll_binding_for_offer_uses_label_mask_to_skip_other_arm_lanes_without_author
                         let scope = worker.cursor.node_scope_id();
                         assert!(!scope.is_none(), "worker must start at route scope");
 
-                        let matching = IncomingClassification {
+                        let matching = IngressEvidence {
                             label: HINT_RIGHT_DATA_LABEL,
                             instance: 9,
                             has_fin: false,
                             channel: Channel::new(5),
                         };
-                        let loop_mismatch = IncomingClassification {
+                        let loop_mismatch = IngressEvidence {
                             label: LABEL_LOOP_CONTINUE,
                             instance: 1,
                             has_fin: false,
@@ -6577,13 +6593,13 @@ fn poll_binding_for_offer_buffered_match_skips_drop_only_preferred_lane_for_non_
                         let scope = worker.cursor.node_scope_id();
                         assert!(!scope.is_none(), "worker must start at route scope");
 
-                        let matching = IncomingClassification {
+                        let matching = IngressEvidence {
                             label: HINT_RIGHT_DATA_LABEL,
                             instance: 9,
                             has_fin: false,
                             channel: Channel::new(5),
                         };
-                        let loop_mismatch = IncomingClassification {
+                        let loop_mismatch = IngressEvidence {
                             label: LABEL_LOOP_CONTINUE,
                             instance: 1,
                             has_fin: false,
@@ -6648,7 +6664,7 @@ fn poll_binding_for_offer_polls_only_selected_lane_for_unbuffered_generic_mask()
                             .add_rendezvous_from_config(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(9052);
-                        let matching = IncomingClassification {
+                        let matching = IngressEvidence {
                             label: HINT_RIGHT_DATA_LABEL,
                             instance: 9,
                             has_fin: false,
@@ -6743,7 +6759,7 @@ fn poll_binding_for_offer_polls_authoritative_demux_lane_when_current_lane_is_ex
                             .add_rendezvous_from_config(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(9053);
-                        let matching = IncomingClassification {
+                        let matching = IngressEvidence {
                             label: HINT_RIGHT_DATA_LABEL,
                             instance: 11,
                             has_fin: false,
@@ -6822,7 +6838,7 @@ fn record_route_decision_for_scope_lanes_refreshes_sibling_frontier_cache() {
                             .add_rendezvous_from_config(config, transport)
                             .expect("register rendezvous");
                         let sid = SessionId::new(9054);
-                        let matching = IncomingClassification {
+                        let matching = IngressEvidence {
                             label: HINT_RIGHT_DATA_LABEL,
                             instance: 12,
                             has_fin: false,
@@ -6884,9 +6900,9 @@ fn record_route_decision_for_scope_lanes_refreshes_sibling_frontier_cache() {
 }
 
 #[test]
-fn take_binding_for_selected_arm_preserves_cached_other_arm_classification() {
+fn take_binding_for_selected_arm_preserves_cached_other_arm_evidence() {
     run_offer_regression_test(
-        "take_binding_for_selected_arm_preserves_cached_other_arm_classification",
+        "take_binding_for_selected_arm_preserves_cached_other_arm_evidence",
         || {
             offer_fixture!(2048, clock, config);
             with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
@@ -6922,13 +6938,13 @@ fn take_binding_for_selected_arm_preserves_cached_other_arm_classification() {
                         let scope = worker.cursor.node_scope_id();
                         assert!(!scope.is_none(), "worker must start at route scope");
 
-                        let matching = IncomingClassification {
+                        let matching = IngressEvidence {
                             label: HINT_LEFT_DATA_LABEL,
                             instance: 9,
                             has_fin: true,
                             channel: Channel::new(5),
                         };
-                        let cached_mismatch = IncomingClassification {
+                        let cached_mismatch = IngressEvidence {
                             label: HINT_RIGHT_DATA_LABEL,
                             instance: 7,
                             has_fin: false,
@@ -6956,22 +6972,21 @@ fn take_binding_for_selected_arm_preserves_cached_other_arm_classification() {
                                 | ScopeLabelMeta::FLAG_CONTROLLER_ARM1,
                             ..ScopeLabelMeta::EMPTY
                         };
-                        let mut binding_classification = Some(cached_mismatch);
+                        let mut binding_evidence = Some(cached_mismatch);
 
-                        let (channel, instance, has_fin) = worker.take_binding_for_selected_arm(
+                        let selected = worker.take_binding_for_selected_arm(
                             0,
                             0,
                             label_meta,
-                            &mut binding_classification,
+                            &mut binding_evidence,
                         );
-                        assert_eq!(channel, Some(matching.channel));
-                        assert_eq!(instance, Some(matching.instance));
-                        assert!(
-                            has_fin,
-                            "selected-arm helper should preserve FIN from matching ingress"
+                        assert_eq!(
+                            selected,
+                            Some(matching),
+                            "selected-arm helper must preserve the matched ingress evidence exactly"
                         );
                         assert!(
-                            binding_classification.is_none(),
+                            binding_evidence.is_none(),
                             "cached mismatch should be re-buffered, not left staged"
                         );
                         let deferred = worker.binding_inbox.take_matching_or_poll(
@@ -6982,8 +6997,1036 @@ fn take_binding_for_selected_arm_preserves_cached_other_arm_classification() {
                         assert_eq!(
                             deferred,
                             Some(cached_mismatch),
-                            "selected-arm demux must preserve cached other-arm classifications"
+                            "selected-arm demux must preserve cached other-arm evidences"
                         );
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn selected_arm_mask_preserves_actual_binding_evidence_label() {
+    run_offer_regression_test(
+        "selected_arm_mask_preserves_actual_binding_evidence_label",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
+                with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(OfferHintWorkerBindingEndpoint, worker_slot, {
+                        let transport = HintOnlyTransport::new(HINT_NONE);
+                        let rv_id = cluster_ref
+                            .add_rendezvous_from_config(config, transport)
+                            .expect("register rendezvous");
+                        let sid = SessionId::new(9059);
+                        unsafe {
+                            cluster_ref
+                                .attach_endpoint_into::<0, _, _, _>(
+                                    controller_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &HINT_CONTROLLER_PROGRAM(),
+                                    NoBinding,
+                                )
+                                .expect("attach controller endpoint");
+                            cluster_ref
+                                .attach_endpoint_into::<1, _, _, _>(
+                                    worker_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &HINT_WORKER_PROGRAM(),
+                                    TestBinding::default(),
+                                )
+                                .expect("attach worker endpoint");
+                        }
+                        let _controller = controller_slot.borrow_mut();
+                        let worker = worker_slot.borrow_mut();
+                        let observed = IngressEvidence {
+                            label: ENTRY_ARM0_CONTROL_LABEL,
+                            instance: 11,
+                            has_fin: true,
+                            channel: Channel::new(8),
+                        };
+                        let label_meta = ScopeLabelMeta {
+                            arm_label_masks: [
+                                ScopeLabelMeta::label_bit(HINT_LEFT_DATA_LABEL)
+                                    | ScopeLabelMeta::label_bit(observed.label),
+                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL),
+                            ],
+                            evidence_arm_label_masks: [
+                                ScopeLabelMeta::label_bit(HINT_LEFT_DATA_LABEL)
+                                    | ScopeLabelMeta::label_bit(observed.label),
+                                ScopeLabelMeta::label_bit(HINT_RIGHT_DATA_LABEL),
+                            ],
+                            ..ScopeLabelMeta::EMPTY
+                        };
+                        assert_eq!(
+                            label_meta.preferred_binding_label(Some(0)),
+                            None,
+                            "fixture must exercise the non-singleton selected-arm mask path"
+                        );
+                        let mut binding_evidence = Some(observed);
+
+                        let selected = worker.take_binding_for_selected_arm(
+                            0,
+                            0,
+                            label_meta,
+                            &mut binding_evidence,
+                        );
+
+                        assert_eq!(
+                            selected,
+                            Some(observed),
+                            "selected-arm demux must not rewrite the observed evidence label"
+                        );
+                        assert!(
+                            binding_evidence.is_none(),
+                            "matched evidence should be consumed by the selected branch"
+                        );
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn decode_rejects_when_branch_label_and_binding_evidence_label_disagree() {
+    run_offer_regression_test(
+        "decode_rejects_when_branch_label_and_binding_evidence_label_disagree",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
+                with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(OfferHintWorkerBindingEndpoint, worker_slot, {
+                        let transport = HintOnlyTransport::new(HINT_NONE);
+                        let rv_id = cluster_ref
+                            .add_rendezvous_from_config(config, transport)
+                            .expect("register rendezvous");
+                        let sid = SessionId::new(9063);
+                        unsafe {
+                            cluster_ref
+                                .attach_endpoint_into::<0, _, _, _>(
+                                    controller_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &ENTRY_CONTROLLER_PROGRAM(),
+                                    NoBinding,
+                                )
+                                .expect("attach controller endpoint");
+                            cluster_ref
+                                .attach_endpoint_into::<1, _, _, _>(
+                                    worker_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &ENTRY_WORKER_PROGRAM(),
+                                    TestBinding::with_incoming_and_payloads(&[], &[&[42]]),
+                                )
+                                .expect("attach worker endpoint");
+                        }
+                        let _controller = controller_slot.borrow_mut();
+                        let worker = worker_slot.borrow_mut();
+                        let scope = worker.cursor.node_scope_id();
+                        assert!(!scope.is_none(), "worker must start at route scope");
+
+                        let selected = IngressEvidence {
+                            label: ENTRY_ARM0_SIGNAL_LABEL,
+                            instance: 15,
+                            has_fin: false,
+                            channel: Channel::new(12),
+                        };
+                        let mismatched = IngressEvidence {
+                            label: ENTRY_ARM0_CONTROL_LABEL,
+                            instance: 15,
+                            has_fin: false,
+                            channel: Channel::new(13),
+                        };
+                        let selection = OfferScopeSelection {
+                            scope_id: scope,
+                            frontier_parallel_root: None,
+                            offer_lane: 0,
+                            offer_lane_idx: 0,
+                            at_route_offer_entry: false,
+                        };
+                        assert_ne!(
+                            mismatched.label, ENTRY_ARM0_SIGNAL_LABEL,
+                            "fixture must exercise evidence label != branch recv label"
+                        );
+                        let resolved = ResolvedRouteDecision {
+                            route_token: RouteDecisionToken::from_ack(
+                                Arm::new(0).expect("binary route arm"),
+                            ),
+                            selected_arm: 0,
+                            resolved_label_hint: None,
+                        };
+
+                        let mut branch = RouteFrontierMachine::new(worker)
+                            .materialize_branch(
+                                selection,
+                                resolved,
+                                false,
+                                Some(LaneIngressEvidence::new(0, selected)),
+                                0,
+                                0,
+                                None,
+                            )
+                            .expect("materialize selected branch")
+                            .into();
+                        assert_eq!(branch_label(&branch), ENTRY_ARM0_SIGNAL_LABEL);
+                        branch.binding_evidence =
+                            PackedIngressEvidence::from_option(Some(mismatched));
+
+                        let mut cx = Context::from_waker(noop_waker_ref());
+                        let err = {
+                            let mut decode =
+                                pin!(CursorDecode::<Msg<103, u8>>::run(worker, branch));
+                            match decode.as_mut().poll(&mut cx) {
+                                Poll::Ready(Err(err)) => err,
+                                Poll::Ready(Ok(_)) => {
+                                    panic!("mismatched binding evidence label must fail closed")
+                                }
+                                Poll::Pending => {
+                                    panic!("mismatched binding evidence label must not await I/O")
+                                }
+                            }
+                        };
+                        match err {
+                            RecvError::LabelMismatch { expected, actual } => {
+                                assert_eq!(expected, ENTRY_ARM0_SIGNAL_LABEL);
+                                assert_eq!(actual, mismatched.label);
+                            }
+                            other => panic!("expected label mismatch, got {other:?}"),
+                        }
+                        assert_eq!(
+                            worker.binding.last_recv_channel(),
+                            None,
+                            "label mismatch must be rejected before reading the evidence channel"
+                        );
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn materialized_branch_preserves_actual_binding_evidence_label() {
+    run_offer_regression_test(
+        "materialized_branch_preserves_actual_binding_evidence_label",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
+                with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(OfferHintWorkerBindingEndpoint, worker_slot, {
+                        let transport = HintOnlyTransport::new(HINT_NONE);
+                        let rv_id = cluster_ref
+                            .add_rendezvous_from_config(config, transport)
+                            .expect("register rendezvous");
+                        let sid = SessionId::new(9060);
+                        unsafe {
+                            cluster_ref
+                                .attach_endpoint_into::<0, _, _, _>(
+                                    controller_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &ENTRY_CONTROLLER_PROGRAM(),
+                                    NoBinding,
+                                )
+                                .expect("attach controller endpoint");
+                            cluster_ref
+                                .attach_endpoint_into::<1, _, _, _>(
+                                    worker_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &ENTRY_WORKER_PROGRAM(),
+                                    TestBinding::default(),
+                                )
+                                .expect("attach worker endpoint");
+                        }
+                        let _controller = controller_slot.borrow_mut();
+                        let worker = worker_slot.borrow_mut();
+                        let scope = worker.cursor.node_scope_id();
+                        assert!(!scope.is_none(), "worker must start at route scope");
+
+                        let observed = IngressEvidence {
+                            label: ENTRY_ARM0_SIGNAL_LABEL,
+                            instance: 12,
+                            has_fin: false,
+                            channel: Channel::new(9),
+                        };
+                        let selection = OfferScopeSelection {
+                            scope_id: scope,
+                            frontier_parallel_root: None,
+                            offer_lane: 0,
+                            offer_lane_idx: 0,
+                            at_route_offer_entry: false,
+                        };
+                        let resolved = ResolvedRouteDecision {
+                            route_token: RouteDecisionToken::from_ack(
+                                Arm::new(0).expect("binary route arm"),
+                            ),
+                            selected_arm: 0,
+                            resolved_label_hint: None,
+                        };
+
+                        let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
+                            .materialize_branch(
+                                selection,
+                                resolved,
+                                false,
+                                Some(LaneIngressEvidence::new(0, observed)),
+                                0,
+                                0,
+                                None,
+                            )
+                            .expect("materialize selected branch")
+                            .into();
+
+                        assert_eq!(branch_label(&branch), ENTRY_ARM0_SIGNAL_LABEL);
+                        assert_eq!(
+                            branch.binding_evidence.into_option(),
+                            Some(observed),
+                            "materialization must keep the binding evidence label observed by demux"
+                        );
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn materialize_non_wire_recv_evidence_requeues_staged_transport_payload() {
+    run_offer_regression_test(
+        "materialize_non_wire_recv_evidence_requeues_staged_transport_payload",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, PendingOfferCluster, cluster_ref, {
+                with_offer_value_slot!(PendingControllerBindingEndpoint, controller_slot, {
+                    with_offer_value_slot!(PendingWorkerEndpoint, worker_slot, {
+                        with_offer_value_slot!(PendingTransportState, pending_state_slot, {
+                            pending_state_slot.store(PendingTransportState::default());
+                            let pending_state: &'static PendingTransportState =
+                                unsafe { &*pending_state_slot.ptr() };
+                            let transport = PendingTransport::new(pending_state);
+                            let transport_probe = transport;
+                            let rv_id = cluster_ref
+                                .add_rendezvous_from_config(config, transport)
+                                .expect("register rendezvous");
+                            let sid = SessionId::new(9063);
+                            unsafe {
+                                cluster_ref
+                                    .attach_endpoint_into::<0, _, _, _>(
+                                        controller_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &ENTRY_CONTROLLER_PROGRAM(),
+                                        TestBinding::default(),
+                                    )
+                                    .expect("attach controller endpoint");
+                                cluster_ref
+                                    .attach_endpoint_into::<1, _, _, _>(
+                                        worker_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &ENTRY_WORKER_PROGRAM(),
+                                        NoBinding,
+                                    )
+                                    .expect("attach worker endpoint");
+                            }
+
+                            let controller = controller_slot.borrow_mut();
+                            let _worker = worker_slot.borrow_mut();
+                            let scope = controller.cursor.node_scope_id();
+                            assert!(
+                                !scope.is_none(),
+                                "controller must start at route controller scope"
+                            );
+                            let evidence = IngressEvidence {
+                                label: ENTRY_ARM0_CONTROL_LABEL,
+                                instance: 14,
+                                has_fin: false,
+                                channel: Channel::new(11),
+                            };
+                            let selection = OfferScopeSelection {
+                                scope_id: scope,
+                                frontier_parallel_root: None,
+                                offer_lane: 0,
+                                offer_lane_idx: 0,
+                                at_route_offer_entry: false,
+                            };
+                            let resolved = ResolvedRouteDecision {
+                                route_token: RouteDecisionToken::from_ack(
+                                    Arm::new(0).expect("binary route arm"),
+                                ),
+                                selected_arm: 0,
+                                resolved_label_hint: None,
+                            };
+                            let staged_payload = Payload::new(&[0x6b]);
+                            let staged_payload_len = staged_payload.as_bytes().len();
+
+                            let branch: MaterializedRouteBranch<'_> =
+                                RouteFrontierMachine::new(controller)
+                                    .materialize_branch(
+                                        selection,
+                                        resolved,
+                                        true,
+                                        Some(LaneIngressEvidence::new(0, evidence)),
+                                        staged_payload_len,
+                                        0,
+                                        Some(staged_payload),
+                                    )
+                                    .expect("non-wire branch must rebuffer stray binding evidence")
+                                    .into();
+                            assert!(
+                                !branch_has_staged_payload(&branch),
+                                "requeued transport payload must not remain staged on a non-wire branch"
+                            );
+                            assert_eq!(
+                                transport_probe.requeue_count(),
+                                1,
+                                "non-wire materialization must requeue staged transport payload once"
+                            );
+                            controller.restore_materialized_route_branch(branch);
+                            assert_eq!(
+                                transport_probe.requeue_count(),
+                                1,
+                                "restoring the materialized branch must not requeue an already requeued payload"
+                            );
+                            assert_eq!(
+                                controller.binding_inbox.take_matching_or_poll(
+                                    &mut controller.binding,
+                                    0,
+                                    evidence.label,
+                                ),
+                                Some(evidence),
+                                "non-wire materialization must rebuffer stray binding evidence"
+                            );
+                        });
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn pico_budget_offer_fixture_is_separate_from_large_host_fixture() {
+    assert!(
+        PICO_OFFER_FIXTURE_SLAB_CAPACITY < LARGE_HOST_OFFER_FIXTURE_SLAB_CAPACITY,
+        "Pico-equivalent fixture budget must stay distinct from large host stress storage"
+    );
+    assert!(
+        4096 <= PICO_OFFER_FIXTURE_SLAB_CAPACITY,
+        "Pico-equivalent fixture must still cover common offer regressions"
+    );
+}
+
+#[test]
+fn dropped_branch_restores_original_binding_evidence_label() {
+    run_offer_regression_test(
+        "dropped_branch_restores_original_binding_evidence_label",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
+                with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(OfferHintWorkerBindingEndpoint, worker_slot, {
+                        let transport = HintOnlyTransport::new(HINT_NONE);
+                        let rv_id = cluster_ref
+                            .add_rendezvous_from_config(config, transport)
+                            .expect("register rendezvous");
+                        let sid = SessionId::new(9061);
+                        unsafe {
+                            cluster_ref
+                                .attach_endpoint_into::<0, _, _, _>(
+                                    controller_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &ENTRY_CONTROLLER_PROGRAM(),
+                                    NoBinding,
+                                )
+                                .expect("attach controller endpoint");
+                            cluster_ref
+                                .attach_endpoint_into::<1, _, _, _>(
+                                    worker_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &ENTRY_WORKER_PROGRAM(),
+                                    TestBinding::default(),
+                                )
+                                .expect("attach worker endpoint");
+                        }
+                        let _controller = controller_slot.borrow_mut();
+                        let worker = worker_slot.borrow_mut();
+                        let scope = worker.cursor.node_scope_id();
+                        assert!(!scope.is_none(), "worker must start at route scope");
+
+                        let observed = IngressEvidence {
+                            label: ENTRY_ARM0_SIGNAL_LABEL,
+                            instance: 13,
+                            has_fin: false,
+                            channel: Channel::new(10),
+                        };
+                        let selection = OfferScopeSelection {
+                            scope_id: scope,
+                            frontier_parallel_root: None,
+                            offer_lane: 0,
+                            offer_lane_idx: 0,
+                            at_route_offer_entry: false,
+                        };
+                        let resolved = ResolvedRouteDecision {
+                            route_token: RouteDecisionToken::from_ack(
+                                Arm::new(0).expect("binary route arm"),
+                            ),
+                            selected_arm: 0,
+                            resolved_label_hint: None,
+                        };
+                        let branch = RouteFrontierMachine::new(worker)
+                            .materialize_branch(
+                                selection,
+                                resolved,
+                                false,
+                                Some(LaneIngressEvidence::new(0, observed)),
+                                0,
+                                0,
+                                None,
+                            )
+                            .expect("materialize selected branch")
+                            .into();
+
+                        worker.restore_materialized_route_branch(branch);
+                        let restored = worker.binding_inbox.take_matching_or_poll(
+                            &mut worker.binding,
+                            0,
+                            observed.label,
+                        );
+                        assert_eq!(
+                            restored,
+                            Some(observed),
+                            "branch restore must rebuffer the original observed evidence label"
+                        );
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn selected_branch_decode_uses_original_evidence_channel() {
+    run_offer_regression_test(
+        "selected_branch_decode_uses_original_evidence_channel",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
+                with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(OfferHintWorkerBindingEndpoint, worker_slot, {
+                        let transport = HintOnlyTransport::new(HINT_NONE);
+                        let rv_id = cluster_ref
+                            .add_rendezvous_from_config(config, transport)
+                            .expect("register rendezvous");
+                        let sid = SessionId::new(9062);
+                        unsafe {
+                            cluster_ref
+                                .attach_endpoint_into::<0, _, _, _>(
+                                    controller_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &ENTRY_CONTROLLER_PROGRAM(),
+                                    NoBinding,
+                                )
+                                .expect("attach controller endpoint");
+                            cluster_ref
+                                .attach_endpoint_into::<1, _, _, _>(
+                                    worker_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &ENTRY_WORKER_PROGRAM(),
+                                    TestBinding::with_incoming_and_payloads(&[], &[&[42]]),
+                                )
+                                .expect("attach worker endpoint");
+                        }
+                        let _controller = controller_slot.borrow_mut();
+                        let worker = worker_slot.borrow_mut();
+                        let scope = worker.cursor.node_scope_id();
+                        assert!(!scope.is_none(), "worker must start at route scope");
+
+                        let observed = IngressEvidence {
+                            label: ENTRY_ARM0_SIGNAL_LABEL,
+                            instance: 14,
+                            has_fin: false,
+                            channel: Channel::new(11),
+                        };
+                        let selection = OfferScopeSelection {
+                            scope_id: scope,
+                            frontier_parallel_root: None,
+                            offer_lane: 0,
+                            offer_lane_idx: 0,
+                            at_route_offer_entry: false,
+                        };
+                        let resolved = ResolvedRouteDecision {
+                            route_token: RouteDecisionToken::from_ack(
+                                Arm::new(0).expect("binary route arm"),
+                            ),
+                            selected_arm: 0,
+                            resolved_label_hint: None,
+                        };
+                        let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
+                            .materialize_branch(
+                                selection,
+                                resolved,
+                                false,
+                                Some(LaneIngressEvidence::new(0, observed)),
+                                0,
+                                0,
+                                None,
+                            )
+                            .expect("materialize selected branch")
+                            .into();
+
+                        assert_eq!(
+                            branch.binding_evidence.into_option(),
+                            Some(observed),
+                            "decode preview must retain the original demux evidence identity"
+                        );
+                        let mut cx = Context::from_waker(noop_waker_ref());
+                        let decoded = {
+                            let mut decode =
+                                pin!(CursorDecode::<Msg<103, u8>>::run(worker, branch));
+                            poll_ready_ok(
+                                &mut cx,
+                                decode.as_mut(),
+                                "selected branch binding decode",
+                            )
+                        };
+                        assert_eq!(decoded, 42);
+                        assert_eq!(
+                            worker.binding.last_recv_channel(),
+                            Some(observed.channel),
+                            "decode must use the original observed binding channel"
+                        );
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn wire_recv_with_selected_binding_evidence_requeues_transport_without_staging_it() {
+    run_offer_regression_test(
+        "wire_recv_with_selected_binding_evidence_requeues_transport_without_staging_it",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, PendingOfferCluster, cluster_ref, {
+                with_offer_value_slot!(PendingControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(PendingWorkerBindingEndpoint, worker_slot, {
+                        with_offer_value_slot!(PendingTransportState, pending_state_slot, {
+                            pending_state_slot.store(PendingTransportState::default());
+                            let pending_state: &'static PendingTransportState =
+                                unsafe { &*pending_state_slot.ptr() };
+                            let transport = PendingTransport::new(pending_state);
+                            let transport_probe = transport;
+                            let rv_id = cluster_ref
+                                .add_rendezvous_from_config(config, transport)
+                                .expect("register rendezvous");
+                            let sid = SessionId::new(9064);
+                            unsafe {
+                                cluster_ref
+                                    .attach_endpoint_into::<0, _, _, _>(
+                                        controller_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &ENTRY_CONTROLLER_PROGRAM(),
+                                        NoBinding,
+                                    )
+                                    .expect("attach controller endpoint");
+                                cluster_ref
+                                    .attach_endpoint_into::<1, _, _, _>(
+                                        worker_slot.ptr(),
+                                        rv_id,
+                                        sid,
+                                        &ENTRY_WORKER_PROGRAM(),
+                                        TestBinding::with_incoming_and_payloads(&[], &[&[42]]),
+                                    )
+                                    .expect("attach worker endpoint");
+                            }
+                            let _controller = controller_slot.borrow_mut();
+                            let worker = worker_slot.borrow_mut();
+                            let scope = worker.cursor.node_scope_id();
+                            assert!(!scope.is_none(), "worker must start at route scope");
+
+                            let observed = IngressEvidence {
+                                label: ENTRY_ARM0_SIGNAL_LABEL,
+                                instance: 16,
+                                has_fin: false,
+                                channel: Channel::new(21),
+                            };
+                            let selection = OfferScopeSelection {
+                                scope_id: scope,
+                                frontier_parallel_root: None,
+                                offer_lane: 0,
+                                offer_lane_idx: 0,
+                                at_route_offer_entry: false,
+                            };
+                            let resolved = ResolvedRouteDecision {
+                                route_token: RouteDecisionToken::from_ack(
+                                    Arm::new(0).expect("binary route arm"),
+                                ),
+                                selected_arm: 0,
+                                resolved_label_hint: None,
+                            };
+                            let staged_transport = Payload::new(&[0x6b]);
+                            let staged_transport_len = staged_transport.as_bytes().len();
+                            let branch: MaterializedRouteBranch<'_> =
+                                RouteFrontierMachine::new(worker)
+                                    .materialize_branch(
+                                        selection,
+                                        resolved,
+                                        false,
+                                        Some(LaneIngressEvidence::new(0, observed)),
+                                        staged_transport_len,
+                                        0,
+                                        Some(staged_transport),
+                                    )
+                                    .expect("materialize selected branch")
+                                    .into();
+
+                            assert_eq!(
+                                transport_probe.requeue_count(),
+                                1,
+                                "selected binding evidence must requeue competing transport bytes"
+                            );
+                            assert!(
+                                !branch_has_transport_payload(&branch),
+                                "requeued transport bytes must not remain staged on the branch"
+                            );
+                            assert_eq!(
+                                branch.binding_evidence.into_option(),
+                                Some(observed),
+                                "binding evidence must remain the selected payload authority"
+                            );
+                            let mut cx = Context::from_waker(noop_waker_ref());
+                            let decoded = {
+                                let mut decode =
+                                    pin!(CursorDecode::<Msg<103, u8>>::run(worker, branch));
+                                poll_ready_ok(
+                                    &mut cx,
+                                    decode.as_mut(),
+                                    "selected binding decode with requeued transport",
+                                )
+                            };
+                            assert_eq!(
+                                decoded, 42,
+                                "decode must consume binding payload, not requeued transport bytes"
+                            );
+                            assert_eq!(
+                                worker.binding.last_recv_channel(),
+                                Some(observed.channel),
+                                "decode must call the selected binding channel"
+                            );
+                        });
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn finish_resolved_rebuffers_carried_other_arm_evidence() {
+    run_offer_regression_test(
+        "finish_resolved_rebuffers_carried_other_arm_evidence",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
+                with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(OfferHintWorkerBindingEndpoint, worker_slot, {
+                        let transport = HintOnlyTransport::new(HINT_NONE);
+                        let rv_id = cluster_ref
+                            .add_rendezvous_from_config(config, transport)
+                            .expect("register rendezvous");
+                        let sid = SessionId::new(9056);
+                        unsafe {
+                            cluster_ref
+                                .attach_endpoint_into::<0, _, _, _>(
+                                    controller_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &HINT_CONTROLLER_PROGRAM(),
+                                    NoBinding,
+                                )
+                                .expect("attach controller endpoint");
+                            cluster_ref
+                                .attach_endpoint_into::<1, _, _, _>(
+                                    worker_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &HINT_WORKER_PROGRAM(),
+                                    TestBinding::default(),
+                                )
+                                .expect("attach worker endpoint");
+                        }
+                        let _controller = controller_slot.borrow_mut();
+                        let worker = worker_slot.borrow_mut();
+                        let scope = worker.cursor.node_scope_id();
+                        assert!(!scope.is_none(), "worker must start at route scope");
+
+                        let carried_other_arm = IngressEvidence {
+                            label: HINT_RIGHT_DATA_LABEL,
+                            instance: 7,
+                            has_fin: false,
+                            channel: Channel::new(3),
+                        };
+                        let selection = OfferScopeSelection {
+                            scope_id: scope,
+                            frontier_parallel_root: None,
+                            offer_lane: 0,
+                            offer_lane_idx: 0,
+                            at_route_offer_entry: false,
+                        };
+                        let resolved = ResolvedRouteDecision {
+                            route_token: RouteDecisionToken::from_ack(
+                                Arm::new(0).expect("binary route arm"),
+                            ),
+                            selected_arm: 0,
+                            resolved_label_hint: None,
+                        };
+                        let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
+                            .materialize_branch(
+                                selection,
+                                resolved,
+                                false,
+                                Some(LaneIngressEvidence::new(0, carried_other_arm)),
+                                0,
+                                0,
+                                None,
+                            )
+                            .expect("materialize selected branch")
+                            .into();
+
+                        assert_eq!(branch_label(&branch), HINT_LEFT_DATA_LABEL);
+                        assert!(
+                            branch.binding_evidence.into_option().is_none(),
+                            "selected branch must not carry other-arm demux evidence"
+                        );
+                        let deferred = worker.binding_inbox.take_matching_or_poll(
+                            &mut worker.binding,
+                            0,
+                            HINT_RIGHT_DATA_LABEL,
+                        );
+                        assert_eq!(
+                            deferred,
+                            Some(carried_other_arm),
+                            "other-arm evidence must be rebuffered for its own branch"
+                        );
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn finish_resolved_does_not_drop_carried_other_arm_when_fresh_selected_evidence_exists() {
+    run_offer_regression_test(
+        "finish_resolved_does_not_drop_carried_other_arm_when_fresh_selected_evidence_exists",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
+                with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(OfferHintWorkerBindingEndpoint, worker_slot, {
+                        let transport = HintOnlyTransport::new(HINT_NONE);
+                        let rv_id = cluster_ref
+                            .add_rendezvous_from_config(config, transport)
+                            .expect("register rendezvous");
+                        let sid = SessionId::new(9057);
+                        unsafe {
+                            cluster_ref
+                                .attach_endpoint_into::<0, _, _, _>(
+                                    controller_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &HINT_CONTROLLER_PROGRAM(),
+                                    NoBinding,
+                                )
+                                .expect("attach controller endpoint");
+                            cluster_ref
+                                .attach_endpoint_into::<1, _, _, _>(
+                                    worker_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &HINT_WORKER_PROGRAM(),
+                                    TestBinding::default(),
+                                )
+                                .expect("attach worker endpoint");
+                        }
+                        let _controller = controller_slot.borrow_mut();
+                        let worker = worker_slot.borrow_mut();
+                        let scope = worker.cursor.node_scope_id();
+                        assert!(!scope.is_none(), "worker must start at route scope");
+
+                        let fresh_selected = IngressEvidence {
+                            label: HINT_LEFT_DATA_LABEL,
+                            instance: 9,
+                            has_fin: true,
+                            channel: Channel::new(5),
+                        };
+                        let carried_other_arm = IngressEvidence {
+                            label: HINT_RIGHT_DATA_LABEL,
+                            instance: 7,
+                            has_fin: false,
+                            channel: Channel::new(3),
+                        };
+                        worker.binding_inbox.put_back(0, fresh_selected);
+
+                        let selection = OfferScopeSelection {
+                            scope_id: scope,
+                            frontier_parallel_root: None,
+                            offer_lane: 0,
+                            offer_lane_idx: 0,
+                            at_route_offer_entry: false,
+                        };
+                        let resolved = ResolvedRouteDecision {
+                            route_token: RouteDecisionToken::from_ack(
+                                Arm::new(0).expect("binary route arm"),
+                            ),
+                            selected_arm: 0,
+                            resolved_label_hint: None,
+                        };
+                        let branch: MaterializedRouteBranch<'_> = RouteFrontierMachine::new(worker)
+                            .materialize_branch(
+                                selection,
+                                resolved,
+                                false,
+                                Some(LaneIngressEvidence::new(0, carried_other_arm)),
+                                0,
+                                0,
+                                None,
+                            )
+                            .expect("materialize selected branch")
+                            .into();
+
+                        assert_eq!(branch.binding_evidence.into_option(), Some(fresh_selected));
+                        let deferred = worker.binding_inbox.take_matching_or_poll(
+                            &mut worker.binding,
+                            0,
+                            HINT_RIGHT_DATA_LABEL,
+                        );
+                        assert_eq!(
+                            deferred,
+                            Some(carried_other_arm),
+                            "fresh selected evidence must not cause carried other-arm evidence to be dropped"
+                        );
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn authoritative_arm_decode_never_reads_other_arm_binding_channel() {
+    run_offer_regression_test(
+        "authoritative_arm_decode_never_reads_other_arm_binding_channel",
+        || {
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
+                with_offer_value_slot!(OfferHintControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(OfferHintWorkerBindingEndpoint, worker_slot, {
+                        let transport = HintOnlyTransport::new(HINT_NONE);
+                        let rv_id = cluster_ref
+                            .add_rendezvous_from_config(config, transport)
+                            .expect("register rendezvous");
+                        let sid = SessionId::new(9058);
+                        unsafe {
+                            cluster_ref
+                                .attach_endpoint_into::<0, _, _, _>(
+                                    controller_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &HINT_CONTROLLER_PROGRAM(),
+                                    NoBinding,
+                                )
+                                .expect("attach controller endpoint");
+                            cluster_ref
+                                .attach_endpoint_into::<1, _, _, _>(
+                                    worker_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &HINT_WORKER_PROGRAM(),
+                                    TestBinding::with_incoming_and_payloads(&[], &[&[42]]),
+                                )
+                                .expect("attach worker endpoint");
+                        }
+                        let _controller = controller_slot.borrow_mut();
+                        let worker = worker_slot.borrow_mut();
+                        let scope = worker.cursor.node_scope_id();
+                        assert!(!scope.is_none(), "worker must start at route scope");
+
+                        let selected_evidence = IngressEvidence {
+                            label: HINT_LEFT_DATA_LABEL,
+                            instance: 9,
+                            has_fin: false,
+                            channel: Channel::new(5),
+                        };
+                        let other_arm_evidence = IngressEvidence {
+                            label: HINT_RIGHT_DATA_LABEL,
+                            instance: 7,
+                            has_fin: false,
+                            channel: Channel::new(3),
+                        };
+                        worker.binding_inbox.put_back(0, selected_evidence);
+                        let selection = OfferScopeSelection {
+                            scope_id: scope,
+                            frontier_parallel_root: None,
+                            offer_lane: 0,
+                            offer_lane_idx: 0,
+                            at_route_offer_entry: false,
+                        };
+                        let resolved = ResolvedRouteDecision {
+                            route_token: RouteDecisionToken::from_ack(
+                                Arm::new(0).expect("binary route arm"),
+                            ),
+                            selected_arm: 0,
+                            resolved_label_hint: None,
+                        };
+                        let branch = RouteFrontierMachine::new(worker)
+                            .materialize_branch(
+                                selection,
+                                resolved,
+                                false,
+                                Some(LaneIngressEvidence::new(0, other_arm_evidence)),
+                                0,
+                                0,
+                                None,
+                            )
+                            .expect("materialize selected branch")
+                            .into();
+
+                        let mut cx = Context::from_waker(noop_waker_ref());
+                        let decoded = {
+                            let mut decode =
+                                pin!(CursorDecode::<Msg<100, u8>>::run(worker, branch));
+                            poll_ready_ok(
+                                &mut cx,
+                                decode.as_mut(),
+                                "selected branch binding decode",
+                            )
+                        };
+                        assert_eq!(decoded, 42);
+                        assert_eq!(
+                            worker.binding.last_recv_channel(),
+                            Some(selected_evidence.channel),
+                            "decode must use the selected arm binding channel, not carried other-arm evidence"
+                        );
+                        let deferred = worker.binding_inbox.take_matching_or_poll(
+                            &mut worker.binding,
+                            0,
+                            HINT_RIGHT_DATA_LABEL,
+                        );
+                        assert_eq!(deferred, Some(other_arm_evidence));
                     });
                 });
             });
@@ -7123,7 +8166,7 @@ fn static_passive_binding_label_materializes_poll() {
                         rv_id,
                         sid,
                         &entry_worker_program,
-                        TestBinding::with_incoming(&[IncomingClassification {
+                        TestBinding::with_incoming(&[IngressEvidence {
                             label: ENTRY_ARM0_SIGNAL_LABEL,
                             instance: 0,
                             has_fin: false,
@@ -7147,16 +8190,15 @@ fn static_passive_binding_label_materializes_poll() {
 
             let label_meta = endpoint_scope_label_meta(&worker, scope, ScopeLoopMeta::EMPTY);
 
-            let mut binding_classification = None;
-            worker.cache_binding_classification_for_offer(
+            let mut binding_evidence = None;
+            worker.cache_binding_evidence_for_offer(
                 scope,
                 0,
                 label_meta,
                 worker.offer_scope_materialization_meta(scope, 0),
-                &mut binding_classification,
+                &mut binding_evidence,
             );
-            let classification =
-                binding_classification.expect("binding classification should be staged for poll");
+            let evidence = binding_evidence.expect("binding evidence should be staged for poll");
             with_lane_set_view(&[0], |offer_lanes| {
                 worker.ingest_scope_evidence_for_offer_lanes(
                     scope,
@@ -7166,7 +8208,7 @@ fn static_passive_binding_label_materializes_poll() {
                     label_meta,
                 );
             });
-            worker.ingest_binding_scope_evidence(scope, classification.label, false, label_meta);
+            worker.ingest_binding_scope_evidence(scope, evidence.label(), false, label_meta);
 
             assert!(
                 worker.peek_scope_ack(scope).is_none(),
@@ -7175,7 +8217,7 @@ fn static_passive_binding_label_materializes_poll() {
             let resolved_label = worker.take_scope_hint(scope);
             assert_eq!(
                 resolved_label,
-                Some(classification.label),
+                Some(evidence.label()),
                 "binding-backed poll should still preserve the resolved ingress label"
             );
             assert_eq!(
@@ -7406,6 +8448,356 @@ fn nested_static_passive_binding_dispatch_materializes_poll_on_ancestor_scopes()
 }
 
 #[test]
+fn dynamic_linger_parent_route_without_authoritative_arm_fails_decode_commit() {
+    run_offer_regression_test(
+        "dynamic_linger_parent_route_without_authoritative_arm_fails_decode_commit",
+        || {
+            type EntryArm0SignalMsg = Msg<{ ENTRY_ARM0_SIGNAL_LABEL }, u8>;
+            type EntryArm0ReplyMsg = Msg<104, u8>;
+            type DynamicParentLeftSteps =
+                SeqSteps<HintLeftHead, SendOnly<0, Role<0>, Role<1>, Msg<100, u8>>>;
+            type DynamicParentRightBodySteps = SeqSteps<
+                SendOnly<0, Role<0>, Role<1>, EntryArm0SignalMsg>,
+                SendOnly<0, Role<1>, Role<0>, EntryArm0ReplyMsg>,
+            >;
+            type DynamicParentRightSteps = SeqSteps<HintRightHead, DynamicParentRightBodySteps>;
+            type DynamicParentEntrySteps =
+                BranchSteps<DynamicParentLeftSteps, DynamicParentRightSteps>;
+            static DYNAMIC_DECODE_PAYLOAD: [u8; 1] = [0x5a];
+            type ControllerEndpoint = CursorEndpoint<
+                'static,
+                0,
+                HintOnlyTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                crate::control::cap::mint::EpochTbl,
+                4,
+                crate::control::cap::mint::MintConfig,
+                NoBinding,
+            >;
+            type WorkerEndpoint = CursorEndpoint<
+                'static,
+                1,
+                HintOnlyTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                crate::control::cap::mint::EpochTbl,
+                4,
+                crate::control::cap::mint::MintConfig,
+                NoBinding,
+            >;
+
+            let program: g::Program<DynamicParentEntrySteps> = g::route(
+                HINT_LEFT_ARM(),
+                g::seq(
+                    g::send::<
+                        Role<0>,
+                        Role<0>,
+                        Msg<
+                            ROUTE_HINT_RIGHT_LABEL,
+                            GenericCapToken<RouteHintRightKind>,
+                            RouteHintRightKind,
+                        >,
+                        0,
+                    >()
+                    .policy::<HINT_ROUTE_POLICY_ID>(),
+                    g::seq(
+                        g::send::<Role<0>, Role<1>, EntryArm0SignalMsg, 0>(),
+                        g::send::<Role<1>, Role<0>, EntryArm0ReplyMsg, 0>(),
+                    ),
+                ),
+            );
+            let controller_program: RoleProgram<0> = project(&program);
+            let worker_program: RoleProgram<1> = project(&program);
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
+                with_offer_value_slot!(ControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(WorkerEndpoint, worker_slot, {
+                        let transport = HintOnlyTransport::new(HINT_NONE);
+                        let rv_id = cluster_ref
+                            .add_rendezvous_from_config(config, transport)
+                            .expect("register rendezvous");
+                        let sid = SessionId::new(913);
+                        unsafe {
+                            cluster_ref
+                                .attach_endpoint_into::<0, _, _, _>(
+                                    controller_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &controller_program,
+                                    NoBinding,
+                                )
+                                .expect("attach controller endpoint");
+                            cluster_ref
+                                .attach_endpoint_into::<1, _, _, _>(
+                                    worker_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &worker_program,
+                                    NoBinding,
+                                )
+                                .expect("attach worker endpoint");
+                        }
+
+                        let worker = worker_slot.borrow_mut();
+                        let parent_scope = worker.cursor.node_scope_id();
+                        assert!(
+                            worker
+                                .cursor
+                                .first_recv_target(parent_scope, ENTRY_ARM0_SIGNAL_LABEL)
+                                .is_none(),
+                            "dynamic parent route must not expose static Poll dispatch"
+                        );
+                        let (parent_arm, target_idx) = (0..worker.cursor.local_steps_len())
+                            .find_map(|idx| {
+                                let recv_meta = worker.cursor.try_recv_meta_at(idx)?;
+                                if recv_meta.label == ENTRY_ARM0_SIGNAL_LABEL
+                                    && recv_meta.scope == parent_scope
+                                {
+                                    Some((recv_meta.route_arm?, idx))
+                                } else {
+                                    None
+                                }
+                            })
+                            .expect("dynamic parent right arm should contain the staged recv");
+                        assert_eq!(parent_arm, 1);
+                        worker.set_cursor_index(target_idx);
+                        let recv_meta = worker
+                            .cursor
+                            .try_recv_meta()
+                            .expect("cursor must point at recv");
+                        assert_eq!(recv_meta.label, ENTRY_ARM0_SIGNAL_LABEL);
+                        let before_cursor = worker.cursor.index();
+                        assert_eq!(
+                            worker.selected_arm_for_scope(parent_scope),
+                            None,
+                            "dynamic parent must start without route authority"
+                        );
+
+                        let branch = MaterializedRouteBranch {
+                            label: ENTRY_ARM0_SIGNAL_LABEL,
+                            binding_evidence: PackedIngressEvidence::EMPTY,
+                            binding_evidence_lane: u8::MAX,
+                            staged_payload: Some(StagedPayload::Transport {
+                                lane: recv_meta.lane,
+                                payload: Payload::new(&DYNAMIC_DECODE_PAYLOAD),
+                            }),
+                            branch_meta: BranchMeta {
+                                scope_id: parent_scope,
+                                selected_arm: parent_arm,
+                                lane_wire: recv_meta.lane,
+                                eff_index: recv_meta.eff_index,
+                                kind: BranchKind::WireRecv,
+                                route_source: RouteDecisionSource::Poll,
+                            },
+                        };
+                        let mut cx = Context::from_waker(noop_waker_ref());
+                        {
+                            let mut decode =
+                                pin!(CursorDecode::<EntryArm0SignalMsg>::run(worker, branch));
+                            match decode.as_mut().poll(&mut cx) {
+                                Poll::Ready(Err(RecvError::PhaseInvariant)) => {}
+                                Poll::Ready(Ok(_)) => panic!(
+                                    "decode must not commit a dynamic linger parent from child label evidence"
+                                ),
+                                Poll::Ready(Err(err)) => {
+                                    panic!("decode failed with unexpected error: {err:?}")
+                                }
+                                Poll::Pending => panic!("staged decode unexpectedly pending"),
+                            }
+                        }
+
+                        assert_eq!(
+                            worker.selected_arm_for_scope(parent_scope),
+                            None,
+                            "dynamic parent must remain unselected after failed decode commit"
+                        );
+                        assert_eq!(
+                            worker.cursor.index(),
+                            before_cursor,
+                            "decode commit failure must not publish cursor progress"
+                        );
+                        assert!(
+                            worker.peek_scope_ack(parent_scope).is_none(),
+                            "decode failure must not mint ACK authority for the dynamic parent"
+                        );
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
+fn static_linger_parent_route_commits_only_through_static_poll_descriptor() {
+    run_offer_regression_test(
+        "static_linger_parent_route_commits_only_through_static_poll_descriptor",
+        || {
+            type EntryArm0SignalMsg = Msg<{ ENTRY_ARM0_SIGNAL_LABEL }, u8>;
+            type EntryArm0ReplyMsg = Msg<104, u8>;
+            static STATIC_DECODE_PAYLOAD: [u8; 1] = [0x5b];
+            type StaticParentEntryLeftSteps = SeqSteps<
+                SendOnly<0, Role<0>, Role<0>, NestedStaticRouteLeftMsg>,
+                SendOnly<0, Role<0>, Role<1>, NestedStaticOuterLeftMsg>,
+            >;
+            type StaticParentEntryRightBodySteps = SeqSteps<
+                SendOnly<0, Role<0>, Role<1>, EntryArm0SignalMsg>,
+                SendOnly<0, Role<1>, Role<0>, EntryArm0ReplyMsg>,
+            >;
+            type StaticParentEntryRightSteps = SeqSteps<
+                SendOnly<0, Role<0>, Role<0>, NestedStaticRouteRightMsg>,
+                StaticParentEntryRightBodySteps,
+            >;
+            type StaticParentEntrySteps =
+                BranchSteps<StaticParentEntryLeftSteps, StaticParentEntryRightSteps>;
+            type ControllerEndpoint = CursorEndpoint<
+                'static,
+                0,
+                HintOnlyTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                crate::control::cap::mint::EpochTbl,
+                4,
+                crate::control::cap::mint::MintConfig,
+                NoBinding,
+            >;
+            type WorkerEndpoint = CursorEndpoint<
+                'static,
+                1,
+                HintOnlyTransport,
+                DefaultLabelUniverse,
+                CounterClock,
+                crate::control::cap::mint::EpochTbl,
+                4,
+                crate::control::cap::mint::MintConfig,
+                NoBinding,
+            >;
+
+            let program: g::Program<StaticParentEntrySteps> = g::route(
+                g::seq(
+                    g::send::<Role<0>, Role<0>, NestedStaticRouteLeftMsg, 0>(),
+                    g::send::<Role<0>, Role<1>, NestedStaticOuterLeftMsg, 0>(),
+                ),
+                g::seq(
+                    g::send::<Role<0>, Role<0>, NestedStaticRouteRightMsg, 0>(),
+                    g::seq(
+                        g::send::<Role<0>, Role<1>, EntryArm0SignalMsg, 0>(),
+                        g::send::<Role<1>, Role<0>, EntryArm0ReplyMsg, 0>(),
+                    ),
+                ),
+            );
+            let controller_program: RoleProgram<0> = project(&program);
+            let worker_program: RoleProgram<1> = project(&program);
+            offer_fixture!(2048, clock, config);
+            with_offer_cluster!(clock, OfferHintCluster, cluster_ref, {
+                with_offer_value_slot!(ControllerEndpoint, controller_slot, {
+                    with_offer_value_slot!(WorkerEndpoint, worker_slot, {
+                        let transport = HintOnlyTransport::new(HINT_NONE);
+                        let rv_id = cluster_ref
+                            .add_rendezvous_from_config(config, transport)
+                            .expect("register rendezvous");
+                        let sid = SessionId::new(914);
+                        unsafe {
+                            cluster_ref
+                                .attach_endpoint_into::<0, _, _, _>(
+                                    controller_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &controller_program,
+                                    NoBinding,
+                                )
+                                .expect("attach controller endpoint");
+                            cluster_ref
+                                .attach_endpoint_into::<1, _, _, _>(
+                                    worker_slot.ptr(),
+                                    rv_id,
+                                    sid,
+                                    &worker_program,
+                                    NoBinding,
+                                )
+                                .expect("attach worker endpoint");
+                        }
+
+                        let worker = worker_slot.borrow_mut();
+                        let parent_scope = worker.cursor.node_scope_id();
+                        assert_eq!(
+                            worker
+                                .cursor
+                                .first_recv_target(parent_scope, ENTRY_ARM0_SIGNAL_LABEL)
+                                .map(|(arm, _)| arm),
+                            Some(1),
+                            "static parent must expose compiled Poll dispatch for the child label"
+                        );
+                        assert!(
+                            worker.peek_scope_ack(parent_scope).is_none(),
+                            "test must start without ACK/Resolver route authority"
+                        );
+                        let (parent_arm, target_idx) = worker
+                            .cursor
+                            .first_recv_target(parent_scope, ENTRY_ARM0_SIGNAL_LABEL)
+                            .expect("parent route should expose Poll dispatch");
+                        assert_eq!(parent_arm, 1);
+                        worker.set_cursor_index(state_index_to_usize(target_idx));
+                        let recv_meta = worker
+                            .cursor
+                            .try_recv_meta()
+                            .expect("cursor must point at child recv");
+                        assert_eq!(recv_meta.label, ENTRY_ARM0_SIGNAL_LABEL);
+
+                        let branch = MaterializedRouteBranch {
+                            label: ENTRY_ARM0_SIGNAL_LABEL,
+                            binding_evidence: PackedIngressEvidence::EMPTY,
+                            binding_evidence_lane: u8::MAX,
+                            staged_payload: Some(StagedPayload::Transport {
+                                lane: recv_meta.lane,
+                                payload: Payload::new(&STATIC_DECODE_PAYLOAD),
+                            }),
+                            branch_meta: BranchMeta {
+                                scope_id: parent_scope,
+                                selected_arm: parent_arm,
+                                lane_wire: recv_meta.lane,
+                                eff_index: recv_meta.eff_index,
+                                kind: BranchKind::WireRecv,
+                                route_source: RouteDecisionSource::Poll,
+                            },
+                        };
+                        let mut cx = Context::from_waker(noop_waker_ref());
+                        {
+                            let mut decode =
+                                pin!(CursorDecode::<EntryArm0SignalMsg>::run(worker, branch));
+                            let decoded = poll_ready_ok(
+                                &mut cx,
+                                decode.as_mut(),
+                                "static child decode commit",
+                            );
+                            assert_eq!(decoded, STATIC_DECODE_PAYLOAD[0]);
+                        }
+
+                        assert_eq!(
+                            worker.selected_arm_for_scope(parent_scope),
+                            Some(1),
+                            "static parent route must commit through compiled Poll descriptor"
+                        );
+                        assert!(
+                            worker.peek_scope_ack(parent_scope).is_none(),
+                            "static Poll commit must not synthesize ACK authority"
+                        );
+                        let follow_up = 0x6cu8;
+                        let mut send_reply =
+                            pin!(CursorSend::<EntryArm0ReplyMsg>::run(worker, &follow_up));
+                        let _ = poll_ready_ok(
+                            &mut cx,
+                            send_reply.as_mut(),
+                            "post-decode child route continuation",
+                        );
+                    });
+                });
+            });
+        },
+    );
+}
+
+#[test]
 fn deep_right_nested_static_passive_binding_dispatch_materializes_poll_on_all_ancestor_scopes() {
     run_offer_regression_test(
         "deep_right_nested_static_passive_binding_dispatch_materializes_poll_on_all_ancestor_scopes",
@@ -7585,7 +8977,7 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label() {
                             sid,
                             &deep_right_worker_program,
                             TestBinding::with_incoming_and_payloads(
-                                &[IncomingClassification {
+                                &[IngressEvidence {
                                     label: 0x55,
                                     instance: 17,
                                     has_fin: false,
@@ -7647,7 +9039,7 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label() {
                 }
 
                 let worker = unsafe { &mut *worker_storage.as_mut_ptr().cast::<WorkerEndpoint>() };
-                let mut branch = {
+                let branch = {
                     let mut offer = pin!(cursor_offer(worker));
                     match offer.as_mut().poll(&mut cx) {
                         Poll::Ready(Ok(branch)) => branch,
@@ -7664,10 +9056,7 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label() {
                     0x55,
                     "worker must materialize the deep final reply"
                 );
-                let mut decode = pin!(CursorDecode::<DeepRightFinalRightMsg>::run(
-                    worker,
-                    &mut branch
-                ));
+                let mut decode = pin!(CursorDecode::<DeepRightFinalRightMsg>::run(worker, branch));
                 match decode.as_mut().poll(&mut cx) {
                     Poll::Ready(Ok(reply)) => assert_eq!(reply, payload),
                     Poll::Ready(Err(err)) => {
@@ -7758,7 +9147,7 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label_with_deferred_bin
                                 &deep_right_worker_program,
                                 DeferredIngressBinding::with_incoming_and_payloads(
                                     deferred_state,
-                                    &[IncomingClassification {
+                                    &[IngressEvidence {
                                         label: 0x55,
                                         instance: 17,
                                         has_fin: false,
@@ -7849,7 +9238,7 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label_with_deferred_bin
 
                     let worker =
                         unsafe { &mut *worker_storage.as_mut_ptr().cast::<WorkerEndpoint>() };
-                    let mut branch = {
+                    let branch = {
                         let mut offer = pin!(cursor_offer(worker));
                         match offer.as_mut().poll(&mut cx) {
                             Poll::Ready(Ok(branch)) => branch,
@@ -7866,10 +9255,8 @@ fn deep_right_nested_final_reply_offer_materializes_leaf_label_with_deferred_bin
                         0x55,
                         "worker must materialize the deep final reply after deferred binding ingress"
                     );
-                    let mut decode = pin!(CursorDecode::<DeepRightFinalRightMsg>::run(
-                        worker,
-                        &mut branch
-                    ));
+                    let mut decode =
+                        pin!(CursorDecode::<DeepRightFinalRightMsg>::run(worker, branch));
                     match decode.as_mut().poll(&mut cx) {
                         Poll::Ready(Ok(reply)) => assert_eq!(reply, payload),
                         Poll::Ready(Err(err)) => {
@@ -7993,18 +9380,15 @@ fn select_scope_recovers_route_state_from_current_arm_position() {
                         "current node must carry structural arm annotation"
                     );
 
-                    let recovered = worker
-                        .ensure_current_route_arm_state()
-                        .expect("route-state recovery should not fail");
-                    assert_eq!(
-                        recovered,
-                        Some(true),
-                        "current arm position should recover missing route state"
+                    let recovered = worker.current_route_arm_authorized();
+                    assert!(
+                        recovered.is_err(),
+                        "missing runtime route state must fail closed instead of being repaired"
                     );
                     assert_eq!(
                         worker.selected_arm_for_scope(scope),
-                        Some(0),
-                        "current arm position should restore selected arm state"
+                        None,
+                        "current arm position must not restore selected arm state"
                     );
                 });
             });
@@ -9150,7 +10534,7 @@ fn passive_offer_descends_into_nested_route_after_loop_continue_and_custom_route
                                     rv_id,
                                     sid,
                                     &LOOP_CONTINUE_PASSIVE_WORKER_PROGRAM(),
-                                    TestBinding::with_incoming(&[IncomingClassification {
+                                    TestBinding::with_incoming(&[IngressEvidence {
                                         label: LOOP_CONTINUE_PASSIVE_RIGHT_REPLY_LABEL,
                                         instance: 1,
                                         has_fin: false,
@@ -9384,7 +10768,7 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                 reply_payload: u8,
             ) {
                 let server = server_slot.borrow_mut();
-                let mut branch = {
+                let branch = {
                     let mut server_offer = core::pin::pin!(cursor_offer(server));
                     poll_ready_ok(cx, server_offer.as_mut(), "server request offer")
                 };
@@ -9394,9 +10778,8 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                     "server must first observe the request"
                 );
                 {
-                    let mut server_decode = core::pin::pin!(
-                        CursorDecode::<SessionRequestWireMsg>::run(server, &mut branch)
-                    );
+                    let mut server_decode =
+                        core::pin::pin!(CursorDecode::<SessionRequestWireMsg>::run(server, branch));
                     let _request =
                         poll_ready_ok(cx, server_decode.as_mut(), "server request decode");
                 }
@@ -9436,7 +10819,7 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                 client_slot: &mut OfferValueSlotGuard<'_, ClientEndpoint>,
             ) {
                 let client = client_slot.borrow_mut();
-                let mut reply_branch = {
+                let reply_branch = {
                     let mut client_offer = core::pin::pin!(cursor_offer(client));
                     poll_ready_ok(cx, client_offer.as_mut(), "client snapshot reply offer")
                 };
@@ -9450,7 +10833,7 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                     let mut client_decode = core::pin::pin!(CursorDecode::<
                         SnapshotCandidatesReplyMsg,
                     >::run(
-                        client, &mut reply_branch
+                        client, reply_branch
                     ));
                     let _reply =
                         poll_ready_ok(cx, client_decode.as_mut(), "client snapshot reply decode");
@@ -9478,7 +10861,7 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                 reply_payload: u8,
             ) {
                 let server = server_slot.borrow_mut();
-                let mut branch = {
+                let branch = {
                     let mut server_offer = core::pin::pin!(cursor_offer(server));
                     poll_ready_ok(cx, server_offer.as_mut(), "server commit request offer")
                 };
@@ -9488,9 +10871,8 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                     "server must observe the second request"
                 );
                 {
-                    let mut server_decode = core::pin::pin!(
-                        CursorDecode::<SessionRequestWireMsg>::run(server, &mut branch)
-                    );
+                    let mut server_decode =
+                        core::pin::pin!(CursorDecode::<SessionRequestWireMsg>::run(server, branch));
                     let _request =
                         poll_ready_ok(cx, server_decode.as_mut(), "server commit request decode");
                 }
@@ -9541,7 +10923,7 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                 client_slot: &mut OfferValueSlotGuard<'_, ClientEndpoint>,
             ) {
                 let client = client_slot.borrow_mut();
-                let mut commit_branch = {
+                let commit_branch = {
                     let mut client_offer = core::pin::pin!(cursor_offer(client));
                     poll_ready_ok(cx, client_offer.as_mut(), "client commit reply offer")
                 };
@@ -9552,7 +10934,7 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                 );
                 {
                     let mut client_decode = core::pin::pin!(
-                        CursorDecode::<CommitCandidatesReplyMsg>::run(client, &mut commit_branch)
+                        CursorDecode::<CommitCandidatesReplyMsg>::run(client, commit_branch)
                     );
                     let _reply =
                         poll_ready_ok(cx, client_decode.as_mut(), "client commit reply decode");
@@ -9612,7 +10994,7 @@ fn loop_continue_request_then_triple_nested_reply_route_keeps_client_offer_and_s
                                         sid,
                                         &client_program,
                                         TestBinding::with_incoming_and_payloads(
-                                            &[IncomingClassification {
+                                            &[IngressEvidence {
                                                 label: 0x51,
                                                 instance: 11,
                                                 has_fin: false,
@@ -9799,7 +11181,7 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                 admin_reply_payload: u8,
             ) {
                 let server = server_slot.borrow_mut();
-                let mut branch = {
+                let branch = {
                     let mut offer_request = core::pin::pin!(cursor_offer(server));
                     poll_ready_ok(cx, offer_request.as_mut(), "server admin request offer")
                 };
@@ -9809,9 +11191,8 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                     "server must first observe the admin request"
                 );
                 {
-                    let mut decode_request = core::pin::pin!(
-                        CursorDecode::<SessionRequestWireMsg>::run(server, &mut branch)
-                    );
+                    let mut decode_request =
+                        core::pin::pin!(CursorDecode::<SessionRequestWireMsg>::run(server, branch));
                     let _ =
                         poll_ready_ok(cx, decode_request.as_mut(), "server admin request decode");
                 }
@@ -9835,7 +11216,7 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                 client_slot: &mut OfferValueSlotGuard<'_, ClientEndpoint>,
             ) {
                 let client = client_slot.borrow_mut();
-                let mut admin_branch = {
+                let admin_branch = {
                     let mut offer_reply = core::pin::pin!(cursor_offer(client));
                     poll_ready_ok(cx, offer_reply.as_mut(), "client admin reply offer")
                 };
@@ -9846,10 +11227,8 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                 );
                 let admin_reply_scope = branch_scope(&admin_branch);
                 {
-                    let mut decode_reply = core::pin::pin!(CursorDecode::<AdminReplyMsg>::run(
-                        client,
-                        &mut admin_branch
-                    ));
+                    let mut decode_reply =
+                        core::pin::pin!(CursorDecode::<AdminReplyMsg>::run(client, admin_branch));
                     let _ = poll_ready_ok(cx, decode_reply.as_mut(), "client admin reply decode");
                 }
                 assert_eq!(
@@ -9898,7 +11277,7 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                 snapshot_reply_payload: u8,
             ) {
                 let server = server_slot.borrow_mut();
-                let mut branch = {
+                let branch = {
                     let mut offer_request = core::pin::pin!(cursor_offer(server));
                     poll_ready_ok(cx, offer_request.as_mut(), "server snapshot request offer")
                 };
@@ -9908,9 +11287,8 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                     "server must observe the snapshot request"
                 );
                 {
-                    let mut decode_request = core::pin::pin!(
-                        CursorDecode::<SessionRequestWireMsg>::run(server, &mut branch)
-                    );
+                    let mut decode_request =
+                        core::pin::pin!(CursorDecode::<SessionRequestWireMsg>::run(server, branch));
                     let _ = poll_ready_ok(
                         cx,
                         decode_request.as_mut(),
@@ -9964,7 +11342,7 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                 client_slot: &mut OfferValueSlotGuard<'_, ClientEndpoint>,
             ) {
                 let client = client_slot.borrow_mut();
-                let mut snapshot_branch = {
+                let snapshot_branch = {
                     let mut offer_reply = core::pin::pin!(cursor_offer(client));
                     poll_ready_ok(
                         cx,
@@ -9981,7 +11359,7 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                     let mut decode_reply = core::pin::pin!(CursorDecode::<
                         SnapshotCandidatesReplyMsg,
                     >::run(
-                        client, &mut snapshot_branch
+                        client, snapshot_branch
                     ));
                     let _ = poll_ready_ok(
                         cx,
@@ -10036,13 +11414,13 @@ fn admin_reply_then_snapshot_reply_right_path_survives_next_iteration() {
                                         &client_program,
                                         TestBinding::with_incoming_and_payloads(
                                             &[
-                                                IncomingClassification {
+                                                IngressEvidence {
                                                     label: 0x50,
                                                     instance: 21,
                                                     has_fin: false,
                                                     channel: Channel::new(13),
                                                 },
-                                                IncomingClassification {
+                                                IngressEvidence {
                                                     label: 0x51,
                                                     instance: 22,
                                                     has_fin: false,
@@ -10319,15 +11697,14 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                 reply_payload: u8,
             ) {
                 let server = server_slot.borrow_mut();
-                let mut branch = {
+                let branch = {
                     let mut server_offer = core::pin::pin!(cursor_offer(server));
                     poll_ready_ok(cx, server_offer.as_mut(), "server first request offer")
                 };
                 assert_eq!(branch_label(&branch), 0x10);
                 {
-                    let mut server_decode = core::pin::pin!(
-                        CursorDecode::<SessionRequestWireMsg>::run(server, &mut branch)
-                    );
+                    let mut server_decode =
+                        core::pin::pin!(CursorDecode::<SessionRequestWireMsg>::run(server, branch));
                     let _request =
                         poll_ready_ok(cx, server_decode.as_mut(), "server first request decode");
                 }
@@ -10372,18 +11749,17 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                 client_slot: &mut OfferValueSlotGuard<'_, ClientEndpoint>,
             ) {
                 let client = client_slot.borrow_mut();
-                let mut branch = {
+                let branch = {
                     let mut client_offer = core::pin::pin!(cursor_offer(client));
                     poll_ready_ok(cx, client_offer.as_mut(), "client first offer")
                 };
                 assert_eq!(branch_label(&branch), 0x51);
                 let branch_scope = branch_scope(&branch);
                 {
-                    let mut client_decode = core::pin::pin!(CursorDecode::<
-                        SnapshotCandidatesReplyMsg,
-                    >::run(
-                        client, &mut branch
-                    ));
+                    let mut client_decode =
+                        core::pin::pin!(CursorDecode::<SnapshotCandidatesReplyMsg>::run(
+                            client, branch
+                        ));
                     let _reply = poll_ready_ok(cx, client_decode.as_mut(), "client first decode");
                 }
                 {
@@ -10405,15 +11781,14 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                 reply_payload: u8,
             ) {
                 let server = server_slot.borrow_mut();
-                let mut branch = {
+                let branch = {
                     let mut server_offer = core::pin::pin!(cursor_offer(server));
                     poll_ready_ok(cx, server_offer.as_mut(), "server second request offer")
                 };
                 assert_eq!(branch_label(&branch), 0x10);
                 {
-                    let mut server_decode = core::pin::pin!(
-                        CursorDecode::<SessionRequestWireMsg>::run(server, &mut branch)
-                    );
+                    let mut server_decode =
+                        core::pin::pin!(CursorDecode::<SessionRequestWireMsg>::run(server, branch));
                     let _request =
                         poll_ready_ok(cx, server_decode.as_mut(), "server second request decode");
                 }
@@ -10469,15 +11844,14 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                 client_slot: &mut OfferValueSlotGuard<'_, ClientEndpoint>,
             ) {
                 let client = client_slot.borrow_mut();
-                let mut branch = {
+                let branch = {
                     let mut client_offer = core::pin::pin!(cursor_offer(client));
                     poll_ready_ok(cx, client_offer.as_mut(), "client second offer")
                 };
                 assert_eq!(branch_label(&branch), 0x55);
                 {
-                    let mut client_decode = core::pin::pin!(
-                        CursorDecode::<CommitFinalReplyMsg>::run(client, &mut branch)
-                    );
+                    let mut client_decode =
+                        core::pin::pin!(CursorDecode::<CommitFinalReplyMsg>::run(client, branch));
                     let _reply = poll_ready_ok(cx, client_decode.as_mut(), "client second decode");
                 }
                 {
@@ -10511,13 +11885,13 @@ fn snapshot_then_commit_final_reply_survives_next_iteration() {
                                         &client_program,
                                         TestBinding::with_incoming_and_payloads(
                                             &[
-                                                IncomingClassification {
+                                                IngressEvidence {
                                                     label: 0x51,
                                                     instance: 41,
                                                     has_fin: false,
                                                     channel: Channel::new(17),
                                                 },
-                                                IncomingClassification {
+                                                IngressEvidence {
                                                     label: 0x55,
                                                     instance: 42,
                                                     has_fin: false,
@@ -10633,7 +12007,7 @@ fn dropping_pending_decode_future_preserves_preview_branch_state() {
                             let before_idx = worker.cursor.index();
 
                             let mut cx = Context::from_waker(noop_waker_ref());
-                            let mut branch = {
+                            let branch = {
                                 let mut offer = pin!(cursor_offer(worker));
                                 poll_ready_ok(&mut cx, offer.as_mut(), "preview branch offer")
                             };
@@ -10647,7 +12021,7 @@ fn dropping_pending_decode_future_preserves_preview_branch_state() {
 
                             {
                                 let mut decode =
-                                    pin!(CursorDecode::<Msg<100, u8>>::run(worker, &mut branch));
+                                    pin!(CursorDecode::<Msg<100, u8>>::run(worker, branch));
                                 assert!(
                                     matches!(decode.as_mut().poll(&mut cx), Poll::Pending),
                                     "decode should wait on transport recv before commit"
@@ -11001,7 +12375,7 @@ fn decode_branch_commit_clears_stale_route_hints_on_selected_lane() {
                         );
 
                         let mut cx = Context::from_waker(noop_waker_ref());
-                        let mut branch = {
+                        let branch = {
                             let mut offer = pin!(cursor_offer(worker));
                             poll_ready_ok(&mut cx, offer.as_mut(), "offer selected right branch")
                         };
@@ -11012,19 +12386,15 @@ fn decode_branch_commit_clears_stale_route_hints_on_selected_lane() {
                         );
 
                         {
-                            let mut decode =
-                                pin!(CursorDecode::<Msg<HINT_RIGHT_DATA_LABEL, u8>>::run(
-                                    worker,
-                                    &mut branch
-                                ));
+                            let mut decode = pin!(
+                                CursorDecode::<Msg<HINT_RIGHT_DATA_LABEL, u8>>::run(worker, branch)
+                            );
                             let _ = poll_ready_ok(
                                 &mut cx,
                                 decode.as_mut(),
                                 "decode right branch and commit route preview",
                             );
                         }
-                        drop(branch);
-
                         assert!(
                             !worker
                                 .port_for_lane(0)

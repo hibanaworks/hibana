@@ -2,6 +2,7 @@
 name          = "hibana"
 version       = "0.1.0"
 edition       = "2024"
+rust-version  = "1.95"
 description   = "Const-projected Affine MultiParty Session Types (MPST) for capability-driven runtimes"
 license       = "MIT OR Apache-2.0"
 repository    = "https://github.com/hibanaworks/hibana"

@@ -113,7 +113,7 @@ fn substrate_root_exposes_only_core_buckets() {
         "pub use crate::binding::{BindingSlot, NoBinding};",
         "pub mod advanced {",
         "ChannelStore",
-        "IncomingClassification",
+        "IngressEvidence",
         "pub mod policy {",
         "pub use crate::transport::context::PolicySignalsProvider;",
         "pub mod signals {",
@@ -176,7 +176,7 @@ fn substrate_root_exposes_only_core_buckets() {
         "ChannelDirection",
         "ChannelKey",
         "ChannelStore",
-        "IncomingClassification",
+        "IngressEvidence",
         "TransportOpsError",
     ] {
         assert!(

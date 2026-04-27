@@ -31,7 +31,7 @@
 //!
 //! # Key Components
 //!
-//! - [`IncomingClassification`]: Classification for incoming data
+//! - [`IngressEvidence`]: Lane-local ingress evidence
 //! - [`BindingSlot`]: Trait for protocol-specific binders
 //! - [`ChannelStore`]: Label/instance → Channel mappings (no_alloc by default)
 //! - [`NoBinding`]: Zero-cost default when binding is not needed
@@ -165,17 +165,18 @@ impl core::fmt::Display for TransportOpsError {
 impl std::error::Error for TransportOpsError {}
 
 // =============================================================================
-// IncomingClassification: Result of classifying incoming data
+// IngressEvidence: demux evidence for incoming data
 // =============================================================================
 
-/// Result of classifying an incoming frame.
+/// Lane-local demux evidence for an incoming frame.
 ///
-/// This is returned by `BindingSlot::poll_incoming()` and contains
-/// all information needed by hibana to select the correct route arm,
-/// **without requiring an edge ordinal**.
+/// This is returned by `BindingSlot::poll_incoming_for_lane()` and contains
+/// transport-observable facts for demux and decode channel selection. It is not
+/// route authority; route decisions remain descriptor-checked
+/// `Ack | Resolver | Poll`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct IncomingClassification {
-    /// Logical label for the incoming data (maps to route arm)
+pub struct IngressEvidence {
+    /// Logical label observed on ingress.
     pub label: u8,
     /// Instance within the label (for multi-channel)
     pub instance: u16,
@@ -201,21 +202,21 @@ pub struct IncomingClassification {
 ///
 /// The receive path uses a lane-aware two-step approach:
 ///
-/// 1. **Classification** (`poll_incoming_for_lane`): Called by `offer()` to
-///    gather demux evidence for the selected logical lane. Only returns
-///    classifications for that lane.
+/// 1. **Evidence** (`poll_incoming_for_lane`): Called by `offer()` to gather
+///    demux evidence for the selected logical lane. Only returns evidence for
+///    that lane.
 ///
 /// 2. **Reading** (`on_recv`): Called after arm selection to read the actual
-///    data. The channel comes from the classification.
+///    data. The channel comes from ingress evidence.
 ///
 /// Additionally, implementations may provide a slot-scoped
 /// `PolicySignalsProvider` for policy evaluation and resolver context.
 ///
 pub trait BindingSlot {
-    /// Poll for incoming data classification on a specific logical lane.
+    /// Poll for incoming demux evidence on a specific logical lane.
     ///
     /// Called by `offer()` to gather demux evidence for the selected scope/lane.
-    /// Only returns classifications for data destined to the specified `logical_lane`.
+    /// Only returns evidence for data destined to the specified `logical_lane`.
     /// Returns `None` if no data is available for that lane.
     ///
     /// # Lane-Aware Polling
@@ -227,10 +228,10 @@ pub trait BindingSlot {
     ///
     /// Binders with multiple internal streams/channels must demux here.
     ///
-    /// **IMPORTANT**: The label in the returned classification is for demux and
+    /// **IMPORTANT**: The label in the returned evidence is for demux and
     /// decode channel selection only. Route arm authority remains
     /// `RouteDecisionToken(Ack|Resolver|Poll)`.
-    fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IncomingClassification>;
+    fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IngressEvidence>;
 
     /// Read data from the specified channel and return a borrowed payload view.
     ///
@@ -292,7 +293,7 @@ where
 
 impl BindingSlot for BindingHandle<'_> {
     #[inline(always)]
-    fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IncomingClassification> {
+    fn poll_incoming_for_lane(&mut self, logical_lane: u8) -> Option<IngressEvidence> {
         match self {
             Self::None(binding) => binding.poll_incoming_for_lane(logical_lane),
             Self::Borrowed(binding) => binding.poll_incoming_for_lane(logical_lane),
@@ -337,7 +338,7 @@ pub struct NoBinding;
 
 impl BindingSlot for NoBinding {
     #[inline(always)]
-    fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IncomingClassification> {
+    fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IngressEvidence> {
         // NoBinding relies on transport.recv() directly; no internal buffering
         None
     }

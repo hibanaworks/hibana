@@ -3,14 +3,36 @@
 
 #[cfg(feature = "fanout-heavy")]
 mod fanout_program;
-#[cfg(all(not(feature = "linear-heavy"), not(feature = "fanout-heavy")))]
+#[cfg(all(
+    not(feature = "linear-heavy"),
+    not(feature = "fanout-heavy"),
+    not(feature = "memory-control-1"),
+    not(feature = "memory-control-4"),
+    not(feature = "memory-control-8")
+))]
 mod huge_program;
 #[cfg(feature = "linear-heavy")]
 mod linear_program;
 mod localside;
-#[cfg(not(feature = "linear-heavy"))]
+#[cfg(any(
+    feature = "memory-control-1",
+    feature = "memory-control-4",
+    feature = "memory-control-8"
+))]
+mod memory_control;
+#[cfg(all(
+    not(feature = "linear-heavy"),
+    not(feature = "memory-control-1"),
+    not(feature = "memory-control-4"),
+    not(feature = "memory-control-8")
+))]
 mod route_localside;
-#[cfg(not(feature = "linear-heavy"))]
+#[cfg(all(
+    not(feature = "linear-heavy"),
+    not(feature = "memory-control-1"),
+    not(feature = "memory-control-4"),
+    not(feature = "memory-control-8")
+))]
 mod route_control_kinds;
 
 use core::{
@@ -38,12 +60,36 @@ use hibana::{
 
 #[cfg(all(feature = "linear-heavy", feature = "fanout-heavy"))]
 compile_error!("pico smoke accepts at most one alternate huge choreography shape feature");
+#[cfg(any(
+    all(feature = "memory-control-1", feature = "memory-control-4"),
+    all(feature = "memory-control-1", feature = "memory-control-8"),
+    all(feature = "memory-control-4", feature = "memory-control-8"),
+    all(feature = "linear-heavy", feature = "memory-control-1"),
+    all(feature = "linear-heavy", feature = "memory-control-4"),
+    all(feature = "linear-heavy", feature = "memory-control-8"),
+    all(feature = "fanout-heavy", feature = "memory-control-1"),
+    all(feature = "fanout-heavy", feature = "memory-control-4"),
+    all(feature = "fanout-heavy", feature = "memory-control-8"),
+))]
+compile_error!("pico smoke accepts exactly one alternate shape feature");
 
 #[cfg(feature = "linear-heavy")]
 use linear_program as sample_program;
 #[cfg(feature = "fanout-heavy")]
 use fanout_program as sample_program;
-#[cfg(all(not(feature = "linear-heavy"), not(feature = "fanout-heavy")))]
+#[cfg(any(
+    feature = "memory-control-1",
+    feature = "memory-control-4",
+    feature = "memory-control-8"
+))]
+use memory_control as sample_program;
+#[cfg(all(
+    not(feature = "linear-heavy"),
+    not(feature = "fanout-heavy"),
+    not(feature = "memory-control-1"),
+    not(feature = "memory-control-4"),
+    not(feature = "memory-control-8")
+))]
 use huge_program as sample_program;
 
 const RING_EVENTS: usize = 128;
@@ -435,6 +481,12 @@ fn transport_queue_is_empty() -> bool {
 }
 
 fn retain_fixture_symbols() {
+    let _ = localside::controller_send_u8::<0>
+        as fn(&mut localside::ControllerEndpoint<'_>, u8);
+    let _ = localside::worker_send_u8::<0> as fn(&mut localside::WorkerEndpoint<'_>, u8);
+    let _ = localside::worker_recv_u8::<0> as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
+    let _ =
+        localside::controller_recv_u8::<0> as fn(&mut localside::ControllerEndpoint<'_>) -> u8;
     let _ = localside::worker_offer_decode_u8::<0>
         as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
 }

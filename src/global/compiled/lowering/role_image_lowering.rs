@@ -11,18 +11,11 @@ use super::super::images::role::{
 pub(super) fn build_local_steps_into(
     role: u8,
     typestate: &RoleTypestateValue,
-    by_eff_index: &mut [LocalStep],
-    present: &mut [bool],
     steps: &mut [LocalStep],
     eff_index_to_step: &mut [u16],
 ) -> usize {
-    if by_eff_index.len() != present.len() || by_eff_index.len() != eff_index_to_step.len() {
-        panic!("compiled role local-step scratch shape mismatch");
-    }
     let mut idx = 0usize;
-    while idx < by_eff_index.len() {
-        by_eff_index[idx] = LocalStep::EMPTY;
-        present[idx] = false;
+    while idx < eff_index_to_step.len() {
         eff_index_to_step[idx] = MACHINE_NO_STEP;
         idx += 1;
     }
@@ -35,63 +28,31 @@ pub(super) fn build_local_steps_into(
     let mut node_idx = 0usize;
     while node_idx < typestate.len() {
         match typestate.node(node_idx).action() {
-            LocalAction::Send {
-                eff_index,
-                peer,
-                label,
-                resource,
-                is_control,
-                shot,
-                lane,
-                ..
-            } => {
+            LocalAction::Send { eff_index, .. } => {
                 let idx = eff_index.as_usize();
-                if idx >= by_eff_index.len() {
+                if idx >= eff_index_to_step.len() {
                     panic!("local step eff_index exceeds lowering scratch capacity");
                 }
-                if !present[idx] {
-                    by_eff_index[idx] =
-                        LocalStep::send(eff_index, peer, label, resource, is_control, shot, lane);
-                    present[idx] = true;
+                if eff_index_to_step[idx] == MACHINE_NO_STEP {
+                    eff_index_to_step[idx] = node_idx as u16;
                 }
             }
-            LocalAction::Recv {
-                eff_index,
-                peer,
-                label,
-                resource,
-                is_control,
-                shot,
-                lane,
-                ..
-            } => {
+            LocalAction::Recv { eff_index, .. } => {
                 let idx = eff_index.as_usize();
-                if idx >= by_eff_index.len() {
+                if idx >= eff_index_to_step.len() {
                     panic!("local step eff_index exceeds lowering scratch capacity");
                 }
-                if !present[idx] {
-                    by_eff_index[idx] =
-                        LocalStep::recv(eff_index, peer, label, resource, is_control, shot, lane);
-                    present[idx] = true;
+                if eff_index_to_step[idx] == MACHINE_NO_STEP {
+                    eff_index_to_step[idx] = node_idx as u16;
                 }
             }
-            LocalAction::Local {
-                eff_index,
-                label,
-                resource,
-                is_control,
-                shot,
-                lane,
-                ..
-            } => {
+            LocalAction::Local { eff_index, .. } => {
                 let idx = eff_index.as_usize();
-                if idx >= by_eff_index.len() {
+                if idx >= eff_index_to_step.len() {
                     panic!("local step eff_index exceeds lowering scratch capacity");
                 }
-                if !present[idx] {
-                    by_eff_index[idx] =
-                        LocalStep::local(eff_index, role, label, resource, is_control, shot, lane);
-                    present[idx] = true;
+                if eff_index_to_step[idx] == MACHINE_NO_STEP {
+                    eff_index_to_step[idx] = node_idx as u16;
                 }
             }
             LocalAction::Terminate | LocalAction::Jump { .. } => {}
@@ -101,15 +62,49 @@ pub(super) fn build_local_steps_into(
 
     let mut len = 0usize;
     let mut idx = 0usize;
-    while idx < by_eff_index.len() {
-        if present[idx] {
+    while idx < eff_index_to_step.len() {
+        let state_idx = eff_index_to_step[idx];
+        if state_idx != MACHINE_NO_STEP {
             if len >= steps.len() {
                 panic!("compiled role local step count exceeds lowering scratch capacity");
             }
             if len > u16::MAX as usize {
                 panic!("compiled role local step count overflow");
             }
-            steps[len] = by_eff_index[idx];
+            steps[len] = match typestate.node(state_idx as usize).action() {
+                LocalAction::Send {
+                    eff_index,
+                    peer,
+                    label,
+                    resource,
+                    is_control,
+                    shot,
+                    lane,
+                    ..
+                } => LocalStep::send(eff_index, peer, label, resource, is_control, shot, lane),
+                LocalAction::Recv {
+                    eff_index,
+                    peer,
+                    label,
+                    resource,
+                    is_control,
+                    shot,
+                    lane,
+                    ..
+                } => LocalStep::recv(eff_index, peer, label, resource, is_control, shot, lane),
+                LocalAction::Local {
+                    eff_index,
+                    label,
+                    resource,
+                    is_control,
+                    shot,
+                    lane,
+                    ..
+                } => LocalStep::local(eff_index, role, label, resource, is_control, shot, lane),
+                LocalAction::Terminate | LocalAction::Jump { .. } => {
+                    panic!("local step state index must reference a local action")
+                }
+            };
             eff_index_to_step[idx] = len as u16;
             len += 1;
         }

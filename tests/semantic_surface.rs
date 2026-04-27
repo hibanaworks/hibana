@@ -185,11 +185,13 @@ fn topology_validation_has_no_test_only_semantic_owner() {
 #[test]
 fn stable_public_api_gate_has_no_nightly_or_rustdoc_json_owner() {
     let script = read(".github/scripts/check_hibana_public_api.sh");
+    let final_gate = read(".github/scripts/run_final_form_gates.sh");
     let workflow = read(".github/workflows/quality-gates.yml");
-    let combined = format!("{script}\n{workflow}");
+    let combined = format!("{script}\n{final_gate}\n{workflow}");
 
     for required in [
         "export TOOLCHAIN=\"${TOOLCHAIN:-stable}\"",
+        "bash ./.github/scripts/run_final_form_gates.sh",
         "bash ./.github/scripts/check_hibana_public_api.sh",
         "stable public API check passed",
     ] {

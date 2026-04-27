@@ -120,12 +120,31 @@ impl LaneSetView {
 
     #[inline(always)]
     pub(crate) fn first_set(self, lane_limit: usize) -> Option<usize> {
-        let mut lane = 0usize;
-        while lane < lane_limit {
-            if self.contains(lane) {
-                return Some(lane);
+        self.next_set_from(0, lane_limit)
+    }
+
+    #[inline(always)]
+    pub(crate) fn next_set_from(self, start: usize, lane_limit: usize) -> Option<usize> {
+        if start >= lane_limit {
+            return None;
+        }
+        let bits = LaneWord::BITS as usize;
+        let mut word_idx = start / bits;
+        let mut bit_offset = start % bits;
+        while word_idx < self.word_len() && word_idx.saturating_mul(bits) < lane_limit {
+            let mut word = unsafe { *self.ptr.add(word_idx) };
+            word &= LaneWord::MAX << bit_offset;
+            while word != 0 {
+                let lane = word_idx
+                    .saturating_mul(bits)
+                    .saturating_add(word.trailing_zeros() as usize);
+                if lane < lane_limit {
+                    return Some(lane);
+                }
+                return None;
             }
-            lane += 1;
+            word_idx += 1;
+            bit_offset = 0;
         }
         None
     }
@@ -134,17 +153,15 @@ impl LaneSetView {
     #[inline(always)]
     pub(crate) fn write_lane_indices(self, lane_limit: usize, dst: &mut [u8]) -> usize {
         let mut written = 0usize;
-        let mut lane = 0usize;
-        while lane < lane_limit {
-            if self.contains(lane) {
-                assert!(
-                    written < dst.len(),
-                    "lane-index destination is too small for the exact lane set"
-                );
-                dst[written] = u8::try_from(lane).expect("lane index exceeds public lane width");
-                written += 1;
-            }
-            lane += 1;
+        let mut next = self.first_set(lane_limit);
+        while let Some(lane) = next {
+            assert!(
+                written < dst.len(),
+                "lane-index destination is too small for the exact lane set"
+            );
+            dst[written] = u8::try_from(lane).expect("lane index exceeds public lane width");
+            written += 1;
+            next = self.next_set_from(lane.saturating_add(1), lane_limit);
         }
         written
     }
@@ -502,6 +519,7 @@ struct RoleImage {
 #[derive(Clone, Copy)]
 pub(crate) struct RoleFacts {
     scope_count: u16,
+    max_active_scope_depth: u16,
     eff_count: u16,
     local_step_count: u16,
     phase_count: u16,
@@ -522,20 +540,18 @@ pub(crate) struct RoleImageRef {
 
 #[derive(Clone, Copy)]
 pub(crate) struct RoleImageSource {
-    init_lowering: unsafe fn(*mut LoweringSummary),
+    summary: fn() -> &'static LoweringSummary,
 }
 
 impl RoleImageSource {
     #[inline(always)]
-    const fn new(init_lowering: unsafe fn(*mut LoweringSummary)) -> Self {
-        Self { init_lowering }
+    const fn new(summary: fn() -> &'static LoweringSummary) -> Self {
+        Self { summary }
     }
 
     #[inline(always)]
-    pub(crate) unsafe fn init_lowering(self, dst: *mut LoweringSummary) {
-        unsafe {
-            (self.init_lowering)(dst);
-        }
+    pub(crate) fn summary(self) -> &'static LoweringSummary {
+        (self.summary)()
     }
 }
 
@@ -554,6 +570,7 @@ pub(crate) trait RoleProgramView<const ROLE: u8>: private::RoleProgramViewSeal {
 #[derive(Clone, Copy)]
 pub(crate) struct RoleFootprint {
     pub(crate) scope_count: usize,
+    pub(crate) max_active_scope_depth: usize,
     pub(crate) eff_count: usize,
     pub(crate) phase_count: usize,
     pub(crate) phase_lane_entry_count: usize,
@@ -594,6 +611,7 @@ impl RoleFootprint {
         let logical_lane_count = logical_lane_count_for_role(active_lane_count, logical_lane_seed);
         Self {
             scope_count: 0,
+            max_active_scope_depth: 0,
             eff_count: 0,
             phase_count: 0,
             phase_lane_entry_count: 0,
@@ -661,13 +679,7 @@ impl RoleLoweringInput {
     #[cfg(test)]
     #[inline(always)]
     pub(crate) fn with_summary<R>(&self, f: impl FnOnce(&LoweringSummary) -> R) -> R {
-        let mut summary = core::mem::MaybeUninit::<LoweringSummary>::uninit();
-        unsafe {
-            self.source().init_lowering(summary.as_mut_ptr());
-            let out = f(summary.assume_init_ref());
-            summary.assume_init_drop();
-            out
-        }
+        f(self.source().summary())
     }
 }
 
@@ -701,6 +713,7 @@ impl RoleFacts {
     const fn from_counts(counts: RoleLoweringCounts) -> Self {
         Self {
             scope_count: Self::compact_count(counts.scope_count),
+            max_active_scope_depth: Self::compact_count(counts.max_active_scope_depth),
             eff_count: Self::compact_count(counts.eff_count),
             local_step_count: Self::compact_count(counts.local_step_count),
             phase_count: Self::compact_count(counts.phase_count),
@@ -721,6 +734,7 @@ impl RoleFacts {
     const fn footprint(self) -> RoleFootprint {
         RoleFootprint {
             scope_count: self.scope_count as usize,
+            max_active_scope_depth: self.max_active_scope_depth as usize,
             eff_count: self.eff_count as usize,
             phase_count: self.phase_count as usize,
             phase_lane_entry_count: self.phase_lane_entry_count as usize,
@@ -773,10 +787,8 @@ impl<Steps, const ROLE: u8> ValidatedRoleImage<Steps, ROLE>
 where
     Steps: BuildProgramSource,
 {
-    unsafe fn init_lowering(dst: *mut LoweringSummary) {
-        unsafe {
-            validated_program_summary::<Steps>().write_clone_to(dst);
-        }
+    fn summary() -> &'static LoweringSummary {
+        validated_program_summary::<Steps>()
     }
 
     const STAMP: ProgramStamp = validated_program_summary::<Steps>().stamp();
@@ -785,7 +797,7 @@ where
     const IMAGE: RoleImage = RoleImage::new(
         Self::STAMP,
         Self::FACTS,
-        RoleImageSource::new(Self::init_lowering),
+        RoleImageSource::new(Self::summary),
     );
 }
 
@@ -869,6 +881,27 @@ mod tests {
         assert_eq!(logical_lane_count_for_role(254, 255), LANE_DOMAIN_SIZE);
         assert_eq!(logical_lane_count_for_role(255, 256), LANE_DOMAIN_SIZE);
         assert_eq!(logical_lane_count_for_role(256, 256), LANE_DOMAIN_SIZE);
+    }
+
+    #[test]
+    fn lane_set_view_iterates_set_bits_without_empty_lane_scan() {
+        let mut words = [0usize; 4];
+        let (word, bit) = lane_word_index(3);
+        words[word] |= bit;
+        let (word, bit) = lane_word_index(usize::BITS as usize + 5);
+        words[word] |= bit;
+        let (word, bit) = lane_word_index(usize::BITS as usize * 2 + 1);
+        words[word] |= bit;
+        let view = LaneSetView::from_parts(words.as_ptr(), words.len());
+
+        assert_eq!(view.first_set(256), Some(3));
+        assert_eq!(view.next_set_from(4, 256), Some(usize::BITS as usize + 5));
+        assert_eq!(
+            view.next_set_from(usize::BITS as usize + 6, 256),
+            Some(usize::BITS as usize * 2 + 1),
+        );
+        assert_eq!(view.next_set_from(usize::BITS as usize * 2 + 2, 256), None,);
+        assert_eq!(view.next_set_from(usize::BITS as usize + 6, 65), None);
     }
 
     fn assert_parallel_phase_shape(image: &CompiledRoleImage) {

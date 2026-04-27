@@ -79,19 +79,15 @@ where
         let mut summary = OfferEntryStaticSummary::EMPTY;
         let active_offer_lanes = self.route_state.active_offer_lanes();
         let lane_limit = self.cursor.logical_lane_count();
-        let mut lane_idx = 0usize;
-        while lane_idx < lane_limit {
-            if !active_offer_lanes.contains(lane_idx) {
-                lane_idx += 1;
-                continue;
-            }
+        let mut next = active_offer_lanes.first_set(lane_limit);
+        while let Some(lane_idx) = next {
             let info = self.route_state.lane_offer_state(lane_idx);
             if info.scope.is_none() || state_index_to_usize(info.entry) != entry_idx {
-                lane_idx += 1;
+                next = active_offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
                 continue;
             }
             summary.observe_lane(info);
-            lane_idx += 1;
+            next = active_offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
         }
         summary
     }

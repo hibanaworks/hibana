@@ -17,15 +17,13 @@ where
     ) -> bool {
         let lane_limit = self.cursor.logical_lane_count();
         let active_offer_lanes = self.route_state.active_offer_lanes();
-        let mut lane_idx = 0usize;
-        while lane_idx < lane_limit {
-            if active_offer_lanes.contains(lane_idx) {
-                let info = self.route_state.lane_offer_state(lane_idx);
-                if !info.entry.is_max() && state_index_to_usize(info.entry) == entry_idx {
-                    return true;
-                }
+        let mut next = active_offer_lanes.first_set(lane_limit);
+        while let Some(lane_idx) = next {
+            let info = self.route_state.lane_offer_state(lane_idx);
+            if !info.entry.is_max() && state_index_to_usize(info.entry) == entry_idx {
+                return true;
             }
-            lane_idx += 1;
+            next = active_offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
         }
         #[cfg(test)]
         {
@@ -49,15 +47,15 @@ where
     ) -> bool {
         let lane_limit = self.cursor.logical_lane_count();
         let active_offer_lanes = self.route_state.active_offer_lanes();
-        let mut lane_idx = 0usize;
-        while lane_idx < lane_limit {
-            if lane_idx != excluded_lane_idx && active_offer_lanes.contains(lane_idx) {
+        let mut next = active_offer_lanes.first_set(lane_limit);
+        while let Some(lane_idx) = next {
+            if lane_idx != excluded_lane_idx {
                 let info = self.route_state.lane_offer_state(lane_idx);
                 if !info.entry.is_max() && state_index_to_usize(info.entry) == entry_idx {
                     return true;
                 }
             }
-            lane_idx += 1;
+            next = active_offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
         }
         false
     }
@@ -72,17 +70,14 @@ where
         let lane_limit = self.cursor.logical_lane_count();
         let active_offer_lanes = self.route_state.active_offer_lanes();
         let projected_lane_limit = core::cmp::min(lane_limit, u32::BITS as usize);
-        let mut lane_idx = 0usize;
-        while lane_idx < projected_lane_limit {
-            if !active_offer_lanes.contains(lane_idx) {
-                lane_idx += 1;
-                continue;
-            }
+        let mut next = active_offer_lanes.first_set(projected_lane_limit);
+        while let Some(lane_idx) = next {
             let info = self.route_state.lane_offer_state(lane_idx);
             if !info.entry.is_max() && state_index_to_usize(info.entry) == entry_idx {
                 active_mask |= 1u32 << lane_idx;
             }
-            lane_idx += 1;
+            next =
+                active_offer_lanes.next_set_from(lane_idx.saturating_add(1), projected_lane_limit);
         }
         active_mask
     }
@@ -129,15 +124,11 @@ where
     fn offer_entry_state_from_route_state(&self, entry_idx: usize) -> Option<OfferEntryState> {
         let lane_limit = self.cursor.logical_lane_count();
         let active_offer_lanes = self.route_state.active_offer_lanes();
-        let mut lane_idx = 0usize;
-        while lane_idx < lane_limit {
-            if !active_offer_lanes.contains(lane_idx) {
-                lane_idx += 1;
-                continue;
-            }
+        let mut next = active_offer_lanes.first_set(lane_limit);
+        while let Some(lane_idx) = next {
             let info = self.route_state.lane_offer_state(lane_idx);
             if info.scope.is_none() || state_index_to_usize(info.entry) != entry_idx {
-                lane_idx += 1;
+                next = active_offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
                 continue;
             }
             let selection_meta = self.compute_offer_entry_selection_meta(
@@ -284,17 +275,13 @@ where
     ) -> Option<LaneOfferState> {
         let lane_limit = self.cursor.logical_lane_count();
         let active_offer_lanes = self.route_state.active_offer_lanes();
-        let mut lane_idx = 0usize;
-        while lane_idx < lane_limit {
-            if !active_offer_lanes.contains(lane_idx) {
-                lane_idx += 1;
-                continue;
-            }
+        let mut next = active_offer_lanes.first_set(lane_limit);
+        while let Some(lane_idx) = next {
             let info = self.route_state.lane_offer_state(lane_idx);
             if state_index_to_usize(info.entry) == entry_idx {
                 return Some(info);
             }
-            lane_idx += 1;
+            next = active_offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
         }
         #[cfg(test)]
         {
@@ -331,17 +318,13 @@ where
     ) -> Option<usize> {
         let lane_limit = self.cursor.logical_lane_count();
         let active_offer_lanes = self.route_state.active_offer_lanes();
-        let mut lane_idx = 0usize;
-        while lane_idx < lane_limit {
-            if !active_offer_lanes.contains(lane_idx) {
-                lane_idx += 1;
-                continue;
-            }
+        let mut next = active_offer_lanes.first_set(lane_limit);
+        while let Some(lane_idx) = next {
             let info = self.route_state.lane_offer_state(lane_idx);
             if state_index_to_usize(info.entry) == entry_idx {
                 return Some(lane_idx);
             }
-            lane_idx += 1;
+            next = active_offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
         }
         #[cfg(not(test))]
         let _ = entry_state;
@@ -730,13 +713,14 @@ where
             return true;
         }
         let lane_limit = self.cursor.logical_lane_count();
-        let mut lane_idx = 0usize;
-        while lane_idx < lane_limit {
+        let lane_set = self.cursor.current_phase_lane_set();
+        let mut next = lane_set.first_set(lane_limit);
+        while let Some(lane_idx) = next {
             if let Some(idx) = self.cursor.index_for_lane_step(lane_idx) {
                 self.set_cursor_index(idx);
                 return true;
             }
-            lane_idx += 1;
+            next = lane_set.next_set_from(lane_idx.saturating_add(1), lane_limit);
         }
         false
     }

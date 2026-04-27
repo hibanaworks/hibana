@@ -8,7 +8,7 @@ use crate::global::{
 use super::super::images::{CompiledProgramFacts, CompiledRoleImage};
 #[cfg(test)]
 use super::super::lowering::program_owner::CompiledProgram;
-use super::super::lowering::{LoweringSummary, ProgramStamp};
+use super::super::lowering::{CompiledRoleImageInitError, LoweringSummary, ProgramStamp};
 use super::super::lowering::{program_image_builder, role_image_builder};
 #[cfg(test)]
 use core::ptr;
@@ -20,11 +20,7 @@ pub(crate) enum LoweringLeaseMode {
 }
 
 pub(crate) struct RoleLoweringScratch<'a> {
-    typestate_build: *mut RoleTypestateBuildScratch,
-    by_eff_index: *mut LocalStep,
-    by_eff_index_len: usize,
-    present: *mut bool,
-    present_len: usize,
+    typestate_build: RoleTypestateBuildScratch,
     steps: *mut LocalStep,
     steps_len: usize,
     eff_index_to_step: *mut u16,
@@ -51,22 +47,18 @@ impl<'a> RoleLoweringScratch<'a> {
     #[inline(always)]
     pub(crate) unsafe fn init_empty(&mut self) {
         unsafe {
-            RoleTypestateBuildScratch::init_empty(self.typestate_build);
+            self.typestate_build.init_empty();
         }
     }
 
     #[inline(always)]
     pub(crate) fn typestate_build_mut(&mut self) -> &mut RoleTypestateBuildScratch {
-        unsafe { &mut *self.typestate_build }
+        &mut self.typestate_build
     }
 
-    pub(crate) fn local_step_build_slices_mut(
-        &mut self,
-    ) -> (&mut [LocalStep], &mut [bool], &mut [LocalStep], &mut [u16]) {
+    pub(crate) fn local_step_build_slices_mut(&mut self) -> (&mut [LocalStep], &mut [u16]) {
         unsafe {
             (
-                core::slice::from_raw_parts_mut(self.by_eff_index, self.by_eff_index_len),
-                core::slice::from_raw_parts_mut(self.present, self.present_len),
                 core::slice::from_raw_parts_mut(self.steps, self.steps_len),
                 core::slice::from_raw_parts_mut(self.eff_index_to_step, self.eff_index_to_step_len),
             )
@@ -123,8 +115,6 @@ impl<'a> RoleLoweringScratch<'a> {
 #[derive(Clone, Copy)]
 struct RoleLoweringScratchLayout {
     typestate_build: usize,
-    by_eff_index: usize,
-    present: usize,
     steps: usize,
     eff_index_to_step: usize,
     step_index_to_state: usize,
@@ -156,21 +146,30 @@ impl RoleLoweringScratchLayout {
     }
 
     #[inline(always)]
+    const fn typestate_node_count(footprint: RoleFootprint) -> usize {
+        let capped = footprint
+            .local_step_count
+            .saturating_add(footprint.scope_count)
+            .saturating_add(footprint.passive_linger_route_scope_count)
+            .saturating_add(1);
+        if capped == 0 { 1 } else { capped }
+    }
+
+    #[inline(always)]
     const fn from_start(start: usize, footprint: RoleFootprint) -> Self {
         let eff_index_count = Self::eff_index_count(footprint);
         let step_count = Self::step_count(footprint);
         let parallel_range_count = Self::parallel_range_count(footprint);
+        let typestate_node_count = Self::typestate_node_count(footprint);
 
-        let typestate_build =
-            Self::align_up(start, core::mem::align_of::<RoleTypestateBuildScratch>());
-        let typestate_build_end =
-            typestate_build + core::mem::size_of::<RoleTypestateBuildScratch>();
-        let by_eff_index = Self::align_up(typestate_build_end, core::mem::align_of::<LocalStep>());
-        let by_eff_index_end =
-            by_eff_index + eff_index_count.saturating_mul(core::mem::size_of::<LocalStep>());
-        let present = Self::align_up(by_eff_index_end, core::mem::align_of::<bool>());
-        let present_end = present + eff_index_count.saturating_mul(core::mem::size_of::<bool>());
-        let steps = Self::align_up(present_end, core::mem::align_of::<LocalStep>());
+        let typestate_build = Self::align_up(start, RoleTypestateBuildScratch::storage_align());
+        let typestate_build_end = RoleTypestateBuildScratch::storage_end_from_start(
+            typestate_build,
+            typestate_node_count,
+            footprint.scope_count,
+            footprint.max_active_scope_depth,
+        );
+        let steps = Self::align_up(typestate_build_end, core::mem::align_of::<LocalStep>());
         let steps_end = steps + step_count.saturating_mul(core::mem::size_of::<LocalStep>());
         let eff_index_to_step = Self::align_up(steps_end, core::mem::align_of::<u16>());
         let eff_index_to_step_end =
@@ -191,8 +190,6 @@ impl RoleLoweringScratchLayout {
             + parallel_range_count.saturating_mul(core::mem::size_of::<(usize, usize)>());
         Self {
             typestate_build,
-            by_eff_index,
-            present,
             steps,
             eff_index_to_step,
             step_index_to_state,
@@ -207,12 +204,16 @@ impl RoleLoweringScratchLayout {
         let eff_index_count = Self::eff_index_count(footprint);
         let step_count = Self::step_count(footprint);
         let parallel_range_count = Self::parallel_range_count(footprint);
+        let typestate_node_count = Self::typestate_node_count(footprint);
         RoleLoweringScratch {
-            typestate_build: self.typestate_build as *mut RoleTypestateBuildScratch,
-            by_eff_index: RoleLoweringScratch::ptr_or_dangling(self.by_eff_index, eff_index_count),
-            by_eff_index_len: eff_index_count,
-            present: RoleLoweringScratch::ptr_or_dangling(self.present, eff_index_count),
-            present_len: eff_index_count,
+            typestate_build: unsafe {
+                RoleTypestateBuildScratch::from_storage(
+                    self.typestate_build,
+                    typestate_node_count,
+                    footprint.scope_count,
+                    footprint.max_active_scope_depth,
+                )
+            },
             steps: RoleLoweringScratch::ptr_or_dangling(self.steps, step_count),
             steps_len: step_count,
             eff_index_to_step: RoleLoweringScratch::ptr_or_dangling(
@@ -255,20 +256,15 @@ impl<'a> LoweringLease<'a> {
 }
 
 struct TransientLoweringLeaseStorage<'a> {
-    lowering: *mut LoweringSummary,
     role_lowering_scratch: Option<RoleLoweringScratch<'a>>,
 }
 
 impl<'a> TransientLoweringLeaseStorage<'a> {
+    #[cfg(test)]
     #[inline(always)]
     const fn align_up(value: usize, align: usize) -> usize {
         let mask = align.saturating_sub(1);
         (value + mask) & !mask
-    }
-
-    #[inline(always)]
-    const fn lowering_offset(base: usize) -> usize {
-        Self::align_up(base, core::mem::align_of::<LoweringSummary>())
     }
 
     #[inline(always)]
@@ -277,11 +273,10 @@ impl<'a> TransientLoweringLeaseStorage<'a> {
         mode: LoweringLeaseMode,
         footprint: RoleFootprint,
     ) -> usize {
-        let lowering_end = Self::lowering_offset(base) + core::mem::size_of::<LoweringSummary>();
         match mode {
-            LoweringLeaseMode::SummaryOnly => lowering_end - base,
+            LoweringLeaseMode::SummaryOnly => 0,
             LoweringLeaseMode::SummaryAndRoleScratch => {
-                RoleLoweringScratchLayout::from_start(lowering_end, footprint).end - base
+                RoleLoweringScratchLayout::from_start(base, footprint).end - base
             }
         }
     }
@@ -298,15 +293,11 @@ impl<'a> TransientLoweringLeaseStorage<'a> {
         if required > len {
             return None;
         }
-        let lowering = Self::lowering_offset(base) as *mut LoweringSummary;
-        let lowering_end = lowering as usize + core::mem::size_of::<LoweringSummary>();
         Some(Self {
-            lowering,
             role_lowering_scratch: match mode {
                 LoweringLeaseMode::SummaryOnly => None,
                 LoweringLeaseMode::SummaryAndRoleScratch => Some(unsafe {
-                    RoleLoweringScratchLayout::from_start(lowering_end, footprint)
-                        .scratch(footprint)
+                    RoleLoweringScratchLayout::from_start(base, footprint).scratch(footprint)
                 }),
             },
         })
@@ -319,8 +310,7 @@ impl<'a> TransientLoweringLeaseStorage<'a> {
         stamp: ProgramStamp,
     ) -> LoweringLease<'a> {
         unsafe {
-            source.init_lowering(self.lowering);
-            let summary = &*self.lowering;
+            let summary = source.summary();
             debug_assert_eq!(summary.stamp(), stamp);
             let mut role_lowering_scratch = self.role_lowering_scratch;
             if let Some(scratch) = role_lowering_scratch.as_mut() {
@@ -338,8 +328,8 @@ impl<'a> TransientLoweringLeaseStorage<'a> {
 #[cfg(test)]
 const fn lowering_lease_storage_align() -> usize {
     let mut align = core::mem::align_of::<LoweringSummary>();
-    if core::mem::align_of::<RoleTypestateBuildScratch>() > align {
-        align = core::mem::align_of::<RoleTypestateBuildScratch>();
+    if RoleTypestateBuildScratch::storage_align() > align {
+        align = RoleTypestateBuildScratch::storage_align();
     }
     if core::mem::align_of::<LocalStep>() > align {
         align = core::mem::align_of::<LocalStep>();
@@ -441,6 +431,7 @@ pub(crate) unsafe fn init_compiled_program_image_from_summary(
     }
 }
 
+#[cfg(test)]
 pub(crate) unsafe fn init_compiled_role_image_from_summary(
     dst: *mut CompiledRoleImage,
     role: u8,
@@ -455,6 +446,47 @@ pub(crate) unsafe fn init_compiled_role_image_from_summary(
     }
 }
 
+pub(crate) unsafe fn try_init_compiled_role_image_from_summary(
+    dst: *mut CompiledRoleImage,
+    role: u8,
+    summary: &LoweringSummary,
+    scratch: &mut RoleLoweringScratch<'_>,
+    footprint: RoleFootprint,
+) -> Result<(), CompiledRoleImageInitError> {
+    unsafe {
+        role_image_builder::try_init_compiled_role_image_from_summary(
+            dst, role, summary, scratch, footprint,
+        )
+    }
+}
+
+pub(crate) unsafe fn validate_compiled_role_image_init_from_summary(
+    dst: *mut CompiledRoleImage,
+    role: u8,
+    summary: &LoweringSummary,
+    footprint: RoleFootprint,
+) -> Result<(), CompiledRoleImageInitError> {
+    unsafe {
+        role_image_builder::validate_compiled_role_image_init_from_summary(
+            dst, role, summary, footprint,
+        )
+    }
+}
+
+pub(crate) unsafe fn init_compiled_role_image_from_prevalidated_summary(
+    dst: *mut CompiledRoleImage,
+    role: u8,
+    summary: &LoweringSummary,
+    scratch: &mut RoleLoweringScratch<'_>,
+    footprint: RoleFootprint,
+) -> usize {
+    unsafe {
+        role_image_builder::init_compiled_role_image_from_prevalidated_summary(
+            dst, role, summary, scratch, footprint,
+        )
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn with_compiled_program<R>(
     input: RoleLoweringInput,
@@ -462,10 +494,8 @@ pub(crate) fn with_compiled_program<R>(
 ) -> R {
     let mut compiled = core::mem::MaybeUninit::<CompiledProgram>::uninit();
     unsafe {
-        let mut summary = core::mem::MaybeUninit::<LoweringSummary>::uninit();
-        input.source().init_lowering(summary.as_mut_ptr());
-        CompiledProgram::init_from_summary(compiled.as_mut_ptr(), summary.assume_init_ref());
-        summary.assume_init_drop();
+        let summary = input.source().summary();
+        CompiledProgram::init_from_summary(compiled.as_mut_ptr(), summary);
         let result = f(compiled.assume_init_ref());
         compiled.assume_init_drop();
         result
@@ -532,6 +562,7 @@ mod tests {
     fn lowering_lease_role_scratch_bytes_follow_footprint() {
         let empty = RoleFootprint {
             scope_count: 0,
+            max_active_scope_depth: 0,
             eff_count: 0,
             phase_count: 0,
             phase_lane_entry_count: 0,
@@ -550,6 +581,7 @@ mod tests {
         };
         let compact = RoleFootprint {
             scope_count: 0,
+            max_active_scope_depth: 0,
             eff_count: 3,
             phase_count: 2,
             phase_lane_entry_count: 2,
@@ -567,8 +599,6 @@ mod tests {
             frontier_entry_count: 0,
         };
         let base = 0usize;
-        let _summary_end = TransientLoweringLeaseStorage::lowering_offset(base)
-            + core::mem::size_of::<LoweringSummary>();
         let summary_only_required = TransientLoweringLeaseStorage::required_bytes_from_base(
             base,
             LoweringLeaseMode::SummaryOnly,
@@ -585,9 +615,9 @@ mod tests {
             compact,
         );
 
-        assert!(
-            compact_required > summary_only_required,
-            "role-local lowering scratch must reserve additional bytes beyond the summary clone"
+        assert_eq!(
+            summary_only_required, 0,
+            "lowering leases borrow the static summary instead of cloning it into the attach slab"
         );
         assert!(
             compact_required > empty_required,

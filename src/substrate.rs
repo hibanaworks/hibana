@@ -134,15 +134,14 @@ pub mod tap {
     pub use crate::observe::core::TapEvent;
 }
 
-/// Canonical binding and ingress classification surface.
+/// Canonical binding and ingress evidence surface.
 pub mod binding {
     pub use crate::binding::{BindingSlot, NoBinding};
 
     /// Advanced binding details for custom demux and channel adapters.
     pub mod advanced {
         pub use crate::binding::{
-            Channel, ChannelDirection, ChannelKey, ChannelStore, IncomingClassification,
-            TransportOpsError,
+            Channel, ChannelDirection, ChannelKey, ChannelStore, IngressEvidence, TransportOpsError,
         };
     }
 }
@@ -268,7 +267,7 @@ mod tests {
 
     const PICO_RING_EVENTS: usize = 128;
     const TARGET_PICO_SLAB_BYTES: usize = 32_768;
-    const HOST_MEASURE_SLAB_BYTES: usize = 131_072;
+    const HOST_MEASURE_SLAB_BYTES: usize = 262_144;
     const HOST_STACK_BYTES: usize = 32 * 1024;
     const STACK_CANARY_BYTE: u8 = 0xA5;
     const STACK_CANARY_HEADROOM_BYTES: usize = 512;

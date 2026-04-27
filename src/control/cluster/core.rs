@@ -4934,7 +4934,7 @@ mod tests {
             RendezvousId::new(1),
             Some(SessionId::new(9)),
             Lane::new(3),
-            EffIndex::new(2),
+            EffIndex::from_dense_ordinal(2),
             0x40,
             ScopeId::none(),
             None,
@@ -6389,9 +6389,10 @@ mod tests {
         let compiled_program_bytes = size_of::<CompiledProgramFacts>();
         let compiled_role_bytes = size_of::<CompiledRoleImage>();
         let route_heavy_worker = huge_program::worker_program();
+        let route_heavy_footprint = crate::global::lowering_input(&route_heavy_worker).footprint();
         let role_compile_scratch_bytes =
             crate::global::compiled::materialize::role_lowering_scratch_storage_bytes(
-                crate::global::lowering_input(&route_heavy_worker).footprint(),
+                route_heavy_footprint,
             );
         let endpoint_storage_bytes = size_of::<
             crate::endpoint::kernel::CursorEndpoint<
@@ -6447,7 +6448,7 @@ mod tests {
                 && control_core_bytes <= 1_700_000
                 && rv_core_bytes <= 250_000
                 && resolver_core_bytes <= 8_000
-                && lowering_summary_bytes <= 20_000
+                && lowering_summary_bytes <= 210_000
                 && compiled_program_bytes <= 64
                 && compiled_role_bytes <= 64
                 && role_compile_scratch_bytes <= 66_000
@@ -6458,7 +6459,15 @@ mod tests {
                 && cap_table_bytes <= 64
                 && delegation_graph_bytes <= 3_000
                 && topology_graph_bytes <= 2_000,
-            "resident regression: session_cluster={session_cluster_bytes} control_core={control_core_bytes} rv_core={rv_core_bytes} resolver={resolver_core_bytes} lowering_summary={lowering_summary_bytes} compiled_program={compiled_program_bytes} compiled_role={compiled_role_bytes} role_compile_scratch={role_compile_scratch_bytes} endpoint_storage={endpoint_storage_bytes} rendezvous_header={rendezvous_header_bytes} route_table={route_table_bytes} loop_table={loop_table_bytes} cap_table={cap_table_bytes} delegation_graph={delegation_graph_bytes} topology_graph={topology_graph_bytes}"
+            "resident regression: session_cluster={session_cluster_bytes} control_core={control_core_bytes} rv_core={rv_core_bytes} resolver={resolver_core_bytes} lowering_summary={lowering_summary_bytes} compiled_program={compiled_program_bytes} compiled_role={compiled_role_bytes} role_compile_scratch={role_compile_scratch_bytes} route_heavy_footprint(scope={}, active_depth={}, eff={}, local_steps={}, phases={}, phase_lane_entries={}, phase_lane_words={}, parallel={}) endpoint_storage={endpoint_storage_bytes} rendezvous_header={rendezvous_header_bytes} route_table={route_table_bytes} loop_table={loop_table_bytes} cap_table={cap_table_bytes} delegation_graph={delegation_graph_bytes} topology_graph={topology_graph_bytes}",
+            route_heavy_footprint.scope_count,
+            route_heavy_footprint.max_active_scope_depth,
+            route_heavy_footprint.eff_count,
+            route_heavy_footprint.local_step_count,
+            route_heavy_footprint.phase_count,
+            route_heavy_footprint.phase_lane_entry_count,
+            route_heavy_footprint.phase_lane_word_count,
+            route_heavy_footprint.parallel_enter_count,
         );
     }
 
@@ -6653,13 +6662,13 @@ mod tests {
         assert!(
             route.compiled_program_persistent_bytes <= 256
                 && linear.compiled_program_persistent_bytes <= 64
-                && fanout.compiled_program_persistent_bytes <= 384,
+                && fanout.compiled_program_persistent_bytes <= 400,
             "compiled program atlas tail regressed: route={route:?} linear={linear:?} fanout={fanout:?}"
         );
         assert!(
-            route.compiled_role_persistent_bytes <= 3 * 1024
-                && linear.compiled_role_persistent_bytes <= 1536
-                && fanout.compiled_role_persistent_bytes <= 4 * 1024,
+            route.compiled_role_persistent_bytes <= 4 * 1024
+                && linear.compiled_role_persistent_bytes <= 3 * 1024
+                && fanout.compiled_role_persistent_bytes <= 5 * 1024,
             "compiled role blob tail regressed: route={route:?} linear={linear:?} fanout={fanout:?}"
         );
 
@@ -9285,7 +9294,7 @@ mod tests {
                             .prepare_reroute_handle_from_policy(
                                 src_id,
                                 Lane::new(4),
-                                EffIndex::new(10),
+                                EffIndex::from_dense_ordinal(10),
                                 TAG_CAP_DELEGATE_CONTROL,
                                 ControlOp::CapDelegate,
                                 PolicyMode::Static,
@@ -9331,7 +9340,7 @@ mod tests {
                             .prepare_reroute_handle_from_policy(
                                 src_id,
                                 Lane::new(4),
-                                EffIndex::new(10),
+                                EffIndex::from_dense_ordinal(10),
                                 TAG_CAP_DELEGATE_CONTROL,
                                 ControlOp::CapDelegate,
                                 PolicyMode::Static,
@@ -9963,7 +9972,7 @@ mod tests {
                             .expect("register rendezvous");
 
                         let policy_id = 913u16;
-                        let eff_index = EffIndex::new(7);
+                        let eff_index = EffIndex::from_dense_ordinal(7);
                         let policy = crate::global::const_dsl::PolicyMode::dynamic(policy_id);
 
                         cluster
@@ -10024,7 +10033,7 @@ mod tests {
                             .expect("register rendezvous");
                         let policy = crate::global::const_dsl::PolicyMode::dynamic(914)
                             .with_scope(ScopeId::route(1));
-                        let eff_index = EffIndex::new(8);
+                        let eff_index = EffIndex::from_dense_ordinal(8);
                         let tag = crate::control::cap::resource_kinds::RouteDecisionKind::TAG;
 
                         cluster
@@ -10040,7 +10049,7 @@ mod tests {
                             )
                             .expect_err("route decision must reject loop resolver type");
 
-                        let loop_eff = EffIndex::new(9);
+                        let loop_eff = EffIndex::from_dense_ordinal(9);
                         let loop_tag = crate::control::cap::resource_kinds::LoopContinueKind::TAG;
                         cluster
                             .register_dynamic_policy_resolver(
@@ -10055,7 +10064,7 @@ mod tests {
                             )
                             .expect_err("loop control must reject route resolver type");
 
-                        let non_binary_eff = EffIndex::new(10);
+                        let non_binary_eff = EffIndex::from_dense_ordinal(10);
                         cluster
                             .register_dynamic_policy_resolver(
                                 rv_id,

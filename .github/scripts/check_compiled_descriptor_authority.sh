@@ -69,6 +69,37 @@ for path in runtime_paths:
         if re.search(forbidden, source):
             fail(f"{path} reads typed/raw choreography instead of compiled descriptor facts: {forbidden}")
 
+for path in [
+    "src/endpoint/kernel/core.rs",
+    "src/endpoint/kernel/route_frontier/offer.rs",
+    "src/global/typestate/cursor.rs",
+]:
+    source = strip_cfg_test_modules(read(path))
+    if "MAX_EFF_NODES" in source:
+            fail(f"{path} uses whole-program effect bounds in route/flow/cursor hot path instead of compiled descriptor bounds")
+
+core = read("src/endpoint/kernel/core.rs")
+offer = read("src/endpoint/kernel/route_frontier/offer.rs")
+role_image_source = read("src/global/compiled/images/role.rs")
+for required in [
+    "pub(crate) struct RoleRuntimeTableView",
+    "route_record_by_dense_route",
+    "route_dense_by_scope_slot",
+    "route_offer_lane_words_by_dense_route",
+    "phase_headers",
+    "control_by_eff: &'a [ControlDesc]",
+    "pub(crate) fn control_by_eff(&self) -> &[ControlDesc]",
+    "runtime_tables(",
+]:
+    if required not in role_image_source:
+        fail(f"role image missing precomputed runtime table view: {required}")
+
+if "par_join_by_scope" in role_image_source:
+    fail("role runtime table view must not label phase headers as par join by scope")
+
+if re.search(r"control_by_eff:\s*self\.eff_index_to_step\(\)", role_image_source):
+    fail("control_by_eff must be a ControlDesc row table, not an eff-to-step map")
+
 cluster = read("src/control/cluster/core.rs")
 for required in [
     "CompiledProgramRef",
@@ -90,6 +121,7 @@ for required in [
         fail(f"endpoint init path missing compiled image/header authority: {required}")
 
 role_image = read("src/global/compiled/images/role.rs")
+role_program = read("src/global/role_program.rs")
 for required in [
     "pub(crate) struct CompiledRoleImage",
     "typestate_offset: u16",
@@ -101,7 +133,61 @@ for required in [
     if required not in role_image:
         fail(f"compiled role image is not a compact offset/facts owner: {required}")
 
-role_program = read("src/global/role_program.rs")
+for required in [
+    "fn next_set_from(",
+    "lane_set_view_iterates_set_bits_without_empty_lane_scan",
+]:
+    if required not in role_program:
+        fail(f"LaneSetView must iterate compiled lane masks by set bits: {required}")
+
+for required in [
+    "offer_lanes.next_set_from(",
+    "next_preferred_lane_in_lane_set(",
+]:
+    if required not in core:
+        fail(f"offer hot path must walk compiled lane masks without empty-lane scans: {required}")
+
+offer_tests = read("src/endpoint/kernel/core_offer_tests.rs")
+for required in [
+    "preview_offer_entry_evidence_defers_binding_poll_until_selected_scope",
+    "poll_binding_for_offer_polls_only_selected_lane_for_unbuffered_generic_mask",
+    "poll_binding_for_offer_polls_authoritative_demux_lane_when_current_lane_is_excluded",
+]:
+    if required not in offer_tests:
+        fail(f"offer hot path missing behavior proof for compiled lane/evidence use: {required}")
+
+for required in [
+    "role_runtime_table_view_route_dense_by_scope_slot_maps_to_expected_row",
+    "role_runtime_table_view_control_by_eff_contains_control_descriptors",
+]:
+    if required not in role_image_source:
+        fail(f"compiled runtime table view missing behavior proof: {required}")
+
+for required in [
+    "try_poll_route_decision_immediate(",
+    "offer_lanes.next_set_from(",
+    "ingest_scope_evidence_for_offer(",
+]:
+    if required not in offer:
+        fail(f"offer frontier must use compiled lane-set hot-path helpers: {required}")
+
+if re.search(
+    r"while\s+lane_idx\s+<\s+(?:logical_lane_count|lane_limit)\s*\{[^{}]*(?:!\s*)?(?<!active_)offer_lanes\.contains",
+    offer,
+    re.S,
+):
+    fail("offer frontier must not scan empty lanes looking for offer_lanes membership")
+
+for forbidden in [
+    "fallback route",
+    "repair route",
+    "absorb mismatch",
+    "guess route",
+    "infer route",
+]:
+    if forbidden in core or forbidden in offer:
+        fail(f"offer/route hot path retained forbidden repair or inference vocabulary: {forbidden}")
+
 for required in [
     "struct RoleImage",
     "pub(crate) struct RoleImageRef",
@@ -116,7 +202,7 @@ for required in [
     "pub(crate) const fn source(&self) -> RoleImageSource",
     "fn footprint(self) -> RoleFootprint",
     "RoleImage::new(",
-    "RoleImageSource::new(Self::init_lowering)",
+    "RoleImageSource::new(Self::summary)",
     "&ValidatedRoleImage::<Steps, ROLE>::IMAGE",
 ]:
     if required not in role_program:
@@ -125,7 +211,6 @@ for forbidden in [
     "summary: &'static LoweringSummary",
     "const fn summary(",
     "pub(crate) const fn summary(",
-    "pub(crate) fn summary(",
     "program.image.summary()",
     "\n    counts: RoleLoweringCounts,\n",
     "program.summary.role_lowering_counts::<ROLE>()",

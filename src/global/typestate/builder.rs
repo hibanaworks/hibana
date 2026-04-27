@@ -36,7 +36,7 @@ pub(crate) struct RoleTypestateValue {
     pub(super) scope_registry: ScopeRegistry,
 }
 
-pub(crate) struct RoleTypestateInitStorage<'a> {
+pub(crate) struct RoleTypestateRowDestinations<'a> {
     pub(crate) nodes_ptr: *mut LocalNode,
     pub(crate) nodes_cap: usize,
     pub(crate) scope_records: &'a mut [ScopeRecord],
@@ -44,6 +44,7 @@ pub(crate) struct RoleTypestateInitStorage<'a> {
     pub(crate) route_dense_by_slot: *mut u16,
     pub(crate) route_records: *mut RouteScopeRecord,
     pub(crate) route_offer_lane_words: *mut LaneWord,
+    pub(crate) route_arm0_lane_words: *mut LaneWord,
     pub(crate) route_arm1_lane_words: *mut LaneWord,
     pub(crate) route_lane_word_len: usize,
     pub(crate) route_dispatch_shapes: *mut RouteDispatchShape,

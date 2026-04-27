@@ -746,7 +746,7 @@ pub(crate) fn try_local_meta_value(ts: &RoleTypestateValue, idx: usize) -> Optio
 }
 
 pub(crate) const fn as_eff_index(idx: usize) -> EffIndex {
-    EffIndex::from_usize(idx)
+    EffIndex::from_dense_ordinal(idx)
 }
 
 pub(crate) const fn as_state_index(idx: usize) -> StateIndex {

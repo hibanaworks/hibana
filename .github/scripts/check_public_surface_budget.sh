@@ -33,7 +33,7 @@ check_max_lines ".github/allowlists/endpoint-public-api.txt" 11
 check_max_lines ".github/allowlists/substrate-public-api.txt" 43
 
 check_absent \
-  "g::advanced|FlowSendArg|SendOutcomeKind|CapFlow|FlowInner|DynamicResolution|from_fn|from_state|fallback|legacy|compat|heuristic|rescue|state machine|TransportSnapshotParts|ConfigParts|RegisteredTokenParts" \
+  "g::advanced|FlowSendArg|SendOutcomeKind|CapFlow|FlowInner|DynamicResolution|IncomingClassification|from_fn|from_state|fallback|legacy|compat|heuristic|rescue|state machine|TransportSnapshotParts|ConfigParts|RegisteredTokenParts" \
   "forbidden final-form names in public API allowlists" \
   .github/allowlists
 

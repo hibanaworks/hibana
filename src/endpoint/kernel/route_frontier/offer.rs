@@ -6,7 +6,7 @@ use super::authority::{
     Arm, DeferReason, DeferSource, RouteDecisionSource, RouteDecisionToken, RouteResolveStep,
     ScopeHint,
 };
-use super::core::{CursorEndpoint, RouteBranch, StagedPayload};
+use super::core::{BranchPreviewView, CursorEndpoint, RouteBranch, StagedPayload};
 use super::evidence::ScopeLabelMeta;
 #[cfg(test)]
 use super::frontier::FrontierCandidate;
@@ -21,8 +21,9 @@ use super::frontier::{
     frontier_working_observation_key_view_from_storage,
     should_suppress_current_passive_without_evidence,
 };
-use super::inbox::PackedIncomingClassification;
+use super::inbox::PackedIngressEvidence;
 use super::lane_port;
+use super::route_state::RouteArmCommitProof;
 use crate::binding::BindingSlot;
 use crate::control::cap::mint::{CapShot, EpochTable, MintConfigMarker};
 use crate::eff::EffIndex;
@@ -31,12 +32,38 @@ use crate::global::compiled::images::ControlSemanticKind;
 use crate::global::const_dsl::{PolicyMode, ScopeId, ScopeKind};
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
-    MAX_FIRST_RECV_DISPATCH, RecvMeta, StateIndex, state_index_to_usize,
+    ARM_SHARED, MAX_FIRST_RECV_DISPATCH, RecvMeta, StateIndex, state_index_to_usize,
 };
 use crate::policy_runtime::PolicySlot;
 use crate::rendezvous::port::Port;
 use crate::runtime::{config::Clock, consts::LabelUniverse};
 use crate::transport::{Transport, wire::Payload};
+
+#[derive(Clone, Copy)]
+pub(in crate::endpoint::kernel) struct LaneIngressEvidence {
+    pub(in crate::endpoint::kernel) lane_idx: usize,
+    pub(in crate::endpoint::kernel) evidence: crate::binding::IngressEvidence,
+}
+
+impl LaneIngressEvidence {
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn new(
+        lane_idx: usize,
+        evidence: crate::binding::IngressEvidence,
+    ) -> Self {
+        Self { lane_idx, evidence }
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn label(self) -> u8 {
+        self.evidence.label
+    }
+
+    #[inline]
+    const fn into_parts(self) -> (usize, crate::binding::IngressEvidence) {
+        (self.lane_idx, self.evidence)
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct OfferScopeSelection {
@@ -69,10 +96,30 @@ enum ResolvePendingAction {
 }
 
 #[derive(Clone, Copy)]
+pub(in crate::endpoint::kernel) struct BranchCommitPlan {
+    preview: BranchPreviewView,
+    meta: Option<RecvMeta>,
+    route_arm_proof: Option<RouteArmCommitProof>,
+    clear_other_lanes: bool,
+}
+
+impl BranchCommitPlan {
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) fn meta(&self) -> Option<RecvMeta> {
+        self.meta
+    }
+
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) fn route_arm_proof(&self) -> Option<RouteArmCommitProof> {
+        self.route_arm_proof
+    }
+}
+
+#[derive(Clone, Copy)]
 struct OfferCollectState<'a> {
     selection: OfferScopeSelection,
     facts: OfferFrontierFacts,
-    binding_classification: Option<crate::binding::IncomingClassification>,
+    binding_evidence: Option<LaneIngressEvidence>,
     transport_payload_len: usize,
     transport_payload_lane: u8,
     transport_payload: Option<Payload<'a>>,
@@ -82,7 +129,7 @@ struct OfferCollectState<'a> {
 struct OfferResolveState<'a> {
     selection: OfferScopeSelection,
     facts: OfferFrontierFacts,
-    binding_classification: Option<crate::binding::IncomingClassification>,
+    binding_evidence: Option<LaneIngressEvidence>,
     transport_payload_len: usize,
     transport_payload_lane: u8,
     transport_payload: Option<Payload<'a>>,
@@ -445,7 +492,7 @@ pub(super) struct RouteFrontierMachine<
 {
     endpoint: &'endpoint mut CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
     frontier_visited: Option<FrontierVisitSet>,
-    carried_binding_classification: Option<crate::binding::IncomingClassification>,
+    carried_binding_evidence: Option<LaneIngressEvidence>,
     carried_transport_payload: Option<(usize, u8, Payload<'r>)>,
     run_stage: Option<OfferRunStage<'r>>,
     pending_recv: lane_port::PendingRecv,
@@ -453,7 +500,7 @@ pub(super) struct RouteFrontierMachine<
 
 pub(crate) struct OfferState<'r> {
     frontier_visited: Option<FrontierVisitSet>,
-    carried_binding_classification: Option<crate::binding::IncomingClassification>,
+    carried_binding_evidence: Option<LaneIngressEvidence>,
     carried_transport_payload: Option<(usize, u8, Payload<'r>)>,
     run_stage: Option<OfferRunStage<'r>>,
     pending_recv: lane_port::PendingRecv,
@@ -464,7 +511,7 @@ impl<'r> OfferState<'r> {
     pub(crate) const fn new() -> Self {
         Self {
             frontier_visited: None,
-            carried_binding_classification: None,
+            carried_binding_evidence: None,
             carried_transport_payload: None,
             run_stage: None,
             pending_recv: lane_port::PendingRecv::new(),
@@ -489,7 +536,7 @@ where
         Self {
             endpoint,
             frontier_visited: None,
-            carried_binding_classification: None,
+            carried_binding_evidence: None,
             carried_transport_payload: None,
             run_stage: None,
             pending_recv: lane_port::PendingRecv::new(),
@@ -561,6 +608,15 @@ where
     }
 
     #[inline]
+    fn for_each_set_lane(lane_set: LaneSetView, lane_limit: usize, mut f: impl FnMut(usize)) {
+        let mut next = lane_set.first_set(lane_limit);
+        while let Some(lane_idx) = next {
+            f(lane_idx);
+            next = lane_set.next_set_from(lane_idx.saturating_add(1), lane_limit);
+        }
+    }
+
+    #[inline]
     pub(in crate::endpoint::kernel) fn frontier_observation_offer_lane_entry_slot_masks(
         endpoint: &CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
         current_parallel_root: ScopeId,
@@ -585,25 +641,21 @@ where
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 continue;
             };
-            let Some(state) = endpoint.offer_entry_state_snapshot(entry_idx) else {
+            let Some(_state) = endpoint.offer_entry_state_snapshot(entry_idx) else {
                 continue;
             };
             if !endpoint.offer_entry_has_active_lanes(entry_idx) {
                 continue;
             }
             let logical_lane_count = endpoint.cursor.logical_lane_count();
-            let _ = state;
             let active_offer_lanes = endpoint.route_state.active_offer_lanes();
-            let mut lane_idx = 0usize;
-            while lane_idx < logical_lane_count {
-                if active_offer_lanes.contains(lane_idx)
-                    && state_index_to_usize(endpoint.route_state.lane_offer_state(lane_idx).entry)
-                        == entry_idx
+            Self::for_each_set_lane(active_offer_lanes, logical_lane_count, |lane_idx| {
+                if state_index_to_usize(endpoint.route_state.lane_offer_state(lane_idx).entry)
+                    == entry_idx
                 {
                     slot_masks.set_logical_mask(lane_idx, slot_masks[lane_idx] | (1u8 << slot_idx));
                 }
-                lane_idx += 1;
-            }
+            });
         }
         slot_masks
     }
@@ -673,8 +725,8 @@ where
         }
         let logical_lane_count = endpoint.cursor.logical_lane_count();
         let binding_nonempty_lanes = endpoint.binding_inbox.nonempty_lanes();
-        let mut lane_idx = 0usize;
-        while lane_idx < logical_lane_count {
+        let active_offer_lanes = endpoint.route_state.active_offer_lanes();
+        Self::for_each_set_lane(active_offer_lanes, logical_lane_count, |lane_idx| {
             let info = endpoint.route_state.lane_offer_state(lane_idx);
             if !info.entry.is_max()
                 && active_entries
@@ -686,8 +738,7 @@ where
                     key.insert_binding_nonempty_lane(lane_idx);
                 }
             }
-            lane_idx += 1;
-        }
+        });
         key
     }
 
@@ -923,7 +974,8 @@ where
     fn mark_static_passive_descendant_path_ready(&mut self, scope_id: ScopeId, label: u8) {
         let mut current_scope = scope_id;
         let mut depth = 0usize;
-        while depth < crate::eff::meta::MAX_EFF_NODES {
+        let depth_bound = self.endpoint.route_scope_depth_bound();
+        while depth < depth_bound {
             let Some(arm) = self
                 .endpoint
                 .static_passive_descendant_dispatch_arm_from_exact_label(current_scope, label)
@@ -931,14 +983,6 @@ where
                 break;
             };
             self.mark_scope_ready_arm(current_scope, arm);
-            if self
-                .endpoint
-                .selected_arm_for_scope(current_scope)
-                .is_none()
-            {
-                let lane = self.endpoint.offer_lane_for_scope(current_scope);
-                let _ = self.endpoint.set_route_arm(lane, current_scope, arm);
-            }
             let Some(child_scope) = self
                 .endpoint
                 .cursor
@@ -1412,7 +1456,7 @@ where
             }
             return Ok(());
         }
-        if self.endpoint.ensure_current_route_arm_state()?.is_some() {
+        if self.endpoint.current_route_arm_authorized()?.is_some() {
             return Ok(());
         }
         if current_is_route_entry && current_has_offer_lanes {
@@ -1456,7 +1500,7 @@ where
         &mut self,
         selection: OfferScopeSelection,
         selected_arm: Option<u8>,
-        binding_classification: &mut Option<crate::binding::IncomingClassification>,
+        binding_evidence: &mut Option<LaneIngressEvidence>,
         transport_payload_len: &mut usize,
         transport_payload_lane: &mut u8,
         transport_payload: &mut Option<Payload<'r>>,
@@ -1471,8 +1515,8 @@ where
                 return Poll::Ready(Ok(()));
             }
         }
-        if binding_classification.is_none()
-            && let Some((_, classification)) = {
+        if binding_evidence.is_none()
+            && let Some((lane_idx, evidence)) = {
                 let label_meta = self.endpoint.selection_label_meta(selection);
                 self.endpoint.poll_binding_for_offer(
                     selection.scope_id,
@@ -1482,7 +1526,7 @@ where
                 )
             }
         {
-            *binding_classification = Some(classification);
+            *binding_evidence = Some(LaneIngressEvidence::new(lane_idx, evidence));
             return Poll::Ready(Ok(()));
         }
         if *transport_payload_len == 0 {
@@ -1502,21 +1546,17 @@ where
         offer_lanes: LaneSetView,
         cx: &mut core::task::Context<'_>,
     ) -> Option<Arm> {
-        let mut lane_idx = 0usize;
-        let logical_lane_count = self.endpoint.cursor.logical_lane_count();
+        let lane_limit = self.endpoint.cursor.logical_lane_count();
+        let mut next = offer_lanes.first_set(lane_limit);
         let mut arm = None;
-        while lane_idx < logical_lane_count {
-            if !offer_lanes.contains(lane_idx) {
-                lane_idx += 1;
-                continue;
-            }
+        while let Some(lane_idx) = next {
             let lane = lane_idx as u8;
             let port = self.endpoint.port_for_lane(lane as usize);
             if let Poll::Ready(route_arm) = port.poll_route_decision(scope_id, ROLE, cx) {
                 arm = Some(route_arm);
                 break;
             }
-            lane_idx += 1;
+            next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
         }
         let arm = arm?;
         Arm::new(arm)
@@ -1553,7 +1593,7 @@ where
                 match self.await_static_passive_progress(
                     state.selection,
                     Some(selected_arm),
-                    &mut state.binding_classification,
+                    &mut state.binding_evidence,
                     &mut state.transport_payload_len,
                     &mut state.transport_payload_lane,
                     &mut state.transport_payload,
@@ -1581,7 +1621,7 @@ where
         let selection = state.selection;
         let is_route_controller = state.facts.is_route_controller;
         let is_dynamic_route_scope = state.facts.is_dynamic_route_scope;
-        let binding_classification = &mut state.binding_classification;
+        let binding_evidence = &mut state.binding_evidence;
         let transport_payload_len = &mut state.transport_payload_len;
         let transport_payload_lane = &mut state.transport_payload_lane;
         let transport_payload = &mut state.transport_payload;
@@ -1635,7 +1675,7 @@ where
                             DeferReason::Unsupported,
                             retry_hint,
                             offer_lane,
-                            binding_classification.is_some(),
+                            binding_evidence.is_some(),
                             None,
                             frontier_visited,
                         ) {
@@ -1662,12 +1702,12 @@ where
                     let label_meta = self.endpoint.selection_label_meta(selection);
                     let materialization_meta =
                         self.endpoint.selection_materialization_meta(selection);
-                    self.endpoint.cache_binding_classification_for_offer(
+                    self.endpoint.cache_binding_evidence_for_offer(
                         scope_id,
                         offer_lane_idx,
                         label_meta,
                         materialization_meta,
-                        binding_classification,
+                        binding_evidence,
                     );
 
                     self.endpoint.ingest_scope_evidence_for_offer_lanes(
@@ -1677,10 +1717,10 @@ where
                         is_dynamic_route_scope,
                         label_meta,
                     );
-                    if let Some(classification) = binding_classification.as_ref() {
+                    if let Some(evidence) = binding_evidence.as_ref() {
                         self.endpoint.ingest_binding_scope_evidence(
                             scope_id,
-                            classification.label,
+                            evidence.label(),
                             is_dynamic_route_scope,
                             label_meta,
                         );
@@ -1720,7 +1760,7 @@ where
                 if self.endpoint.scope_has_ready_arm_evidence(scope_id) {
                     let needs_wire_turn_for_materialization = !passive_waited_for_wire
                         && *transport_payload_len == 0
-                        && binding_classification.is_none();
+                        && binding_evidence.is_none();
                     if !needs_wire_turn_for_materialization {
                         break;
                     }
@@ -1752,7 +1792,7 @@ where
                     DeferReason::NoEvidence,
                     1,
                     offer_lane,
-                    binding_classification.is_some(),
+                    binding_evidence.is_some(),
                     None,
                     frontier_visited,
                 ) {
@@ -1801,7 +1841,7 @@ where
                         DeferReason::Unsupported,
                         retry_hint,
                         offer_lane,
-                        binding_classification.is_some(),
+                        binding_evidence.is_some(),
                         None,
                         frontier_visited,
                     ) {
@@ -1821,7 +1861,7 @@ where
         if route_token.is_none()
             && !is_route_controller
             && *transport_payload_len == 0
-            && binding_classification.is_none()
+            && binding_evidence.is_none()
             && resolved_label_hint.is_none()
             && !liveness_exhausted
         {
@@ -1888,7 +1928,7 @@ where
                     DeferReason::NoEvidence,
                     1,
                     offer_lane,
-                    binding_classification.is_some(),
+                    binding_evidence.is_some(),
                     None,
                     frontier_visited,
                 ) {
@@ -1924,18 +1964,18 @@ where
             Some(route_token) => route_token,
             None => return Poll::Ready(Err(RecvError::PhaseInvariant)),
         };
-        if let Some(classification) = binding_classification.as_ref()
+        if let Some(evidence) = binding_evidence.as_ref()
             && let Some(binding_arm) = {
                 let label_meta = self.endpoint.selection_label_meta(selection);
                 CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_label_to_arm(
                     label_meta,
-                    classification.label,
+                    evidence.label(),
                 )
             }
             && binding_arm == route_token.arm().as_u8()
         {
-            // Binding classification is demux-only. Once Ack/Resolver/Poll has
-            // fixed the arm, matching classification may still contribute
+            // Binding evidence is demux-only. Once Ack/Resolver/Poll has
+            // fixed the arm, matching evidence may still contribute
             // readiness for branch materialization.
             self.endpoint.mark_scope_ready_arm(scope_id, binding_arm);
         }
@@ -2001,7 +2041,7 @@ where
                     DeferReason::NoEvidence,
                     1,
                     offer_lane,
-                    binding_classification.is_some(),
+                    binding_evidence.is_some(),
                     Some(route_token.arm().as_u8()),
                     frontier_visited,
                 ) {
@@ -2049,10 +2089,10 @@ where
         selection: OfferScopeSelection,
         resolved: ResolvedRouteDecision,
         is_route_controller: bool,
-        mut binding_classification: Option<crate::binding::IncomingClassification>,
+        mut binding_evidence: Option<LaneIngressEvidence>,
         transport_payload_len: usize,
         transport_payload_lane: u8,
-        mut transport_payload: Option<Payload<'r>>,
+        transport_payload: Option<Payload<'r>>,
     ) -> RecvResult<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>> {
         let scope_id = selection.scope_id;
         let route_token = resolved.route_token;
@@ -2101,67 +2141,71 @@ where
         // Late binding channel resolution: for wire recv branches, prefer
         // binding ingress even when transport payload bytes were staged earlier.
         let label_meta = self.endpoint.selection_label_meta(selection);
-        let binding_classification = if transport_payload_len == 0
-            || matches!(branch_kind, BranchKind::WireRecv)
-        {
-            let mut classification = binding_classification;
+        let binding_evidence = if matches!(branch_kind, BranchKind::WireRecv) {
+            let mut selected_evidence = None;
             let lane_idx = meta.lane as usize;
+            if let Some(carried) = binding_evidence.as_ref()
+                && carried.lane_idx != lane_idx
+            {
+                let (carried_lane, carried_evidence) =
+                    binding_evidence.take().unwrap().into_parts();
+                self.endpoint
+                    .put_back_binding_for_lane(carried_lane, carried_evidence);
+            }
             if let Some(expected_label) = label_meta.preferred_binding_label(Some(selected_arm)) {
-                if binding_classification
-                    .as_ref()
-                    .map(|classification| classification.label == expected_label)
-                    .unwrap_or(false)
-                {
-                    if let Some(matched) = binding_classification.take() {
-                        classification = Some(matched);
+                if let Some(carried) = binding_evidence.take() {
+                    let (carried_lane, carried) = carried.into_parts();
+                    if carried.label == expected_label && carried.label == meta.label {
+                        selected_evidence = Some(carried);
+                    } else {
+                        self.endpoint
+                            .put_back_binding_for_lane(carried_lane, carried);
                     }
-                } else if binding_classification.as_ref().and_then(|classification| {
-                    CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint, B>::scope_label_to_arm(
-                        label_meta,
-                        classification.label,
-                    )
-                }) == Some(selected_arm)
-                {
-                    if let Some(matched) = binding_classification.take() {
-                        classification = Some(matched);
-                    }
-                } else if let Some(matched) = self
-                    .endpoint
-                    .take_matching_binding_for_lane(lane_idx, expected_label)
-                {
-                    classification = Some(matched);
+                }
+                if selected_evidence.is_none() && expected_label == meta.label {
+                    selected_evidence = self
+                        .endpoint
+                        .take_matching_binding_for_lane(lane_idx, expected_label);
                 }
             } else {
-                let (channel, instance, has_fin) = self.endpoint.take_binding_for_selected_arm(
-                    lane_idx,
-                    selected_arm,
-                    label_meta,
-                    &mut binding_classification,
-                );
-                if let Some(channel) = channel {
-                    classification = Some(crate::binding::IncomingClassification {
-                        label: meta.label,
-                        instance: instance.unwrap_or(0),
-                        has_fin,
-                        channel,
-                    });
+                if let Some(carried) = binding_evidence.take() {
+                    let (carried_lane, carried) = carried.into_parts();
+                    if carried.label == meta.label {
+                        selected_evidence = Some(carried);
+                    } else {
+                        self.endpoint
+                            .put_back_binding_for_lane(carried_lane, carried);
+                    }
+                }
+                if selected_evidence.is_none() {
+                    selected_evidence = self
+                        .endpoint
+                        .take_matching_binding_for_lane(lane_idx, meta.label);
                 }
             }
-            classification
+            selected_evidence.map(|evidence| LaneIngressEvidence::new(lane_idx, evidence))
         } else {
-            binding_classification
+            if let Some(lane_evidence) = binding_evidence {
+                let (lane_idx, evidence) = lane_evidence.into_parts();
+                self.endpoint.put_back_binding_for_lane(lane_idx, evidence);
+            }
+            None
         };
-        let binding_staged_payload = binding_classification.and_then(|classification| {
+        let binding_staged_payload = binding_evidence.and_then(|lane_evidence| {
+            let (lane_idx, evidence) = lane_evidence.into_parts();
             self.endpoint
-                .take_restored_binding_payload(meta.lane as usize, classification)
+                .take_restored_binding_payload(lane_idx, evidence)
+                .map(|payload| (lane_idx as u8, payload))
         });
-        if transport_payload_len != 0
-            && (!matches!(branch_kind, BranchKind::WireRecv) || binding_classification.is_some())
+        let transport_payload_for_branch = if transport_payload_len != 0
+            && (!matches!(branch_kind, BranchKind::WireRecv) || binding_evidence.is_some())
         {
             let port = self.endpoint.port_for_lane(transport_payload_lane as usize);
             lane_port::requeue_recv(port);
-            transport_payload = None;
-        }
+            None
+        } else {
+            transport_payload
+        };
         let branch_progress_eff = self
             .endpoint
             .cursor
@@ -2184,16 +2228,16 @@ where
             .set_cursor_index(state_index_to_usize(preview_meta.cursor_index));
         Ok(RouteBranch {
             label: meta.label,
-            binding_classification: PackedIncomingClassification::from_option(
-                binding_classification,
+            binding_evidence: PackedIngressEvidence::from_option(
+                binding_evidence.map(|lane_evidence| lane_evidence.evidence),
             ),
+            binding_evidence_lane: binding_evidence
+                .map(|lane_evidence| lane_evidence.lane_idx as u8)
+                .unwrap_or(u8::MAX),
             staged_payload: binding_staged_payload
-                .map(|payload| StagedPayload::Binding {
-                    lane: meta.lane,
-                    payload,
-                })
+                .map(|(lane, payload)| StagedPayload::Binding { lane, payload })
                 .or_else(|| {
-                    transport_payload.map(|payload| StagedPayload::Transport {
+                    transport_payload_for_branch.map(|payload| StagedPayload::Transport {
                         lane: transport_payload_lane,
                         payload,
                     })
@@ -2203,17 +2247,101 @@ where
         })
     }
 
-    fn commit_route_branch_preview(
+    pub(in crate::endpoint::kernel) fn preflight_route_branch_commit(
+        &self,
+        preview: BranchPreviewView,
+    ) -> RecvResult<BranchCommitPlan> {
+        let scope_id = preview.branch_meta.scope_id;
+        let selected_arm = preview.branch_meta.selected_arm;
+        let lane_wire = preview.branch_meta.lane_wire;
+        let lane_idx = lane_wire as usize;
+        if lane_idx >= self.endpoint.cursor.logical_lane_count() {
+            return Err(RecvError::PhaseInvariant);
+        }
+        let clear_other_lanes =
+            self.endpoint.selected_arm_for_scope(scope_id) != Some(selected_arm);
+        let route_arm_proof = if clear_other_lanes {
+            self.endpoint
+                .preflight_route_arm_commit_after_clearing_other_lanes(
+                    lane_wire,
+                    scope_id,
+                    selected_arm,
+                )
+        } else {
+            self.endpoint
+                .preflight_route_arm_commit(lane_wire, scope_id, selected_arm)
+        };
+        if scope_id.kind() == ScopeKind::Route && route_arm_proof.is_none() {
+            return Err(RecvError::PhaseInvariant);
+        }
+        if preview.branch_meta.route_source == RouteDecisionSource::Poll
+            && preview.branch_meta.kind == BranchKind::WireRecv
+        {
+            let Some((arm, _)) = self
+                .endpoint
+                .cursor
+                .first_recv_target(scope_id, preview.label)
+            else {
+                return Err(RecvError::PhaseInvariant);
+            };
+            let arm = if arm == ARM_SHARED { 0 } else { arm };
+            if arm != selected_arm {
+                return Err(RecvError::PhaseInvariant);
+            }
+        }
+
+        let meta = if preview.branch_meta.kind == BranchKind::WireRecv {
+            let mut meta = if let Some(meta) = self.endpoint.cursor.try_recv_meta() {
+                meta
+            } else {
+                return Err(RecvError::PhaseInvariant);
+            };
+            if meta.route_arm.is_none() {
+                meta.route_arm = Some(selected_arm);
+            }
+            if meta.label != preview.label {
+                meta.label = preview.label;
+            }
+            Some(meta)
+        } else {
+            None
+        };
+
+        Ok(BranchCommitPlan {
+            preview,
+            meta,
+            route_arm_proof,
+            clear_other_lanes,
+        })
+    }
+
+    pub(in crate::endpoint::kernel) fn publish_route_branch_commit_plan(
         &mut self,
-        preview: &RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    ) -> RecvResult<Option<RecvMeta>> {
+        plan: BranchCommitPlan,
+    ) -> Option<RecvMeta> {
+        let preview = plan.preview;
         let scope_id = preview.branch_meta.scope_id;
         let selected_arm = preview.branch_meta.selected_arm;
         let lane_wire = preview.branch_meta.lane_wire;
         let is_route_controller = self.endpoint.cursor.is_route_controller(scope_id);
-        if !is_route_controller {
+
+        if plan.clear_other_lanes {
             self.endpoint
-                .propagate_recvless_parent_route_decision(scope_id, selected_arm);
+                .clear_scope_route_state_for_other_lanes(scope_id, lane_wire);
+        }
+        if let Some(proof) = plan.route_arm_proof {
+            self.endpoint.commit_route_arm_after_preflight(proof);
+        }
+        self.endpoint
+            .skip_unselected_arm_lanes(scope_id, selected_arm, lane_wire);
+
+        if !is_route_controller {
+            if let Some(plan) = self
+                .endpoint
+                .build_recvless_parent_route_decision_plan(scope_id)
+            {
+                self.endpoint.publish_recvless_parent_route_decision(plan);
+            }
         }
 
         match preview.branch_meta.route_source {
@@ -2247,13 +2375,9 @@ where
                             lane,
                         );
                     } else {
-                        let logical_lane_count = self.endpoint.cursor.logical_lane_count();
-                        let mut lane_idx = 0usize;
-                        while lane_idx < logical_lane_count {
-                            if !offer_lanes.contains(lane_idx) {
-                                lane_idx += 1;
-                                continue;
-                            }
+                        let lane_limit = self.endpoint.cursor.logical_lane_count();
+                        let mut next = offer_lanes.first_set(lane_limit);
+                        while let Some(lane_idx) = next {
                             let lane = lane_idx as u8;
                             self.endpoint.record_route_decision_for_lane(
                                 lane as usize,
@@ -2266,7 +2390,8 @@ where
                                 RouteDecisionSource::Ack,
                                 lane,
                             );
-                            lane_idx += 1;
+                            next =
+                                offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
                         }
                     }
                 }
@@ -2282,32 +2407,6 @@ where
             _ => {}
         }
 
-        if self.endpoint.selected_arm_for_scope(scope_id) != Some(selected_arm) {
-            self.endpoint
-                .clear_scope_route_state_for_other_lanes(scope_id, lane_wire);
-        }
-        self.endpoint
-            .skip_unselected_arm_lanes(scope_id, selected_arm, lane_wire);
-        self.endpoint
-            .set_route_arm(lane_wire, scope_id, selected_arm)?;
-
-        let meta = if preview.branch_meta.kind == BranchKind::WireRecv {
-            let mut meta = if let Some(meta) = self.endpoint.cursor.try_recv_meta() {
-                meta
-            } else {
-                return Err(RecvError::PhaseInvariant);
-            };
-            if meta.route_arm.is_none() {
-                meta.route_arm = Some(selected_arm);
-            }
-            if meta.label != preview.label {
-                meta.label = preview.label;
-            }
-            Some(meta)
-        } else {
-            None
-        };
-
         if self.endpoint.arm_has_recv(scope_id, selected_arm) {
             self.endpoint
                 .consume_scope_ready_arm(scope_id, selected_arm);
@@ -2317,15 +2416,7 @@ where
             .port_for_lane(lane_wire as usize)
             .clear_route_hints();
 
-        Ok(meta)
-    }
-
-    #[inline]
-    fn commit_branch_preview(
-        &mut self,
-        branch: &RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    ) -> RecvResult<Option<RecvMeta>> {
-        self.commit_route_branch_preview(branch)
+        plan.meta
     }
 
     fn ingest_binding_scope_evidence(
@@ -2415,33 +2506,31 @@ where
             return;
         }
         let lane_limit = self.endpoint.cursor.logical_lane_count();
-        let mut lane_idx = 0usize;
-        while lane_idx < lane_limit {
-            if offer_lanes.contains(lane_idx) {
-                let drain_transport_hints = {
-                    let port = self.endpoint.port_for_lane(lane_idx);
-                    !self.pending_recv.parks_port(port)
-                };
-                if self
-                    .endpoint
-                    .pending_scope_ack_lane_mask(summary_lane_idx, scope_id, lane_idx)
-                    || self.endpoint.pending_scope_hint_lane_mask(
-                        summary_lane_idx,
-                        lane_idx,
-                        label_meta,
-                        drain_transport_hints,
-                    )
-                {
-                    self.ingest_scope_evidence_for_lane(
-                        lane_idx,
-                        scope_id,
-                        suppress_hint,
-                        label_meta,
-                        drain_transport_hints,
-                    );
-                }
+        let mut next = offer_lanes.first_set(lane_limit);
+        while let Some(lane_idx) = next {
+            let drain_transport_hints = {
+                let port = self.endpoint.port_for_lane(lane_idx);
+                !self.pending_recv.parks_port(port)
+            };
+            if self
+                .endpoint
+                .pending_scope_ack_lane_mask(summary_lane_idx, scope_id, lane_idx)
+                || self.endpoint.pending_scope_hint_lane_mask(
+                    summary_lane_idx,
+                    lane_idx,
+                    label_meta,
+                    drain_transport_hints,
+                )
+            {
+                self.ingest_scope_evidence_for_lane(
+                    lane_idx,
+                    scope_id,
+                    suppress_hint,
+                    label_meta,
+                    drain_transport_hints,
+                );
             }
-            lane_idx += 1;
+            next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
         }
     }
 
@@ -2464,28 +2553,27 @@ where
         false
     }
 
-    pub(in crate::endpoint::kernel) fn cache_binding_classification_for_offer(
+    pub(in crate::endpoint::kernel) fn cache_binding_evidence_for_offer(
         &mut self,
         scope_id: ScopeId,
         offer_lane_idx: usize,
         label_meta: ScopeLabelMeta,
         materialization_meta: ScopeArmMaterializationMeta,
-        binding_classification: &mut Option<crate::binding::IncomingClassification>,
+        binding_evidence: &mut Option<LaneIngressEvidence>,
     ) {
-        if binding_classification.is_some() {
+        if binding_evidence.is_some() {
             return;
         }
-        if let Some((lane_idx, classification)) = self.endpoint.poll_binding_for_offer(
+        if let Some((lane_idx, evidence)) = self.endpoint.poll_binding_for_offer(
             scope_id,
             offer_lane_idx,
             label_meta,
             materialization_meta,
         ) {
-            if binding_classification.is_none() {
-                *binding_classification = Some(classification);
+            if binding_evidence.is_none() {
+                *binding_evidence = Some(LaneIngressEvidence::new(lane_idx, evidence));
             } else {
-                self.endpoint
-                    .put_back_binding_for_lane(lane_idx, classification);
+                self.endpoint.put_back_binding_for_lane(lane_idx, evidence);
             }
         }
     }
@@ -2709,8 +2797,8 @@ where
         };
         let lane_limit = self.endpoint.cursor.logical_lane_count();
         let active_offer_lanes = self.endpoint.route_state.active_offer_lanes();
-        let mut lane_idx = 0usize;
-        while lane_idx < lane_limit {
+        let mut changed_external_lane = false;
+        let mut check_lane = |lane_idx: usize| {
             let entry_owns_lane = active_offer_lanes.contains(lane_idx)
                 && state_index_to_usize(self.endpoint.route_state.lane_offer_state(lane_idx).entry)
                     == entry_idx;
@@ -2720,9 +2808,23 @@ where
                     || cached_key.binding_nonempty_lanes().contains(lane_idx)
                         != observation_key.binding_nonempty_lanes().contains(lane_idx))
             {
-                return false;
+                changed_external_lane = true;
             }
-            lane_idx += 1;
+        };
+        Self::for_each_set_lane(cached_key.offer_lanes(), lane_limit, &mut check_lane);
+        Self::for_each_set_lane(observation_key.offer_lanes(), lane_limit, &mut check_lane);
+        Self::for_each_set_lane(
+            cached_key.binding_nonempty_lanes(),
+            lane_limit,
+            &mut check_lane,
+        );
+        Self::for_each_set_lane(
+            observation_key.binding_nonempty_lanes(),
+            lane_limit,
+            &mut check_lane,
+        );
+        if changed_external_lane {
+            return false;
         }
         let len = cached_observed_entries.len();
         let Some(entry) = checked_state_index(entry_idx) else {
@@ -2814,17 +2916,31 @@ where
             use_root_observed_entries,
         );
         let lane_limit = self.endpoint.cursor.logical_lane_count();
-        let mut lane_idx = 0usize;
-        while lane_idx < lane_limit {
+        let mut changed_slotted_lane = false;
+        let mut check_lane = |lane_idx: usize| {
             if (cached_key.offer_lanes().contains(lane_idx)
                 != observation_key.offer_lanes().contains(lane_idx)
                 || cached_key.binding_nonempty_lanes().contains(lane_idx)
                     != observation_key.binding_nonempty_lanes().contains(lane_idx))
                 && slot_masks[lane_idx] != 0
             {
-                return false;
+                changed_slotted_lane = true;
             }
-            lane_idx += 1;
+        };
+        Self::for_each_set_lane(cached_key.offer_lanes(), lane_limit, &mut check_lane);
+        Self::for_each_set_lane(observation_key.offer_lanes(), lane_limit, &mut check_lane);
+        Self::for_each_set_lane(
+            cached_key.binding_nonempty_lanes(),
+            lane_limit,
+            &mut check_lane,
+        );
+        Self::for_each_set_lane(
+            observation_key.binding_nonempty_lanes(),
+            lane_limit,
+            &mut check_lane,
+        );
+        if changed_slotted_lane {
+            return false;
         }
         if !cached_observed_entries.remove_observation(entry_idx) {
             return false;
@@ -3389,8 +3505,7 @@ where
             use_root_observed_entries,
         );
         let lane_limit = self.endpoint.cursor.logical_lane_count();
-        let mut lane_idx = 0usize;
-        while lane_idx < lane_limit {
+        let mut mark_changed_lane = |lane_idx: usize| {
             if cached_key.offer_lanes().contains(lane_idx)
                 != observation_key.offer_lanes().contains(lane_idx)
                 || cached_key.binding_nonempty_lanes().contains(lane_idx)
@@ -3398,8 +3513,23 @@ where
             {
                 changed_slot_mask |= slot_masks[lane_idx];
             }
-            lane_idx += 1;
-        }
+        };
+        Self::for_each_set_lane(cached_key.offer_lanes(), lane_limit, &mut mark_changed_lane);
+        Self::for_each_set_lane(
+            observation_key.offer_lanes(),
+            lane_limit,
+            &mut mark_changed_lane,
+        );
+        Self::for_each_set_lane(
+            cached_key.binding_nonempty_lanes(),
+            lane_limit,
+            &mut mark_changed_lane,
+        );
+        Self::for_each_set_lane(
+            observation_key.binding_nonempty_lanes(),
+            lane_limit,
+            &mut mark_changed_lane,
+        );
         Some(changed_slot_mask)
     }
 
@@ -4158,16 +4288,24 @@ where
     fn sync_lane_offer_state(&mut self) {
         let logical_lane_count = self.endpoint.cursor.logical_lane_count();
         let active_offer_lanes = self.endpoint.route_state.active_offer_lanes();
-        let mut lane_idx = 0usize;
-        while lane_idx < logical_lane_count {
+        Self::for_each_set_lane(active_offer_lanes, logical_lane_count, |lane_idx| {
             let needs_refresh = Self::offer_refresh_mask(self.endpoint, lane_idx);
-            if active_offer_lanes.contains(lane_idx) && !needs_refresh {
+            if !needs_refresh {
                 self.clear_lane_offer_state(lane_idx);
-            } else if needs_refresh {
-                self.refresh_lane_offer_state(lane_idx);
             }
-            lane_idx += 1;
-        }
+        });
+        let current_phase_lanes = self.endpoint.cursor.current_phase_lane_set();
+        Self::for_each_set_lane(current_phase_lanes, logical_lane_count, |lane_idx| {
+            self.refresh_lane_offer_state(lane_idx);
+        });
+        let lane_linger_lanes = self.endpoint.route_state.lane_linger_lanes();
+        Self::for_each_set_lane(lane_linger_lanes, logical_lane_count, |lane_idx| {
+            self.refresh_lane_offer_state(lane_idx);
+        });
+        let lane_offer_linger_lanes = self.endpoint.route_state.lane_offer_linger_lanes();
+        Self::for_each_set_lane(lane_offer_linger_lanes, logical_lane_count, |lane_idx| {
+            self.refresh_lane_offer_state(lane_idx);
+        });
     }
 
     fn refresh_lane_offer_state(&mut self, lane_idx: usize) {
@@ -4317,7 +4455,7 @@ where
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<()>> {
         let facts = state.facts;
-        if state.binding_classification.is_none() && state.transport_payload_len == 0 {
+        if state.binding_evidence.is_none() && state.transport_payload_len == 0 {
             let payload_view = if facts.skip_recv_loop {
                 None
             } else {
@@ -4327,21 +4465,23 @@ where
                         let materialization_meta = self
                             .endpoint
                             .selection_materialization_meta(facts.selection);
-                        if let Some((_, classification)) = self.endpoint.poll_binding_for_offer(
+                        if let Some((lane_idx, evidence)) = self.endpoint.poll_binding_for_offer(
                             facts.scope_id,
                             facts.offer_lane_idx,
                             label_meta,
                             materialization_meta,
                         ) {
-                            state.binding_classification = Some(classification);
+                            state.binding_evidence =
+                                Some(LaneIngressEvidence::new(lane_idx, evidence));
                             break 'offer_recv None;
                         }
                         if facts.recvless_loop_control_scope
-                            && let Some((_, classification)) = self
+                            && let Some((lane_idx, evidence)) = self
                                 .endpoint
                                 .poll_binding_any_for_offer(facts.offer_lane_idx, facts.offer_lanes)
                         {
-                            state.binding_classification = Some(classification);
+                            state.binding_evidence =
+                                Some(LaneIngressEvidence::new(lane_idx, evidence));
                             break 'offer_recv None;
                         }
                     }
@@ -4362,21 +4502,23 @@ where
                         let materialization_meta = self
                             .endpoint
                             .selection_materialization_meta(facts.selection);
-                        if let Some((_, classification)) = self.endpoint.poll_binding_for_offer(
+                        if let Some((lane_idx, evidence)) = self.endpoint.poll_binding_for_offer(
                             facts.scope_id,
                             facts.offer_lane_idx,
                             label_meta,
                             materialization_meta,
                         ) {
-                            state.binding_classification = Some(classification);
+                            state.binding_evidence =
+                                Some(LaneIngressEvidence::new(lane_idx, evidence));
                             break 'offer_recv None;
                         }
                         if facts.recvless_loop_control_scope
-                            && let Some((_, classification)) = self
+                            && let Some((lane_idx, evidence)) = self
                                 .endpoint
                                 .poll_binding_any_for_offer(facts.offer_lane_idx, facts.offer_lanes)
                         {
-                            state.binding_classification = Some(classification);
+                            state.binding_evidence =
+                                Some(LaneIngressEvidence::new(lane_idx, evidence));
                             break 'offer_recv None;
                         }
                     }
@@ -4422,13 +4564,12 @@ where
                                 let suppress_scope_hint = stage.facts.suppress_scope_hint;
                                 let is_route_controller = stage.facts.is_route_controller;
                                 let is_dynamic_route_scope = stage.facts.is_dynamic_route_scope;
-                                if let Some(classification) = stage.binding_classification.as_ref()
-                                {
+                                if let Some(evidence) = stage.binding_evidence.as_ref() {
                                     let label_meta =
                                         self.endpoint.selection_label_meta(stage.selection);
                                     self.ingest_binding_scope_evidence(
                                         scope_id,
-                                        classification.label,
+                                        evidence.label(),
                                         suppress_scope_hint,
                                         label_meta,
                                     );
@@ -4457,7 +4598,7 @@ where
                                     Some(OfferRunStage::ResolveToken(OfferResolveState {
                                         selection: stage.selection,
                                         facts: stage.facts,
-                                        binding_classification: stage.binding_classification,
+                                        binding_evidence: stage.binding_evidence,
                                         transport_payload_len: stage.transport_payload_len,
                                         transport_payload_lane: stage.transport_payload_lane,
                                         transport_payload: stage.transport_payload,
@@ -4494,7 +4635,7 @@ where
                             };
                         match resolved {
                             ResolveTokenOutcome::RestartFrontier => {
-                                self.carried_binding_classification = stage.binding_classification;
+                                self.carried_binding_evidence = stage.binding_evidence;
                                 self.carried_transport_payload =
                                     stage.transport_payload.map(|payload| {
                                         (
@@ -4512,8 +4653,7 @@ where
                                         .descend_selected_passive_route(stage.selection, resolved)
                                     {
                                         Ok(true) => {
-                                            self.carried_binding_classification =
-                                                stage.binding_classification;
+                                            self.carried_binding_evidence = stage.binding_evidence;
                                             self.carried_transport_payload =
                                                 stage.transport_payload.map(|payload| {
                                                     (
@@ -4532,7 +4672,7 @@ where
                                     stage.selection,
                                     resolved,
                                     stage.facts.is_route_controller,
-                                    stage.binding_classification,
+                                    stage.binding_evidence,
                                     stage.transport_payload_len,
                                     stage.transport_payload_lane,
                                     stage.transport_payload,
@@ -4569,7 +4709,7 @@ where
             self.run_stage = Some(OfferRunStage::CollectEvidence(OfferCollectState {
                 selection,
                 facts,
-                binding_classification: self.carried_binding_classification.take(),
+                binding_evidence: self.carried_binding_evidence.take(),
                 transport_payload_len,
                 transport_payload_lane,
                 transport_payload: (transport_payload_len != 0).then_some(transport_payload),
@@ -4596,7 +4736,7 @@ where
         let mut machine = RouteFrontierMachine {
             endpoint: self,
             frontier_visited: state.frontier_visited.take(),
-            carried_binding_classification: state.carried_binding_classification.take(),
+            carried_binding_evidence: state.carried_binding_evidence.take(),
             carried_transport_payload: state.carried_transport_payload.take(),
             run_stage: state.run_stage.take(),
             pending_recv: core::mem::replace(
@@ -4606,18 +4746,25 @@ where
         };
         let poll = machine.poll_run(cx).map(|result| result.map(Into::into));
         state.frontier_visited = machine.frontier_visited.take();
-        state.carried_binding_classification = machine.carried_binding_classification.take();
+        state.carried_binding_evidence = machine.carried_binding_evidence.take();
         state.carried_transport_payload = machine.carried_transport_payload.take();
         state.run_stage = machine.run_stage.take();
         state.pending_recv = machine.pending_recv;
         poll
     }
 
-    pub(in crate::endpoint::kernel) fn commit_branch_preview(
+    pub(in crate::endpoint::kernel) fn preflight_branch_preview_commit_plan(
         &mut self,
-        branch: &RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint, B>,
-    ) -> RecvResult<Option<RecvMeta>> {
-        RouteFrontierMachine::new(self).commit_branch_preview(branch)
+        branch: BranchPreviewView,
+    ) -> RecvResult<BranchCommitPlan> {
+        RouteFrontierMachine::new(self).preflight_route_branch_commit(branch)
+    }
+
+    pub(in crate::endpoint::kernel) fn publish_branch_preview_commit_plan(
+        &mut self,
+        plan: BranchCommitPlan,
+    ) -> Option<RecvMeta> {
+        RouteFrontierMachine::new(self).publish_route_branch_commit_plan(plan)
     }
 
     pub(in crate::endpoint::kernel) fn ingest_binding_scope_evidence(
@@ -4665,20 +4812,20 @@ where
         )
     }
 
-    pub(in crate::endpoint::kernel) fn cache_binding_classification_for_offer(
+    pub(in crate::endpoint::kernel) fn cache_binding_evidence_for_offer(
         &mut self,
         scope_id: ScopeId,
         offer_lane_idx: usize,
         label_meta: ScopeLabelMeta,
         materialization_meta: ScopeArmMaterializationMeta,
-        binding_classification: &mut Option<crate::binding::IncomingClassification>,
+        binding_evidence: &mut Option<LaneIngressEvidence>,
     ) {
-        RouteFrontierMachine::new(self).cache_binding_classification_for_offer(
+        RouteFrontierMachine::new(self).cache_binding_evidence_for_offer(
             scope_id,
             offer_lane_idx,
             label_meta,
             materialization_meta,
-            binding_classification,
+            binding_evidence,
         )
     }
 

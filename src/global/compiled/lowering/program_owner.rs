@@ -68,43 +68,48 @@ impl CompiledProgram {
         let view = summary.view();
         let mut lease_budget = LeaseGraphBudget::new();
 
-        let nodes = view.as_slice();
-        let mut offset = 0usize;
-        while offset < nodes.len() {
-            let node = nodes[offset];
-            if matches!(node.kind, EffKind::Atom) {
-                let policy = match view.policy_at(offset) {
-                    Some(policy) => policy,
-                    None => PolicyMode::Static,
-                };
-                let atom = node.atom_data();
-                let control_desc = view.control_desc_at(offset);
-                lease_budget = lease_budget.include_atom(control_desc, policy);
-                let resource_policy_site = if policy.is_dynamic() {
-                    compiled_program_push_dynamic_policy_site(
-                        dynamic_policy_sites,
-                        &mut dynamic_policy_sites_len,
-                        DynamicPolicySite::new(
-                            EffIndex::from_usize(offset),
-                            atom.label,
-                            atom.resource,
-                            control_desc.map(crate::global::ControlDesc::op),
-                            policy,
-                        ),
-                    )
-                } else {
-                    ResourceDescriptor::STATIC_POLICY_SITE
-                };
-                compiled_program_emit_atom(
-                    effect_envelope,
-                    atom,
-                    offset,
-                    policy,
-                    resource_policy_site,
-                    control_desc,
-                );
+        let mut segment_idx = 0usize;
+        while segment_idx < view.segment_count() {
+            let segment = view.segment_at(segment_idx);
+            let mut local = 0usize;
+            while local < segment.len() {
+                let offset = segment.start() + local;
+                let node = segment.node_at_local(local);
+                if matches!(node.kind, EffKind::Atom) {
+                    let policy = match segment.policy_at_local(local) {
+                        Some(policy) => policy,
+                        None => PolicyMode::Static,
+                    };
+                    let atom = node.atom_data();
+                    let control_desc = segment.control_desc_at_local(local);
+                    lease_budget = lease_budget.include_atom(control_desc, policy);
+                    let resource_policy_site = if policy.is_dynamic() {
+                        compiled_program_push_dynamic_policy_site(
+                            dynamic_policy_sites,
+                            &mut dynamic_policy_sites_len,
+                            DynamicPolicySite::new(
+                                EffIndex::from_dense_ordinal(offset),
+                                atom.label,
+                                atom.resource,
+                                control_desc.map(crate::global::ControlDesc::op),
+                                policy,
+                            ),
+                        )
+                    } else {
+                        ResourceDescriptor::STATIC_POLICY_SITE
+                    };
+                    compiled_program_emit_atom(
+                        effect_envelope,
+                        atom,
+                        offset,
+                        policy,
+                        resource_policy_site,
+                        control_desc,
+                    );
+                }
+                local += 1;
             }
-            offset += 1;
+            segment_idx += 1;
         }
 
         lease_budget.validate();

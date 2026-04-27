@@ -17,13 +17,12 @@ note: inside `hibana::global::compiled::lowering::driver::LoweringSummary::scan_
 note: inside `hibana::global::compiled::lowering::driver::LoweringSummary::scan_into`
  --> $RUST/core/src/panic.rs
   |
-  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  = note: the failure occurred here
   |
  ::: src/global/compiled/lowering/driver.rs
   |
-  |                         panic!("dynamic policy attached to unsupported control op");
-  |                         ----------------------------------------------------------- in this macro invocation
+  | ...                   panic!("dynamic policy attached to unsupported control op");
+  |                       ----------------------------------------------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global/program.rs

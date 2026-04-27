@@ -3,11 +3,139 @@
 use super::evidence::RouteArmState;
 use super::evidence_store::{ScopeEvidenceSlot, ScopeEvidenceTable};
 use super::frontier::LaneOfferState;
+use crate::endpoint::{RecvError, RecvResult};
 use crate::global::const_dsl::ScopeId;
 use crate::global::role_program::{
     DENSE_LANE_NONE, DenseLaneOrdinal, LaneSet, LaneSetView, LaneWord,
 };
 const NO_SELECTED_ARM: u8 = u8::MAX;
+const ROUTE_ARM_COMMIT_INSERT: u16 = u16::MAX;
+
+#[derive(Clone, Copy)]
+pub(super) struct RouteArmCommitProof {
+    scope: ScopeId,
+    lane_idx: u16,
+    dense: u16,
+    scope_slot: u16,
+    pos: u16,
+    arm: u8,
+    is_linger: bool,
+}
+
+impl RouteArmCommitProof {
+    pub(super) const EMPTY: Self = Self {
+        scope: ScopeId::none(),
+        lane_idx: 0,
+        dense: 0,
+        scope_slot: 0,
+        pos: 0,
+        arm: 0,
+        is_linger: false,
+    };
+
+    #[inline]
+    pub(super) const fn lane_idx(self) -> u16 {
+        self.lane_idx
+    }
+
+    #[inline]
+    pub(super) const fn scope(self) -> ScopeId {
+        self.scope
+    }
+
+    #[inline]
+    pub(super) const fn arm(self) -> u8 {
+        self.arm
+    }
+}
+
+pub(super) struct RouteCommitProofWorkspace {
+    ptr: *mut RouteArmCommitProof,
+    cap: u16,
+}
+
+impl RouteCommitProofWorkspace {
+    pub(super) unsafe fn init(dst: *mut Self, ptr: *mut RouteArmCommitProof, cap: usize) {
+        if cap > u16::MAX as usize {
+            panic!("route commit proof workspace overflow");
+        }
+        unsafe {
+            core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
+            core::ptr::addr_of_mut!((*dst).cap).write(cap as u16);
+        }
+        let mut idx = 0usize;
+        while idx < cap {
+            unsafe {
+                ptr.add(idx).write(RouteArmCommitProof::EMPTY);
+            }
+            idx += 1;
+        }
+    }
+
+    #[inline]
+    pub(super) fn begin(&mut self, required: usize) -> RecvResult<RouteCommitProofList<'_>> {
+        let cap = self.cap as usize;
+        if required > cap {
+            return Err(RecvError::PhaseInvariant);
+        }
+        let rows = unsafe { core::slice::from_raw_parts_mut(self.ptr, cap) };
+        Ok(RouteCommitProofList { rows, len: 0 })
+    }
+}
+
+pub(super) struct RouteCommitProofList<'a> {
+    rows: &'a mut [RouteArmCommitProof],
+    len: usize,
+}
+
+impl RouteCommitProofList<'_> {
+    #[cfg(test)]
+    #[inline]
+    pub(super) fn len(&self) -> usize {
+        self.len
+    }
+
+    pub(super) fn contains_lane_scope(&self, lane: u8, scope: ScopeId) -> bool {
+        let mut idx = 0usize;
+        while idx < self.len {
+            let proof = self.rows[idx];
+            if proof.lane_idx() == lane as u16 && proof.scope() == scope {
+                return true;
+            }
+            idx += 1;
+        }
+        false
+    }
+
+    pub(super) fn arm_for_scope(&self, scope: ScopeId) -> Option<u8> {
+        let mut idx = 0usize;
+        while idx < self.len {
+            let proof = self.rows[idx];
+            if proof.scope() == scope {
+                return Some(proof.arm());
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    #[inline]
+    pub(super) fn iter(&self) -> impl Iterator<Item = RouteArmCommitProof> + '_ {
+        self.rows[..self.len].iter().copied()
+    }
+
+    pub(super) fn push_unique(&mut self, proof: RouteArmCommitProof) -> RecvResult<()> {
+        if self.contains_lane_scope(proof.lane_idx() as u8, proof.scope()) {
+            return Ok(());
+        }
+        if self.len >= self.rows.len() {
+            return Err(RecvError::PhaseInvariant);
+        }
+        self.rows[self.len] = proof;
+        self.len += 1;
+        Ok(())
+    }
+}
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -281,57 +409,176 @@ impl RouteState {
             .unwrap_or(0)
     }
 
-    pub(super) fn set_route_arm(
-        &mut self,
+    fn preflight_route_arm_with_effective_slot(
+        &self,
         lane_idx: usize,
         scope: ScopeId,
         scope_slot: usize,
         arm: u8,
         is_linger: bool,
-    ) -> Result<(), ()> {
-        let len = self.lane_route_arm_len(lane_idx);
-        for idx in 0..len {
+        effective_arm: u8,
+        effective_refs: u16,
+    ) -> Option<RouteArmCommitProof> {
+        let dense = self.lane_offer_states.lane_dense_ordinal(lane_idx)?;
+        if lane_idx > u16::MAX as usize
+            || dense > u16::MAX as usize
+            || scope_slot > u16::MAX as usize
+        {
+            return None;
+        }
+        let len = unsafe { *self.lane_route_arm_lens.add(dense) as usize };
+        let mut idx = 0usize;
+        while idx < len {
             let current = self.lane_route_arms.get(lane_idx, idx);
             if current.scope == scope {
-                if current.arm != arm {
-                    self.replace_scope_selected_arm(scope_slot, current.arm, arm)?;
+                if current.arm == arm || (effective_refs == 1 && effective_arm == current.arm) {
+                    return Some(RouteArmCommitProof {
+                        scope,
+                        lane_idx: lane_idx as u16,
+                        dense: dense as u16,
+                        scope_slot: scope_slot as u16,
+                        pos: idx as u16,
+                        arm,
+                        is_linger,
+                    });
                 }
-                self.lane_route_arms
-                    .set(lane_idx, idx, RouteArmState { scope, arm });
-                self.active_route_lanes.insert(lane_idx);
-                return Ok(());
+                return None;
             }
+            idx += 1;
         }
 
-        if len >= self.lane_route_arms.depth() {
-            return Err(());
+        if len >= self.lane_route_arms.depth() || len > u16::MAX as usize {
+            return None;
         }
+        if effective_refs == 0 || (effective_arm == arm && effective_refs != u16::MAX) {
+            Some(RouteArmCommitProof {
+                scope,
+                lane_idx: lane_idx as u16,
+                dense: dense as u16,
+                scope_slot: scope_slot as u16,
+                pos: ROUTE_ARM_COMMIT_INSERT,
+                arm,
+                is_linger,
+            })
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn preflight_route_arm_commit(
+        &self,
+        lane_idx: usize,
+        scope: ScopeId,
+        scope_slot: usize,
+        arm: u8,
+        is_linger: bool,
+    ) -> Option<RouteArmCommitProof> {
+        if scope_slot >= self.scope_selected_arm_count {
+            return None;
+        }
+        let slot = unsafe { &*self.scope_selected_arms.add(scope_slot) };
+        self.preflight_route_arm_with_effective_slot(
+            lane_idx, scope, scope_slot, arm, is_linger, slot.arm, slot.refs,
+        )
+    }
+
+    pub(super) fn preflight_route_arm_commit_after_clearing_other_lanes(
+        &self,
+        keep_lane_idx: usize,
+        scope: ScopeId,
+        scope_slot: usize,
+        arm: u8,
+        is_linger: bool,
+    ) -> Option<RouteArmCommitProof> {
         if self
             .lane_offer_states
-            .lane_dense_ordinal(lane_idx)
+            .lane_dense_ordinal(keep_lane_idx)
             .is_none()
+            || scope_slot >= self.scope_selected_arm_count
         {
-            return Err(());
+            return None;
         }
-        self.increment_scope_selected_arm(scope_slot, arm)?;
-        if !self
-            .lane_route_arms
-            .set(lane_idx, len, RouteArmState { scope, arm })
-        {
-            return Err(());
+
+        let slot = unsafe { &*self.scope_selected_arms.add(scope_slot) };
+        let mut effective_arm = slot.arm;
+        let mut effective_refs = slot.refs;
+        let active_route_lanes = self.active_route_lanes.view();
+        let mut next = active_route_lanes.first_set(self.lane_offer_states.lane_slot_count);
+        while let Some(lane_idx) = next {
+            if lane_idx != keep_lane_idx {
+                let len = self.lane_route_arm_len(lane_idx);
+                let mut idx = 0usize;
+                while idx < len {
+                    let current = self.lane_route_arms.get(lane_idx, idx);
+                    if current.scope == scope && effective_refs != 0 && effective_arm == current.arm
+                    {
+                        effective_refs = effective_refs.saturating_sub(1);
+                        if effective_refs == 0 {
+                            effective_arm = NO_SELECTED_ARM;
+                        }
+                        break;
+                    }
+                    idx += 1;
+                }
+            }
+            next = active_route_lanes.next_set_from(
+                lane_idx.saturating_add(1),
+                self.lane_offer_states.lane_slot_count,
+            );
         }
-        let Some(dense) = self.lane_offer_states.lane_dense_ordinal(lane_idx) else {
-            return Err(());
-        };
-        unsafe {
-            let count = self.lane_route_arm_lens.add(dense);
-            count.write((*count).saturating_add(1));
+
+        self.preflight_route_arm_with_effective_slot(
+            keep_lane_idx,
+            scope,
+            scope_slot,
+            arm,
+            is_linger,
+            effective_arm,
+            effective_refs,
+        )
+    }
+
+    pub(super) fn commit_route_arm_after_preflight(&mut self, proof: RouteArmCommitProof) {
+        let scope = proof.scope;
+        let lane_idx = proof.lane_idx as usize;
+        let dense = proof.dense as usize;
+        let scope_slot = proof.scope_slot as usize;
+        let arm = proof.arm;
+        let slot = unsafe { &mut *self.scope_selected_arms.add(scope_slot) };
+        if proof.pos == ROUTE_ARM_COMMIT_INSERT {
+            let len = unsafe { *self.lane_route_arm_lens.add(dense) as usize };
+            if slot.refs == 0 {
+                slot.arm = arm;
+                slot.refs = 1;
+            } else {
+                slot.refs = slot.refs.saturating_add(1);
+            }
+            self.lane_route_arms
+                .set(lane_idx, len, RouteArmState { scope, arm });
+            unsafe {
+                self.lane_route_arm_lens
+                    .add(dense)
+                    .write((len as u8).saturating_add(1));
+            }
+            if proof.is_linger {
+                self.increment_linger_count(lane_idx);
+            }
+        } else {
+            let pos = proof.pos as usize;
+            let current = self.lane_route_arms.get(lane_idx, pos);
+            if current.arm != arm {
+                slot.arm = arm;
+                slot.refs = 1;
+            }
+            self.lane_route_arms
+                .set(lane_idx, pos, RouteArmState { scope, arm });
         }
         self.active_route_lanes.insert(lane_idx);
-        if is_linger {
-            self.increment_linger_count(lane_idx);
-        }
-        Ok(())
+    }
+
+    #[inline]
+    pub(super) fn active_route_lanes(&self) -> LaneSetView {
+        self.active_route_lanes.view()
     }
 
     pub(super) fn pop_route_arm(
@@ -478,48 +725,6 @@ impl RouteState {
     }
 
     #[inline]
-    fn increment_scope_selected_arm(&mut self, scope_slot: usize, arm: u8) -> Result<(), ()> {
-        if scope_slot >= self.scope_selected_arm_count {
-            return Err(());
-        }
-        let slot = unsafe { &mut *self.scope_selected_arms.add(scope_slot) };
-        if slot.refs == 0 {
-            slot.arm = arm;
-            slot.refs = 1;
-            return Ok(());
-        }
-        if slot.arm != arm || slot.refs == u16::MAX {
-            return Err(());
-        }
-        slot.refs += 1;
-        Ok(())
-    }
-
-    #[inline]
-    fn replace_scope_selected_arm(
-        &mut self,
-        scope_slot: usize,
-        old_arm: u8,
-        new_arm: u8,
-    ) -> Result<(), ()> {
-        if scope_slot >= self.scope_selected_arm_count {
-            return Err(());
-        }
-        let slot = unsafe { &mut *self.scope_selected_arms.add(scope_slot) };
-        if slot.refs == 0 || slot.arm != old_arm {
-            return Err(());
-        }
-        if old_arm == new_arm {
-            return Ok(());
-        }
-        if slot.refs != 1 {
-            return Err(());
-        }
-        slot.arm = new_arm;
-        Ok(())
-    }
-
-    #[inline]
     fn decrement_scope_selected_arm(&mut self, scope_slot: usize, arm: u8) -> bool {
         if scope_slot >= self.scope_selected_arm_count {
             return false;
@@ -585,8 +790,93 @@ impl RouteState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::global::role_program::{DenseLaneOrdinal, lane_word_count};
+    use crate::global::role_program::{DenseLaneOrdinal, LaneWord, lane_word_count};
     use core::mem::MaybeUninit;
+
+    struct RouteStateFixture {
+        state: RouteState,
+        _route_arm_storage: std::vec::Vec<RouteArmState>,
+        _lane_offer_state_storage: std::vec::Vec<LaneOfferState>,
+        _scope_evidence_slots: std::vec::Vec<MaybeUninit<ScopeEvidenceSlot>>,
+        _scope_selected_arms: std::vec::Vec<RouteScopeSelectedArmSlot>,
+        _lane_dense_by_lane: std::vec::Vec<DenseLaneOrdinal>,
+        _lane_route_arm_lens: std::vec::Vec<u8>,
+        _lane_linger_counts: std::vec::Vec<u8>,
+        _active_route_lane_words: std::vec::Vec<LaneWord>,
+        _lane_linger_words: std::vec::Vec<LaneWord>,
+        _lane_offer_linger_words: std::vec::Vec<LaneWord>,
+        _active_offer_lane_words: std::vec::Vec<LaneWord>,
+    }
+
+    fn route_state_fixture(
+        lanes: usize,
+        route_depth: usize,
+        scope_count: usize,
+    ) -> RouteStateFixture {
+        let lane_words = lane_word_count(lanes);
+        let mut lane_dense_by_lane: std::vec::Vec<DenseLaneOrdinal> = (0..lanes)
+            .map(|lane| DenseLaneOrdinal::new(lane).expect("test lane dense ordinal"))
+            .collect();
+        let mut route_arm_storage = std::vec::Vec::with_capacity(lanes * route_depth);
+        route_arm_storage.resize(lanes * route_depth, RouteArmState::EMPTY);
+        let mut lane_offer_state_storage = std::vec::Vec::with_capacity(lanes);
+        lane_offer_state_storage.resize(lanes, LaneOfferState::EMPTY);
+        let mut scope_evidence_slots = std::vec::Vec::<MaybeUninit<ScopeEvidenceSlot>>::new();
+        let mut scope_selected_arms = std::vec::Vec::with_capacity(scope_count);
+        scope_selected_arms.resize(scope_count, RouteScopeSelectedArmSlot::EMPTY);
+        let mut lane_route_arm_lens = std::vec::Vec::with_capacity(lanes);
+        lane_route_arm_lens.resize(lanes, 0u8);
+        let mut lane_linger_counts = std::vec::Vec::with_capacity(lanes);
+        lane_linger_counts.resize(lanes, 0u8);
+        let mut active_route_lane_words = std::vec::Vec::with_capacity(lane_words);
+        active_route_lane_words.resize(lane_words, 0usize);
+        let mut lane_linger_words = std::vec::Vec::with_capacity(lane_words);
+        lane_linger_words.resize(lane_words, 0usize);
+        let mut lane_offer_linger_words = std::vec::Vec::with_capacity(lane_words);
+        lane_offer_linger_words.resize(lane_words, 0usize);
+        let mut active_offer_lane_words = std::vec::Vec::with_capacity(lane_words);
+        active_offer_lane_words.resize(lane_words, 0usize);
+        let mut state = MaybeUninit::<RouteState>::uninit();
+        unsafe {
+            RouteState::init_empty(
+                state.as_mut_ptr(),
+                route_arm_storage.as_mut_ptr(),
+                lane_offer_state_storage.as_mut_ptr(),
+                scope_evidence_slots
+                    .as_mut_ptr()
+                    .cast::<ScopeEvidenceSlot>(),
+                scope_selected_arms.as_mut_ptr(),
+                lane_dense_by_lane.as_mut_ptr(),
+                lanes,
+                lane_route_arm_lens.as_mut_ptr(),
+                lane_linger_counts.as_mut_ptr(),
+                active_route_lane_words.as_mut_ptr(),
+                lane_linger_words.as_mut_ptr(),
+                lane_offer_linger_words.as_mut_ptr(),
+                active_offer_lane_words.as_mut_ptr(),
+                lanes,
+                lane_words,
+                lanes,
+                route_depth,
+                0,
+                scope_count,
+            );
+        }
+        RouteStateFixture {
+            state: unsafe { state.assume_init() },
+            _route_arm_storage: route_arm_storage,
+            _lane_offer_state_storage: lane_offer_state_storage,
+            _scope_evidence_slots: scope_evidence_slots,
+            _scope_selected_arms: scope_selected_arms,
+            _lane_dense_by_lane: lane_dense_by_lane,
+            _lane_route_arm_lens: lane_route_arm_lens,
+            _lane_linger_counts: lane_linger_counts,
+            _active_route_lane_words: active_route_lane_words,
+            _lane_linger_words: lane_linger_words,
+            _lane_offer_linger_words: lane_offer_linger_words,
+            _active_offer_lane_words: active_offer_lane_words,
+        }
+    }
 
     #[test]
     fn route_state_keeps_lane_255_addressable_in_full_lane_domain() {
@@ -644,12 +934,96 @@ mod tests {
         let scope = ScopeId::route(1);
 
         assert_eq!(state.lane_route_arm_len(255), 0);
-        assert!(state.set_route_arm(255, scope, 0, 1, false).is_ok());
+        let proof = state
+            .preflight_route_arm_commit(255, scope, 0, 1, false)
+            .expect("high lane route arm should preflight");
+        state.commit_route_arm_after_preflight(proof);
         assert_eq!(state.lane_route_arm_len(255), 1);
         assert_eq!(state.route_arm_for(255, scope), Some(1));
         assert_eq!(state.selected_arm_for_scope_slot(0), Some(1));
         assert!(state.pop_route_arm(255, scope, 0, false));
         assert_eq!(state.lane_route_arm_len(255), 0);
         assert_eq!(state.selected_arm_for_scope_slot(0), None);
+    }
+
+    #[test]
+    fn branch_commit_preflight_error_records_no_route_decisions() {
+        let mut fixture = route_state_fixture(2, 1, 1);
+        let state = &mut fixture.state;
+        let scope = ScopeId::route(1);
+        let proof = state
+            .preflight_route_arm_commit(0, scope, 0, 0, false)
+            .expect("first route arm should preflight");
+        state.commit_route_arm_after_preflight(proof);
+        assert_eq!(state.route_arm_for(0, scope), Some(0));
+        assert_eq!(state.selected_arm_for_scope_slot(0), Some(0));
+
+        assert!(
+            state
+                .preflight_route_arm_commit(1, scope, 0, 1, false)
+                .is_none(),
+            "conflicting arm must fail in preflight"
+        );
+        assert_eq!(state.route_arm_for(1, scope), None);
+        assert_eq!(state.route_arm_for(0, scope), Some(0));
+        assert_eq!(state.selected_arm_for_scope_slot(0), Some(0));
+    }
+
+    #[test]
+    fn branch_commit_publish_is_infallible_after_preflight_and_preserves_refs() {
+        let mut fixture = route_state_fixture(2, 2, 1);
+        let state = &mut fixture.state;
+        let scope = ScopeId::route(1);
+        let first = state
+            .preflight_route_arm_commit(0, scope, 0, 1, false)
+            .expect("first route arm should preflight");
+        state.commit_route_arm_after_preflight(first);
+        let second = state
+            .preflight_route_arm_commit(1, scope, 0, 1, false)
+            .expect("same route arm should preflight");
+        state.commit_route_arm_after_preflight(second);
+        assert_eq!(state.route_arm_for(0, scope), Some(1));
+        assert_eq!(state.route_arm_for(1, scope), Some(1));
+        assert_eq!(state.selected_arm_for_scope_slot(0), Some(1));
+        assert!(state.pop_route_arm(0, scope, 0, false));
+        assert_eq!(
+            state.selected_arm_for_scope_slot(0),
+            Some(1),
+            "selected arm remains while another lane still holds a ref"
+        );
+        assert!(state.pop_route_arm(1, scope, 0, false));
+        assert_eq!(state.selected_arm_for_scope_slot(0), None);
+    }
+
+    #[test]
+    fn route_commit_proof_workspace_accepts_more_than_64_route_scopes() {
+        let mut storage = std::vec::Vec::new();
+        storage.resize(71, RouteArmCommitProof::EMPTY);
+        let mut workspace = MaybeUninit::<RouteCommitProofWorkspace>::uninit();
+        unsafe {
+            RouteCommitProofWorkspace::init(workspace.as_mut_ptr(), storage.as_mut_ptr(), 71);
+        }
+        let mut workspace = unsafe { workspace.assume_init() };
+        let list = workspace
+            .begin(66)
+            .expect("route commit proof workspace derives from route scope count");
+
+        assert_eq!(list.len(), 0);
+    }
+
+    #[test]
+    fn decode_commit_proof_workspace_accepts_more_than_64_route_scopes() {
+        let mut storage = std::vec::Vec::new();
+        storage.resize(71, RouteArmCommitProof::EMPTY);
+        let mut workspace = MaybeUninit::<RouteCommitProofWorkspace>::uninit();
+        unsafe {
+            RouteCommitProofWorkspace::init(workspace.as_mut_ptr(), storage.as_mut_ptr(), 71);
+        }
+        let mut workspace = unsafe { workspace.assume_init() };
+        let list = workspace
+            .begin(66)
+            .expect("decode commit plan uses shared route-scope workspace");
+
+        assert_eq!(list.len(), 0);
     }
 }

@@ -131,7 +131,7 @@ text_bytes_for_case() {
 }
 
 declare -A TEXT_BYTES=()
-for count in 1 16 64 256; do
+for count in 1 8 16 32 64 256; do
   TEXT_BYTES["${count}"]="$(text_bytes_for_case "${count}")"
   echo "message-heavy text bytes count=${count} text=${TEXT_BYTES[${count}]}"
 done
@@ -147,10 +147,11 @@ growth() {
 }
 
 GROWTH_16="$(growth 1 16)"
+GROWTH_32="$(growth 16 32)"
 GROWTH_64="$(growth 16 64)"
 GROWTH_256="$(growth 64 256)"
 
-echo "message-heavy text growth 1->16=${GROWTH_16} 16->64=${GROWTH_64} 64->256=${GROWTH_256}"
+echo "message-heavy text growth 1->8=$(growth 1 8) 8->16=$(growth 8 16) 16->32=${GROWTH_32} 16->64=${GROWTH_64} 64->256=${GROWTH_256}"
 
 if (( TEXT_BYTES[256] > TEXT_BYTES[1] + 512 * 1024 )); then
   echo "message-heavy text growth exceeded absolute budget" >&2

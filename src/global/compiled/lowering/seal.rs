@@ -28,9 +28,9 @@ const fn lane_word_parts(lane: usize) -> (usize, LaneWord) {
 }
 
 #[inline(always)]
-const fn encode_u16_count(value: usize, label: &str) -> u16 {
+const fn encode_u16_count(value: usize) -> u16 {
     if value > u16::MAX as usize {
-        panic!("{}", label);
+        panic!("compiled role count overflow");
     }
     value as u16
 }
@@ -97,7 +97,6 @@ pub(super) const fn exact_role_phase_facts(
     view: super::LoweringView<'_>,
     role: u8,
 ) -> ExactRolePhaseFacts {
-    let nodes = view.as_slice();
     let mut local_effs = [0usize; eff::meta::MAX_EFF_NODES];
     let mut local_lanes = [0u8; eff::meta::MAX_EFF_NODES];
     let mut active_lanes = [0usize; LANE_FACT_WORDS];
@@ -105,8 +104,8 @@ pub(super) const fn exact_role_phase_facts(
     let mut active_lane_count = 0usize;
     let mut endpoint_lane_slot_count = 0usize;
     let mut idx = 0usize;
-    while idx < nodes.len() {
-        let node = nodes[idx];
+    while idx < view.len() {
+        let node = view.node_at(idx);
         if matches!(node.kind, EffKind::Atom) {
             let atom = node.atom_data();
             if atom.from == role || atom.to == role {
@@ -140,18 +139,9 @@ pub(super) const fn exact_role_phase_facts(
             phase_count: 0,
             phase_lane_entry_count: 0,
             phase_lane_word_count: 0,
-            active_lane_count: encode_u16_count(
-                active_lane_count,
-                "compiled role active lane count overflow",
-            ),
-            endpoint_lane_slot_count: encode_u16_count(
-                endpoint_lane_slot_count,
-                "compiled role endpoint lane slot count overflow",
-            ),
-            logical_lane_count: encode_u16_count(
-                logical_lane_count,
-                "compiled role logical lane count overflow",
-            ),
+            active_lane_count: encode_u16_count(active_lane_count),
+            endpoint_lane_slot_count: encode_u16_count(endpoint_lane_slot_count),
+            logical_lane_count: encode_u16_count(logical_lane_count),
         };
     }
 
@@ -252,27 +242,12 @@ pub(super) const fn exact_role_phase_facts(
     }
 
     ExactRolePhaseFacts {
-        phase_count: encode_u16_count(phase_count, "compiled role phase capacity exceeded"),
-        phase_lane_entry_count: encode_u16_count(
-            phase_lane_entry_count,
-            "compiled role phase lane-entry capacity exceeded",
-        ),
-        phase_lane_word_count: encode_u16_count(
-            phase_lane_word_count,
-            "compiled role phase lane-word capacity exceeded",
-        ),
-        active_lane_count: encode_u16_count(
-            active_lane_count,
-            "compiled role active lane count overflow",
-        ),
-        endpoint_lane_slot_count: encode_u16_count(
-            endpoint_lane_slot_count,
-            "compiled role endpoint lane slot count overflow",
-        ),
-        logical_lane_count: encode_u16_count(
-            logical_lane_count,
-            "compiled role logical lane count overflow",
-        ),
+        phase_count: encode_u16_count(phase_count),
+        phase_lane_entry_count: encode_u16_count(phase_lane_entry_count),
+        phase_lane_word_count: encode_u16_count(phase_lane_word_count),
+        active_lane_count: encode_u16_count(active_lane_count),
+        endpoint_lane_slot_count: encode_u16_count(endpoint_lane_slot_count),
+        logical_lane_count: encode_u16_count(logical_lane_count),
     }
 }
 
@@ -535,11 +510,10 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         {
             return None;
         }
-        let nodes = view.as_slice();
         let mut marker_idx = route_enter_marker_idx + 1;
         let mut active_scope_depth = 1usize;
         let mut idx = route_enter.offset;
-        while idx < end && idx < nodes.len() {
+        while idx < end && idx < view.len() {
             let mut scan_marker_idx = marker_idx;
             let mut depth_after_exits = active_scope_depth;
             while scan_marker_idx < scope_markers.len() {
@@ -593,11 +567,10 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         end: usize,
         out: &mut [LocalSig; eff::meta::MAX_EFF_NODES],
     ) -> usize {
-        let nodes = view.as_slice();
         let mut len = 0usize;
         let mut idx = start;
-        while idx < end && idx < nodes.len() {
-            let node = nodes[idx];
+        while idx < end && idx < view.len() {
+            let node = view.node_at(idx);
             if matches!(node.kind, EffKind::Atom) {
                 let atom = node.atom_data();
                 let sig = if atom.from == ROLE && atom.to == ROLE {

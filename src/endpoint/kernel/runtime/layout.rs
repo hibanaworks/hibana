@@ -8,8 +8,10 @@ use super::frontier::{
     ActiveEntrySlot, FrontierObservationSlot, LaneOfferState, RootFrontierState,
 };
 use super::frontier_state::FrontierState;
-use super::inbox::{BindingInbox, PackedIncomingClassification};
-use super::route_state::{RouteScopeSelectedArmSlot, RouteState};
+use super::inbox::{BindingInbox, PackedIngressEvidence};
+use super::route_state::{
+    RouteArmCommitProof, RouteCommitProofWorkspace, RouteScopeSelectedArmSlot, RouteState,
+};
 use crate::global::role_program::{DenseLaneOrdinal, LaneWord, RoleFootprint, lane_word_count};
 use crate::global::typestate::PhaseCursorState;
 
@@ -100,6 +102,8 @@ pub(crate) struct EndpointArenaLayout {
     route_state_lane_linger_lanes: EndpointArenaSection,
     route_state_lane_offer_linger_lanes: EndpointArenaSection,
     route_state_active_offer_lanes: EndpointArenaSection,
+    route_commit_proof_workspace: EndpointArenaSection,
+    route_state_commit_proofs: EndpointArenaSection,
     frontier: RouteFrontierArenaLayout,
     binding_inbox: EndpointArenaSection,
     binding_lane_dense_by_lane: EndpointArenaSection,
@@ -182,6 +186,17 @@ impl EndpointArenaLayout {
         offset = route_state_active_offer_lanes.offset + route_state_active_offer_lanes.bytes;
         total_align = max_usize(total_align, route_state_active_offer_lanes.align);
 
+        let route_commit_proof_workspace = Self::section::<RouteCommitProofWorkspace>(offset);
+        offset = route_commit_proof_workspace.offset + route_commit_proof_workspace.bytes;
+        total_align = max_usize(total_align, route_commit_proof_workspace.align);
+
+        let route_state_commit_proofs = Self::section_array::<RouteArmCommitProof>(
+            offset,
+            footprint.route_scope_count.saturating_add(1),
+        );
+        offset = route_state_commit_proofs.offset + route_state_commit_proofs.bytes;
+        total_align = max_usize(total_align, route_state_commit_proofs.align);
+
         let route_arm_stack = Self::section_array::<RouteArmState>(
             offset,
             footprint
@@ -262,7 +277,7 @@ impl EndpointArenaLayout {
         offset = binding_lane_dense_by_lane.offset + binding_lane_dense_by_lane.bytes;
         total_align = max_usize(total_align, binding_lane_dense_by_lane.align);
 
-        let binding_slots = Self::section_array::<PackedIncomingClassification>(
+        let binding_slots = Self::section_array::<PackedIngressEvidence>(
             offset,
             binding_lane_count * BindingInbox::PER_LANE_CAPACITY,
         );
@@ -301,6 +316,8 @@ impl EndpointArenaLayout {
             route_state_lane_linger_lanes,
             route_state_lane_offer_linger_lanes,
             route_state_active_offer_lanes,
+            route_commit_proof_workspace,
+            route_state_commit_proofs,
             frontier: RouteFrontierArenaLayout {
                 route_arm_stack,
                 lane_offer_state_slots,
@@ -403,6 +420,16 @@ impl EndpointArenaLayout {
     #[inline(always)]
     pub(crate) const fn route_state_active_offer_lanes(&self) -> EndpointArenaSection {
         self.route_state_active_offer_lanes
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_commit_proof_workspace(&self) -> EndpointArenaSection {
+        self.route_commit_proof_workspace
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_state_commit_proofs(&self) -> EndpointArenaSection {
+        self.route_state_commit_proofs
     }
 
     pub(crate) const fn frontier_root_rows(&self) -> EndpointArenaSection {
@@ -548,5 +575,14 @@ mod tests {
             layout.frontier_offer_entry_slots().count(),
             footprint.frontier_entry_count
         );
+    }
+
+    #[test]
+    fn route_commit_proof_workspace_tracks_compiled_route_scope_count() {
+        let mut footprint = RoleFootprint::for_endpoint_layout(1, 1, 1, 1, 70, 1);
+        footprint.route_scope_count = 70;
+        let layout = EndpointArenaLayout::from_footprint_with_binding(footprint, false);
+
+        assert_eq!(layout.route_state_commit_proofs().count(), 71);
     }
 }

@@ -1,9 +1,12 @@
 use crate::control::cluster::effects::ResourceDescriptor;
 use crate::eff::EffIndex;
+use crate::global::ControlDesc;
 use crate::global::compiled::images::program::{
     CompiledProgramCounts, CompiledProgramFacts, DynamicPolicySite, RouteControlRecord,
 };
-use crate::global::compiled::images::role::{CompiledRoleImage, PhaseImageHeader, PhaseLaneEntry};
+use crate::global::compiled::images::role::{
+    CompiledRoleImage, CompiledRoleSegmentHeader, PhaseImageHeader, PhaseLaneEntry,
+};
 use crate::global::const_dsl::ControlScopeKind;
 #[cfg(test)]
 use crate::global::role_program::lane_word_count;
@@ -70,6 +73,17 @@ pub(in crate::global::compiled) const fn compiled_role_route_scope_cap(
 }
 
 #[inline(always)]
+pub(in crate::global::compiled) const fn compiled_role_segment_header_cap(
+    eff_count: usize,
+) -> usize {
+    if eff_count == 0 {
+        0
+    } else {
+        eff_count.div_ceil(crate::eff::meta::MAX_SEGMENT_EFFS)
+    }
+}
+
+#[inline(always)]
 pub(in crate::global::compiled) const fn compiled_role_step_cap(eff_count: usize) -> usize {
     if eff_count == 0 { 1 } else { eff_count }
 }
@@ -121,6 +135,7 @@ pub(in crate::global::compiled) const fn compiled_role_image_bytes_for_layout(
 ) -> usize {
     let scope_cap = compiled_role_scope_cap(footprint.scope_count);
     let route_scope_cap = compiled_role_route_scope_cap(footprint.route_scope_count);
+    let segment_header_cap = compiled_role_segment_header_cap(footprint.eff_count);
     let eff_index_cap = compiled_role_step_cap(footprint.eff_count);
     let step_index_cap = compiled_role_step_cap(footprint.local_step_count);
     let typestate_node_cap = compiled_role_typestate_node_cap(
@@ -138,8 +153,12 @@ pub(in crate::global::compiled) const fn compiled_role_image_bytes_for_layout(
         route_scope_cap.saturating_mul(crate::global::typestate::MAX_FIRST_RECV_DISPATCH);
     let route_dispatch_target_cap = route_dispatch_entry_cap;
     let header = core::mem::size_of::<CompiledRoleImage>();
+    let segment_headers_start =
+        align_up(header, core::mem::align_of::<CompiledRoleSegmentHeader>());
+    let segment_headers_end = segment_headers_start
+        + segment_header_cap.saturating_mul(core::mem::size_of::<CompiledRoleSegmentHeader>());
     let typestate_start = align_up(
-        header,
+        segment_headers_end,
         max_align(
             core::mem::align_of::<RoleTypestateValue>(),
             core::mem::align_of::<CompiledRoleImage>(),
@@ -182,10 +201,14 @@ pub(in crate::global::compiled) const fn compiled_role_image_bytes_for_layout(
         align_up(route_records_end, core::mem::align_of::<LaneWord>());
     let route_offer_lane_words_end = route_offer_lane_words_start
         + route_scope_lane_word_cap.saturating_mul(core::mem::size_of::<LaneWord>());
-    let route_arm1_lane_words_start = align_up(
+    let route_arm0_lane_words_start = align_up(
         route_offer_lane_words_end,
         core::mem::align_of::<LaneWord>(),
     );
+    let route_arm0_lane_words_end = route_arm0_lane_words_start
+        + route_scope_lane_word_cap.saturating_mul(core::mem::size_of::<LaneWord>());
+    let route_arm1_lane_words_start =
+        align_up(route_arm0_lane_words_end, core::mem::align_of::<LaneWord>());
     let route_arm1_lane_words_end = route_arm1_lane_words_start
         + route_scope_lane_word_cap.saturating_mul(core::mem::size_of::<LaneWord>());
     let route_arm0_lane_last_start =
@@ -213,7 +236,10 @@ pub(in crate::global::compiled) const fn compiled_role_image_bytes_for_layout(
     let eff_index_start = align_up(route_dispatch_targets_end, core::mem::align_of::<u16>());
     let eff_index_end = eff_index_start + eff_index_cap.saturating_mul(core::mem::size_of::<u16>());
     let step_index_start = align_up(eff_index_end, core::mem::align_of::<StateIndex>());
-    step_index_start + step_index_cap.saturating_mul(core::mem::size_of::<StateIndex>())
+    let step_index_end =
+        step_index_start + step_index_cap.saturating_mul(core::mem::size_of::<StateIndex>());
+    let control_by_eff_start = align_up(step_index_end, core::mem::align_of::<ControlDesc>());
+    control_by_eff_start + eff_index_cap.saturating_mul(core::mem::size_of::<ControlDesc>())
 }
 
 #[cfg(test)]
@@ -235,6 +261,7 @@ pub(in crate::global::compiled) const fn compiled_role_image_bytes_for_counts(
     };
     compiled_role_image_bytes_for_layout(RoleFootprint {
         scope_count,
+        max_active_scope_depth: scope_count,
         eff_count,
         phase_count,
         phase_lane_entry_count: eff_count,
@@ -271,5 +298,6 @@ pub(in crate::global::compiled) const fn compiled_role_image_align() -> usize {
     align = max_align(align, core::mem::align_of::<RouteScopeRecord>());
     align = max_align(align, core::mem::align_of::<RouteDispatchShape>());
     align = max_align(align, core::mem::align_of::<RouteDispatchEntry>());
-    max_align(align, core::mem::align_of::<StateIndex>())
+    align = max_align(align, core::mem::align_of::<StateIndex>());
+    max_align(align, core::mem::align_of::<ControlDesc>())
 }

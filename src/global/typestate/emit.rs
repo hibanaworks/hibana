@@ -2,9 +2,9 @@
 
 #[cfg(test)]
 use super::builder::RoleTypestate;
-use super::builder::{RoleTypestateInitStorage, RoleTypestateValue};
+use super::builder::{RoleTypestateRowDestinations, RoleTypestateValue};
 use super::{
-    emit_walk::RoleTypestateBuildScratch,
+    emit_walk::{RoleTypestateBuildScratch, RoleTypestateWalkRows},
     facts::{LocalAction, LocalNode, StateIndex, state_index_to_usize},
 };
 use crate::{
@@ -12,10 +12,11 @@ use crate::{
     global::{
         compiled::lowering::LoweringSummary,
         const_dsl::{ScopeId, ScopeKind},
+        role_program::LaneWord,
     },
 };
 
-use super::registry::{MAX_FIRST_RECV_DISPATCH, ScopeRegion};
+use super::registry::{MAX_FIRST_RECV_DISPATCH, RouteScopeRecord, ScopeRegion};
 
 #[inline(always)]
 fn phase_route_guard_for_scope_registry(
@@ -145,22 +146,97 @@ pub(crate) fn phase_route_guard_for_built_state_for_role<const ROLE: u8>(
 }
 
 #[inline(never)]
-pub(crate) unsafe fn init_value_from_summary_for_role(
+pub(crate) unsafe fn stream_value_header(dst: *mut RoleTypestateValue, nodes: *const LocalNode) {
+    unsafe {
+        core::ptr::addr_of_mut!((*dst).nodes).write(nodes);
+        core::ptr::addr_of_mut!((*dst).len).write(0);
+    }
+}
+
+#[inline(never)]
+pub(crate) unsafe fn stream_value_node_rows_from_summary_for_role(
     dst: *mut RoleTypestateValue,
     role: u8,
-    storage: &mut RoleTypestateInitStorage<'_>,
+    rows: &mut RoleTypestateRowDestinations<'_>,
     summary: &LoweringSummary,
     scratch: &mut RoleTypestateBuildScratch,
-) {
+) -> RoleTypestateWalkRows {
     unsafe {
-        core::ptr::addr_of_mut!((*dst).nodes).write(storage.nodes_ptr.cast_const());
-        super::emit_walk::init_role_typestate_value(
+        core::ptr::addr_of_mut!((*dst).nodes).write(rows.nodes_ptr.cast_const());
+        super::emit_walk::stream_role_typestate_node_rows(
             role,
-            storage,
+            rows,
             scratch,
             core::ptr::addr_of_mut!((*dst).len),
-            core::ptr::addr_of_mut!((*dst).scope_registry),
             summary.view(),
+        )
+    }
+}
+
+#[inline(never)]
+pub(crate) unsafe fn stream_value_scope_rows_from_walk(
+    dst: *mut RoleTypestateValue,
+    rows: &mut RoleTypestateRowDestinations<'_>,
+    walk_rows: RoleTypestateWalkRows,
+) {
+    let _ = walk_rows.len;
+    unsafe {
+        super::emit_walk::stream_role_scope_rows(
+            rows,
+            core::ptr::addr_of_mut!((*dst).scope_registry),
+            walk_rows.scope_entries_len,
+        );
+    }
+}
+
+#[inline(never)]
+pub(crate) unsafe fn stream_value_route_slot_rows_from_walk(
+    dst: *mut RoleTypestateValue,
+    rows: &mut RoleTypestateRowDestinations<'_>,
+    walk_rows: RoleTypestateWalkRows,
+) {
+    let _ = walk_rows.len;
+    unsafe {
+        super::emit_walk::stream_role_route_slot_rows(
+            rows,
+            core::ptr::addr_of_mut!((*dst).scope_registry),
+            walk_rows.scope_entries_len,
+        );
+    }
+}
+
+#[inline(never)]
+pub(crate) unsafe fn stream_value_lane_mask_rows_from_walk(
+    dst: *mut RoleTypestateValue,
+    rows: &mut RoleTypestateRowDestinations<'_>,
+    scratch: &mut RoleTypestateBuildScratch,
+    walk_rows: RoleTypestateWalkRows,
+) {
+    let _ = walk_rows.len;
+    unsafe {
+        super::emit_walk::stream_role_lane_mask_rows(
+            rows,
+            scratch,
+            core::ptr::addr_of_mut!((*dst).scope_registry),
+            walk_rows.scope_entries_len,
+        );
+    }
+}
+
+#[inline(never)]
+pub(crate) unsafe fn stream_value_route_record_rows_from_walk(
+    dst: *mut RoleTypestateValue,
+    rows: &mut RoleTypestateRowDestinations<'_>,
+    scratch: &mut RoleTypestateBuildScratch,
+    walk_rows: RoleTypestateWalkRows,
+) {
+    let _ = walk_rows.len;
+    unsafe {
+        super::emit_walk::stream_role_route_record_rows(
+            rows,
+            scratch,
+            core::ptr::addr_of_mut!((*dst).scope_registry),
+            walk_rows.scope_entries_len,
         );
     }
 }
@@ -269,6 +345,45 @@ impl RoleTypestateValue {
         unsafe { *self.nodes.add(index) }
     }
 
+    #[inline(always)]
+    pub(crate) fn checked_node(&self, index: usize) -> Option<LocalNode> {
+        if index < self.len() {
+            Some(self.node(index))
+        } else {
+            None
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_records_table(&self) -> &[RouteScopeRecord] {
+        self.scope_registry.route_records_table()
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_dense_by_slot_table(&self) -> &[u16] {
+        self.scope_registry.route_dense_by_slot_table()
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_offer_lane_words_table(&self) -> &[LaneWord] {
+        self.scope_registry.route_offer_lane_words_table()
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_arm0_lane_words_table(&self) -> &[LaneWord] {
+        self.scope_registry.route_arm0_lane_words_table()
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_arm1_lane_words_table(&self) -> &[LaneWord] {
+        self.scope_registry.route_arm1_lane_words_table()
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_lane_word_len(&self) -> usize {
+        self.scope_registry.route_lane_word_len()
+    }
+
     pub(in crate::global::typestate) fn scope_region_for(
         &self,
         scope_id: ScopeId,
@@ -347,22 +462,6 @@ impl RoleTypestateValue {
     }
 
     #[inline]
-    pub(in crate::global::typestate) fn route_offer_lane_set(
-        &self,
-        scope_id: ScopeId,
-    ) -> Option<crate::global::role_program::LaneSetView> {
-        self.scope_registry.route_offer_lane_set(scope_id)
-    }
-
-    #[inline]
-    pub(in crate::global::typestate) fn route_offer_entry(
-        &self,
-        scope_id: ScopeId,
-    ) -> Option<StateIndex> {
-        self.scope_registry.route_offer_entry(scope_id)
-    }
-
-    #[inline]
     pub(in crate::global::typestate) fn route_scope_slot(
         &self,
         scope_id: ScopeId,
@@ -370,8 +469,15 @@ impl RoleTypestateValue {
         self.scope_registry.route_scope_slot(scope_id)
     }
 
+    #[cfg(test)]
     #[inline]
-    pub(in crate::global::typestate) fn route_scope_dense_ordinal(
+    pub(in crate::global) fn route_scope_slot_for_test(&self, scope_id: ScopeId) -> Option<usize> {
+        self.scope_registry.route_scope_slot(scope_id)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(in crate::global) fn route_scope_dense_ordinal_for_test(
         &self,
         slot: usize,
     ) -> Option<usize> {
@@ -447,6 +553,12 @@ impl RoleTypestateValue {
         self.scope_registry.route_scope_count()
     }
 
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn scope_count(&self) -> usize {
+        self.scope_registry.record_count()
+    }
+
     #[inline]
     pub(crate) fn route_dispatch_shape_count(&self) -> usize {
         self.scope_registry.route_dispatch_shape_count()
@@ -467,6 +579,7 @@ impl RoleTypestateValue {
         &mut self,
         route_records: *const super::registry::RouteScopeRecord,
         route_offer_lane_words: *const crate::global::role_program::LaneWord,
+        route_arm0_lane_words: *const crate::global::role_program::LaneWord,
         route_arm1_lane_words: *const crate::global::role_program::LaneWord,
         route_dispatch_shapes: *const super::registry::RouteDispatchShape,
         route_dispatch_shape_len: usize,
@@ -480,6 +593,7 @@ impl RoleTypestateValue {
             self.scope_registry.relocate_compact_route_payload(
                 route_records,
                 route_offer_lane_words,
+                route_arm0_lane_words,
                 route_arm1_lane_words,
                 route_dispatch_shapes,
                 route_dispatch_shape_len,
@@ -802,6 +916,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
         route_dense_by_slot: *mut u16,
         route_records: *mut super::registry::RouteScopeRecord,
         route_offer_lane_words: *mut crate::global::role_program::LaneWord,
+        route_arm0_lane_words: *mut crate::global::role_program::LaneWord,
         route_arm1_lane_words: *mut crate::global::role_program::LaneWord,
         route_lane_word_len: usize,
         route_dispatch_shapes: *mut super::registry::RouteDispatchShape,
@@ -819,7 +934,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
         scratch: &mut RoleTypestateBuildScratch,
     ) {
         unsafe {
-            let mut storage = RoleTypestateInitStorage {
+            let mut rows = RoleTypestateRowDestinations {
                 nodes_ptr: core::ptr::addr_of_mut!((*dst).nodes).cast::<LocalNode>(),
                 nodes_cap: super::facts::MAX_STATES,
                 scope_records,
@@ -827,6 +942,7 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                 route_dense_by_slot,
                 route_records,
                 route_offer_lane_words,
+                route_arm0_lane_words,
                 route_arm1_lane_words,
                 route_lane_word_len,
                 route_dispatch_shapes,
@@ -841,13 +957,34 @@ impl<const ROLE: u8> RoleTypestate<ROLE> {
                 route_arm0_lane_last_eff_by_slot,
                 route_scope_cap,
             };
-            super::emit_walk::init_role_typestate_value(
+            let walk_rows = super::emit_walk::stream_role_typestate_node_rows(
                 ROLE,
-                &mut storage,
+                &mut rows,
                 scratch,
                 core::ptr::addr_of_mut!((*dst).len),
-                core::ptr::addr_of_mut!((*dst).scope_registry),
                 summary.view(),
+            );
+            super::emit_walk::stream_role_scope_rows(
+                &mut rows,
+                core::ptr::addr_of_mut!((*dst).scope_registry),
+                walk_rows.scope_entries_len,
+            );
+            super::emit_walk::stream_role_route_slot_rows(
+                &mut rows,
+                core::ptr::addr_of_mut!((*dst).scope_registry),
+                walk_rows.scope_entries_len,
+            );
+            super::emit_walk::stream_role_route_record_rows(
+                &mut rows,
+                scratch,
+                core::ptr::addr_of_mut!((*dst).scope_registry),
+                walk_rows.scope_entries_len,
+            );
+            super::emit_walk::stream_role_lane_mask_rows(
+                &mut rows,
+                scratch,
+                core::ptr::addr_of_mut!((*dst).scope_registry),
+                walk_rows.scope_entries_len,
             );
         }
     }

@@ -19,7 +19,7 @@ pub(crate) struct RawSendPayload {
     encode: unsafe fn(*const (), &mut [u8]) -> Result<usize, SendError>,
 }
 
-pub(super) struct PendingRecv {
+pub(crate) struct PendingRecv {
     port_key: Option<*const ()>,
 }
 

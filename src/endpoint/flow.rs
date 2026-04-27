@@ -20,7 +20,7 @@ where
 {
     endpoint: *mut super::Endpoint<'r, ROLE>,
     preview: kernel::SendPreview,
-    desc: kernel::SendDesc,
+    desc: kernel::SendRuntimeDesc,
     _msg: PhantomData<(&'e mut super::Endpoint<'r, ROLE>, M)>,
 }
 
@@ -48,14 +48,14 @@ pub(crate) struct SendFuture<'e, 'r, const ROLE: u8> {
 }
 
 #[inline]
-pub(crate) fn send_desc<M>() -> kernel::SendDesc
+pub(crate) fn send_desc<M>() -> kernel::SendRuntimeDesc
 where
     M: MessageSpec + SendableLabel,
     M::ControlKind: ControlPayloadKind,
 {
     let control = <M as MessageSpec>::CONTROL.map(ControlDesc::from_static);
     let expects_control = <M::ControlKind as ControlPayloadKind>::IS_CONTROL;
-    kernel::SendDesc::new(
+    kernel::SendRuntimeDesc::new(
         <M as MessageSpec>::LABEL,
         expects_control,
         control,
@@ -70,7 +70,7 @@ where
     pub(crate) fn new(
         endpoint: *mut super::Endpoint<'r, ROLE>,
         preview: kernel::SendPreview,
-        desc: kernel::SendDesc,
+        desc: kernel::SendRuntimeDesc,
     ) -> Self {
         Self {
             endpoint,

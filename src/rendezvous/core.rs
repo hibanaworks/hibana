@@ -1339,11 +1339,11 @@ where
     }
 
     #[inline]
-    fn first_reusable_role_image_slot(&self, min_len: usize) -> Option<usize> {
+    fn first_unpinned_role_image_slot(&self) -> Option<usize> {
         let mut idx = 0usize;
         while idx < self.image_slot_capacity as usize {
             let slot = unsafe { &*self.role_images.add(idx) };
-            if slot.occupied && slot.pins == 0 && slot.len as usize >= min_len {
+            if slot.occupied && slot.pins == 0 {
                 return Some(idx);
             }
             idx += 1;
@@ -1352,11 +1352,11 @@ where
     }
 
     #[inline]
-    fn first_unpinned_role_image_slot(&self) -> Option<usize> {
+    fn first_reusable_role_image_slot(&self, min_len: usize) -> Option<usize> {
         let mut idx = 0usize;
         while idx < self.image_slot_capacity as usize {
             let slot = unsafe { &*self.role_images.add(idx) };
-            if slot.occupied && slot.pins == 0 {
+            if slot.occupied && slot.pins == 0 && slot.len as usize >= min_len {
                 return Some(idx);
             }
             idx += 1;
@@ -1599,14 +1599,18 @@ where
         let (ptr, offset) = unsafe {
             self.allocate_persistent_image_bytes(bytes, CompiledRoleImage::persistent_align())
         }?;
-        unsafe {
-            crate::global::compiled::materialize::init_compiled_role_image_from_summary(
+        let init_result = unsafe {
+            crate::global::compiled::materialize::try_init_compiled_role_image_from_summary(
                 ptr.cast::<CompiledRoleImage>(),
                 role,
                 summary,
                 scratch,
                 footprint,
-            );
+            )
+        };
+        if init_result.is_err() {
+            self.release_persistent_region(offset, bytes as u32);
+            return None;
         }
         let actual_bytes = unsafe { (*ptr.cast::<CompiledRoleImage>()).actual_persistent_bytes() };
         if actual_bytes < bytes {
@@ -1642,6 +1646,7 @@ where
         let counts = summary.role_lowering_counts::<ROLE>();
         let footprint = crate::global::role_program::RoleFootprint {
             scope_count: counts.scope_count,
+            max_active_scope_depth: counts.max_active_scope_depth,
             eff_count: counts.eff_count,
             phase_count: counts.phase_count,
             phase_lane_entry_count: counts.phase_lane_entry_count,
@@ -1734,81 +1739,81 @@ where
     ) -> Option<*const CompiledRoleImage> {
         let bytes = CompiledRoleImage::persistent_bytes_for_program(footprint);
         if let Some(insert_idx) = self.first_reusable_role_image_slot(bytes) {
-            let slot = unsafe { &mut *self.role_images.add(insert_idx) };
-            let ptr = unsafe {
-                self.slab_ptr_and_len()
-                    .0
-                    .add(slot.offset as usize)
-                    .cast::<CompiledRoleImage>()
-            };
-            unsafe {
-                crate::global::compiled::materialize::init_compiled_role_image_from_summary(
-                    ptr, role, summary, scratch, footprint,
-                );
-            }
-            let actual_bytes = unsafe { (*ptr).actual_persistent_bytes() };
-            if actual_bytes < slot.len as usize {
-                self.release_persistent_region(
-                    slot.offset.saturating_add(actual_bytes as u32),
-                    slot.len.saturating_sub(actual_bytes as u32),
-                );
-            }
-            let reserved =
-                Self::frontier_scratch_guard_bytes(unsafe { (*ptr).frontier_scratch_layout() })
-                    as u32;
-            self.reserve_scratch_reserved_bytes(reserved);
-            slot.stamp = stamp;
-            slot.role = role;
-            slot.len = actual_bytes as u32;
-            slot.occupied = true;
-            debug_assert_eq!(slot.pins, 0);
-            return Some(ptr.cast_const());
-        }
-        let insert_idx = self.first_unpinned_role_image_slot()?;
-        let (ptr, offset, reserved_len, released_region) = {
-            let slot = unsafe { &*self.role_images.add(insert_idx) };
-            if (slot.len as usize) >= bytes {
+            let (ptr, old_offset, old_len) = {
+                let slot = unsafe { &*self.role_images.add(insert_idx) };
+                debug_assert_eq!(slot.pins, 0);
                 let ptr = unsafe {
                     self.slab_ptr_and_len()
                         .0
                         .add(slot.offset as usize)
                         .cast::<CompiledRoleImage>()
                 };
-                (ptr.cast::<u8>(), slot.offset, slot.len, None)
-            } else {
-                let (ptr, offset) = unsafe {
-                    self.allocate_persistent_image_bytes(
-                        bytes,
-                        CompiledRoleImage::persistent_align(),
-                    )
-                }?;
-                (ptr, offset, bytes as u32, Some((slot.offset, slot.len)))
+                (ptr, slot.offset, slot.len)
+            };
+            unsafe {
+                crate::global::compiled::materialize::validate_compiled_role_image_init_from_summary(
+                    ptr, role, summary, footprint,
+                )
             }
+            .ok()?;
+            let actual_bytes = unsafe {
+                crate::global::compiled::materialize::init_compiled_role_image_from_prevalidated_summary(
+                    ptr, role, summary, scratch, footprint,
+                )
+            } as u32;
+            if actual_bytes < old_len {
+                self.release_persistent_region(
+                    old_offset.saturating_add(actual_bytes),
+                    old_len - actual_bytes,
+                );
+            }
+            let slot = unsafe { &mut *self.role_images.add(insert_idx) };
+            *slot = RoleImageSlot {
+                stamp,
+                role,
+                offset: old_offset,
+                len: actual_bytes,
+                pins: 0,
+                occupied: true,
+            };
+            self.recompute_scratch_reserved_bytes();
+            return Some(ptr.cast_const());
+        }
+        let insert_idx = self.first_unpinned_role_image_slot()?;
+        let (old_offset, old_len) = {
+            let slot = unsafe { &*self.role_images.add(insert_idx) };
+            debug_assert_eq!(slot.pins, 0);
+            (slot.offset, slot.len)
         };
-        unsafe {
-            crate::global::compiled::materialize::init_compiled_role_image_from_summary(
+        let (ptr, offset) = unsafe {
+            self.allocate_persistent_image_bytes(bytes, CompiledRoleImage::persistent_align())
+        }?;
+        let init_result = unsafe {
+            crate::global::compiled::materialize::try_init_compiled_role_image_from_summary(
                 ptr.cast::<CompiledRoleImage>(),
                 role,
                 summary,
                 scratch,
                 footprint,
-            );
+            )
+        };
+        if init_result.is_err() {
+            self.release_persistent_region(offset, bytes as u32);
+            return None;
         }
         let actual_bytes =
             unsafe { (*ptr.cast::<CompiledRoleImage>()).actual_persistent_bytes() } as u32;
-        if actual_bytes < reserved_len {
+        if actual_bytes < bytes as u32 {
             self.release_persistent_region(
                 offset.saturating_add(actual_bytes),
-                reserved_len.saturating_sub(actual_bytes),
+                (bytes as u32).saturating_sub(actual_bytes),
             );
         }
         let reserved = Self::frontier_scratch_guard_bytes(unsafe {
             (*ptr.cast::<CompiledRoleImage>()).frontier_scratch_layout()
         }) as u32;
         self.reserve_scratch_reserved_bytes(reserved);
-        if let Some((old_offset, old_len)) = released_region {
-            self.release_persistent_region(old_offset, old_len);
-        }
+        self.release_persistent_region(old_offset, old_len);
         let slot = unsafe { &mut *self.role_images.add(insert_idx) };
         *slot = RoleImageSlot {
             stamp,
@@ -1818,6 +1823,7 @@ where
             pins: 0,
             occupied: true,
         };
+        self.recompute_scratch_reserved_bytes();
         Some(ptr.cast::<CompiledRoleImage>())
     }
 
@@ -4598,6 +4604,8 @@ mod epf_tests {
         DropClock,
         crate::control::cap::mint::EpochTbl,
     >;
+    const DROP_TEST_SLAB_BYTES: usize =
+        core::mem::size_of::<DropTestRendezvous>() + core::mem::align_of::<DropTestRendezvous>();
 
     thread_local! {
         static EPF_TEST_TAP: UnsafeCell<[TapEvent; RING_EVENTS]> =
@@ -4612,10 +4620,8 @@ mod epf_tests {
             const { UnsafeCell::new(MaybeUninit::uninit()) };
         static DROP_TEST_TAP: UnsafeCell<[TapEvent; RING_EVENTS]> =
             const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
-        static DROP_TEST_SLAB: UnsafeCell<[u8; core::mem::size_of::<DropTestRendezvous>()
-            + core::mem::align_of::<DropTestRendezvous>()]> =
-            const { UnsafeCell::new([0u8; core::mem::size_of::<DropTestRendezvous>()
-                + core::mem::align_of::<DropTestRendezvous>()]) };
+        static DROP_TEST_SLAB: UnsafeCell<[u8; DROP_TEST_SLAB_BYTES]> =
+            const { UnsafeCell::new([0u8; DROP_TEST_SLAB_BYTES]) };
         static DROP_TRANSPORT_COUNT: Cell<u32> = const { Cell::new(0) };
         static DROP_CLOCK_COUNT: Cell<u32> = const { Cell::new(0) };
     }
@@ -6630,7 +6636,7 @@ mod epf_tests {
         with_epf_test_rendezvous(|rendezvous| {
             let lane = Lane::new(1);
             let sid = SessionId::new(29);
-            let eff_index = EffIndex::new(11);
+            let eff_index = EffIndex::from_dense_ordinal(11);
             let tag = 7;
             let policy = PolicyMode::dynamic(3);
 
@@ -6665,7 +6671,7 @@ mod epf_tests {
         with_epf_test_rendezvous(|rendezvous| {
             let lane = Lane::new(1);
             let sid = SessionId::new(30);
-            let eff_index = EffIndex::new(12);
+            let eff_index = EffIndex::from_dense_ordinal(12);
             let tag = 9;
             let policy = PolicyMode::dynamic(7);
 
@@ -6838,6 +6844,128 @@ mod epf_tests {
             assert_eq!(
                 image_a as usize, image_b as usize,
                 "reused program image slot must keep using the same storage when the replacement fits"
+            );
+        });
+    }
+
+    #[test]
+    fn role_image_replacement_reuses_unpinned_sufficient_slot_without_extra_persistent_bytes() {
+        let summary_a = route_summary();
+        let summary_b = route_summary_alt();
+        with_image_test_rendezvous_slots(1, |rendezvous| unsafe {
+            let image_a = rendezvous
+                .materialize_role_image_from_summary::<0>(summary_a.stamp(), &summary_a)
+                .expect("materialize first role image");
+            let first_frontier = rendezvous.image_frontier;
+            let first_scratch = rendezvous.scratch_reserved_bytes;
+            let role_slot = rendezvous
+                .pin_role_image_for(summary_a.stamp(), 0)
+                .expect("pin first role image");
+            rendezvous.unpin_role_image_slot(role_slot as usize);
+
+            let image_b = rendezvous
+                .materialize_role_image_from_summary::<0>(summary_b.stamp(), &summary_b)
+                .expect("reuse role image slot");
+            assert_eq!(
+                image_a as usize, image_b as usize,
+                "reused role image slot must keep using the same storage when the replacement fits",
+            );
+            assert_eq!(
+                rendezvous.image_frontier, first_frontier,
+                "reusing an unpinned role image slot must not allocate another persistent region",
+            );
+            assert_eq!(
+                rendezvous.scratch_reserved_bytes, first_scratch,
+                "same-shape replacement must not increase scratch reservation",
+            );
+        });
+    }
+
+    #[test]
+    fn role_image_replacement_init_failure_preserves_old_slot_and_old_image() {
+        let summary_a = route_summary();
+        let summary_b = route_summary_alt();
+        with_image_test_rendezvous_slots(1, |rendezvous| unsafe {
+            let image_a = rendezvous
+                .materialize_role_image_from_summary::<0>(summary_a.stamp(), &summary_a)
+                .expect("materialize first role image");
+            let first_frontier = rendezvous.image_frontier;
+            let first_scratch = rendezvous.scratch_reserved_bytes;
+            let role_slot = rendezvous
+                .pin_role_image_for(summary_a.stamp(), 0)
+                .expect("pin first role image");
+            rendezvous.unpin_role_image_slot(role_slot as usize);
+
+            let counts = summary_b.role_lowering_counts::<0>();
+            let invalid_footprint = crate::global::role_program::RoleFootprint {
+                scope_count: counts.scope_count,
+                max_active_scope_depth: counts.max_active_scope_depth,
+                eff_count: counts.eff_count,
+                phase_count: counts.phase_count,
+                phase_lane_entry_count: counts.phase_lane_entry_count,
+                phase_lane_word_count: counts.phase_lane_word_count,
+                parallel_enter_count: counts.parallel_enter_count,
+                route_scope_count: counts.route_scope_count,
+                local_step_count: counts.local_step_count.saturating_sub(1),
+                passive_linger_route_scope_count: counts.passive_linger_route_scope_count,
+                active_lane_count: counts.active_lane_count,
+                endpoint_lane_slot_count: counts.endpoint_lane_slot_count,
+                logical_lane_count: counts.logical_lane_count,
+                logical_lane_word_count: crate::global::role_program::lane_word_count(
+                    counts.logical_lane_count,
+                ),
+                max_route_stack_depth: 0,
+                scope_evidence_count: 0,
+                frontier_entry_count: 0,
+            };
+            let scratch_bytes =
+                crate::global::compiled::materialize::role_lowering_scratch_storage_bytes(
+                    invalid_footprint,
+                );
+            let mut scratch_storage = std::vec::Vec::with_capacity(scratch_bytes);
+            scratch_storage.resize(scratch_bytes, 0u8);
+            let result = crate::global::compiled::materialize::with_role_lowering_scratch_storage(
+                invalid_footprint,
+                scratch_storage.as_mut_ptr(),
+                scratch_storage.len(),
+                |scratch| {
+                    rendezvous.materialize_role_image_from_summary_for_program::<0>(
+                        summary_b.stamp(),
+                        &summary_b,
+                        scratch,
+                        invalid_footprint,
+                    )
+                },
+            )
+            .flatten();
+
+            assert!(
+                result.is_none(),
+                "preflight capacity failure must reject replacement without touching the old image",
+            );
+            assert_eq!(
+                rendezvous
+                    .role_image::<0>(summary_a.stamp())
+                    .map(|ptr| ptr as usize),
+                Some(image_a as usize),
+                "failed replacement must keep the old role image slot published",
+            );
+            assert!(
+                rendezvous.role_image::<0>(summary_b.stamp()).is_none(),
+                "failed replacement must not publish the rejected image stamp",
+            );
+            assert_eq!(
+                (*image_a).actual_persistent_bytes(),
+                (*rendezvous.role_image::<0>(summary_a.stamp()).unwrap()).actual_persistent_bytes(),
+                "failed replacement must not roll back or zero the old image rows",
+            );
+            assert_eq!(
+                rendezvous.image_frontier, first_frontier,
+                "failed preflight must not allocate or release persistent bytes",
+            );
+            assert_eq!(
+                rendezvous.scratch_reserved_bytes, first_scratch,
+                "failed preflight must not change scratch reservation",
             );
         });
     }

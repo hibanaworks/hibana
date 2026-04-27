@@ -90,7 +90,7 @@ pub(crate) struct EndpointOps<'r> {
     pub(crate) init_public_send_state: unsafe fn(
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        desc: crate::endpoint::kernel::SendDesc,
+        desc: crate::endpoint::kernel::SendRuntimeDesc,
         preview: crate::endpoint::kernel::SendPreview,
         payload: Option<crate::endpoint::kernel::RawSendPayload>,
     ),
@@ -108,12 +108,12 @@ pub(crate) struct EndpointOps<'r> {
         unsafe fn(
             ptr: NonNull<KernelEndpointHeader>,
             handle: PackedEndpointHandle,
-            desc: crate::endpoint::kernel::SendDesc,
+            desc: crate::endpoint::kernel::SendRuntimeDesc,
         ) -> crate::endpoint::SendResult<crate::endpoint::kernel::SendPreview>,
     pub(crate) poll_recv: unsafe fn(
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        desc: crate::endpoint::kernel::RecvDesc,
+        desc: crate::endpoint::kernel::RecvRuntimeDesc,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>>,
     pub(crate) poll_offer: unsafe fn(
@@ -124,7 +124,7 @@ pub(crate) struct EndpointOps<'r> {
     pub(crate) poll_decode: unsafe fn(
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        desc: crate::endpoint::kernel::DecodeDesc,
+        desc: crate::endpoint::kernel::DecodeRuntimeDesc,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>>,
     pub(crate) poll_send: unsafe fn(
@@ -299,7 +299,7 @@ where
     unsafe fn preview_public_endpoint<const ROLE: u8>(
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        desc: crate::endpoint::kernel::SendDesc,
+        desc: crate::endpoint::kernel::SendRuntimeDesc,
     ) -> crate::endpoint::SendResult<crate::endpoint::kernel::SendPreview> {
         let Some(kernel) =
             (unsafe { Self::public_endpoint_ptr_from_header::<'_, ROLE>(ptr, handle) })
@@ -314,7 +314,7 @@ where
     unsafe fn init_public_send_state_raw<const ROLE: u8>(
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        desc: crate::endpoint::kernel::SendDesc,
+        desc: crate::endpoint::kernel::SendRuntimeDesc,
         preview: crate::endpoint::kernel::SendPreview,
         payload: Option<crate::endpoint::kernel::RawSendPayload>,
     ) {
@@ -401,7 +401,7 @@ where
     unsafe fn poll_recv_public_endpoint<const ROLE: u8>(
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        desc: crate::endpoint::kernel::RecvDesc,
+        desc: crate::endpoint::kernel::RecvRuntimeDesc,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>> {
         let Some(kernel) =
@@ -436,7 +436,7 @@ where
     unsafe fn poll_decode_public_endpoint<const ROLE: u8>(
         ptr: NonNull<KernelEndpointHeader>,
         handle: PackedEndpointHandle,
-        desc: crate::endpoint::kernel::DecodeDesc,
+        desc: crate::endpoint::kernel::DecodeRuntimeDesc,
         cx: &mut Context<'_>,
     ) -> Poll<crate::endpoint::RecvResult<RawPayload>> {
         let Some(kernel) =

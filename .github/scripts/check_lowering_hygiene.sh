@@ -196,9 +196,16 @@ check_absent \
   src/global/typestate/emit.rs
 
 for required in \
-  'src/global/typestate/emit_walk.rs:pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(' \
+  'src/global/typestate/emit_walk.rs:pub(super) unsafe fn stream_role_typestate_node_rows<P: TypestateProgramView>(' \
+  'src/global/typestate/emit_walk.rs:pub(super) unsafe fn stream_role_scope_rows(' \
+  'src/global/typestate/emit_walk.rs:pub(super) unsafe fn stream_role_route_slot_rows(' \
+  'src/global/typestate/emit_walk.rs:pub(super) unsafe fn stream_role_route_record_rows(' \
+  'src/global/typestate/emit_walk.rs:pub(super) unsafe fn stream_role_lane_mask_rows(' \
   'src/global/typestate/emit_scope.rs:pub(super) const fn alloc_scope_record(' \
-  'src/global/typestate/emit_scope.rs:pub(super) unsafe fn init_scope_registry(' \
+  'src/global/typestate/emit_scope.rs:pub(super) unsafe fn stream_scope_registry_scope_rows(' \
+  'src/global/typestate/emit_scope.rs:pub(super) unsafe fn stream_scope_registry_route_slot_rows(' \
+  'src/global/typestate/emit_scope.rs:pub(super) unsafe fn stream_scope_registry_route_record_rows(' \
+  'src/global/typestate/emit_scope.rs:pub(super) unsafe fn stream_scope_registry_lane_mask_rows(' \
   'src/global/typestate/emit_route.rs:pub(super) const MAX_LOOP_TRACKED: usize =' \
   'src/global/typestate/emit_route.rs:pub(super) const fn find_loop_entry_state('
 do

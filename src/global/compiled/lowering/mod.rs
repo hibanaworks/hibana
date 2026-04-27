@@ -11,8 +11,14 @@ pub(super) mod seal;
 
 pub(crate) use self::{
     driver::{LoweringSummary, LoweringView, ProgramStamp, RoleLoweringCounts},
+    role_image_builder::CompiledRoleImageInitError,
     seal::validate_all_roles,
 };
 
 #[cfg(test)]
-pub(crate) use self::program_owner::CompiledProgram;
+pub(crate) use self::{
+    program_owner::CompiledProgram,
+    role_image_builder::{
+        RoleImageStreamFault, try_init_compiled_role_image_from_summary_with_fault,
+    },
+};

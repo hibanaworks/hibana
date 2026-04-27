@@ -1,4 +1,5 @@
 use crate::endpoint::kernel::{EndpointArenaLayout, FrontierScratchLayout};
+use crate::global::ControlDesc;
 #[cfg(test)]
 use crate::global::compiled::layout::compiled_role_image_bytes_for_counts;
 use crate::global::compiled::layout::{
@@ -8,7 +9,7 @@ use crate::global::role_program::{
     DENSE_LANE_NONE, DenseLaneOrdinal, LaneSetView, LaneSteps, LaneWord, PhaseRouteGuard,
     RoleFootprint, lane_word_count, logical_lane_count_for_role,
 };
-use crate::global::typestate::{RoleTypestateValue, StateIndex};
+use crate::global::typestate::{RoleTypestateValue, RouteScopeRecord, StateIndex};
 
 pub(in crate::global::compiled) const MACHINE_NO_STEP: u16 = u16::MAX;
 
@@ -39,24 +40,47 @@ pub(in crate::global::compiled) const fn encode_compact_offset_u16(value: usize)
 /// Crate-private runtime image for role-local immutable facts.
 #[derive(Clone, Debug)]
 pub(crate) struct CompiledRoleImage {
+    pub(in crate::global::compiled) segment_headers_offset: u16,
     pub(in crate::global::compiled) typestate_offset: u16,
     pub(in crate::global::compiled) phase_headers_offset: u16,
     pub(in crate::global::compiled) phase_lane_entries_offset: u16,
     pub(in crate::global::compiled) phase_lane_words_offset: u16,
     pub(in crate::global::compiled) eff_index_to_step_offset: u16,
     pub(in crate::global::compiled) step_index_to_state_offset: u16,
+    pub(in crate::global::compiled) control_by_eff_offset: u16,
     pub(in crate::global::compiled) role: u8,
     pub(in crate::global::compiled) role_facts: RoleResidentFacts,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(in crate::global::compiled) struct PhaseImageHeader {
+pub(crate) struct PhaseImageHeader {
     pub(in crate::global::compiled) lane_entry_start: u16,
     pub(in crate::global::compiled) lane_entry_len: u16,
     pub(in crate::global::compiled) lane_word_start: u16,
     pub(in crate::global::compiled) lane_word_len: u16,
     pub(in crate::global::compiled) min_start: u16,
     pub(in crate::global::compiled) route_guard: PhaseRouteGuard,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CompiledRoleSegmentHeader {
+    pub(in crate::global::compiled) eff_start: u16,
+    pub(in crate::global::compiled) eff_len: u16,
+    pub(in crate::global::compiled) scope_marker_len: u16,
+    pub(in crate::global::compiled) control_marker_len: u16,
+    pub(in crate::global::compiled) policy_marker_len: u16,
+    pub(in crate::global::compiled) control_desc_len: u16,
+}
+
+impl CompiledRoleSegmentHeader {
+    pub(in crate::global::compiled) const EMPTY: Self = Self {
+        eff_start: 0,
+        eff_len: 0,
+        scope_marker_len: 0,
+        control_marker_len: 0,
+        policy_marker_len: 0,
+        control_desc_len: 0,
+    };
 }
 
 impl PhaseImageHeader {
@@ -81,6 +105,19 @@ impl PhaseLaneEntry {
         lane: 0,
         steps: LaneSteps::EMPTY,
     };
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct RoleRuntimeTableView<'a> {
+    pub(crate) segment_headers: &'a [CompiledRoleSegmentHeader],
+    pub(crate) route_record_by_dense_route: &'a [RouteScopeRecord],
+    pub(crate) route_dense_by_scope_slot: &'a [u16],
+    pub(crate) route_offer_lane_words_by_dense_route: &'a [LaneWord],
+    pub(crate) route_arm0_lane_words_by_dense_route: &'a [LaneWord],
+    pub(crate) route_arm1_lane_words_by_dense_route: &'a [LaneWord],
+    pub(crate) phase_headers: &'a [PhaseImageHeader],
+    pub(crate) control_by_eff: &'a [ControlDesc],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -170,6 +207,13 @@ impl CompiledRoleImage {
     }
 
     #[inline(always)]
+    pub(in crate::global::compiled) fn segment_headers_ptr(
+        &self,
+    ) -> *const CompiledRoleSegmentHeader {
+        self.ptr_at(self.segment_headers_offset)
+    }
+
+    #[inline(always)]
     pub(in crate::global::compiled) fn phase_headers_ptr(&self) -> *const PhaseImageHeader {
         self.ptr_at(self.phase_headers_offset)
     }
@@ -192,6 +236,11 @@ impl CompiledRoleImage {
     #[inline(always)]
     pub(in crate::global::compiled) fn step_index_to_state_ptr(&self) -> *const StateIndex {
         self.ptr_at(self.step_index_to_state_offset)
+    }
+
+    #[inline(always)]
+    pub(in crate::global::compiled) fn control_by_eff_ptr(&self) -> *const ControlDesc {
+        self.ptr_at(self.control_by_eff_offset)
     }
 
     #[cfg(test)]
@@ -227,6 +276,116 @@ impl CompiledRoleImage {
     #[inline(always)]
     pub(crate) fn local_len(&self) -> usize {
         self.role_facts.step_index_to_state_len()
+    }
+
+    #[inline(always)]
+    pub(crate) fn runtime_tables(&self) -> RoleRuntimeTableView<'_> {
+        let typestate = self.typestate_ref();
+        RoleRuntimeTableView {
+            segment_headers: self.segment_headers(),
+            route_record_by_dense_route: typestate.route_records_table(),
+            route_dense_by_scope_slot: typestate.route_dense_by_slot_table(),
+            route_offer_lane_words_by_dense_route: typestate.route_offer_lane_words_table(),
+            route_arm0_lane_words_by_dense_route: typestate.route_arm0_lane_words_table(),
+            route_arm1_lane_words_by_dense_route: typestate.route_arm1_lane_words_table(),
+            phase_headers: if self.phase_len() == 0 {
+                &[]
+            } else {
+                unsafe { core::slice::from_raw_parts(self.phase_headers_ptr(), self.phase_len()) }
+            },
+            control_by_eff: self.control_by_eff(),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn route_scope_dense_ordinal_by_slot(&self, slot: usize) -> Option<usize> {
+        let tables = self.runtime_tables();
+        let dense = *tables.route_dense_by_scope_slot.get(slot)?;
+        if dense == u16::MAX {
+            None
+        } else {
+            Some(dense as usize)
+        }
+    }
+
+    #[inline]
+    pub(crate) fn route_scope_offer_entry_by_slot(&self, slot: usize) -> Option<StateIndex> {
+        let dense = self.route_scope_dense_ordinal_by_slot(slot)?;
+        Some(
+            self.runtime_tables()
+                .route_record_by_dense_route
+                .get(dense)?
+                .offer_entry(),
+        )
+    }
+
+    #[inline]
+    pub(crate) fn route_scope_offer_lane_set_by_slot(&self, slot: usize) -> Option<LaneSetView> {
+        let dense = self.route_scope_dense_ordinal_by_slot(slot)?;
+        let route = self
+            .runtime_tables()
+            .route_record_by_dense_route
+            .get(dense)?;
+        let start = route.offer_lane_word_start();
+        let len = self.typestate_ref().route_lane_word_len();
+        let end = start.checked_add(len)?;
+        let lanes = self
+            .runtime_tables()
+            .route_offer_lane_words_by_dense_route
+            .get(start..end)?;
+        Some(LaneSetView::from_parts(lanes.as_ptr(), lanes.len()))
+    }
+
+    #[inline]
+    pub(crate) fn route_scope_arm_lane_set_by_slot(
+        &self,
+        slot: usize,
+        arm: u8,
+    ) -> Option<LaneSetView> {
+        let dense = self.route_scope_dense_ordinal_by_slot(slot)?;
+        let route = self
+            .runtime_tables()
+            .route_record_by_dense_route
+            .get(dense)?;
+        let start = route.route_arm_lane_word_start();
+        let len = self.typestate_ref().route_lane_word_len();
+        let end = start.checked_add(len)?;
+        let tables = self.runtime_tables();
+        let lanes = match arm {
+            0 => tables
+                .route_arm0_lane_words_by_dense_route
+                .get(start..end)?,
+            1 => tables
+                .route_arm1_lane_words_by_dense_route
+                .get(start..end)?,
+            _ => return None,
+        };
+        Some(LaneSetView::from_parts(lanes.as_ptr(), lanes.len()))
+    }
+
+    #[inline(always)]
+    pub(crate) fn segment_headers(&self) -> &[CompiledRoleSegmentHeader] {
+        if self.segment_count() == 0 {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(self.segment_headers_ptr(), self.segment_count()) }
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn segment_count(&self) -> usize {
+        let eff_count = self.role_facts.eff_index_to_step_len();
+        if eff_count == 0 {
+            0
+        } else {
+            eff_count.div_ceil(crate::eff::meta::MAX_SEGMENT_EFFS)
+        }
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) fn segment_header(&self, segment: usize) -> Option<CompiledRoleSegmentHeader> {
+        self.segment_headers().get(segment).copied()
     }
 
     #[cfg(test)]
@@ -331,6 +490,16 @@ impl CompiledRoleImage {
             core::slice::from_raw_parts(
                 self.step_index_to_state_ptr(),
                 self.role_facts.step_index_to_state_len(),
+            )
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn control_by_eff(&self) -> &[ControlDesc] {
+        unsafe {
+            core::slice::from_raw_parts(
+                self.control_by_eff_ptr(),
+                self.role_facts.eff_index_to_step_len(),
             )
         }
     }
@@ -443,7 +612,7 @@ impl CompiledRoleImage {
 
     #[inline(always)]
     pub(crate) fn route_table_lane_slots(&self) -> usize {
-        if self.typestate_ref().route_scope_count() == 0 {
+        if self.runtime_tables().route_record_by_dense_route.is_empty() {
             0
         } else {
             self.endpoint_lane_slot_count()
@@ -476,14 +645,13 @@ impl CompiledRoleImage {
     }
 
     #[inline(always)]
-    #[cfg(test)]
     pub(crate) fn route_scope_count(&self) -> usize {
-        self.typestate_ref().route_scope_count()
+        self.runtime_tables().route_record_by_dense_route.len()
     }
 
     #[inline(always)]
     pub(crate) fn scope_evidence_count(&self) -> usize {
-        self.typestate_ref().route_scope_count()
+        self.runtime_tables().route_record_by_dense_route.len()
     }
 
     #[inline(always)]
@@ -529,14 +697,16 @@ impl CompiledRoleImage {
 
     #[inline(always)]
     pub(crate) fn endpoint_layout_footprint(&self) -> RoleFootprint {
-        RoleFootprint::for_endpoint_layout(
+        let mut footprint = RoleFootprint::for_endpoint_layout(
             self.active_lane_count(),
             self.endpoint_lane_slot_count(),
             self.logical_lane_count(),
             self.max_route_stack_depth(),
             self.scope_evidence_count(),
             self.max_frontier_entries(),
-        )
+        );
+        footprint.route_scope_count = self.route_scope_count();
+        footprint
     }
 
     #[inline(always)]
@@ -666,9 +836,10 @@ mod tests {
     };
     use crate::{
         control::{
-            cap::mint::{ControlResourceKind, GenericCapToken},
+            cap::mint::{ControlResourceKind, GenericCapToken, ResourceKind},
             cap::resource_kinds::{LoopBreakKind, LoopContinueKind, RouteDecisionKind},
         },
+        eff::meta::MAX_SEGMENT_EFFS,
         g::{self, Msg, Role},
         global::compiled::lowering::LoweringSummary,
         global::{
@@ -787,7 +958,7 @@ mod tests {
     #[test]
     fn compiled_role_image_header_stays_compact() {
         assert!(
-            core::mem::size_of::<super::CompiledRoleImage>() <= 32,
+            core::mem::size_of::<super::CompiledRoleImage>() <= 34,
             "CompiledRoleImage header regressed back to pointer-rich layout: {} bytes",
             core::mem::size_of::<super::CompiledRoleImage>()
         );
@@ -1399,6 +1570,617 @@ mod tests {
                 local_len,
                 phase_count,
                 fanout_parallel_markers,
+            );
+        });
+    }
+
+    fn long_linear_worker_program() -> role_program::RoleProgram<1> {
+        let program = g::send::<Role<0>, Role<1>, Msg<1, u8>, 0>();
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<2, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<3, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<4, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<5, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<6, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<7, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<8, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<9, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<10, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<11, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<12, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<13, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<14, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<15, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<16, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<17, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<18, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<19, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<20, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<21, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<22, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<23, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<24, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<25, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<26, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<27, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<28, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<29, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<30, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<31, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<32, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<33, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<34, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<35, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<36, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<37, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<38, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<39, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<40, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<41, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<42, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<43, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<44, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<45, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<46, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<47, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<50, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<51, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<52, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<53, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<54, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<55, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<56, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<58, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<59, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<60, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<61, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<62, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<63, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<64, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<65, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<66, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<67, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<68, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<69, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<70, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<71, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<72, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<73, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<74, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<75, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<76, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<77, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<78, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<79, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<80, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<81, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<82, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<83, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<84, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<85, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<86, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<87, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<88, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<89, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<90, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<91, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<92, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<93, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<94, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<95, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<96, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<97, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<98, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<99, u8>, 0>());
+        let program = g::seq(program, g::send::<Role<0>, Role<1>, Msg<100, u8>, 0>());
+        role_program::project(&program)
+    }
+
+    #[test]
+    fn long_linear_role_image_keeps_segmented_eff_indices_past_first_segment() {
+        let worker = long_linear_worker_program();
+        role_program::lowering_input(&worker).with_summary(|summary| {
+            assert_eq!(
+                summary.segment_summary(0).eff_len(),
+                MAX_SEGMENT_EFFS,
+                "first lowering segment must be summarized at segment-local capacity",
+            );
+            assert!(
+                summary.segment_summary(1).eff_len() > 0,
+                "long linear program must populate the next lowering segment",
+            );
+        });
+        with_compiled_role_image(&worker, |image| {
+            assert!(
+                image.segment_count() > 1,
+                "compiled role image must persist segment descriptor rows"
+            );
+            let first = image.segment_header(0).expect("first segment header");
+            let second = image.segment_header(1).expect("second segment header");
+            assert_eq!(first.eff_start, 0);
+            assert_eq!(first.eff_len as usize, MAX_SEGMENT_EFFS);
+            assert_eq!(second.eff_start as usize, MAX_SEGMENT_EFFS);
+            assert!(second.eff_len > 0);
+            let typestate = image.typestate_ref();
+            let mut idx = 0usize;
+            while idx < typestate.len() {
+                let eff_index = match typestate.node(idx).action() {
+                    LocalAction::Send { eff_index, .. }
+                    | LocalAction::Recv { eff_index, .. }
+                    | LocalAction::Local { eff_index, .. } => Some(eff_index),
+                    LocalAction::Terminate | LocalAction::Jump { .. } => None,
+                };
+
+                if let Some(eff_index) = eff_index {
+                    if eff_index.segment() > 0 {
+                        assert!(
+                            eff_index.as_usize() >= MAX_SEGMENT_EFFS,
+                            "segmented index must still map back to its flat descriptor slot",
+                        );
+                        return;
+                    }
+                }
+                idx += 1;
+            }
+
+            panic!("long linear role image did not retain a segment-1 effect index");
+        });
+    }
+
+    #[test]
+    fn role_image_segment_streaming_failure_rolls_back_header() {
+        let worker = long_linear_worker_program();
+        let input = crate::global::lowering_input(&worker);
+        let real_footprint = input.footprint();
+        let constrained_footprint = role_program::RoleFootprint {
+            eff_count: MAX_SEGMENT_EFFS,
+            ..real_footprint
+        };
+        let constrained_bytes =
+            CompiledRoleImage::persistent_bytes_for_program(constrained_footprint);
+        let bytes = CompiledRoleImage::persistent_bytes_for_program(real_footprint);
+        let align = CompiledRoleImage::persistent_align();
+        let mut storage = std::vec::Vec::with_capacity(bytes + align);
+        storage.resize(bytes + align, 0xA5);
+        let base = storage.as_mut_ptr() as usize;
+        let aligned = crate::global::compiled::materialize::with_role_lowering_scratch(
+            input,
+            |summary, scratch| {
+                let aligned = ((base + align - 1) & !(align - 1)) as *mut CompiledRoleImage;
+                let result = unsafe {
+                    crate::global::compiled::materialize::try_init_compiled_role_image_from_summary(
+                        aligned,
+                        1,
+                        summary,
+                        scratch,
+                        constrained_footprint,
+                    )
+                };
+                assert_eq!(
+                    result,
+                    Err(crate::global::compiled::lowering::CompiledRoleImageInitError::SegmentHeaderCapacity),
+                    "constrained segment header storage must preserve the init failure reason"
+                );
+                aligned
+            },
+        );
+        let image = unsafe { &*aligned };
+        assert_eq!(image.role(), 1);
+        assert_eq!(image.typestate_offset, 0);
+        assert_eq!(image.segment_headers_offset, 0);
+        assert_eq!(image.eff_index_to_step_offset, 0);
+        assert_eq!(image.step_index_to_state_offset, 0);
+        assert_eq!(image.control_by_eff_offset, 0);
+        assert_eq!(image.actual_persistent_bytes(), 0);
+        let rolled_back_rows =
+            unsafe { std::slice::from_raw_parts(aligned.cast::<u8>(), constrained_bytes) };
+        assert!(
+            rolled_back_rows[core::mem::size_of::<CompiledRoleImage>()..]
+                .iter()
+                .all(|byte| *byte == 0),
+            "descriptor row storage must be zeroed on streaming init failure",
+        );
+    }
+
+    #[test]
+    fn role_image_phase_row_streaming_failure_rolls_back_rows() {
+        let worker = long_linear_worker_program();
+        let input = crate::global::lowering_input(&worker);
+        let real_footprint = input.footprint();
+        let constrained_footprint = role_program::RoleFootprint {
+            phase_count: real_footprint.phase_count.saturating_sub(1),
+            ..real_footprint
+        };
+        let constrained_bytes =
+            CompiledRoleImage::persistent_bytes_for_program(constrained_footprint);
+        let bytes = CompiledRoleImage::persistent_bytes_for_program(real_footprint);
+        let align = CompiledRoleImage::persistent_align();
+        let mut storage = std::vec::Vec::with_capacity(bytes + align);
+        storage.resize(bytes + align, 0xA5);
+        let base = storage.as_mut_ptr() as usize;
+        let aligned = crate::global::compiled::materialize::with_role_lowering_scratch(
+            input,
+            |summary, scratch| {
+                let aligned = ((base + align - 1) & !(align - 1)) as *mut CompiledRoleImage;
+                let result = unsafe {
+                    crate::global::compiled::materialize::try_init_compiled_role_image_from_summary(
+                        aligned,
+                        1,
+                        summary,
+                        scratch,
+                        constrained_footprint,
+                    )
+                };
+                assert_eq!(
+                    result,
+                    Err(crate::global::compiled::lowering::CompiledRoleImageInitError::PhaseHeaderCapacity),
+                    "constrained phase row storage must preserve the init failure reason"
+                );
+                aligned
+            },
+        );
+        let image = unsafe { &*aligned };
+        assert_eq!(image.role(), 1);
+        assert_eq!(image.typestate_offset, 0);
+        assert_eq!(image.segment_headers_offset, 0);
+        assert_eq!(image.phase_headers_offset, 0);
+        assert_eq!(image.actual_persistent_bytes(), 0);
+        let rolled_back_rows =
+            unsafe { std::slice::from_raw_parts(aligned.cast::<u8>(), constrained_bytes) };
+        assert!(
+            rolled_back_rows[core::mem::size_of::<CompiledRoleImage>()..]
+                .iter()
+                .all(|byte| *byte == 0),
+            "descriptor row storage must be zeroed on phase row streaming failure",
+        );
+    }
+
+    fn assert_role_image_row_capacity_failure_rolls_back<const ROLE: u8>(
+        name: &str,
+        program: &role_program::RoleProgram<ROLE>,
+        constrained_footprint: role_program::RoleFootprint,
+        expected: crate::global::compiled::lowering::CompiledRoleImageInitError,
+    ) {
+        let input = crate::global::lowering_input(program);
+        let real_footprint = input.footprint();
+        let constrained_bytes =
+            CompiledRoleImage::persistent_bytes_for_program(constrained_footprint);
+        let bytes = CompiledRoleImage::persistent_bytes_for_program(real_footprint);
+        let align = CompiledRoleImage::persistent_align();
+        let mut storage = std::vec::Vec::with_capacity(bytes + align);
+        storage.resize(bytes + align, 0xA5);
+        let base = storage.as_mut_ptr() as usize;
+        let aligned = crate::global::compiled::materialize::with_role_lowering_scratch(
+            input,
+            |summary, scratch| {
+                let aligned = ((base + align - 1) & !(align - 1)) as *mut CompiledRoleImage;
+                let result = unsafe {
+                    crate::global::compiled::materialize::try_init_compiled_role_image_from_summary(
+                        aligned,
+                        ROLE,
+                        summary,
+                        scratch,
+                        constrained_footprint,
+                    )
+                };
+                assert_eq!(
+                    result,
+                    Err(expected),
+                    "{name} must preserve the row init failure reason"
+                );
+                aligned
+            },
+        );
+        let image = unsafe { &*aligned };
+        assert_eq!(image.role(), ROLE);
+        assert_eq!(image.typestate_offset, 0);
+        assert_eq!(image.segment_headers_offset, 0);
+        assert_eq!(image.eff_index_to_step_offset, 0);
+        assert_eq!(image.step_index_to_state_offset, 0);
+        assert_eq!(image.control_by_eff_offset, 0);
+        assert_eq!(image.actual_persistent_bytes(), 0);
+        let rolled_back_rows =
+            unsafe { std::slice::from_raw_parts(aligned.cast::<u8>(), constrained_bytes) };
+        assert!(
+            rolled_back_rows[core::mem::size_of::<CompiledRoleImage>()..]
+                .iter()
+                .all(|byte| *byte == 0),
+            "{name} descriptor row storage must be zeroed on init failure",
+        );
+    }
+
+    #[test]
+    fn role_image_descriptor_row_capacity_failures_roll_back_rows() {
+        let worker = long_linear_worker_program();
+        let input = crate::global::lowering_input(&worker);
+        let real = input.footprint();
+        assert_role_image_row_capacity_failure_rolls_back(
+            "typestate rows",
+            &worker,
+            role_program::RoleFootprint {
+                local_step_count: real.local_step_count.saturating_sub(1),
+                ..real
+            },
+            crate::global::compiled::lowering::CompiledRoleImageInitError::TypestateNodeCapacity,
+        );
+        let routed_worker = huge_program::worker_program();
+        let routed_input = crate::global::lowering_input(&routed_worker);
+        let routed = routed_input.footprint();
+        assert_role_image_row_capacity_failure_rolls_back(
+            "route records",
+            &routed_worker,
+            role_program::RoleFootprint {
+                route_scope_count: routed.route_scope_count.saturating_sub(1),
+                ..routed
+            },
+            crate::global::compiled::lowering::CompiledRoleImageInitError::RouteRowCapacity,
+        );
+        assert_role_image_row_capacity_failure_rolls_back(
+            "phase lane entries",
+            &worker,
+            role_program::RoleFootprint {
+                phase_lane_entry_count: real.phase_lane_entry_count.saturating_sub(1),
+                ..real
+            },
+            crate::global::compiled::lowering::CompiledRoleImageInitError::PhaseLaneEntryCapacity,
+        );
+        assert_role_image_row_capacity_failure_rolls_back(
+            "phase lane words",
+            &worker,
+            role_program::RoleFootprint {
+                phase_lane_word_count: real.phase_lane_word_count.saturating_sub(1),
+                ..real
+            },
+            crate::global::compiled::lowering::CompiledRoleImageInitError::PhaseLaneWordCapacity,
+        );
+    }
+
+    fn assert_role_image_stream_fault_rolls_back<const ROLE: u8>(
+        name: &str,
+        program: &role_program::RoleProgram<ROLE>,
+        fault: crate::global::compiled::lowering::RoleImageStreamFault,
+        expected: crate::global::compiled::lowering::CompiledRoleImageInitError,
+    ) {
+        let input = crate::global::lowering_input(program);
+        let footprint = input.footprint();
+        let bytes = CompiledRoleImage::persistent_bytes_for_program(footprint);
+        let align = CompiledRoleImage::persistent_align();
+        let mut storage = std::vec::Vec::with_capacity(bytes + align);
+        storage.resize(bytes + align, 0xA5);
+        let base = storage.as_mut_ptr() as usize;
+        let aligned = crate::global::compiled::materialize::with_role_lowering_scratch(
+            input,
+            |summary, scratch| {
+                let aligned = ((base + align - 1) & !(align - 1)) as *mut CompiledRoleImage;
+                let result = unsafe {
+                    crate::global::compiled::lowering::try_init_compiled_role_image_from_summary_with_fault(
+                        aligned,
+                        ROLE,
+                        summary,
+                        scratch,
+                        footprint,
+                        fault,
+                    )
+                };
+                assert_eq!(
+                    result,
+                    Err(expected),
+                    "{name} must preserve writer fault reason"
+                );
+                aligned
+            },
+        );
+        let image = unsafe { &*aligned };
+        assert_eq!(image.role(), ROLE);
+        assert_eq!(image.typestate_offset, 0);
+        assert_eq!(image.segment_headers_offset, 0);
+        assert_eq!(image.eff_index_to_step_offset, 0);
+        assert_eq!(image.step_index_to_state_offset, 0);
+        assert_eq!(image.control_by_eff_offset, 0);
+        assert_eq!(image.actual_persistent_bytes(), 0);
+        let rolled_back_rows = unsafe { std::slice::from_raw_parts(aligned.cast::<u8>(), bytes) };
+        assert!(
+            rolled_back_rows[core::mem::size_of::<CompiledRoleImage>()..]
+                .iter()
+                .all(|byte| *byte == 0),
+            "{name} descriptor row storage must be zeroed on writer fault",
+        );
+    }
+
+    #[test]
+    fn descriptor_row_writer_faults_roll_back_rows() {
+        let linear_worker = long_linear_worker_program();
+        let route_worker = huge_program::worker_program();
+
+        assert_role_image_stream_fault_rolls_back(
+            "typestate node writer",
+            &linear_worker,
+            crate::global::compiled::lowering::RoleImageStreamFault::AfterTypestateNode(0),
+            crate::global::compiled::lowering::CompiledRoleImageInitError::TypestateNodeCapacity,
+        );
+        assert_role_image_stream_fault_rolls_back(
+            "scope row writer",
+            &route_worker,
+            crate::global::compiled::lowering::RoleImageStreamFault::AfterScopeRow(0),
+            crate::global::compiled::lowering::CompiledRoleImageInitError::ScopeRowCapacity,
+        );
+        assert_role_image_stream_fault_rolls_back(
+            "route record writer",
+            &route_worker,
+            crate::global::compiled::lowering::RoleImageStreamFault::AfterRouteRecord(0),
+            crate::global::compiled::lowering::CompiledRoleImageInitError::RouteRowCapacity,
+        );
+        assert_role_image_stream_fault_rolls_back(
+            "route slot writer",
+            &route_worker,
+            crate::global::compiled::lowering::RoleImageStreamFault::AfterRouteSlot(0),
+            crate::global::compiled::lowering::CompiledRoleImageInitError::RouteRowCapacity,
+        );
+        assert_role_image_stream_fault_rolls_back(
+            "lane mask writer",
+            &route_worker,
+            crate::global::compiled::lowering::RoleImageStreamFault::AfterLaneMask(0),
+            crate::global::compiled::lowering::CompiledRoleImageInitError::LaneMatrixCapacity,
+        );
+        assert_role_image_stream_fault_rolls_back(
+            "phase header writer",
+            &linear_worker,
+            crate::global::compiled::lowering::RoleImageStreamFault::AfterPhaseHeader(0),
+            crate::global::compiled::lowering::CompiledRoleImageInitError::PhaseHeaderCapacity,
+        );
+        assert_role_image_stream_fault_rolls_back(
+            "phase lane entry writer",
+            &linear_worker,
+            crate::global::compiled::lowering::RoleImageStreamFault::AfterPhaseLaneEntry(0),
+            crate::global::compiled::lowering::CompiledRoleImageInitError::PhaseLaneEntryCapacity,
+        );
+        assert_role_image_stream_fault_rolls_back(
+            "phase lane word writer",
+            &linear_worker,
+            crate::global::compiled::lowering::RoleImageStreamFault::AfterPhaseLaneWord(0),
+            crate::global::compiled::lowering::CompiledRoleImageInitError::PhaseLaneWordCapacity,
+        );
+        assert_role_image_stream_fault_rolls_back(
+            "eff-index writer",
+            &linear_worker,
+            crate::global::compiled::lowering::RoleImageStreamFault::AfterEffIndexRow(0),
+            crate::global::compiled::lowering::CompiledRoleImageInitError::EffIndexCapacity,
+        );
+        assert_role_image_stream_fault_rolls_back(
+            "step-index writer",
+            &linear_worker,
+            crate::global::compiled::lowering::RoleImageStreamFault::AfterStepIndexRow(0),
+            crate::global::compiled::lowering::CompiledRoleImageInitError::StepIndexCapacity,
+        );
+        assert_role_image_stream_fault_rolls_back(
+            "control-by-eff writer",
+            &linear_worker,
+            crate::global::compiled::lowering::RoleImageStreamFault::AfterControlByEffRow(0),
+            crate::global::compiled::lowering::CompiledRoleImageInitError::EffIndexCapacity,
+        );
+    }
+
+    #[test]
+    fn role_runtime_table_view_names_match_actual_slice_semantics() {
+        let worker = huge_program::worker_program();
+        with_compiled_role_image(&worker, |image| {
+            let tables = image.runtime_tables();
+            assert_eq!(tables.segment_headers.len(), image.segment_count());
+            assert_eq!(
+                tables.route_record_by_dense_route.len(),
+                image.route_scope_count()
+            );
+            assert_eq!(
+                tables.route_dense_by_scope_slot.len(),
+                image.typestate_ref().scope_count()
+            );
+            assert!(!tables.route_offer_lane_words_by_dense_route.is_empty());
+            assert_eq!(tables.phase_headers.len(), image.phase_len());
+            assert_eq!(tables.control_by_eff.len(), image.eff_index_to_step().len());
+        });
+    }
+
+    #[test]
+    fn role_runtime_table_view_route_dense_by_scope_slot_maps_to_expected_row() {
+        let worker = huge_program::worker_program();
+        with_compiled_role_image(&worker, |image| {
+            let typestate = image.typestate_ref();
+            let tables = image.runtime_tables();
+            let mut checked = 0usize;
+
+            let mut idx = 0usize;
+            while idx < typestate.len() {
+                let scope = typestate.node(idx).scope();
+                if let Some(slot) = typestate.route_scope_slot_for_test(scope) {
+                    let dense = typestate
+                        .route_scope_dense_ordinal_for_test(slot)
+                        .expect("route scope slot must map to a dense ordinal");
+                    assert_eq!(
+                        tables.route_dense_by_scope_slot[slot] as usize, dense,
+                        "route_dense_by_scope_slot must map sparse scope slots to dense route rows",
+                    );
+                    assert_eq!(
+                        tables.route_record_by_dense_route[dense],
+                        typestate.route_records_table()[dense],
+                        "dense route row must address the expected route scope record",
+                    );
+                    checked += 1;
+                }
+                idx += 1;
+            }
+
+            assert!(checked > 0, "fixture must contain route scopes");
+        });
+    }
+
+    #[test]
+    fn role_runtime_table_view_control_by_eff_contains_control_descriptors() {
+        let program = g::send::<
+            Role<0>,
+            Role<0>,
+            Msg<{ LoopContinueKind::LABEL }, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
+            0,
+        >();
+        let controller: role_program::RoleProgram<0> = role_program::project(&program);
+        with_compiled_role_image(&controller, |image| {
+            let tables = image.runtime_tables();
+            let control = tables
+                .control_by_eff
+                .iter()
+                .copied()
+                .find(|desc| desc.label() == LoopContinueKind::LABEL)
+                .expect("control_by_eff must contain the projected control descriptor row");
+
+            assert_eq!(control.op(), LoopContinueKind::OP);
+            assert_eq!(control.resource_tag(), LoopContinueKind::TAG);
+        });
+    }
+
+    #[test]
+    fn phase_headers_are_not_indexed_as_par_join_scope_table() {
+        let worker = huge_program::worker_program();
+        with_compiled_role_image(&worker, |image| {
+            let tables = image.runtime_tables();
+            assert_eq!(tables.phase_headers.len(), image.phase_len());
+            let mut idx = 0usize;
+            while idx < image.phase_len() {
+                let expected = image.phase_header(idx).expect("phase header row");
+                let actual = tables.phase_headers[idx];
+                assert_eq!(actual.lane_entry_start, expected.lane_entry_start);
+                assert_eq!(actual.lane_entry_len, expected.lane_entry_len);
+                assert_eq!(actual.lane_word_start, expected.lane_word_start);
+                assert_eq!(actual.lane_word_len, expected.lane_word_len);
+                assert_eq!(actual.min_start, expected.min_start);
+                assert!(actual.route_guard.matches(expected.route_guard));
+                idx += 1;
+            }
+        });
+    }
+
+    #[test]
+    fn segment_headers_match_eff_index_to_step_boundaries() {
+        let worker = long_linear_worker_program();
+        with_compiled_role_image(&worker, |image| {
+            let tables = image.runtime_tables();
+            let mut expected_start = 0usize;
+            for (segment_idx, header) in tables.segment_headers.iter().copied().enumerate() {
+                assert_eq!(
+                    header.eff_start as usize, expected_start,
+                    "segment header {segment_idx} must begin at the previous segment boundary",
+                );
+                if segment_idx + 1 < tables.segment_headers.len() {
+                    assert_eq!(
+                        header.eff_len as usize, MAX_SEGMENT_EFFS,
+                        "non-final segment must be full",
+                    );
+                } else {
+                    assert!(header.eff_len > 0, "final segment must not be empty");
+                }
+                expected_start += header.eff_len as usize;
+            }
+            assert_eq!(
+                expected_start,
+                image.eff_index_to_step().len(),
+                "segment headers must exactly cover the eff-index table"
             );
         });
     }

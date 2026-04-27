@@ -248,7 +248,7 @@ Route authority has exactly three public sources:
 - `Resolver` for dynamic-route resolution
 - `Poll` for transport-observable static evidence
 
-Important negative rule: hint labels and binding classifications are demux or
+Important negative rule: hint labels and binding ingress evidence are demux or
 readiness evidence, not a fourth authority source.
 
 Loop meaning comes from metadata, not from special wire labels. Labels are
@@ -633,8 +633,8 @@ impl hibana::substrate::binding::BindingSlot for MyBinding {
     fn poll_incoming_for_lane(
         &mut self,
         _logical_lane: u8,
-    ) -> Option<hibana::substrate::binding::advanced::IncomingClassification> {
-        Some(hibana::substrate::binding::advanced::IncomingClassification {
+    ) -> Option<hibana::substrate::binding::advanced::IngressEvidence> {
+        Some(hibana::substrate::binding::advanced::IngressEvidence {
             label: 40,
             instance: 0,
             has_fin: false,
@@ -852,27 +852,32 @@ let _ = (controller, cluster_role);
 
 ## Validation
 
-The canonical local validation flow is:
+The canonical local validation authority is the final-form gate runner:
 
 ```bash
-bash ./.github/scripts/check_policy_surface_hygiene.sh
-bash ./.github/scripts/check_lowering_hygiene.sh
-bash ./.github/scripts/check_compiled_descriptor_authority.sh
-bash ./.github/scripts/check_frozen_image_hygiene.sh
-bash ./.github/scripts/check_exact_layout_hygiene.sh
-bash ./.github/scripts/check_raw_future_hygiene.sh
-bash ./.github/scripts/check_message_monomorphization_hygiene.sh
-bash ./.github/scripts/check_message_heavy_matrix.sh
-bash ./.github/scripts/check_surface_hygiene.sh
-bash ./.github/scripts/check_public_surface_budget.sh
-bash ./.github/scripts/check_boundary_contracts.sh
-bash ./.github/scripts/check_plane_boundaries.sh
-bash ./.github/scripts/check_mgmt_boundary.sh
-bash ./.github/scripts/check_resolver_context_surface.sh
-bash ./.github/scripts/check_warning_free.sh
-bash ./.github/scripts/check_direct_projection_binary.sh
+bash ./.github/scripts/run_final_form_gates.sh
+```
+
+The expanded form includes the stable/no-std gates, public surface guards,
+segmented lowering and descriptor streaming hygiene, kernel monomorphization
+quarantine, route authority/topology checks, and final measurements:
+
+```bash
+bash ./.github/scripts/check_rust_1_95_stable.sh
+bash ./.github/scripts/check_no_nightly_features.sh
+bash ./.github/scripts/check_no_generic_const_exprs.sh
+bash ./.github/scripts/check_no_custom_target_json.sh
 bash ./.github/scripts/check_no_std_build.sh
-bash ./.github/scripts/check_pico_size_matrix.sh
+bash ./.github/scripts/check_warning_free.sh
+bash ./.github/scripts/check_hibana_public_api.sh
+bash ./.github/scripts/check_public_surface_budget.sh
+bash ./.github/scripts/check_segmented_lowering_hygiene.sh
+bash ./.github/scripts/check_descriptor_streaming_hygiene.sh
+bash ./.github/scripts/check_kernel_monomorphization_quarantine.sh
+bash ./.github/scripts/check_route_authority_taxonomy.sh
+bash ./.github/scripts/check_compiled_descriptor_authority.sh
+bash ./.github/scripts/check_topology_hygiene.sh
+bash ./.github/scripts/check_final_form_measurements.sh
 
 cargo check --all-targets -p hibana
 cargo check --no-default-features --lib -p hibana

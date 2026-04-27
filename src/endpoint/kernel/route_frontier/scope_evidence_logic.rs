@@ -623,25 +623,23 @@ where
         if summary_lane_idx >= lane_limit {
             return None;
         }
-        let mut lane_idx = 0usize;
-        while lane_idx < lane_limit {
-            if !offer_lanes.contains(lane_idx)
-                || !self.pending_scope_ack_lane_mask(summary_lane_idx, scope_id, lane_idx)
-            {
-                lane_idx += 1;
+        let mut next = offer_lanes.first_set(lane_limit);
+        while let Some(lane_idx) = next {
+            if !self.pending_scope_ack_lane_mask(summary_lane_idx, scope_id, lane_idx) {
+                next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
                 continue;
             }
             let Some(arm) = self
                 .port_for_lane(lane_idx)
                 .peek_route_decision(scope_id, ROLE)
             else {
-                lane_idx += 1;
+                next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
                 continue;
             };
             if let Some(arm) = Arm::new(arm) {
                 return Some(RouteDecisionToken::from_ack(arm));
             }
-            lane_idx += 1;
+            next = offer_lanes.next_set_from(lane_idx.saturating_add(1), lane_limit);
         }
         None
     }

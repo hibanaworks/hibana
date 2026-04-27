@@ -1,4 +1,5 @@
 #![cfg(feature = "std")]
+#![recursion_limit = "512"]
 
 mod common;
 #[path = "../internal/pico_smoke/src/fanout_program.rs"]
@@ -31,6 +32,7 @@ use hibana::{
 };
 
 type HugeKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
+type DeepScopeKit = SessionKit<'static, TestTransport, DefaultLabelUniverse, CounterClock, 4>;
 
 fn drive<F: core::future::Future>(future: F) -> F::Output {
     let mut future = core::pin::pin!(future);
@@ -59,6 +61,78 @@ fn drive_pinned<F: core::future::Future>(mut future: core::pin::Pin<&mut F>) -> 
             Poll::Pending => std::thread::yield_now(),
         }
     }
+}
+
+macro_rules! over_256_linear_program {
+    ($($label:literal),+ $(,)?) => {{
+        let program = g::send::<Role<0>, Role<1>, Msg<0, u8>, 0>();
+        $(
+            let program = g::seq(
+                program,
+                g::send::<Role<0>, Role<1>, Msg<$label, u8>, 0>(),
+            );
+        )+
+        program
+    }};
+}
+
+macro_rules! drive_over_256_linear {
+    ($controller:ident, $worker:ident, $($label:literal),+ $(,)?) => {{
+        localside::controller_send_u8::<0>(&mut $controller, 0);
+        assert_eq!(localside::worker_recv_u8::<0>(&mut $worker), 0);
+        $(
+            localside::controller_send_u8::<$label>(&mut $controller, $label as u8);
+            assert_eq!(
+                localside::worker_recv_u8::<$label>(&mut $worker),
+                $label as u8,
+                "linear >256 runtime payload must roundtrip through label {}",
+                $label,
+            );
+        )+
+    }};
+}
+
+macro_rules! over_256_labels {
+    ($macro_name:ident $(, $arg:ident)* $(,)?) => {
+        $macro_name!(
+            $($arg,)*
+            58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
+            70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
+            82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
+            94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105,
+            58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
+            70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
+            82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
+            94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105,
+            58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
+            70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
+            82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
+            94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105,
+            58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
+            70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
+            82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
+            94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105,
+            58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
+            70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
+            82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
+            94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105,
+            58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
+            70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
+            82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
+            94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105,
+        )
+    };
+}
+
+macro_rules! deep_nested_par_scope_program {
+    () => {
+        g::send::<Role<0>, Role<1>, Msg<90, ()>, 0>()
+    };
+    ($lane:literal $($tail:literal)*) => {{
+        let left = g::send::<Role<2>, Role<3>, Msg<91, ()>, $lane>();
+        let right = deep_nested_par_scope_program!($($tail)*);
+        g::par(left, right)
+    }};
 }
 
 const HIGH_LANE_LEFT_CTRL: u8 = 122;
@@ -170,6 +244,21 @@ fn edge_lane_controller_program() -> RoleProgram<0> {
     project(&program)
 }
 
+fn deep_active_scope_controller_program() -> RoleProgram<0> {
+    let program = deep_nested_par_scope_program!(
+        0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
+        16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+        32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47
+        48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63
+        64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79
+        80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95
+        96 97 98 99 100 101 102 103 104 105 106 107 108 109 110 111
+        112 113 114 115 116 117 118 119 120 121 122 123 124 125 126 127
+        128
+    );
+    project(&program)
+}
+
 fn edge_lane_worker_program() -> RoleProgram<1> {
     let program = g::seq(
         g::send::<Role<0>, Role<1>, Msg<{ EDGE_LANE_LABEL }, u8>, EDGE_LANE>(),
@@ -246,6 +335,35 @@ fn huge_choreography_shape_matrix_runs_to_completion_on_actual_localside() {
         &fanout_program::ACK_LABELS,
         fanout_program::run,
     );
+}
+
+#[test]
+fn program_over_256_effects_projects_and_runs_through_segment_2() {
+    let program = over_256_labels!(over_256_linear_program);
+    let controller_program: RoleProgram<0> = project(&program);
+    let worker_program: RoleProgram<1> = project(&program);
+
+    runtime_support::with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        let kit = HugeKit::new(clock);
+        let rv_id = kit
+            .add_rendezvous_from_config(Config::new(tap_buf, slab), transport.clone())
+            .expect("register rendezvous");
+        let sid = SessionId::new(0x6300);
+        let mut controller = kit
+            .enter(rv_id, sid, &controller_program, NoBinding)
+            .expect("enter >256 controller");
+        let mut worker = kit
+            .enter(rv_id, sid, &worker_program, NoBinding)
+            .expect("enter >256 worker");
+
+        over_256_labels!(drive_over_256_linear, controller, worker);
+
+        assert!(
+            transport.queue_is_empty(),
+            ">256 effect runtime proof must drain every transport frame"
+        );
+    });
 }
 
 #[test]
@@ -326,6 +444,29 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
             transport.queue_is_empty(),
             "high-lane localside route test must drain every transport frame"
         );
+    });
+}
+
+#[test]
+fn active_scope_depth_above_128_enters_public_sessionkit_path() {
+    runtime_support::with_fixture(|clock, tap_buf, slab| {
+        let transport = TestTransport::default();
+        let kit = DeepScopeKit::new(clock);
+        let rv_id = kit
+            .add_rendezvous_from_config(
+                Config::new(tap_buf, slab).with_lane_range(0..256),
+                transport.clone(),
+            )
+            .expect("register deep-scope rendezvous");
+
+        let _controller = kit
+            .enter(
+                rv_id,
+                SessionId::new(0x6210),
+                &deep_active_scope_controller_program(),
+                NoBinding,
+            )
+            .expect("enter role with >128 active nested scopes");
     });
 }
 

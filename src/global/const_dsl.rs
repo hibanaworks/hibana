@@ -10,6 +10,8 @@ use crate::global::{
     MessageControlSpec, MessageSpec, RoleMarker, SendableLabel, StaticControlDesc,
 };
 
+const MAX_SEGMENT_EFFS: usize = eff::meta::MAX_SEGMENT_EFFS;
+const MAX_SEGMENTS: usize = eff::meta::MAX_SEGMENTS;
 const MAX_CAPACITY: usize = eff::meta::MAX_EFF_NODES;
 
 /// Structured scope classification used by the global DSL to tag composite
@@ -537,10 +539,108 @@ impl ControlSpecMarker {
     }
 }
 
+/// Segment-local summary for effect rows and metadata markers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SegmentSummary {
+    eff_len: u16,
+    scope_marker_len: u16,
+    route_scope_enter_len: u16,
+    control_marker_len: u16,
+    policy_marker_len: u16,
+    control_spec_len: u16,
+}
+
+impl SegmentSummary {
+    pub(crate) const EMPTY: Self = Self {
+        eff_len: 0,
+        scope_marker_len: 0,
+        route_scope_enter_len: 0,
+        control_marker_len: 0,
+        policy_marker_len: 0,
+        control_spec_len: 0,
+    };
+
+    #[inline(always)]
+    const fn bump(value: u16) -> u16 {
+        if value == u16::MAX {
+            panic!("segment summary overflow");
+        }
+        value + 1
+    }
+
+    #[inline(always)]
+    const fn with_effect(mut self) -> Self {
+        self.eff_len = Self::bump(self.eff_len);
+        self
+    }
+
+    #[inline(always)]
+    const fn with_scope_marker(mut self, scope_kind: ScopeKind, event: ScopeEvent) -> Self {
+        self.scope_marker_len = Self::bump(self.scope_marker_len);
+        if matches!(scope_kind, ScopeKind::Route) && matches!(event, ScopeEvent::Enter) {
+            self.route_scope_enter_len = Self::bump(self.route_scope_enter_len);
+        }
+        self
+    }
+
+    #[inline(always)]
+    const fn with_control_marker(mut self) -> Self {
+        self.control_marker_len = Self::bump(self.control_marker_len);
+        self
+    }
+
+    #[inline(always)]
+    const fn with_policy_marker(mut self) -> Self {
+        self.policy_marker_len = Self::bump(self.policy_marker_len);
+        self
+    }
+
+    #[inline(always)]
+    const fn with_control_spec(mut self) -> Self {
+        self.control_spec_len = Self::bump(self.control_spec_len);
+        self
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) const fn eff_len(self) -> usize {
+        self.eff_len as usize
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) const fn scope_marker_len(self) -> usize {
+        self.scope_marker_len as usize
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) const fn route_scope_enter_len(self) -> usize {
+        self.route_scope_enter_len as usize
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) const fn control_marker_len(self) -> usize {
+        self.control_marker_len as usize
+    }
+
+    #[inline(always)]
+    pub(crate) const fn policy_marker_len(self) -> usize {
+        self.policy_marker_len as usize
+    }
+
+    #[inline(always)]
+    pub(crate) const fn control_spec_len(self) -> usize {
+        self.control_spec_len as usize
+    }
+}
+
 /// Accumulator used to build `EffStruct` sequences in const contexts.
 #[derive(Clone, Copy)]
 pub struct EffList {
-    data: [EffStruct; MAX_CAPACITY],
+    segments: [[EffStruct; MAX_SEGMENT_EFFS]; MAX_SEGMENTS],
+    segment_summaries: [SegmentSummary; MAX_SEGMENTS],
     len: usize,
     scope_budget: u16,
     scope_markers: [ScopeMarker; MAX_CAPACITY],
@@ -563,7 +663,8 @@ impl EffList {
     /// Create an empty accumulator.
     pub const fn new() -> Self {
         Self {
-            data: [EffStruct::pure(); MAX_CAPACITY],
+            segments: [[EffStruct::pure(); MAX_SEGMENT_EFFS]; MAX_SEGMENTS],
+            segment_summaries: [SegmentSummary::EMPTY; MAX_SEGMENTS],
             len: 0,
             scope_budget: 0,
             scope_markers: [ScopeMarker::empty(); MAX_CAPACITY],
@@ -590,6 +691,92 @@ impl EffList {
     /// Whether the accumulator is empty.
     pub const fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    #[inline(always)]
+    const fn segment_slot(offset: usize) -> (usize, usize) {
+        (offset / MAX_SEGMENT_EFFS, offset % MAX_SEGMENT_EFFS)
+    }
+
+    #[inline(always)]
+    const fn summary_segment_for_scope_marker_offset(
+        offset: usize,
+        current_len: usize,
+        event: ScopeEvent,
+    ) -> usize {
+        if offset > current_len || current_len > MAX_CAPACITY {
+            panic!("EffList marker offset out of bounds");
+        }
+        if matches!(event, ScopeEvent::Enter) {
+            if offset >= MAX_CAPACITY {
+                panic!("EffList marker offset out of bounds");
+            }
+            return offset / MAX_SEGMENT_EFFS;
+        }
+        if current_len == 0 {
+            0
+        } else if offset == current_len && offset % MAX_SEGMENT_EFFS == 0 {
+            (offset / MAX_SEGMENT_EFFS) - 1
+        } else {
+            offset / MAX_SEGMENT_EFFS
+        }
+    }
+
+    #[inline(always)]
+    const fn summary_segment_for_effect_indexed_offset(offset: usize) -> usize {
+        if offset >= MAX_CAPACITY {
+            panic!("EffList effect marker offset out of bounds");
+        }
+        offset / MAX_SEGMENT_EFFS
+    }
+
+    #[inline(always)]
+    pub(crate) const fn node_at(&self, offset: usize) -> EffStruct {
+        if offset >= self.len {
+            panic!("EffList node offset out of bounds");
+        }
+        let (segment, local) = Self::segment_slot(offset);
+        self.segments[segment][local]
+    }
+
+    #[inline(always)]
+    pub(crate) const fn segment_count(&self) -> usize {
+        if self.len == 0 {
+            0
+        } else {
+            ((self.len - 1) / MAX_SEGMENT_EFFS) + 1
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn segment_start(segment: usize) -> usize {
+        if segment >= MAX_SEGMENTS {
+            panic!("EffList segment out of bounds");
+        }
+        segment * MAX_SEGMENT_EFFS
+    }
+
+    #[inline(always)]
+    pub(crate) const fn segment_len(&self, segment: usize) -> usize {
+        let count = self.segment_count();
+        if segment >= count {
+            panic!("EffList segment out of range");
+        }
+        let start = Self::segment_start(segment);
+        let remaining = self.len - start;
+        if remaining > MAX_SEGMENT_EFFS {
+            MAX_SEGMENT_EFFS
+        } else {
+            remaining
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn segment_summary(&self, segment: usize) -> SegmentSummary {
+        if segment >= MAX_SEGMENTS {
+            panic!("EffList segment summary out of bounds");
+        }
+        self.segment_summaries[segment]
     }
 
     /// Shift every scope identifier by `offset` ordinals.
@@ -638,18 +825,14 @@ impl EffList {
         self
     }
 
-    /// Borrow the accumulated effects as a slice.
-    #[inline(always)]
-    pub const fn as_slice(&self) -> &[EffStruct] {
-        unsafe { core::slice::from_raw_parts(self.data.as_ptr(), self.len) }
-    }
-
     /// Append a single node to the accumulator.
     pub const fn push(mut self, node: EffStruct) -> Self {
         if self.len >= MAX_CAPACITY {
             panic!("EffList capacity exceeded");
         }
-        self.data[self.len] = node;
+        let (segment, local) = Self::segment_slot(self.len);
+        self.segments[segment][local] = node;
+        self.segment_summaries[segment] = self.segment_summaries[segment].with_effect();
         self.len += 1;
         self
     }
@@ -661,7 +844,7 @@ impl EffList {
         let mut idx = 0;
         let base = self.len;
         while idx < other.len {
-            self = self.push(other.data[idx]);
+            self = self.push(other.node_at(idx));
             idx += 1;
         }
         let mut scope_idx = 0;
@@ -745,6 +928,9 @@ impl EffList {
                 break;
             }
         }
+        let segment = Self::summary_segment_for_scope_marker_offset(offset, self.len, event);
+        self.segment_summaries[segment] =
+            self.segment_summaries[segment].with_scope_marker(scope_kind, event);
         self.scope_markers[idx] = ScopeMarker {
             offset,
             scope_id,
@@ -792,6 +978,10 @@ impl EffList {
                 break;
             }
         }
+        let segment =
+            Self::summary_segment_for_scope_marker_offset(offset, self.len, ScopeEvent::Enter);
+        self.segment_summaries[segment] =
+            self.segment_summaries[segment].with_scope_marker(scope.kind(), ScopeEvent::Enter);
         self.scope_markers[idx] = ScopeMarker {
             offset,
             scope_id: scope,
@@ -813,6 +1003,8 @@ impl EffList {
         if self.control_marker_len >= MAX_CAPACITY {
             panic!("EffList control marker capacity exceeded");
         }
+        let segment = Self::summary_segment_for_effect_indexed_offset(offset);
+        self.segment_summaries[segment] = self.segment_summaries[segment].with_control_marker();
         self.control_markers[self.control_marker_len] = ControlMarker {
             offset: ControlMarker::encode_offset(offset),
             scope_kind,
@@ -883,7 +1075,7 @@ impl EffList {
     }
 
     pub(crate) const fn push_policy(mut self, offset: usize, policy: PolicyMode) -> Self {
-        if offset >= MAX_CAPACITY {
+        if offset > self.len || offset > MAX_CAPACITY {
             panic!("EffList policy marker offset out of bounds");
         }
         let mut idx = 0usize;
@@ -897,6 +1089,8 @@ impl EffList {
         if self.policy_marker_len >= MAX_CAPACITY {
             panic!("EffList policy marker capacity exceeded");
         }
+        let segment = Self::summary_segment_for_effect_indexed_offset(offset);
+        self.segment_summaries[segment] = self.segment_summaries[segment].with_policy_marker();
         self.policy_markers[self.policy_marker_len] = PolicyMarker::new(offset, policy);
         self.policy_marker_len += 1;
         self
@@ -1012,6 +1206,8 @@ impl EffList {
         if self.control_spec_len >= MAX_CAPACITY {
             panic!("EffList control spec capacity exceeded");
         }
+        let segment = Self::summary_segment_for_effect_indexed_offset(offset);
+        self.segment_summaries[segment] = self.segment_summaries[segment].with_control_spec();
         self.control_specs[self.control_spec_len] = ControlSpecMarker::new(offset, spec);
         self.control_spec_len += 1;
         self
@@ -1040,22 +1236,6 @@ impl EffList {
         unsafe {
             core::slice::from_raw_parts(self.control_markers.as_ptr(), self.control_marker_len)
         }
-    }
-}
-
-impl core::ops::Deref for EffList {
-    type Target = [EffStruct];
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        self.as_slice()
-    }
-}
-
-impl AsRef<[EffStruct]> for EffList {
-    #[inline(always)]
-    fn as_ref(&self) -> &[EffStruct] {
-        self.as_slice()
     }
 }
 
@@ -1134,7 +1314,11 @@ where
 mod tests {
     use core::mem::size_of;
 
-    use super::{CompactScopeId, ControlMarker, EffList, ScopeId, ScopeKind};
+    use super::{
+        CompactScopeId, ControlMarker, ControlScopeKind, EffList, PolicyMode, ScopeEvent, ScopeId,
+        ScopeKind,
+    };
+    use crate::eff::{EffAtom, EffKind, EffStruct};
     use crate::g;
     use crate::global::steps::{PolicySteps, RouteSteps, SendStep, SeqSteps, StepCons, StepNil};
     use crate::runtime::consts::{LABEL_LOOP_BREAK, LABEL_LOOP_CONTINUE};
@@ -1174,6 +1358,127 @@ mod tests {
     >;
     type LoopDecisionProgram = RouteSteps<LoopContinueProgram, LoopBreakHead>;
 
+    const fn atom(label: u8) -> EffStruct {
+        EffStruct::atom(EffAtom {
+            from: 0,
+            to: 1,
+            label,
+            is_control: false,
+            resource: None,
+            lane: 0,
+        })
+    }
+
+    const fn segment_boundary_list() -> EffList {
+        let mut list = EffList::new();
+        let mut idx = 0usize;
+        while idx <= crate::eff::meta::MAX_SEGMENT_EFFS {
+            list = list.push(atom(idx as u8));
+            idx += 1;
+        }
+        list
+    }
+
+    static SEGMENT_BOUNDARY_LIST: EffList = segment_boundary_list();
+
+    const fn scope_exit_at_exact_segment_boundary_list() -> EffList {
+        let route_scope = ScopeId::new(ScopeKind::Route, 1);
+        let mut list = EffList::new();
+        let mut idx = 0usize;
+        while idx < crate::eff::meta::MAX_SEGMENT_EFFS {
+            list = list.push(atom(idx as u8));
+            idx += 1;
+        }
+        list.push_scope_marker_full(
+            crate::eff::meta::MAX_SEGMENT_EFFS,
+            route_scope,
+            ScopeKind::Route,
+            ScopeEvent::Exit,
+            false,
+            Some(0),
+        )
+    }
+
+    static SCOPE_EXIT_AT_EXACT_SEGMENT_BOUNDARY_LIST: EffList =
+        scope_exit_at_exact_segment_boundary_list();
+
+    const fn scope_enter_at_exact_segment_boundary_list() -> EffList {
+        let route_scope = ScopeId::new(ScopeKind::Route, 2);
+        let mut list = EffList::new();
+        let mut idx = 0usize;
+        while idx < crate::eff::meta::MAX_SEGMENT_EFFS {
+            list = list.push(atom(idx as u8));
+            idx += 1;
+        }
+        list = list.push_scope_marker_full(
+            crate::eff::meta::MAX_SEGMENT_EFFS,
+            route_scope,
+            ScopeKind::Route,
+            ScopeEvent::Enter,
+            false,
+            Some(0),
+        );
+        list.push(atom(0xaa))
+    }
+
+    static SCOPE_ENTER_AT_EXACT_SEGMENT_BOUNDARY_LIST: EffList =
+        scope_enter_at_exact_segment_boundary_list();
+
+    const fn control_spec_at_segment_boundary_list() -> EffList {
+        let mut list = EffList::new();
+        let mut idx = 0usize;
+        while idx <= crate::eff::meta::MAX_SEGMENT_EFFS {
+            list = list.push(atom(idx as u8));
+            idx += 1;
+        }
+        list.push_control_spec(
+            crate::eff::meta::MAX_SEGMENT_EFFS,
+            crate::global::StaticControlDesc::of::<LoopContinueKind>(),
+        )
+        .push_control_marker(
+            crate::eff::meta::MAX_SEGMENT_EFFS,
+            ControlScopeKind::Route,
+            9,
+        )
+        .push_policy(crate::eff::meta::MAX_SEGMENT_EFFS, PolicyMode::dynamic(44))
+    }
+
+    static CONTROL_SPEC_AT_SEGMENT_BOUNDARY_LIST: EffList = control_spec_at_segment_boundary_list();
+
+    const fn segment_metadata_list() -> EffList {
+        let route_scope = ScopeId::new(ScopeKind::Route, 0);
+        segment_boundary_list()
+            .push_scope_marker_full(
+                0,
+                route_scope,
+                ScopeKind::Route,
+                ScopeEvent::Enter,
+                false,
+                Some(0),
+            )
+            .push_control_marker(
+                crate::eff::meta::MAX_SEGMENT_EFFS,
+                ControlScopeKind::Route,
+                7,
+            )
+            .push_policy(crate::eff::meta::MAX_SEGMENT_EFFS, PolicyMode::dynamic(33))
+    }
+
+    static SEGMENT_METADATA_LIST: EffList = segment_metadata_list();
+
+    const fn over_old_single_cap_list() -> EffList {
+        const OLD_SINGLE_CAP: usize = 256;
+        let mut list = EffList::new();
+        let mut idx = 0usize;
+        while idx <= OLD_SINGLE_CAP {
+            list = list.push(atom(1));
+            idx += 1;
+        }
+        list
+    }
+
+    static OVER_OLD_SINGLE_CAP_LIST: EffList = over_old_single_cap_list();
+
     #[test]
     fn control_marker_stays_compact() {
         assert!(
@@ -1194,6 +1499,114 @@ mod tests {
             "CompactScopeId regressed beyond its packed u32 storage: {} bytes",
             size_of::<CompactScopeId>()
         );
+    }
+
+    #[test]
+    fn eff_list_crosses_segment_boundary_without_public_dsl_change() {
+        let list = &SEGMENT_BOUNDARY_LIST;
+
+        assert_eq!(list.len(), crate::eff::meta::MAX_SEGMENT_EFFS + 1);
+        assert_eq!(list.segment_count(), 2);
+        assert!(matches!(list.node_at(0).kind, EffKind::Atom));
+        assert_eq!(
+            list.node_at(crate::eff::meta::MAX_SEGMENT_EFFS)
+                .atom_data()
+                .label,
+            crate::eff::meta::MAX_SEGMENT_EFFS as u8
+        );
+    }
+
+    #[test]
+    fn eff_list_segment_summaries_track_metadata_by_segment() {
+        let list = &SEGMENT_METADATA_LIST;
+
+        let first = list.segment_summary(0);
+        let second = list.segment_summary(1);
+        assert_eq!(first.eff_len(), crate::eff::meta::MAX_SEGMENT_EFFS);
+        assert_eq!(first.scope_marker_len(), 1);
+        assert_eq!(first.route_scope_enter_len(), 1);
+        assert_eq!(second.eff_len(), 1);
+        assert_eq!(second.control_marker_len(), 1);
+        assert_eq!(second.policy_marker_len(), 1);
+        assert_eq!(second.control_spec_len(), 0);
+    }
+
+    #[test]
+    fn scope_exit_at_exact_segment_boundary_belongs_to_previous_segment() {
+        let list = &SCOPE_EXIT_AT_EXACT_SEGMENT_BOUNDARY_LIST;
+
+        assert_eq!(list.len(), crate::eff::meta::MAX_SEGMENT_EFFS);
+        assert_eq!(list.segment_count(), 1);
+        let first = list.segment_summary(0);
+        assert_eq!(first.eff_len(), crate::eff::meta::MAX_SEGMENT_EFFS);
+        assert_eq!(first.scope_marker_len(), 1);
+        assert_eq!(first.route_scope_enter_len(), 0);
+    }
+
+    #[test]
+    fn scope_enter_at_exact_segment_boundary_belongs_to_next_segment() {
+        let list = &SCOPE_ENTER_AT_EXACT_SEGMENT_BOUNDARY_LIST;
+
+        assert_eq!(list.len(), crate::eff::meta::MAX_SEGMENT_EFFS + 1);
+        assert_eq!(list.segment_count(), 2);
+        let first = list.segment_summary(0);
+        let second = list.segment_summary(1);
+        assert_eq!(first.eff_len(), crate::eff::meta::MAX_SEGMENT_EFFS);
+        assert_eq!(first.scope_marker_len(), 0);
+        assert_eq!(second.eff_len(), 1);
+        assert_eq!(second.scope_marker_len(), 1);
+        assert_eq!(second.route_scope_enter_len(), 1);
+    }
+
+    #[test]
+    fn control_spec_at_segment_boundary_belongs_to_effect_segment() {
+        let list = &CONTROL_SPEC_AT_SEGMENT_BOUNDARY_LIST;
+
+        assert_eq!(list.len(), crate::eff::meta::MAX_SEGMENT_EFFS + 1);
+        assert_eq!(list.segment_count(), 2);
+        let first = list.segment_summary(0);
+        let second = list.segment_summary(1);
+        assert_eq!(first.eff_len(), crate::eff::meta::MAX_SEGMENT_EFFS);
+        assert_eq!(first.control_marker_len(), 0);
+        assert_eq!(first.policy_marker_len(), 0);
+        assert_eq!(first.control_spec_len(), 0);
+        assert_eq!(second.eff_len(), 1);
+        assert_eq!(second.control_marker_len(), 1);
+        assert_eq!(second.policy_marker_len(), 1);
+        assert_eq!(second.control_spec_len(), 1);
+    }
+
+    #[test]
+    fn eff_list_with_more_than_256_effects_keeps_segment_summaries() {
+        const OLD_SINGLE_CAP: usize = 256;
+        let list = &OVER_OLD_SINGLE_CAP_LIST;
+
+        assert_eq!(list.len(), OLD_SINGLE_CAP + 1);
+        assert!(list.segment_count() > 1);
+        assert_eq!(
+            list.segment_summary(0).eff_len(),
+            crate::eff::meta::MAX_SEGMENT_EFFS,
+        );
+        assert!(
+            crate::eff::EffIndex::from_dense_ordinal(OLD_SINGLE_CAP).segment() > 0,
+            "effect 256 must be represented as a segmented descriptor position",
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "EffList marker offset out of bounds")]
+    fn segment_marker_offset_rejects_over_capacity_marker() {
+        let _ = EffList::summary_segment_for_scope_marker_offset(
+            crate::eff::meta::MAX_EFF_NODES + 1,
+            crate::eff::meta::MAX_EFF_NODES,
+            ScopeEvent::Enter,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "EffList effect marker offset out of bounds")]
+    fn segment_effect_offset_rejects_capacity_marker() {
+        let _ = EffList::summary_segment_for_effect_indexed_offset(crate::eff::meta::MAX_EFF_NODES);
     }
 
     fn loop_body() -> g::Program<StepCons<SendStep<g::Role<0>, g::Role<1>, g::Msg<1, u32>>, StepNil>>

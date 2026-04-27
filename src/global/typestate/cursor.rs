@@ -47,8 +47,6 @@ pub(crate) struct LoopMetadata {
 // =============================================================================
 // =============================================================================
 
-/// Maximum phases and steps that PhaseCursor can hold.
-const PHASE_CURSOR_MAX_STEPS: usize = crate::eff::meta::MAX_EFF_NODES;
 const PHASE_CURSOR_NO_STEP: u16 = u16::MAX;
 const PHASE_CURSOR_NO_STATE: StateIndex = StateIndex::MAX;
 
@@ -212,7 +210,7 @@ pub(crate) struct PhaseCursor {
 impl PhaseCursor {
     #[inline(always)]
     const fn encode_index(idx: usize) -> u16 {
-        debug_assert!(idx < PHASE_CURSOR_MAX_STEPS);
+        debug_assert!(idx < u16::MAX as usize);
         idx as u16
     }
 
@@ -309,7 +307,26 @@ impl PhaseCursor {
     }
 
     #[inline(always)]
-    fn local_steps_len(&self) -> usize {
+    fn checked_typestate_node(
+        &self,
+        idx: StateIndex,
+        iterations: u32,
+    ) -> Result<LocalNode, JumpError> {
+        if idx.is_max() {
+            return Err(JumpError {
+                iterations,
+                idx: state_index_to_usize(idx),
+            });
+        }
+        let raw = state_index_to_usize(idx);
+        self.typestate().checked_node(raw).ok_or(JumpError {
+            iterations,
+            idx: raw,
+        })
+    }
+
+    #[inline(always)]
+    pub(crate) fn local_steps_len(&self) -> usize {
         self.machine().local_steps_len()
     }
 
@@ -509,7 +526,7 @@ impl PhaseCursor {
             return;
         }
         let eff_idx = eff_index.as_usize();
-        if eff_idx >= PHASE_CURSOR_MAX_STEPS {
+        if eff_idx >= self.machine().eff_index_to_step().len() {
             debug_assert!(false, "eff_index out of bounds for phase cursor");
             return;
         }
@@ -550,7 +567,7 @@ impl PhaseCursor {
             return;
         }
         let eff_idx = eff_index.as_usize();
-        if eff_idx >= PHASE_CURSOR_MAX_STEPS {
+        if eff_idx >= self.machine().eff_index_to_step().len() {
             debug_assert!(false, "eff_index out of bounds for phase cursor");
             return;
         }
@@ -596,7 +613,7 @@ impl PhaseCursor {
             return false;
         }
         let eff_idx = eff_index.as_usize();
-        if eff_idx >= PHASE_CURSOR_MAX_STEPS {
+        if eff_idx >= self.machine().eff_index_to_step().len() {
             return false;
         }
         let step_idx = self.machine().eff_index_to_step()[eff_idx];
@@ -736,56 +753,55 @@ impl PhaseCursor {
         self.state_mut().idx = next.raw();
     }
 
-    /// Follow Jump nodes until reaching a non-Jump or PassiveObserverBranch.
+    /// Return the index reached after following non-decision Jump nodes.
     ///
-    /// Jump nodes are control flow instructions that redirect the cursor to
-    /// their target (stored in the `next` field). This method follows the
-    /// chain of Jump nodes until reaching a non-Jump node.
-    ///
-    /// **Decision point**: Only `PassiveObserverBranch` Jumps are NOT followed
-    /// automatically. The passive observer must use `offer()` to determine
-    /// which arm was selected before the Jump can be followed.
-    ///
-    /// **Auto-followed Jumps**:
-    /// - `LoopContinue`: Returns cursor to loop_start for next iteration
-    /// - `LoopBreak`: Exits the loop scope to terminal
-    /// - `RouteArmEnd`: Exits the route arm to scope_end
-    ///
-    /// Returns `Err(JumpError)` if the Jump chain exceeds MAX_EFF_NODES iterations,
-    /// indicating a CFG cycle bug in the typestate compiler.
+    /// This is a preview operation: it does not mutate the cursor, so callers can
+    /// validate jump traversal before publishing route commits or consuming preview
+    /// resources.
     #[inline(never)]
-    pub(crate) fn try_follow_jumps_in_place(&mut self) -> Result<(), JumpError> {
+    pub(crate) fn try_follow_jumps_from_index(
+        &self,
+        mut idx: StateIndex,
+    ) -> Result<StateIndex, JumpError> {
         let mut iter = 0u32;
-        while self.is_jump() {
-            match self.action().jump_reason() {
-                Some(JumpReason::PassiveObserverBranch) => {
-                    // Decision point: stop for offer() to handle arm selection.
-                    // Even when an arm is τ-eliminated, the decision is still required.
-                    return Ok(());
-                }
-                _ => {
-                    // Follow all other Jump nodes (LoopContinue, LoopBreak, RouteArmEnd)
-                    self.advance_in_place();
+        let step_bound = self.local_steps_len().saturating_add(1) as u32;
+        loop {
+            let node = self.checked_typestate_node(idx, iter)?;
+            match node.action() {
+                LocalAction::Jump {
+                    reason: JumpReason::PassiveObserverBranch,
+                } => return Ok(idx),
+                LocalAction::Jump { .. } => {
+                    idx = node.next();
                     iter += 1;
-                    if iter > crate::eff::meta::MAX_EFF_NODES as u32 {
+                    if iter > step_bound {
                         return Err(JumpError {
                             iterations: iter,
-                            idx: self.idx_usize(),
+                            idx: state_index_to_usize(idx),
                         });
                     }
                 }
+                _ => return Ok(idx),
             }
         }
-        Ok(())
+    }
+
+    /// Return the index reached by advancing once, then following Jump nodes.
+    #[inline(never)]
+    pub(crate) fn try_next_index_past_jumps(&self) -> Result<StateIndex, JumpError> {
+        let next = self.typestate().node(self.idx_usize()).next();
+        self.try_follow_jumps_from_index(next)
     }
 
     /// Advance to the next node, then follow Jump nodes.
     ///
-    /// Returns `Err(JumpError)` if the Jump chain exceeds MAX_EFF_NODES iterations.
+    /// Returns `Err(JumpError)` if the Jump chain exceeds the compiled local
+    /// typestate bound.
     #[inline(never)]
     pub(crate) fn try_advance_past_jumps_in_place(&mut self) -> Result<(), JumpError> {
-        self.advance_in_place();
-        self.try_follow_jumps_in_place()
+        let target = self.try_next_index_past_jumps()?;
+        self.state_mut().idx = target.raw();
+        Ok(())
     }
 
     /// Follow a PassiveObserverBranch Jump to the specified arm's target.
@@ -1020,16 +1036,6 @@ impl PhaseCursor {
             .first_recv_dispatch_target_for_label(scope_id, label)
     }
 
-    #[inline]
-    pub(crate) fn first_recv_target_evidence(
-        &self,
-        scope_id: ScopeId,
-        label: u8,
-    ) -> Option<(u8, StateIndex)> {
-        self.typestate()
-            .first_recv_dispatch_target_for_label(scope_id, label)
-    }
-
     /// Check if this role is the controller for the given route scope.
     ///
     /// Uses the shared program route atlas to compare the route controller role
@@ -1188,23 +1194,42 @@ impl PhaseCursor {
 
     /// Get the compiled offer-lane mask for a route scope.
     pub(crate) fn route_scope_offer_lane_set(&self, scope_id: ScopeId) -> Option<LaneSetView> {
-        self.typestate().route_offer_lane_set(scope_id)
+        let slot = self.typestate().route_scope_slot(scope_id)?;
+        self.machine
+            .compiled_role()
+            .route_scope_offer_lane_set_by_slot(slot)
+    }
+
+    /// Get the compiled lane mask for one arm of a route scope.
+    pub(crate) fn route_scope_arm_lane_set(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+    ) -> Option<LaneSetView> {
+        let slot = self.typestate().route_scope_slot(scope_id)?;
+        self.machine
+            .compiled_role()
+            .route_scope_arm_lane_set_by_slot(slot, arm)
     }
 
     /// Get offer entry index for a route scope.
     /// u16::MAX indicates the entry check is disabled (e.g., linger routes).
     pub(crate) fn route_scope_offer_entry(&self, scope_id: ScopeId) -> Option<StateIndex> {
-        self.typestate().route_offer_entry(scope_id)
+        let slot = self.typestate().route_scope_slot(scope_id)?;
+        self.machine
+            .compiled_role()
+            .route_scope_offer_entry_by_slot(slot)
     }
 
     #[inline]
     pub(crate) fn route_scope_slot(&self, scope_id: ScopeId) -> Option<usize> {
         let sparse_slot = self.typestate().route_scope_slot(scope_id)?;
-        self.typestate().route_scope_dense_ordinal(sparse_slot)
+        self.machine
+            .compiled_role()
+            .route_scope_dense_ordinal_by_slot(sparse_slot)
     }
 
     #[inline]
-    #[cfg(test)]
     pub(crate) fn route_scope_count(&self) -> usize {
         self.typestate().route_scope_count()
     }
@@ -1398,5 +1423,59 @@ impl PhaseCursor {
             continue_index: as_state_index(continue_index),
             break_index: as_state_index(break_index),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        g,
+        g::{Msg, Role},
+        global::{
+            compiled::{images::CompiledProgramRef, materialize::with_compiled_role_image},
+            role_program,
+        },
+    };
+
+    #[test]
+    fn jump_preflight_rejects_sentinel_and_out_of_bounds_targets() {
+        let program = g::send::<Role<0>, Role<1>, Msg<7, ()>, 0>();
+        let controller: role_program::RoleProgram<0> = role_program::project(&program);
+        let input = crate::global::lowering_input(&controller);
+
+        with_compiled_role_image::<0, _>(input, |compiled_role| {
+            let mut compiled_program_facts = core::mem::MaybeUninit::<
+                crate::global::compiled::images::CompiledProgramFacts,
+            >::uninit();
+            let program_ref = unsafe {
+                CompiledProgramRef::from_raw(input.stamp(), compiled_program_facts.as_mut_ptr())
+            };
+            let mut cursor_slot = core::mem::MaybeUninit::<PhaseCursor>::uninit();
+            let mut state_slot = core::mem::MaybeUninit::<PhaseCursorState>::uninit();
+            let mut lane_cursors = [0u16; 1];
+            let mut current_step_labels = [0u8; 1];
+
+            unsafe {
+                PhaseCursor::init_from_compiled(
+                    cursor_slot.as_mut_ptr(),
+                    state_slot.as_mut_ptr(),
+                    lane_cursors.as_mut_ptr(),
+                    current_step_labels.as_mut_ptr(),
+                    compiled_role,
+                    program_ref,
+                );
+                let cursor = &*cursor_slot.as_ptr();
+
+                assert!(cursor.try_follow_jumps_from_index(StateIndex::MAX).is_err());
+                assert!(
+                    cursor
+                        .try_follow_jumps_from_index(StateIndex::from_usize(
+                            compiled_role.typestate_ref().len() + 1,
+                        ))
+                        .is_err()
+                );
+            }
+        });
     }
 }

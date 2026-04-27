@@ -1,7 +1,7 @@
 //! Binding inbox helpers for endpoint demux.
 
 use crate::{
-    binding::{BindingSlot, IncomingClassification},
+    binding::{BindingSlot, IngressEvidence},
     global::role_program::{DENSE_LANE_NONE, DenseLaneOrdinal, LaneSet, LaneSetView, LaneWord},
 };
 
@@ -135,13 +135,13 @@ impl DenseLaneU128Array {
 
 #[derive(Clone, Copy)]
 #[repr(C)]
-pub(super) struct PackedIncomingClassification {
+pub(super) struct PackedIngressEvidence {
     channel_lo: u32,
     channel_hi: u32,
     meta: u32,
 }
 
-impl PackedIncomingClassification {
+impl PackedIngressEvidence {
     const META_LABEL_MASK: u32 = 0xFF;
     const META_INSTANCE_SHIFT: u32 = 8;
     const META_FLAGS_SHIFT: u32 = 24;
@@ -160,22 +160,22 @@ impl PackedIncomingClassification {
     }
 
     #[inline]
-    pub(super) const fn encode(classification: IncomingClassification) -> Self {
-        let channel_raw = classification.channel.raw();
-        let flags = Self::FLAG_PRESENT | ((classification.has_fin as u8) << 1);
+    pub(super) const fn encode(evidence: IngressEvidence) -> Self {
+        let channel_raw = evidence.channel.raw();
+        let flags = Self::FLAG_PRESENT | ((evidence.has_fin as u8) << 1);
         Self {
             channel_lo: channel_raw as u32,
             channel_hi: (channel_raw >> 32) as u32,
-            meta: (classification.label as u32)
-                | ((classification.instance as u32) << Self::META_INSTANCE_SHIFT)
+            meta: (evidence.label as u32)
+                | ((evidence.instance as u32) << Self::META_INSTANCE_SHIFT)
                 | ((flags as u32) << Self::META_FLAGS_SHIFT),
         }
     }
 
     #[inline]
-    pub(super) const fn decode(self) -> IncomingClassification {
+    pub(super) const fn decode(self) -> IngressEvidence {
         let flags = (self.meta >> Self::META_FLAGS_SHIFT) as u8;
-        IncomingClassification {
+        IngressEvidence {
             label: (self.meta & Self::META_LABEL_MASK) as u8,
             instance: (self.meta >> Self::META_INSTANCE_SHIFT) as u16,
             has_fin: (flags & Self::FLAG_HAS_FIN) != 0,
@@ -186,15 +186,15 @@ impl PackedIncomingClassification {
     }
 
     #[inline]
-    pub(super) const fn from_option(value: Option<IncomingClassification>) -> Self {
+    pub(super) const fn from_option(value: Option<IngressEvidence>) -> Self {
         match value {
-            Some(classification) => Self::encode(classification),
+            Some(evidence) => Self::encode(evidence),
             None => Self::EMPTY,
         }
     }
 
     #[inline]
-    pub(super) const fn into_option(self) -> Option<IncomingClassification> {
+    pub(super) const fn into_option(self) -> Option<IngressEvidence> {
         if self.is_present() {
             Some(self.decode())
         } else {
@@ -203,7 +203,7 @@ impl PackedIncomingClassification {
     }
 
     #[inline]
-    pub(super) fn take(slot: &mut Self) -> Option<IncomingClassification> {
+    pub(super) fn take(slot: &mut Self) -> Option<IngressEvidence> {
         let packed = *slot;
         *slot = Self::EMPTY;
         packed.into_option()
@@ -212,13 +212,13 @@ impl PackedIncomingClassification {
 
 #[derive(Clone, Copy)]
 struct DenseLaneSlots {
-    ptr: *mut PackedIncomingClassification,
+    ptr: *mut PackedIngressEvidence,
 }
 
 impl DenseLaneSlots {
     unsafe fn init_from_parts(
         dst: *mut Self,
-        ptr: *mut PackedIncomingClassification,
+        ptr: *mut PackedIngressEvidence,
         active_lane_count: usize,
     ) {
         unsafe {
@@ -227,7 +227,7 @@ impl DenseLaneSlots {
         let mut idx = 0usize;
         while idx < active_lane_count.saturating_mul(BindingInbox::PER_LANE_CAPACITY) {
             unsafe {
-                ptr.add(idx).write(PackedIncomingClassification::EMPTY);
+                ptr.add(idx).write(PackedIngressEvidence::EMPTY);
             }
             idx += 1;
         }
@@ -239,7 +239,7 @@ impl DenseLaneSlots {
         lanes: &DenseLaneIndex,
         lane_idx: usize,
         idx: usize,
-    ) -> Option<*mut PackedIncomingClassification> {
+    ) -> Option<*mut PackedIngressEvidence> {
         if idx >= BindingInbox::PER_LANE_CAPACITY {
             return None;
         }
@@ -253,7 +253,7 @@ impl DenseLaneSlots {
         lanes: &DenseLaneIndex,
         lane_idx: usize,
         idx: usize,
-    ) -> Option<Option<IncomingClassification>> {
+    ) -> Option<Option<IngressEvidence>> {
         self.slot_ptr(lanes, lane_idx, idx).map(|ptr| {
             let packed = unsafe { ptr.read() };
             if packed.is_present() {
@@ -270,7 +270,7 @@ impl DenseLaneSlots {
         lanes: &DenseLaneIndex,
         lane_idx: usize,
         idx: usize,
-        value: Option<IncomingClassification>,
+        value: Option<IngressEvidence>,
     ) -> bool {
         let Some(ptr) = self.slot_ptr(lanes, lane_idx, idx) else {
             return false;
@@ -278,8 +278,8 @@ impl DenseLaneSlots {
         unsafe {
             ptr.write(
                 value
-                    .map(PackedIncomingClassification::encode)
-                    .unwrap_or(PackedIncomingClassification::EMPTY),
+                    .map(PackedIngressEvidence::encode)
+                    .unwrap_or(PackedIngressEvidence::EMPTY),
             );
         }
         true
@@ -299,7 +299,7 @@ impl BindingInbox {
 
     pub(super) unsafe fn init_empty(
         dst: *mut Self,
-        slots: *mut PackedIncomingClassification,
+        slots: *mut PackedIngressEvidence,
         len: *mut u8,
         label_masks: *mut u128,
         nonempty_lane_words: *mut LaneWord,
@@ -386,8 +386,8 @@ impl BindingInbox {
         let mut mask = 0u128;
         let mut idx = 0usize;
         while idx < buffered {
-            if let Some(classification) = self.slots.get(&self.lanes, lane_idx, idx).flatten() {
-                mask |= label_bit(classification.label);
+            if let Some(evidence) = self.slots.get(&self.lanes, lane_idx, idx).flatten() {
+                mask |= label_bit(evidence.label);
             }
             idx += 1;
         }
@@ -427,7 +427,7 @@ impl BindingInbox {
         &mut self,
         lane_idx: usize,
         idx: usize,
-    ) -> Option<IncomingClassification> {
+    ) -> Option<IngressEvidence> {
         if !self.lanes.contains_lane(lane_idx) {
             return None;
         }
@@ -435,7 +435,7 @@ impl BindingInbox {
         if idx >= buffered {
             return None;
         }
-        let classification = self
+        let evidence = self
             .slots
             .get(&self.lanes, lane_idx, idx)
             .flatten()
@@ -452,7 +452,7 @@ impl BindingInbox {
             .set_value(&self.lanes, lane_idx, (buffered - 1) as u8);
         self.recompute_label_mask(lane_idx);
         self.update_nonempty_lanes(lane_idx);
-        Some(classification)
+        Some(evidence)
     }
 
     #[inline]
@@ -460,7 +460,7 @@ impl BindingInbox {
         &mut self,
         binding: &mut B,
         lane_idx: usize,
-    ) -> Option<IncomingClassification> {
+    ) -> Option<IngressEvidence> {
         if !self.lanes.contains_lane(lane_idx) {
             return None;
         }
@@ -472,11 +472,7 @@ impl BindingInbox {
     }
 
     #[inline]
-    pub(super) fn push_back(
-        &mut self,
-        lane_idx: usize,
-        classification: IncomingClassification,
-    ) -> bool {
+    pub(super) fn push_back(&mut self, lane_idx: usize, evidence: IngressEvidence) -> bool {
         if !self.lanes.contains_lane(lane_idx) {
             return false;
         }
@@ -486,14 +482,14 @@ impl BindingInbox {
         }
         let _ = self
             .slots
-            .set(&self.lanes, lane_idx, buffered, Some(classification));
+            .set(&self.lanes, lane_idx, buffered, Some(evidence));
         let _ = self
             .len
             .set_value(&self.lanes, lane_idx, (buffered + 1) as u8);
         self.nonempty_lanes.insert(lane_idx);
         self.sync_label_mask(
             lane_idx,
-            self.label_masks.get_value(&self.lanes, lane_idx) | label_bit(classification.label),
+            self.label_masks.get_value(&self.lanes, lane_idx) | label_bit(evidence.label),
         );
         true
     }
@@ -504,7 +500,7 @@ impl BindingInbox {
         binding: &mut B,
         lane_idx: usize,
         expected_label: u8,
-    ) -> Option<IncomingClassification> {
+    ) -> Option<IngressEvidence> {
         if !self.lanes.contains_lane(lane_idx) {
             return None;
         }
@@ -513,8 +509,8 @@ impl BindingInbox {
             let buffered = self.len.get_value(&self.lanes, lane_idx) as usize;
             let mut idx = 0usize;
             while idx < buffered {
-                if let Some(classification) = self.slots.get(&self.lanes, lane_idx, idx).flatten()
-                    && classification.label == expected_label
+                if let Some(evidence) = self.slots.get(&self.lanes, lane_idx, idx).flatten()
+                    && evidence.label == expected_label
                 {
                     return self.remove_buffered_at(lane_idx, idx);
                 }
@@ -529,13 +525,13 @@ impl BindingInbox {
             if (self.len.get_value(&self.lanes, lane_idx) as usize) >= Self::PER_LANE_CAPACITY {
                 break;
             }
-            let Some(classification) = binding.poll_incoming_for_lane(lane_idx as u8) else {
+            let Some(evidence) = binding.poll_incoming_for_lane(lane_idx as u8) else {
                 break;
             };
-            if classification.label == expected_label {
-                return Some(classification);
+            if evidence.label == expected_label {
+                return Some(evidence);
             }
-            if !self.push_back(lane_idx, classification) {
+            if !self.push_back(lane_idx, evidence) {
                 break;
             }
         }
@@ -550,7 +546,7 @@ impl BindingInbox {
         label_mask: u128,
         drop_label_mask: u128,
         mut drop_mismatch: F,
-    ) -> Option<IncomingClassification> {
+    ) -> Option<IngressEvidence> {
         if !self.lanes.contains_lane(lane_idx) || label_mask == 0 {
             return None;
         }
@@ -558,16 +554,15 @@ impl BindingInbox {
         if (self.label_masks.get_value(&self.lanes, lane_idx) & buffered_scan_mask) != 0 {
             let mut idx = 0usize;
             while idx < (self.len.get_value(&self.lanes, lane_idx) as usize) {
-                let Some(classification) = self.slots.get(&self.lanes, lane_idx, idx).flatten()
-                else {
+                let Some(evidence) = self.slots.get(&self.lanes, lane_idx, idx).flatten() else {
                     idx += 1;
                     continue;
                 };
-                let label_bit = label_bit(classification.label);
+                let label_bit = label_bit(evidence.label);
                 if (label_mask & label_bit) != 0 {
                     return self.remove_buffered_at(lane_idx, idx);
                 }
-                if (drop_label_mask & label_bit) != 0 && drop_mismatch(classification.label) {
+                if (drop_label_mask & label_bit) != 0 && drop_mismatch(evidence.label) {
                     let _ = self.remove_buffered_at(lane_idx, idx);
                     continue;
                 }
@@ -581,17 +576,17 @@ impl BindingInbox {
             if (self.len.get_value(&self.lanes, lane_idx) as usize) >= Self::PER_LANE_CAPACITY {
                 break;
             }
-            let Some(classification) = binding.poll_incoming_for_lane(lane_idx as u8) else {
+            let Some(evidence) = binding.poll_incoming_for_lane(lane_idx as u8) else {
                 break;
             };
-            let label_bit = label_bit(classification.label);
+            let label_bit = label_bit(evidence.label);
             if (label_mask & label_bit) != 0 {
-                return Some(classification);
+                return Some(evidence);
             }
-            if (drop_label_mask & label_bit) != 0 && drop_mismatch(classification.label) {
+            if (drop_label_mask & label_bit) != 0 && drop_mismatch(evidence.label) {
                 continue;
             }
-            if !self.push_back(lane_idx, classification) {
+            if !self.push_back(lane_idx, evidence) {
                 break;
             }
         }
@@ -599,7 +594,7 @@ impl BindingInbox {
     }
 
     #[inline]
-    pub(super) fn put_back(&mut self, lane_idx: usize, classification: IncomingClassification) {
+    pub(super) fn put_back(&mut self, lane_idx: usize, evidence: IngressEvidence) {
         if !self.lanes.contains_lane(lane_idx) {
             return;
         }
@@ -613,16 +608,14 @@ impl BindingInbox {
             let _ = self.slots.set(&self.lanes, lane_idx, idx, prev);
             idx -= 1;
         }
-        let _ = self
-            .slots
-            .set(&self.lanes, lane_idx, 0, Some(classification));
+        let _ = self.slots.set(&self.lanes, lane_idx, 0, Some(evidence));
         let _ = self
             .len
             .set_value(&self.lanes, lane_idx, (buffered + 1) as u8);
         self.nonempty_lanes.insert(lane_idx);
         self.sync_label_mask(
             lane_idx,
-            self.label_masks.get_value(&self.lanes, lane_idx) | label_bit(classification.label),
+            self.label_masks.get_value(&self.lanes, lane_idx) | label_bit(evidence.label),
         );
     }
 
@@ -651,7 +644,7 @@ mod tests {
         let mut slots = std::vec::Vec::with_capacity(LANES * BindingInbox::PER_LANE_CAPACITY);
         slots.resize(
             LANES * BindingInbox::PER_LANE_CAPACITY,
-            PackedIncomingClassification::EMPTY,
+            PackedIngressEvidence::EMPTY,
         );
         let mut len = std::vec::Vec::with_capacity(LANES);
         len.resize(LANES, 0u8);
@@ -676,7 +669,7 @@ mod tests {
 
         inbox.put_back(
             255,
-            IncomingClassification {
+            IngressEvidence {
                 label: 7,
                 instance: 1,
                 has_fin: false,
@@ -690,7 +683,7 @@ mod tests {
         assert_eq!(
             inbox
                 .remove_buffered_at(255, 0)
-                .expect("lane 255 buffered classification")
+                .expect("lane 255 buffered evidence")
                 .channel,
             Channel::new(9)
         );

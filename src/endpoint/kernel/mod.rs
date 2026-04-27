@@ -66,8 +66,25 @@ mod lane_slots {
         }
 
         #[inline]
+        pub(super) fn iter(&self) -> core::slice::Iter<'_, Option<T>> {
+            let len = self.len();
+            let ptr = if len == 0 {
+                core::ptr::NonNull::<Option<T>>::dangling().as_ptr()
+            } else {
+                self.ptr.cast_const()
+            };
+            unsafe { core::slice::from_raw_parts(ptr, len).iter() }
+        }
+
+        #[inline]
         pub(super) fn iter_mut(&mut self) -> core::slice::IterMut<'_, Option<T>> {
-            unsafe { core::slice::from_raw_parts_mut(self.ptr, self.len()).iter_mut() }
+            let len = self.len();
+            let ptr = if len == 0 {
+                core::ptr::NonNull::<Option<T>>::dangling().as_ptr()
+            } else {
+                self.ptr
+            };
+            unsafe { core::slice::from_raw_parts_mut(ptr, len).iter_mut() }
         }
     }
 
@@ -139,10 +156,9 @@ mod route_state;
 pub(crate) use self::core::cursor_endpoint_storage_layout;
 pub(super) use self::core::*;
 pub(crate) use self::core::{
-    CursorEndpoint, MaterializedRouteBranch, SendControlOutcome, SendDesc, SendPreview,
+    CursorEndpoint, DecodeRuntimeDesc, MaterializedRouteBranch, RecvRuntimeDesc,
+    SendControlOutcome, SendPreview, SendRuntimeDesc,
 };
-pub(crate) use self::decode::DecodeDesc;
 pub(crate) use self::frontier::FrontierScratchLayout;
 pub(crate) use self::lane_port::RawSendPayload;
 pub(crate) use self::layout::EndpointArenaLayout;
-pub(crate) use self::recv::RecvDesc;

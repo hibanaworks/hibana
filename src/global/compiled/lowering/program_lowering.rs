@@ -106,7 +106,7 @@ pub(super) fn compiled_program_emit_route_controls(
 ) {
     let view = summary.view();
     let scope_markers = view.scope_markers();
-    let default_end = view.as_slice().len();
+    let default_end = view.len();
     let mut marker_idx = 0usize;
     while marker_idx < scope_markers.len() {
         let marker = scope_markers[marker_idx];
@@ -127,7 +127,7 @@ pub(super) fn compiled_program_emit_route_controls(
                         Some(policy_id) => policy_id,
                         None => u16::MAX,
                     },
-                    EffIndex::from_usize(eff_offset),
+                    EffIndex::from_dense_ordinal(eff_offset),
                     tag,
                     Some(op),
                 ),
@@ -173,7 +173,7 @@ pub(super) fn compiled_program_emit_atom_into_slices(
             panic!("control atom/control descriptor mismatch");
         }
         let descriptor = ResourceDescriptor::new(
-            control_desc.with_sites(EffIndex::from_usize(offset), resource_policy_site),
+            control_desc.with_sites(EffIndex::from_dense_ordinal(offset), resource_policy_site),
         );
         compiled_program_push_resource(resources, resources_len, descriptor);
     } else if !policy.is_static() && !matches!(policy, PolicyMode::Dynamic { .. }) {
@@ -219,7 +219,7 @@ pub(super) fn compiled_program_emit_atom(
             panic!("control atom/control descriptor mismatch");
         }
         let descriptor = ResourceDescriptor::new(
-            control_desc.with_sites(EffIndex::from_usize(offset), resource_policy_site),
+            control_desc.with_sites(EffIndex::from_dense_ordinal(offset), resource_policy_site),
         );
         effect_envelope.push_tap_event(control_desc.tap_id());
         effect_envelope.push_resource(descriptor);

@@ -109,7 +109,7 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
     #[inline]
     fn poll_raw(
         &mut self,
-        desc: kernel::DecodeDesc,
+        desc: kernel::DecodeRuntimeDesc,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         let endpoint = unsafe { &mut *self.endpoint };
@@ -140,7 +140,7 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
     #[inline]
     fn poll_raw(
         &mut self,
-        desc: kernel::RecvDesc,
+        desc: kernel::RecvRuntimeDesc,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         let endpoint = unsafe { &mut *self.endpoint };
@@ -197,7 +197,7 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = unsafe { self.get_unchecked_mut() };
-        let desc = kernel::DecodeDesc::new(
+        let desc = kernel::DecodeRuntimeDesc::new(
             <M as crate::global::MessageSpec>::LABEL,
             <M::ControlKind as crate::global::ControlPayloadKind>::IS_CONTROL,
             validate_wire_payload::<M::Payload>,
@@ -228,7 +228,7 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = unsafe { self.get_unchecked_mut() };
-        let desc = kernel::RecvDesc::new(
+        let desc = kernel::RecvRuntimeDesc::new(
             <M as crate::global::MessageSpec>::LABEL,
             <M::Payload as WirePayload>::decode_payload(Payload::new(&[])).is_ok(),
         );
@@ -317,7 +317,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
     unsafe fn init_public_send_state(
         &mut self,
-        desc: kernel::SendDesc,
+        desc: kernel::SendRuntimeDesc,
         preview: kernel::SendPreview,
         payload: Option<kernel::RawSendPayload>,
     ) {
@@ -362,14 +362,14 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         }
     }
     #[inline]
-    fn preview_flow(&mut self, desc: kernel::SendDesc) -> SendResult<kernel::SendPreview> {
+    fn preview_flow(&mut self, desc: kernel::SendRuntimeDesc) -> SendResult<kernel::SendPreview> {
         unsafe { (self.ops().preview_flow)(self.ptr, self.handle, desc) }
     }
 
     #[inline]
     fn poll_recv(
         &mut self,
-        desc: kernel::RecvDesc,
+        desc: kernel::RecvRuntimeDesc,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         unsafe { (self.ops().poll_recv)(self.ptr, self.handle, desc, cx) }
@@ -383,7 +383,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
     fn poll_decode(
         &mut self,
-        desc: kernel::DecodeDesc,
+        desc: kernel::DecodeRuntimeDesc,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         unsafe { (self.ops().poll_decode)(self.ptr, self.handle, desc, cx) }
@@ -588,7 +588,7 @@ pub type RecvResult<T> = core::result::Result<T, RecvError>;
 
 #[cfg(test)]
 mod tests {
-    use super::{DecodeFuture, Endpoint, OfferFuture, RecvFuture, RouteBranch};
+    use super::{DecodeFuture, Endpoint, OfferFuture, RecvFuture, RouteBranch, flow, kernel};
     use core::mem::size_of;
 
     type RecvFut = RecvFuture<'static, 'static, 0, crate::g::Msg<7, ()>>;
@@ -599,6 +599,9 @@ mod tests {
     type DecodeFutU8 = DecodeFuture<'static, 'static, 0, crate::g::Msg<11, u8>>;
     type DecodeFutU64 = DecodeFuture<'static, 'static, 0, crate::g::Msg<12, u64>>;
     type DecodeFutBytes = DecodeFuture<'static, 'static, 0, crate::g::Msg<13, [u8; 32]>>;
+    type FlowU8 = flow::Flow<'static, 'static, 0, crate::g::Msg<14, u8>>;
+    type FlowBytes = flow::Flow<'static, 'static, 0, crate::g::Msg<15, [u8; 32]>>;
+    type SendFut = flow::SendFuture<'static, 'static, 0>;
 
     #[test]
     fn endpoint_surface_size_gates_hold() {
@@ -633,5 +636,55 @@ mod tests {
         assert_eq!(size_of::<DecodeFut>(), size_of::<DecodeFutU8>());
         assert_eq!(size_of::<DecodeFut>(), size_of::<DecodeFutU64>());
         assert_eq!(size_of::<DecodeFut>(), size_of::<DecodeFutBytes>());
+    }
+
+    #[test]
+    fn send_flow_and_runtime_descriptor_size_gates_hold() {
+        const WORD: usize = size_of::<usize>();
+        assert_eq!(
+            size_of::<FlowU8>(),
+            size_of::<FlowBytes>(),
+            "Flow layout must remain payload-type independent",
+        );
+        assert!(
+            size_of::<FlowU8>() <= 12 * WORD,
+            "Flow must stay a thin send preview, not a transport/runtime owner",
+        );
+        assert!(
+            size_of::<SendFut>() <= 3 * WORD,
+            "SendFuture must stay within the raw-future wrapper budget",
+        );
+        assert!(
+            size_of::<kernel::RecvRuntimeDesc>() <= WORD,
+            "RecvRuntimeDesc must stay smaller than a pointer-sized descriptor",
+        );
+        assert!(
+            size_of::<kernel::DecodeRuntimeDesc>() <= 3 * WORD,
+            "DecodeRuntimeDesc must be core plus decode adapters only",
+        );
+        assert!(
+            size_of::<kernel::SendRuntimeDesc>() <= 6 * WORD,
+            "SendRuntimeDesc must be send-specific metadata, not a union descriptor",
+        );
+    }
+
+    #[test]
+    fn final_form_future_layout_measurement_report() {
+        std::println!(
+            "future-layout Endpoint={} RouteBranch={} OfferFuture={} RecvFuture={} DecodeFuture={} SendFuture={} Flow={} RecvFutureU8={} RecvFutureU64={} RecvFutureBytes={} DecodeFutureU8={} DecodeFutureU64={} DecodeFutureBytes={}",
+            size_of::<Endpoint<'static, 0>>(),
+            size_of::<RouteBranch<'static, 'static, 0>>(),
+            size_of::<OfferFuture<'static, 'static, 0>>(),
+            size_of::<RecvFut>(),
+            size_of::<DecodeFut>(),
+            size_of::<SendFut>(),
+            size_of::<FlowU8>(),
+            size_of::<RecvFutU8>(),
+            size_of::<RecvFutU64>(),
+            size_of::<RecvFutBytes>(),
+            size_of::<DecodeFutU8>(),
+            size_of::<DecodeFutU64>(),
+            size_of::<DecodeFutBytes>(),
+        );
     }
 }

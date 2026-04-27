@@ -19,7 +19,7 @@ use hibana::{
         SessionKit,
         binding::{
             BindingSlot, NoBinding,
-            advanced::{Channel, IncomingClassification, TransportOpsError},
+            advanced::{Channel, IngressEvidence, TransportOpsError},
         },
         ids::SessionId,
         policy::{
@@ -120,7 +120,7 @@ impl PolicySignalsProvider for PolicyInputBinding {
 }
 
 impl BindingSlot for PolicyInputBinding {
-    fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IncomingClassification> {
+    fn poll_incoming_for_lane(&mut self, _logical_lane: u8) -> Option<IngressEvidence> {
         None
     }
 

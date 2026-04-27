@@ -3,7 +3,11 @@
 use super::{
     builder::{ARM_SHARED, MAX_FIRST_RECV_DISPATCH, encode_typestate_len},
     emit_route::{MAX_LOOP_TRACKED, find_loop_entry_state, store_loop_entry_if_absent},
-    emit_scope::{alloc_scope_record, init_scope_registry},
+    emit_scope::{
+        alloc_scope_record, finalize_scope_registry_lane_rows,
+        stream_scope_registry_lane_mask_rows, stream_scope_registry_route_record_rows,
+        stream_scope_registry_route_slot_rows, stream_scope_registry_scope_rows,
+    },
     facts::{
         JumpReason, LocalAction, LocalNode, MAX_STATES, StateIndex, as_eff_index, as_state_index,
         state_index_to_usize,
@@ -18,87 +22,452 @@ use super::{
     },
 };
 
-const MAX_SCOPE_SCRATCH: usize = crate::eff::meta::MAX_EFF_NODES;
 const LINGER_ARM_NO_NODE: u16 = u16::MAX;
 const ROUTE_PASSIVE_ARM_UNSET: u16 = u16::MAX;
-const MAX_JUMP_BACKPATCH: usize = MAX_STATES;
-const MAX_STATE_BITSET_WORDS: usize = (MAX_STATES + 63) / 64;
-const MAX_SCOPE_BITSET_WORDS: usize = (MAX_SCOPE_SCRATCH + 63) / 64;
 
-#[derive(Clone, Copy)]
-pub(super) struct FixedBitSet<const WORDS: usize> {
-    words: [u64; WORDS],
+pub(crate) struct RoleTypestateFixedScratch {
+    pub(super) loop_entry_ids: [ScopeId; MAX_LOOP_TRACKED],
+    pub(super) loop_entry_states: [StateIndex; MAX_LOOP_TRACKED],
+    pub(super) dispatch_table: [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
+    pub(super) prefix_actions: [[PrefixAction; MAX_PREFIX_ACTIONS]; 2],
+    pub(super) prefix_lens: [usize; 2],
+    pub(super) arm_seen_recv: u8,
 }
 
-impl<const WORDS: usize> FixedBitSet<WORDS> {
-    const EMPTY: Self = Self { words: [0; WORDS] };
+#[derive(Clone, Copy)]
+pub(super) struct DynamicBitSet {
+    words: *mut u64,
+    word_len: usize,
+}
+
+impl DynamicBitSet {
+    #[inline(always)]
+    unsafe fn from_raw_parts(words: *mut u64, word_len: usize) -> Self {
+        Self { words, word_len }
+    }
+
+    #[inline(always)]
+    fn get(self, index: usize) -> bool {
+        let word = index / 64;
+        let bit = index % 64;
+        if word >= self.word_len {
+            return false;
+        }
+        unsafe { (*self.words.add(word) & (1u64 << bit)) != 0 }
+    }
 
     #[inline(always)]
     fn clear_all(&mut self) {
         let mut idx = 0usize;
-        while idx < WORDS {
-            self.words[idx] = 0;
+        while idx < self.word_len {
+            unsafe {
+                *self.words.add(idx) = 0;
+            }
             idx += 1;
         }
-    }
-
-    #[inline(always)]
-    fn get(&self, index: usize) -> bool {
-        let word = index / 64;
-        let bit = index % 64;
-        word < WORDS && (self.words[word] & (1u64 << bit)) != 0
     }
 
     #[inline(always)]
     fn set(&mut self, index: usize, value: bool) {
         let word = index / 64;
         let bit = index % 64;
-        if word >= WORDS {
+        if word >= self.word_len {
             return;
         }
-        let mask = 1u64 << bit;
-        if value {
-            self.words[word] |= mask;
-        } else {
-            self.words[word] &= !mask;
+        unsafe {
+            let ptr = self.words.add(word);
+            let mask = 1u64 << bit;
+            if value {
+                *ptr |= mask;
+            } else {
+                *ptr &= !mask;
+            }
         }
     }
 }
 
 pub(crate) struct RoleTypestateBuildScratch {
-    pub(super) loop_entry_ids: [ScopeId; MAX_LOOP_TRACKED],
-    pub(super) loop_entry_states: [StateIndex; MAX_LOOP_TRACKED],
-    pub(super) linger_arm_last_node: [[u16; 2]; MAX_SCOPE_SCRATCH],
-    pub(super) linger_arm_scope_ids: [ScopeId; MAX_SCOPE_SCRATCH],
-    pub(super) linger_arm_current: [u8; MAX_SCOPE_SCRATCH],
-    pub(super) linger_passive_arm_start: [[u16; 2]; MAX_SCOPE_SCRATCH],
-    pub(super) jump_backpatch_indices: [u16; MAX_JUMP_BACKPATCH],
-    pub(super) jump_backpatch_scopes: [ScopeId; MAX_JUMP_BACKPATCH],
-    pub(super) jump_backpatch_kinds: [u8; MAX_JUMP_BACKPATCH],
-    pub(super) scope_stack: [ScopeId; MAX_SCOPE_SCRATCH],
-    pub(super) scope_stack_kinds: [ScopeKind; MAX_SCOPE_SCRATCH],
-    pub(super) scope_stack_entries: [u16; MAX_SCOPE_SCRATCH],
-    pub(super) route_current_arm: [u8; MAX_SCOPE_SCRATCH],
-    pub(super) scope_controller_roles: [u8; MAX_SCOPE_SCRATCH],
-    pub(super) scope_route_policy_tags: [u8; MAX_SCOPE_SCRATCH],
-    pub(super) scope_route_policy_ids: [u16; MAX_SCOPE_SCRATCH],
-    pub(super) scope_route_policy_effs: [EffIndex; MAX_SCOPE_SCRATCH],
-    pub(super) last_step_was_scope: FixedBitSet<MAX_SCOPE_BITSET_WORDS>,
-    pub(super) route_arm_last_node: [[StateIndex; 2]; MAX_SCOPE_SCRATCH],
-    pub(super) route_enter_count: [u8; MAX_SCOPE_SCRATCH],
-    pub(super) route_passive_arm_start: [[u16; 2]; MAX_SCOPE_SCRATCH],
-    pub(super) route_scope_entries: [RouteScopeScratchRecord; MAX_SCOPE_SCRATCH],
-    pub(super) dispatch_table: [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
-    pub(super) prefix_actions: [[PrefixAction; MAX_PREFIX_ACTIONS]; 2],
-    pub(super) prefix_lens: [usize; 2],
-    pub(super) arm_seen_recv: u8,
-    pub(super) scan_stack: [StateIndex; MAX_SCOPE_SCRATCH],
-    pub(super) visited: FixedBitSet<MAX_STATE_BITSET_WORDS>,
+    fixed: *mut RoleTypestateFixedScratch,
+    state_scratch_len: usize,
+    scope_scratch_len: usize,
+    scope_stack_len_cap: usize,
+    jump_backpatch_indices: *mut u16,
+    jump_backpatch_scopes: *mut ScopeId,
+    jump_backpatch_kinds: *mut u8,
+    scan_stack: *mut StateIndex,
+    visited_words: *mut u64,
+    visited_word_len: usize,
+    linger_arm_last_node: *mut [u16; 2],
+    linger_arm_scope_ids: *mut ScopeId,
+    linger_arm_current: *mut u8,
+    linger_passive_arm_start: *mut [u16; 2],
+    scope_stack: *mut ScopeId,
+    scope_stack_kinds: *mut ScopeKind,
+    scope_stack_entries: *mut u16,
+    route_current_arm: *mut u8,
+    scope_controller_roles: *mut u8,
+    scope_route_policy_tags: *mut u8,
+    scope_route_policy_ids: *mut u16,
+    scope_route_policy_effs: *mut EffIndex,
+    last_step_was_scope_words: *mut u64,
+    last_step_was_scope_word_len: usize,
+    route_arm_last_node: *mut [StateIndex; 2],
+    route_enter_count: *mut u8,
+    route_passive_arm_start: *mut [u16; 2],
+    route_scope_entries: *mut RouteScopeScratchRecord,
 }
 
 impl RoleTypestateBuildScratch {
-    pub(crate) unsafe fn init_empty(dst: *mut Self) {
+    #[inline(always)]
+    const fn align_up(value: usize, align: usize) -> usize {
+        let mask = align.saturating_sub(1);
+        (value + mask) & !mask
+    }
+
+    #[inline(always)]
+    const fn scope_word_len(scope_scratch_len: usize) -> usize {
+        scope_scratch_len.div_ceil(64)
+    }
+
+    #[inline(always)]
+    const fn max_align(left: usize, right: usize) -> usize {
+        if left > right { left } else { right }
+    }
+
+    pub(crate) const fn storage_align() -> usize {
+        let mut align = core::mem::align_of::<RoleTypestateFixedScratch>();
+        align = Self::max_align(align, core::mem::align_of::<[u16; 2]>());
+        align = Self::max_align(align, core::mem::align_of::<ScopeId>());
+        align = Self::max_align(align, core::mem::align_of::<u8>());
+        align = Self::max_align(align, core::mem::align_of::<ScopeKind>());
+        align = Self::max_align(align, core::mem::align_of::<u16>());
+        align = Self::max_align(align, core::mem::align_of::<EffIndex>());
+        align = Self::max_align(align, core::mem::align_of::<u64>());
+        align = Self::max_align(align, core::mem::align_of::<[StateIndex; 2]>());
+        align = Self::max_align(align, core::mem::align_of::<RouteScopeScratchRecord>());
+        align
+    }
+
+    pub(crate) const fn storage_end_from_start(
+        start: usize,
+        state_scratch_len: usize,
+        scope_scratch_len: usize,
+        scope_stack_len_cap: usize,
+    ) -> usize {
+        let fixed = Self::align_up(start, core::mem::align_of::<RoleTypestateFixedScratch>());
+        let fixed_end = fixed + core::mem::size_of::<RoleTypestateFixedScratch>();
+        let jump_backpatch_indices = Self::align_up(fixed_end, core::mem::align_of::<u16>());
+        let jump_backpatch_indices_end =
+            jump_backpatch_indices + state_scratch_len.saturating_mul(core::mem::size_of::<u16>());
+        let jump_backpatch_scopes =
+            Self::align_up(jump_backpatch_indices_end, core::mem::align_of::<ScopeId>());
+        let jump_backpatch_scopes_end = jump_backpatch_scopes
+            + state_scratch_len.saturating_mul(core::mem::size_of::<ScopeId>());
+        let jump_backpatch_kinds =
+            Self::align_up(jump_backpatch_scopes_end, core::mem::align_of::<u8>());
+        let jump_backpatch_kinds_end =
+            jump_backpatch_kinds + state_scratch_len.saturating_mul(core::mem::size_of::<u8>());
+        let scan_stack = Self::align_up(
+            jump_backpatch_kinds_end,
+            core::mem::align_of::<StateIndex>(),
+        );
+        let scan_stack_end =
+            scan_stack + state_scratch_len.saturating_mul(core::mem::size_of::<StateIndex>());
+        let visited_words = Self::align_up(scan_stack_end, core::mem::align_of::<u64>());
+        let visited_words_end = visited_words
+            + Self::scope_word_len(state_scratch_len).saturating_mul(core::mem::size_of::<u64>());
+        let linger_arm_last_node =
+            Self::align_up(visited_words_end, core::mem::align_of::<[u16; 2]>());
+        let linger_arm_last_node_end = linger_arm_last_node
+            + scope_scratch_len.saturating_mul(core::mem::size_of::<[u16; 2]>());
+        let linger_arm_scope_ids =
+            Self::align_up(linger_arm_last_node_end, core::mem::align_of::<ScopeId>());
+        let linger_arm_scope_ids_end = linger_arm_scope_ids
+            + scope_scratch_len.saturating_mul(core::mem::size_of::<ScopeId>());
+        let linger_arm_current =
+            Self::align_up(linger_arm_scope_ids_end, core::mem::align_of::<u8>());
+        let linger_arm_current_end =
+            linger_arm_current + scope_scratch_len.saturating_mul(core::mem::size_of::<u8>());
+        let linger_passive_arm_start =
+            Self::align_up(linger_arm_current_end, core::mem::align_of::<[u16; 2]>());
+        let linger_passive_arm_start_end = linger_passive_arm_start
+            + scope_scratch_len.saturating_mul(core::mem::size_of::<[u16; 2]>());
+        let scope_stack = Self::align_up(
+            linger_passive_arm_start_end,
+            core::mem::align_of::<ScopeId>(),
+        );
+        let scope_stack_end =
+            scope_stack + scope_stack_len_cap.saturating_mul(core::mem::size_of::<ScopeId>());
+        let scope_stack_kinds = Self::align_up(scope_stack_end, core::mem::align_of::<ScopeKind>());
+        let scope_stack_kinds_end = scope_stack_kinds
+            + scope_stack_len_cap.saturating_mul(core::mem::size_of::<ScopeKind>());
+        let scope_stack_entries =
+            Self::align_up(scope_stack_kinds_end, core::mem::align_of::<u16>());
+        let scope_stack_entries_end =
+            scope_stack_entries + scope_stack_len_cap.saturating_mul(core::mem::size_of::<u16>());
+        let route_current_arm =
+            Self::align_up(scope_stack_entries_end, core::mem::align_of::<u8>());
+        let route_current_arm_end =
+            route_current_arm + scope_stack_len_cap.saturating_mul(core::mem::size_of::<u8>());
+        let scope_controller_roles =
+            Self::align_up(route_current_arm_end, core::mem::align_of::<u8>());
+        let scope_controller_roles_end =
+            scope_controller_roles + scope_scratch_len.saturating_mul(core::mem::size_of::<u8>());
+        let scope_route_policy_tags =
+            Self::align_up(scope_controller_roles_end, core::mem::align_of::<u8>());
+        let scope_route_policy_tags_end =
+            scope_route_policy_tags + scope_scratch_len.saturating_mul(core::mem::size_of::<u8>());
+        let scope_route_policy_ids =
+            Self::align_up(scope_route_policy_tags_end, core::mem::align_of::<u16>());
+        let scope_route_policy_ids_end =
+            scope_route_policy_ids + scope_scratch_len.saturating_mul(core::mem::size_of::<u16>());
+        let scope_route_policy_effs = Self::align_up(
+            scope_route_policy_ids_end,
+            core::mem::align_of::<EffIndex>(),
+        );
+        let scope_route_policy_effs_end = scope_route_policy_effs
+            + scope_scratch_len.saturating_mul(core::mem::size_of::<EffIndex>());
+        let last_step_was_scope_words =
+            Self::align_up(scope_route_policy_effs_end, core::mem::align_of::<u64>());
+        let last_step_was_scope_words_end = last_step_was_scope_words
+            + Self::scope_word_len(scope_stack_len_cap).saturating_mul(core::mem::size_of::<u64>());
+        let route_arm_last_node = Self::align_up(
+            last_step_was_scope_words_end,
+            core::mem::align_of::<[StateIndex; 2]>(),
+        );
+        let route_arm_last_node_end = route_arm_last_node
+            + scope_stack_len_cap.saturating_mul(core::mem::size_of::<[StateIndex; 2]>());
+        let route_enter_count =
+            Self::align_up(route_arm_last_node_end, core::mem::align_of::<u8>());
+        let route_enter_count_end =
+            route_enter_count + scope_stack_len_cap.saturating_mul(core::mem::size_of::<u8>());
+        let route_passive_arm_start =
+            Self::align_up(route_enter_count_end, core::mem::align_of::<[u16; 2]>());
+        let route_passive_arm_start_end = route_passive_arm_start
+            + scope_stack_len_cap.saturating_mul(core::mem::size_of::<[u16; 2]>());
+        let route_scope_entries = Self::align_up(
+            route_passive_arm_start_end,
+            core::mem::align_of::<RouteScopeScratchRecord>(),
+        );
+        route_scope_entries
+            + scope_scratch_len.saturating_mul(core::mem::size_of::<RouteScopeScratchRecord>())
+    }
+
+    pub(crate) unsafe fn from_storage(
+        start: usize,
+        state_scratch_len: usize,
+        scope_scratch_len: usize,
+        scope_stack_len_cap: usize,
+    ) -> Self {
+        let fixed = Self::align_up(start, core::mem::align_of::<RoleTypestateFixedScratch>());
+        let fixed_end = fixed + core::mem::size_of::<RoleTypestateFixedScratch>();
+        let jump_backpatch_indices = Self::align_up(fixed_end, core::mem::align_of::<u16>());
+        let jump_backpatch_indices_end =
+            jump_backpatch_indices + state_scratch_len.saturating_mul(core::mem::size_of::<u16>());
+        let jump_backpatch_scopes =
+            Self::align_up(jump_backpatch_indices_end, core::mem::align_of::<ScopeId>());
+        let jump_backpatch_scopes_end = jump_backpatch_scopes
+            + state_scratch_len.saturating_mul(core::mem::size_of::<ScopeId>());
+        let jump_backpatch_kinds =
+            Self::align_up(jump_backpatch_scopes_end, core::mem::align_of::<u8>());
+        let jump_backpatch_kinds_end =
+            jump_backpatch_kinds + state_scratch_len.saturating_mul(core::mem::size_of::<u8>());
+        let scan_stack = Self::align_up(
+            jump_backpatch_kinds_end,
+            core::mem::align_of::<StateIndex>(),
+        );
+        let scan_stack_end =
+            scan_stack + state_scratch_len.saturating_mul(core::mem::size_of::<StateIndex>());
+        let visited_words = Self::align_up(scan_stack_end, core::mem::align_of::<u64>());
+        let visited_words_end = visited_words
+            + Self::scope_word_len(state_scratch_len).saturating_mul(core::mem::size_of::<u64>());
+        let linger_arm_last_node =
+            Self::align_up(visited_words_end, core::mem::align_of::<[u16; 2]>());
+        let linger_arm_last_node_end = linger_arm_last_node
+            + scope_scratch_len.saturating_mul(core::mem::size_of::<[u16; 2]>());
+        let linger_arm_scope_ids =
+            Self::align_up(linger_arm_last_node_end, core::mem::align_of::<ScopeId>());
+        let linger_arm_scope_ids_end = linger_arm_scope_ids
+            + scope_scratch_len.saturating_mul(core::mem::size_of::<ScopeId>());
+        let linger_arm_current =
+            Self::align_up(linger_arm_scope_ids_end, core::mem::align_of::<u8>());
+        let linger_arm_current_end =
+            linger_arm_current + scope_scratch_len.saturating_mul(core::mem::size_of::<u8>());
+        let linger_passive_arm_start =
+            Self::align_up(linger_arm_current_end, core::mem::align_of::<[u16; 2]>());
+        let linger_passive_arm_start_end = linger_passive_arm_start
+            + scope_scratch_len.saturating_mul(core::mem::size_of::<[u16; 2]>());
+        let scope_stack = Self::align_up(
+            linger_passive_arm_start_end,
+            core::mem::align_of::<ScopeId>(),
+        );
+        let scope_stack_end =
+            scope_stack + scope_stack_len_cap.saturating_mul(core::mem::size_of::<ScopeId>());
+        let scope_stack_kinds = Self::align_up(scope_stack_end, core::mem::align_of::<ScopeKind>());
+        let scope_stack_kinds_end = scope_stack_kinds
+            + scope_stack_len_cap.saturating_mul(core::mem::size_of::<ScopeKind>());
+        let scope_stack_entries =
+            Self::align_up(scope_stack_kinds_end, core::mem::align_of::<u16>());
+        let scope_stack_entries_end =
+            scope_stack_entries + scope_stack_len_cap.saturating_mul(core::mem::size_of::<u16>());
+        let route_current_arm =
+            Self::align_up(scope_stack_entries_end, core::mem::align_of::<u8>());
+        let route_current_arm_end =
+            route_current_arm + scope_stack_len_cap.saturating_mul(core::mem::size_of::<u8>());
+        let scope_controller_roles =
+            Self::align_up(route_current_arm_end, core::mem::align_of::<u8>());
+        let scope_controller_roles_end =
+            scope_controller_roles + scope_scratch_len.saturating_mul(core::mem::size_of::<u8>());
+        let scope_route_policy_tags =
+            Self::align_up(scope_controller_roles_end, core::mem::align_of::<u8>());
+        let scope_route_policy_tags_end =
+            scope_route_policy_tags + scope_scratch_len.saturating_mul(core::mem::size_of::<u8>());
+        let scope_route_policy_ids =
+            Self::align_up(scope_route_policy_tags_end, core::mem::align_of::<u16>());
+        let scope_route_policy_ids_end =
+            scope_route_policy_ids + scope_scratch_len.saturating_mul(core::mem::size_of::<u16>());
+        let scope_route_policy_effs = Self::align_up(
+            scope_route_policy_ids_end,
+            core::mem::align_of::<EffIndex>(),
+        );
+        let scope_route_policy_effs_end = scope_route_policy_effs
+            + scope_scratch_len.saturating_mul(core::mem::size_of::<EffIndex>());
+        let last_step_was_scope_words =
+            Self::align_up(scope_route_policy_effs_end, core::mem::align_of::<u64>());
+        let last_step_was_scope_words_end = last_step_was_scope_words
+            + Self::scope_word_len(scope_stack_len_cap).saturating_mul(core::mem::size_of::<u64>());
+        let route_arm_last_node = Self::align_up(
+            last_step_was_scope_words_end,
+            core::mem::align_of::<[StateIndex; 2]>(),
+        );
+        let route_arm_last_node_end = route_arm_last_node
+            + scope_stack_len_cap.saturating_mul(core::mem::size_of::<[StateIndex; 2]>());
+        let route_enter_count =
+            Self::align_up(route_arm_last_node_end, core::mem::align_of::<u8>());
+        let route_enter_count_end =
+            route_enter_count + scope_stack_len_cap.saturating_mul(core::mem::size_of::<u8>());
+        let route_passive_arm_start =
+            Self::align_up(route_enter_count_end, core::mem::align_of::<[u16; 2]>());
+        let route_passive_arm_start_end = route_passive_arm_start
+            + scope_stack_len_cap.saturating_mul(core::mem::size_of::<[u16; 2]>());
+        let route_scope_entries = Self::align_up(
+            route_passive_arm_start_end,
+            core::mem::align_of::<RouteScopeScratchRecord>(),
+        );
         unsafe {
+            Self::from_raw_parts(
+                fixed as *mut RoleTypestateFixedScratch,
+                state_scratch_len,
+                scope_scratch_len,
+                scope_stack_len_cap,
+                jump_backpatch_indices as *mut u16,
+                jump_backpatch_scopes as *mut ScopeId,
+                jump_backpatch_kinds as *mut u8,
+                scan_stack as *mut StateIndex,
+                visited_words as *mut u64,
+                Self::scope_word_len(state_scratch_len),
+                linger_arm_last_node as *mut [u16; 2],
+                linger_arm_scope_ids as *mut ScopeId,
+                linger_arm_current as *mut u8,
+                linger_passive_arm_start as *mut [u16; 2],
+                scope_stack as *mut ScopeId,
+                scope_stack_kinds as *mut ScopeKind,
+                scope_stack_entries as *mut u16,
+                route_current_arm as *mut u8,
+                scope_controller_roles as *mut u8,
+                scope_route_policy_tags as *mut u8,
+                scope_route_policy_ids as *mut u16,
+                scope_route_policy_effs as *mut EffIndex,
+                last_step_was_scope_words as *mut u64,
+                Self::scope_word_len(scope_stack_len_cap),
+                route_arm_last_node as *mut [StateIndex; 2],
+                route_enter_count as *mut u8,
+                route_passive_arm_start as *mut [u16; 2],
+                route_scope_entries as *mut RouteScopeScratchRecord,
+            )
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn from_raw_parts(
+        fixed: *mut RoleTypestateFixedScratch,
+        state_scratch_len: usize,
+        scope_scratch_len: usize,
+        scope_stack_len_cap: usize,
+        jump_backpatch_indices: *mut u16,
+        jump_backpatch_scopes: *mut ScopeId,
+        jump_backpatch_kinds: *mut u8,
+        scan_stack: *mut StateIndex,
+        visited_words: *mut u64,
+        visited_word_len: usize,
+        linger_arm_last_node: *mut [u16; 2],
+        linger_arm_scope_ids: *mut ScopeId,
+        linger_arm_current: *mut u8,
+        linger_passive_arm_start: *mut [u16; 2],
+        scope_stack: *mut ScopeId,
+        scope_stack_kinds: *mut ScopeKind,
+        scope_stack_entries: *mut u16,
+        route_current_arm: *mut u8,
+        scope_controller_roles: *mut u8,
+        scope_route_policy_tags: *mut u8,
+        scope_route_policy_ids: *mut u16,
+        scope_route_policy_effs: *mut EffIndex,
+        last_step_was_scope_words: *mut u64,
+        last_step_was_scope_word_len: usize,
+        route_arm_last_node: *mut [StateIndex; 2],
+        route_enter_count: *mut u8,
+        route_passive_arm_start: *mut [u16; 2],
+        route_scope_entries: *mut RouteScopeScratchRecord,
+    ) -> Self {
+        Self {
+            fixed,
+            state_scratch_len,
+            scope_scratch_len,
+            scope_stack_len_cap,
+            jump_backpatch_indices,
+            jump_backpatch_scopes,
+            jump_backpatch_kinds,
+            scan_stack,
+            visited_words,
+            visited_word_len,
+            linger_arm_last_node,
+            linger_arm_scope_ids,
+            linger_arm_current,
+            linger_passive_arm_start,
+            scope_stack,
+            scope_stack_kinds,
+            scope_stack_entries,
+            route_current_arm,
+            scope_controller_roles,
+            scope_route_policy_tags,
+            scope_route_policy_ids,
+            scope_route_policy_effs,
+            last_step_was_scope_words,
+            last_step_was_scope_word_len,
+            route_arm_last_node,
+            route_enter_count,
+            route_passive_arm_start,
+            route_scope_entries,
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn fixed_mut(&self) -> &mut RoleTypestateFixedScratch {
+        unsafe { &mut *self.fixed }
+    }
+
+    #[inline(always)]
+    unsafe fn slice_mut<'a, T>(ptr: *mut T, len: usize) -> &'a mut [T] {
+        if len == 0 {
+            &mut []
+        } else {
+            unsafe { core::slice::from_raw_parts_mut(ptr, len) }
+        }
+    }
+
+    pub(crate) unsafe fn init_empty(&mut self) {
+        unsafe {
+            let dst = self.fixed;
             let mut loop_idx = 0usize;
             while loop_idx < MAX_LOOP_TRACKED {
                 core::ptr::addr_of_mut!((*dst).loop_entry_ids[loop_idx]).write(ScopeId::generic(0));
@@ -107,48 +476,69 @@ impl RoleTypestateBuildScratch {
             }
 
             let mut idx = 0usize;
-            while idx < MAX_SCOPE_SCRATCH {
-                core::ptr::addr_of_mut!((*dst).linger_arm_last_node[idx])
+            while idx < self.scope_scratch_len {
+                self.linger_arm_last_node
+                    .add(idx)
                     .write([LINGER_ARM_NO_NODE; 2]);
-                core::ptr::addr_of_mut!((*dst).linger_arm_scope_ids[idx])
+                self.linger_arm_scope_ids
+                    .add(idx)
                     .write(ScopeId::generic(0));
-                core::ptr::addr_of_mut!((*dst).linger_arm_current[idx]).write(0);
-                core::ptr::addr_of_mut!((*dst).linger_passive_arm_start[idx])
+                self.linger_arm_current.add(idx).write(0);
+                self.linger_passive_arm_start
+                    .add(idx)
                     .write([LINGER_ARM_NO_NODE; 2]);
-                core::ptr::addr_of_mut!((*dst).scope_stack[idx]).write(ScopeId::none());
-                core::ptr::addr_of_mut!((*dst).scope_stack_kinds[idx]).write(ScopeKind::Generic);
-                core::ptr::addr_of_mut!((*dst).scope_stack_entries[idx]).write(0);
-                core::ptr::addr_of_mut!((*dst).route_current_arm[idx]).write(0);
-                core::ptr::addr_of_mut!((*dst).scope_controller_roles[idx])
+                self.scope_controller_roles
+                    .add(idx)
                     .write(CONTROLLER_ROLE_NONE);
-                core::ptr::addr_of_mut!((*dst).scope_route_policy_tags[idx]).write(0);
-                core::ptr::addr_of_mut!((*dst).scope_route_policy_ids[idx]).write(u16::MAX);
-                core::ptr::addr_of_mut!((*dst).scope_route_policy_effs[idx]).write(EffIndex::MAX);
-                core::ptr::addr_of_mut!((*dst).route_arm_last_node[idx])
-                    .write([StateIndex::MAX; 2]);
-                core::ptr::addr_of_mut!((*dst).route_enter_count[idx]).write(0);
-                core::ptr::addr_of_mut!((*dst).route_passive_arm_start[idx])
-                    .write([ROUTE_PASSIVE_ARM_UNSET; 2]);
+                self.scope_route_policy_tags.add(idx).write(0);
+                self.scope_route_policy_ids.add(idx).write(u16::MAX);
+                self.scope_route_policy_effs.add(idx).write(EffIndex::MAX);
+                self.route_scope_entries
+                    .add(idx)
+                    .write(RouteScopeScratchRecord::EMPTY);
                 idx += 1;
             }
-            core::ptr::addr_of_mut!((*dst).last_step_was_scope).write(FixedBitSet::EMPTY);
 
-            let mut recv_idx = 0usize;
-            while recv_idx < MAX_SCOPE_SCRATCH {
-                core::ptr::addr_of_mut!((*dst).route_scope_entries[recv_idx])
-                    .write(RouteScopeScratchRecord::EMPTY);
-                recv_idx += 1;
+            let mut stack_idx = 0usize;
+            while stack_idx < self.scope_stack_len_cap {
+                self.scope_stack.add(stack_idx).write(ScopeId::none());
+                self.scope_stack_kinds
+                    .add(stack_idx)
+                    .write(ScopeKind::Generic);
+                self.scope_stack_entries.add(stack_idx).write(0);
+                self.route_current_arm.add(stack_idx).write(0);
+                self.route_arm_last_node
+                    .add(stack_idx)
+                    .write([StateIndex::MAX; 2]);
+                self.route_enter_count.add(stack_idx).write(0);
+                self.route_passive_arm_start
+                    .add(stack_idx)
+                    .write([ROUTE_PASSIVE_ARM_UNSET; 2]);
+                stack_idx += 1;
+            }
+
+            let mut word_idx = 0usize;
+            while word_idx < self.last_step_was_scope_word_len {
+                self.last_step_was_scope_words.add(word_idx).write(0);
+                word_idx += 1;
             }
 
             let mut state_idx = 0usize;
-            while state_idx < MAX_STATES {
-                core::ptr::addr_of_mut!((*dst).jump_backpatch_indices[state_idx]).write(0);
-                core::ptr::addr_of_mut!((*dst).jump_backpatch_scopes[state_idx])
+            while state_idx < self.state_scratch_len {
+                self.jump_backpatch_indices.add(state_idx).write(0);
+                self.jump_backpatch_scopes
+                    .add(state_idx)
                     .write(ScopeId::generic(0));
-                core::ptr::addr_of_mut!((*dst).jump_backpatch_kinds[state_idx]).write(0);
+                self.jump_backpatch_kinds.add(state_idx).write(0);
+                self.scan_stack.add(state_idx).write(StateIndex::MAX);
                 state_idx += 1;
             }
-            core::ptr::addr_of_mut!((*dst).visited).write(FixedBitSet::EMPTY);
+
+            let mut visited_idx = 0usize;
+            while visited_idx < self.visited_word_len {
+                self.visited_words.add(visited_idx).write(0);
+                visited_idx += 1;
+            }
 
             let mut dispatch_idx = 0usize;
             while dispatch_idx < MAX_FIRST_RECV_DISPATCH {
@@ -171,13 +561,122 @@ impl RoleTypestateBuildScratch {
 
             core::ptr::addr_of_mut!((*dst).prefix_lens).write([0; 2]);
             core::ptr::addr_of_mut!((*dst).arm_seen_recv).write(0);
-
-            let mut scan_idx = 0usize;
-            while scan_idx < MAX_SCOPE_SCRATCH {
-                core::ptr::addr_of_mut!((*dst).scan_stack[scan_idx]).write(StateIndex::MAX);
-                scan_idx += 1;
-            }
         }
+    }
+
+    #[inline(always)]
+    unsafe fn linger_arm_last_node_mut(&self) -> &mut [[u16; 2]] {
+        unsafe { Self::slice_mut(self.linger_arm_last_node, self.scope_scratch_len) }
+    }
+
+    #[inline(always)]
+    unsafe fn jump_backpatch_indices_mut(&self) -> &mut [u16] {
+        unsafe { Self::slice_mut(self.jump_backpatch_indices, self.state_scratch_len) }
+    }
+
+    #[inline(always)]
+    unsafe fn jump_backpatch_scopes_mut(&self) -> &mut [ScopeId] {
+        unsafe { Self::slice_mut(self.jump_backpatch_scopes, self.state_scratch_len) }
+    }
+
+    #[inline(always)]
+    unsafe fn jump_backpatch_kinds_mut(&self) -> &mut [u8] {
+        unsafe { Self::slice_mut(self.jump_backpatch_kinds, self.state_scratch_len) }
+    }
+
+    #[inline(always)]
+    unsafe fn scan_stack_mut(&self) -> &mut [StateIndex] {
+        unsafe { Self::slice_mut(self.scan_stack, self.state_scratch_len) }
+    }
+
+    #[inline(always)]
+    unsafe fn visited_mut(&self) -> DynamicBitSet {
+        unsafe { DynamicBitSet::from_raw_parts(self.visited_words, self.visited_word_len) }
+    }
+
+    #[inline(always)]
+    unsafe fn linger_arm_scope_ids_mut(&self) -> &mut [ScopeId] {
+        unsafe { Self::slice_mut(self.linger_arm_scope_ids, self.scope_scratch_len) }
+    }
+
+    #[inline(always)]
+    unsafe fn linger_arm_current_mut(&self) -> &mut [u8] {
+        unsafe { Self::slice_mut(self.linger_arm_current, self.scope_scratch_len) }
+    }
+
+    #[inline(always)]
+    unsafe fn linger_passive_arm_start_mut(&self) -> &mut [[u16; 2]] {
+        unsafe { Self::slice_mut(self.linger_passive_arm_start, self.scope_scratch_len) }
+    }
+
+    #[inline(always)]
+    unsafe fn scope_stack_mut(&self) -> &mut [ScopeId] {
+        unsafe { Self::slice_mut(self.scope_stack, self.scope_stack_len_cap) }
+    }
+
+    #[inline(always)]
+    unsafe fn scope_stack_kinds_mut(&self) -> &mut [ScopeKind] {
+        unsafe { Self::slice_mut(self.scope_stack_kinds, self.scope_stack_len_cap) }
+    }
+
+    #[inline(always)]
+    unsafe fn scope_stack_entries_mut(&self) -> &mut [u16] {
+        unsafe { Self::slice_mut(self.scope_stack_entries, self.scope_stack_len_cap) }
+    }
+
+    #[inline(always)]
+    unsafe fn route_current_arm_mut(&self) -> &mut [u8] {
+        unsafe { Self::slice_mut(self.route_current_arm, self.scope_stack_len_cap) }
+    }
+
+    #[inline(always)]
+    unsafe fn scope_controller_roles_mut(&self) -> &mut [u8] {
+        unsafe { Self::slice_mut(self.scope_controller_roles, self.scope_scratch_len) }
+    }
+
+    #[inline(always)]
+    unsafe fn scope_route_policy_tags_mut(&self) -> &mut [u8] {
+        unsafe { Self::slice_mut(self.scope_route_policy_tags, self.scope_scratch_len) }
+    }
+
+    #[inline(always)]
+    unsafe fn scope_route_policy_ids_mut(&self) -> &mut [u16] {
+        unsafe { Self::slice_mut(self.scope_route_policy_ids, self.scope_scratch_len) }
+    }
+
+    #[inline(always)]
+    unsafe fn scope_route_policy_effs_mut(&self) -> &mut [EffIndex] {
+        unsafe { Self::slice_mut(self.scope_route_policy_effs, self.scope_scratch_len) }
+    }
+
+    #[inline(always)]
+    unsafe fn last_step_was_scope_mut(&self) -> DynamicBitSet {
+        unsafe {
+            DynamicBitSet::from_raw_parts(
+                self.last_step_was_scope_words,
+                self.last_step_was_scope_word_len,
+            )
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn route_arm_last_node_mut(&self) -> &mut [[StateIndex; 2]] {
+        unsafe { Self::slice_mut(self.route_arm_last_node, self.scope_stack_len_cap) }
+    }
+
+    #[inline(always)]
+    unsafe fn route_enter_count_mut(&self) -> &mut [u8] {
+        unsafe { Self::slice_mut(self.route_enter_count, self.scope_stack_len_cap) }
+    }
+
+    #[inline(always)]
+    unsafe fn route_passive_arm_start_mut(&self) -> &mut [[u16; 2]] {
+        unsafe { Self::slice_mut(self.route_passive_arm_start, self.scope_stack_len_cap) }
+    }
+
+    #[inline(always)]
+    unsafe fn route_scope_entries_mut(&self) -> &mut [RouteScopeScratchRecord] {
+        unsafe { Self::slice_mut(self.route_scope_entries, self.scope_scratch_len) }
     }
 }
 use crate::{
@@ -191,7 +690,8 @@ use crate::{
 };
 
 pub(super) trait TypestateProgramView {
-    fn as_slice(&self) -> &[EffStruct];
+    fn len(&self) -> usize;
+    fn node_at(&self, offset: usize) -> EffStruct;
     fn scope_markers(&self) -> &[crate::global::const_dsl::ScopeMarker];
     fn policy_at(&self, offset: usize) -> Option<PolicyMode>;
     fn control_desc_at(&self, offset: usize) -> Option<ControlDesc>;
@@ -205,8 +705,13 @@ pub(super) trait TypestateProgramView {
 
 impl TypestateProgramView for LoweringView<'_> {
     #[inline(always)]
-    fn as_slice(&self) -> &[EffStruct] {
-        LoweringView::as_slice(self)
+    fn len(&self) -> usize {
+        LoweringView::len(self)
+    }
+
+    #[inline(always)]
+    fn node_at(&self, offset: usize) -> EffStruct {
+        LoweringView::node_at(self, offset)
     }
 
     #[inline(always)]
@@ -360,9 +865,9 @@ fn clear_prefix_actions(prefix_actions: &mut [[PrefixAction; MAX_PREFIX_ACTIONS]
 }
 
 #[inline(never)]
-fn clear_scan_stack(scan_stack: &mut [StateIndex; eff::meta::MAX_EFF_NODES]) {
+fn clear_scan_stack(scan_stack: &mut [StateIndex]) {
     let mut idx = 0usize;
-    while idx < eff::meta::MAX_EFF_NODES {
+    while idx < scan_stack.len() {
         scan_stack[idx] = StateIndex::MAX;
         idx += 1;
     }
@@ -379,7 +884,7 @@ fn mark_arm_seen(mask: &mut u8, arm_idx: usize) {
 }
 
 #[inline(never)]
-fn clear_visited(visited: &mut FixedBitSet<MAX_STATE_BITSET_WORDS>) {
+fn clear_visited(visited: &mut DynamicBitSet) {
     visited.clear_all();
 }
 
@@ -477,8 +982,8 @@ fn merge_nested_dispatch_entries(
 struct RouteFinalizeCtx<'a> {
     nodes: &'a mut [LocalNode],
     scope_entries: &'a mut [ScopeRecord],
-    scope_controller_roles: &'a [u8; MAX_SCOPE_SCRATCH],
-    scope_route_policy_effs: &'a [EffIndex; MAX_SCOPE_SCRATCH],
+    scope_controller_roles: &'a [u8],
+    scope_route_policy_effs: &'a [EffIndex],
     route_scope_entries: &'a mut [RouteScopeScratchRecord],
     route_scope_offer_lane_words: &'a mut [LaneWord],
     route_lane_word_len: usize,
@@ -487,8 +992,8 @@ struct RouteFinalizeCtx<'a> {
     prefix_actions: &'a mut [[PrefixAction; MAX_PREFIX_ACTIONS]; 2],
     prefix_lens: &'a mut [usize; 2],
     arm_seen_recv: &'a mut u8,
-    scan_stack: &'a mut [StateIndex; eff::meta::MAX_EFF_NODES],
-    visited: &'a mut FixedBitSet<MAX_STATE_BITSET_WORDS>,
+    scan_stack: &'a mut [StateIndex],
+    visited: DynamicBitSet,
 }
 
 struct RoleWalkCtx<'a> {
@@ -496,6 +1001,7 @@ struct RoleWalkCtx<'a> {
     scope_entries: &'a mut [ScopeRecord],
     route_scope_entries: &'a mut [RouteScopeScratchRecord],
     route_scope_offer_lane_words: &'a mut [LaneWord],
+    route_scope_arm0_lane_words: &'a mut [LaneWord],
     route_scope_arm1_lane_words: &'a mut [LaneWord],
     route_lane_word_len: usize,
     lane_slot_count: usize,
@@ -504,26 +1010,26 @@ struct RoleWalkCtx<'a> {
     route_arm0_lane_last_eff_by_slot: &'a mut [EffIndex],
     loop_entry_ids: &'a mut [ScopeId; MAX_LOOP_TRACKED],
     loop_entry_states: &'a mut [StateIndex; MAX_LOOP_TRACKED],
-    linger_arm_scope_ids: &'a mut [ScopeId; MAX_SCOPE_SCRATCH],
-    linger_arm_current: &'a mut [u8; MAX_SCOPE_SCRATCH],
-    linger_arm_last_node: &'a mut [[u16; 2]; MAX_SCOPE_SCRATCH],
-    jump_backpatch_indices: &'a mut [u16; MAX_JUMP_BACKPATCH],
-    jump_backpatch_scopes: &'a mut [ScopeId; MAX_JUMP_BACKPATCH],
-    jump_backpatch_kinds: &'a mut [u8; MAX_JUMP_BACKPATCH],
-    scope_stack: &'a mut [ScopeId; MAX_SCOPE_SCRATCH],
-    scope_stack_kinds: &'a mut [ScopeKind; MAX_SCOPE_SCRATCH],
-    scope_stack_entries: &'a mut [u16; MAX_SCOPE_SCRATCH],
-    route_current_arm: &'a mut [u8; MAX_SCOPE_SCRATCH],
-    scope_controller_roles: &'a mut [u8; MAX_SCOPE_SCRATCH],
-    scope_route_policy_effs: &'a mut [EffIndex; MAX_SCOPE_SCRATCH],
-    last_step_was_scope: &'a mut FixedBitSet<MAX_SCOPE_BITSET_WORDS>,
-    route_arm_last_node: &'a mut [[StateIndex; 2]; MAX_SCOPE_SCRATCH],
+    linger_arm_scope_ids: &'a mut [ScopeId],
+    linger_arm_current: &'a mut [u8],
+    linger_arm_last_node: &'a mut [[u16; 2]],
+    jump_backpatch_indices: &'a mut [u16],
+    jump_backpatch_scopes: &'a mut [ScopeId],
+    jump_backpatch_kinds: &'a mut [u8],
+    scope_stack: &'a mut [ScopeId],
+    scope_stack_kinds: &'a mut [ScopeKind],
+    scope_stack_entries: &'a mut [u16],
+    route_current_arm: &'a mut [u8],
+    scope_controller_roles: &'a mut [u8],
+    scope_route_policy_effs: &'a mut [EffIndex],
+    last_step_was_scope: DynamicBitSet,
+    route_arm_last_node: &'a mut [[StateIndex; 2]],
     dispatch_table: &'a mut [(u8, u8, StateIndex); MAX_FIRST_RECV_DISPATCH],
     prefix_actions: &'a mut [[PrefixAction; MAX_PREFIX_ACTIONS]; 2],
     prefix_lens: &'a mut [usize; 2],
     arm_seen_recv: &'a mut u8,
-    scan_stack: &'a mut [StateIndex; eff::meta::MAX_EFF_NODES],
-    visited: &'a mut FixedBitSet<MAX_STATE_BITSET_WORDS>,
+    scan_stack: &'a mut [StateIndex],
+    visited: DynamicBitSet,
 }
 
 #[derive(Clone, Copy)]
@@ -554,7 +1060,7 @@ fn collect_route_dispatch_for_exit(
         let arm_entry = ctx.scope_entries[entry_idx].arm_entry[arm_idx];
         if !arm_entry.is_max() {
             clear_scan_stack(ctx.scan_stack);
-            clear_visited(ctx.visited);
+            clear_visited(&mut ctx.visited);
             let mut scan_len = 1usize;
             ctx.scan_stack[0] = arm_entry;
 
@@ -1137,7 +1643,7 @@ fn handle_scope_exit_for_role(
                 let prev_idx = arm_last[1] as usize;
                 ctx.nodes[prev_idx] = ctx.nodes[prev_idx].with_next(as_state_index(*node_len));
                 ctx.nodes[*node_len] = jump_node;
-                if *jump_backpatch_len >= MAX_JUMP_BACKPATCH {
+                if *jump_backpatch_len >= ctx.jump_backpatch_indices.len() {
                     panic!("jump backpatch capacity exceeded for LoopBreak");
                 }
                 ctx.jump_backpatch_indices[*jump_backpatch_len] = *node_len as u16;
@@ -1153,7 +1659,7 @@ fn handle_scope_exit_for_role(
                 if *node_len > 0 && passive_starts[1] < *node_len {
                     let arm_last_node = *node_len - 1;
                     if !ctx.nodes[arm_last_node].action().is_jump() {
-                        if *jump_backpatch_len >= MAX_JUMP_BACKPATCH {
+                        if *jump_backpatch_len >= ctx.jump_backpatch_indices.len() {
                             panic!("jump backpatch capacity exceeded for arm last node");
                         }
                         ctx.jump_backpatch_indices[*jump_backpatch_len] = arm_last_node as u16;
@@ -1177,7 +1683,7 @@ fn handle_scope_exit_for_role(
                 ctx.nodes[*node_len] = jump_node;
                 ctx.route_scope_entries[entry_idx].passive_arm_jump[1] = as_state_index(*node_len);
                 if arm_is_empty {
-                    if *jump_backpatch_len >= MAX_JUMP_BACKPATCH {
+                    if *jump_backpatch_len >= ctx.jump_backpatch_indices.len() {
                         panic!("jump backpatch capacity exceeded for empty arm");
                     }
                     ctx.jump_backpatch_indices[*jump_backpatch_len] = *node_len as u16;
@@ -1212,7 +1718,7 @@ fn handle_scope_exit_for_role(
         if is_passive && arm0_is_tau_eliminated {
             ctx.scope_entries[entry_idx].arm_entry[0] = as_state_index(*node_len);
         }
-        if *jump_backpatch_len >= MAX_JUMP_BACKPATCH {
+        if *jump_backpatch_len >= ctx.jump_backpatch_indices.len() {
             panic!("jump backpatch capacity exceeded for RouteArmEnd Jump");
         }
         ctx.jump_backpatch_indices[*jump_backpatch_len] = *node_len as u16;
@@ -1246,7 +1752,7 @@ fn handle_scope_exit_for_role(
                 ctx.nodes[prev_idx] = ctx.nodes[prev_idx].with_next(as_state_index(*node_len));
                 ctx.nodes[*node_len] = jump_node;
             }
-            if *jump_backpatch_len >= MAX_JUMP_BACKPATCH {
+            if *jump_backpatch_len >= ctx.jump_backpatch_indices.len() {
                 panic!("jump backpatch capacity exceeded for RouteArmEnd Jump (arm 1)");
             }
             ctx.jump_backpatch_indices[*jump_backpatch_len] = *node_len as u16;
@@ -1444,6 +1950,14 @@ fn handle_atom_for_role<P: TypestateProgramView>(
                 let arm = ctx.route_current_arm[stack_idx] as usize;
                 if arm == 0 {
                     ctx.route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
+                    insert_offer_lane(
+                        route_scope_lane_words_mut(
+                            ctx.route_scope_arm0_lane_words,
+                            ctx.route_scope_entries[entry_idx].lane_word_start(),
+                            ctx.route_lane_word_len,
+                        ),
+                        lane_idx as u8,
+                    );
                 } else if arm == 1 {
                     insert_offer_lane(
                         route_scope_lane_words_mut(
@@ -1583,6 +2097,14 @@ fn handle_atom_for_role<P: TypestateProgramView>(
                 let arm = ctx.route_current_arm[stack_idx] as usize;
                 if arm == 0 {
                     ctx.route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
+                    insert_offer_lane(
+                        route_scope_lane_words_mut(
+                            ctx.route_scope_arm0_lane_words,
+                            ctx.route_scope_entries[entry_idx].lane_word_start(),
+                            ctx.route_lane_word_len,
+                        ),
+                        lane_idx as u8,
+                    );
                 } else if arm == 1 {
                     insert_offer_lane(
                         route_scope_lane_words_mut(
@@ -1735,6 +2257,14 @@ fn handle_atom_for_role<P: TypestateProgramView>(
                 let arm = ctx.route_current_arm[stack_idx] as usize;
                 if arm == 0 {
                     ctx.route_arm0_lane_last_eff_by_slot[lane_offset] = as_eff_index(eff_idx);
+                    insert_offer_lane(
+                        route_scope_lane_words_mut(
+                            ctx.route_scope_arm0_lane_words,
+                            ctx.route_scope_entries[entry_idx].lane_word_start(),
+                            ctx.route_lane_word_len,
+                        ),
+                        lane_idx as u8,
+                    );
                 } else if arm == 1 {
                     insert_offer_lane(
                         route_scope_lane_words_mut(
@@ -1802,32 +2332,24 @@ fn handle_atom_for_role<P: TypestateProgramView>(
     *loop_entry_len_out = loop_entry_len;
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct RoleTypestateWalkRows {
+    pub(super) len: u16,
+    pub(super) scope_entries_len: u16,
+}
+
 #[inline(never)]
-pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
+pub(super) unsafe fn stream_role_typestate_node_rows<P: TypestateProgramView>(
     role: u8,
-    storage: &mut super::builder::RoleTypestateInitStorage<'_>,
+    storage: &mut super::builder::RoleTypestateRowDestinations<'_>,
     scratch: &mut RoleTypestateBuildScratch,
     len_dst: *mut u16,
-    scope_registry_dst: *mut super::registry::ScopeRegistry,
     program: P,
-) {
-    let slice = program.as_slice();
+) -> RoleTypestateWalkRows {
     let scope_markers = program.scope_markers();
     let nodes = unsafe { core::slice::from_raw_parts_mut(storage.nodes_ptr, storage.nodes_cap) };
     let lane_slot_count = storage.lane_slot_count;
-    let scope_slots_by_scope = storage.scope_slots_by_scope;
-    let route_dense_by_slot = storage.route_dense_by_slot;
-    let route_records = storage.route_records;
-    let route_offer_lane_words = storage.route_offer_lane_words;
-    let route_arm1_lane_words = storage.route_arm1_lane_words;
     let route_lane_word_len = storage.route_lane_word_len;
-    let route_dispatch_shapes = storage.route_dispatch_shapes;
-    let route_dispatch_shape_cap = storage.route_dispatch_shape_cap;
-    let route_dispatch_entries = storage.route_dispatch_entries;
-    let route_dispatch_entry_cap = storage.route_dispatch_entry_cap;
-    let route_dispatch_targets = storage.route_dispatch_targets;
-    let route_dispatch_target_cap = storage.route_dispatch_target_cap;
-    let route_scope_cap = storage.route_scope_cap;
     let lane_matrix_len = storage
         .scope_records
         .len()
@@ -1872,11 +2394,20 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
             core::slice::from_raw_parts_mut(storage.route_arm1_lane_words, route_lane_word_cap)
         }
     };
+    let route_scope_arm0_lane_words = if route_lane_word_cap == 0 {
+        &mut []
+    } else {
+        unsafe {
+            core::slice::from_raw_parts_mut(storage.route_arm0_lane_words, route_lane_word_cap)
+        }
+    };
     route_scope_offer_lane_words.fill(0);
+    route_scope_arm0_lane_words.fill(0);
     route_scope_arm1_lane_words.fill(0);
 
-    let loop_entry_ids = &mut scratch.loop_entry_ids;
-    let loop_entry_states = &mut scratch.loop_entry_states;
+    let fixed = unsafe { scratch.fixed_mut() };
+    let loop_entry_ids = &mut fixed.loop_entry_ids;
+    let loop_entry_states = &mut fixed.loop_entry_states;
     let mut loop_entry_len = 0usize;
 
     // Track the last node index of each arm for linger (loop) scopes.
@@ -1886,9 +2417,9 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
     // Capacity = MAX_EFF_NODES (can have at most one linger scope per effect node).
     const MAX_LINGER_ARM_TRACK: usize = eff::meta::MAX_EFF_NODES;
     const LINGER_ARM_NO_NODE: u16 = u16::MAX;
-    let linger_arm_last_node = &mut scratch.linger_arm_last_node;
-    let linger_arm_scope_ids = &mut scratch.linger_arm_scope_ids;
-    let linger_arm_current = &mut scratch.linger_arm_current; // current arm (0 or 1)
+    let linger_arm_last_node = unsafe { scratch.linger_arm_last_node_mut() };
+    let linger_arm_scope_ids = unsafe { scratch.linger_arm_scope_ids_mut() };
+    let linger_arm_current = unsafe { scratch.linger_arm_current_mut() }; // current arm (0 or 1)
     let mut linger_arm_len = 0usize;
 
     // Track passive observer arm boundaries for linger (loop) scopes.
@@ -1897,7 +2428,7 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
     // This allows inserting PassiveObserverBranch Jump nodes at scope exit.
     // Use u16::MAX as sentinel for "not set" to distinguish from node_len == 0.
     const PASSIVE_ARM_UNSET: u16 = u16::MAX;
-    let linger_passive_arm_start = &mut scratch.linger_passive_arm_start;
+    let linger_passive_arm_start = unsafe { scratch.linger_passive_arm_start_mut() };
     // Non-linger Route arm tracking for RouteArmEnd Jump generation.
     // Uses "Scope-as-Block" strategy: treat nested scopes as opaque blocks.
     // - last_step_was_scope[stack_idx]: true if last step was a scope exit
@@ -1908,50 +2439,52 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
     // - 0 = loop_start (LoopContinue)
     // - 1 = scope_end (LoopBreak)
     // - 2 = scope_end (RouteArmEnd)
-    // Capacity = MAX_STATES (at most one backpatch per node).
-    let jump_backpatch_indices = &mut scratch.jump_backpatch_indices;
-    let jump_backpatch_scopes = &mut scratch.jump_backpatch_scopes;
-    let jump_backpatch_kinds = &mut scratch.jump_backpatch_kinds;
+    // Capacity = typestate node capacity (at most one backpatch per node).
+    let jump_backpatch_indices = unsafe { scratch.jump_backpatch_indices_mut() };
+    let jump_backpatch_scopes = unsafe { scratch.jump_backpatch_scopes_mut() };
+    let jump_backpatch_kinds = unsafe { scratch.jump_backpatch_kinds_mut() };
     let mut jump_backpatch_len = 0usize;
 
     let mut node_len = 0usize;
     let mut eff_idx = 0usize;
 
     let mut scope_marker_idx = 0usize;
-    let scope_stack = &mut scratch.scope_stack;
-    let scope_stack_kinds = &mut scratch.scope_stack_kinds;
-    let scope_stack_entries = &mut scratch.scope_stack_entries;
+    let scope_stack = unsafe { scratch.scope_stack_mut() };
+    let scope_stack_kinds = unsafe { scratch.scope_stack_kinds_mut() };
+    let scope_stack_entries = unsafe { scratch.scope_stack_entries_mut() };
     // Track current arm number for each route scope in the stack.
     // Starts at 0 (no arm yet), incremented when a dynamic control recv is found.
-    let route_current_arm = &mut scratch.route_current_arm;
-    let scope_controller_roles = &mut scratch.scope_controller_roles;
-    let scope_route_policy_tags = &mut scratch.scope_route_policy_tags;
-    let scope_route_policy_ids = &mut scratch.scope_route_policy_ids;
-    let scope_route_policy_effs = &mut scratch.scope_route_policy_effs;
+    let route_current_arm = unsafe { scratch.route_current_arm_mut() };
+    let scope_controller_roles = unsafe { scratch.scope_controller_roles_mut() };
+    let scope_route_policy_tags = unsafe { scratch.scope_route_policy_tags_mut() };
+    let scope_route_policy_ids = unsafe { scratch.scope_route_policy_ids_mut() };
+    let scope_route_policy_effs = unsafe { scratch.scope_route_policy_effs_mut() };
     // Scope-as-Block: Track whether the last step was a scope exit (for nested route handling).
-    let last_step_was_scope = &mut scratch.last_step_was_scope;
+    let mut last_step_was_scope = unsafe { scratch.last_step_was_scope_mut() };
     // Scope-as-Block: Track the last node index for each arm in non-linger Route scopes.
     // route_arm_last_node[stack_idx][arm] = last node index for that arm.
-    let route_arm_last_node = &mut scratch.route_arm_last_node;
+    let route_arm_last_node = unsafe { scratch.route_arm_last_node_mut() };
     // Non-linger Route passive observer tracking using is_immediate_reenter method.
     // The arm boundary is detected via Exit→Enter pairs in ScopeEvent, not via
     // other roles' self-send messages (which passive observers don't see).
     //
     // route_enter_count[stack_idx] = number of Enter events for this scope.
     // arm number = enter_count - 1 (arm 0 at first Enter, arm 1 at second Enter).
-    let route_enter_count = &mut scratch.route_enter_count;
+    let route_enter_count = unsafe { scratch.route_enter_count_mut() };
     // route_passive_arm_start[stack_idx][arm] = node_len at arm start.
     // Use u16::MAX as sentinel for "not set".
     const ROUTE_PASSIVE_ARM_UNSET: u16 = u16::MAX;
-    let route_passive_arm_start = &mut scratch.route_passive_arm_start;
+    let route_passive_arm_start = unsafe { scratch.route_passive_arm_start_mut() };
     let mut scope_stack_len = 0usize;
     let scope_entries = &mut *storage.scope_records;
-    let route_scope_entries = &mut scratch.route_scope_entries;
+    let route_scope_entries = unsafe { scratch.route_scope_entries_mut() };
+    let scan_stack = unsafe { scratch.scan_stack_mut() };
+    let visited = unsafe { scratch.visited_mut() };
     let mut scope_entries_len = 0usize;
     let mut scope_range_counter: u16 = 0;
     let mut route_scope_lane_word_cursor = 0usize;
 
-    while eff_idx <= slice.len() {
+    while eff_idx <= program.len() {
         while scope_marker_idx < scope_markers.len()
             && scope_markers[scope_marker_idx].offset == eff_idx
         {
@@ -1959,7 +2492,7 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
             let scope = marker.scope_id;
             match marker.event {
                 ScopeEvent::Enter => {
-                    if scope_stack_len >= eff::meta::MAX_EFF_NODES {
+                    if scope_stack_len >= scope_stack.len() {
                         panic!("structured scope stack overflow");
                     }
                     let parent_entry = if scope_stack_len == 0 {
@@ -1996,6 +2529,7 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                                 .checked_add(route_lane_word_len)
                                 .expect("route scope lane-word cursor overflow");
                             if lane_word_end > route_scope_offer_lane_words.len()
+                                || lane_word_end > route_scope_arm0_lane_words.len()
                                 || lane_word_end > route_scope_arm1_lane_words.len()
                             {
                                 panic!("route scope lane-word scratch overflow");
@@ -2007,6 +2541,12 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                             route_scope_entries[entry_idx].lane_word_start = lane_word_start as u16;
                             route_scope_lane_words_mut(
                                 route_scope_offer_lane_words,
+                                lane_word_start,
+                                route_lane_word_len,
+                            )
+                            .fill(0);
+                            route_scope_lane_words_mut(
+                                route_scope_arm0_lane_words,
                                 lane_word_start,
                                 route_lane_word_len,
                             )
@@ -2143,7 +2683,7 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                         if route_enter_count[stack_idx] == 1
                             && scope_route_policy_effs[entry_idx] == EffIndex::MAX
                         {
-                            let mut scope_end = slice.len();
+                            let mut scope_end = program.len();
                             let mut scan_idx = scope_marker_idx + 1;
                             let mut nest_depth = 1usize;
                             while scan_idx < scope_markers.len() {
@@ -2184,6 +2724,7 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                         scope_entries,
                         route_scope_entries,
                         route_scope_offer_lane_words,
+                        route_scope_arm0_lane_words,
                         route_scope_arm1_lane_words,
                         route_lane_word_len,
                         lane_slot_count,
@@ -2206,12 +2747,12 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                         scope_route_policy_effs,
                         last_step_was_scope,
                         route_arm_last_node,
-                        dispatch_table: &mut scratch.dispatch_table,
-                        prefix_actions: &mut scratch.prefix_actions,
-                        prefix_lens: &mut scratch.prefix_lens,
-                        arm_seen_recv: &mut scratch.arm_seen_recv,
-                        scan_stack: &mut scratch.scan_stack,
-                        visited: &mut scratch.visited,
+                        dispatch_table: &mut fixed.dispatch_table,
+                        prefix_actions: &mut fixed.prefix_actions,
+                        prefix_lens: &mut fixed.prefix_lens,
+                        arm_seen_recv: &mut fixed.arm_seen_recv,
+                        scan_stack: &mut *scan_stack,
+                        visited,
                     };
                     handle_scope_exit_for_role(
                         &mut walk_ctx,
@@ -2230,7 +2771,7 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
             scope_marker_idx += 1;
         }
 
-        if eff_idx == slice.len() {
+        if eff_idx == program.len() {
             break;
         }
 
@@ -2260,13 +2801,14 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
             search -= 1;
         }
 
-        let eff = slice[eff_idx];
+        let eff = program.node_at(eff_idx);
         if matches!(eff.kind, eff::EffKind::Atom) {
             let mut walk_ctx = RoleWalkCtx {
                 nodes,
                 scope_entries,
                 route_scope_entries,
                 route_scope_offer_lane_words,
+                route_scope_arm0_lane_words,
                 route_scope_arm1_lane_words,
                 route_lane_word_len,
                 lane_slot_count,
@@ -2289,12 +2831,12 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
                 scope_route_policy_effs,
                 last_step_was_scope,
                 route_arm_last_node,
-                dispatch_table: &mut scratch.dispatch_table,
-                prefix_actions: &mut scratch.prefix_actions,
-                prefix_lens: &mut scratch.prefix_lens,
-                arm_seen_recv: &mut scratch.arm_seen_recv,
-                scan_stack: &mut scratch.scan_stack,
-                visited: &mut scratch.visited,
+                dispatch_table: &mut fixed.dispatch_table,
+                prefix_actions: &mut fixed.prefix_actions,
+                prefix_lens: &mut fixed.prefix_lens,
+                arm_seen_recv: &mut fixed.arm_seen_recv,
+                scan_stack: &mut *scan_stack,
+                visited,
             };
             handle_atom_for_role(
                 &mut walk_ctx,
@@ -2365,28 +2907,171 @@ pub(super) unsafe fn init_role_typestate_value<P: TypestateProgramView>(
     nodes[node_len] = LocalNode::terminal(terminal_index);
     unsafe {
         len_dst.write(encode_typestate_len(node_len + 1));
-        init_scope_registry(
+    }
+    RoleTypestateWalkRows {
+        len: encode_typestate_len(node_len + 1),
+        scope_entries_len: encode_typestate_len(scope_entries_len),
+    }
+}
+
+#[inline(never)]
+pub(super) unsafe fn stream_role_scope_rows(
+    storage: &mut super::builder::RoleTypestateRowDestinations<'_>,
+    scope_registry_dst: *mut super::registry::ScopeRegistry,
+    scope_entries_len: u16,
+) {
+    unsafe {
+        stream_scope_registry_scope_rows(
             scope_registry_dst,
-            scope_entries.as_mut_ptr(),
-            scope_slots_by_scope,
-            route_dense_by_slot,
-            route_records,
-            route_scope_cap,
-            route_offer_lane_words,
-            route_arm1_lane_words,
-            route_lane_word_len,
-            route_dispatch_shapes,
-            route_dispatch_shape_cap,
-            route_dispatch_entries,
-            route_dispatch_entry_cap,
-            route_dispatch_targets,
-            route_dispatch_target_cap,
-            route_scope_entries.as_mut_ptr(),
+            storage.scope_records.as_mut_ptr(),
+            storage.scope_slots_by_scope,
+            scope_entries_len as usize,
+        );
+    }
+}
+
+#[inline(never)]
+pub(super) unsafe fn stream_role_route_slot_rows(
+    storage: &mut super::builder::RoleTypestateRowDestinations<'_>,
+    scope_registry_dst: *mut super::registry::ScopeRegistry,
+    scope_entries_len: u16,
+) {
+    unsafe {
+        stream_scope_registry_route_slot_rows(
+            scope_registry_dst,
+            storage.scope_records.as_mut_ptr(),
+            storage.route_dense_by_slot,
+            storage.route_scope_cap,
+            scope_entries_len as usize,
+        );
+    }
+}
+
+#[inline(never)]
+pub(super) unsafe fn stream_role_lane_mask_rows(
+    storage: &mut super::builder::RoleTypestateRowDestinations<'_>,
+    scratch: &mut RoleTypestateBuildScratch,
+    scope_registry_dst: *mut super::registry::ScopeRegistry,
+    scope_entries_len: u16,
+) {
+    let lane_slot_count = storage.lane_slot_count;
+    let lane_matrix_len = storage
+        .scope_records
+        .len()
+        .saturating_mul(storage.lane_slot_count);
+    let scope_lane_first_eff = if lane_matrix_len == 0 {
+        &mut []
+    } else {
+        unsafe { core::slice::from_raw_parts_mut(storage.scope_lane_first_eff, lane_matrix_len) }
+    };
+    let scope_lane_last_eff = if lane_matrix_len == 0 {
+        &mut []
+    } else {
+        unsafe { core::slice::from_raw_parts_mut(storage.scope_lane_last_eff, lane_matrix_len) }
+    };
+    let route_arm0_lane_last_eff_by_slot = if lane_matrix_len == 0 {
+        &mut []
+    } else {
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                storage.route_arm0_lane_last_eff_by_slot,
+                lane_matrix_len,
+            )
+        }
+    };
+    unsafe {
+        stream_scope_registry_lane_mask_rows(
+            storage.scope_records.as_mut_ptr(),
+            storage.route_dense_by_slot,
+            storage.route_offer_lane_words,
+            storage.route_arm0_lane_words,
+            storage.route_arm1_lane_words,
+            storage.route_lane_word_len,
+            scratch.route_scope_entries_mut().as_mut_ptr(),
+            route_arm0_lane_last_eff_by_slot.as_mut_ptr(),
+            lane_slot_count,
+            scope_entries_len as usize,
+        );
+        finalize_scope_registry_lane_rows(
+            scope_registry_dst,
             lane_slot_count,
             scope_lane_first_eff.as_mut_ptr(),
             scope_lane_last_eff.as_mut_ptr(),
-            route_arm0_lane_last_eff_by_slot.as_mut_ptr(),
-            scope_entries_len,
         );
+    }
+}
+
+#[inline(never)]
+pub(super) unsafe fn stream_role_route_record_rows(
+    storage: &mut super::builder::RoleTypestateRowDestinations<'_>,
+    scratch: &mut RoleTypestateBuildScratch,
+    scope_registry_dst: *mut super::registry::ScopeRegistry,
+    scope_entries_len: u16,
+) {
+    let lane_slot_count = storage.lane_slot_count;
+    let lane_matrix_len = storage
+        .scope_records
+        .len()
+        .saturating_mul(storage.lane_slot_count);
+    let route_arm0_lane_last_eff_by_slot = if lane_matrix_len == 0 {
+        &mut []
+    } else {
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                storage.route_arm0_lane_last_eff_by_slot,
+                lane_matrix_len,
+            )
+        }
+    };
+    unsafe {
+        stream_scope_registry_route_record_rows(
+            scope_registry_dst,
+            storage.scope_records.as_mut_ptr(),
+            storage.route_dense_by_slot,
+            storage.route_records,
+            storage.route_offer_lane_words,
+            storage.route_arm0_lane_words,
+            storage.route_arm1_lane_words,
+            storage.route_lane_word_len,
+            storage.route_dispatch_shapes,
+            storage.route_dispatch_shape_cap,
+            storage.route_dispatch_entries,
+            storage.route_dispatch_entry_cap,
+            storage.route_dispatch_targets,
+            storage.route_dispatch_target_cap,
+            scratch.route_scope_entries_mut().as_mut_ptr(),
+            lane_slot_count,
+            route_arm0_lane_last_eff_by_slot.as_mut_ptr(),
+            scope_entries_len as usize,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_scope_scratch_storage_is_descriptor_sized_not_segment_sized() {
+        let scope_128 = RoleTypestateBuildScratch::storage_end_from_start(0, 130, 128, 128);
+        let scope_129 = RoleTypestateBuildScratch::storage_end_from_start(0, 131, 129, 129);
+        let exact_stack_for_129_scopes =
+            RoleTypestateBuildScratch::storage_end_from_start(0, 131, 129, 2);
+        let max_state = RoleTypestateBuildScratch::storage_end_from_start(
+            0, MAX_STATES, MAX_STATES, MAX_STATES,
+        );
+
+        assert!(scope_129 > scope_128);
+        assert!(exact_stack_for_129_scopes < scope_129);
+        assert!(
+            scope_129
+                > RoleTypestateBuildScratch::storage_end_from_start(
+                    0,
+                    crate::eff::meta::MAX_SEGMENT_EFFS + 2,
+                    crate::eff::meta::MAX_SEGMENT_EFFS,
+                    crate::eff::meta::MAX_SEGMENT_EFFS,
+                )
+        );
+        assert!(scope_129 < max_state);
     }
 }

@@ -23,12 +23,17 @@ pub(crate) use self::registry::{
 pub(crate) use self::{builder::RoleTypestate, emit::phase_route_guard_for_built_state_for_role};
 pub(crate) use self::{
     builder::{
-        ARM_SHARED, MAX_FIRST_RECV_DISPATCH, RoleTypestateInitStorage, RoleTypestateValue,
+        ARM_SHARED, MAX_FIRST_RECV_DISPATCH, RoleTypestateRowDestinations, RoleTypestateValue,
         ScopeRegion,
     },
     cursor::{LoopMetadata, LoopRole, PhaseCursor, PhaseCursorState},
-    emit::{init_value_from_summary_for_role, phase_route_guard_for_state_for_role},
-    emit_walk::RoleTypestateBuildScratch,
+    emit::{
+        phase_route_guard_for_state_for_role, stream_value_header,
+        stream_value_lane_mask_rows_from_walk, stream_value_node_rows_from_summary_for_role,
+        stream_value_route_record_rows_from_walk, stream_value_route_slot_rows_from_walk,
+        stream_value_scope_rows_from_walk,
+    },
+    emit_walk::{RoleTypestateBuildScratch, RoleTypestateWalkRows},
     facts::{
         JumpReason, LocalAction, LocalMeta, LocalNode, MAX_STATES, PassiveArmNavigation, RecvMeta,
         SendMeta, state_index_to_usize,
