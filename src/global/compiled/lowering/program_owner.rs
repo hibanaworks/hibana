@@ -181,15 +181,6 @@ impl CompiledProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn route_controller_role(&self, scope_id: ScopeId) -> Option<u8> {
-        compiled_program_lookup_route_control(
-            &self.route_controls[..self.route_controls_len()],
-            scope_id,
-        )
-        .and_then(|record| record.controller_role())
-    }
-
-    #[inline(always)]
     pub(crate) fn route_controller(
         &self,
         scope_id: ScopeId,

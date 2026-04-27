@@ -597,19 +597,19 @@ mod tests {
             })
             .expect("route enter marker")
             .scope_id;
-        let compiled = crate::global::compiled::lowering::CompiledProgram::from_summary(&summary);
-
-        assert_eq!(compiled.route_controller_role(scope_id), Some(0));
-        let (policy, eff_index, resource_tag, op) = compiled
-            .route_controller(scope_id)
-            .expect("route controller atlas entry");
-        assert_eq!(
-            policy,
-            PolicyMode::dynamic(ROUTE_POLICY_ID).with_scope(scope_id)
-        );
-        assert_eq!(eff_index, EffIndex::ZERO);
-        assert_eq!(resource_tag, LoopContinueKind::TAG);
-        assert_eq!(op, ControlOp::LoopContinue);
+        with_compiled_program_facts(&summary, |compiled| {
+            assert_eq!(compiled.route_controller_role(scope_id), Some(0));
+            let (policy, eff_index, resource_tag, op) = compiled
+                .route_controller(scope_id)
+                .expect("route controller atlas entry");
+            assert_eq!(
+                policy,
+                PolicyMode::dynamic(ROUTE_POLICY_ID).with_scope(scope_id)
+            );
+            assert_eq!(eff_index, EffIndex::ZERO);
+            assert_eq!(resource_tag, LoopContinueKind::TAG);
+            assert_eq!(op, ControlOp::LoopContinue);
+        });
     }
 
     #[test]
@@ -656,14 +656,14 @@ mod tests {
             })
             .expect("outer route enter marker")
             .scope_id;
-        let compiled = crate::global::compiled::lowering::CompiledProgram::from_summary(&summary);
-
-        assert_eq!(compiled.route_controller_role(scope_id), Some(0));
-        assert_eq!(
-            compiled.route_controller(scope_id),
-            None,
-            "nested dynamic policies must not promote the enclosing static route"
-        );
+        with_compiled_program_facts(&summary, |compiled| {
+            assert_eq!(compiled.route_controller_role(scope_id), Some(0));
+            assert_eq!(
+                compiled.route_controller(scope_id),
+                None,
+                "nested dynamic policies must not promote the enclosing static route"
+            );
+        });
     }
 
     #[test]
