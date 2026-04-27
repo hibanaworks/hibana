@@ -1,7 +1,7 @@
 error[E0080]: evaluation panicked: route arms reuse the same label
  --> src/global/program.rs
   |
-  | /         assert_distinct_route_labels::<<Left as RouteArmHead>::Label, <Right as RouteArmHead>::Label>(
+  | /         assert_distinct_route_labels::<<Left as RouteArmHead>::Label, <Right as RouteArmHead>::L...
   | |         );
   | |_________^ evaluation of `<hibana::global::steps::RouteSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<5>, ()>>, hibana::global::steps::StepNil>> as hibana::global::program::BuildProgramSource>::SOURCE` failed inside this call
   |

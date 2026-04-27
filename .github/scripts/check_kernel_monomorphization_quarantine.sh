@@ -104,7 +104,6 @@ PY
 
 TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 rustup component add llvm-tools-preview --toolchain "${TOOLCHAIN}" >/dev/null
-cargo +"${TOOLCHAIN}" build -p hibana --features std --lib >/dev/null
 
 SYSROOT="$(rustup run "${TOOLCHAIN}" rustc --print sysroot)"
 HOST="$(rustup run "${TOOLCHAIN}" rustc -vV | sed -n 's|host: ||p')"
@@ -114,9 +113,25 @@ if [[ ! -x "${LLVM_NM}" ]]; then
   exit 1
 fi
 
+SYMBOL_TARGET_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hibana-kernel-target.XXXXXX")"
 SYMBOLS_FILE="$(mktemp "${TMPDIR:-/tmp}/hibana-kernel-symbols.XXXXXX")"
-trap 'rm -f "${SYMBOLS_FILE}"' EXIT
-"${LLVM_NM}" --demangle target/debug/deps/libhibana-*.rlib 2>/dev/null \
+cleanup_symbol_proof() {
+  rm -f "${SYMBOLS_FILE}"
+  rm -rf "${SYMBOL_TARGET_DIR}"
+}
+trap cleanup_symbol_proof EXIT
+
+CARGO_TARGET_DIR="${SYMBOL_TARGET_DIR}" cargo +"${TOOLCHAIN}" build -p hibana --features std --lib >/dev/null
+shopt -s nullglob
+HIBANA_RLIBS=("${SYMBOL_TARGET_DIR}"/debug/deps/libhibana-*.rlib)
+shopt -u nullglob
+if [[ "${#HIBANA_RLIBS[@]}" != "1" ]]; then
+  echo "kernel monomorphization quarantine violation: expected exactly one fresh hibana rlib, found ${#HIBANA_RLIBS[@]}" >&2
+  printf '%s\n' "${HIBANA_RLIBS[@]}" >&2
+  exit 1
+fi
+
+"${LLVM_NM}" --demangle "${HIBANA_RLIBS[0]}" 2>/dev/null \
   | rg '\bT hibana::endpoint::kernel::core::kernel_(recv|decode|send)::h[[:xdigit:]]+' \
   >"${SYMBOLS_FILE}"
 

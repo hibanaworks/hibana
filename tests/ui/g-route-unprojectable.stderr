@@ -33,7 +33,7 @@ note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<1>::val
  ::: src/global/compiled/lowering/seal.rs
   |
   | / ...   panic!(
-  | | ...       "Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dyn...
+  | | ...       "Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministi...
   | | ...   );
   | |_______- in this macro invocation
 
