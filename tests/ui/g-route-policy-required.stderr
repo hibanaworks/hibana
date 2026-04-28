@@ -1,10 +1,10 @@
 error[E0277]: `g::route(left, right)` arms must begin with a controller self-send
  --> tests/ui/g-route-policy-required.rs:6:37
   |
-6 | ...m<_> = g::route(left_arm, right_arm);
-  |           -------- ^^^^^^^^ route arm must begin with a controller self-send
-  |           |
-  |           required by a bound introduced by this call
+6 |     let _: g::Program<_> = g::route(left_arm, right_arm);
+  |                            -------- ^^^^^^^^ route arm must begin with a controller self-send
+  |                            |
+  |                            required by a bound introduced by this call
   |
   = help: the trait `hibana::global::RouteArmHead` is not implemented for `hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<3>, ()>>, hibana::global::steps::StepNil>`
 note: required by a bound in `route`
@@ -19,17 +19,17 @@ note: required by a bound in `route`
 error[E0277]: `g::route(left, right)` arms must begin with a controller self-send
  --> tests/ui/g-route-policy-required.rs:6:47
   |
-6 | ... = g::route(left_arm, right_arm);
-  |       --------           ^^^^^^^^^ route arm must begin with a controller self-send
-  |       |
-  |       required by a bound introduced by this call
+6 |     let _: g::Program<_> = g::route(left_arm, right_arm);
+  |                            --------           ^^^^^^^^^ route arm must begin with a controller self-send
+  |                            |
+  |                            required by a bound introduced by this call
   |
   = help: the trait `hibana::global::RouteArmHead` is not implemented for `hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<4>, ()>>, hibana::global::steps::StepNil>`
 note: required by a bound in `route`
  --> src/global.rs
   |
-  | ...const fn route<LeftSteps, RightSteps>(
-  |             ----- required by a bound in this function
+  | pub const fn route<LeftSteps, RightSteps>(
+  |              ----- required by a bound in this function
 ...
-  | ...RightSteps: RouteArmHead + TailLoopC...
-  |                ^^^^^^^^^^^^ required by this bound in `route`
+  |     RightSteps: RouteArmHead + TailLoopControl,
+  |                 ^^^^^^^^^^^^ required by this bound in `route`

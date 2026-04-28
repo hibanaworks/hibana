@@ -1,8 +1,8 @@
 error[E0080]: evaluation panicked: route-decision control messages require local path
  --> src/global.rs
   |
-  | ...   validate_control_descriptor_contract(spec);
-  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::global::Message<hibana::global::LabelMarker<124>, hibana::substrate::cap::GenericCapToken<WireRouteDecisionKind>, WireRouteDecisionKind> as hibana::global::MessageControlSpec>::CONTROL` failed inside this call
+  |         validate_control_descriptor_contract(spec);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::global::Message<hibana::global::LabelMarker<124>, hibana::substrate::cap::GenericCapToken<WireRouteDecisionKind>, WireRouteDecisionKind> as hibana::global::MessageControlSpec>::CONTROL` failed inside this call
   |
 note: inside `hibana::global::validate_control_descriptor_contract`
  --> $RUST/core/src/panic.rs
@@ -11,22 +11,22 @@ note: inside `hibana::global::validate_control_descriptor_contract`
   |
  ::: src/global.rs
   |
-  | ...   panic!("route-decision control messages require local path");
-  |       ------------------------------------------------------------ in this macro invocation
+  |                 panic!("route-decision control messages require local path");
+  |                 ------------------------------------------------------------ in this macro invocation
 
 note: erroneous constant encountered
  --> src/global.rs
   |
-  | ...ch <M as MessageControlSpec>::CONTROL {
-  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |             let path = match <M as MessageControlSpec>::CONTROL {
+  |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/global.rs
   |
   | /     const {
-  | |         let from = <From as KnownRole...
-  | |         let to = <To as KnownRole>::I...
-  | |         crate::global::validate_role_...
+  | |         let from = <From as KnownRole>::INDEX;
+  | |         let to = <To as KnownRole>::INDEX;
+  | |         crate::global::validate_role_index(from);
 ... |
   | |     }
   | |_____^

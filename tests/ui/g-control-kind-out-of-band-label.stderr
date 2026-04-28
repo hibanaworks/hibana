@@ -1,8 +1,8 @@
 error[E0080]: evaluation panicked: control labels must stay inside the reserved protocol-control range
  --> src/global.rs
   |
-  | ...   validate_control_label_contract::<LABEL, K>();
-  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::global::Message<hibana::global::LabelMarker<40>, hibana::substrate::cap::GenericCapToken<OutOfBandKind>, OutOfBandKind> as hibana::global::MessageControlSpec>::CONTROL` failed inside this call
+  |         validate_control_label_contract::<LABEL, K>();
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::global::Message<hibana::global::LabelMarker<40>, hibana::substrate::cap::GenericCapToken<OutOfBandKind>, OutOfBandKind> as hibana::global::MessageControlSpec>::CONTROL` failed inside this call
   |
 note: inside `hibana::global::validate_control_label_contract::<40, OutOfBandKind>`
  --> $RUST/core/src/panic.rs
@@ -11,22 +11,22 @@ note: inside `hibana::global::validate_control_label_contract::<40, OutOfBandKin
   |
  ::: src/global.rs
   |
-  | ...   panic!("control labels must stay inside the reserved protocol-control range");
-  |       ----------------------------------------------------------------------------- in this macro invocation
+  |             panic!("control labels must stay inside the reserved protocol-control range");
+  |             ----------------------------------------------------------------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global.rs
   |
-  | ...ch <M as MessageControlSpec>::CONTROL {
-  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |             let path = match <M as MessageControlSpec>::CONTROL {
+  |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/global.rs
   |
   | /     const {
-  | |         let from = <From as KnownRole...
-  | |         let to = <To as KnownRole>::I...
-  | |         crate::global::validate_role_...
+  | |         let from = <From as KnownRole>::INDEX;
+  | |         let to = <To as KnownRole>::INDEX;
+  | |         crate::global::validate_role_index(from);
 ... |
   | |     }
   | |_____^
@@ -38,7 +38,7 @@ note: the above error was encountered while instantiating `fn send::<Role<0>, Ro
    |  _____________^
 46 | |         g::Role<0>,
 47 | |         g::Role<1>,
-48 | |         g::Msg<40, GenericCapToken<Out...
+48 | |         g::Msg<40, GenericCapToken<OutOfBandKind>, OutOfBandKind>,
 49 | |         0,
 50 | |     >();
    | |_______^

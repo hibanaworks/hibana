@@ -16,7 +16,7 @@ bash ./.github/scripts/check_no_std_build.sh
 bash ./.github/scripts/check_warning_free.sh
 bash ./.github/scripts/check_hibana_public_api.sh
 bash ./.github/scripts/check_public_surface_budget.sh
-cargo +"${TOOLCHAIN}" test -p hibana --test ui --features std
+bash ./.github/scripts/run_ui_gate.sh
 cargo +"${TOOLCHAIN}" test -p hibana --test public_surface_guards --features std
 cargo +"${TOOLCHAIN}" test -p hibana --test substrate_surface --features std
 bash ./.github/scripts/check_segmented_lowering_hygiene.sh

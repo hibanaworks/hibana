@@ -1,5 +1,5 @@
 error[E0425]: cannot find type `ExternalControl` in module `hibana::substrate::cap`
  --> tests/ui/external_control_reintroduction.rs:4:58
   |
-4 | ...te::cap::ExternalControl<LoopContinueK...
-  |             ^^^^^^^^^^^^^^^ not found in `hibana::substrate::cap`
+4 |     let _ = core::mem::size_of::<hibana::substrate::cap::ExternalControl<LoopContinueKind>>();
+  |                                                          ^^^^^^^^^^^^^^^ not found in `hibana::substrate::cap`

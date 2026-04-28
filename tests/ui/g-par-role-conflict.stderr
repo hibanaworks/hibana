@@ -16,5 +16,5 @@ note: inside `hibana::global::program::par_binary::<hibana::global::steps::StepC
   |
  ::: src/global/program.rs
   |
-  | ...   panic!("parallel arms reuse a role on the same lane");
-  |       ----------------------------------------------------- in this macro invocation
+  |         panic!("parallel arms reuse a role on the same lane");
+  |         ----------------------------------------------------- in this macro invocation

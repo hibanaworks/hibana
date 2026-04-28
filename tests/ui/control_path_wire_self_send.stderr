@@ -5,16 +5,16 @@ error[E0080]: evaluation panicked: wire control messages require cross-role send
   |
  ::: src/global.rs
   |
-  | ...   panic!("wire control messages require cross-role send")
-  |       ------------------------------------------------------- in this macro invocation
+  |                     panic!("wire control messages require cross-role send")
+  |                     ------------------------------------------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global.rs
   |
   | /     const {
-  | |         let from = <From as KnownRole...
-  | |         let to = <To as KnownRole>::I...
-  | |         crate::global::validate_role_...
+  | |         let from = <From as KnownRole>::INDEX;
+  | |         let to = <To as KnownRole>::INDEX;
+  | |         crate::global::validate_role_index(from);
 ... |
   | |     }
   | |_____^
@@ -26,7 +26,7 @@ note: the above error was encountered while instantiating `fn send::<Role<0>, Ro
    |  _____________^
 46 | |         g::Role<0>,
 47 | |         g::Role<0>,
-48 | |         g::Msg<110, GenericCapToken<Lo...
+48 | |         g::Msg<110, GenericCapToken<LoadBeginKind>, LoadBeginKind>,
 49 | |         0,
 50 | |     >();
    | |_______^

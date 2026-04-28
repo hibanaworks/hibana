@@ -1,5 +1,5 @@
 error[E0425]: cannot find function `caps_mask_from_tag` in module `hibana::substrate::cap`
  --> tests/ui/caps_mask_from_tag_reintroduction.rs:2:37
   |
-2 | ...::cap::caps_mask_from_tag(0);
-  |           ^^^^^^^^^^^^^^^^^^ not found in `hibana::substrate::cap`
+2 |     let _ = hibana::substrate::cap::caps_mask_from_tag(0);
+  |                                     ^^^^^^^^^^^^^^^^^^ not found in `hibana::substrate::cap`

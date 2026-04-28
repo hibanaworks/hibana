@@ -1,5 +1,5 @@
 error[E0576]: cannot find method or associated constant `GRANTS` in trait `ControlResourceKind`
  --> tests/ui/composite_control_grants.rs:4:56
   |
-4 | ...sourceKind>::GRANTS;
-  |                 ^^^^^^ not found in `ControlResourceKind`
+4 |     let _ = <LoopContinueKind as ControlResourceKind>::GRANTS;
+  |                                                        ^^^^^^ not found in `ControlResourceKind`

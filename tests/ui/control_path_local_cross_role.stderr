@@ -5,16 +5,16 @@ error[E0080]: evaluation panicked: local control messages require self-send
   |
  ::: src/global.rs
   |
-  | ...   panic!("local control messages require self-send")
-  |       -------------------------------------------------- in this macro invocation
+  |                     panic!("local control messages require self-send")
+  |                     -------------------------------------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global.rs
   |
   | /     const {
-  | |         let from = <From as KnownRole...
-  | |         let to = <To as KnownRole>::I...
-  | |         crate::global::validate_role_...
+  | |         let from = <From as KnownRole>::INDEX;
+  | |         let to = <To as KnownRole>::INDEX;
+  | |         crate::global::validate_role_index(from);
 ... |
   | |     }
   | |_____^
@@ -26,7 +26,7 @@ note: the above error was encountered while instantiating `fn send::<Role<0>, Ro
    |  _____________^
  6 | |         g::Role<0>,
  7 | |         g::Role<1>,
- 8 | |         g::Msg<48, GenericCapToken<Loo...
+ 8 | |         g::Msg<48, GenericCapToken<LoopContinueKind>, LoopContinueKind>,
  9 | |         0,
 10 | |     >();
    | |_______^

@@ -883,7 +883,7 @@ cargo check --all-targets -p hibana
 cargo check --no-default-features --lib -p hibana
 
 cargo test -p hibana --features std
-cargo test -p hibana --test ui --features std
+bash ./.github/scripts/run_ui_gate.sh
 cargo test -p hibana --test policy_replay --features std
 cargo test -p hibana --test public_surface_guards --features std
 cargo test -p hibana --test substrate_surface --features std

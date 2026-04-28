@@ -12,19 +12,19 @@ note: inside `hibana::global::compiled::lowering::seal::validate_all_roles`
 note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<1>::validate_compiled_layout`
  --> src/global/compiled/lowering/seal.rs
   |
-  | ...   Self::validate_route_projection_guarantees(view);
-  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         Self::validate_route_projection_guarantees(view);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<1>::validate_route_projection_guarantees`
  --> src/global/compiled/lowering/seal.rs
   |
-  | / ...   Self::validate_route_scope(
-  | | ...       view,
-  | | ...       scope_markers,
-  | | ...       marker.scope_id,
-  | | ...       marker.controller_role,
-  | | ...       marker.linger,
-  | | ...   );
-  | |_______^
+  | /                 Self::validate_route_scope(
+  | |                     view,
+  | |                     scope_markers,
+  | |                     marker.scope_id,
+  | |                     marker.controller_role,
+  | |                     marker.linger,
+  | |                 );
+  | |_________________^
 note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<1>::validate_route_scope`
  --> $RUST/core/src/panic.rs
   |
@@ -33,7 +33,7 @@ note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<1>::val
  ::: src/global/compiled/lowering/seal.rs
   |
   | / ...   panic!(
-  | | ...       "Route unprojectable for th...
+  | | ...       "Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dyn...
   | | ...   );
   | |_______- in this macro invocation
 
@@ -52,17 +52,17 @@ note: erroneous constant encountered
 note: erroneous constant encountered
  --> src/global/role_program.rs
   |
-  | ...w(&ValidatedRoleImage::<Steps, ROLE>::IMAGE)
-  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::IMAGE)
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/global/role_program.rs
   |
-  | ...ew(&ValidatedRoleImage::<Steps, ROLE>::IMAGE)
-  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::IMAGE)
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: the above error was encountered while instantiating `fn project::<1, hibana::global::steps::RouteSteps<hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<118>, GenericCapToken<RouteControl<118, 0>>, RouteControl<118, 0>>>, hibana::global::steps::StepNil>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, hibana::global::steps::StepNil>>>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<119>, GenericCapToken<RouteControl<119, 0>>, RouteControl<119, 0>>>, hibana::global::steps::StepNil>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<42>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::SeqSteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<99>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<77>, ()>>, hibana::global::steps::StepNil>>>>>>`
   --> tests/ui/g-route-unprojectable.rs:49:43
    |
-49 | ...ogram<1> = project(&route);
-   |               ^^^^^^^^^^^^^^^
+49 |     let passive_program: RoleProgram<1> = project(&route);
+   |                                           ^^^^^^^^^^^^^^^

@@ -1,7 +1,7 @@
 error[E0432]: unresolved imports `hibana::substrate::cap::advanced::CancelAckKind`, `hibana::substrate::cap::advanced::CancelKind`
  --> tests/ui/core_cancel_kind_reintroduction.rs:1:40
   |
-1 | ...ed::{CancelAckKind, CancelKind};
-  |         ^^^^^^^^^^^^^  ^^^^^^^^^^ no `CancelKind` in `substrate::cap::advanced`
-  |         |
-  |         no `CancelAckKind` in `substrate::cap::advanced`
+1 | use hibana::substrate::cap::advanced::{CancelAckKind, CancelKind};
+  |                                        ^^^^^^^^^^^^^  ^^^^^^^^^^ no `CancelKind` in `substrate::cap::advanced`
+  |                                        |
+  |                                        no `CancelAckKind` in `substrate::cap::advanced`

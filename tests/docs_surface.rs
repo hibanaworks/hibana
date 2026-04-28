@@ -63,7 +63,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "bash ./.github/scripts/check_route_authority_taxonomy.sh",
         "bash ./.github/scripts/check_final_form_measurements.sh",
         "cargo check --all-targets -p hibana",
-        "cargo test -p hibana --test ui --features std",
+        "bash ./.github/scripts/run_ui_gate.sh",
     ] {
         assert!(
             readme.contains(required),
