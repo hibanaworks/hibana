@@ -1,5 +1,5 @@
 error[E0425]: cannot find type `CanonicalControl` in module `hibana::substrate::cap`
  --> tests/ui/canonical_control_reintroduction.rs:4:58
   |
-4 |     let _ = core::mem::size_of::<hibana::substrate::cap::CanonicalControl<LoopContinueKind>>();
-  |                                                          ^^^^^^^^^^^^^^^^ not found in `hibana::substrate::cap`
+4 | ...te::cap::CanonicalControl<LoopContinue...
+  |             ^^^^^^^^^^^^^^^^ not found in `hibana::substrate::cap`

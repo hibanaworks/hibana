@@ -1,26 +1,27 @@
 error[E0080]: evaluation panicked: control labels require capability payloads
  --> src/global.rs
   |
-  |         crate::global::validate_sendable_message::<M>();
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::send::<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<106>, ()>, 0>::{constant#0}` failed inside this call
+  | ...   crate::global::validate_sendable_message::<M>();
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::send::<hibana::g::Role<0>, hibana::g::Role<1>, hibana::global::Message<hibana::global::LabelMarker<106>, ()>, 0>::{constant#0}` failed inside this call
   |
 note: inside `hibana::global::validate_sendable_message::<hibana::global::Message<hibana::global::LabelMarker<106>, ()>>`
  --> $RUST/core/src/panic.rs
   |
-  = note: the failure occurred here
+  | ...   $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
   |
  ::: src/global.rs
   |
-  |         panic!("control labels require capability payloads");
-  |         ---------------------------------------------------- in this macro invocation
+  | ...   panic!("control labels require capability payloads");
+  |       ---------------------------------------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global.rs
   |
   | /     const {
-  | |         let from = <From as KnownRole>::INDEX;
-  | |         let to = <To as KnownRole>::INDEX;
-  | |         crate::global::validate_role_index(from);
+  | |         let from = <From as KnownRole...
+  | |         let to = <To as KnownRole>::I...
+  | |         crate::global::validate_role_...
 ... |
   | |     }
   | |_____^
@@ -28,5 +29,5 @@ note: erroneous constant encountered
 note: the above error was encountered while instantiating `fn send::<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<106>, ()>, 0>`
  --> tests/ui/g-control-band-min-plain-message.rs:4:13
   |
-4 |     let _ = g::send::<g::Role<0>, g::Role<1>, g::Msg<106, ()>, 0>();
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4 | ... = g::send::<g::Role<0>, g::Role<1>, g::Msg<106, ()>, 0>();
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

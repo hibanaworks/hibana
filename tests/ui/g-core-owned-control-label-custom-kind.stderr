@@ -1,32 +1,33 @@
 error[E0080]: evaluation panicked: core-owned control label is reserved
  --> src/global.rs
   |
-  |         validate_control_label_contract::<LABEL, K>();
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::global::Message<hibana::global::LabelMarker<57>, hibana::substrate::cap::GenericCapToken<FakeRouteDecisionKind>, FakeRouteDecisionKind> as hibana::global::MessageControlSpec>::CONTROL` failed inside this call
+  | ...   validate_control_label_contract::<LABEL, K>();
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<hibana::global::Message<hibana::global::LabelMarker<57>, hibana::substrate::cap::GenericCapToken<FakeRouteDecisionKind>, FakeRouteDecisionKind> as hibana::global::MessageControlSpec>::CONTROL` failed inside this call
   |
 note: inside `hibana::global::validate_control_label_contract::<57, FakeRouteDecisionKind>`
  --> $RUST/core/src/panic.rs
   |
-  = note: the failure occurred here
+  | ...   $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
   |
  ::: src/global.rs
   |
-  |                 panic!("core-owned control label is reserved");
-  |                 ---------------------------------------------- in this macro invocation
+  | ...   panic!("core-owned control label is reserved");
+  |       ---------------------------------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global.rs
   |
-  |             let path = match <M as MessageControlSpec>::CONTROL {
-  |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | ...ch <M as MessageControlSpec>::CONTROL {
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/global.rs
   |
   | /     const {
-  | |         let from = <From as KnownRole>::INDEX;
-  | |         let to = <To as KnownRole>::INDEX;
-  | |         crate::global::validate_role_index(from);
+  | |         let from = <From as KnownRole...
+  | |         let to = <To as KnownRole>::I...
+  | |         crate::global::validate_role_...
 ... |
   | |     }
   | |_____^

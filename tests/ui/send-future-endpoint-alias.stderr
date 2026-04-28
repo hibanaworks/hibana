@@ -1,10 +1,10 @@
 error[E0107]: struct takes 1 generic argument but 2 generic arguments were supplied
   --> tests/ui/send-future-endpoint-alias.rs:37:20
    |
-37 |     endpoint: &mut Endpoint<'r, 0, SessionKit<'cfg, T, U, C, MAX_RV>>,
-   |                    ^^^^^^^^      ----------------------------------- help: remove the unnecessary generic argument
-   |                    |
-   |                    expected 1 generic argument
+37 | ...ut Endpoint<'r, 0, SessionKit<'cfg, T, U, C, MAX_RV>>,
+   |       ^^^^^^^^      ----------------------------------- help: remove the unnecessary generic argument
+   |       |
+   |       expected 1 generic argument
    |
 note: struct defined here, with 1 generic parameter: `ROLE`
   --> src/endpoint.rs
@@ -15,10 +15,10 @@ note: struct defined here, with 1 generic parameter: `ROLE`
 error[E0499]: cannot borrow `*endpoint` as mutable more than once at a time
   --> tests/ui/send-future-endpoint-alias.rs:46:23
    |
-44 |     let flow = endpoint.flow::<g::Msg<7, Payload>>().unwrap();
-   |                -------- first mutable borrow occurs here
-45 |     let send = flow.send(&Payload(1));
-46 |     let _flow_again = endpoint.flow::<g::Msg<7, Payload>>().unwrap();
-   |                       ^^^^^^^^ second mutable borrow occurs here
-47 |     let _ = send;
-   |             ---- first borrow later used here
+44 | ...et flow = endpoint.flow::<g::Msg<7, P...
+   |              -------- first mutable borrow occurs here
+45 | ...et send = flow.send(&Payload(1));
+46 | ...et _flow_again = endpoint.flow::<g::M...
+   |                     ^^^^^^^^ second mutable borrow occurs here
+47 | ...et _ = send;
+   |           ---- first borrow later used here

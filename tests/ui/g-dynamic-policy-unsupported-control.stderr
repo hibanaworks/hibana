@@ -1,8 +1,8 @@
 error[E0080]: evaluation panicked: dynamic policy attached to unsupported control op
  --> src/global/program.rs
   |
-  |         let summary = LoweringSummary::scan_const(<Steps as BuildProgramSource>::SOURCE.eff_list());
-  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::ValidatedProgram::<hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<124>, hibana::substrate::cap::GenericCapToken<PolicyAnnotateKind>, PolicyAnnotateKind>>, hibana::global::steps::StepNil>, 7>>::SUMMARY` failed inside this call
+  | ... = LoweringSummary::scan_const(<Steps as BuildProgramSource>::SOURCE.eff_list());
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::global::program::ValidatedProgram::<hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<124>, hibana::substrate::cap::GenericCapToken<PolicyAnnotateKind>, PolicyAnnotateKind>>, hibana::global::steps::StepNil>, 7>>::SUMMARY` failed inside this call
   |
 note: inside `hibana::global::compiled::lowering::driver::LoweringSummary::scan_const`
  --> src/global/compiled/lowering/driver.rs
@@ -12,17 +12,18 @@ note: inside `hibana::global::compiled::lowering::driver::LoweringSummary::scan_
 note: inside `hibana::global::compiled::lowering::driver::LoweringSummary::scan_impl`
  --> src/global/compiled/lowering/driver.rs
   |
-  |         Self::scan_into(&mut summary, eff_list);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | ...   Self::scan_into(&mut summary, eff_list);
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: inside `hibana::global::compiled::lowering::driver::LoweringSummary::scan_into`
  --> $RUST/core/src/panic.rs
   |
-  = note: the failure occurred here
+  | ...   $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
   |
  ::: src/global/compiled/lowering/driver.rs
   |
-  | ...                   panic!("dynamic policy attached to unsupported control op");
-  |                       ----------------------------------------------------------- in this macro invocation
+  | ...   panic!("dynamic policy attached to unsupported control op");
+  |       ----------------------------------------------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global/program.rs
@@ -39,17 +40,17 @@ note: erroneous constant encountered
 note: erroneous constant encountered
  --> src/global/role_program.rs
   |
-  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::IMAGE)
-  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | ...w(&ValidatedRoleImage::<Steps, ROLE>::IMAGE)
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/global/role_program.rs
   |
-  |     RoleProgram::new(&ValidatedRoleImage::<Steps, ROLE>::IMAGE)
-  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | ...ew(&ValidatedRoleImage::<Steps, ROLE>::IMAGE)
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: the above error was encountered while instantiating `fn project::<0, hibana::global::steps::PolicySteps<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<0>, hibana::global::Message<hibana::global::LabelMarker<124>, GenericCapToken<PolicyAnnotateKind>, PolicyAnnotateKind>>, hibana::global::steps::StepNil>, 7>>`
   --> tests/ui/g-dynamic-policy-unsupported-control.rs:59:57
    |
-59 |     let _: hibana::substrate::program::RoleProgram<0> = project(&program);
-   |                                                         ^^^^^^^^^^^^^^^^^
+59 | ...gram<0> = project(&program);
+   |              ^^^^^^^^^^^^^^^^^

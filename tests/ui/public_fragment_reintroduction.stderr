@@ -1,5 +1,5 @@
 error[E0425]: cannot find type `Fragment` in module `hibana::substrate::program`
  --> tests/ui/public_fragment_reintroduction.rs:2:62
   |
-2 |     let _ = core::mem::size_of::<hibana::substrate::program::Fragment<()>>();
-  |                                                              ^^^^^^^^ not found in `hibana::substrate::program`
+2 | ...::program::Fragment<()>>();
+  |               ^^^^^^^^ not found in `hibana::substrate::program`

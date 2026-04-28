@@ -12,9 +12,10 @@ note: inside `par::<hibana::global::steps::StepCons<hibana::global::steps::SendS
 note: inside `hibana::global::program::par_binary::<hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<1>, hibana::global::Message<hibana::global::LabelMarker<3>, ()>>, hibana::global::steps::StepNil>, hibana::global::steps::StepCons<hibana::global::steps::SendStep<Role<0>, Role<2>, hibana::global::Message<hibana::global::LabelMarker<4>, ()>>, hibana::global::steps::StepNil>>`
  --> $RUST/core/src/panic.rs
   |
-  = note: the failure occurred here
+  | ...   $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
   |
  ::: src/global/program.rs
   |
-  |         panic!("parallel arms reuse a role on the same lane");
-  |         ----------------------------------------------------- in this macro invocation
+  | ...   panic!("parallel arms reuse a role on the same lane");
+  |       ----------------------------------------------------- in this macro invocation

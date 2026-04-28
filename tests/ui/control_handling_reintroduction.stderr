@@ -1,5 +1,5 @@
 error[E0433]: cannot find `ControlHandling` in `cap`
  --> tests/ui/control_handling_reintroduction.rs:2:37
   |
-2 |     let _ = hibana::substrate::cap::ControlHandling::Canonical;
-  |                                     ^^^^^^^^^^^^^^^ could not find `ControlHandling` in `cap`
+2 | ...te::cap::ControlHandling::Canonical;
+  |             ^^^^^^^^^^^^^^^ could not find `ControlHandling` in `cap`
