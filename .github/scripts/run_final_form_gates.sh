@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+source "${ROOT_DIR}/.github/scripts/configure_ui_diagnostics.sh"
 
 bash ./.github/scripts/check_text_integrity.sh
 bash ./.github/scripts/check_rust_1_95_stable.sh
