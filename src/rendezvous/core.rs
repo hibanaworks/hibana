@@ -4774,14 +4774,14 @@ mod epf_tests {
         );
     }
 
-    fn route_summary() -> LoweringSummary {
+    fn route_summary() -> &'static LoweringSummary {
         let program = g::send::<Role<0>, Role<1>, Msg<11, u32>, 0>();
-        program.summary().clone()
+        program.summary()
     }
 
-    fn route_summary_alt() -> LoweringSummary {
+    fn route_summary_alt() -> &'static LoweringSummary {
         let program = g::send::<Role<0>, Role<1>, Msg<12, u32>, 0>();
-        program.summary().clone()
+        program.summary()
     }
 
     #[test]

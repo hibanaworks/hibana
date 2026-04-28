@@ -1112,10 +1112,16 @@ mod tests {
     static SCOPE_ENTER_AT_BOUNDARY: EffList = scope_enter_at_boundary_program();
     static SCOPE_EXIT_AT_BOUNDARY: EffList = scope_exit_at_boundary_program();
     static CONTROL_SPEC_AT_BOUNDARY: EffList = control_spec_at_boundary_program();
+    static SCOPE_ENTER_AT_BOUNDARY_SUMMARY: LoweringSummary =
+        LoweringSummary::scan_const(&SCOPE_ENTER_AT_BOUNDARY);
+    static SCOPE_EXIT_AT_BOUNDARY_SUMMARY: LoweringSummary =
+        LoweringSummary::scan_const(&SCOPE_EXIT_AT_BOUNDARY);
+    static CONTROL_SPEC_AT_BOUNDARY_SUMMARY: LoweringSummary =
+        LoweringSummary::scan_const(&CONTROL_SPEC_AT_BOUNDARY);
 
     #[test]
     fn lowering_scope_enter_at_exact_segment_boundary_belongs_to_next_segment() {
-        let summary = LoweringSummary::scan_const(&SCOPE_ENTER_AT_BOUNDARY);
+        let summary = &SCOPE_ENTER_AT_BOUNDARY_SUMMARY;
 
         assert_eq!(summary.segment_summary(0).scope_marker_len(), 0);
         assert_eq!(summary.segment_summary(1).scope_marker_len(), 2);
@@ -1126,7 +1132,7 @@ mod tests {
 
     #[test]
     fn lowering_scope_exit_at_exact_segment_boundary_belongs_to_previous_segment() {
-        let summary = LoweringSummary::scan_const(&SCOPE_EXIT_AT_BOUNDARY);
+        let summary = &SCOPE_EXIT_AT_BOUNDARY_SUMMARY;
 
         assert_eq!(summary.segment_summary(0).scope_marker_len(), 2);
         assert_eq!(summary.segment_summary(0).route_scope_enter_len(), 1);
@@ -1137,7 +1143,7 @@ mod tests {
 
     #[test]
     fn lowering_control_spec_at_segment_boundary_belongs_to_effect_segment() {
-        let summary = LoweringSummary::scan_const(&CONTROL_SPEC_AT_BOUNDARY);
+        let summary = &CONTROL_SPEC_AT_BOUNDARY_SUMMARY;
 
         assert_eq!(summary.segment_summary(0).control_marker_len(), 0);
         assert_eq!(summary.segment_summary(0).policy_marker_len(), 0);
