@@ -11,8 +11,11 @@ note: inside `hibana::global::validate_control_descriptor_contract`
   |
  ::: src/global.rs
   |
-  |             panic!("cap-delegate control messages require the lower-layer endpoint token path");
-  |             ----------------------------------------------------------------------------------- in this macro invocation
+  | /             panic!(concat!(
+  | |                 "cap-delegate control messages require ",
+  | |                 "the lower-layer endpoint token path",
+  | |             ));
+  | |______________- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global.rs

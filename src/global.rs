@@ -841,7 +841,10 @@ where
 const fn validate_control_descriptor_contract(spec: StaticControlDesc) {
     match spec.op() {
         crate::control::cap::mint::ControlOp::CapDelegate => {
-            panic!("cap-delegate control messages require the lower-layer endpoint token path");
+            panic!(concat!(
+                "cap-delegate control messages require ",
+                "the lower-layer endpoint token path",
+            ));
         }
         crate::control::cap::mint::ControlOp::RouteDecision => {
             if !matches!(spec.scope_kind(), const_dsl::ControlScopeKind::Route) {

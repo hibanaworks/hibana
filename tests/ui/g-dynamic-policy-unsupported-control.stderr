@@ -15,14 +15,19 @@ note: inside `hibana::global::compiled::lowering::driver::LoweringSummary::scan_
   |         Self::scan_into(&mut summary, eff_list);
   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: inside `hibana::global::compiled::lowering::driver::LoweringSummary::scan_into`
+ --> src/global/compiled/lowering/driver.rs
+  |
+  | ...                   reject_dynamic_policy_unsupported();
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: inside `hibana::global::compiled::lowering::driver::reject_dynamic_policy_unsupported`
  --> $RUST/core/src/panic.rs
   |
   = note: the failure occurred here
   |
  ::: src/global/compiled/lowering/driver.rs
   |
-  | ...                   panic!("dynamic policy attached to unsupported control op");
-  |                       ----------------------------------------------------------- in this macro invocation
+  |     panic!("dynamic policy attached to unsupported control op");
+  |     ----------------------------------------------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global/program.rs

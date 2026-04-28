@@ -32,10 +32,12 @@ note: inside `hibana::global::compiled::lowering::seal::ProjectionSeal::<1>::val
   |
  ::: src/global/compiled/lowering/seal.rs
   |
-  | / ...   panic!(
-  | | ...       "Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dyn...
-  | | ...   );
-  | |_______- in this macro invocation
+  | /         panic!(concat!(
+  | |             "Route unprojectable for this role: arms not mergeable, ",
+  | |             "wire dispatch non-deterministic, ",
+  | |             "and no dynamic policy annotation provided",
+  | |         ));
+  | |__________- in this macro invocation
 
 note: erroneous constant encountered
  --> src/global/program.rs

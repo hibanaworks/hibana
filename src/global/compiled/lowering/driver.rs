@@ -22,6 +22,12 @@ use super::program_lowering::control_scope_mask_bit;
 const MAX_LOWERING_NODES: usize = crate::eff::meta::MAX_EFF_NODES;
 const ROUTE_SCOPE_ORDINAL_WORDS: usize = (MAX_LOWERING_NODES + 63) / 64;
 const MAX_TRACKED_ROLE_FACTS: usize = u16::BITS as usize;
+
+#[inline(always)]
+const fn reject_dynamic_policy_unsupported() -> ! {
+    panic!("dynamic policy attached to unsupported control op");
+}
+
 #[inline(always)]
 const fn checked_role_index(role: u8) -> usize {
     let role = role as usize;
@@ -455,7 +461,7 @@ impl<'a> LoweringView<'a> {
                             None => panic!("dynamic route policy requires controller control op"),
                         };
                         if !control.supports_dynamic_policy() {
-                            panic!("dynamic policy attached to unsupported control op");
+                            reject_dynamic_policy_unsupported();
                         }
                         return Some((policy, idx, control.resource_tag(), control.op()));
                     }
@@ -713,7 +719,7 @@ impl LoweringSummary {
                             && let Some(control_spec) = summary.validation.control_desc_at(idx)
                             && !control_spec.supports_dynamic_policy()
                         {
-                            panic!("dynamic policy attached to unsupported control op");
+                            reject_dynamic_policy_unsupported();
                         }
                         if atom.resource.is_some() {
                             summary.program.compiled_program_counts.resources += 1;

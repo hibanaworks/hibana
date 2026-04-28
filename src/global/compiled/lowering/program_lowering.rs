@@ -9,6 +9,11 @@ use crate::global::const_dsl::{
 use super::super::images::program::{DynamicPolicySite, RouteControlRecord};
 
 #[inline(always)]
+const fn reject_dynamic_policy_unsupported() -> ! {
+    panic!("dynamic policy attached to unsupported control op");
+}
+
+#[inline(always)]
 pub(super) const fn compiled_program_push_dynamic_policy_site(
     dynamic_policy_sites: &mut [DynamicPolicySite],
     dynamic_policy_sites_len: &mut usize,
@@ -164,7 +169,7 @@ pub(super) fn compiled_program_emit_atom_into_slices(
             .expect("control atom must carry a resource tag");
         let control_desc = control_desc.expect("control atom missing control descriptor");
         if policy.is_dynamic() && !control_desc.supports_dynamic_policy() {
-            panic!("dynamic policy attached to unsupported control op");
+            reject_dynamic_policy_unsupported();
         }
         if control_desc.label() != atom.label || control_desc.resource_tag() != resource_kind_tag {
             panic!("control atom/control descriptor mismatch");

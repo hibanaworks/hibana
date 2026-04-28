@@ -396,9 +396,11 @@ impl<const ROLE: u8> ProjectionSeal<ROLE> {
         ) {
             return;
         }
-        panic!(
-            "Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no dynamic policy annotation provided"
-        );
+        panic!(concat!(
+            "Route unprojectable for this role: arms not mergeable, ",
+            "wire dispatch non-deterministic, ",
+            "and no dynamic policy annotation provided",
+        ));
     }
 
     const fn route_arm_ranges(
