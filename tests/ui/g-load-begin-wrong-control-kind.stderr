@@ -1,8 +1,7 @@
 error[E0080]: evaluation panicked: wire control messages require cross-role send
  --> $RUST/core/src/panic.rs
   |
-  | ...   $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::send::<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<110>, hibana::substrate::cap::GenericCapToken<LoadBeginKind>, LoadBeginKind>, 0>::{constant#0}` failed here
+  = note: evaluation of `hibana::g::send::<hibana::g::Role<0>, hibana::g::Role<0>, hibana::global::Message<hibana::global::LabelMarker<110>, hibana::substrate::cap::GenericCapToken<LoadBeginKind>, LoadBeginKind>, 0>::{constant#0}` failed here
   |
  ::: src/global.rs
   |
