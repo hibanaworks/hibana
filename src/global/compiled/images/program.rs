@@ -23,15 +23,6 @@ pub(crate) struct DynamicPolicySite {
 }
 
 impl DynamicPolicySite {
-    #[cfg(test)]
-    pub(in crate::global::compiled) const EMPTY: Self = Self {
-        eff_index: EffIndex::ZERO,
-        label: 0,
-        resource_tag: None,
-        op: None,
-        policy: PolicyMode::Static,
-    };
-
     #[inline(always)]
     pub(in crate::global::compiled) const fn new(
         eff_index: EffIndex,
@@ -97,16 +88,6 @@ pub(crate) struct RouteControlRecord {
 }
 
 impl RouteControlRecord {
-    #[cfg(test)]
-    pub(in crate::global::compiled) const EMPTY: Self = Self {
-        scope_id: CompactScopeId::none(),
-        controller_role: ROUTE_CONTROL_NONE,
-        route_policy_tag: 0,
-        route_policy_op: None,
-        route_policy_id: u16::MAX,
-        route_policy_eff: EffIndex::MAX,
-    };
-
     #[inline(always)]
     pub(in crate::global::compiled) const fn new(
         scope_id: ScopeId,
@@ -520,14 +501,27 @@ mod tests {
             (value + mask) & !mask
         }
 
+        const STORAGE_BYTES: usize =
+            CompiledProgramFacts::max_persistent_bytes() + CompiledProgramFacts::persistent_align();
+        static STORAGE: std::sync::Mutex<[u8; STORAGE_BYTES]> =
+            std::sync::Mutex::new([0u8; STORAGE_BYTES]);
+
         let counts = summary.compiled_program_counts();
         let bytes = CompiledProgramFacts::persistent_bytes_for_counts(counts);
         let align = CompiledProgramFacts::persistent_align();
-        let mut storage = std::vec::Vec::with_capacity(bytes + align);
-        storage.resize(bytes + align, 0u8);
+        let mut storage = STORAGE
+            .lock()
+            .expect("compiled program image test storage lock poisoned");
+        assert!(
+            bytes + align <= storage.len(),
+            "compiled program image test storage must cover max persistent image"
+        );
         let base = storage.as_mut_ptr() as usize;
         let aligned = align_up(base, align) as *mut CompiledProgramFacts;
-        debug_assert!((aligned as usize) + bytes <= base + storage.len());
+        assert!(
+            (aligned as usize) + bytes <= base + storage.len(),
+            "compiled program image test storage alignment exceeded backing storage"
+        );
         unsafe {
             crate::global::compiled::lowering::program_image_builder::init_compiled_program_image_from_summary(aligned, summary);
             let result = f(&*aligned);
@@ -547,17 +541,34 @@ mod tests {
         .policy::<ROUTE_POLICY_ID>();
 
         let summary = program.summary();
-        let compiled = crate::global::compiled::lowering::CompiledProgram::from_summary(&summary);
-        let mut sites = compiled.dynamic_policy_sites_for(ROUTE_POLICY_ID);
-        let site = sites.next().expect("route policy site");
-        assert!(
-            sites.next().is_none(),
-            "expected single dynamic policy site"
-        );
-        assert_eq!(site.label(), LABEL_ROUTE_DECISION);
-        assert_eq!(site.resource_tag(), Some(RouteDecisionKind::TAG));
+        with_compiled_program_facts(&summary, |compiled| {
+            let mut sites = compiled.dynamic_policy_sites_for(ROUTE_POLICY_ID);
+            let site = sites.next().expect("route policy site");
+            assert!(
+                sites.next().is_none(),
+                "expected single dynamic policy site"
+            );
+            assert_eq!(site.label(), LABEL_ROUTE_DECISION);
+            assert_eq!(site.resource_tag(), Some(RouteDecisionKind::TAG));
+        });
 
-        let budget = compiled.lease_budget;
+        let mut budget = crate::control::lease::planner::LeaseGraphBudget::new();
+        let view = summary.view();
+        let mut segment_idx = 0usize;
+        while segment_idx < view.segment_count() {
+            let segment = view.segment_at(segment_idx);
+            let mut local = 0usize;
+            while local < segment.len() {
+                let node = segment.node_at_local(local);
+                if matches!(node.kind, crate::eff::EffKind::Atom) {
+                    let policy = segment.policy_at_local(local).unwrap_or(PolicyMode::Static);
+                    budget = budget.include_atom(segment.control_desc_at_local(local), policy);
+                }
+                local += 1;
+            }
+            segment_idx += 1;
+        }
+        budget.validate();
         assert!(!budget.requires_caps());
         assert!(!budget.requires_topology());
         assert!(!budget.requires_delegation());
@@ -763,13 +774,14 @@ mod tests {
         let program = g::seq(cancel, g::seq(fence, route));
 
         let summary = program.summary();
-        let compiled = crate::global::compiled::lowering::CompiledProgram::from_summary(&summary);
-        let effect_envelope = compiled.effect_envelope();
+        with_compiled_program_facts(&summary, |compiled| {
+            let effect_envelope = compiled.effect_envelope();
 
-        assert_eq!(effect_envelope.resources().count(), 3);
-        assert!(
-            effect_envelope.control_scopes().next().is_none(),
-            "no-op control scopes should not stay in the runtime reset mask"
-        );
+            assert_eq!(effect_envelope.resources().count(), 3);
+            assert!(
+                effect_envelope.control_scopes().next().is_none(),
+                "no-op control scopes should not stay in the runtime reset mask"
+            );
+        });
     }
 }

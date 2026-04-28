@@ -8,9 +8,6 @@ use crate::global::const_dsl::{
 
 use super::super::images::program::{DynamicPolicySite, RouteControlRecord};
 
-#[cfg(test)]
-use crate::control::cluster::effects::EffectEnvelope;
-
 #[inline(always)]
 pub(super) const fn compiled_program_push_dynamic_policy_site(
     dynamic_policy_sites: &mut [DynamicPolicySite],
@@ -194,40 +191,5 @@ pub(in crate::global::compiled) const fn control_scope_mask_bit(
         ControlScopeKind::Delegate => 0,
         ControlScopeKind::Policy => 0,
         ControlScopeKind::Route => 0,
-    }
-}
-
-#[cfg(test)]
-#[inline(always)]
-pub(super) fn compiled_program_emit_atom(
-    effect_envelope: &mut EffectEnvelope,
-    atom: EffAtom,
-    offset: usize,
-    policy: PolicyMode,
-    resource_policy_site: u16,
-    control_desc: Option<ControlDesc>,
-) {
-    if atom.is_control {
-        let resource_kind_tag = atom
-            .resource
-            .expect("control atom must carry a resource tag");
-        let control_desc = control_desc.expect("control atom missing control descriptor");
-        if policy.is_dynamic() && !control_desc.supports_dynamic_policy() {
-            panic!("dynamic policy attached to unsupported control op");
-        }
-        if control_desc.label() != atom.label || control_desc.resource_tag() != resource_kind_tag {
-            panic!("control atom/control descriptor mismatch");
-        }
-        let descriptor = ResourceDescriptor::new(
-            control_desc.with_sites(EffIndex::from_dense_ordinal(offset), resource_policy_site),
-        );
-        effect_envelope.push_tap_event(control_desc.tap_id());
-        effect_envelope.push_resource(descriptor);
-    } else {
-        if !policy.is_static() && !matches!(policy, PolicyMode::Dynamic { .. }) {
-            panic!("static policy attached to non-control atom");
-        }
-        let tap_id = 0x0200 + atom.label as u16;
-        effect_envelope.push_tap_event(tap_id);
     }
 }

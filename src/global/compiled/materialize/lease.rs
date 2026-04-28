@@ -6,8 +6,6 @@ use crate::global::{
 };
 
 use super::super::images::{CompiledProgramFacts, CompiledRoleImage};
-#[cfg(test)]
-use super::super::lowering::program_owner::CompiledProgram;
 use super::super::lowering::{CompiledRoleImageInitError, LoweringSummary, ProgramStamp};
 use super::super::lowering::{program_image_builder, role_image_builder};
 #[cfg(test)]
@@ -490,14 +488,30 @@ pub(crate) unsafe fn init_compiled_role_image_from_prevalidated_summary(
 #[cfg(test)]
 pub(crate) fn with_compiled_program<R>(
     input: RoleLoweringInput,
-    f: impl FnOnce(&CompiledProgram) -> R,
+    f: impl FnOnce(&CompiledProgramFacts) -> R,
 ) -> R {
-    let mut compiled = core::mem::MaybeUninit::<CompiledProgram>::uninit();
+    const STORAGE_BYTES: usize =
+        CompiledProgramFacts::max_persistent_bytes() + CompiledProgramFacts::persistent_align();
+    static STORAGE: std::sync::Mutex<[u8; STORAGE_BYTES]> =
+        std::sync::Mutex::new([0u8; STORAGE_BYTES]);
+
+    let mut storage = STORAGE
+        .lock()
+        .expect("compiled program test storage lock poisoned");
     unsafe {
         let summary = input.source().summary();
-        CompiledProgram::init_from_summary(compiled.as_mut_ptr(), summary);
-        let result = f(compiled.assume_init_ref());
-        compiled.assume_init_drop();
+        let base = storage.as_mut_ptr() as usize;
+        let align = CompiledProgramFacts::persistent_align();
+        let aligned =
+            TransientLoweringLeaseStorage::align_up(base, align) as *mut CompiledProgramFacts;
+        assert!(
+            (aligned as usize) + CompiledProgramFacts::max_persistent_bytes()
+                <= base + storage.len(),
+            "compiled program test storage alignment exceeded backing storage"
+        );
+        init_compiled_program_image_from_summary(aligned, summary);
+        let result = f(&*aligned);
+        ptr::drop_in_place(aligned);
         result
     }
 }

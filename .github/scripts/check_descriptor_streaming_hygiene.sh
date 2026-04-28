@@ -54,7 +54,12 @@ if ! rg -n 'segment_count\(\)|segment_len\(|node_at\(' src/global/compiled/lower
   exit 1
 fi
 
-if ! rg -n 'while segment_idx < view\.segment_count\(\)' src/global/compiled/lowering/program_image_builder.rs src/global/compiled/lowering/program_owner.rs >/dev/null; then
+if [[ -e src/global/compiled/lowering/program_owner.rs ]]; then
+  echo "descriptor streaming hygiene violation: test-only compiled program owner must not be reintroduced" >&2
+  exit 1
+fi
+
+if ! rg -n 'while segment_idx < view\.segment_count\(\)' src/global/compiled/lowering/program_image_builder.rs >/dev/null; then
   echo "descriptor streaming hygiene violation: compiled program image init must stream segment-by-segment" >&2
   exit 1
 fi

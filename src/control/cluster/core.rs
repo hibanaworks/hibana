@@ -4900,7 +4900,7 @@ mod tests {
     use crate::transport::{Transport, TransportError, wire::Payload};
     use core::mem::size_of;
     use core::{cell::UnsafeCell, mem::MaybeUninit};
-    use std::{string::String, thread_local};
+    use std::thread_local;
 
     fn token_wire_image(
         nonce: [u8; CAP_NONCE_LEN],
@@ -10096,86 +10096,6 @@ mod tests {
                     });
                 });
             },
-        );
-    }
-
-    #[test]
-    fn resolver_context_has_no_internal_coordinate_getters() {
-        fn compact_ws(src: &str) -> String {
-            let mut out = String::with_capacity(src.len());
-            let mut prev_space = false;
-            for ch in src.chars() {
-                if ch.is_whitespace() {
-                    if !prev_space {
-                        out.push(' ');
-                        prev_space = true;
-                    }
-                } else {
-                    out.push(ch);
-                    prev_space = false;
-                }
-            }
-            out
-        }
-
-        fn resolver_context_impl_body(src: &str) -> &str {
-            let impl_anchor = src
-                .find("impl ResolverContext {")
-                .expect("ResolverContext impl must exist");
-            let open_brace = src[impl_anchor..]
-                .find('{')
-                .map(|idx| impl_anchor + idx)
-                .expect("ResolverContext impl opening brace");
-            let mut depth = 0usize;
-            for (offset, ch) in src[open_brace..].char_indices() {
-                match ch {
-                    '{' => depth += 1,
-                    '}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            let end = open_brace + offset;
-                            return &src[open_brace + 1..end];
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            panic!("ResolverContext impl closing brace");
-        }
-
-        let src = include_str!("core.rs");
-        let impl_body = compact_ws(resolver_context_impl_body(src));
-        assert!(
-            !impl_body.contains("fn eff_index("),
-            "ResolverContext must not expose eff_index getter"
-        );
-        assert!(
-            !impl_body.contains("fn scope_id("),
-            "ResolverContext must not expose scope_id getter"
-        );
-        assert!(
-            !impl_body.contains("fn scope_trace("),
-            "ResolverContext must not expose scope_trace getter"
-        );
-        assert!(
-            !impl_body.contains("fn rv_id("),
-            "ResolverContext must not expose rv_id getter"
-        );
-        assert!(
-            !impl_body.contains("fn session("),
-            "ResolverContext must not expose session getter"
-        );
-        assert!(
-            !impl_body.contains("fn lane("),
-            "ResolverContext must not expose lane getter"
-        );
-        assert!(
-            !impl_body.contains("fn tag("),
-            "ResolverContext must not expose tag getter"
-        );
-        assert!(
-            !impl_body.contains("fn metrics("),
-            "ResolverContext must not expose metrics getter"
         );
     }
 

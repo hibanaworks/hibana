@@ -81,7 +81,7 @@ mod tests {
     use crate::eff::EffIndex;
     use crate::g::{self, Msg, Role};
     use crate::global::MessageSpec;
-    use crate::global::compiled::{images::CompiledRoleImage, lowering::CompiledProgram};
+    use crate::global::compiled::images::CompiledRoleImage;
     use crate::global::const_dsl::{PolicyMode, ScopeKind};
     use crate::global::role_program;
     use crate::global::role_program::{RoleProgram, project};
@@ -355,20 +355,23 @@ mod tests {
         let controller: RoleProgram<0> = project(&route_program);
 
         with_compiled_role_image(&controller, |compiled| {
-            let summary = route_program.summary();
-            let compiled_program = CompiledProgram::from_summary(&summary);
             let typestate = compiled.typestate_ref();
             let scope_id = typestate.node(0).scope();
             let region = typestate
                 .scope_region_for(scope_id)
                 .expect("route scope region present");
             assert_eq!(region.kind, ScopeKind::Route);
-            let (policy, eff_index, _, _) = compiled_program
-                .route_controller(scope_id)
-                .expect("controller policy recorded");
-            let expected_policy = PolicyMode::dynamic(ROUTE_POLICY_ID).with_scope(scope_id);
-            assert_eq!(policy, expected_policy);
-            assert_ne!(eff_index, EffIndex::MAX);
+            crate::global::compiled::materialize::with_compiled_program(
+                crate::global::lowering_input(&controller),
+                |compiled_program| {
+                    let (policy, eff_index, _, _) = compiled_program
+                        .route_controller(scope_id)
+                        .expect("controller policy recorded");
+                    let expected_policy = PolicyMode::dynamic(ROUTE_POLICY_ID).with_scope(scope_id);
+                    assert_eq!(policy, expected_policy);
+                    assert_ne!(eff_index, EffIndex::MAX);
+                },
+            );
         });
     }
 

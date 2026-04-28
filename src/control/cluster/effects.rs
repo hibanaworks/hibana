@@ -169,12 +169,6 @@ impl<'a> EffectEnvelopeRef<'a> {
             && self.control_scope_mask == 0
     }
 
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) fn tap_events(&self) -> impl Iterator<Item = u16> + '_ {
-        self.tap_events.iter().copied()
-    }
-
     #[inline(always)]
     pub(crate) fn resources(&self) -> impl Iterator<Item = &ResourceDescriptor> {
         self.resources.iter()
@@ -310,26 +304,6 @@ impl EffectEnvelope {
         self.as_ref().is_empty()
     }
 
-    /// Push a tap event ID.
-    #[cfg(test)]
-    pub(crate) const fn push_tap_event(&mut self, event_id: u16) {
-        if self.tap_events_len >= Self::MAX_TAP_EVENTS {
-            panic!("EffectEnvelope: MAX_TAP_EVENTS exceeded");
-        }
-        self.tap_events[self.tap_events_len] = core::mem::MaybeUninit::new(event_id);
-        self.tap_events_len += 1;
-    }
-
-    /// Push a resource descriptor.
-    #[cfg(test)]
-    pub(crate) const fn push_resource(&mut self, descriptor: ResourceDescriptor) {
-        if self.resources_len >= Self::MAX_RESOURCES {
-            panic!("EffectEnvelope: MAX_RESOURCES exceeded");
-        }
-        self.resources[self.resources_len] = core::mem::MaybeUninit::new(descriptor);
-        self.resources_len += 1;
-    }
-
     /// Iterate over tap events.
     #[cfg(test)]
     pub(crate) fn tap_events(&self) -> impl Iterator<Item = u16> + '_ {
@@ -450,7 +424,6 @@ mod tests {
             lowering_input(&projected),
             |facts| {
                 let projected = facts.effect_envelope();
-                assert!(projected.tap_events().count() >= 1);
                 let resources: Vec<_> = projected.resources().collect();
                 assert_eq!(resources.len(), 1);
                 assert_eq!(resources[0].tag(), SnapshotControl::TAG);

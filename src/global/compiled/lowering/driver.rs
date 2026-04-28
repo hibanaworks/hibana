@@ -973,12 +973,6 @@ impl LoweringSummary {
             .lowering_counts_for_role(role, self.program.lowering_facts)
     }
 
-    #[cfg(test)]
-    #[inline(always)]
-    pub(crate) const fn control_markers(&self) -> &[ControlMarker] {
-        self.program.control_markers()
-    }
-
     #[inline(always)]
     pub(crate) const fn compiled_program_control_scope_mask(&self) -> u8 {
         self.program.control_scope_mask
